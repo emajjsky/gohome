@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>今日爸妈好吗 - 回家看看</title>
+    <link href="assets/styles/tailwind.css" rel="stylesheet">
+    <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined.fill {
+            font-variation-settings: 'FILL' 1;
+        }
+        html, body, .font-display, .font-sans { font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", Arial, sans-serif !important; }
+        body {
+            background-color: #f9f9ff;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* 隐藏滚动条，保持精致感 */
+        ::-webkit-scrollbar {
+            width: 0px;
+            background: transparent;
+        }
+    </style>
+</head>
+<body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
+    
+    <!-- 顶部导航 -->
+    <header class="flex justify-between items-center px-container py-6 sticky top-0 z-40 bg-surface/80 backdrop-blur-md md:bg-white/80">
+        <div class="flex items-center gap-2">
+            <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                <span class="material-symbols-outlined fill text-xl">home_health</span>
+            </div>
+            <h1 class="font-display text-xl font-bold text-on-surface tracking-tight">回家看看</h1>
+        </div>
+        <button class="w-11 h-11 rounded-full overflow-hidden shadow-sm border border-outline-variant/30 hover:shadow-md transition-shadow">
+            <img src="assets/images/avatar.jpg" alt="妈妈的头像" class="w-full h-full object-cover">
+        </button>
+    </header>
+
+    <!-- 主体内容 -->
+    <main class="flex-1 px-container flex flex-col gap-section pt-2 pb-8">
+        
+        <!-- 问候与状态 -->
+        <section class="flex flex-col gap-2 mt-2">
+            <h2 class="font-display text-3xl font-extrabold text-on-surface tracking-tight">妈妈在家</h2>
+            <div class="flex items-center gap-2.5 mt-1 bg-white/60 w-max px-3 py-1.5 rounded-full border border-outline-variant/20 shadow-sm">
+                <span class="relative flex h-2.5 w-2.5">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-40"></span>
+                    <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary"></span>
+                </span>
+                <span class="font-sans text-xs font-semibold text-primary tracking-wide">今日状态平稳</span>
+            </div>
+        </section>
+
+        <!-- 核心摘要卡片 -->
+        <section class="bg-surface-container-lowest rounded-2xl shadow-soft p-6 border border-outline-variant/20 flex flex-col gap-5">
+            <div class="flex gap-4 items-start">
+                <div class="w-1.5 h-12 bg-primary/20 rounded-full flex-shrink-0 mt-1.5"></div>
+                <p class="font-sans text-[17px] text-on-surface-variant leading-relaxed font-medium">
+                    妈妈今天 <span class="text-on-surface font-semibold">7:42</span> 起床，上午活动正常。午饭时间厨房有活动，下午客厅停留较久。<br><br>建议今晚打个电话聊聊。
+                </p>
+            </div>
+            
+            <div class="flex gap-3 pt-3">
+                <button class="flex-1 bg-primary text-on-primary rounded-xl h-14 font-sans text-base font-semibold shadow-float hover:bg-primary/90 transition-all active:scale-[0.98] flex items-center justify-center gap-2">
+                    <span class="material-symbols-outlined fill text-[22px]">call</span>
+                    电话问候
+                </button>
+                <button class="flex-1 bg-transparent border-[1.5px] border-primary text-primary rounded-xl h-14 font-sans text-base font-semibold hover:bg-primary/5 transition-all active:scale-[0.98] flex items-center justify-center gap-2">
+                    <span class="material-symbols-outlined text-[22px]">videocam</span>
+                    视频看看
+                </button>
+            </div>
+        </section>
+
+        <!-- 地图与距离 -->
+        <section class="bg-surface-container-lowest rounded-2xl shadow-soft p-5 border border-outline-variant/20 flex flex-col gap-4 overflow-hidden">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="font-display text-[22px] font-bold text-on-surface tracking-tight">与爸妈的距离</h3>
+                    <p class="font-sans text-sm text-on-surface-variant font-medium mt-1">随时知道自己离家还有多远</p>
+                </div>
+                <div class="px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-semibold">本周回家计划</div>
+            </div>
+
+            <div class="relative rounded-2xl border border-outline-variant/20 overflow-hidden bg-[linear-gradient(135deg,#f7faff_0%,#eef4ff_100%)] h-48">
+                <div class="absolute inset-0 opacity-60 bg-[linear-gradient(90deg,transparent_24%,rgba(58,94,135,0.06)_25%,rgba(58,94,135,0.06)_26%,transparent_27%,transparent_74%,rgba(58,94,135,0.06)_75%,rgba(58,94,135,0.06)_76%,transparent_77%),linear-gradient(transparent_24%,rgba(58,94,135,0.06)_25%,rgba(58,94,135,0.06)_26%,transparent_27%,transparent_74%,rgba(58,94,135,0.06)_75%,rgba(58,94,135,0.06)_76%,transparent_77%)] bg-[length:36px_36px]"></div>
+                <svg viewBox="0 0 400 220" class="absolute inset-0 w-full h-full">
+                    <path d="M40 178 C95 150, 118 116, 170 110 S270 132, 344 62" fill="none" stroke="#89a6c8" stroke-width="12" stroke-linecap="round" opacity="0.24"/>
+                    <path d="M40 178 C95 150, 118 116, 170 110 S270 132, 344 62" fill="none" stroke="#3a5e87" stroke-width="5" stroke-linecap="round" stroke-dasharray="1 13"/>
+                    <circle cx="40" cy="178" r="16" fill="#ffffff" stroke="#3a5e87" stroke-width="4"/>
+                    <circle cx="40" cy="178" r="7" fill="#3a5e87"/>
+                    <circle cx="344" cy="62" r="18" fill="#ffffff" stroke="#d08770" stroke-width="4"/>
+                    <circle cx="344" cy="62" r="8" fill="#d08770"/>
+                </svg>
+                <div class="absolute left-4 bottom-4 bg-white/90 backdrop-blur-sm rounded-xl px-3 py-2 shadow-sm border border-white/60">
+                    <p class="font-sans text-[11px] text-on-surface-variant font-semibold">我在这里</p>
+                    <p class="font-display text-sm font-bold text-on-surface">上海 · 徐汇</p>
+                </div>
+                <div class="absolute right-4 top-4 bg-white/90 backdrop-blur-sm rounded-xl px-3 py-2 shadow-sm border border-white/60 text-right">
+                    <p class="font-sans text-[11px] text-on-surface-variant font-semibold">爸妈家</p>
+                    <p class="font-display text-sm font-bold text-on-surface">苏州 · 姑苏</p>
+                </div>
+                <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 px-3 py-2 rounded-full bg-primary text-white text-sm font-bold shadow-float">
+                    112 公里
+                </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3">
+                <div class="bg-white rounded-xl p-3 border border-outline-variant/20">
+                    <p class="font-sans text-[11px] text-on-surface-variant font-semibold">驾车回家</p>
+                    <p class="font-display text-lg font-bold text-on-surface mt-1">1小时42分</p>
+                </div>
+                <div class="bg-white rounded-xl p-3 border border-outline-variant/20">
+                    <p class="font-sans text-[11px] text-on-surface-variant font-semibold">上次见面</p>
+                    <p class="font-display text-lg font-bold text-on-surface mt-1">12天前</p>
+                </div>
+                <div class="bg-white rounded-xl p-3 border border-outline-variant/20">
+                    <p class="font-sans text-[11px] text-on-surface-variant font-semibold">下次计划</p>
+                    <p class="font-display text-lg font-bold text-primary mt-1">周六回家</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 生活节奏时间轴 -->
+        <section class="flex flex-col gap-5">
+            <div class="flex items-center justify-between">
+                <h3 class="font-display text-[22px] font-bold text-on-surface tracking-tight">生活节奏</h3>
+                <button class="text-sm font-medium text-primary flex items-center gap-1 hover:opacity-80 transition-opacity">
+                    查看全部 <span class="material-symbols-outlined text-[18px]">chevron_right</span>
+                </button>
+            </div>
+            
+            <div class="bg-surface-container-lowest rounded-2xl shadow-soft p-6 border border-outline-variant/20 relative overflow-hidden">
+                <!-- 背景装饰网格 -->
+                <div class="absolute inset-0 bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px] opacity-30 pointer-events-none"></div>
+                
+                <!-- 垂直连接线 -->
+                <div class="absolute left-[43px] top-8 bottom-8 w-px bg-outline-variant/30"></div>
+                
+                <div class="flex flex-col gap-8 relative">
+                    <!-- 节点 1: 早晨 -->
+                    <div class="flex items-start gap-5">
+                        <div class="w-10 h-10 rounded-full bg-secondary-container/50 border border-secondary-container flex items-center justify-center text-on-secondary-container z-10 shadow-sm shrink-0">
+                            <span class="material-symbols-outlined text-[20px]">bed</span>
+                        </div>
+                        <div class="pt-1">
+                            <div class="flex items-center gap-2 mb-1">
+                                <p class="font-display text-lg font-bold text-on-surface">起床</p>
+                                <span class="text-xs font-medium px-2 py-0.5 rounded bg-surface-container text-on-surface-variant">卧室</span>
+                            </div>
+                            <p class="font-sans text-sm text-outline font-medium">07:42</p>
+                        </div>
+                    </div>
+
+                    <!-- 节点 2: 中午 -->
+                    <div class="flex items-start gap-5">
+                        <div class="w-10 h-10 rounded-full bg-surface-container-high/50 border border-surface-container-high flex items-center justify-center text-on-surface z-10 shadow-sm shrink-0">
+                            <span class="material-symbols-outlined text-[20px]">restaurant</span>
+                        </div>
+                        <div class="pt-1">
+                            <div class="flex items-center gap-2 mb-1">
+                                <p class="font-display text-lg font-bold text-on-surface">做饭及午餐</p>
+                                <span class="text-xs font-medium px-2 py-0.5 rounded bg-surface-container text-on-surface-variant">厨房</span>
+                            </div>
+                            <p class="font-sans text-sm text-outline font-medium">11:30 - 12:45</p>
+                        </div>
+                    </div>
+
+                    <!-- 节点 3: 下午 -->
+                    <div class="flex items-start gap-5">
+                        <div class="w-10 h-10 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-primary z-10 shadow-sm shrink-0">
+                            <span class="material-symbols-outlined text-[20px] fill">chair</span>
+                        </div>
+                        <div class="pt-1">
+                            <div class="flex items-center gap-2 mb-1">
+                                <p class="font-display text-lg font-bold text-on-surface">休息</p>
+                                <span class="text-xs font-medium px-2 py-0.5 rounded bg-surface-container text-on-surface-variant">客厅</span>
+                            </div>
+                            <p class="font-sans text-sm text-primary font-medium">14:00 - 当前</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 环境快照 -->
+        <section class="flex flex-col gap-5">
+            <h3 class="font-display text-[22px] font-bold text-on-surface tracking-tight">环境快照</h3>
+            <div class="bg-surface-container-lowest rounded-2xl shadow-soft p-3 border border-outline-variant/20 flex items-center gap-4 cursor-pointer hover:bg-surface-container-low transition-colors group">
+                <div class="w-20 h-20 rounded-xl overflow-hidden relative shadow-sm shrink-0">
+                    <img src="assets/images/chinese-mother-daughter-relax.jpg" alt="客厅环境" class="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500">
+                    <div class="absolute inset-0 border border-black/5 rounded-xl"></div>
+                </div>
+                <div class="flex-1 flex flex-col justify-center">
+                    <div class="flex items-center gap-1.5 mb-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                        <p class="font-sans text-xs font-semibold text-primary tracking-wide">15 分钟前 · 客厅</p>
+                    </div>
+                    <p class="font-sans text-[15px] text-on-surface font-medium line-clamp-2 leading-snug">
+                        在客厅走动，随后在沙发坐下休息。
+                    </p>
+                </div>
+                <span class="material-symbols-outlined text-outline-variant pr-2 group-hover:text-primary transition-colors">chevron_right</span>
+            </div>
+        </section>
+
+        <!-- 温馨时刻抓拍 -->
+        <section class="flex flex-col gap-5">
+            <div class="flex items-center justify-between">
+                <h3 class="font-display text-[22px] font-bold text-on-surface tracking-tight">温馨时刻</h3>
+                <button class="text-sm font-medium text-primary flex items-center gap-1 hover:opacity-80 transition-opacity">
+                    全部照片 <span class="material-symbols-outlined text-[18px]">chevron_right</span>
+                </button>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4">
+                <!-- 抓拍 1 -->
+                <div class="relative group rounded-2xl overflow-hidden shadow-soft aspect-[4/5] cursor-pointer">
+                    <img src="assets/images/chinese-mother-daughter-home.jpg" alt="温馨时刻抓拍1" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-black/0 to-transparent"></div>
+                    <div class="absolute bottom-0 left-0 w-full p-4 flex flex-col gap-1">
+                        <div class="flex items-center gap-1 text-white/90">
+                            <span class="material-symbols-outlined text-[16px] fill">favorite</span>
+                            <span class="font-sans text-xs font-medium">检测到笑容</span>
+                        </div>
+                        <p class="font-sans text-sm font-medium text-white">今天 14:20 · 女儿到家陪妈妈</p>
+                    </div>
+                </div>
+                
+                <div class="flex flex-col gap-4">
+                    <!-- 抓拍 2 -->
+                    <div class="relative group rounded-2xl overflow-hidden shadow-soft flex-1 cursor-pointer">
+                        <img src="assets/images/asian-elderly-mother-daughter.jpg" alt="温馨时刻抓拍2" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700">
+                        <div class="absolute inset-0 bg-gradient-to-t from-black/50 via-black/0 to-transparent"></div>
+                        <div class="absolute bottom-0 left-0 w-full p-3">
+                            <p class="font-sans text-xs font-medium text-white">一起散步 · 昨天</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 抓拍 3 -->
+                    <div class="relative group rounded-2xl overflow-hidden shadow-soft flex-1 cursor-pointer">
+                        <img src="assets/images/chinese-mother-daughter-relax.jpg" alt="温馨时刻抓拍3" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700">
+                        <div class="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent"></div>
+                        <div class="absolute bottom-0 left-0 w-full p-3">
+                            <p class="font-sans text-xs font-medium text-white">回家探望 · 本周</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 底部悬浮导航 -->
+    <nav class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
+        <div class="flex justify-between items-center">
+            <a href="index.html" class="flex flex-col items-center gap-1.5 text-primary">
+                <div class="w-12 h-8 rounded-full bg-primary/15 flex items-center justify-center transition-colors">
+                    <span class="material-symbols-outlined fill text-[22px]">home</span>
+                </div>
+                <span class="font-sans text-[11px] font-bold tracking-wide">首页</span>
+            </a>
+            <a href="monitor.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                    <span class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">监控</span>
+            </a>
+            <a href="events.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                    <span class="material-symbols-outlined text-[22px]">history</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
+            </a>
+            <a href="companionship.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                    <span class="material-symbols-outlined text-[22px]">diversity_1</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">陪伴</span>
+            </a>
+            <a href="privacy.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                    <span class="material-symbols-outlined text-[22px]">person</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
+            </a>
+        </div>
+    </nav>
+</body>
+</html>

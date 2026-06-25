@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>监护规则 - 回家看看</title>
+    <link href="assets/styles/tailwind.css" rel="stylesheet">
+    <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
+        html, body, .font-display, .font-sans { font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", Arial, sans-serif !important; }
+        body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+    </style>
+</head>
+<body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
+    
+    <header class="flex justify-between items-center px-container py-6 sticky top-0 z-40 bg-surface/80 backdrop-blur-md md:bg-white/80">
+        <a href="monitor.html" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-variant transition-colors text-on-surface">
+            <span class="material-symbols-outlined">arrow_back</span>
+        </a>
+        <h1 class="font-display text-xl font-bold text-on-surface tracking-tight">监护规则</h1>
+        <div class="w-10 h-10"></div>
+    </header>
+
+    <main class="flex-1 px-container flex flex-col gap-6 pt-2 pb-8">
+        
+        <section class="flex flex-col gap-1 mb-2">
+            <h2 class="font-display text-2xl font-extrabold text-on-surface">规则设置</h2>
+            <p class="font-sans text-sm text-on-surface-variant font-medium">管理 AI 监控的各项触发条件与提醒设置，保持适度关怀。</p>
+        </section>
+
+        <!-- 安全守护 -->
+        <section class="bg-white rounded-2xl shadow-soft p-5 border border-outline-variant/20 flex flex-col">
+            <div class="flex items-center gap-2 mb-4">
+                <span class="material-symbols-outlined text-primary">security</span>
+                <h3 class="font-display text-lg font-bold text-on-surface">安全守护</h3>
+            </div>
+            
+            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
+                <div class="flex flex-col gap-0.5 pr-4">
+                    <span class="font-display text-base font-bold text-on-surface">疑似跌倒检测</span>
+                    <span class="font-sans text-xs text-on-surface-variant">AI 识别跌倒风险并立即通知</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" class="sr-only peer" checked>
+                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
+            </div>
+
+            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
+                <div class="flex flex-col gap-0.5 pr-4">
+                    <span class="font-display text-base font-bold text-on-surface">陌生人出现提醒</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" class="sr-only peer" checked>
+                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
+            </div>
+
+            <div class="flex justify-between items-center pt-3">
+                <div class="flex flex-col gap-0.5 pr-4">
+                    <span class="font-display text-base font-bold text-on-surface">设备离线提醒</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" class="sr-only peer" checked>
+                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
+            </div>
+        </section>
+
+        <!-- 生活节律 -->
+        <section class="bg-white rounded-2xl shadow-soft p-5 border border-outline-variant/20 flex flex-col">
+            <div class="flex items-center gap-2 mb-4">
+                <span class="material-symbols-outlined text-primary">schedule</span>
+                <h3 class="font-display text-lg font-bold text-on-surface">生活节律</h3>
+            </div>
+            
+            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
+                <div class="flex flex-col gap-0.5 pr-4">
+                    <span class="font-display text-base font-bold text-on-surface">未按时起床提醒</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" class="sr-only peer" checked>
+                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
+            </div>
+
+            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
+                <div class="flex flex-col gap-0.5 pr-4">
+                    <span class="font-display text-base font-bold text-on-surface">午饭时间未见活动</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" class="sr-only peer" checked>
+                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
+            </div>
+
+            <div class="flex justify-between items-center pt-3">
+                <div class="flex flex-col gap-0.5 pr-4">
+                    <span class="font-display text-base font-bold text-on-surface">活动量明显下降</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" class="sr-only peer">
+                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
+            </div>
+        </section>
+
+        <div class="flex justify-center mt-2">
+            <button class="flex items-center gap-1 text-primary font-sans text-sm font-semibold hover:opacity-80 transition-opacity">
+                高级设置
+                <span class="material-symbols-outlined text-[18px]">expand_more</span>
+            </button>
+        </div>
+    </main>
+</body>
+</html>

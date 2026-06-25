@@ -1,0 +1,61 @@
+module.exports = {
+  content: ["./*.html"],
+  theme: {
+    extend: {
+      colors: {
+        surface: "#f9f9ff",
+        "surface-dim": "#d0daf2",
+        "surface-bright": "#f9f9ff",
+        "surface-variant": "#eef3fb",
+        "surface-container-lowest": "#ffffff",
+        "surface-container-low": "#f0f3ff",
+        "surface-container": "#e8eeff",
+        "surface-container-high": "#dfe8ff",
+        "on-surface": "#111c2d",
+        "on-surface-variant": "#43474e",
+        outline: "#73777f",
+        "outline-variant": "#c3c6cf",
+        primary: "#3a5e87",
+        "on-primary": "#ffffff",
+        "primary-container": "#5477a1",
+        "on-primary-container": "#fdfcff",
+        secondary: "#2b6674",
+        "on-secondary": "#ffffff",
+        "secondary-container": "#b0e9f9",
+        "on-secondary-container": "#306a78",
+        warning: "#d08770",
+      },
+      fontFamily: {
+        sans: [
+          "Microsoft YaHei",
+          "微软雅黑",
+          "PingFang SC",
+          "Hiragino Sans GB",
+          "Arial",
+          "sans-serif",
+        ],
+        display: [
+          "Microsoft YaHei",
+          "微软雅黑",
+          "PingFang SC",
+          "Hiragino Sans GB",
+          "Arial",
+          "sans-serif",
+        ],
+      },
+      boxShadow: {
+        soft: "0px 4px 20px rgba(0, 0, 0, 0.04)",
+        float: "0px 8px 30px rgba(58, 94, 135, 0.12)",
+      },
+      spacing: {
+        container: "24px",
+        section: "32px",
+      },
+      borderRadius: {
+        "2xl": "24px",
+        xl: "16px",
+      },
+    },
+  },
+  plugins: [],
+};

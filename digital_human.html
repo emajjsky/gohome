@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>数字人对话 - 回家看看</title>
+    <link href="assets/styles/tailwind.css" rel="stylesheet">
+    <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
+        html, body, .font-display, .font-sans { font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", Arial, sans-serif !important; }
+        body { background-color: #f6f8fc; -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+        .call-overlay { opacity: 0; pointer-events: none; transition: opacity 220ms ease; }
+        .call-overlay.active { opacity: 1; pointer-events: auto; }
+    </style>
+</head>
+<body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative bg-[#f6f8fc]">
+    <header id="chat-header" class="flex items-center px-container py-5 sticky top-0 z-40 bg-white/92 backdrop-blur-md border-b border-outline-variant/20">
+        <div class="flex items-center gap-3">
+            <a href="memorial_home.html" class="w-10 h-10 rounded-full bg-surface-container-low border border-outline-variant/20 flex items-center justify-center text-on-surface">
+                <span class="material-symbols-outlined">arrow_back</span>
+            </a>
+            <div>
+                <p class="font-sans text-[11px] font-semibold text-primary tracking-wider uppercase">数字陪伴</p>
+                <h1 class="font-display text-xl font-bold text-on-surface tracking-tight">和妈妈说说话</h1>
+            </div>
+        </div>
+    </header>
+
+    <main id="chat-main" class="flex-1 px-container pt-4 pb-[190px] flex flex-col gap-4">
+        <section class="rounded-3xl bg-white border border-outline-variant/20 shadow-soft p-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-full overflow-hidden border border-outline-variant/20">
+                    <img src="assets/images/avatar.jpg" alt="妈妈头像" class="w-full h-full object-cover">
+                </div>
+                <div>
+                    <p class="font-display text-base font-bold text-on-surface">妈妈数字人</p>
+                    <div class="flex items-center gap-2 mt-0.5">
+                        <span class="relative flex h-2 w-2">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-50"></span>
+                            <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                        </span>
+                        <span class="font-sans text-xs font-medium text-on-surface-variant">在线，像微信一样聊聊天</span>
+                    </div>
+                </div>
+            </div>
+            <button id="open-video-call" class="px-4 h-10 rounded-full bg-primary text-white text-sm font-semibold shadow-float flex items-center justify-center gap-1.5">
+                <span class="material-symbols-outlined fill text-[18px]">videocam</span>
+                视频对话
+            </button>
+        </section>
+
+        <section class="flex flex-col gap-3">
+            <div class="flex items-center justify-between">
+                <h3 class="font-display text-[20px] font-bold tracking-tight text-on-surface">聊天记录</h3>
+                <span class="font-sans text-xs font-semibold text-outline">刚刚</span>
+            </div>
+            <div class="flex flex-col gap-4">
+                <div class="flex items-start gap-3">
+                    <div class="w-9 h-9 rounded-full overflow-hidden shrink-0 border border-outline-variant/20">
+                        <img src="assets/images/avatar.jpg" alt="妈妈头像" class="w-full h-full object-cover">
+                    </div>
+                    <div class="max-w-[82%]">
+                        <div class="bg-white rounded-2xl rounded-tl-md px-4 py-3 shadow-soft border border-outline-variant/15">
+                            <p class="font-sans text-sm text-on-surface leading-relaxed">我在呢。今天怎么突然想起找我聊天了？</p>
+                        </div>
+                        <p class="font-sans text-[11px] text-outline mt-1.5 ml-1">刚刚</p>
+                    </div>
+                </div>
+                <div class="flex justify-end">
+                    <div class="max-w-[78%]">
+                        <div class="bg-primary text-white rounded-2xl rounded-tr-md px-4 py-3 shadow-float">
+                            <p class="font-sans text-sm leading-relaxed">嗯，今天开了一天会，突然很想听你说说话。</p>
+                        </div>
+                        <p class="font-sans text-[11px] text-outline mt-1.5 text-right mr-1">刚刚</p>
+                    </div>
+                </div>
+                <div class="flex items-start gap-3">
+                    <div class="w-9 h-9 rounded-full overflow-hidden shrink-0 border border-outline-variant/20">
+                        <img src="assets/images/avatar.jpg" alt="妈妈头像" class="w-full h-full object-cover">
+                    </div>
+                    <div class="max-w-[82%]">
+                        <div class="bg-white rounded-2xl rounded-tl-md px-4 py-3 shadow-soft border border-outline-variant/15">
+                            <p class="font-sans text-sm text-on-surface leading-relaxed">那你先别急，慢一点和我说。今天最让你累的是哪件事？</p>
+                        </div>
+                        <p class="font-sans text-[11px] text-outline mt-1.5 ml-1">刚刚</p>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button class="px-4 py-2.5 rounded-full bg-white border border-outline-variant/20 text-on-surface text-sm font-semibold shadow-sm">今天过得怎么样</button>
+                <button class="px-4 py-2.5 rounded-full bg-white border border-outline-variant/20 text-on-surface text-sm font-semibold shadow-sm">再教我做一次红烧肉</button>
+                <button class="px-4 py-2.5 rounded-full bg-white border border-outline-variant/20 text-on-surface text-sm font-semibold shadow-sm">讲讲我小时候</button>
+            </div>
+        </section>
+    </main>
+
+    <div id="chat-composer" class="fixed left-0 w-full px-4 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 z-40" style="bottom: 104px;">
+        <div class="bg-white border border-outline-variant/20 rounded-[24px] shadow-[0_18px_40px_rgba(31,41,55,0.12)] px-3 py-3">
+            <div class="flex items-center gap-2.5">
+                <button class="w-10 h-10 rounded-full bg-surface-container-low text-outline flex items-center justify-center shrink-0">
+                    <span class="material-symbols-outlined text-[20px]">add</span>
+                </button>
+                <div class="flex-1 h-11 rounded-full bg-surface-container-low border border-outline-variant/15 px-4 flex items-center gap-2">
+                    <span class="material-symbols-outlined text-outline text-[18px]">edit_square</span>
+                    <input type="text" value="" placeholder="输入你想说的话..." class="flex-1 bg-transparent text-sm text-on-surface placeholder:text-outline outline-none">
+                </div>
+                <button class="w-10 h-10 rounded-full bg-surface-container-low text-outline flex items-center justify-center shrink-0">
+                    <span class="material-symbols-outlined text-[20px]">graphic_eq</span>
+                </button>
+                <button id="open-video-call-fab" class="w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center shrink-0 shadow-float">
+                    <span class="material-symbols-outlined fill text-[20px]">videocam</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <nav id="bottom-nav" class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/92 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(31,41,55,0.06)]">
+        <div class="flex justify-between items-center">
+            <a href="memorial_home.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
+                <div class="w-12 h-8 rounded-full flex items-center justify-center">
+                    <span class="material-symbols-outlined text-[22px]">home</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
+            </a>
+            <a href="digital_human.html" class="flex flex-col items-center gap-1.5 text-primary">
+                <div class="w-12 h-8 rounded-full bg-primary/15 flex items-center justify-center">
+                    <span class="material-symbols-outlined fill text-[22px]">forum</span>
+                </div>
+                <span class="font-sans text-[11px] font-bold tracking-wide">数字人</span>
+            </a>
+            <a href="memory_gallery.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
+                <div class="w-12 h-8 rounded-full flex items-center justify-center">
+                    <span class="material-symbols-outlined text-[22px]">photo_library</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">记忆馆</span>
+            </a>
+            <a href="voice_archive.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
+                <div class="w-12 h-8 rounded-full flex items-center justify-center">
+                    <span class="material-symbols-outlined text-[22px] fill">mic</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">声音</span>
+            </a>
+            <a href="privacy.html?memorial=on" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
+                <div class="w-12 h-8 rounded-full flex items-center justify-center">
+                    <span class="material-symbols-outlined text-[22px]">person</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
+            </a>
+        </div>
+    </nav>
+
+    <div id="video-call-overlay" class="call-overlay absolute inset-0 z-[70] bg-[#0f1724]">
+        <div class="absolute inset-0">
+            <img src="assets/images/elderly-portrait-wiki.jpg" alt="视频对话角色画面" class="w-full h-full object-cover object-top">
+            <div class="absolute inset-0 bg-gradient-to-t from-black/55 via-black/15 to-black/10"></div>
+        </div>
+        <div class="relative h-full flex flex-col justify-between p-6 text-white">
+            <div class="flex items-start justify-end pt-2">
+                <div class="text-sm font-semibold tracking-wide" style="text-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);">视频通话中</div>
+            </div>
+            <div></div>
+            <div class="flex items-center justify-center gap-3 pb-6">
+                <div class="h-12 px-5 rounded-full text-white border border-white/10 flex items-center justify-center text-sm font-semibold" style="background: #16a34a; box-shadow: 0 12px 30px rgba(22, 163, 74, 0.28);">
+                    通话中
+                </div>
+                <button id="close-video-call-bottom" class="h-12 px-5 rounded-full flex items-center justify-center gap-1.5 text-sm font-semibold" style="background: #ef4444; box-shadow: 0 16px 40px rgba(239, 68, 68, 0.35);">
+                    <span class="material-symbols-outlined fill text-[20px]">call_end</span>
+                    挂断
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const videoOverlay = document.getElementById('video-call-overlay');
+        const chatHeader = document.getElementById('chat-header');
+        const chatMain = document.getElementById('chat-main');
+        const chatComposer = document.getElementById('chat-composer');
+        const bottomNav = document.getElementById('bottom-nav');
+        const openVideoButtons = [
+            document.getElementById('open-video-call'),
+            document.getElementById('open-video-call-fab')
+        ];
+        const closeVideoButtons = [
+            document.getElementById('close-video-call-bottom')
+        ];
+
+        openVideoButtons.forEach((button) => {
+            button.addEventListener('click', () => {
+                videoOverlay.classList.add('active');
+                chatHeader.style.visibility = 'hidden';
+                chatMain.style.visibility = 'hidden';
+                chatComposer.style.display = 'none';
+                bottomNav.style.display = 'none';
+            });
+        });
+
+        closeVideoButtons.forEach((button) => {
+            button.addEventListener('click', () => {
+                videoOverlay.classList.remove('active');
+                chatHeader.style.visibility = '';
+                chatMain.style.visibility = '';
+                chatComposer.style.display = '';
+                bottomNav.style.display = '';
+            });
+        });
+    </script>
+</body>
+</html>
