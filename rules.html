@@ -3,54 +3,37 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>监护规则 - 回家看看</title>
+    <title>提醒节奏 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <link href="assets/styles/app.css" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
-        html, body, .font-display, .font-sans { font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", Arial, sans-serif !important; }
+        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
         body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
     </style>
 </head>
 <body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
-    
-    <header class="flex justify-between items-center px-container py-6 sticky top-0 z-40 bg-surface/80 backdrop-blur-md md:bg-white/80">
-        <a href="monitor.html" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-variant transition-colors text-on-surface">
-            <span class="material-symbols-outlined">arrow_back</span>
-        </a>
-        <h1 class="font-display text-xl font-bold text-on-surface tracking-tight">监护规则</h1>
-        <div class="w-10 h-10"></div>
-    </header>
+    <main class="flex-1 px-container flex flex-col gap-4 pt-5 pb-8">
 
-    <main class="flex-1 px-container flex flex-col gap-6 pt-2 pb-8">
-        
-        <section class="flex flex-col gap-1 mb-2">
-            <h2 class="font-display text-2xl font-extrabold text-on-surface">规则设置</h2>
-            <p class="font-sans text-sm text-on-surface-variant font-medium">管理 AI 监控的各项触发条件与提醒设置，保持适度关怀。</p>
-        </section>
-
-        <!-- 安全守护 -->
-        <section class="bg-white rounded-2xl shadow-soft p-5 border border-outline-variant/20 flex flex-col">
+        <section class="app-soft-card p-5 flex flex-col">
             <div class="flex items-center gap-2 mb-4">
                 <span class="material-symbols-outlined text-primary">security</span>
-                <h3 class="font-display text-lg font-bold text-on-surface">安全守护</h3>
+                <h3 class="font-display text-lg font-bold text-on-surface">高优先级提醒</h3>
             </div>
-            
-            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
-                <div class="flex flex-col gap-0.5 pr-4">
+            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10 gap-4">
+                <div class="flex flex-col gap-0.5 pr-2">
                     <span class="font-display text-base font-bold text-on-surface">疑似跌倒检测</span>
-                    <span class="font-sans text-xs text-on-surface-variant">AI 识别跌倒风险并立即通知</span>
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
                     <input type="checkbox" class="sr-only peer" checked>
                     <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                 </label>
             </div>
-
-            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
-                <div class="flex flex-col gap-0.5 pr-4">
+            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10 gap-4">
+                <div class="flex flex-col gap-0.5 pr-2">
                     <span class="font-display text-base font-bold text-on-surface">陌生人出现提醒</span>
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
@@ -58,9 +41,8 @@
                     <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                 </label>
             </div>
-
-            <div class="flex justify-between items-center pt-3">
-                <div class="flex flex-col gap-0.5 pr-4">
+            <div class="flex justify-between items-center pt-3 gap-4">
+                <div class="flex flex-col gap-0.5 pr-2">
                     <span class="font-display text-base font-bold text-on-surface">设备离线提醒</span>
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
@@ -70,15 +52,13 @@
             </div>
         </section>
 
-        <!-- 生活节律 -->
-        <section class="bg-white rounded-2xl shadow-soft p-5 border border-outline-variant/20 flex flex-col">
+        <section class="app-soft-card p-5 flex flex-col">
             <div class="flex items-center gap-2 mb-4">
                 <span class="material-symbols-outlined text-primary">schedule</span>
-                <h3 class="font-display text-lg font-bold text-on-surface">生活节律</h3>
+                <h3 class="font-display text-lg font-bold text-on-surface">生活节奏观察</h3>
             </div>
-            
-            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
-                <div class="flex flex-col gap-0.5 pr-4">
+            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10 gap-4">
+                <div class="flex flex-col gap-0.5 pr-2">
                     <span class="font-display text-base font-bold text-on-surface">未按时起床提醒</span>
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
@@ -86,9 +66,8 @@
                     <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                 </label>
             </div>
-
-            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
-                <div class="flex flex-col gap-0.5 pr-4">
+            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10 gap-4">
+                <div class="flex flex-col gap-0.5 pr-2">
                     <span class="font-display text-base font-bold text-on-surface">午饭时间未见活动</span>
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
@@ -96,9 +75,8 @@
                     <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                 </label>
             </div>
-
-            <div class="flex justify-between items-center pt-3">
-                <div class="flex flex-col gap-0.5 pr-4">
+            <div class="flex justify-between items-center pt-3 gap-4">
+                <div class="flex flex-col gap-0.5 pr-2">
                     <span class="font-display text-base font-bold text-on-surface">活动量明显下降</span>
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
@@ -108,12 +86,40 @@
             </div>
         </section>
 
-        <div class="flex justify-center mt-2">
-            <button class="flex items-center gap-1 text-primary font-sans text-sm font-semibold hover:opacity-80 transition-opacity">
-                高级设置
-                <span class="material-symbols-outlined text-[18px]">expand_more</span>
-            </button>
-        </div>
     </main>
+    <nav class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
+        <div class="flex justify-between items-center">
+            <a href="index.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill group-hover:bg-primary/5">
+                    <span class="material-symbols-outlined text-[22px]">home</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
+            </a>
+            <a href="monitor.html" class="flex flex-col items-center gap-1.5 text-primary">
+                <div class="app-nav-pill active">
+                    <span class="material-symbols-outlined fill text-[22px]">nest_cam_indoor</span>
+                </div>
+                <span class="font-sans text-[11px] font-bold tracking-wide">守护</span>
+            </a>
+            <a href="events.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill group-hover:bg-primary/5">
+                    <span class="material-symbols-outlined text-[22px]">history</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
+            </a>
+            <a href="companionship.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill group-hover:bg-primary/5">
+                    <span class="material-symbols-outlined text-[22px]">diversity_1</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">陪伴</span>
+            </a>
+            <a href="privacy.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill group-hover:bg-primary/5">
+                    <span class="material-symbols-outlined text-[22px]">person</span>
+                </div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
+            </a>
+        </div>
+    </nav>
 </body>
 </html>

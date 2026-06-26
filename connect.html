@@ -3,13 +3,14 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>连接摄像头 - 回家看看</title>
+    <title>接入守护设备 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <link href="assets/styles/app.css" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
-        html, body, .font-display, .font-sans { font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", Arial, sans-serif !important; }
+        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
         body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
         .spin-slow { animation: spin 3s linear infinite; }
@@ -18,64 +19,107 @@
     </style>
 </head>
 <body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-8">
-    
-    <header class="flex justify-between items-center px-container py-6 sticky top-0 z-40 bg-surface/80 backdrop-blur-md md:bg-white/80">
-        <a href="monitor.html" class="w-10 h-10 flex items-center justify-center rounded-full bg-white shadow-sm border border-outline-variant/20 hover:opacity-80 transition-opacity text-primary">
+    <header class="flex justify-between items-center px-container py-5 sticky top-0 z-40 bg-surface/88 backdrop-blur-xl md:bg-white/88">
+        <a href="monitor.html" class="w-10 h-10 flex items-center justify-center rounded-full bg-white shadow-sm border border-outline-variant/20 text-on-surface">
             <span class="material-symbols-outlined">arrow_back</span>
         </a>
-        <h1 class="font-display text-xl font-bold text-primary tracking-tight">连接摄像头</h1>
+        <div class="text-center">
+            <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">CONNECT</p>
+            <p class="font-display text-[16px] font-bold text-on-surface">接入守护设备</p>
+        </div>
         <div class="w-10 h-10"></div>
     </header>
 
-    <main class="flex-1 px-container flex flex-col pt-4 pb-8 max-w-sm mx-auto w-full">
-        
-        <!-- 进度 -->
-        <div class="flex items-center justify-center mb-10">
-            <span class="font-sans text-xs font-bold text-primary bg-primary/10 px-3 py-1.5 rounded-full tracking-wider">步骤 2 / 3</span>
-        </div>
+    <main class="flex-1 px-container flex flex-col gap-6 pt-3 pb-8 max-w-sm mx-auto w-full">
+        <section class="app-soft-card bg-white p-5 flex flex-col gap-4">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">STEP 2 / 3</p>
+                    <h2 class="font-display text-[22px] font-bold text-on-surface tracking-tight mt-1">把新的画面接进来，让守护更完整一点</h2>
+                    <p class="font-sans text-[13px] text-on-surface-variant leading-relaxed mt-2">这里只做必要连接，不强调复杂配置。你的目标不是搭系统，而是让家里的情况能被温和地看见。</p>
+                </div>
+                <div class="w-11 h-11 rounded-full bg-[#eef5ff] text-primary flex items-center justify-center shrink-0">
+                    <span class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
+                </div>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[11px] font-semibold text-on-surface-variant">接入位置</p>
+                    <p class="font-display text-[17px] font-bold text-on-surface mt-1">客厅</p>
+                    <p class="font-sans text-[11px] text-primary mt-1">优先推荐</p>
+                </div>
+                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[11px] font-semibold text-on-surface-variant">连接方式</p>
+                    <p class="font-display text-[17px] font-bold text-on-surface mt-1">地址流</p>
+                    <p class="font-sans text-[11px] text-primary mt-1">RTSP / RTMP</p>
+                </div>
+                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[11px] font-semibold text-on-surface-variant">当前状态</p>
+                    <p class="font-display text-[17px] font-bold text-on-surface mt-1">已连通</p>
+                    <p class="font-sans text-[11px] text-primary mt-1">测试通过</p>
+                </div>
+            </div>
+        </section>
 
-        <div class="text-center mb-10">
-            <h2 class="font-display text-2xl font-extrabold text-on-surface mb-2">配置视频流</h2>
-            <p class="font-sans text-sm text-on-surface-variant font-medium">请提供设备地址以便我们建立安全连接。</p>
-        </div>
-
-        <!-- 输入区 -->
-        <div class="bg-white rounded-2xl shadow-soft p-5 mb-8 border border-outline-variant/20">
-            <div class="mb-5">
-                <label class="block font-sans text-xs font-bold text-on-surface-variant mb-2 ml-1" for="stream-url">视频流地址 (RTSP/RTMP)</label>
+        <section class="bg-white rounded-[28px] shadow-soft p-5 border border-outline-variant/20 flex flex-col gap-5">
+            <div>
+                <label class="block font-sans text-[11px] font-bold text-on-surface-variant tracking-[0.08em] mb-2 ml-1" for="stream-url">视频流地址</label>
                 <div class="relative">
                     <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
                         <span class="material-symbols-outlined text-outline text-[20px]">link</span>
                     </span>
-                    <input type="text" id="stream-url" class="block w-full pl-10 pr-4 py-3.5 bg-surface-container border-transparent rounded-xl focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all font-sans text-sm text-on-surface font-medium" value="rtsp://admin:12345@192.168.1.100/stream">
+                    <input type="text" id="stream-url" class="block w-full pl-10 pr-4 py-3.5 bg-surface-container border-transparent rounded-2xl focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all font-sans text-[13px] text-on-surface font-medium" value="rtsp://admin:12345@192.168.1.100/stream">
                 </div>
-                <p class="mt-2.5 ml-1 font-sans text-xs text-outline flex items-center gap-1">
+                <p class="mt-2.5 ml-1 font-sans text-[12px] text-outline flex items-center gap-1.5">
                     <span class="material-symbols-outlined text-[14px]">info</span>
-                    可以在摄像头管理后台获取地址
+                    一般可以在设备后台复制这段地址，填进来后先做一次连通测试。
                 </p>
             </div>
-            
-            <button class="w-full bg-primary hover:bg-primary/90 text-white font-sans text-[15px] font-bold h-12 rounded-xl shadow-float transition-all flex items-center justify-center gap-2 active:scale-[0.98]">
-                测试连接
-                <span class="material-symbols-outlined spin-slow text-[18px]">sync</span>
-            </button>
-        </div>
+            <div class="grid grid-cols-2 gap-3">
+                <button class="h-11 rounded-2xl bg-primary text-white font-sans text-[13px] font-bold shadow-float flex items-center justify-center gap-2">
+                    测试连接
+                    <span class="material-symbols-outlined spin-slow text-[18px]">sync</span>
+                </button>
+                <button class="h-11 rounded-2xl bg-[#f4f6fb] text-on-surface font-sans text-[13px] font-semibold border border-outline-variant/15">保存并继续</button>
+            </div>
+        </section>
 
-        <!-- 状态展示 -->
-        <div class="flex-1 flex flex-col items-center justify-center min-h-[220px]">
+        <section class="flex flex-col gap-3">
+            <div class="app-story-note">
+                <div class="app-story-icon bg-[#eef5ff] text-primary">
+                    <span class="material-symbols-outlined text-[18px]">check_circle</span>
+                </div>
+                <div>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.12em]">连接状态</p>
+                    <p class="font-display text-[16px] font-bold text-on-surface mt-1">设备已经能被稳定访问，接下来只需要确认放置位置</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">当前测试结果正常，系统可以读取画面。下一步更重要的是别让设备过多打扰家里的日常。</p>
+                </div>
+            </div>
+            <div class="app-story-note">
+                <div class="app-story-icon bg-[#edf6ee] text-[#2d7d5c]">
+                    <span class="material-symbols-outlined text-[18px]">home</span>
+                </div>
+                <div>
+                    <p class="font-sans text-[11px] font-semibold text-[#2d7d5c] tracking-[0.12em]">放置建议</p>
+                    <p class="font-display text-[16px] font-bold text-on-surface mt-1">优先覆盖客厅、厨房和入户门，不需要把每个角落都拍进去</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">我们想确认的是生活节奏和安全状态，不是把家变成一个需要时时被盯着的地方。</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="flex-1 flex flex-col items-center justify-center min-h-[220px]">
             <div class="relative w-32 h-32 flex items-center justify-center mb-6">
                 <div class="absolute inset-0 bg-primary/20 rounded-full pulse-ring"></div>
-                <div class="absolute inset-2 bg-primary/30 rounded-full pulse-ring" style="animation-delay: 0.5s;"></div>
-                
+                <div class="absolute inset-2 bg-primary/28 rounded-full pulse-ring" style="animation-delay: 0.5s;"></div>
                 <div class="relative z-10 w-24 h-24 bg-white rounded-full shadow-soft flex items-center justify-center border-4 border-white overflow-hidden">
-                    <img src="assets/images/chinese-mother-daughter-home.jpg" class="absolute inset-0 w-full h-full object-cover opacity-60" alt="Preview">
+                    <img src="assets/images/chinese-mother-daughter-home.jpg" class="absolute inset-0 w-full h-full object-cover opacity-60" alt="连接预览">
                     <div class="bg-primary text-white rounded-full w-8 h-8 flex items-center justify-center z-20 shadow-sm">
                         <span class="material-symbols-outlined text-[18px] font-bold">check</span>
                     </div>
                 </div>
             </div>
-            <p class="font-sans text-sm font-bold text-primary animate-pulse tracking-wide">连接成功，正在初始化 AI 引擎...</p>
-        </div>
+            <p class="font-sans text-[13px] font-bold text-primary tracking-wide">连接成功，画面已接入守护系统</p>
+        </section>
     </main>
 </body>
 </html>

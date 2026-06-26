@@ -3,115 +3,140 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>事件详情 - 回家看看</title>
+    <title>牵挂详情 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <link href="assets/styles/app.css" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
-        html, body, .font-display, .font-sans { font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", Arial, sans-serif !important; }
+        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
         body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
     </style>
 </head>
 <body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-32">
-    
-    <!-- 沉浸式头部 -->
-    <header class="absolute top-0 left-0 right-0 z-40 flex items-center px-container py-6">
-        <a href="events.html" class="w-10 h-10 flex items-center justify-center rounded-full bg-black/20 backdrop-blur-md text-white hover:bg-black/30 transition-colors">
+    <header class="sticky top-0 z-40 flex items-center justify-between px-container py-5 bg-surface/88 backdrop-blur-xl md:bg-white/88">
+        <a href="events.html" class="w-10 h-10 flex items-center justify-center rounded-full bg-white border border-outline-variant/20 text-on-surface shadow-sm">
             <span class="material-symbols-outlined">arrow_back</span>
         </a>
+        <div class="text-center">
+            <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">DETAIL</p>
+            <p class="font-display text-[16px] font-bold text-on-surface">牵挂详情</p>
+        </div>
+        <div class="w-10 h-10"></div>
     </header>
 
-    <!-- 异常截图/视频 -->
-    <div class="relative w-full h-72 bg-black overflow-hidden">
-        <img src="assets/images/elderly-alone.jpg" class="w-full h-full object-cover object-[center_40%] opacity-80" alt="客厅异常画面">
-        <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30"></div>
-        <button class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center border border-white/30 text-white hover:bg-white/30 transition-all">
-            <span class="material-symbols-outlined fill text-[36px]">play_arrow</span>
-        </button>
-        <div class="absolute bottom-5 left-6 flex items-center gap-2 text-white">
-            <span class="material-symbols-outlined text-[16px]">schedule</span>
-            <span class="font-sans text-sm font-semibold tracking-wide">09:42</span>
-        </div>
-    </div>
-
-    <main class="flex-1 px-container flex flex-col gap-6 -mt-6 relative z-10">
-        
-        <!-- 详情卡片 -->
-        <section class="bg-white rounded-2xl shadow-soft p-5 border border-outline-variant/20 flex flex-col gap-2">
-            <div class="flex items-center gap-2 mb-1">
-                <span class="relative flex h-2.5 w-2.5">
-                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-error opacity-60"></span>
-                    <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-error"></span>
-                </span>
-                <span class="font-sans text-[10px] font-bold text-error bg-error/10 px-2 py-1 rounded tracking-widest uppercase">URGENT RISK</span>
-            </div>
-            <h2 class="font-display text-2xl font-bold text-on-surface">客厅疑似跌倒</h2>
-            <p class="font-sans text-sm text-on-surface-variant font-medium flex items-center gap-1.5 mt-1">
-                <span class="material-symbols-outlined text-[16px]">location_on</span>
-                一楼 客厅区域
-            </p>
-        </section>
-
-        <!-- AI 分析 -->
-        <section class="flex flex-col gap-3">
-            <h3 class="font-sans text-xs font-bold text-outline uppercase tracking-wider pl-1">AI 智能分析</h3>
-            <div class="bg-surface-container rounded-2xl p-5 border border-outline-variant/20 relative overflow-hidden">
-                <div class="absolute -right-4 -top-4 opacity-5 text-primary">
-                    <span class="material-symbols-outlined text-[100px]">smart_toy</span>
+    <main class="flex-1 px-container flex flex-col gap-6 pt-2 pb-8">
+        <section class="rounded-[28px] overflow-hidden border border-outline-variant/20 shadow-soft bg-white">
+            <div class="relative h-72 bg-black">
+                <img src="assets/images/elderly-alone.jpg" class="w-full h-full object-cover object-[center_40%] opacity-84" alt="客厅画面">
+                <div class="absolute inset-0 bg-gradient-to-t from-black/72 via-black/10 to-black/25"></div>
+                <button class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-15 h-15 bg-white/18 backdrop-blur-md rounded-full flex items-center justify-center border border-white/25 text-white">
+                    <span class="material-symbols-outlined fill text-[34px]">play_arrow</span>
+                </button>
+                <div class="absolute top-4 left-4 flex items-center gap-2">
+                    <span class="px-3 py-1 rounded-full bg-[#fff4e8] text-[#c87b2a] text-[10px] font-bold tracking-[0.1em]">需要确认</span>
+                    <span class="px-3 py-1 rounded-full bg-black/28 backdrop-blur-md text-white text-[10px] font-semibold">09:42</span>
                 </div>
-                <p class="font-sans text-sm text-on-surface font-medium leading-relaxed relative z-10">
-                    <span class="font-bold text-primary">09:42</span> 客厅检测到老人长时间保持低姿态，持续 <span class="text-error font-bold">73 秒</span>，建议尽快确认。
-                </p>
-                <div class="h-px bg-outline-variant/30 my-4 relative z-10"></div>
-                <ul class="flex flex-col gap-3 relative z-10">
-                    <li class="flex items-start gap-2.5">
-                        <span class="material-symbols-outlined text-green-600 text-[18px] mt-0.5">check_circle</span>
-                        <span class="font-sans text-sm text-on-surface-variant font-medium">姿态从站立变为低姿态</span>
-                    </li>
-                    <li class="flex items-start gap-2.5">
-                        <span class="material-symbols-outlined text-green-600 text-[18px] mt-0.5">check_circle</span>
-                        <span class="font-sans text-sm text-on-surface-variant font-medium">持续时间较长超过预设安全阈值</span>
-                    </li>
-                    <li class="flex items-start gap-2.5">
-                        <span class="material-symbols-outlined text-error text-[18px] mt-0.5">warning</span>
-                        <span class="font-sans text-sm text-on-surface-variant font-medium">未检测到起身动作</span>
-                    </li>
-                </ul>
+                <div class="absolute left-4 right-4 bottom-4">
+                    <div class="rounded-2xl bg-black/30 backdrop-blur-md border border-white/10 p-4 text-white">
+                        <p class="font-sans text-[10px] font-semibold tracking-[0.14em] text-white/80">今天最让人在意的是</p>
+                        <p class="font-display text-[18px] font-bold mt-1">她在客厅有一段时间保持低姿态，系统建议你尽快确认一下</p>
+                    </div>
+                </div>
             </div>
         </section>
 
-        <!-- 建议操作 -->
-        <section class="flex flex-col gap-3">
-            <h3 class="font-sans text-xs font-bold text-outline uppercase tracking-wider pl-1">建议操作</h3>
+        <section class="app-soft-card bg-white p-5 flex flex-col gap-3">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">EVENT NOTE</p>
+                    <h2 class="font-display text-[22px] font-bold text-on-surface tracking-tight mt-1">这不是一定有危险，但它值得你现在看一眼</h2>
+                </div>
+                <div class="w-11 h-11 rounded-full bg-[#fff4e8] text-[#c87b2a] flex items-center justify-center shrink-0">
+                    <span class="material-symbols-outlined text-[22px]">warning</span>
+                </div>
+            </div>
             <div class="grid grid-cols-2 gap-3">
-                <button class="bg-white border border-primary/20 hover:bg-primary/5 text-primary rounded-xl p-4 flex flex-col items-center justify-center gap-2 transition-colors shadow-sm">
-                    <span class="material-symbols-outlined text-[24px]">record_voice_over</span>
-                    <span class="font-sans text-sm font-semibold">语音呼叫</span>
-                </button>
-                <button class="bg-white border border-primary/20 hover:bg-primary/5 text-primary rounded-xl p-4 flex flex-col items-center justify-center gap-2 transition-colors shadow-sm">
+                <div class="rounded-2xl bg-[#fbfbff] border border-outline-variant/10 p-3">
+                    <p class="font-sans text-[11px] font-semibold text-on-surface-variant">发生位置</p>
+                    <p class="font-display text-[16px] font-bold text-on-surface mt-1">一楼客厅</p>
+                    <p class="font-sans text-[11px] text-primary mt-1">沙发附近</p>
+                </div>
+                <div class="rounded-2xl bg-[#fbfbff] border border-outline-variant/10 p-3">
+                    <p class="font-sans text-[11px] font-semibold text-on-surface-variant">持续时间</p>
+                    <p class="font-display text-[16px] font-bold text-on-surface mt-1">73 秒</p>
+                    <p class="font-sans text-[11px] text-primary mt-1">超过设定阈值</p>
+                </div>
+            </div>
+            <p class="font-sans text-[13px] text-on-surface-variant leading-relaxed">系统看到的是姿态变化和停留时间，并不是直接判断结果。所以这条提醒的重点不是制造紧张，而是提醒你此刻最好主动确认一下。</p>
+        </section>
+
+        <section class="flex flex-col gap-3">
+            <div class="app-story-note">
+                <div class="app-story-icon bg-[#eef5ff] text-primary">
+                    <span class="material-symbols-outlined text-[18px]">visibility</span>
+                </div>
+                <div>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.12em]">事实</p>
+                    <p class="font-display text-[16px] font-bold text-on-surface mt-1">09:42 起，客厅画面里出现了较长时间的低姿态停留</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">系统连续识别到姿态从站立变为低位，期间没有检测到明显起身动作，因此推送了这条确认提醒。</p>
+                </div>
+            </div>
+            <div class="app-story-note">
+                <div class="app-story-icon bg-[#fff4e8] text-[#c87b2a]">
+                    <span class="material-symbols-outlined text-[18px]">favorite</span>
+                </div>
+                <div>
+                    <p class="font-sans text-[11px] font-semibold text-[#c87b2a] tracking-[0.12em]">情绪</p>
+                    <p class="font-display text-[16px] font-bold text-on-surface mt-1">最让人放心不下的，不是数据本身，而是你不确定她现在需不需要你</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">这类提醒往往不一定严重，但最容易让人心里一紧。它存在的意义，是帮你尽快把“担心”变成一次真实确认。</p>
+                </div>
+            </div>
+            <div class="app-story-note">
+                <div class="app-story-icon bg-[#edf6ee] text-[#2d7d5c]">
+                    <span class="material-symbols-outlined text-[18px]">call</span>
+                </div>
+                <div>
+                    <p class="font-sans text-[11px] font-semibold text-[#2d7d5c] tracking-[0.12em]">行动</p>
+                    <p class="font-display text-[16px] font-bold text-on-surface mt-1">先联系她，如果没人接，再联系附近家人或邻居</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">现在最重要的不是反复看画面，而是尽快确认她的状态。确认后，这条提醒就可以安心地结束。</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="flex flex-col gap-3">
+            <div class="flex items-center justify-between">
+                <h3 class="font-display text-[18px] font-bold text-on-surface tracking-tight">现在最适合做的</h3>
+                <span class="font-sans text-[11px] font-semibold text-primary">按优先级</span>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <button class="bg-white border border-primary/15 text-primary rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm">
                     <span class="material-symbols-outlined text-[24px]">call</span>
-                    <span class="font-sans text-sm font-semibold">电话确认</span>
+                    <span class="font-sans text-[13px] font-bold">先打电话</span>
                 </button>
-                <button class="col-span-2 bg-surface border border-outline-variant/30 hover:bg-surface-container text-on-surface-variant rounded-xl p-4 flex items-center justify-center gap-2 transition-colors">
+                <button class="bg-white border border-primary/15 text-primary rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm">
+                    <span class="material-symbols-outlined text-[24px]">record_voice_over</span>
+                    <span class="font-sans text-[13px] font-bold">语音喊一声</span>
+                </button>
+                <button class="col-span-2 bg-[#f5f7fb] border border-outline-variant/15 text-on-surface rounded-2xl p-4 flex items-center justify-center gap-2">
                     <span class="material-symbols-outlined text-[20px]">group</span>
-                    <span class="font-sans text-sm font-semibold">联系紧急联系人</span>
+                    <span class="font-sans text-[13px] font-semibold">联系紧急联系人或附近家人</span>
                 </button>
             </div>
         </section>
     </main>
 
-    <!-- 底部操作栏 -->
-    <footer class="fixed bottom-0 left-0 w-full bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 p-5 z-40 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2">
+    <footer class="fixed bottom-0 left-0 w-full bg-white/92 backdrop-blur-xl border-t border-outline-variant/20 p-5 z-40 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2">
         <div class="flex gap-3">
-            <button class="flex-1 py-3.5 rounded-xl bg-white border border-outline-variant text-on-surface-variant font-sans text-[15px] font-bold hover:bg-surface-container transition-colors flex justify-center items-center gap-1.5">
+            <button class="flex-1 py-3.5 rounded-2xl bg-white border border-outline-variant/20 text-on-surface-variant font-sans text-[14px] font-bold flex justify-center items-center gap-1.5">
                 <span class="material-symbols-outlined text-[20px]">block</span>
                 标记误报
             </button>
-            <button class="flex-1 py-3.5 rounded-xl bg-primary text-white font-sans text-[15px] font-bold shadow-float hover:bg-primary/90 transition-all flex justify-center items-center gap-1.5">
+            <button class="flex-1 py-3.5 rounded-2xl bg-primary text-white font-sans text-[14px] font-bold shadow-float flex justify-center items-center gap-1.5">
                 <span class="material-symbols-outlined fill text-[20px]">verified_user</span>
-                确认安全
+                已确认安全
             </button>
         </div>
     </footer>

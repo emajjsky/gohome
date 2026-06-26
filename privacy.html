@@ -3,105 +3,97 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>隐私与授权 - 回家看看</title>
+    <title>我的 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <link href="assets/styles/app.css" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
-        html, body, .font-display, .font-sans { font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Hiragino Sans GB", Arial, sans-serif !important; }
+        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
         body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
         .collapsed-panel { max-height: 0; opacity: 0; overflow: hidden; margin-top: 0; transition: all 220ms ease; }
-        .expanded-panel { max-height: 420px; opacity: 1; margin-top: 0.75rem; transition: all 260ms ease; }
+        .expanded-panel { max-height: 320px; opacity: 1; margin-top: 0.75rem; transition: all 260ms ease; }
     </style>
 </head>
 <body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
-    
-    <header class="flex justify-between items-center px-container py-6 sticky top-0 z-40 bg-surface/80 backdrop-blur-md md:bg-white/80">
-        <div class="flex items-center gap-2">
-            <h1 class="font-display text-2xl font-extrabold text-on-surface tracking-tight">我的</h1>
-        </div>
-        <button class="w-10 h-10 flex items-center justify-center rounded-full overflow-hidden shadow-sm border border-outline-variant/30">
-            <img src="assets/images/avatar.jpg" alt="妈妈的头像" class="w-full h-full object-cover">
-        </button>
-    </header>
 
-    <main class="flex-1 px-container flex flex-col gap-6 pt-2 pb-8">
-        
-        <!-- 信任宣言 -->
-        <section class="text-center pt-2 pb-2">
-            <div class="w-16 h-16 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-4">
-                <span class="material-symbols-outlined text-primary text-[32px] fill">security</span>
+    <main class="flex-1 px-container flex flex-col gap-6 pt-5 pb-8">
+        <section class="app-soft-card p-4 flex flex-col gap-3">
+            <div class="flex items-center justify-between gap-4">
+                <h3 class="font-display text-[17px] font-bold text-on-surface">回家提醒</h3>
+                <span class="font-sans text-[12px] font-semibold text-primary">12天</span>
             </div>
-            <h2 class="font-display text-xl font-bold text-on-surface mb-2">信任与陪伴</h2>
-            <p class="font-sans text-sm text-on-surface-variant max-w-[260px] mx-auto leading-relaxed font-medium">
-                "回家看看希望帮助你陪伴家人，而不是打扰他们的生活。"
-            </p>
+            <div class="grid grid-cols-4 gap-2">
+                <button class="h-10 rounded-2xl bg-white border border-outline-variant/20 text-on-surface-variant text-[12px] font-semibold">7天</button>
+                <button class="h-10 rounded-2xl bg-primary text-white text-[12px] font-bold shadow-sm">12天</button>
+                <button class="h-10 rounded-2xl bg-white border border-outline-variant/20 text-on-surface-variant text-[12px] font-semibold">15天</button>
+                <button class="h-10 rounded-2xl bg-white border border-outline-variant/20 text-on-surface-variant text-[12px] font-semibold">21天</button>
+            </div>
         </section>
 
-        <!-- 隐私控制项 -->
-        <section class="flex flex-col gap-3">
-            <h3 class="font-sans text-xs font-bold text-outline uppercase tracking-wider pl-1">权限与隐私设置</h3>
-            <div class="bg-white rounded-2xl shadow-soft p-5 border border-outline-variant/20 flex flex-col">
-                
-                <!-- 设置项 1 -->
-                <div class="flex justify-between items-center py-4 border-b border-outline-variant/10">
-                    <div class="flex flex-col gap-1 pr-4">
-                        <div class="flex items-center gap-2">
-                            <span class="material-symbols-outlined text-primary text-[18px]">visibility_off</span>
-                            <span class="font-display text-base font-bold text-on-surface">隐私模式</span>
-                        </div>
-                        <p class="font-sans text-xs text-on-surface-variant">在家人同意时进入隐私保护</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                        <input type="checkbox" class="sr-only peer" checked>
-                        <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                    </label>
-                </div>
+        <section class="app-soft-card p-5 flex flex-col gap-1">
+            <div class="flex items-center justify-between">
+                <h3 class="font-display text-[18px] font-bold text-on-surface tracking-tight">关系提醒</h3>
+                <span class="material-symbols-outlined text-primary">notifications_active</span>
+            </div>
 
-                <!-- 设置项 2 -->
-                <div class="flex justify-between items-center py-4 border-b border-outline-variant/10">
-                    <div class="flex flex-col gap-1 pr-4">
-                        <div class="flex items-center gap-2">
-                            <span class="material-symbols-outlined text-primary text-[18px]">screenshot_monitor</span>
-                            <span class="font-display text-base font-bold text-on-surface">仅异常保存截图</span>
-                        </div>
-                        <p class="font-sans text-xs text-on-surface-variant">本地存储，不上传云端</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                        <input type="checkbox" class="sr-only peer" checked>
-                        <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                    </label>
+            <div class="flex items-center justify-between gap-4 py-3 border-b border-outline-variant/10">
+                <div class="pr-3">
+                    <p class="font-display text-[16px] font-bold text-on-surface">多久没打电话开始提醒</p>
                 </div>
+                <span class="px-3 py-1 rounded-full bg-[#eef5ff] text-primary text-[11px] font-semibold shrink-0">3天</span>
+            </div>
 
-                <!-- 设置项 3 -->
-                <div class="flex justify-between items-center pt-4">
-                    <div class="flex flex-col gap-1 pr-4">
-                        <div class="flex items-center gap-2">
-                            <span class="material-symbols-outlined text-primary text-[18px]">emergency</span>
-                            <span class="font-display text-base font-bold text-on-surface">仅紧急时查看画面</span>
-                        </div>
-                        <p class="font-sans text-xs text-on-surface-variant">限制日常视频流访问</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                        <input type="checkbox" class="sr-only peer">
-                        <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                    </label>
+            <div class="flex items-center justify-between gap-4 py-3 border-b border-outline-variant/10">
+                <div class="pr-3">
+                    <p class="font-display text-[16px] font-bold text-on-surface">家里太安静时触发柔性提醒</p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" class="sr-only peer" checked>
+                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
+            </div>
+
+            <div class="flex items-center justify-between gap-4 pt-3">
+                <div class="pr-3">
+                    <p class="font-display text-[16px] font-bold text-on-surface">自动生成周末回家建议</p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" class="sr-only peer" checked>
+                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
+            </div>
+        </section>
+
+        <section class="app-soft-card p-5 flex flex-col gap-3">
+            <div class="flex items-center justify-between">
+                <h3 class="font-display text-[18px] font-bold text-on-surface tracking-tight">纪念日与回忆</h3>
+                <span class="material-symbols-outlined text-[#b5765d]">cake</span>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div class="rounded-2xl bg-surface-container-low p-4">
+                    <p class="font-display text-[16px] font-bold text-on-surface">妈妈生日</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1.5">提前 7 天提醒</p>
+                    <p class="font-sans text-[12px] text-primary font-semibold mt-2">已开启</p>
+                </div>
+                <div class="rounded-2xl bg-surface-container-low p-4">
+                    <p class="font-display text-[16px] font-bold text-on-surface">去年今天</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1.5">照片与声音回顾</p>
+                    <p class="font-sans text-[12px] text-primary font-semibold mt-2">每周一次</p>
                 </div>
             </div>
         </section>
 
         <section class="flex flex-col gap-3">
-            <h3 class="font-sans text-xs font-bold text-outline uppercase tracking-wider pl-1">缅怀模式</h3>
-            <div class="bg-[linear-gradient(135deg,#f6f8ff_0%,#eef3ff_100%)] rounded-2xl shadow-soft p-5 border border-primary/10 flex flex-col gap-5">
+            <div class="app-soft-card p-5 flex flex-col gap-4 overflow-hidden">
                 <div class="flex items-start justify-between gap-4">
                     <div class="pr-2">
                         <div class="flex items-center gap-2">
                             <span class="material-symbols-outlined text-primary text-[20px]">auto_stories</span>
-                            <span class="font-display text-lg font-bold text-on-surface">开启缅怀模式</span>
+                            <span class="font-display text-lg font-bold text-on-surface">开启回忆模式</span>
                         </div>
-                        <p class="font-sans text-sm text-on-surface-variant mt-2 leading-relaxed">开启后，首页仍保持日常守护；缅怀内容会收纳在这里，从“我的”进入，不打扰普通模式。</p>
                     </div>
                     <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
                         <input id="memorial-mode-toggle" type="checkbox" class="sr-only peer">
@@ -109,21 +101,9 @@
                     </label>
                 </div>
                 <div id="memorial-mode-panel" class="collapsed-panel">
-                    <div class="grid grid-cols-2 gap-3">
-                    <a href="voice_archive.html" class="bg-white rounded-2xl p-4 border border-outline-variant/20 shadow-sm flex flex-col gap-2">
-                        <span class="material-symbols-outlined fill text-primary text-[22px]">mic</span>
-                        <span class="font-display text-base font-bold text-on-surface">声音留存</span>
-                        <span class="font-sans text-xs text-on-surface-variant">录下问候、故事和节日寄语</span>
-                    </a>
-                    <a href="memorial_home.html" class="bg-primary text-white rounded-2xl p-4 shadow-float flex flex-col gap-2">
-                        <span class="material-symbols-outlined text-[22px]">neurology</span>
-                        <span class="font-display text-base font-bold">进入缅怀</span>
-                        <span class="font-sans text-xs text-white/80">数字人、记忆馆、声音相册</span>
-                    </a>
-                    </div>
-                    <div class="bg-white/85 backdrop-blur-sm rounded-2xl p-4 border border-white/80 flex flex-col gap-3 mt-3">
+                    <div class="rounded-2xl bg-surface-container-low p-4 flex flex-col gap-3">
                         <div class="flex items-center justify-between">
-                            <span class="font-display text-base font-bold text-on-surface">资料准备情况</span>
+                            <span class="font-display text-base font-bold text-on-surface">资料准备</span>
                             <span class="font-sans text-xs font-semibold text-primary">已可体验</span>
                         </div>
                         <div class="grid grid-cols-3 gap-3">
@@ -140,19 +120,48 @@
                                 <p class="font-display text-lg font-bold text-on-surface mt-1">6 段</p>
                             </div>
                         </div>
+                        <div class="rounded-xl bg-white px-3.5 py-3 border border-outline-variant/10">
+                            <p class="font-display text-[15px] font-bold text-on-surface">建议补 3 段节日语音</p>
+                        </div>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- 本地计算保障 -->
-        <section class="bg-surface-container-low rounded-2xl p-5 border border-outline-variant/20 flex gap-4 mt-2">
-            <span class="material-symbols-outlined text-primary text-[24px] shrink-0 mt-0.5">memory</span>
-            <div class="flex flex-col gap-1.5">
-                <h4 class="font-display text-base font-bold text-on-surface">本地计算保障</h4>
-                <p class="font-sans text-xs text-on-surface-variant leading-relaxed">
-                    视频流均在本地 AI 盒进行实时分析，核心隐私不外泄。采用端侧处理技术，确保敏感数据永远不会离开家庭网络。
-                </p>
+        <section class="app-soft-card p-5 flex flex-col gap-1">
+            <div class="flex items-center justify-between">
+                <h3 class="font-display text-[18px] font-bold text-on-surface tracking-tight">守护方式</h3>
+                <span class="material-symbols-outlined text-primary">shield</span>
+            </div>
+
+            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
+                <div class="pr-4">
+                    <p class="font-display text-[16px] font-bold text-on-surface">隐私模式</p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" class="sr-only peer" checked>
+                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
+            </div>
+
+            <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
+                <div class="pr-4">
+                    <p class="font-display text-[16px] font-bold text-on-surface">仅异常保存截图</p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" class="sr-only peer" checked>
+                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
+            </div>
+
+            <div class="flex justify-between items-center pt-3">
+                <div class="pr-4">
+                    <p class="font-display text-[16px] font-bold text-on-surface">仅紧急时查看画面</p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" class="sr-only peer">
+                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                </label>
             </div>
         </section>
 
@@ -162,31 +171,31 @@
     <nav class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
         <div class="flex justify-between items-center">
             <a id="nav-item-1" href="index.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div id="nav-item-1-box" class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                <div id="nav-item-1-box" class="app-nav-pill group-hover:bg-primary/5">
                     <span id="nav-item-1-icon" class="material-symbols-outlined text-[22px]">home</span>
                 </div>
                 <span id="nav-item-1-label" class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
             </a>
             <a id="nav-item-2" href="monitor.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div id="nav-item-2-box" class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                <div id="nav-item-2-box" class="app-nav-pill group-hover:bg-primary/5">
                     <span id="nav-item-2-icon" class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
                 </div>
-                <span id="nav-item-2-label" class="font-sans text-[11px] font-semibold tracking-wide">监控</span>
+                <span id="nav-item-2-label" class="font-sans text-[11px] font-semibold tracking-wide">守护</span>
             </a>
             <a id="nav-item-3" href="events.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div id="nav-item-3-box" class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                <div id="nav-item-3-box" class="app-nav-pill group-hover:bg-primary/5">
                     <span id="nav-item-3-icon" class="material-symbols-outlined text-[22px]">history</span>
                 </div>
                 <span id="nav-item-3-label" class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
             </a>
             <a id="nav-item-4" href="companionship.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div id="nav-item-4-box" class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                <div id="nav-item-4-box" class="app-nav-pill group-hover:bg-primary/5">
                     <span id="nav-item-4-icon" class="material-symbols-outlined text-[22px]">diversity_1</span>
                 </div>
                 <span id="nav-item-4-label" class="font-sans text-[11px] font-semibold tracking-wide">陪伴</span>
             </a>
             <a id="nav-item-5" href="privacy.html" class="flex flex-col items-center gap-1.5 text-primary">
-                <div id="nav-item-5-box" class="w-12 h-8 rounded-full bg-primary/15 flex items-center justify-center transition-colors">
+                <div id="nav-item-5-box" class="app-nav-pill active">
                     <span id="nav-item-5-icon" class="material-symbols-outlined fill text-[22px]">person</span>
                 </div>
                 <span id="nav-item-5-label" class="font-sans text-[11px] font-bold tracking-wide">我的</span>
@@ -213,14 +222,14 @@
             const items = {
                 regular: [
                     { href: 'index.html', icon: 'home', label: '首页', fill: false },
-                    { href: 'monitor.html', icon: 'nest_cam_indoor', label: '监控', fill: false },
+                    { href: 'monitor.html', icon: 'nest_cam_indoor', label: '守护', fill: false },
                     { href: 'events.html', icon: 'history', label: '事件', fill: false },
                     { href: 'companionship.html', icon: 'diversity_1', label: '陪伴', fill: false },
                     { href: 'privacy.html', icon: 'person', label: '我的', fill: true }
                 ],
                 memorial: [
                     { href: 'memorial_home.html', icon: 'home', label: '首页', fill: true },
-                    { href: 'digital_human.html', icon: 'forum', label: '数字人', fill: false },
+                    { href: 'digital_human.html', icon: 'forum', label: '平行世界', fill: false },
                     { href: 'memory_gallery.html', icon: 'photo_library', label: '记忆馆', fill: false },
                     { href: 'voice_archive.html', icon: 'mic', label: '声音', fill: true },
                     { href: 'privacy.html?memorial=on', icon: 'person', label: '我的', fill: true }
@@ -240,11 +249,11 @@
                 icon.classList.toggle('fill', item.fill);
                 if (slot === 5) {
                     link.className = 'flex flex-col items-center gap-1.5 text-primary';
-                    box.className = 'w-12 h-8 rounded-full bg-primary/15 flex items-center justify-center transition-colors';
+                    box.className = 'app-nav-pill active';
                     label.className = 'font-sans text-[11px] font-bold tracking-wide';
                 } else {
                     link.className = 'flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group';
-                    box.className = 'w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors';
+                    box.className = 'app-nav-pill group-hover:bg-primary/5';
                     label.className = 'font-sans text-[11px] font-semibold tracking-wide';
                 }
             });
