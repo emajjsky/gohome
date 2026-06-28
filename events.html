@@ -63,9 +63,9 @@
             <div class="flex items-start justify-between gap-4">
                 <div>
                     <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.18em]">TODAY</p>
-                    <h3 class="font-display text-[18px] font-bold text-on-surface mt-1">今天最让人在意的是：午饭比平时晚了些</h3>
+                    <h3 id="edgeTimelineTitle" class="font-display text-[18px] font-bold text-on-surface mt-1">今天最让人在意的是：午饭比平时晚了些</h3>
                 </div>
-                <div class="app-section-badge shrink-0">建议今天联系</div>
+                <div id="edgeTimelineBadge" class="app-section-badge shrink-0">建议今天联系</div>
             </div>
             <div class="grid grid-cols-2 gap-3">
                 <button class="app-btn-primary font-sans text-[13px] font-semibold flex items-center justify-center gap-1.5">
@@ -74,12 +74,12 @@
                 </button>
                 <button class="app-btn-secondary font-sans text-[13px] font-semibold flex items-center justify-center gap-1.5">
                     <span class="material-symbols-outlined text-[18px]">calendar_month</span>
-                    加进回家计划
+                    <span id="edgeTimelineAction">加进回家计划</span>
                 </button>
             </div>
         </section>
 
-        <section class="flex flex-col gap-3 mt-1">
+        <section id="edgeEventsList" class="flex flex-col gap-3 mt-1">
             <a href="event_detail.html" class="app-soft-card bg-white p-4 group">
                 <div class="flex items-start justify-between gap-3">
                     <div class="flex items-center gap-2 text-on-surface-variant font-sans text-xs font-semibold">
@@ -184,5 +184,7 @@
             </a>
         </div>
     </nav>
+    <script src="assets/scripts/edge-client.js"></script>
+    <script src="assets/scripts/events-live.js"></script>
 </body>
 </html>

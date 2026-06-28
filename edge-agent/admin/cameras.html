@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>摄像头配置 - edge-agent</title>
+  <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
+  <link rel="stylesheet" href="/admin/styles.css?v=20260628-console-7">
+</head>
+<body data-page="cameras">
+  <a class="skip-link" href="#main">跳到内容</a>
+  <div class="admin-frame">
+    <aside class="side-nav" aria-label="管理台导航">
+      <div class="side-brand">
+        <p class="eyebrow">想家了吗 edge-agent</p>
+        <strong>本机视觉控制台</strong>
+      </div>
+      <nav class="side-section">
+        <a class="side-link" href="/admin/index.html"><span class="material-symbols-outlined">dashboard</span>首页</a>
+        <a class="side-link active" href="/admin/cameras.html"><span class="material-symbols-outlined">linked_camera</span>摄像头配置</a>
+        <a class="side-link" href="/admin/algorithms.html"><span class="material-symbols-outlined">tune</span>算法配置</a>
+      </nav>
+    </aside>
+
+    <main id="main" class="admin-main">
+      <header class="page-head">
+        <div>
+          <p class="eyebrow">CAMERA SETUP</p>
+          <h1>摄像头配置</h1>
+          <p>这页只做摄像头接入、测试、启停和删除。接入成功后回首页看实时画面。</p>
+        </div>
+        <div class="page-actions">
+          <span id="workerBadge" class="status-pill muted">检查中</span>
+          <button id="refreshAll" class="icon-button" type="button" title="刷新">
+            <span class="material-symbols-outlined">refresh</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="camera-config-layout">
+        <section class="panel camera-panel">
+          <div class="panel-head">
+            <div>
+              <h2>新增或更新摄像头</h2>
+              <p>局域网摄像头填 IP、端口、账号、密码；RTSP 直接填完整地址。</p>
+            </div>
+            <div class="segmented-control" aria-label="摄像头类型">
+              <button id="modeLan" class="active" type="button">局域网</button>
+              <button id="modeRtsp" type="button">RTSP</button>
+              <button id="quickLocal" type="button">本机</button>
+            </div>
+          </div>
+
+          <form id="cameraForm" class="camera-form">
+            <label>名称<input id="cameraName" name="name" value="局域网摄像头" autocomplete="off"></label>
+            <label>房间<input id="cameraRoom" name="room" value="客厅" autocomplete="off"></label>
+            <label id="cameraHostField">摄像头 IP<input id="cameraHost" name="host" value="192.168.1.11" autocomplete="off"></label>
+            <label id="cameraPortField">RTSP 端口<input id="cameraPort" name="port" value="554" inputmode="numeric" autocomplete="off"></label>
+            <label id="cameraUserField">用户名<input id="cameraUsername" name="username" value="admin" autocomplete="off"></label>
+            <label id="cameraPasswordField">密码<input id="cameraPassword" name="password" type="password" autocomplete="off"></label>
+            <label id="cameraPathField" class="wide">RTSP 路径<input id="cameraPath" name="path" value="/" autocomplete="off"></label>
+            <label id="cameraUrlField" class="wide hidden" hidden>视频地址<input id="cameraUrl" name="stream_url" value="rtsp://192.168.1.11:554/" autocomplete="off"></label>
+            <p class="form-note wide">优先填写摄像头的 H.264 / 720p 子码流地址。H.265 主码流容易出现解码延迟、灰块或花屏。</p>
+            <button class="primary-button" type="submit">
+              <span class="material-symbols-outlined">add_circle</span>
+              保存并测试
+            </button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head compact">
+            <div>
+              <h2>已接入摄像头</h2>
+              <p>“测试”会实际抓一帧，成功后状态变为在线。</p>
+            </div>
+          </div>
+          <div id="cameraList" class="camera-list compact" aria-live="polite"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/admin/console.js?v=20260628-console-7"></script>
+</body>
+</html>

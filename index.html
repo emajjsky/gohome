@@ -35,7 +35,7 @@
                             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#32a071] opacity-35"></span>
                             <span class="relative inline-flex rounded-full h-2 w-2 bg-[#32a071]"></span>
                         </span>
-                        <span class="font-sans text-[11px] font-semibold text-[#2d7d5c] tracking-wide">今天，你想家了吗</span>
+                        <span id="edgeHomeDevice" class="font-sans text-[11px] font-semibold text-[#2d7d5c] tracking-wide">今天，你想家了吗</span>
                     </div>
                     <div class="w-11 h-11 rounded-full overflow-hidden border border-white/80 shadow-[0_12px_28px_rgba(46,64,90,0.1)]">
                         <img src="assets/images/elderly-portrait-wiki.jpg" alt="妈妈头像" class="w-full h-full object-cover object-top">
@@ -43,9 +43,9 @@
                 </div>
 
                 <div class="flex flex-col gap-2.5">
-                    <p class="font-sans text-[12px] text-on-surface-variant font-medium">15:20 更新 · 午饭后家里慢慢安静下来</p>
-                    <h2 class="font-display text-[24px] leading-[1.22] font-bold text-on-surface tracking-tight">她今天在客厅坐了很久，你要不要周末回去看看？</h2>
-                    <p class="font-sans text-[13px] text-on-surface-variant leading-relaxed">
+                    <p id="edgeHomeTime" class="font-sans text-[12px] text-on-surface-variant font-medium">15:20 更新 · 午饭后家里慢慢安静下来</p>
+                    <h2 id="edgeHomeTitle" class="font-display text-[24px] leading-[1.22] font-bold text-on-surface tracking-tight">她今天在客厅坐了很久，你要不要周末回去看看？</h2>
+                    <p id="edgeHomeSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-relaxed">
                         上午自己做了饭，中午活动正常，下午大部分时间都在沙发边休息。没有异常，却很像在等一句问候。
                     </p>
                 </div>
@@ -162,8 +162,8 @@
                     </div>
                     <div>
                         <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.12em]">事实</p>
-                        <p class="font-display text-[16px] font-bold text-on-surface mt-1">下午大部分时间都在客厅</p>
-                        <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">15 分钟前刚起身活动过，随后又回到沙发边坐下。</p>
+                        <p id="edgeHomeFactTitle" class="font-display text-[16px] font-bold text-on-surface mt-1">下午大部分时间都在客厅</p>
+                        <p id="edgeHomeFactSub" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">15 分钟前刚起身活动过，随后又回到沙发边坐下。</p>
                     </div>
                 </div>
                 <div class="app-story-note">
@@ -172,8 +172,8 @@
                     </div>
                     <div>
                         <p class="font-sans text-[11px] font-semibold text-[#b5765d] tracking-[0.12em]">情绪</p>
-                        <p class="font-display text-[16px] font-bold text-on-surface mt-1">今天家里有点安静</p>
-                        <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">没有异常，也没有热闹，像是在等一句“你吃饭了吗”。</p>
+                        <p id="edgeHomeFeelingTitle" class="font-display text-[16px] font-bold text-on-surface mt-1">今天家里有点安静</p>
+                        <p id="edgeHomeFeelingSub" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">没有异常，也没有热闹，像是在等一句“你吃饭了吗”。</p>
                     </div>
                 </div>
                 <div class="app-story-note">
@@ -182,8 +182,8 @@
                     </div>
                     <div>
                         <p class="font-sans text-[11px] font-semibold text-[#2d7d5c] tracking-[0.12em]">行动</p>
-                        <p class="font-display text-[16px] font-bold text-on-surface mt-1">晚饭前打一通电话，周六再回去陪她吃饭</p>
-                        <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">一句问候能立刻发生，一个周末计划也可以现在定下来。</p>
+                        <p id="edgeHomeActionTitle" class="font-display text-[16px] font-bold text-on-surface mt-1">晚饭前打一通电话，周六再回去陪她吃饭</p>
+                        <p id="edgeHomeActionSub" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">一句问候能立刻发生，一个周末计划也可以现在定下来。</p>
                     </div>
                 </div>
             </div>
@@ -196,15 +196,15 @@
             </div>
             <div class="grid grid-cols-2 gap-3">
                 <div class="app-snapshot-card relative group aspect-[1.48/1] col-span-2 cursor-pointer">
-                    <img src="assets/images/family-sofa.jpg" alt="客厅休息" class="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-700">
+                    <img id="edgeHomeSnapshotImage" src="assets/images/family-sofa.jpg" alt="客厅休息" class="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-700">
                     <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent"></div>
                     <div class="absolute top-3 left-3 app-map-badge px-2.5 py-2">
-                        <p class="font-sans text-[10px] text-on-surface-variant font-semibold">15 分钟前</p>
-                        <p class="font-display text-[13px] font-bold text-on-surface mt-0.5">客厅动态</p>
+                        <p id="edgeHomeSnapshotTime" class="font-sans text-[10px] text-on-surface-variant font-semibold">15 分钟前</p>
+                        <p id="edgeHomeSnapshotRoom" class="font-display text-[13px] font-bold text-on-surface mt-0.5">客厅动态</p>
                     </div>
                     <div class="absolute bottom-0 left-0 right-0 p-4">
-                        <p class="font-display text-[17px] leading-snug font-bold text-white">刚刚起身走动了一会儿，随后又回到客厅坐下</p>
-                        <p class="font-sans text-[12px] text-white/80 mt-1.5">这一切都很平常，但也很容易让人想起家里的安静。</p>
+                        <p id="edgeHomeSnapshotHeadline" class="font-display text-[17px] leading-snug font-bold text-white">刚刚起身走动了一会儿，随后又回到客厅坐下</p>
+                        <p id="edgeHomeSnapshotSub" class="font-sans text-[12px] text-white/80 mt-1.5">这一切都很平常，但也很容易让人想起家里的安静。</p>
                     </div>
                 </div>
                 <div class="app-snapshot-card relative aspect-[1/1]">
@@ -304,5 +304,7 @@
             </a>
         </div>
     </nav>
+    <script src="assets/scripts/edge-client.js"></script>
+    <script src="assets/scripts/home-live.js"></script>
 </body>
 </html>

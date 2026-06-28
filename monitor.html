@@ -13,68 +13,100 @@
         html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
         body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
-
-    <main class="flex-1 px-container flex flex-col gap-6 pt-5 pb-8">
-        <section class="flex space-x-2 overflow-x-auto no-scrollbar pb-1 -mx-container px-container">
-            <button class="px-4 py-2.5 rounded-full bg-primary text-white font-sans text-[12px] font-bold shadow-soft transition-all shrink-0">客厅</button>
-            <button class="px-4 py-2.5 rounded-full bg-white text-on-surface-variant font-sans text-[12px] font-semibold border border-outline-variant/25 transition-all shrink-0 shadow-sm">厨房</button>
-            <button class="px-4 py-2.5 rounded-full bg-white text-on-surface-variant font-sans text-[12px] font-semibold border border-outline-variant/25 transition-all shrink-0 shadow-sm">入户门</button>
-        </section>
-
-        <section class="bg-white rounded-[28px] shadow-soft overflow-hidden relative border border-outline-variant/20 flex flex-col">
-            <div class="relative w-full aspect-video bg-black">
-                <img src="assets/images/elderly-alone.jpg" class="w-full h-full object-cover object-[center_38%] opacity-92" alt="客厅画面">
-                <div class="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-black/25 pointer-events-none"></div>
-                <div class="absolute top-4 left-4 right-4 flex items-start justify-between gap-3">
-                    <div class="flex items-center gap-2">
-                        <span class="px-3 py-1 rounded-full bg-black/35 backdrop-blur-md text-white text-[10px] font-bold tracking-[0.12em]">15:20 更新</span>
-                        <span class="px-3 py-1 rounded-full bg-white/18 border border-white/20 backdrop-blur-md text-white text-[10px] font-semibold">客厅</span>
-                    </div>
-                    <div class="w-9 h-9 rounded-full bg-black/35 backdrop-blur-md text-white flex items-center justify-center">
-                        <span class="material-symbols-outlined text-[16px]">wifi</span>
-                    </div>
+    <main class="flex-1 px-container flex flex-col gap-5 pt-5 pb-8 max-w-sm mx-auto w-full">
+        <section class="app-soft-card bg-white p-5 flex flex-col gap-5 overflow-hidden">
+            <div class="flex items-start justify-between gap-4">
+                <div class="min-w-0">
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">守护概览</p>
+                    <h1 id="edgeMainMessage" class="font-display text-[24px] leading-[1.2] font-bold text-on-surface tracking-tight mt-1">正在读取家里状态</h1>
+                    <p id="edgeStatusText" class="font-sans text-[13px] text-on-surface-variant leading-relaxed mt-2">本机服务连接后，会显示当前是否需要你确认。</p>
                 </div>
-                <div class="absolute left-4 right-4 bottom-4">
-                    <div class="rounded-2xl bg-black/30 backdrop-blur-md border border-white/10 p-3 text-white">
-                        <p class="font-sans text-[10px] font-semibold tracking-[0.14em] text-white/80">今天最安心的是</p>
-                        <p class="font-display text-[16px] font-bold mt-1">她午饭后在客厅安静休息，没有异常起伏</p>
+                <span id="edgeDeviceStatus" class="app-section-badge shrink-0">连接中</span>
+            </div>
+
+            <div class="rounded-[24px] bg-[#f6f8fc] border border-outline-variant/10 p-4 flex items-start gap-3">
+                <div id="edgeStatusIcon" class="w-10 h-10 rounded-full bg-[#edf6ee] flex items-center justify-center text-[#2d7d5c] shrink-0">
+                    <span class="material-symbols-outlined text-[20px]">health_and_safety</span>
+                </div>
+                <div class="min-w-0">
+                    <p id="edgeStatusTitle" class="font-display text-[17px] font-bold text-on-surface">暂无异常</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1">这里给家属看结论，检测细节已经拆到独立页面。</p>
+                    <div class="flex flex-wrap gap-2 mt-3">
+                        <span id="edgeFeeling" class="app-mini-pill good">家里平稳</span>
+                        <span id="edgeNext" class="app-mini-pill muted">继续观察</span>
                     </div>
                 </div>
             </div>
-            <div class="p-5 bg-white flex flex-col gap-3">
-                <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-full bg-[#edf6ee] flex items-center justify-center text-[#2d7d5c] shrink-0">
-                        <span class="material-symbols-outlined text-[20px]">health_and_safety</span>
-                    </div>
+
+            <div class="grid grid-cols-3 gap-3">
+                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">位置</p>
+                    <p id="edgeCameraRoom" class="font-display text-[15px] font-bold text-on-surface mt-1">客厅</p>
+                </div>
+                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">更新</p>
+                    <p id="edgeUpdateTime" class="font-display text-[15px] font-bold text-on-surface mt-1">--:--</p>
+                </div>
+                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">检测</p>
+                    <p id="edgeDetector" class="font-display text-[15px] font-bold text-on-surface mt-1">等待</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="grid grid-cols-2 gap-3">
+            <a href="detection.html" class="col-span-2 rounded-[26px] bg-[linear-gradient(180deg,#496f98_0%,#3b5f86_55%,#253f59_100%)] text-white p-5 shadow-float active:scale-[0.99] transition-transform">
+                <div class="flex items-start justify-between gap-4">
                     <div>
-                        <h3 class="font-display text-[17px] font-bold text-on-surface">暂无异常</h3>
-                        <p class="font-sans text-[12px] text-on-surface-variant mt-1">今天只需要安心。</p>
+                        <p class="font-sans text-[11px] font-semibold text-white/72 tracking-[0.16em]">VISION</p>
+                        <h2 class="font-display text-[20px] font-bold mt-1">视觉检测</h2>
+                        <p id="edgeFact" class="font-sans text-[13px] text-white/78 leading-relaxed mt-2">查看检测框、人数、亮度和规则命中。</p>
                     </div>
+                    <span class="w-11 h-11 rounded-full bg-white/16 flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined text-[22px]">frame_inspect</span>
+                    </span>
                 </div>
-            </div>
+            </a>
+
+            <a href="connect.html" class="app-rhythm-mini p-4 flex flex-col gap-3 active:scale-[0.99] transition-transform">
+                <span class="app-icon-chip">
+                    <span class="material-symbols-outlined text-[20px]">add_circle</span>
+                </span>
+                <div>
+                    <p class="font-display text-[16px] font-bold text-on-surface">摄像头</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">接入和测试画面</p>
+                </div>
+            </a>
+
+            <a href="rules.html" class="app-rhythm-mini p-4 flex flex-col gap-3 active:scale-[0.99] transition-transform">
+                <span class="app-icon-chip">
+                    <span class="material-symbols-outlined text-[20px]">rule_settings</span>
+                </span>
+                <div>
+                    <p class="font-display text-[16px] font-bold text-on-surface">守护规则</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">调整提醒阈值</p>
+                </div>
+            </a>
         </section>
 
-        <section class="grid grid-cols-3 gap-3">
-            <div class="app-rhythm-mini p-3">
-                <p class="font-sans text-[10px] font-semibold text-primary tracking-[0.12em]">事实</p>
-                <p class="font-display text-[15px] font-bold text-on-surface mt-1.5">活动正常</p>
-            </div>
-            <div class="app-rhythm-mini p-3">
-                <p class="font-sans text-[10px] font-semibold text-[#c87b2a] tracking-[0.12em]">感受</p>
-                <p class="font-display text-[15px] font-bold text-on-surface mt-1.5">家里安静</p>
-            </div>
-            <div class="app-rhythm-mini p-3">
-                <p class="font-sans text-[10px] font-semibold text-[#2d7d5c] tracking-[0.12em]">下一步</p>
-                <p class="font-display text-[15px] font-bold text-on-surface mt-1.5">打个电话</p>
-            </div>
+        <section class="app-snapshot-card bg-white overflow-hidden border border-outline-variant/10">
+            <a href="detection.html" class="block relative aspect-video bg-black">
+                <img id="edgeSnapshotImage" src="assets/images/elderly-alone.jpg" class="w-full h-full object-cover object-[center_38%] opacity-95" alt="家里最新画面">
+                <div class="absolute inset-0 bg-gradient-to-t from-black/64 via-transparent to-black/18"></div>
+                <div class="absolute top-3 left-3 flex gap-2">
+                    <span id="edgeBrightness" class="px-2.5 py-1 rounded-full bg-black/38 backdrop-blur-md text-white text-[10px] font-bold">等待亮度</span>
+                </div>
+                <div class="absolute bottom-0 left-0 right-0 p-4">
+                    <p class="font-sans text-[11px] text-white/72 font-semibold tracking-[0.12em]">最新画面</p>
+                    <p class="font-display text-[18px] leading-snug font-bold text-white mt-1">点开查看检测细节</p>
+                </div>
+            </a>
         </section>
 
-        <section class="bg-surface-container-lowest rounded-2xl shadow-soft p-5 border border-outline-variant/20">
+        <section class="app-soft-card bg-white p-5 border border-outline-variant/10">
             <div class="flex justify-between items-center gap-4">
                 <div class="flex items-start gap-3">
                     <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
@@ -91,71 +123,43 @@
                 </label>
             </div>
         </section>
-
-        <section class="bg-surface-container-lowest rounded-2xl shadow-soft p-5 border border-outline-variant/20">
-            <a href="connect.html" class="flex justify-between items-center group cursor-pointer gap-3">
-                <div class="flex items-center gap-3 min-w-0">
-                    <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                        <span class="material-symbols-outlined text-[20px]">add_circle</span>
-                    </div>
-                    <div class="min-w-0">
-                        <h3 class="font-display text-base font-bold text-on-surface">添加摄像头</h3>
-                        <p class="font-sans text-xs text-on-surface-variant font-medium mt-0.5 leading-relaxed">补充厨房或门口画面。</p>
-                    </div>
-                </div>
-                <span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors shrink-0">chevron_right</span>
-            </a>
-        </section>
-        
-        <section class="bg-surface-container-lowest rounded-2xl shadow-soft p-5 border border-outline-variant/20">
-            <a href="rules.html" class="flex justify-between items-center group cursor-pointer gap-3">
-                <div class="flex items-center gap-3 min-w-0">
-                    <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                        <span class="material-symbols-outlined text-[20px]">rule_settings</span>
-                    </div>
-                    <div class="min-w-0">
-                        <h3 class="font-display text-base font-bold text-on-surface">守护规则</h3>
-                    </div>
-                </div>
-                <span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors shrink-0">chevron_right</span>
-            </a>
-        </section>
     </main>
 
-    <!-- 底部悬浮导航 -->
     <nav class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
         <div class="flex justify-between items-center">
             <a href="index.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                <div class="app-nav-pill group-hover:bg-primary/5">
                     <span class="material-symbols-outlined text-[22px]">home</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
             </a>
             <a href="monitor.html" class="flex flex-col items-center gap-1.5 text-primary">
-                <div class="w-12 h-8 rounded-full bg-primary/15 flex items-center justify-center transition-colors">
+                <div class="app-nav-pill active">
                     <span class="material-symbols-outlined fill text-[22px]">nest_cam_indoor</span>
                 </div>
                 <span class="font-sans text-[11px] font-bold tracking-wide">守护</span>
             </a>
             <a href="events.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                <div class="app-nav-pill group-hover:bg-primary/5">
                     <span class="material-symbols-outlined text-[22px]">history</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
             </a>
             <a href="companionship.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                <div class="app-nav-pill group-hover:bg-primary/5">
                     <span class="material-symbols-outlined text-[22px]">diversity_1</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">陪伴</span>
             </a>
             <a href="privacy.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="w-12 h-8 rounded-full flex items-center justify-center group-hover:bg-primary/5 transition-colors">
+                <div class="app-nav-pill group-hover:bg-primary/5">
                     <span class="material-symbols-outlined text-[22px]">person</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
             </a>
         </div>
     </nav>
+    <script src="assets/scripts/edge-client.js"></script>
+    <script src="assets/scripts/monitor-live.js"></script>
 </body>
 </html>

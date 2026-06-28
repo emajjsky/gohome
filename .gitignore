@@ -1,2 +1,9 @@
 node_modules/
 .DS_Store
+__pycache__/
+*.pyc
+.env
+edge-agent/.venv/
+edge-agent/data/
+edge-agent/logs/
+edge-agent/*.pt

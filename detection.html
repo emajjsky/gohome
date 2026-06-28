@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>视觉检测 - 想家了吗</title>
+    <link href="assets/styles/tailwind.css" rel="stylesheet">
+    <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <link href="assets/styles/app.css" rel="stylesheet">
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
+        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
+        body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+    </style>
+</head>
+<body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
+    <header class="flex justify-between items-center px-container py-5 sticky top-0 z-40 bg-surface/88 backdrop-blur-xl md:bg-white/88">
+        <a href="monitor.html" class="w-10 h-10 flex items-center justify-center rounded-full bg-white shadow-sm border border-outline-variant/20 text-on-surface" title="返回守护">
+            <span class="material-symbols-outlined">arrow_back</span>
+        </a>
+        <div class="text-center">
+            <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">VISION</p>
+            <p class="font-display text-[16px] font-bold text-on-surface">视觉检测</p>
+        </div>
+        <button id="detectionRefreshButton" class="w-10 h-10 flex items-center justify-center rounded-full bg-white shadow-sm border border-outline-variant/20 text-on-surface" type="button" title="刷新检测">
+            <span class="material-symbols-outlined text-[20px]">refresh</span>
+        </button>
+    </header>
+
+    <main class="flex-1 px-container flex flex-col gap-5 pt-3 pb-8 max-w-sm mx-auto w-full">
+        <section class="app-soft-card bg-white p-5 flex flex-col gap-4">
+            <div class="flex items-start justify-between gap-4">
+                <div class="min-w-0">
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">本机算法事实</p>
+                    <h1 id="detectionTitle" class="font-display text-[23px] leading-[1.18] font-bold text-on-surface tracking-tight mt-1">正在读取检测结果</h1>
+                    <p id="detectionSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-relaxed mt-2">这里只看摄像头、检测框和规则命中情况。</p>
+                </div>
+                <span id="detectionStatusBadge" class="app-section-badge shrink-0">连接中</span>
+            </div>
+
+            <div id="detectionStage" class="app-detection-stage">
+                <img id="detectionSnapshotImage" src="assets/images/elderly-alone.jpg" alt="最新检测截图">
+                <div id="detectionOverlay" class="app-detection-overlay" aria-hidden="true"></div>
+                <div class="app-detection-shade"></div>
+                <div class="absolute top-3 left-3 right-3 flex items-start justify-between gap-3">
+                    <div class="flex flex-wrap gap-2">
+                        <span id="detectionRoom" class="px-2.5 py-1 rounded-full bg-black/40 backdrop-blur-md text-white text-[10px] font-bold">未选择</span>
+                        <span id="detectionTime" class="px-2.5 py-1 rounded-full bg-white/18 border border-white/20 backdrop-blur-md text-white text-[10px] font-semibold">等待截图</span>
+                    </div>
+                    <span id="detectionBackend" class="px-2.5 py-1 rounded-full bg-white/18 border border-white/20 backdrop-blur-md text-white text-[10px] font-semibold">basic</span>
+                </div>
+                <div id="detectionEmpty" class="app-detection-empty hidden">
+                    <span class="material-symbols-outlined text-[34px]">image_search</span>
+                    <p class="font-sans text-[12px] font-semibold">还没有检测截图</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-4 gap-2.5">
+                <div class="rounded-2xl bg-[#fbfbff] px-2.5 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">人数</p>
+                    <p id="detectionPeople" class="font-display text-[16px] font-bold text-on-surface mt-1">-</p>
+                </div>
+                <div class="rounded-2xl bg-[#fbfbff] px-2.5 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">人框</p>
+                    <p id="detectionBoxes" class="font-display text-[16px] font-bold text-on-surface mt-1">-</p>
+                </div>
+                <div class="rounded-2xl bg-[#fbfbff] px-2.5 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">亮度</p>
+                    <p id="detectionBrightness" class="font-display text-[16px] font-bold text-on-surface mt-1">-</p>
+                </div>
+                <div class="rounded-2xl bg-[#fbfbff] px-2.5 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">变化</p>
+                    <p id="detectionMotion" class="font-display text-[16px] font-bold text-on-surface mt-1">-</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <button id="detectionCaptureButton" class="app-btn-primary font-sans text-[13px] font-bold flex items-center justify-center gap-2 active:scale-[0.98]" type="button">
+                    <span class="material-symbols-outlined text-[18px]">photo_camera</span>
+                    抓取一帧
+                </button>
+                <a href="rules.html" class="app-btn-secondary font-sans text-[13px] font-bold flex items-center justify-center gap-2 active:scale-[0.98]">
+                    <span class="material-symbols-outlined text-[18px]">rule_settings</span>
+                    检测规则
+                </a>
+            </div>
+        </section>
+
+        <section class="app-soft-card bg-white p-5 flex flex-col gap-4">
+            <div class="flex items-center justify-between gap-3">
+                <div>
+                    <h2 class="font-display text-[18px] font-bold text-on-surface">摄像头源</h2>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">选择一条摄像头查看最新检测结果。</p>
+                </div>
+                <span id="detectionCameraCount" class="app-section-badge shrink-0">加载中</span>
+            </div>
+            <div id="detectionCameraList" class="app-camera-list"></div>
+            <a href="connect.html" class="h-11 rounded-2xl bg-[#f4f6fb] text-on-surface font-sans text-[13px] font-bold border border-outline-variant/15 flex items-center justify-center gap-2">
+                <span class="material-symbols-outlined text-[18px]">add_circle</span>
+                接入或管理摄像头
+            </a>
+        </section>
+
+        <section class="app-soft-card bg-white p-5 flex flex-col gap-4">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">RULE EVALUATION</p>
+                    <h2 class="font-display text-[18px] font-bold text-on-surface mt-1">规则判断</h2>
+                </div>
+                <span id="detectionRuleBadge" class="app-mini-pill muted">等待规则</span>
+            </div>
+            <p id="detectionRuleSummary" class="font-sans text-[13px] text-on-surface-variant leading-relaxed">后台 worker 产生检测结果后，会在这里显示是否已经生成告警候选。</p>
+            <div class="grid grid-cols-3 gap-3">
+                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">无人</p>
+                    <p id="detectionNoPerson" class="font-display text-[15px] font-bold text-on-surface mt-1">-</p>
+                </div>
+                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">无变化</p>
+                    <p id="detectionNoMotion" class="font-display text-[15px] font-bold text-on-surface mt-1">-</p>
+                </div>
+                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">评估</p>
+                    <p id="detectionEvalTime" class="font-display text-[15px] font-bold text-on-surface mt-1">-</p>
+                </div>
+            </div>
+            <a href="events.html" class="h-11 rounded-2xl bg-[#f4f6fb] text-on-surface font-sans text-[13px] font-bold border border-outline-variant/15 flex items-center justify-center gap-2">
+                <span class="material-symbols-outlined text-[18px]">history</span>
+                查看已生成事件
+            </a>
+        </section>
+
+        <section class="app-soft-card bg-white p-5 flex flex-col gap-4">
+            <div class="flex items-center justify-between gap-3">
+                <h2 class="font-display text-[18px] font-bold text-on-surface">能力清单</h2>
+                <span id="detectionCapabilityBadge" class="app-mini-pill muted">检测中</span>
+            </div>
+            <div>
+                <div class="app-capability-row">
+                    <div>
+                        <strong>摄像头离线</strong>
+                        <span>拉流失败、账号错误、网络中断进入规则评估。</span>
+                    </div>
+                    <em class="app-mini-pill good not-italic">已接入</em>
+                </div>
+                <div class="app-capability-row">
+                    <div>
+                        <strong>黑屏 / 遮挡</strong>
+                        <span>用亮度和对比度判断画面异常。</span>
+                    </div>
+                    <em class="app-mini-pill good not-italic">已接入</em>
+                </div>
+                <div class="app-capability-row">
+                    <div>
+                        <strong>人形 / 无人</strong>
+                        <span id="detectionPersonCapability">需要 YOLO 后端。</span>
+                    </div>
+                    <em id="detectionPersonBadge" class="app-mini-pill muted not-italic">待启用</em>
+                </div>
+                <div class="app-capability-row">
+                    <div>
+                        <strong>疑似跌倒候选</strong>
+                        <span id="detectionFallCapability">基于 YOLO 人框比例的第一版候选逻辑。</span>
+                    </div>
+                    <em id="detectionFallBadge" class="app-mini-pill muted not-italic">待启用</em>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <nav class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
+        <div class="flex justify-between items-center">
+            <a href="index.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">home</span></div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
+            </a>
+            <a href="monitor.html" class="flex flex-col items-center gap-1.5 text-primary">
+                <div class="app-nav-pill active"><span class="material-symbols-outlined fill text-[22px]">nest_cam_indoor</span></div>
+                <span class="font-sans text-[11px] font-bold tracking-wide">守护</span>
+            </a>
+            <a href="events.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">history</span></div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
+            </a>
+            <a href="companionship.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">diversity_1</span></div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">陪伴</span>
+            </a>
+            <a href="privacy.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">person</span></div>
+                <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
+            </a>
+        </div>
+    </nav>
+    <div id="detectionToast" class="app-toast" role="status" aria-live="polite"></div>
+    <script src="assets/scripts/edge-client.js"></script>
+    <script src="assets/scripts/detection-live.js"></script>
+</body>
+</html>
