@@ -65,12 +65,11 @@ class CameraAgent:
 
     def _capture_frame_unlocked(self, camera: Dict[str, Any]) -> Dict[str, Any]:
         cv2 = _load_cv2()
-
-        source, _backend, source_label = self.resolve_capture_source(camera)
         started_at = time.monotonic()
+        source, _backend, source_label = self.resolve_capture_source(camera)
         is_local_source = isinstance(source, int)
+        os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
         if is_local_source:
-            os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
             backend = getattr(cv2, "CAP_AVFOUNDATION", 0)
             cap = cv2.VideoCapture(source, backend) if backend else cv2.VideoCapture(source)
             if not cap.isOpened():
@@ -95,7 +94,6 @@ class CameraAgent:
                 raise CameraError(f"Cannot open {source_label}{hint}")
 
             frame = self._read_frame(cap, source_label, warm_up=is_local_source)
-
             height, width = frame.shape[:2]
             return {
                 "frame": frame,

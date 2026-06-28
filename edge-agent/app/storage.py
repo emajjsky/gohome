@@ -54,9 +54,74 @@ class Storage:
                     FOREIGN KEY(camera_id) REFERENCES cameras(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS detection_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    camera_id INTEGER NOT NULL,
+                    snapshot_id INTEGER,
+                    captured_at TEXT NOT NULL,
+                    frame_width INTEGER,
+                    frame_height INTEGER,
+                    detector_backend TEXT NOT NULL DEFAULT 'basic',
+                    model_name TEXT,
+                    model_version TEXT,
+                    person_count INTEGER,
+                    objects_json TEXT NOT NULL DEFAULT '[]',
+                    quality_flags_json TEXT NOT NULL DEFAULT '[]',
+                    raw_confidence_summary_json TEXT NOT NULL DEFAULT '{}',
+                    analysis_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(camera_id) REFERENCES cameras(id),
+                    FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS rule_evaluations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    camera_id INTEGER NOT NULL,
+                    snapshot_id INTEGER,
+                    detection_result_id INTEGER,
+                    rule_set_version TEXT,
+                    evaluated_at TEXT NOT NULL,
+                    matched_rules_json TEXT NOT NULL DEFAULT '[]',
+                    window_seconds INTEGER,
+                    explanation TEXT NOT NULL DEFAULT '',
+                    score REAL,
+                    state_json TEXT NOT NULL DEFAULT '{}',
+                    candidates_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(camera_id) REFERENCES cameras(id),
+                    FOREIGN KEY(snapshot_id) REFERENCES snapshots(id),
+                    FOREIGN KEY(detection_result_id) REFERENCES detection_results(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS event_candidates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    camera_id INTEGER NOT NULL,
+                    detection_result_id INTEGER,
+                    rule_evaluation_id INTEGER,
+                    event_type TEXT NOT NULL,
+                    candidate_level TEXT NOT NULL DEFAULT 'warning',
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    dedupe_key TEXT NOT NULL,
+                    source_evaluations_json TEXT NOT NULL DEFAULT '[]',
+                    evidence_snapshot_ids_json TEXT NOT NULL DEFAULT '[]',
+                    status TEXT NOT NULL DEFAULT 'new',
+                    summary TEXT NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    promoted_event_id INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(camera_id) REFERENCES cameras(id),
+                    FOREIGN KEY(detection_result_id) REFERENCES detection_results(id),
+                    FOREIGN KEY(rule_evaluation_id) REFERENCES rule_evaluations(id)
+                );
+
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     camera_id INTEGER,
+                    detection_result_id INTEGER,
+                    rule_evaluation_id INTEGER,
+                    candidate_id INTEGER,
                     type TEXT NOT NULL,
                     room TEXT NOT NULL DEFAULT '',
                     summary TEXT NOT NULL,
@@ -66,7 +131,10 @@ class Storage:
                     acknowledged INTEGER NOT NULL DEFAULT 0,
                     payload TEXT NOT NULL DEFAULT '{}',
                     FOREIGN KEY(camera_id) REFERENCES cameras(id),
-                    FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
+                    FOREIGN KEY(snapshot_id) REFERENCES snapshots(id),
+                    FOREIGN KEY(detection_result_id) REFERENCES detection_results(id),
+                    FOREIGN KEY(rule_evaluation_id) REFERENCES rule_evaluations(id),
+                    FOREIGN KEY(candidate_id) REFERENCES event_candidates(id)
                 );
 
                 CREATE TABLE IF NOT EXISTS rules (
@@ -92,6 +160,9 @@ class Storage:
             self._ensure_column(conn, "snapshots", "width", "INTEGER")
             self._ensure_column(conn, "snapshots", "height", "INTEGER")
             self._ensure_column(conn, "snapshots", "analysis_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(conn, "events", "detection_result_id", "INTEGER")
+            self._ensure_column(conn, "events", "rule_evaluation_id", "INTEGER")
+            self._ensure_column(conn, "events", "candidate_id", "INTEGER")
             self._ensure_column(conn, "rules", "person_detection_enabled", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "rules", "fall_detection_enabled", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "rules", "no_person_seconds", "INTEGER NOT NULL DEFAULT 300")
@@ -247,6 +318,226 @@ class Storage:
         data["image_url"] = f"/snapshots/{data['image_path']}"
         return data
 
+    def _detection_result_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
+        data = dict(row)
+        data["objects"] = json.loads(data.pop("objects_json", "[]") or "[]")
+        data["quality_flags"] = json.loads(data.pop("quality_flags_json", "[]") or "[]")
+        data["raw_confidence_summary"] = json.loads(data.pop("raw_confidence_summary_json", "{}") or "{}")
+        data["analysis"] = json.loads(data.pop("analysis_json", "{}") or "{}")
+        return data
+
+    def create_detection_result(
+        self,
+        camera_id: int,
+        snapshot_id: Optional[int],
+        captured_at: str,
+        width: Optional[int],
+        height: Optional[int],
+        analysis: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
+        objects = [
+            {
+                "category": "person",
+                "confidence": person.get("confidence"),
+                "bbox": person.get("bbox"),
+                "fall_candidate": bool(person.get("fall_candidate")),
+            }
+            for person in people
+        ]
+        quality_flags = list(analysis.get("tags") or [])
+        raw_confidence_summary = {
+            "person_confidences": [person.get("confidence") for person in people if person.get("confidence") is not None],
+            "motion_score": analysis.get("motion_score"),
+            "brightness": analysis.get("brightness"),
+            "contrast": analysis.get("contrast"),
+        }
+        detector_backend = str(analysis.get("detector_backend") or "basic")
+        model_name = analysis.get("model_name")
+        if detector_backend == "yolo" and not model_name:
+            model_name = analysis.get("yolo_model")
+        created_at = now_iso()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO detection_results (
+                    camera_id, snapshot_id, captured_at, frame_width, frame_height,
+                    detector_backend, model_name, model_version, person_count,
+                    objects_json, quality_flags_json, raw_confidence_summary_json,
+                    analysis_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    camera_id,
+                    snapshot_id,
+                    captured_at,
+                    width,
+                    height,
+                    detector_backend,
+                    model_name,
+                    analysis.get("model_version"),
+                    analysis.get("person_count"),
+                    json.dumps(objects, ensure_ascii=False),
+                    json.dumps(quality_flags, ensure_ascii=False),
+                    json.dumps(raw_confidence_summary, ensure_ascii=False),
+                    json.dumps(analysis or {}, ensure_ascii=False),
+                    created_at,
+                ),
+            )
+            detection_result_id = int(cursor.lastrowid)
+            row = conn.execute("SELECT * FROM detection_results WHERE id = ?", (detection_result_id,)).fetchone()
+        if row is None:
+            raise RuntimeError("DetectionResult was not persisted")
+        return self._detection_result_to_dict(row)
+
+    def latest_detection_result(self, camera_id: int) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM detection_results WHERE camera_id = ? ORDER BY captured_at DESC, id DESC LIMIT 1",
+                (camera_id,),
+            ).fetchone()
+        return self._detection_result_to_dict(row) if row else None
+
+    def _rule_evaluation_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
+        data = dict(row)
+        data["matched_rules"] = json.loads(data.pop("matched_rules_json", "[]") or "[]")
+        data["state"] = json.loads(data.pop("state_json", "{}") or "{}")
+        data["candidates"] = json.loads(data.pop("candidates_json", "[]") or "[]")
+        return data
+
+    def create_rule_evaluation(
+        self,
+        camera_id: int,
+        snapshot_id: Optional[int],
+        detection_result_id: Optional[int],
+        evaluation: Dict[str, Any],
+        rule_set_version: Optional[str],
+    ) -> Dict[str, Any]:
+        candidates = list(evaluation.get("candidates") or [])
+        matched_rules = []
+        explanations: list[str] = []
+        for candidate in candidates:
+            rule = ((candidate.get("payload") or {}).get("rule")) or {}
+            if rule:
+                matched_rules.append(rule)
+                reason = rule.get("reason") or candidate.get("summary")
+                if reason:
+                    explanations.append(str(reason))
+        no_motion = (evaluation.get("state") or {}).get("no_motion_seconds")
+        no_person = (evaluation.get("state") or {}).get("no_person_seconds")
+        windows = [value for value in [no_motion, no_person] if isinstance(value, (int, float))]
+        created_at = now_iso()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO rule_evaluations (
+                    camera_id, snapshot_id, detection_result_id, rule_set_version, evaluated_at,
+                    matched_rules_json, window_seconds, explanation, score,
+                    state_json, candidates_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    camera_id,
+                    snapshot_id,
+                    detection_result_id,
+                    rule_set_version,
+                    evaluation.get("evaluated_at") or created_at,
+                    json.dumps(matched_rules, ensure_ascii=False),
+                    int(max(windows)) if windows else None,
+                    "；".join(explanations),
+                    float(len(candidates)) if candidates else 0.0,
+                    json.dumps(evaluation.get("state") or {}, ensure_ascii=False),
+                    json.dumps(candidates, ensure_ascii=False),
+                    created_at,
+                ),
+            )
+            evaluation_id = int(cursor.lastrowid)
+            row = conn.execute("SELECT * FROM rule_evaluations WHERE id = ?", (evaluation_id,)).fetchone()
+        if row is None:
+            raise RuntimeError("RuleEvaluation was not persisted")
+        return self._rule_evaluation_to_dict(row)
+
+    def latest_rule_evaluation(self, camera_id: int) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM rule_evaluations WHERE camera_id = ? ORDER BY evaluated_at DESC, id DESC LIMIT 1",
+                (camera_id,),
+            ).fetchone()
+        return self._rule_evaluation_to_dict(row) if row else None
+
+    def _event_candidate_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
+        data = dict(row)
+        data["source_evaluations"] = json.loads(data.pop("source_evaluations_json", "[]") or "[]")
+        data["evidence_snapshot_ids"] = json.loads(data.pop("evidence_snapshot_ids_json", "[]") or "[]")
+        data["payload"] = json.loads(data.pop("payload_json", "{}") or "{}")
+        return data
+
+    def create_event_candidate(
+        self,
+        camera_id: int,
+        detection_result_id: Optional[int],
+        rule_evaluation_id: Optional[int],
+        candidate: Dict[str, Any],
+        evaluated_at: Optional[str],
+    ) -> Dict[str, Any]:
+        timestamp = now_iso()
+        snapshot_id = candidate.get("snapshot_id")
+        dedupe_key = f"{camera_id}:{candidate.get('event_type')}:{snapshot_id or 'none'}"
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO event_candidates (
+                    camera_id, detection_result_id, rule_evaluation_id, event_type, candidate_level,
+                    started_at, ended_at, dedupe_key, source_evaluations_json, evidence_snapshot_ids_json,
+                    status, summary, payload_json, promoted_event_id, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    camera_id,
+                    detection_result_id,
+                    rule_evaluation_id,
+                    candidate.get("event_type"),
+                    candidate.get("level") or "warning",
+                    evaluated_at or timestamp,
+                    evaluated_at or timestamp,
+                    dedupe_key,
+                    json.dumps([rule_evaluation_id] if rule_evaluation_id else [], ensure_ascii=False),
+                    json.dumps([snapshot_id] if snapshot_id else [], ensure_ascii=False),
+                    "new",
+                    candidate.get("summary") or "",
+                    json.dumps(candidate.get("payload") or {}, ensure_ascii=False),
+                    None,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            candidate_id = int(cursor.lastrowid)
+            row = conn.execute("SELECT * FROM event_candidates WHERE id = ?", (candidate_id,)).fetchone()
+        if row is None:
+            raise RuntimeError("EventCandidate was not persisted")
+        return self._event_candidate_to_dict(row)
+
+    def update_event_candidate_status(
+        self,
+        candidate_id: int,
+        status: str,
+        promoted_event_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE event_candidates
+                SET status = ?, promoted_event_id = COALESCE(?, promoted_event_id), updated_at = ?
+                WHERE id = ?
+                """,
+                (status, promoted_event_id, now_iso(), candidate_id),
+            )
+            row = conn.execute("SELECT * FROM event_candidates WHERE id = ?", (candidate_id,)).fetchone()
+        return self._event_candidate_to_dict(row) if row else None
+
     def create_snapshot(
         self,
         camera_id: int,
@@ -306,18 +597,25 @@ class Storage:
         camera_id: Optional[int] = None,
         room: str = "",
         snapshot_id: Optional[int] = None,
+        detection_result_id: Optional[int] = None,
+        rule_evaluation_id: Optional[int] = None,
+        candidate_id: Optional[int] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         with self.connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO events (
-                    camera_id, type, room, summary, level, snapshot_id, occurred_at, payload
+                    camera_id, detection_result_id, rule_evaluation_id, candidate_id,
+                    type, room, summary, level, snapshot_id, occurred_at, payload
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     camera_id,
+                    detection_result_id,
+                    rule_evaluation_id,
+                    candidate_id,
                     event_type,
                     room,
                     summary,
@@ -354,10 +652,12 @@ class Storage:
                 SELECT
                     e.*,
                     c.name AS camera_name,
-                    s.image_path AS snapshot_path
+                    s.image_path AS snapshot_path,
+                    ec.status AS candidate_status
                 FROM events e
                 LEFT JOIN cameras c ON c.id = e.camera_id
                 LEFT JOIN snapshots s ON s.id = e.snapshot_id
+                LEFT JOIN event_candidates ec ON ec.id = e.candidate_id
                 {where}
                 ORDER BY e.occurred_at DESC
                 LIMIT ?
@@ -373,10 +673,12 @@ class Storage:
                 SELECT
                     e.*,
                     c.name AS camera_name,
-                    s.image_path AS snapshot_path
+                    s.image_path AS snapshot_path,
+                    ec.status AS candidate_status
                 FROM events e
                 LEFT JOIN cameras c ON c.id = e.camera_id
                 LEFT JOIN snapshots s ON s.id = e.snapshot_id
+                LEFT JOIN event_candidates ec ON ec.id = e.candidate_id
                 WHERE e.id = ?
                 """,
                 (event_id,),

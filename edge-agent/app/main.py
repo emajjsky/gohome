@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+from datetime import datetime
 import socket
 
 from fastapi import FastAPI, HTTPException
@@ -116,6 +117,36 @@ def create_camera(camera: CameraCreate) -> Dict[str, Any]:
     return storage.create_camera(model_dump(camera))
 
 
+def capture_preview(camera_payload: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        rules = storage.get_rules()
+        capture = camera_agent.capture_frame(camera_payload)
+        analysis = detect_agent.analyze_frame_with_config(capture["frame"], config=rules)
+        relative_path = f"preview/{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+        camera_agent.save_frame(capture["frame"], relative_path)
+        return {
+            "ok": True,
+            "width": capture["width"],
+            "height": capture["height"],
+            "elapsed_ms": capture["elapsed_ms"],
+            "source": capture["source"],
+            "snapshot": {
+                "image_path": relative_path,
+                "image_url": f"/snapshots/{relative_path}",
+                "person_count": analysis.get("person_count"),
+                "captured_at": datetime.now().isoformat(),
+            },
+            "analysis": analysis,
+        }
+    except CameraError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/cameras/test-connection")
+async def test_camera_connection(camera: CameraCreate) -> Dict[str, Any]:
+    return await run_in_threadpool(capture_preview, model_dump(camera))
+
+
 @app.get("/api/cameras/{camera_id}")
 def get_camera(camera_id: int) -> Dict[str, Any]:
     camera = storage.get_camera(camera_id)
@@ -178,6 +209,25 @@ def capture_and_store(camera_id: int) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def capture_with_pipeline(camera_id: int) -> Dict[str, Any]:
+    camera = storage.get_camera(camera_id, include_secret=True)
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    rules = storage.get_rules()
+    result = worker.process_camera(camera, rules)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "Capture failed")
+    return {
+        "ok": True,
+        "camera_id": camera_id,
+        "snapshot": result.get("snapshot"),
+        "analysis": result.get("analysis"),
+        "detection_result": result.get("detection_result"),
+        "evaluation": result.get("evaluation"),
+    }
+
+
 @app.post("/api/cameras/{camera_id}/test")
 async def test_camera(camera_id: int) -> Dict[str, Any]:
     return await run_in_threadpool(capture_and_store, camera_id)
@@ -185,7 +235,7 @@ async def test_camera(camera_id: int) -> Dict[str, Any]:
 
 @app.post("/api/cameras/{camera_id}/capture")
 async def capture_camera(camera_id: int) -> Dict[str, Any]:
-    return await run_in_threadpool(capture_and_store, camera_id)
+    return await run_in_threadpool(capture_with_pipeline, camera_id)
 
 
 @app.get("/api/cameras/{camera_id}/snapshot/latest")
@@ -233,7 +283,7 @@ def camera_mjpeg_stream(
 def latest_camera_evaluation(camera_id: int) -> Dict[str, Any]:
     if storage.get_camera(camera_id) is None:
         raise HTTPException(status_code=404, detail="Camera not found")
-    evaluation = worker.latest_evaluations.get(camera_id)
+    evaluation = storage.latest_rule_evaluation(camera_id) or worker.latest_evaluations.get(camera_id)
     if evaluation is None:
         raise HTTPException(status_code=404, detail="Rule evaluation not found")
     return evaluation
@@ -281,6 +331,11 @@ def get_rules() -> Dict[str, Any]:
 @app.put("/api/rules")
 def update_rules(rules: RulesUpdate) -> Dict[str, Any]:
     return storage.update_rules(model_dump(rules))
+
+
+@app.get("/api/rules/runtime")
+def rules_runtime() -> Dict[str, Any]:
+    return worker.runtime_status()
 
 
 @app.post("/api/notify/test")

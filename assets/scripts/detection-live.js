@@ -4,6 +4,7 @@
         selectedCameraId: null,
         detectorBackend: "basic",
         latestSnapshot: null,
+        streamCameraId: null,
         refreshInFlight: false,
         toastTimer: null,
     };
@@ -224,14 +225,11 @@
         const brightness = analysis.brightness ?? snapshot?.brightness;
 
         const image = $("detectionSnapshotImage");
-        if (snapshot?.image_url) {
+        if (snapshot?.image_url && state.streamCameraId !== Number(state.selectedCameraId)) {
             image.onload = () => renderDetectionOverlay(state.latestSnapshot);
             image.src = `${GoHomeEdge.edgeUrl(snapshot.image_url)}?t=${Date.now()}`;
-            $("detectionEmpty").classList.add("hidden");
-        } else {
-            renderEmptySnapshot();
-            return;
         }
+        $("detectionEmpty").classList.add("hidden");
 
         setText("detectionRoom", camera?.room || camera?.name || "摄像头");
         setText("detectionTime", `${GoHomeEdge.fmtTime(snapshot.captured_at)} 更新`);
@@ -266,12 +264,38 @@
         state.latestSnapshot = null;
         $("detectionOverlay").innerHTML = "";
         $("detectionOverlay").removeAttribute("style");
-        $("detectionEmpty").classList.remove("hidden");
+        if (!state.streamCameraId) {
+            $("detectionEmpty").classList.remove("hidden");
+        }
         setText("detectionTime", "等待截图");
         setText("detectionPeople", "-");
         setText("detectionBoxes", "-");
         setText("detectionBrightness", "-");
         setText("detectionMotion", "-");
+    }
+
+    function streamUrl(cameraId) {
+        return GoHomeEdge.edgeUrl(
+            `/api/cameras/${cameraId}/stream.mjpg?fps=5&width=960&height=540&quality=60&drop=4&t=${Date.now()}`
+        );
+    }
+
+    function attachStream(cameraId) {
+        if (!cameraId) return;
+        const numericId = Number(cameraId);
+        if (state.streamCameraId === numericId) return;
+        const image = $("detectionSnapshotImage");
+        state.streamCameraId = numericId;
+        $("detectionEmpty").classList.add("hidden");
+        image.onload = () => renderDetectionOverlay(state.latestSnapshot);
+        image.onerror = () => {
+            if (state.streamCameraId === numericId) {
+                state.streamCameraId = null;
+                renderDetectionOverlay(state.latestSnapshot);
+                $("detectionEmpty").classList.remove("hidden");
+            }
+        };
+        image.src = streamUrl(numericId);
     }
 
     function renderEvaluation(evaluation) {
@@ -311,13 +335,20 @@
         if (!state.selectedCameraId || state.refreshInFlight) return;
         state.refreshInFlight = true;
         try {
+            attachStream(state.selectedCameraId);
             const snapshot = await GoHomeEdge.latestSnapshot(state.selectedCameraId);
             renderSnapshot(snapshot);
             await loadEvaluation(state.selectedCameraId).catch(renderEmptyEvaluation);
         } catch (error) {
-            renderEmptySnapshot();
-            renderEmptyEvaluation();
-            if (error?.message) setText("detectionSubtitle", error.message);
+            if (String(error?.message || "").includes("Snapshot not found")) {
+                renderEmptyEvaluation();
+                setText("detectionSubtitle", "实时画面已连接，等待后台生成最新检测截图。");
+                setText("detectionTime", "实时预览中");
+            } else {
+                renderEmptySnapshot();
+                renderEmptyEvaluation();
+                if (error?.message) setText("detectionSubtitle", error.message);
+            }
         } finally {
             state.refreshInFlight = false;
         }
@@ -363,7 +394,9 @@
         setBusy(button, true);
         try {
             const result = await GoHomeEdge.capture(state.selectedCameraId);
+            state.streamCameraId = null;
             renderSnapshot(result.snapshot || result);
+            attachStream(state.selectedCameraId);
             await loadEvaluation(state.selectedCameraId).catch(renderEmptyEvaluation);
             showToast("已抓取最新画面");
         } finally {
@@ -376,11 +409,13 @@
             const button = event.target.closest("button[data-camera-id]");
             if (!button) return;
             state.selectedCameraId = Number(button.dataset.cameraId);
+            state.streamCameraId = null;
             renderCameraList();
             await loadCurrentSnapshot();
         });
 
         $("detectionRefreshButton").addEventListener("click", () => {
+            state.streamCameraId = null;
             refreshAll().catch((error) => showToast(error.message));
         });
 

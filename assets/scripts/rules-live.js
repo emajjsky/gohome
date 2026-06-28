@@ -3,6 +3,7 @@
         detectorBackend: "basic",
         saving: false,
         saveTimer: null,
+        latestSavedAt: null,
     };
 
     const $ = (id) => document.getElementById(id);
@@ -24,6 +25,10 @@
         node.className = toneClass;
     }
 
+    function fmtDateTime(value) {
+        return GoHomeEdge.fmtDateTime ? GoHomeEdge.fmtDateTime(value) : (value || "-");
+    }
+
     function yoloAvailable() {
         return state.detectorBackend === "yolo";
     }
@@ -31,6 +36,21 @@
     function numberValue(id) {
         const node = $(id);
         return Number(node?.value || 0);
+    }
+
+    function clampInput(id) {
+        const node = $(id);
+        if (!node) return;
+        const min = Number(node.min || 0);
+        const max = Number(node.max || 999999);
+        const value = Number(node.value || 0);
+        if (Number.isNaN(value)) return;
+        node.value = String(Math.min(max, Math.max(min, value)));
+    }
+
+    function coerceNumber(value, fallback) {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : fallback;
     }
 
     function readPayload() {
@@ -49,9 +69,9 @@
     }
 
     function applyRules(rules) {
-        $("captureInterval").value = rules.capture_interval_seconds;
-        $("noMotionSeconds").value = rules.no_motion_seconds;
-        $("noPersonSeconds").value = rules.no_person_seconds;
+        $("captureInterval").value = String(coerceNumber(rules.capture_interval_seconds, 5));
+        $("noMotionSeconds").value = String(coerceNumber(rules.no_motion_seconds, 300));
+        $("noPersonSeconds").value = String(coerceNumber(rules.no_person_seconds, 300));
         $("offlineEnabled").checked = Boolean(rules.offline_enabled);
         $("blackEnabled").checked = Boolean(rules.black_screen_enabled);
         $("noMotionEnabled").checked = Boolean(rules.no_motion_enabled);
@@ -59,6 +79,47 @@
         $("noPersonMirror").checked = Boolean(rules.person_detection_enabled);
         $("fallDetectionEnabled").checked = Boolean(rules.fall_detection_enabled);
         $("notificationEnabled").checked = Boolean(rules.notification_enabled);
+    }
+
+    function runtimeMatches(expectedUpdatedAt, runtime) {
+        if (!expectedUpdatedAt) return true;
+        const loadedAt = runtime?.last_rules_loaded_at;
+        if (!loadedAt) return false;
+        return new Date(loadedAt).getTime() >= new Date(expectedUpdatedAt).getTime();
+    }
+
+    async function refreshRuntime(expectedUpdatedAt = null, attempts = 1, waitMs = 0) {
+        if (waitMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
+        let runtime = null;
+        for (let index = 0; index < attempts; index += 1) {
+            runtime = await GoHomeEdge.rulesRuntime();
+            if (runtimeMatches(expectedUpdatedAt, runtime)) {
+                break;
+            }
+            if (index < attempts - 1) {
+                await new Promise((resolve) => setTimeout(resolve, 500));
+            }
+        }
+        const running = Boolean(runtime?.worker_running);
+        if (!running) {
+            setText("rulesStatusTitle", "规则已保存，worker 未运行");
+            setText("rulesStatusText", "规则已经写入本机数据库，但后台守护循环当前没有运行。");
+            setSaveState("待运行", "bad");
+            return runtime;
+        }
+        if (expectedUpdatedAt && !runtimeMatches(expectedUpdatedAt, runtime)) {
+            setText("rulesStatusTitle", "规则已保存，等待生效");
+            setText("rulesStatusText", "规则已经保存，正在等待下一轮抽帧读取新配置。");
+            setSaveState("等待生效");
+            return runtime;
+        }
+        const loadedAt = runtime?.last_rules_loaded_at ? fmtDateTime(runtime.last_rules_loaded_at) : "刚刚";
+        setText("rulesStatusTitle", "规则已同步");
+        setText("rulesStatusText", `worker 最近一次读取规则时间：${loadedAt}。`);
+        setSaveState("已生效", "ok");
+        return runtime;
     }
 
     function applyCapability() {
@@ -80,14 +141,14 @@
             state.saving = true;
             setSaveState("保存中");
             try {
+                ["captureInterval", "noMotionSeconds", "noPersonSeconds"].forEach(clampInput);
                 if ($("noPersonMirror").checked) $("personDetectionEnabled").checked = true;
                 if ($("personDetectionEnabled").checked) $("noPersonMirror").checked = true;
                 const saved = await GoHomeEdge.updateRules(readPayload());
+                state.latestSavedAt = saved.updated_at || null;
                 applyRules(saved);
                 applyCapability();
-                setSaveState("已保存", "ok");
-                setText("rulesStatusTitle", "规则已同步");
-                setText("rulesStatusText", "下一轮抽帧开始按新的规则执行。");
+                await refreshRuntime(state.latestSavedAt, 3, 250);
             } catch (error) {
                 setSaveState("保存失败", "bad");
                 setText("rulesStatusTitle", "规则保存失败");
@@ -107,13 +168,17 @@
     async function initialize() {
         try {
             await GoHomeEdge.connect();
-            const [device, rules] = await Promise.all([GoHomeEdge.device(), GoHomeEdge.rules()]);
+            const [device, rules, runtime] = await Promise.all([GoHomeEdge.device(), GoHomeEdge.rules(), GoHomeEdge.rulesRuntime()]);
             state.detectorBackend = device.detector_backend || "basic";
+            state.latestSavedAt = rules.updated_at || null;
             applyRules(rules);
             applyCapability();
-            setSaveState("已同步", "ok");
-            setText("rulesStatusTitle", "本机规则已连接");
-            setText("rulesStatusText", `${device.detector_backend === "yolo" ? "YOLO" : "基础"} 后端正在执行当前规则。`);
+            await refreshRuntime(state.latestSavedAt);
+            if (!(runtime && runtime.worker_running)) {
+                setText("rulesStatusText", "规则可以读取和保存，但后台守护循环当前没有运行。");
+            } else if (!runtime.last_rules_loaded_at) {
+                setText("rulesStatusText", `${device.detector_backend === "yolo" ? "YOLO" : "基础"} 后端已连接，等待第一轮 worker 读取规则。`);
+            }
         } catch (error) {
             setSaveState("离线", "bad");
             setText("rulesStatusTitle", "本机服务未连接");

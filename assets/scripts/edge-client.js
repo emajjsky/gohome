@@ -123,6 +123,10 @@
             method: "POST",
             body: JSON.stringify(payload),
         }),
+        testCameraConnection: (payload) => request("/api/cameras/test-connection", {
+            method: "POST",
+            body: JSON.stringify(payload),
+        }),
         updateCamera: (cameraId, patch) => request(`/api/cameras/${cameraId}`, {
             method: "PATCH",
             body: JSON.stringify(patch),
@@ -139,6 +143,7 @@
             body: JSON.stringify(patch),
         }),
         rules: () => request("/api/rules"),
+        rulesRuntime: () => request("/api/rules/runtime"),
         updateRules: (rules) => request("/api/rules", {
             method: "PUT",
             body: JSON.stringify(rules),
