@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>实时观看 - 想家了吗</title>
+    <link href="assets/styles/tailwind.css" rel="stylesheet">
+    <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260629-ui3" rel="stylesheet">
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
+        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
+        body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { width: 0; background: transparent; }
+    </style>
+</head>
+<body class="app-phone-shell text-on-surface font-sans antialiased">
+    <header class="app-topbar">
+        <a href="monitor.html?app=1" class="app-topbar-side">
+            <span class="material-symbols-outlined text-[20px]">arrow_back</span>
+        </a>
+        <div class="min-w-0 text-center">
+            <p id="watchHeaderTitle" class="app-topbar-title">实时观看</p>
+            <p id="watchHeaderSub" class="font-sans text-[11px] text-on-surface-variant mt-0.5">连接中</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <a id="watchDetectionTopLink" href="detection.html?app=1" class="app-topbar-side">
+                <span class="material-symbols-outlined text-[20px]">frame_inspect</span>
+            </a>
+            <button id="watchFullscreenButton" type="button" class="app-topbar-side">
+                <span class="material-symbols-outlined text-[20px]">fullscreen</span>
+            </button>
+        </div>
+    </header>
+
+    <main class="app-main app-stack">
+        <section class="app-panel p-4 flex flex-col gap-3">
+            <div class="flex items-center justify-between gap-3">
+                <div>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">LIVE</p>
+                    <p id="watchFact" class="font-display text-[20px] font-bold text-on-surface mt-1">正在连接家里画面</p>
+                </div>
+                <span id="watchStatusBadge" class="app-section-badge shrink-0">连接中</span>
+            </div>
+            <p id="watchMeta" class="font-sans text-[12px] text-on-surface-variant">等待摄像头</p>
+        </section>
+
+        <section class="app-snapshot-card bg-white overflow-hidden">
+            <div id="watchStage" class="relative aspect-[9/16] bg-black">
+                <img id="watchStageImage" alt="家里实时画面" class="w-full h-full object-cover">
+                <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/14"></div>
+                <div class="absolute top-3 left-3 right-3 flex items-start justify-between gap-3">
+                    <div class="flex flex-wrap gap-2">
+                        <span id="watchRoomBadge" class="px-2.5 py-1 rounded-full bg-black/35 backdrop-blur-md text-white text-[10px] font-semibold">未选择</span>
+                    </div>
+                    <span id="watchProfileBadge" class="px-2.5 py-1 rounded-full bg-black/35 backdrop-blur-md text-white text-[10px] font-semibold">mobile</span>
+                </div>
+                <div class="absolute bottom-0 left-0 right-0 p-4 flex flex-col gap-1.5">
+                    <p id="watchLiveLabel" class="font-sans text-[11px] font-semibold text-white/78 tracking-[0.12em]">LIVE</p>
+                    <p class="font-display text-[20px] font-bold text-white leading-[1.18]">实时画面</p>
+                    <p class="font-sans text-[12px] text-white/80">点顶部切换检测，点下面切摄像头与档位</p>
+                </div>
+                <div id="watchEmptyState" class="absolute inset-0 hidden items-center justify-center bg-black/70 text-white text-center px-8">
+                    <div class="flex flex-col items-center gap-3">
+                        <span class="material-symbols-outlined text-[34px]">videocam_off</span>
+                        <p id="watchEmptyText" class="font-sans text-[13px] font-semibold">还没有可看的摄像头</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="app-panel p-4 flex flex-col gap-3">
+            <div class="flex items-center justify-between gap-3">
+                <p class="font-display text-[16px] font-bold text-on-surface">摄像头</p>
+                <span id="watchCameraCount" class="app-section-badge shrink-0">加载中</span>
+            </div>
+            <div id="watchCameraList" class="flex gap-2 overflow-x-auto pb-1"></div>
+        </section>
+
+        <section class="app-panel p-4 flex flex-col gap-3">
+            <div class="flex items-center justify-between gap-3">
+                <p class="font-display text-[16px] font-bold text-on-surface">档位</p>
+                <span id="watchDetectorBadge" class="app-section-badge shrink-0">等待</span>
+            </div>
+            <div id="watchProfileList" class="flex gap-2 overflow-x-auto pb-1"></div>
+        </section>
+
+        <section class="app-panel p-4 flex flex-col gap-3">
+            <div class="flex items-center justify-between gap-3">
+                <p class="font-display text-[16px] font-bold text-on-surface">最新提醒</p>
+                <a id="watchEventsLink" href="events.html?app=1" class="font-sans text-[12px] font-semibold text-primary">事件</a>
+            </div>
+            <div class="rounded-2xl bg-[#fbfbff] border border-outline-variant/10 p-4">
+                <p id="watchEventTitle" class="font-display text-[16px] font-bold text-on-surface">等待事件</p>
+                <p id="watchEventMeta" class="font-sans text-[12px] text-on-surface-variant mt-1">画面接通后自动刷新</p>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <a id="watchMonitorLink" href="monitor.html?app=1" class="app-btn-secondary h-11 flex items-center justify-center font-sans text-[13px] font-bold">守护概览</a>
+                <a id="watchDetectionLink" href="detection.html?app=1" class="app-btn-secondary h-11 flex items-center justify-center font-sans text-[13px] font-bold">检测细节</a>
+            </div>
+        </section>
+    </main>
+
+    <script src="assets/scripts/edge-client.js?v=20260629-watch2"></script>
+    <script src="assets/scripts/watch-live.js?v=20260630-flow4"></script>
+</body>
+</html>

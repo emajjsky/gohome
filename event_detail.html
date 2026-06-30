@@ -6,7 +6,7 @@
     <title>牵挂详情 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260629-ui2" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
@@ -15,20 +15,19 @@
         ::-webkit-scrollbar { width: 0px; background: transparent; }
     </style>
 </head>
-<body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-32">
-    <header class="sticky top-0 z-40 flex items-center justify-between px-container py-5 bg-surface/88 backdrop-blur-xl md:bg-white/88">
-        <a href="events.html" class="w-10 h-10 flex items-center justify-center rounded-full bg-white border border-outline-variant/20 text-on-surface shadow-sm">
+<body class="app-phone-shell text-on-surface font-sans antialiased">
+    <header class="app-topbar">
+        <a id="edgeDetailBackLink" href="events.html?app=1" class="app-topbar-side">
             <span class="material-symbols-outlined">arrow_back</span>
         </a>
-        <div class="text-center">
-            <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">DETAIL</p>
-            <p class="font-display text-[16px] font-bold text-on-surface">牵挂详情</p>
-        </div>
-        <div class="w-10 h-10"></div>
+        <div class="app-topbar-title">事件详情</div>
+        <a id="edgeDetailWatchLink" href="watch.html?app=1" class="app-topbar-side">
+            <span class="material-symbols-outlined">videocam</span>
+        </a>
     </header>
 
-    <main class="flex-1 px-container flex flex-col gap-6 pt-2 pb-8">
-        <section class="rounded-[28px] overflow-hidden border border-outline-variant/20 shadow-soft bg-white">
+    <main class="app-main app-stack">
+        <section class="app-snapshot-card bg-white">
             <div class="relative h-72 bg-black">
                 <img id="edgeDetailImage" src="assets/images/elderly-alone.jpg" class="w-full h-full object-cover object-[center_40%] opacity-84" alt="客厅画面">
                 <div class="absolute inset-0 bg-gradient-to-t from-black/72 via-black/10 to-black/25"></div>
@@ -48,10 +47,10 @@
             </div>
         </section>
 
-        <section class="app-soft-card bg-white p-5 flex flex-col gap-3">
+        <section class="app-panel p-5 flex flex-col gap-3">
             <div class="flex items-start justify-between gap-3">
                 <div>
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">EVENT NOTE</p>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">EVENT</p>
                     <h2 id="edgeDetailTitle" class="font-display text-[22px] font-bold text-on-surface tracking-tight mt-1">这不是一定有危险，但它值得你现在看一眼</h2>
                 </div>
                 <div class="w-11 h-11 rounded-full bg-[#fff4e8] text-[#c87b2a] flex items-center justify-center shrink-0">
@@ -108,7 +107,7 @@
 
         <section class="flex flex-col gap-3">
             <div class="flex items-center justify-between">
-                <h3 class="font-display text-[18px] font-bold text-on-surface tracking-tight">现在最适合做的</h3>
+                <h3 class="font-display text-[18px] font-bold text-on-surface tracking-tight">现在就做</h3>
                 <span class="font-sans text-[11px] font-semibold text-primary">按优先级</span>
             </div>
             <div class="grid grid-cols-2 gap-3">
@@ -128,8 +127,8 @@
         </section>
     </main>
 
-    <footer class="fixed bottom-0 left-0 w-full bg-white/92 backdrop-blur-xl border-t border-outline-variant/20 p-5 z-40 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2">
-        <div class="flex gap-3">
+    <footer class="app-bottom-nav">
+        <div class="app-bottom-nav-inner flex gap-3">
             <button id="edgeMarkFalsePositive" class="flex-1 py-3.5 rounded-2xl bg-white border border-outline-variant/20 text-on-surface-variant font-sans text-[14px] font-bold flex justify-center items-center gap-1.5">
                 <span class="material-symbols-outlined text-[20px]">block</span>
                 标记误报
@@ -140,7 +139,7 @@
             </button>
         </div>
     </footer>
-    <script src="assets/scripts/edge-client.js"></script>
-    <script src="assets/scripts/event-detail-live.js"></script>
+    <script src="assets/scripts/edge-client.js?v=20260629-video1"></script>
+    <script src="assets/scripts/event-detail-live.js?v=20260630-flow4"></script>
 </body>
 </html>

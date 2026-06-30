@@ -6,7 +6,7 @@
     <title>牵挂时间线 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260629-ui2" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
@@ -17,65 +17,56 @@
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
-<body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
-    <main class="flex-1 px-container flex flex-col gap-5 pt-5 pb-8">
-        <section class="app-soft-card bg-white p-4 flex flex-col gap-4">
+<body class="app-phone-shell text-on-surface font-sans antialiased">
+    <header class="app-topbar">
+        <a id="edgeEventsBackLink" href="monitor.html?app=1" class="app-topbar-side">
+            <span class="material-symbols-outlined">arrow_back</span>
+        </a>
+        <div class="app-topbar-title">事件</div>
+        <a href="privacy.html?app=1" class="app-topbar-side">
+            <span class="material-symbols-outlined">person</span>
+        </a>
+    </header>
+
+    <main class="app-main app-stack">
+        <section class="app-panel p-5 flex flex-col gap-4">
             <div class="flex items-start justify-between gap-4">
                 <div>
                     <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">TIMELINE</p>
-                    <p class="font-display text-[18px] font-bold text-on-surface mt-1">牵挂时间线</p>
+                    <p class="font-display text-[20px] font-bold text-on-surface mt-1">今天的牵挂</p>
                 </div>
-                <button class="w-10 h-10 rounded-full bg-surface-container-low text-outline flex items-center justify-center">
-                    <span class="material-symbols-outlined">calendar_month</span>
-                </button>
+                <span id="edgeTimelineBadge" class="app-section-badge shrink-0">读取中</span>
             </div>
-            <div class="grid grid-cols-5 gap-2">
-                <button class="rounded-2xl bg-surface-container-low px-2 py-3 text-center">
-                    <p class="font-sans text-[10px] text-outline font-semibold">周一</p>
-                    <p class="font-display text-[15px] font-bold text-on-surface mt-1">24</p>
-                </button>
-                <button class="rounded-2xl bg-surface-container-low px-2 py-3 text-center">
-                    <p class="font-sans text-[10px] text-outline font-semibold">周二</p>
-                    <p class="font-display text-[15px] font-bold text-on-surface mt-1">25</p>
-                </button>
-                <button class="rounded-2xl bg-surface-container-low px-2 py-3 text-center">
-                    <p class="font-sans text-[10px] text-outline font-semibold">周三</p>
-                    <p class="font-display text-[15px] font-bold text-on-surface mt-1">26</p>
-                </button>
-                <button class="rounded-2xl bg-surface-container-low px-2 py-3 text-center">
-                    <p class="font-sans text-[10px] text-outline font-semibold">周四</p>
-                    <p class="font-display text-[15px] font-bold text-on-surface mt-1">27</p>
-                </button>
-                <button class="rounded-2xl bg-primary text-white px-2 py-3 text-center shadow-sm">
-                    <p class="font-sans text-[10px] text-white/80 font-semibold">今天</p>
-                    <p class="font-display text-[15px] font-bold mt-1">28</p>
-                </button>
-            </div>
-            <div class="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
-                <button class="px-4 py-2 rounded-full bg-primary text-on-primary font-sans text-[12px] font-semibold shadow-soft shrink-0">全部</button>
-                <button class="px-4 py-2 rounded-full bg-white text-on-surface-variant font-sans text-[12px] font-medium border border-outline-variant/15 shrink-0 shadow-sm">用餐</button>
-                <button class="px-4 py-2 rounded-full bg-white text-on-surface-variant font-sans text-[12px] font-medium border border-outline-variant/15 shrink-0 shadow-sm">客厅</button>
-                <button class="px-4 py-2 rounded-full bg-white text-on-surface-variant font-sans text-[12px] font-medium border border-outline-variant/15 shrink-0 shadow-sm">全屋</button>
+            <p id="edgeTimelineTitle" class="font-display text-[20px] font-bold text-on-surface leading-snug">正在整理今天的重点提醒</p>
+            <div class="grid grid-cols-2 gap-3">
+                <a id="edgeTimelineMonitorLink" href="monitor.html?app=1" class="app-btn-secondary font-sans text-[13px] font-semibold flex items-center justify-center gap-1.5">
+                    <span class="material-symbols-outlined text-[18px]">nest_cam_indoor</span>
+                    回守护页
+                </a>
+                <a id="edgeTimelineWatchLink" href="watch.html?app=1" class="app-btn-primary font-sans text-[13px] font-semibold flex items-center justify-center gap-1.5">
+                    <span class="material-symbols-outlined fill text-[18px]">play_circle</span>
+                    <span id="edgeTimelineAction">先看实时画面</span>
+                </a>
             </div>
         </section>
 
         <section class="app-rhythm-card p-4 flex flex-col gap-3.5">
             <div class="flex items-start justify-between gap-4">
                 <div>
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.18em]">TODAY</p>
-                    <h3 id="edgeTimelineTitle" class="font-display text-[18px] font-bold text-on-surface mt-1">今天最让人在意的是：午饭比平时晚了些</h3>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.18em]">LIST</p>
+                    <h3 class="font-display text-[18px] font-bold text-on-surface mt-1">按时间排好，只保留需要你看的事</h3>
                 </div>
-                <div id="edgeTimelineBadge" class="app-section-badge shrink-0">建议今天联系</div>
+                <div class="app-section-badge shrink-0">最近 30 条</div>
             </div>
             <div class="grid grid-cols-2 gap-3">
-                <button class="app-btn-primary font-sans text-[13px] font-semibold flex items-center justify-center gap-1.5">
-                    <span class="material-symbols-outlined fill text-[18px]">call</span>
-                    现在打电话
-                </button>
-                <button class="app-btn-secondary font-sans text-[13px] font-semibold flex items-center justify-center gap-1.5">
-                    <span class="material-symbols-outlined text-[18px]">calendar_month</span>
-                    <span id="edgeTimelineAction">加进回家计划</span>
-                </button>
+                <div class="app-panel-muted px-4 py-3">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">建议动作</p>
+                    <p class="font-display text-[16px] font-bold text-on-surface mt-1">先点最新一条</p>
+                </div>
+                <div class="app-panel-muted px-4 py-3">
+                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">展示方式</p>
+                    <p class="font-display text-[16px] font-bold text-on-surface mt-1">按时间线看</p>
+                </div>
             </div>
         </section>
 
@@ -144,39 +135,39 @@
             </a>
         </section>
 
-        <div class="mt-2 bg-surface-container-low rounded-xl p-4 flex flex-col items-center justify-center text-center gap-2 border border-outline-variant/10">
+        <div class="mt-1 app-panel-muted p-4 flex flex-col items-center justify-center text-center gap-2">
             <span class="material-symbols-outlined text-primary text-[28px]">favorite</span>
             <p class="font-sans text-sm text-on-surface-variant font-medium">今日牵挂到这里</p>
         </div>
     </main>
 
-    <nav class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
-        <div class="flex justify-between items-center">
-            <a href="index.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+    <nav class="app-bottom-nav">
+        <div class="app-bottom-nav-inner flex justify-between items-center">
+            <a href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
                 <div class="app-nav-pill group-hover:bg-primary/5">
                     <span class="material-symbols-outlined text-[22px]">home</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
             </a>
-            <a href="monitor.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+            <a href="monitor.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
                 <div class="app-nav-pill group-hover:bg-primary/5">
                     <span class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">守护</span>
             </a>
-            <a href="events.html" class="flex flex-col items-center gap-1.5 text-primary">
+            <a href="events.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
                 <div class="app-nav-pill active">
                     <span class="material-symbols-outlined fill text-[22px]">history</span>
                 </div>
                 <span class="font-sans text-[11px] font-bold tracking-wide">事件</span>
             </a>
-            <a href="companionship.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+            <a href="companionship.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
                 <div class="app-nav-pill group-hover:bg-primary/5">
                     <span class="material-symbols-outlined text-[22px]">diversity_1</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">陪伴</span>
             </a>
-            <a href="privacy.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+            <a href="privacy.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
                 <div class="app-nav-pill group-hover:bg-primary/5">
                     <span class="material-symbols-outlined text-[22px]">person</span>
                 </div>
@@ -184,7 +175,7 @@
             </a>
         </div>
     </nav>
-    <script src="assets/scripts/edge-client.js"></script>
-    <script src="assets/scripts/events-live.js"></script>
+    <script src="assets/scripts/edge-client.js?v=20260629-video1"></script>
+    <script src="assets/scripts/events-live.js?v=20260630-flow4"></script>
 </body>
 </html>

@@ -85,6 +85,36 @@
         return state.cameras.find((camera) => Number(camera.id) === Number(state.selectedCameraId)) || null;
     }
 
+    function requestedCameraId() {
+        const value = new URLSearchParams(window.location.search).get("camera_id");
+        return value ? Number(value) : null;
+    }
+
+    function syncSelectedCameraParam(cameraId) {
+        const url = new URL(window.location.href);
+        if (cameraId) {
+            url.searchParams.set("camera_id", String(cameraId));
+        } else {
+            url.searchParams.delete("camera_id");
+        }
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+
+    function syncNavLinks() {
+        const camera = selectedCamera();
+        const suffix = camera?.id ? `?camera_id=${encodeURIComponent(camera.id)}` : "";
+        const watchHref = GoHomeEdge.pageHref(`watch.html${suffix}`) || `watch.html${suffix}`;
+        const eventsHref = GoHomeEdge.pageHref(`events.html${suffix}`) || `events.html${suffix}`;
+        const watchBack = $("detectionBackWatchLink");
+        const eventsPrimary = $("detectionPrimaryEventsLink");
+        const eventsSecondary = $("detectionSecondaryEventsLink");
+        const eventsNav = $("detectionNavEventsLink");
+        if (watchBack) watchBack.href = watchHref;
+        if (eventsPrimary) eventsPrimary.href = eventsHref;
+        if (eventsSecondary) eventsSecondary.href = eventsHref;
+        if (eventsNav) eventsNav.href = eventsHref;
+    }
+
     function statusLabel(status) {
         if (status === "online") return "在线";
         if (status === "offline") return "离线";
@@ -185,6 +215,7 @@
     function renderCameraList() {
         const list = $("detectionCameraList");
         setText("detectionCameraCount", state.cameras.length ? `${state.cameras.length} 路` : "未接入");
+        syncNavLinks();
 
         if (!state.cameras.length) {
             list.innerHTML = `
@@ -211,7 +242,7 @@
         }).join("");
     }
 
-    function renderSnapshot(snapshot) {
+    async function renderSnapshot(snapshot) {
         state.latestSnapshot = snapshot;
         const camera = selectedCamera();
         const analysis = snapshot?.analysis || {};
@@ -227,7 +258,7 @@
         const image = $("detectionSnapshotImage");
         if (snapshot?.image_url && state.streamCameraId !== Number(state.selectedCameraId)) {
             image.onload = () => renderDetectionOverlay(state.latestSnapshot);
-            image.src = `${GoHomeEdge.edgeUrl(snapshot.image_url)}?t=${Date.now()}`;
+            image.src = await GoHomeEdge.v1VideoMediaPlaybackUrl(snapshot.image_url);
         }
         $("detectionEmpty").classList.add("hidden");
 
@@ -274,13 +305,11 @@
         setText("detectionMotion", "-");
     }
 
-    function streamUrl(cameraId) {
-        return GoHomeEdge.edgeUrl(
-            `/api/cameras/${cameraId}/stream.mjpg?fps=5&width=960&height=540&quality=60&drop=4&t=${Date.now()}`
-        );
+    async function streamUrl(cameraId) {
+        return GoHomeEdge.v1VideoStreamPlaybackUrl(cameraId, { profile: "detail" });
     }
 
-    function attachStream(cameraId) {
+    async function attachStream(cameraId) {
         if (!cameraId) return;
         const numericId = Number(cameraId);
         if (state.streamCameraId === numericId) return;
@@ -295,7 +324,7 @@
                 $("detectionEmpty").classList.remove("hidden");
             }
         };
-        image.src = streamUrl(numericId);
+        image.src = await streamUrl(numericId);
     }
 
     function renderEvaluation(evaluation) {
@@ -327,7 +356,7 @@
     }
 
     async function loadEvaluation(cameraId) {
-        const evaluation = await GoHomeEdge.latestEvaluation(cameraId);
+        const evaluation = await GoHomeEdge.appLatestEvaluation(cameraId);
         renderEvaluation(evaluation);
     }
 
@@ -335,20 +364,20 @@
         if (!state.selectedCameraId || state.refreshInFlight) return;
         state.refreshInFlight = true;
         try {
-            attachStream(state.selectedCameraId);
-            const snapshot = await GoHomeEdge.latestSnapshot(state.selectedCameraId);
-            renderSnapshot(snapshot);
-            await loadEvaluation(state.selectedCameraId).catch(renderEmptyEvaluation);
-        } catch (error) {
-            if (String(error?.message || "").includes("Snapshot not found")) {
+            await attachStream(state.selectedCameraId);
+            const snapshot = await GoHomeEdge.appLatestSnapshot(state.selectedCameraId, { allowMissing: true });
+            if (snapshot?.available === false) {
                 renderEmptyEvaluation();
                 setText("detectionSubtitle", "实时画面已连接，等待后台生成最新检测截图。");
                 setText("detectionTime", "实时预览中");
             } else {
-                renderEmptySnapshot();
-                renderEmptyEvaluation();
-                if (error?.message) setText("detectionSubtitle", error.message);
+                await renderSnapshot(snapshot);
+                await loadEvaluation(state.selectedCameraId).catch(renderEmptyEvaluation);
             }
+        } catch (error) {
+            renderEmptySnapshot();
+            renderEmptyEvaluation();
+            if (error?.message) setText("detectionSubtitle", error.message);
         } finally {
             state.refreshInFlight = false;
         }
@@ -358,12 +387,16 @@
         if (!window.GoHomeEdge) return;
         try {
             await GoHomeEdge.connect();
-            const [device, cameras] = await Promise.all([GoHomeEdge.device(), GoHomeEdge.cameras()]);
+            const [device, cameras] = await Promise.all([GoHomeEdge.appDevice(), GoHomeEdge.appCameras()]);
             renderDevice(device);
             state.cameras = cameras;
             const current = selectedCamera();
             if (!current) {
-                state.selectedCameraId = preferredCamera(cameras)?.id || null;
+                const requested = requestedCameraId();
+                state.selectedCameraId = state.cameras.some((item) => Number(item.id) === Number(requested))
+                    ? requested
+                    : (preferredCamera(cameras)?.id || null);
+                syncSelectedCameraParam(state.selectedCameraId);
             }
             renderCameraList();
 
@@ -377,6 +410,11 @@
                 renderEmptyEvaluation();
             }
         } catch (error) {
+            if (error?.status === 401) {
+                GoHomeEdge.clearAuthToken();
+                window.location.href = GoHomeEdge.loginHref(GoHomeEdge.currentPagePath());
+                return;
+            }
             setText("detectionTitle", "本机服务未连接");
             setText("detectionSubtitle", "启动 edge-agent 后，这里会显示真实检测结果。");
             setText("detectionStatusBadge", "未连接");
@@ -395,8 +433,8 @@
         try {
             const result = await GoHomeEdge.capture(state.selectedCameraId);
             state.streamCameraId = null;
-            renderSnapshot(result.snapshot || result);
-            attachStream(state.selectedCameraId);
+            await renderSnapshot(result.snapshot || result);
+            await attachStream(state.selectedCameraId);
             await loadEvaluation(state.selectedCameraId).catch(renderEmptyEvaluation);
             showToast("已抓取最新画面");
         } finally {
@@ -409,6 +447,7 @@
             const button = event.target.closest("button[data-camera-id]");
             if (!button) return;
             state.selectedCameraId = Number(button.dataset.cameraId);
+            syncSelectedCameraParam(state.selectedCameraId);
             state.streamCameraId = null;
             renderCameraList();
             await loadCurrentSnapshot();

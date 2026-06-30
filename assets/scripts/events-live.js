@@ -1,9 +1,75 @@
 (function () {
     const $ = (id) => document.getElementById(id);
+    const EVENT_UPDATES_KEY = "gohome.eventUpdates";
 
     function setText(id, value) {
         const node = $(id);
         if (node) node.textContent = value;
+    }
+
+    function requestedCameraId() {
+        const value = new URLSearchParams(window.location.search).get("camera_id");
+        return value ? Number(value) : null;
+    }
+
+    function syncSelectedCameraParam(cameraId) {
+        const url = new URL(window.location.href);
+        if (cameraId) {
+            url.searchParams.set("camera_id", String(cameraId));
+        } else {
+            url.searchParams.delete("camera_id");
+        }
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+
+    function syncNavLinks(cameraId) {
+        const suffix = cameraId ? `?camera_id=${encodeURIComponent(cameraId)}` : "";
+        const watchHref = GoHomeEdge.pageHref(`watch.html${suffix}`) || `watch.html${suffix}`;
+        const watchLink = $("edgeTimelineWatchLink");
+        const monitorLink = $("edgeTimelineMonitorLink");
+        const backLink = $("edgeEventsBackLink");
+        if (watchLink) watchLink.href = watchHref;
+        if (monitorLink) monitorLink.href = GoHomeEdge.pageHref("monitor.html") || "monitor.html";
+        if (backLink) backLink.href = GoHomeEdge.pageHref("monitor.html") || "monitor.html";
+    }
+
+    function readEventUpdates() {
+        try {
+            return JSON.parse(sessionStorage.getItem(EVENT_UPDATES_KEY) || "{}");
+        } catch (_error) {
+            return {};
+        }
+    }
+
+    function writeEventUpdates(updates) {
+        sessionStorage.setItem(EVENT_UPDATES_KEY, JSON.stringify(updates));
+    }
+
+    function applyPendingUpdates(events) {
+        const updates = readEventUpdates();
+        if (!Object.keys(updates).length) return events;
+        return events.map((event) => {
+            const patch = updates[String(event.id)];
+            return patch ? { ...event, ...patch } : event;
+        });
+    }
+
+    function pruneAppliedUpdates(events) {
+        const updates = readEventUpdates();
+        let changed = false;
+        for (const event of events) {
+            const key = String(event.id);
+            const patch = updates[key];
+            if (!patch) continue;
+            if (
+                Boolean(event.acknowledged) === Boolean(patch.acknowledged)
+                && String(event.resolution || "") === String(patch.resolution || "")
+            ) {
+                delete updates[key];
+                changed = true;
+            }
+        }
+        if (changed) writeEventUpdates(updates);
     }
 
     function iconTone(event) {
@@ -20,17 +86,19 @@
         return "适合现在看一眼。";
     }
 
-    function renderEvent(event) {
+    function renderEvent(event, cameraId) {
         const time = GoHomeEdge.fmtTime(event.occurred_at);
         const label = GoHomeEdge.eventLabel(event.type);
         const room = event.room || event.camera_name || "家里";
         const status = event.acknowledged ? "已处理" : "待确认";
+        const suffix = cameraId ? `&camera_id=${encodeURIComponent(cameraId)}` : "";
+        const detailHref = GoHomeEdge.pageHref(`event_detail.html?eventId=${event.id}${suffix}`) || `event_detail.html?eventId=${event.id}${suffix}`;
         const statusClass = event.acknowledged
             ? "bg-surface-container-low text-on-surface-variant"
             : "bg-[#fff4e8] text-[#c87b2a]";
 
         return `
-            <a href="event_detail.html?eventId=${event.id}" class="app-soft-card bg-white p-4 group">
+            <a href="${detailHref}" class="app-soft-card bg-white p-4 group">
                 <div class="flex items-start justify-between gap-3">
                     <div class="flex items-center gap-2 text-on-surface-variant font-sans text-xs font-semibold">
                         <span class="material-symbols-outlined text-[16px]">schedule</span>${time}
@@ -72,16 +140,25 @@
     async function render() {
         if (!window.GoHomeEdge) return;
         try {
+            syncNavLinks(requestedCameraId());
             await GoHomeEdge.connect();
             const [summary, cameras, allEvents] = await Promise.all([
-                GoHomeEdge.summary(),
-                GoHomeEdge.cameras(),
-                GoHomeEdge.events("limit=30"),
+                GoHomeEdge.appSummary(),
+                GoHomeEdge.appCameras(),
+                GoHomeEdge.appEvents("limit=30"),
             ]);
             const activeCameraIds = enabledCameraIds(cameras);
-            const events = allEvents.filter((event) => activeCameraIds.has(Number(event.camera_id)));
+            pruneAppliedUpdates(allEvents);
+            const events = applyPendingUpdates(allEvents).filter((event) => activeCameraIds.has(Number(event.camera_id)));
             const openEvents = events.filter((event) => !event.acknowledged);
             const mainEvent = openEvents[0] || events[0];
+            const requested = requestedCameraId();
+            const selectedCameraId = activeCameraIds.has(Number(requested))
+                ? requested
+                : (activeCameraIds.has(Number(mainEvent?.camera_id)) ? Number(mainEvent.camera_id) : null);
+
+            syncSelectedCameraParam(selectedCameraId);
+            syncNavLinks(selectedCameraId);
 
             setText("edgeTimelineTitle", mainEvent ? `今天最让人在意的是：${mainEvent.summary}` : summary.main_message);
             setText("edgeTimelineBadge", openEvents.length ? `${openEvents.length} 条待确认` : "当前平稳");
@@ -93,8 +170,14 @@
                 renderEmpty();
                 return;
             }
-            list.innerHTML = events.map(renderEvent).join("");
+            list.innerHTML = events.map((event) => renderEvent(event, selectedCameraId)).join("");
         } catch (error) {
+            if (error?.status === 401) {
+                GoHomeEdge.clearAuthToken();
+                window.location.href = GoHomeEdge.loginHref(GoHomeEdge.currentPagePath());
+                return;
+            }
+            syncNavLinks(requestedCameraId());
             setText("edgeTimelineTitle", "本机守护服务还没连接");
             setText("edgeTimelineBadge", "离线演示");
             setText("edgeTimelineAction", "启动 edge-agent");
@@ -104,5 +187,9 @@
     document.addEventListener("DOMContentLoaded", () => {
         render();
         setInterval(render, 12000);
+    });
+    window.addEventListener("pageshow", render);
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) render();
     });
 })();
