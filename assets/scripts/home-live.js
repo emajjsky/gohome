@@ -1,9 +1,63 @@
 (function () {
     const $ = (id) => document.getElementById(id);
+    const CONTENT_SECTION_IDS = [
+        "edgeHomePlanSection",
+        "edgeHomeReasonSection",
+        "edgeHomeSnapshotSection",
+        "edgeHomeMemorySection",
+    ];
 
     function setText(id, value) {
         const node = $(id);
         if (node) node.textContent = value;
+    }
+
+    function setAction(id, href, label, icon) {
+        const node = $(id);
+        if (!node) return;
+        node.href = window.GoHomeEdge?.pageHref?.(href) || href;
+        const iconNode = node.querySelector(".material-symbols-outlined");
+        if (iconNode && icon) {
+            iconNode.textContent = icon;
+            iconNode.classList.toggle("fill", icon === "login" || icon === "home" || icon === "call");
+        }
+        const textNode = Array.from(node.childNodes).find((child) => child.nodeType === Node.TEXT_NODE && child.textContent.trim());
+        if (textNode) {
+            textNode.textContent = ` ${label}`;
+        } else {
+            node.append(document.createTextNode(` ${label}`));
+        }
+    }
+
+    function syncCameraEntryLinks(camera) {
+        const suffix = camera?.id ? `?camera_id=${encodeURIComponent(camera.id)}` : "";
+        const monitorHref = suffix ? `monitor.html${suffix}` : "monitor.html";
+        const watchHref = suffix ? `watch.html${suffix}` : "watch.html";
+        const eventsHref = suffix ? `events.html${suffix}` : "events.html";
+        const entries = {
+            edgeHomePrimaryAction: watchHref,
+            edgeHomeMonitorLink: monitorHref,
+            edgeHomeWatchLink: watchHref,
+            edgeHomeEventsLink: eventsHref,
+            edgeHomeNavMonitorLink: monitorHref,
+            edgeHomeNavEventsLink: eventsHref,
+        };
+        Object.entries(entries).forEach(([id, href]) => {
+            const node = $(id);
+            if (node) node.href = window.GoHomeEdge?.pageHref?.(href) || href;
+        });
+    }
+
+    function toggleSetupMode(show) {
+        $("edgeHomeSetupPanel")?.classList.toggle("hidden", !show);
+        CONTENT_SECTION_IDS.forEach((id) => $(id)?.classList.toggle("hidden", show));
+    }
+
+    function setSetupStates(account, family, binding, badge = "未完成") {
+        setText("edgeHomeAccountState", account);
+        setText("edgeHomeFamilyState", family);
+        setText("edgeHomeBindingState", binding);
+        setText("edgeHomeSetupBadge", badge);
     }
 
     function isLocalCamera(camera) {
@@ -102,32 +156,117 @@
         };
     }
 
+    function fallbackGuestHome() {
+        toggleSetupMode(true);
+        setSetupStates("未登录", "未开始", "未绑定", "先登录");
+        setText("edgeHomeDevice", "先接身份");
+        setText("edgeHomeTime", "先登录");
+        setText("edgeHomeTitle", "先登录，再把家庭和设备接上。");
+        setText("edgeHomeSubtitle", "");
+        setAction("edgeHomePrimaryAction", "login.html", "去登录", "login");
+        setAction("edgeHomeSecondaryAction", "family.html", "家庭空间", "groups");
+    }
+
+    function renderNoFamilyHome(user) {
+        toggleSetupMode(true);
+        setSetupStates("已登录", "未创建", "待绑定", "下一步");
+        setText("edgeHomeDevice", user.display_name || user.email || "已登录");
+        setText("edgeHomeTime", "下一步");
+        setText("edgeHomeTitle", "先建家庭。");
+        setText("edgeHomeSubtitle", "");
+        setAction("edgeHomePrimaryAction", "family.html", "创建家庭", "groups");
+        setAction("edgeHomeSecondaryAction", "login.html", "切换账号", "person");
+    }
+
+    function renderNeedsBindingHome(user, family) {
+        toggleSetupMode(true);
+        setSetupStates("已登录", family?.name || "已创建", "待绑定", "待绑定");
+        setText("edgeHomeDevice", user.display_name || user.email || "已登录");
+        setText("edgeHomeTime", "最后一步");
+        setText("edgeHomeTitle", "把这台设备绑到家庭。");
+        setText("edgeHomeSubtitle", "");
+        setAction("edgeHomePrimaryAction", "device_binding.html", "绑定设备", "link");
+        setAction("edgeHomeSecondaryAction", "family.html", "家庭空间", "groups");
+    }
+
     async function render() {
         if (!window.GoHomeEdge) return;
         try {
             await GoHomeEdge.connect();
-            const [device, cameras, events] = await Promise.all([
-                GoHomeEdge.device(),
-                GoHomeEdge.cameras(),
-                GoHomeEdge.events("limit=10&acknowledged=false"),
+            let user = null;
+            if (GoHomeEdge.isAuthenticated()) {
+                try {
+                    user = await GoHomeEdge.currentUser();
+                } catch (_error) {
+                    GoHomeEdge.clearAuthToken();
+                }
+            }
+            if (!user) {
+                fallbackGuestHome();
+                return;
+            }
+
+            const [families, device] = await Promise.all([
+                GoHomeEdge.myFamilies(),
+                GoHomeEdge.appDevice(),
+            ]);
+            const primaryFamily = families[0] || null;
+            if (!primaryFamily) {
+                renderNoFamilyHome(user);
+                return;
+            }
+
+            const bindings = await GoHomeEdge.deviceBindings(primaryFamily.id);
+            const currentBinding = bindings.find((item) => item.device_id === device.device_id);
+            if (!currentBinding) {
+                renderNeedsBindingHome(user, primaryFamily);
+                return;
+            }
+
+            toggleSetupMode(false);
+            setAction("edgeHomePrimaryAction", "watch.html", "实时观看", "nest_cam_indoor");
+            setAction("edgeHomeSecondaryAction", "family.html", "家庭空间", "groups");
+            const [cameras, events] = await Promise.all([
+                GoHomeEdge.appCameras(),
+                GoHomeEdge.appEvents("limit=10&acknowledged=false"),
             ]);
             const camera = preferredCamera(cameras);
 
-            setText("edgeHomeDevice", device.worker_running ? "本机守护服务在线" : "本机守护服务暂停");
+            setText("edgeHomeDevice", primaryFamily.name || "家庭空间");
+            setText("edgeHomeTime", device.worker_running ? "守护服务在线" : "守护服务暂停");
 
             if (!camera) {
+                syncCameraEntryLinks(null);
                 setText("edgeHomeTime", "等待摄像头接入");
                 setText("edgeHomeTitle", "还没有添加摄像头");
                 setText("edgeHomeSubtitle", "先打开本机守护服务管理台，把局域网摄像头接进来。");
                 return;
             }
 
+            syncCameraEntryLinks(camera);
             const event = importantEvent(events, camera);
-            const snapshot = await GoHomeEdge.latestSnapshot(camera.id);
+            const snapshot = await GoHomeEdge.appLatestSnapshot(camera.id, { allowMissing: true });
+            if (snapshot?.available === false) {
+                setText("edgeHomeTime", `实时预览中 · ${camera.room || camera.name || "家里"} · ${device.detector_backend === "yolo" ? "YOLO 检测中" : "基础检测中"}`);
+                setText("edgeHomeTitle", event ? event.summary : "本机守护服务已连接，正在同步最新检测摘要");
+                setText("edgeHomeSubtitle", event ? "本机服务已经生成一条待确认提醒，建议先去事件页查看截图和处理状态。" : "实时画面已经恢复，检测摘要会在后台下一轮抽帧后补上。");
+                setText("edgeHomeFactTitle", event ? GoHomeEdge.eventLabel(event.type) : "实时画面正常");
+                setText("edgeHomeFactSub", event ? `${GoHomeEdge.fmtDateTime(event.occurred_at)} 触发，来自 ${event.camera_name || camera.name || "摄像头"}。` : "当前优先展示实时视频，证据截图稍后同步。");
+                setText("edgeHomeFeelingTitle", event ? "有一条提醒待确认" : "家里平稳");
+                setText("edgeHomeFeelingSub", event ? "这类信息应该进入告警处理流程，而不是只作为普通动态展示。" : "不影响你先进入守护页查看实时画面。");
+                setText("edgeHomeActionTitle", event ? "先查看事件，再联系老人" : "继续观察");
+                setText("edgeHomeActionSub", event ? "确认安全后可以标记已处理；误报也要保留记录。" : "等检测摘要同步后，首页会自动更新。");
+                setText("edgeHomeSnapshotTime", "等待检测摘要");
+                setText("edgeHomeSnapshotRoom", camera.room || camera.name || "家里动态");
+                setText("edgeHomeSnapshotHeadline", event ? event.summary : "实时画面已连接");
+                setText("edgeHomeSnapshotSub", "后台正在生成最新证据截图");
+                return;
+            }
+
             const state = snapshotState(snapshot);
             const image = $("edgeHomeSnapshotImage");
             if (image && snapshot.image_url) {
-                image.src = `${GoHomeEdge.edgeUrl(snapshot.image_url)}?t=${Date.now()}`;
+                image.src = await GoHomeEdge.v1VideoMediaPlaybackUrl(snapshot.image_url);
                 image.classList.remove("object-[center_38%]");
             }
 
@@ -145,10 +284,19 @@
             setText("edgeHomeSnapshotHeadline", event ? event.summary : state.snapshot);
             setText("edgeHomeSnapshotSub", `亮度 ${Number(snapshot.brightness || 0).toFixed(0)} · 人数 ${snapshot.person_count ?? "-"} · ${snapshot.tags?.length ? snapshot.tags.join(", ") : "无异常标签"}`);
         } catch (error) {
+            if (error?.status === 401) {
+                GoHomeEdge.clearAuthToken();
+                fallbackGuestHome();
+                return;
+            }
+            toggleSetupMode(true);
+            setSetupStates("未连接", "未连接", "未连接", "离线");
             setText("edgeHomeDevice", "本机守护服务未连接");
             setText("edgeHomeTime", "等待 edge-agent");
             setText("edgeHomeTitle", "主页面还没有连到本机守护服务");
             setText("edgeHomeSubtitle", error.message || "启动 8711 服务后，这里会自动切换成真实摄像头状态。");
+            setAction("edgeHomePrimaryAction", "login.html", "去登录", "login");
+            setAction("edgeHomeSecondaryAction", "family.html", "家庭空间", "groups");
         }
     }
 

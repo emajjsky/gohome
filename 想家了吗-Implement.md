@@ -1386,6 +1386,33 @@ iOS / Android App
 - 本轮收口的是最后一类“页面已经拿到当前摄像头，但跳去 `monitor / events / watch` 时仍退回裸链接”的零散入口，不涉及新的业务逻辑。
 - 这样从 `connect -> monitor/events`、`watch -> monitor`、`events -> monitor`、`monitor -> events`、`detection -> monitor` 再切页时，会继续停留在同一个摄像头视角，不会因为命中静态入口而退回默认摄像头。
 
+## 9.1.28 2026-06-30 首页底部导航摄像头上下文收口记录
+
+做了什么：
+
+- 给 `index.html` 底部导航里的“守护 / 事件”补上动态锚点。
+- 调整 `assets/scripts/home-live.js` 的 `syncCameraEntryLinks()`，让首页在拿到优选摄像头后，不只更新主按钮和“演示主链”三张卡片，也同步更新底部导航的 `monitor / events` 入口。
+- 抬高 `home-live.js` 版本戳，避免 WebView 继续读取旧缓存。
+
+产物位置：
+
+- `index.html`
+- `assets/scripts/home-live.js`
+
+怎么验证：
+
+- 对 `index.html` 和 `assets/scripts/home-live.js` 运行编辑器诊断，确认没有新增报错。
+- 在真实 `8711` 在线页面环境下打开 `index.html?app=1`。
+- 在线读取 `edgeHomeMonitorLink`、`edgeHomeEventsLink`、`edgeHomeNavMonitorLink`、`edgeHomeNavEventsLink` 的 `href`，确认它们都显式带上同一个优选 `camera_id`，并继续保留 `app=1`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 首页本来已经能根据摄像头状态算出优选摄像头，但底部导航仍是裸 `monitor.html / events.html`；这一轮收口后，首页所有进入守护主链的入口口径已经一致。
+
 ## 9.2 2026-06-28 `connect.html` 闭环改造记录
 
 做了什么：
