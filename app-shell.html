@@ -7,12 +7,12 @@
     <link rel="manifest" href="app.webmanifest">
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260629-ui3" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style1" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
         html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
-        body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
+        body { -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 0; background: transparent; }
     </style>
 </head>
@@ -24,20 +24,20 @@
     </header>
 
     <main class="app-main app-stack">
-        <section class="app-home-hero p-5 flex flex-col gap-4">
+        <section class="app-home-hero p-6 flex flex-col gap-4">
             <div class="flex items-center justify-between gap-3">
                 <p id="appShellStatusBadge" class="app-section-badge w-max">加载中</p>
-                <div class="w-10 h-10 rounded-full overflow-hidden border border-white/70 shadow-[0_10px_24px_rgba(46,64,90,0.08)] shrink-0">
+                <div class="w-11 h-11 rounded-full overflow-hidden border border-white/70 shadow-[0_14px_28px_rgba(79,70,91,0.1)] shrink-0">
                     <img src="assets/images/avatar.jpg" alt="想家了吗" class="w-full h-full object-cover">
                 </div>
             </div>
             <div class="flex flex-col gap-2">
-                <p id="appShellTitle" class="font-display text-[24px] font-bold text-on-surface tracking-tight">想家了吗</p>
-                <p id="appShellSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-relaxed">正在准备 App 壳</p>
+                <p id="appShellTitle" class="font-display text-[28px] font-bold text-on-surface tracking-[-0.02em] leading-[1.18]">想家了吗</p>
+                <p id="appShellSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-[1.8] max-w-[260px]">先把登录、家庭和设备轻轻接住，再把你送到家里此刻。</p>
             </div>
-            <div class="app-panel-muted px-4 py-4">
-                <p id="appShellHeadline" class="font-display text-[18px] font-bold text-on-surface">正在接住登录态</p>
-                <p id="appShellMeta" class="font-sans text-[12px] text-on-surface-variant mt-2 leading-5">稍等片刻</p>
+            <div class="app-panel-muted px-5 py-5">
+                <p id="appShellHeadline" class="font-display text-[20px] font-bold text-on-surface tracking-[-0.02em]">正在接住登录态</p>
+                <p id="appShellMeta" class="font-sans text-[12px] text-on-surface-variant mt-2 leading-[1.8]">稍等片刻</p>
             </div>
             <div class="app-kpi-grid">
                 <div class="app-kpi">
@@ -65,21 +65,21 @@
             </div>
         </section>
 
-        <section class="app-panel p-4 flex flex-col gap-3">
+        <section class="app-panel p-5 flex flex-col gap-4">
             <div class="flex items-center justify-between gap-3">
-                <h2 class="font-display text-[18px] font-bold text-on-surface">一句话导航</h2>
-                <span class="app-section-badge shrink-0">演示</span>
+                <h2 class="font-display text-[18px] font-bold text-on-surface">现在去看</h2>
+                <span class="app-section-badge shrink-0">演示链</span>
             </div>
             <div class="grid grid-cols-3 gap-3">
-                <a href="index.html?app=1" class="app-panel-muted px-3 py-4 text-center">
+                <a id="appShellHomeLink" href="index.html?app=1" class="app-panel-muted px-3 py-4 text-center">
                     <p class="font-display text-[15px] font-bold text-on-surface">首页</p>
                     <p class="font-sans text-[11px] text-on-surface-variant mt-1">先讲价值</p>
                 </a>
-                <a href="watch.html?app=1" class="app-panel-muted px-3 py-4 text-center">
+                <a id="appShellWatchLink" href="watch.html?app=1" class="app-panel-muted px-3 py-4 text-center">
                     <p class="font-display text-[15px] font-bold text-on-surface">实时</p>
                     <p class="font-sans text-[11px] text-on-surface-variant mt-1">直接看画面</p>
                 </a>
-                <a href="events.html?app=1" class="app-panel-muted px-3 py-4 text-center">
+                <a id="appShellEventsLink" href="events.html?app=1" class="app-panel-muted px-3 py-4 text-center">
                     <p class="font-display text-[15px] font-bold text-on-surface">事件</p>
                     <p class="font-sans text-[11px] text-on-surface-variant mt-1">看证据链</p>
                 </a>
@@ -88,22 +88,22 @@
 
         <section class="app-stack">
             <div class="flex items-center justify-between">
-                <h2 class="font-display text-[18px] font-bold text-on-surface">进入哪里</h2>
-                <span class="app-section-badge shrink-0">演示链</span>
+                <h2 class="font-display text-[18px] font-bold text-on-surface">下一步入口</h2>
+                <span class="app-section-badge shrink-0">最短路径</span>
             </div>
             <div id="appShellActionList" class="flex flex-col gap-3"></div>
         </section>
 
-        <section class="app-panel px-5 py-4 flex items-center justify-between gap-4">
+        <section class="app-panel px-5 py-5 flex items-center justify-between gap-4">
             <div class="min-w-0">
                 <p class="font-sans text-[11px] font-semibold text-on-surface-variant">App 配置</p>
                 <p id="appShellBundleId" class="font-display text-[13px] font-bold text-on-surface mt-1 break-all">-</p>
                 <p id="appShellScheme" class="font-sans text-[12px] text-on-surface-variant mt-1">-</p>
             </div>
-            <a id="appShellPrivacyLink" href="privacy.html?app=1" class="shrink-0 h-10 px-4 rounded-full bg-[#f4f6fb] text-on-surface font-sans text-[12px] font-semibold border border-outline-variant/15 flex items-center justify-center">隐私</a>
+            <a id="appShellPrivacyLink" href="privacy.html?app=1" class="shrink-0 app-btn-secondary h-10 px-4 text-[12px] font-semibold flex items-center justify-center">隐私</a>
         </section>
     </main>
     <script src="assets/scripts/edge-client.js?v=20260630-video1"></script>
-    <script src="assets/scripts/app-shell-live.js?v=20260629-push1"></script>
+    <script src="assets/scripts/app-shell-live.js?v=20260630-flow3"></script>
 </body>
 </html>

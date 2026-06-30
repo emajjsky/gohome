@@ -6,15 +6,14 @@
     <title>接入摄像头 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260629-ui2" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style1" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
         html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
-        body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
+        body { -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
         input { outline: none; }
-        input:focus { box-shadow: 0 0 0 3px rgba(88, 108, 214, .14); }
     </style>
 </head>
 <body class="app-phone-shell text-on-surface font-sans antialiased">
@@ -22,19 +21,19 @@
         <a id="connectBackLink" href="device_binding.html?app=1" class="app-topbar-side">
             <span class="material-symbols-outlined">arrow_back</span>
         </a>
-        <p class="app-topbar-title">接入摄像头</p>
+        <p class="app-topbar-title">让家里被看见</p>
         <a id="connectTopMonitorLink" href="monitor.html?app=1" class="app-topbar-side">
             <span class="material-symbols-outlined text-[20px]">nest_cam_indoor</span>
         </a>
     </header>
 
     <main class="app-main app-stack">
-        <section class="app-home-hero p-5 flex flex-col gap-4">
+        <section class="app-home-hero p-6 flex flex-col gap-4">
             <div class="flex items-start justify-between gap-4">
                 <div class="min-w-0">
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">本机算力服务</p>
-                    <h2 id="edgeConnectionStatus" class="font-display text-[22px] font-bold text-on-surface tracking-tight mt-1">正在连接守护服务</h2>
-                    <p id="edgeConnectionSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-relaxed mt-2">这一步只负责把家里的摄像头接到本机服务。</p>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.14em]">EDGE SETUP</p>
+                    <h2 id="edgeConnectionStatus" class="font-display text-[26px] font-bold text-on-surface tracking-[-0.02em] leading-[1.14] mt-1">正在连接守护服务</h2>
+                    <p id="edgeConnectionSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-[1.8] mt-2 max-w-[270px]">这一步只负责把家里的摄像头接到本机服务。</p>
                 </div>
                 <div class="w-11 h-11 rounded-full bg-[#eef5ff] text-primary flex items-center justify-center shrink-0">
                     <span class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
@@ -58,8 +57,8 @@
 
         <section class="app-panel px-5 py-5 flex flex-col gap-4">
             <div>
-                <p class="font-display text-[18px] font-bold text-on-surface">添加局域网摄像头</p>
-                <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">摄像头和这台 Mac 在同一个路由器下时，只需要填 IP、账号和密码。</p>
+                <p class="font-display text-[18px] font-bold text-on-surface">把摄像头接进来</p>
+                <p class="font-sans text-[12px] text-on-surface-variant leading-[1.8] mt-1.5">摄像头和这台 Mac 在同一个路由器下时，只需要填 IP、账号和密码。</p>
             </div>
 
             <form id="cameraConnectForm" class="flex flex-col gap-3">
@@ -102,11 +101,11 @@
                 </label>
 
                 <div class="grid grid-cols-2 gap-3 pt-1">
-                    <button id="testCameraButton" class="h-11 rounded-2xl bg-primary text-white font-sans text-[13px] font-bold shadow-float flex items-center justify-center gap-2" type="button">
+                    <button id="testCameraButton" class="app-btn-primary h-11 text-white font-sans text-[13px] font-bold flex items-center justify-center gap-2" type="button">
                         <span class="material-symbols-outlined text-[18px]">play_circle</span>
                         测试画面
                     </button>
-                    <button id="saveCameraButton" class="h-11 rounded-2xl bg-[#f4f6fb] text-on-surface font-sans text-[13px] font-semibold border border-outline-variant/15 flex items-center justify-center gap-2" type="submit">
+                    <button id="saveCameraButton" class="app-btn-secondary h-11 text-on-surface font-sans text-[13px] font-semibold flex items-center justify-center gap-2" type="submit">
                         <span class="material-symbols-outlined text-[18px]">save</span>
                         保存启用
                     </button>
@@ -114,23 +113,23 @@
             </form>
         </section>
 
-        <section class="app-panel overflow-hidden">
+        <section class="app-snapshot-card bg-white/72 overflow-hidden">
             <div class="relative aspect-video bg-black">
                 <img id="connectionPreviewImage" class="hidden w-full h-full object-cover opacity-90" alt="摄像头测试截图">
                 <div id="connectionPreviewEmpty" class="absolute inset-0 grid place-content-center text-center text-white/80">
                     <span class="material-symbols-outlined text-[36px]">photo_camera</span>
                     <p class="font-sans text-[12px] font-semibold mt-2">测试后显示真实画面</p>
                 </div>
-                <div class="absolute left-4 right-4 bottom-4 rounded-2xl bg-black/35 backdrop-blur-md border border-white/10 p-3 text-white">
-                    <p id="connectionResultTitle" class="font-display text-[15px] font-bold">等待测试</p>
-                    <p id="connectionResultText" class="font-sans text-[12px] text-white/78 mt-1">保存前先测试一帧，确认本机服务能读到画面。</p>
+                <div class="absolute left-4 right-4 bottom-4 rounded-[24px] bg-black/30 backdrop-blur-md border border-white/10 p-4 text-white">
+                    <p id="connectionResultTitle" class="font-display text-[17px] font-bold tracking-[-0.02em]">等待测试</p>
+                    <p id="connectionResultText" class="font-sans text-[12px] text-white/78 mt-1 leading-[1.8]">保存前先测试一帧，确认本机服务能读到画面。</p>
                 </div>
             </div>
         </section>
 
-        <section id="connectNextStepSection" class="hidden app-panel p-4 flex flex-col gap-3">
+        <section id="connectNextStepSection" class="hidden app-panel p-5 flex flex-col gap-3">
             <div class="flex items-center justify-between gap-3">
-                <p class="font-display text-[16px] font-bold text-on-surface">下一步</p>
+                <p class="font-display text-[16px] font-bold text-on-surface">接下来去哪里</p>
                 <span id="connectNextStepBadge" class="app-section-badge shrink-0">待接入</span>
             </div>
             <div class="grid grid-cols-2 gap-3">
@@ -141,7 +140,7 @@
 
         <section class="flex flex-col gap-3">
             <div class="flex items-center justify-between">
-                <h3 class="font-display text-[18px] font-bold text-on-surface">已接入摄像头</h3>
+                <h3 class="font-display text-[18px] font-bold text-on-surface">已经接住的画面</h3>
                 <span id="cameraListBadge" class="app-section-badge shrink-0">加载中</span>
             </div>
             <div id="cameraList" class="flex flex-col gap-3"></div>

@@ -34,6 +34,36 @@ body {
         radial-gradient(circle at top right, rgba(240, 236, 252, 0.92) 0%, rgba(240, 236, 252, 0) 42%),
         linear-gradient(180deg, #f8f3ee 0%, #f4efea 52%, #f2ece6 100%);
     color: #241f23;
+    -webkit-tap-highlight-color: transparent;
+}
+
+::-webkit-scrollbar {
+    width: 0;
+    background: transparent;
+}
+
+input,
+select,
+textarea {
+    outline: none;
+    border: 1px solid rgba(162, 151, 154, 0.1);
+    background: rgba(250, 245, 240, 0.9);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+    transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+input[type="number"]:focus {
+    border-color: rgba(124, 127, 171, 0.28);
+    background: rgba(255, 251, 247, 0.96);
+    box-shadow: 0 0 0 4px rgba(124, 127, 171, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+button,
+a {
+    transition: transform 180ms ease, background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
 }
 
 .app-phone-shell {
@@ -116,6 +146,7 @@ body {
     border-radius: 24px;
     border: 1px solid rgba(169, 152, 151, 0.08);
     background: rgba(247, 240, 234, 0.78);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 .app-kpi-grid {
@@ -129,6 +160,7 @@ body {
     border: 1px solid rgba(169, 152, 151, 0.08);
     background: rgba(248, 242, 237, 0.88);
     padding: 12px 14px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .app-kpi p:first-child {
@@ -200,7 +232,7 @@ body {
     background: rgba(255, 252, 249, 0.78);
     color: var(--app-primary-strong);
     border: 1px solid rgba(110, 112, 142, 0.1);
-    box-shadow: none;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
 }
 
 .app-section-badge {
@@ -300,29 +332,29 @@ body {
 
 .app-map-distance {
     border-radius: 9999px;
-    background: linear-gradient(180deg, #496f98 0%, var(--app-primary) 40%, var(--app-primary-strong) 100%);
-    box-shadow: 0 18px 36px rgba(59, 95, 134, 0.24);
+    background: linear-gradient(180deg, #7c7fab 0%, var(--app-primary) 40%, var(--app-primary-strong) 100%);
+    box-shadow: 0 18px 36px rgba(108, 111, 147, 0.2);
 }
 
 .app-map-stat {
     border-radius: 20px;
-    background: rgba(255, 255, 255, 0.94);
-    border: 1px solid rgba(195, 198, 207, 0.12);
-    box-shadow: 0 10px 24px rgba(50, 67, 91, 0.035);
+    background: rgba(255, 252, 249, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    box-shadow: 0 10px 24px rgba(79, 70, 91, 0.04);
 }
 
 .app-rhythm-card {
     border-radius: 24px;
-    background: rgba(255, 255, 255, 0.96);
-    border: 1px solid rgba(195, 198, 207, 0.12);
-    box-shadow: 0 14px 32px rgba(41, 60, 87, 0.04);
+    background: rgba(255, 252, 249, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.44);
+    box-shadow: 0 14px 32px rgba(79, 70, 91, 0.045);
 }
 
 .app-rhythm-mini {
     border-radius: 18px;
-    background: rgba(255, 255, 255, 0.94);
-    border: 1px solid rgba(195, 198, 207, 0.1);
-    box-shadow: 0 8px 18px rgba(50, 67, 91, 0.03);
+    background: rgba(255, 252, 249, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    box-shadow: 0 8px 18px rgba(79, 70, 91, 0.035);
 }
 
 .app-snapshot-card {
@@ -335,8 +367,8 @@ body {
 .app-memory-card {
     border-radius: 24px;
     overflow: hidden;
-    border: 1px solid rgba(195, 198, 207, 0.1);
-    box-shadow: 0 12px 26px rgba(41, 60, 87, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    box-shadow: 0 12px 26px rgba(79, 70, 91, 0.045);
 }
 
 .app-story-note {
@@ -402,7 +434,7 @@ body {
     border-radius: 24px;
     aspect-ratio: 16 / 10;
     background: #111827;
-    border: 1px solid rgba(195, 198, 207, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .app-detection-stage img {
@@ -481,15 +513,16 @@ body {
     gap: 12px;
     padding: 13px 14px;
     border-radius: 20px;
-    border: 1px solid rgba(195, 198, 207, 0.16);
-    background: rgba(255, 255, 255, 0.94);
+    border: 1px solid rgba(162, 151, 154, 0.1);
+    background: rgba(251, 246, 241, 0.88);
     text-align: left;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
 }
 
 .app-camera-option.active {
-    border-color: rgba(58, 94, 135, 0.28);
-    background: #f3f7fc;
-    box-shadow: 0 12px 24px rgba(47, 74, 108, 0.06);
+    border-color: rgba(108, 111, 147, 0.22);
+    background: rgba(244, 239, 251, 0.86);
+    box-shadow: 0 12px 24px rgba(108, 111, 147, 0.08);
 }
 
 .app-camera-option.disabled {
@@ -520,26 +553,27 @@ body {
     min-height: 24px;
     padding: 4px 9px;
     border-radius: 9999px;
-    background: #eef5ff;
-    color: var(--app-primary);
+    background: rgba(108, 111, 147, 0.09);
+    color: var(--app-primary-strong);
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     white-space: nowrap;
+    border: 1px solid rgba(108, 111, 147, 0.06);
 }
 
 .app-mini-pill.good {
-    background: #edf6ee;
+    background: rgba(45, 125, 92, 0.1);
     color: #2d7d5c;
 }
 
 .app-mini-pill.warn {
-    background: #fff4e8;
+    background: rgba(182, 110, 63, 0.1);
     color: #b66e3f;
 }
 
 .app-mini-pill.muted {
-    background: #f4f6fb;
-    color: #73777f;
+    background: rgba(122, 116, 124, 0.08);
+    color: #6f6872;
 }
 
 .app-capability-row {
@@ -548,7 +582,7 @@ body {
     align-items: center;
     gap: 12px;
     padding: 12px 0;
-    border-top: 1px solid rgba(195, 198, 207, 0.16);
+    border-top: 1px solid rgba(162, 151, 154, 0.1);
 }
 
 .app-capability-row:first-child {
@@ -586,6 +620,6 @@ body {
         max-width: 480px;
         margin: 0 auto;
         box-shadow: 0 24px 64px rgba(31, 52, 79, 0.12);
-        background: #fbfcfe;
+        background: linear-gradient(180deg, #faf6f1 0%, #f3ede7 100%);
     }
 }

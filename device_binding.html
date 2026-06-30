@@ -6,31 +6,30 @@
     <title>绑定设备 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260629-ui2" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style1" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
         html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
-        body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
+        body { -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 0; background: transparent; }
         select, input { outline: none; }
-        select:focus, input:focus { box-shadow: 0 0 0 3px rgba(88, 108, 214, .12); }
     </style>
 </head>
 <body class="app-phone-shell text-on-surface font-sans antialiased">
     <header class="app-topbar">
-        <a href="family.html?app=1" class="app-topbar-side">
+        <a id="bindingBackLink" href="family.html?app=1" class="app-topbar-side">
             <span class="material-symbols-outlined">arrow_back</span>
         </a>
-        <p class="app-topbar-title">设备</p>
+        <p class="app-topbar-title">把设备接进来</p>
         <span class="app-topbar-side placeholder"></span>
     </header>
 
     <main class="app-main app-stack">
-        <section class="app-home-hero p-5 flex flex-col gap-4">
+        <section class="app-home-hero p-6 flex flex-col gap-4">
             <div>
-                <p class="font-display text-[18px] font-bold text-on-surface">当前设备</p>
-                <p id="bindingDeviceText" class="font-sans text-[12px] text-on-surface-variant mt-1.5">加载中</p>
+                <p class="font-display text-[22px] font-bold text-on-surface tracking-[-0.02em]">当前设备</p>
+                <p id="bindingDeviceText" class="font-sans text-[12px] text-on-surface-variant mt-1.5 leading-[1.8]">加载中</p>
             </div>
             <div class="app-kpi-grid">
                 <div class="app-kpi">
@@ -46,8 +45,8 @@
 
         <section id="bindingFormSection" class="app-panel px-5 py-5 flex flex-col gap-4">
             <div>
-                <p class="font-display text-[18px] font-bold text-on-surface">绑定到家庭</p>
-                <p class="font-sans text-[12px] text-on-surface-variant mt-1">绑定成功后会直接进入摄像头接入。</p>
+                <p class="font-display text-[18px] font-bold text-on-surface">让这台设备属于一个家</p>
+                <p class="font-sans text-[12px] text-on-surface-variant mt-1 leading-[1.8]">绑定成功后会直接进入摄像头接入。</p>
             </div>
             <form id="bindingForm" class="flex flex-col gap-3">
                 <label class="flex flex-col gap-1.5">
@@ -58,7 +57,7 @@
                     <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">备注</span>
                     <input id="bindingNoteInput" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface" autocomplete="off" placeholder="比如：家里主设备">
                 </label>
-                <button id="bindingSubmitBtn" type="submit" class="h-11 rounded-2xl bg-primary text-white font-sans text-[13px] font-bold shadow-float">绑定当前设备</button>
+                <button id="bindingSubmitBtn" type="submit" class="app-btn-primary h-11 font-sans text-[13px] font-bold">绑定当前设备</button>
             </form>
             <p id="bindingFeedback" class="min-h-[20px] font-sans text-[12px] leading-5 text-on-surface-variant"></p>
         </section>
@@ -79,21 +78,21 @@
                 </div>
             </div>
             <div class="grid grid-cols-2 gap-3">
-                <button id="bindingCodeBtn" type="button" class="h-11 rounded-2xl bg-[#f4f6fb] text-on-surface font-sans text-[13px] font-semibold border border-outline-variant/15">生成绑定码</button>
-                <button id="bindingActivateBtn" type="button" class="h-11 rounded-2xl bg-primary text-white font-sans text-[13px] font-bold shadow-float">激活当前设备</button>
+                <button id="bindingCodeBtn" type="button" class="app-btn-secondary h-11 text-on-surface font-sans text-[13px] font-semibold">生成绑定码</button>
+                <button id="bindingActivateBtn" type="button" class="app-btn-primary h-11 font-sans text-[13px] font-bold">激活当前设备</button>
             </div>
-            <button id="bindingHeartbeatBtn" type="button" class="h-11 rounded-2xl bg-[#f4f6fb] text-on-surface font-sans text-[13px] font-semibold border border-outline-variant/15">发送一次心跳</button>
+            <button id="bindingHeartbeatBtn" type="button" class="app-btn-secondary h-11 text-on-surface font-sans text-[13px] font-semibold">发送一次心跳</button>
             <p id="bindingTokenFeedback" class="min-h-[20px] font-sans text-[12px] leading-5 text-on-surface-variant"></p>
         </section>
 
         <section id="bindingEmptySection" class="hidden app-panel px-5 py-5 flex flex-col gap-3">
             <p class="font-display text-[16px] font-bold text-on-surface">还没有家庭</p>
-            <a href="family.html?app=1" class="h-11 rounded-2xl bg-primary text-white font-sans text-[13px] font-bold shadow-float flex items-center justify-center">先创建家庭</a>
+            <a id="bindingEmptyFamilyLink" href="family.html?app=1" class="app-btn-primary h-11 text-white font-sans text-[13px] font-bold flex items-center justify-center">先创建家庭</a>
         </section>
 
         <section class="app-stack">
             <div class="flex items-center justify-between">
-                <h2 class="font-display text-[18px] font-bold text-on-surface">已绑定设备</h2>
+                <h2 class="font-display text-[18px] font-bold text-on-surface">已经接住的设备</h2>
                 <span id="bindingListBadge" class="app-section-badge shrink-0">0 台</span>
             </div>
             <div id="bindingList" class="flex flex-col gap-3"></div>
@@ -107,11 +106,11 @@
                     <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">home</span></div>
                     <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
                 </a>
-                <a href="family.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <a id="bindingNavFamilyLink" href="family.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
                     <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">groups</span></div>
                     <span class="font-sans text-[11px] font-semibold tracking-wide">家庭</span>
                 </a>
-                <a href="device_binding.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
+                <a id="bindingNavSelfLink" href="device_binding.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
                     <div class="app-nav-pill active"><span class="material-symbols-outlined fill text-[22px]">devices</span></div>
                     <span class="font-sans text-[11px] font-bold tracking-wide">设备</span>
                 </a>
