@@ -6,7 +6,7 @@
     <title>守护 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260629-ui2" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style1" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
@@ -20,24 +20,24 @@
         <a href="index.html?app=1" class="app-topbar-side">
             <span class="material-symbols-outlined">arrow_back</span>
         </a>
-        <div class="app-topbar-title">守护</div>
+        <div class="app-topbar-title">家里现在</div>
         <a id="edgeMonitorWatchTopLink" href="watch.html?app=1" class="app-topbar-side">
             <span class="material-symbols-outlined">videocam</span>
         </a>
     </header>
 
     <main class="app-main app-stack">
-        <section class="app-panel p-5 flex flex-col gap-5 overflow-hidden">
+        <section class="app-panel p-6 flex flex-col gap-5 overflow-hidden">
             <div class="flex items-start justify-between gap-4">
                 <div class="min-w-0">
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">GUARD</p>
-                    <h1 id="edgeMainMessage" class="font-display text-[24px] leading-[1.2] font-bold text-on-surface tracking-tight mt-1">正在读取家里状态</h1>
-                    <p id="edgeStatusText" class="font-sans text-[13px] text-on-surface-variant leading-relaxed mt-2">这里只保留结论和下一步，不堆细节。</p>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.14em]">TODAY</p>
+                    <h1 id="edgeMainMessage" class="font-display text-[26px] leading-[1.14] font-bold text-on-surface tracking-[-0.02em] mt-1">正在读取家里状态</h1>
+                    <p id="edgeStatusText" class="font-sans text-[13px] text-on-surface-variant leading-[1.8] mt-2 max-w-[260px]">这里只保留结论和下一步，不堆细节。</p>
                 </div>
                 <span id="edgeDeviceStatus" class="app-section-badge shrink-0">连接中</span>
             </div>
 
-            <div class="app-panel-muted p-4 flex items-start gap-3">
+            <div class="app-panel-muted p-5 flex items-start gap-3">
                 <div id="edgeStatusIcon" class="w-10 h-10 rounded-full bg-[#edf6ee] flex items-center justify-center text-[#2d7d5c] shrink-0">
                     <span class="material-symbols-outlined text-[20px]">health_and_safety</span>
                 </div>
@@ -68,11 +68,11 @@
         </section>
 
         <section class="grid grid-cols-2 gap-3">
-            <a id="edgeMonitorDetectionLink" href="detection.html?app=1" class="col-span-2 rounded-[26px] bg-[linear-gradient(180deg,#496f98_0%,#3b5f86_55%,#253f59_100%)] text-white p-5 shadow-float active:scale-[0.99] transition-transform">
+            <a id="edgeMonitorDetectionLink" href="detection.html?app=1" class="col-span-2 rounded-[30px] bg-[linear-gradient(180deg,#8a88b1_0%,#6c6f93_52%,#545979_100%)] text-white p-5 shadow-[0_22px_44px_rgba(108,111,147,0.22)] active:scale-[0.99] transition-transform">
                 <div class="flex items-start justify-between gap-4">
                     <div>
-                        <p class="font-sans text-[11px] font-semibold text-white/72 tracking-[0.16em]">VISION</p>
-                        <h2 class="font-display text-[20px] font-bold mt-1">视觉检测</h2>
+                        <p class="font-sans text-[11px] font-semibold text-white/72 tracking-[0.14em]">VISION</p>
+                        <h2 class="font-display text-[22px] font-bold mt-1 tracking-[-0.02em]">去看细节</h2>
                         <p id="edgeFact" class="font-sans text-[13px] text-white/78 leading-relaxed mt-2">查看检测框、人数、亮度和规则命中。</p>
                     </div>
                     <span class="w-11 h-11 rounded-full bg-white/16 flex items-center justify-center shrink-0">
@@ -86,8 +86,8 @@
                     <span class="material-symbols-outlined text-[20px]">add_circle</span>
                 </span>
                 <div>
-                    <p class="font-display text-[16px] font-bold text-on-surface">摄像头</p>
-                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">接入和测试画面</p>
+                    <p class="font-display text-[16px] font-bold text-on-surface">接入画面</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">继续添加或测试摄像头</p>
                 </div>
             </a>
 
@@ -96,22 +96,22 @@
                     <span class="material-symbols-outlined text-[20px]">history</span>
                 </span>
                 <div>
-                    <p class="font-display text-[16px] font-bold text-on-surface">最近事件</p>
-                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">直接看最新提醒</p>
+                    <p class="font-display text-[16px] font-bold text-on-surface">刚刚发生</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">顺着时间线往下看</p>
                 </div>
             </a>
         </section>
 
-        <section class="app-snapshot-card bg-white">
+        <section class="app-snapshot-card bg-white/72">
             <a id="edgeMonitorWatchPreviewLink" href="watch.html?app=1" class="block relative aspect-video bg-black">
                 <img id="edgeSnapshotImage" src="assets/images/elderly-alone.jpg" class="w-full h-full object-cover object-[center_38%] opacity-95" alt="家里最新画面">
                 <div class="absolute inset-0 bg-gradient-to-t from-black/64 via-transparent to-black/18"></div>
                 <div class="absolute top-3 left-3 flex gap-2">
-                    <span id="edgeBrightness" class="px-2.5 py-1 rounded-full bg-black/38 backdrop-blur-md text-white text-[10px] font-bold">等待亮度</span>
+                    <span id="edgeBrightness" class="px-3 py-1.5 rounded-full bg-white/14 backdrop-blur-md text-white text-[10px] font-bold">等待亮度</span>
                 </div>
-                <div class="absolute bottom-0 left-0 right-0 p-4">
-                    <p class="font-sans text-[11px] text-white/72 font-semibold tracking-[0.12em]">最新画面</p>
-                    <p class="font-display text-[18px] leading-snug font-bold text-white mt-1">点开实时观看</p>
+                <div class="absolute bottom-0 left-0 right-0 p-5">
+                    <p class="font-sans text-[11px] text-white/72 font-semibold tracking-[0.12em]">JUST NOW</p>
+                    <p class="font-display text-[20px] leading-snug font-bold text-white mt-1 tracking-[-0.02em]">点开这一眼，看看家里此刻</p>
                 </div>
             </a>
         </section>
@@ -123,8 +123,8 @@
                         <span class="material-symbols-outlined fill text-[20px]">bedtime</span>
                     </div>
                     <div>
-                        <h3 class="font-display text-base font-bold text-on-surface">勿扰模式</h3>
-                        <p class="font-sans text-xs text-on-surface-variant font-medium mt-0.5 leading-relaxed">只提醒必要情况。</p>
+                        <h3 class="font-display text-base font-bold text-on-surface">少打扰一点</h3>
+                        <p class="font-sans text-xs text-on-surface-variant font-medium mt-0.5 leading-relaxed">只在需要你看一眼的时候提醒。</p>
                     </div>
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
