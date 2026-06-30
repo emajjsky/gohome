@@ -230,16 +230,25 @@
                 GoHomeEdge.appCameras(),
                 GoHomeEdge.appEvents("limit=10&acknowledged=false"),
             ]);
-            const camera = preferredCamera(cameras);
+            const enabledCameras = cameras.filter((camera) => camera.enabled !== false);
+            const camera = preferredCamera(enabledCameras);
 
             setText("edgeHomeDevice", primaryFamily.name || "家庭空间");
             setText("edgeHomeTime", device.worker_running ? "守护服务在线" : "守护服务暂停");
 
             if (!camera) {
                 syncCameraEntryLinks(null);
-                setText("edgeHomeTime", "等待摄像头接入");
-                setText("edgeHomeTitle", "还没有添加摄像头");
-                setText("edgeHomeSubtitle", "先打开本机守护服务管理台，把局域网摄像头接进来。");
+                if (cameras.length) {
+                    setText("edgeHomeTime", "等待重新启用摄像头");
+                    setText("edgeHomeTitle", "当前没有启用中的摄像头");
+                    setText("edgeHomeSubtitle", "先去接入页把一路摄像头设为当前，再进入守护主链。");
+                    setAction("edgeHomePrimaryAction", "connect.html", "去接入页", "nest_cam_indoor");
+                } else {
+                    setText("edgeHomeTime", "等待摄像头接入");
+                    setText("edgeHomeTitle", "还没有添加摄像头");
+                    setText("edgeHomeSubtitle", "先打开本机守护服务管理台，把局域网摄像头接进来。");
+                    setAction("edgeHomePrimaryAction", "connect.html", "去接入页", "nest_cam_indoor");
+                }
                 return;
             }
 
