@@ -28,6 +28,45 @@
         }
     }
 
+    function selectedFamilyId() {
+        const params = new URLSearchParams(window.location.search);
+        const familyId = String(params.get("family_id") || "").trim();
+        return familyId || "";
+    }
+
+    function syncBackLink() {
+        const node = $("connectBackLink");
+        if (!node) return;
+        const suffix = selectedFamilyId() ? `?family_id=${encodeURIComponent(selectedFamilyId())}` : "";
+        node.href = window.GoHomeEdge?.pageHref?.(`device_binding.html${suffix}`) || `device_binding.html${suffix}`;
+    }
+
+    function cameraSuffix(cameraId = null) {
+        return cameraId ? `?camera_id=${encodeURIComponent(cameraId)}` : "";
+    }
+
+    function syncNextStepLinks(hasCamera = false, cameraId = null) {
+        const section = $("connectNextStepSection");
+        const badge = $("connectNextStepBadge");
+        const topMonitorLink = $("connectTopMonitorLink");
+        const monitorLink = $("connectMonitorLink");
+        const watchLink = $("connectWatchLink");
+        const navMonitorLink = $("connectNavMonitorLink");
+        const navEventsLink = $("connectNavEventsLink");
+        const suffix = cameraSuffix(cameraId);
+        const monitorHref = window.GoHomeEdge?.pageHref?.(`monitor.html${suffix}`) || `monitor.html${suffix}`;
+        const watchHref = window.GoHomeEdge?.pageHref?.(`watch.html${suffix}`) || `watch.html${suffix}`;
+        const eventsHref = window.GoHomeEdge?.pageHref?.(`events.html${suffix}`) || `events.html${suffix}`;
+        if (topMonitorLink) topMonitorLink.href = monitorHref;
+        if (monitorLink) monitorLink.href = monitorHref;
+        if (watchLink) watchLink.href = watchHref;
+        if (navMonitorLink) navMonitorLink.href = monitorHref;
+        if (navEventsLink) navEventsLink.href = eventsHref;
+        if (!section || !badge) return;
+        section.classList.toggle("hidden", !hasCamera);
+        badge.textContent = hasCamera ? "可继续" : "待接入";
+    }
+
     function isLocalCamera(camera) {
         const streamUrl = String(camera?.stream_url || "").toLowerCase();
         return /^(local|webcam|device|camera):/.test(streamUrl) || /^\d+$/.test(streamUrl);
@@ -167,11 +206,11 @@
         return camera;
     }
 
-    function renderPreview(snapshot, result, title = "画面已接入") {
+    async function renderPreview(snapshot, result, title = "画面已接入") {
         const image = $("connectionPreviewImage");
         const empty = $("connectionPreviewEmpty");
         if (snapshot?.image_url) {
-            image.src = `${GoHomeEdge.edgeUrl(snapshot.image_url)}?t=${Date.now()}`;
+            image.src = await GoHomeEdge.appMediaPlaybackUrl(snapshot.image_url);
             image.classList.remove("hidden");
             empty.classList.add("hidden");
         }
@@ -194,6 +233,8 @@
         const list = $("cameraList");
         const networkCameras = state.cameras.filter((camera) => !isLocalCamera(camera));
         const active = preferredCamera(networkCameras);
+        const cameraId = state.selectedCameraId || active?.id || null;
+        syncNextStepLinks(networkCameras.length > 0, cameraId);
         $("edgeCameraCount").textContent = String(networkCameras.length);
         $("cameraListBadge").textContent = networkCameras.length ? `${networkCameras.length} 路` : "未接入";
         setText("edgeActiveRoom", active?.room || active?.name || "-");
@@ -251,7 +292,7 @@
         try {
             const result = await GoHomeEdge.testCamera(cameraId);
             state.selectedCameraId = cameraId;
-            renderPreview(result.snapshot, result);
+            await renderPreview(result.snapshot, result);
             await loadCameras();
             return result;
         } finally {
@@ -264,7 +305,7 @@
         try {
             const payload = payloadFromForm();
             const result = await GoHomeEdge.testCameraConnection(payload);
-            renderPreview(result.snapshot, result, "测试通过");
+            await renderPreview(result.snapshot, result, "测试通过");
             return result;
         } finally {
             setBusy(button, false);
@@ -274,10 +315,14 @@
     async function initialize() {
         try {
             const health = await GoHomeEdge.connect();
+            syncBackLink();
+            syncNextStepLinks(false);
             setText("edgeConnectionStatus", "本机守护服务已连接");
             setText("edgeConnectionSubtitle", `服务地址 ${health.lan_url || GoHomeEdge.apiBase || "本机"}，添加后由这台 Mac 负责拉流和检测。`);
             await loadCameras();
         } catch (error) {
+            syncBackLink();
+            syncNextStepLinks(false);
             setText("edgeConnectionStatus", "本机服务未连接");
             setText("edgeConnectionSubtitle", error.message || "启动 edge-agent 后再回来接入摄像头。");
             setText("edgeLastTest", "离线");
@@ -294,6 +339,7 @@
             try {
                 await saveCamera(payloadFromForm());
                 setResultState("已保存并启用", "这路摄像头已经写入本机守护服务，后续会作为当前主要守护画面。", "待验证");
+                syncNextStepLinks(true, state.selectedCameraId);
             } catch (error) {
                 setResultState("保存失败", explainCameraError(error.message), "失败");
             } finally {

@@ -1057,6 +1057,335 @@ iOS / Android App
 - 当前产品端 12 个入口/主链页面已统一引用 `assets/scripts/edge-client.js?v=20260630-video1`，不会再出现实时流共享层已经更新，但部分页面继续使用旧版脚本的缓存分叉。
 - 这样后续若继续在 `edge-client.js` 增加共享能力，只需抬同一条版本戳即可覆盖整条用户端主链，不必再按页面分别追缓存问题。
 
+## 9.1.17 2026-06-30 `connect` 预览媒体入口对齐记录
+
+做了什么：
+
+- 调整 `assets/scripts/connect-live.js`，测试摄像头成功后不再手写 `GoHomeEdge.edgeUrl(snapshot.image_url)` 直出图片地址。
+- 统一改成走 `GoHomeEdge.appMediaPlaybackUrl(snapshot.image_url)`，让接入页测试预览也复用用户端共享媒体鉴权入口。
+- 把 `connect-live.js` 版本戳抬到 `20260630-flow3`，避免手机继续命中旧缓存。
+
+产物位置：
+
+- `connect.html`
+- `assets/scripts/connect-live.js`
+
+怎么验证：
+
+- 对 `connect.html` 和 `assets/scripts/connect-live.js` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `connect.html?app=1`，点击已接入摄像头卡片里的“测试”按钮。
+- 测试通过后，`connectionPreviewImage.src` 应变成 `/api/app/media/snapshots/...?...playback_ticket=...`，而不是裸 `snapshots` 或手写 `edgeUrl(...)` 地址。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`connect.html?app=1&cb=connectflow3` 点击现有 RTSP 摄像头“测试”后，预览图当前加载 `http://127.0.0.1:8711/api/app/media/snapshots/camera_9/...jpg?playback_ticket=...`。
+- 这样接入页的测试预览也和事件详情、检测截图一样，统一走共享媒体播放入口；后续如果媒体鉴权或回放票据策略变化，不再需要单独回头修 `connect` 页。
+
+## 9.1.18 2026-06-30 `app-shell` 原生唤起上下文保活记录
+
+做了什么：
+
+- 调整 `assets/scripts/app-shell-live.js` 里的原生唤起目标解析逻辑。
+- 修正摄像头唤起时错误使用 `cameraId` 的问题，统一改成主链约定的 `camera_id`。
+- 补齐事件详情原生唤起时的摄像头上下文，让 `event_detail.html?eventId=...` 同时带上 `camera_id`，避免从原生推送进来后在 `detail -> watch/events` 回链时丢上下文。
+- 把 `app-shell-live.js` 版本戳抬到 `20260630-flow2`，确保真实页面吃到新逻辑。
+
+产物位置：
+
+- `assets/scripts/app-shell-live.js`
+- `app-shell.html`
+
+怎么验证：
+
+- 对 `assets/scripts/app-shell-live.js` 和 `app-shell.html` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `app-shell.html?app=1`，确认当前实际加载脚本为 `assets/scripts/app-shell-live.js?v=20260630-flow2`。
+- 在线读取该脚本文本，确认已包含 `watch.html?camera_id=` 与事件详情追加 `&camera_id=` 的新逻辑。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`app-shell.html?app=1&cb=appshell2` 当前实际加载 `http://127.0.0.1:8711/ui/assets/scripts/app-shell-live.js?v=20260630-flow2`，并且线上脚本内容已经包含 `watch.html?camera_id=` 和事件详情附带 `camera_id` 的逻辑。
+- 这样原生壳从推送或启动参数直达 `watch / event_detail` 时，也能继续承接用户端已经统一好的 `camera_id` 上下文链，不会再因为参数名不一致而掉回默认视图。
+
+## 9.1.19 2026-06-30 首页入口摄像头上下文续接记录
+
+做了什么：
+
+- 在 `index.html` 给首页“演示主链”三张入口卡片补上动态锚点：`edgeHomeMonitorLink`、`edgeHomeWatchLink`、`edgeHomeEventsLink`。
+- 调整 `assets/scripts/home-live.js`，让首页在算出当前优选摄像头后，统一把主按钮和三张入口卡片改成带 `camera_id` 的目标地址。
+- 同时把 `setAction()` 收到共享导航口径，统一通过 `GoHomeEdge.pageHref()` 生成页面跳转地址，避免首页按钮继续手写静态链接。
+- 把 `home-live.js` 版本戳抬到 `20260630-flow2`，确保真实页面命中新逻辑。
+
+产物位置：
+
+- `index.html`
+- `assets/scripts/home-live.js`
+
+怎么验证：
+
+- 对 `index.html` 和 `assets/scripts/home-live.js` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `index.html?app=1`，确认首页当前主按钮和“演示主链”三张卡片都带同一个优选 `camera_id`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`index.html?app=1&cb=homeflow2` 当前 `edgeHomePrimaryAction` 为 `watch.html?camera_id=9&app=1`，三张演示卡分别为 `monitor.html?camera_id=9&app=1`、`watch.html?camera_id=9&app=1`、`events.html?camera_id=9&app=1`。
+- 这样首页作为比赛演示和用户日常入口时，不会再从第一跳就丢掉当前优选摄像头，上下文可以直接承接到 `monitor / watch / events` 主链。
+
+## 9.1.20 2026-06-30 陪伴入口 `app` 参数一致性记录
+
+做了什么：
+
+- 修正 `companionship.html` 底部导航里当前页自己的链接，补上缺失的 `?app=1`。
+- 修正 `rules.html` 底部导航跳去陪伴页的链接，同样补上 `?app=1`。
+- 本轮不动业务逻辑，只补齐用户端主导航里漏掉的 App 壳参数，避免从规则页或陪伴页切换时掉出 App 模式。
+
+产物位置：
+
+- `companionship.html`
+- `rules.html`
+
+怎么验证：
+
+- 对 `companionship.html` 和 `rules.html` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下分别打开 `companionship.html?app=1` 和 `rules.html?app=1`。
+- 在线读取底部导航里的“陪伴”链接，确认都为 `companionship.html?app=1`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`companionship.html?app=1&cb=companion2` 当前底部导航“陪伴”为 `companionship.html?app=1`；`rules.html?app=1&cb=companion2` 当前底部导航“陪伴”同样为 `companionship.html?app=1`。
+- 这样从规则页进入陪伴页、以及停留在陪伴页继续切换底部导航时，都不会再因为漏掉 `app=1` 而脱离 App 壳链路。
+
+## 9.1.21 2026-06-30 `privacy` 动态底部导航共享接入记录
+
+做了什么：
+
+- 在 `privacy.html` 接入 `assets/scripts/edge-client.js?v=20260630-video1`。
+- 调整“我的”页内联的 `renderBottomNav()`，不再手写普通模式和纪念模式的跳转地址，而是统一通过 `GoHomeEdge.pageHref()` 生成。
+- 普通模式下的 `index / monitor / events / companionship / privacy`，以及纪念模式下的 `memorial_home / digital_human / memory_gallery / voice_archive / privacy`，现在都会自动附带当前 App 壳参数。
+
+产物位置：
+
+- `privacy.html`
+
+怎么验证：
+
+- 对 `privacy.html` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `privacy.html?app=1`，读取普通模式底部导航，确认链接为 `...?app=1`。
+- 再把纪念模式开关切为开启，确认纪念模式底部导航生成 `...?memorial=on&app=1`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`privacy.html?app=1&cb=privacy2` 普通模式底部导航当前为 `index.html?app=1`、`monitor.html?app=1`、`events.html?app=1`、`companionship.html?app=1`、`privacy.html?app=1`。
+- 同页把纪念模式切为开启后，底部导航当前变为 `memorial_home.html?memorial=on&app=1`、`digital_human.html?memorial=on&app=1`、`memory_gallery.html?memorial=on&app=1`、`voice_archive.html?memorial=on&app=1`、`privacy.html?memorial=on&app=1`。
+- 这样“我的”页无论处于普通模式还是纪念模式，底部导航都已经收进共享导航口径，不再各自维护静态跳转地址。
+
+## 9.1.22 2026-06-30 纪念模式页内互跳参数收口记录
+
+做了什么：
+
+- 修正 `memorial_home.html`、`digital_human.html`、`memory_gallery.html`、`voice_archive.html` 内部互跳链接。
+- 统一把纪念模式四页底部导航里的 `memorial_home / digital_human / memory_gallery / voice_archive` 改成显式携带 `?app=1&memorial=on`。
+- 顺手补齐页内 CTA 的纪念模式参数，例如 `voice_archive` 去平行世界、`memorial_home` 去记忆馆/声音页等入口，也统一带上 `?app=1&memorial=on`。
+
+产物位置：
+
+- `memorial_home.html`
+- `digital_human.html`
+- `memory_gallery.html`
+- `voice_archive.html`
+
+怎么验证：
+
+- 对上述 4 个 HTML 文件运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下分别打开 `memorial_home.html?app=1&memorial=on` 和 `voice_archive.html?app=1&memorial=on`。
+- 读取底部导航和页内 CTA，确认都已显式携带 `?app=1&memorial=on`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`memorial_home.html?app=1&memorial=on&cb=memorial2` 当前底部导航为 `memorial_home.html?app=1&memorial=on`、`digital_human.html?app=1&memorial=on`、`memory_gallery.html?app=1&memorial=on`、`voice_archive.html?app=1&memorial=on`、`privacy.html?app=1&memorial=on`，相关 CTA 也已带齐纪念模式参数。
+- `voice_archive.html?app=1&memorial=on&cb=memorial2` 当前页内“去平行世界”已变成 `digital_human.html?app=1&memorial=on`，底部导航同样整组保持 `?app=1&memorial=on`。
+- 这样纪念模式四页之间的互跳不会再因为漏掉 `app / memorial` 参数而掉回普通模式或脱离 App 壳。
+
+## 9.1.23 2026-06-30 `connect` 下一步摄像头上下文续接记录
+
+做了什么：
+
+- 调整 `assets/scripts/connect-live.js` 的 `syncNextStepLinks()`，让“下一步”的 `守护 / 实时` 链接不再只跳固定页面。
+- 当前页面如果已经选中或识别出优选摄像头，会把该 `camera_id` 一起续传到 `monitor.html` 和 `watch.html`。
+- 保留原先“没有摄像头时隐藏下一步”的逻辑，不扩散修改整页其他静态导航，只收这一处最直接的接入闭环。
+
+产物位置：
+
+- `assets/scripts/connect-live.js`
+
+怎么验证：
+
+- 对 `assets/scripts/connect-live.js` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `connect.html?app=1`，确认当页面已有优选摄像头时，“下一步”区域显示为 `可继续`。
+- 在线读取 `connectMonitorLink` 和 `connectWatchLink`，确认都显式携带同一个 `camera_id`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`connect.html?app=1&cb=connectcamera1` 当前显示优选房间为 `客厅`，`connectNextStepBadge` 为 `可继续`，并且 `connectMonitorLink = monitor.html?camera_id=9&app=1`、`connectWatchLink = watch.html?camera_id=9&app=1`。
+- 这样从摄像头接入页走“下一步”进入守护或实时观看时，不会再掉回默认摄像头，而是直接承接当前已接入、已优选的那一路画面。
+
+## 9.1.24 2026-06-30 `app-shell` 优选摄像头入口续接记录
+
+做了什么：
+
+- 调整 `assets/scripts/app-shell-live.js`，让 `app-shell` 在拿到摄像头列表后先计算当前优选摄像头。
+- 把主按钮“进入实时观看”改成带优选 `camera_id` 的 `watch.html`。
+- 把“一句话导航”里的 `实时 / 事件` 入口、以及配置卡片里的“实时观看”入口，一并改成承接同一个优选 `camera_id`。
+- 在 `app-shell.html` 给“一句话导航”三张卡片补上动态锚点，并把脚本版本戳抬到 `20260630-flow3`。
+
+产物位置：
+
+- `assets/scripts/app-shell-live.js`
+- `app-shell.html`
+
+怎么验证：
+
+- 对 `assets/scripts/app-shell-live.js` 和 `app-shell.html` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `app-shell.html?app=1`。
+- 在线读取主按钮、“一句话导航”的 `实时 / 事件`、以及配置卡片里的“实时观看”，确认都带同一个优选 `camera_id`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`app-shell.html?app=1&cb=appshell3` 当前 `appShellPrimaryAction = watch.html?camera_id=9&app=1`，`appShellWatchLink = watch.html?camera_id=9&app=1`，`appShellEventsLink = events.html?camera_id=9&app=1`，配置卡片里的“实时观看”同样为 `watch.html?camera_id=9&app=1`。
+- 这样 App 壳作为比赛演示开场入口时，不只是原生唤起能带住 `camera_id`，连页面内的主按钮和快捷卡片也已经直接承接到当前优选摄像头，不会再从第一跳掉回默认视角。
+
+## 9.1.25 2026-06-30 `device_binding` 家庭上下文保活记录
+
+做了什么：
+
+- 在 `device_binding.html` 给返回入口、空状态入口、底部导航里的“家庭 / 设备”补上动态锚点。
+- 调整 `assets/scripts/device-binding-live.js`，当页面确定当前家庭后，会把 `family_id` 写回当前 URL。
+- 同时让本页底部导航里的“设备”链接也显式带上当前 `family_id`，避免刷新或二次进入时掉回默认家庭。
+- 保持“去家庭页”的链接仍走 `family.html?app=1`，不额外扩展 `family.html` 的参数口径。
+
+产物位置：
+
+- `device_binding.html`
+- `assets/scripts/device-binding-live.js`
+
+怎么验证：
+
+- 对 `device_binding.html` 和 `assets/scripts/device-binding-live.js` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `device_binding.html?app=1`。
+- 在线读取当前 URL 和底部导航“设备”链接，确认都已经显式携带当前 `family_id`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`device_binding.html?app=1&cb=binding2` 打开后，页面当前 URL 已同步成 `device_binding.html?app=1&cb=binding2&family_id=37`，下拉当前家庭值为 `37`，并且底部导航“设备”当前为 `device_binding.html?family_id=37&app=1`。
+- 当前环境下只有一个家庭可选，但这已经证明 `device_binding` 会把已选家庭持续写回 URL 和当前页链接；后续多家庭场景下切换时，也能沿用这套保活方式，不必重新补链。
+
+## 9.1.26 2026-06-30 `family` 当前家庭上下文显式化记录
+
+做了什么：
+
+- 在 `family.html` 给返回入口、首页底部导航、当前页底部导航补上动态锚点。
+- 调整 `assets/scripts/family-live.js`，让 `family` 页优先读取 URL 里的 `family_id` 作为当前家庭。
+- 当页面拿到当前家庭后，会把该 `family_id` 写回当前 URL，并把主按钮、列表入口、底部导航“设备”统一指向同一个家庭的 `device_binding.html?family_id=...`。
+- 同时让当前页底部导航“家庭”自身链接也显式带上该 `family_id`，避免刷新后又回到隐式默认状态。
+
+产物位置：
+
+- `family.html`
+- `assets/scripts/family-live.js`
+
+怎么验证：
+
+- 对 `family.html` 和 `assets/scripts/family-live.js` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `family.html?app=1`。
+- 在线读取当前 URL、主按钮、列表“绑定设备”、当前页底部导航，确认它们都显式携带同一个 `family_id`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`family.html?app=1&cb=family2` 当前 URL 已同步成 `family.html?app=1&cb=family2&family_id=37`，并且 `familyPrimaryBindingLink = device_binding.html?family_id=37&app=1`、`familyListBindingLink = device_binding.html?family_id=37&app=1`、`familyNavSelfLink = family.html?family_id=37&app=1`。
+- 这样 `family -> device_binding` 这一步不再只是“页面里隐式用了第一家庭”，而是把当前家庭显式写进 URL 和所有关键入口；后续从设备页再回流家庭页时，也能保持同一个家庭上下文。
+
+补充收口：
+
+- 同步调整了 `assets/scripts/device-binding-live.js` 的回链逻辑，让 `device_binding -> family` 也会继续携带当前 `family_id`。
+- 本轮已在真实 `8711` 在线页面环境下验通：`device_binding.html?app=1&cb=binding3` 当前 URL 为 `device_binding.html?app=1&cb=binding3&family_id=37`，并且 `bindingBackLink = family.html?family_id=37&app=1`、`bindingNavFamilyLink = family.html?family_id=37&app=1`、`bindingEmptyFamilyLink = family.html?family_id=37&app=1`。
+- 这样 `family <-> device_binding` 这条前链已经双向保活同一个家庭上下文，不再只是一边写入、一边丢失。
+
+## 9.1.27 2026-06-30 零散守护入口摄像头上下文收口记录
+
+做了什么：
+
+- 给 `connect.html` 顶部去守护、底部去事件入口补上动态锚点，并在 `assets/scripts/connect-live.js` 里复用当前已接入摄像头，统一把 `monitor / watch / events` 续成同一个 `camera_id`。
+- 调整 `assets/scripts/watch-live.js`，让 `watch` 顶部返回守护和“守护概览”按钮都继续携带当前摄像头，不再回退成裸 `monitor.html`。
+- 调整 `assets/scripts/events-live.js`，让事件页顶部返回、主操作“回守护页”、底部“守护”都继续携带当前 `camera_id`。
+- 调整 `assets/scripts/monitor-live.js` 与 `assets/scripts/detection-live.js`，让底部 `events / monitor` 导航与当前摄像头保持一致；同时抬高对应页面脚本版本戳，避免 WebView 继续命中旧缓存。
+
+产物位置：
+
+- `connect.html`
+- `watch.html`
+- `detection.html`
+- `events.html`
+- `monitor.html`
+- `assets/scripts/connect-live.js`
+- `assets/scripts/watch-live.js`
+- `assets/scripts/detection-live.js`
+- `assets/scripts/events-live.js`
+- `assets/scripts/monitor-live.js`
+
+怎么验证：
+
+- 对上述改动文件运行编辑器诊断，确认没有新增报错。
+- 在真实 `8711` 在线页面分别打开 `connect.html?app=1`、`watch.html?app=1&camera_id=9`、`events.html?app=1&camera_id=9`、`monitor.html?app=1&camera_id=9`、`detection.html?app=1&camera_id=9`。
+- 在线读取顶部入口、主操作按钮和底部导航的 `href`，确认它们都显式带上同一个 `camera_id=9`，并继续保留 `app=1`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮收口的是最后一类“页面已经拿到当前摄像头，但跳去 `monitor / events / watch` 时仍退回裸链接”的零散入口，不涉及新的业务逻辑。
+- 这样从 `connect -> monitor/events`、`watch -> monitor`、`events -> monitor`、`monitor -> events`、`detection -> monitor` 再切页时，会继续停留在同一个摄像头视角，不会因为命中静态入口而退回默认摄像头。
+
 ## 9.2 2026-06-28 `connect.html` 闭环改造记录
 
 做了什么：

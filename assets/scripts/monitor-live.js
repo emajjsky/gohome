@@ -74,10 +74,12 @@
         const watchPreview = $("edgeMonitorWatchPreviewLink");
         const detectionLink = $("edgeMonitorDetectionLink");
         const eventsLink = $("edgeMonitorEventsLink");
+        const eventsNavLink = $("edgeMonitorNavEventsLink");
         if (watchTop) watchTop.href = watchHref;
         if (watchPreview) watchPreview.href = watchHref;
         if (detectionLink) detectionLink.href = detectionHref;
         if (eventsLink) eventsLink.href = eventsHref;
+        if (eventsNavLink) eventsNavLink.href = eventsHref;
     }
 
     async function attachMonitorStream(camera) {

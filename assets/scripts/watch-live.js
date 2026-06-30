@@ -69,12 +69,14 @@
         const camera = activeCamera();
         const suffix = camera?.id ? `?camera_id=${encodeURIComponent(camera.id)}` : "";
         const detectionHref = GoHomeEdge.pageHref(`detection.html${suffix}`) || `detection.html${suffix}`;
-        const monitorHref = GoHomeEdge.pageHref("monitor.html") || "monitor.html";
+        const monitorHref = GoHomeEdge.pageHref(`monitor.html${suffix}`) || `monitor.html${suffix}`;
         const eventsHref = GoHomeEdge.pageHref(`events.html${suffix}`) || `events.html${suffix}`;
+        const monitorTop = $("watchMonitorTopLink");
         const detectionTop = $("watchDetectionTopLink");
         const detectionAction = $("watchDetectionLink");
         const monitorLink = $("watchMonitorLink");
         const eventsLink = $("watchEventsLink");
+        if (monitorTop) monitorTop.href = monitorHref;
         if (detectionTop) detectionTop.href = detectionHref;
         if (detectionAction) detectionAction.href = detectionHref;
         if (monitorLink) monitorLink.href = monitorHref;

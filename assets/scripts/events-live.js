@@ -24,13 +24,16 @@
 
     function syncNavLinks(cameraId) {
         const suffix = cameraId ? `?camera_id=${encodeURIComponent(cameraId)}` : "";
+        const monitorHref = GoHomeEdge.pageHref(`monitor.html${suffix}`) || `monitor.html${suffix}`;
         const watchHref = GoHomeEdge.pageHref(`watch.html${suffix}`) || `watch.html${suffix}`;
         const watchLink = $("edgeTimelineWatchLink");
         const monitorLink = $("edgeTimelineMonitorLink");
         const backLink = $("edgeEventsBackLink");
+        const monitorNavLink = $("edgeEventsNavMonitorLink");
         if (watchLink) watchLink.href = watchHref;
-        if (monitorLink) monitorLink.href = GoHomeEdge.pageHref("monitor.html") || "monitor.html";
-        if (backLink) backLink.href = GoHomeEdge.pageHref("monitor.html") || "monitor.html";
+        if (monitorLink) monitorLink.href = monitorHref;
+        if (backLink) backLink.href = monitorHref;
+        if (monitorNavLink) monitorNavLink.href = monitorHref;
     }
 
     function readEventUpdates() {
@@ -78,8 +81,47 @@
         return "bg-primary/8 text-primary";
     }
 
+    function fmtMetricValue(key, value) {
+        if (value === null || value === undefined || value === "") return "-";
+        if (key === "people" && Array.isArray(value)) return `${value.length} 个人体框`;
+        if (key.endsWith("_seconds")) {
+            const seconds = Math.max(0, Math.round(Number(value) || 0));
+            if (seconds < 60) return `${seconds} 秒`;
+            if (seconds < 3600) return `${Math.floor(seconds / 60)} 分`;
+            return `${(seconds / 3600).toFixed(seconds >= 36000 ? 0 : 1)} 小时`;
+        }
+        if (key === "motion_score") return Number(value).toFixed(4);
+        if (key === "brightness" || key === "contrast") return Number(value).toFixed(0);
+        if (typeof value === "number") return Number.isInteger(value) ? String(value) : Number(value).toFixed(2);
+        return String(value);
+    }
+
+    function metricLabel(key) {
+        const labels = {
+            no_person_seconds: "连续无人",
+            no_motion_seconds: "静止时长",
+            motion_score: "运动分数",
+            brightness: "亮度",
+            contrast: "对比度",
+            people: "人体框",
+        };
+        return labels[key] || key;
+    }
+
+    function summarizeMetrics(metrics) {
+        const entries = Object.entries(metrics || {}).filter(([, value]) => value !== null && value !== undefined && value !== "");
+        if (!entries.length) return "";
+        return entries.map(([key, value]) => `${metricLabel(key)} ${fmtMetricValue(key, value)}`).join("，");
+    }
+
     function actionText(event) {
+        const rule = event?.payload?.rule || {};
+        const observed = summarizeMetrics(rule.observed);
+        const threshold = summarizeMetrics(rule.threshold);
         if (event.acknowledged) return "已处理，可以作为记录查看。";
+        if (observed && threshold) return `${observed}，阈值 ${threshold}。`;
+        if (observed) return `当前观测：${observed}。`;
+        if (rule.reason) return rule.reason;
         if (event.type === "fall_candidate") return "建议先确认老人状态，再标记处理。";
         if (event.type === "camera_offline") return "建议检查本机服务和摄像头连接。";
         if (event.type === "black_screen") return "建议打开截图，看是否遮挡或背光。";

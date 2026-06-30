@@ -153,12 +153,15 @@
     function syncNavLinks() {
         const camera = selectedCamera();
         const suffix = camera?.id ? `?camera_id=${encodeURIComponent(camera.id)}` : "";
+        const monitorHref = GoHomeEdge.pageHref(`monitor.html${suffix}`) || `monitor.html${suffix}`;
         const watchHref = GoHomeEdge.pageHref(`watch.html${suffix}`) || `watch.html${suffix}`;
         const eventsHref = GoHomeEdge.pageHref(`events.html${suffix}`) || `events.html${suffix}`;
+        const monitorNav = $("detectionNavMonitorLink");
         const watchBack = $("detectionBackWatchLink");
         const eventsPrimary = $("detectionPrimaryEventsLink");
         const eventsSecondary = $("detectionSecondaryEventsLink");
         const eventsNav = $("detectionNavEventsLink");
+        if (monitorNav) monitorNav.href = monitorHref;
         if (watchBack) watchBack.href = watchHref;
         if (eventsPrimary) eventsPrimary.href = eventsHref;
         if (eventsSecondary) eventsSecondary.href = eventsHref;
