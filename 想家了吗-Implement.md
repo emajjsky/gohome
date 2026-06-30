@@ -1485,6 +1485,71 @@ iOS / Android App
 - 本轮已在真实 `8711` 页面环境下验通：唯一一路摄像头停用后，首页显示 `当前没有启用中的摄像头`，主按钮已切到 `connect.html?app=1`，同时守护入口回退为不带 `camera_id` 的安全入口。
 - 随后已把摄像头重新恢复为当前启用状态，当前现场配置不受影响。
 
+## 9.1.31 2026-06-30 Raspberry Pi 5 部署准备记录
+
+做了什么：
+
+- 新增 `docs/raspberry-pi-deploy.md`，把 Pi 5 到手后的首轮部署步骤整理成可执行文档。
+- 文档里补齐了系统依赖、Python 环境、`.env` 配置、前台启动、单路 RTSP 验证、`systemd` 安装、日志查看、24 小时检查项和回滚路径。
+- 新增 `edge-agent/scripts/install-systemd-service.sh`，生成并安装 `gohome-edge-agent.service`，让 Pi 侧可以直接走 `systemd` 自启，而不是现场手写 service 文件。
+- 在 `edge-agent/README.md` 增加 Pi 5 入口说明，明确树莓派验证走专用部署文档和 `systemd` 脚本，不复用 macOS LaunchAgent 口径。
+
+产物位置：
+
+- `docs/raspberry-pi-deploy.md`
+- `edge-agent/scripts/install-systemd-service.sh`
+- `edge-agent/README.md`
+
+怎么验证：
+
+- 运行 `bash -n edge-agent/scripts/install-systemd-service.sh`，确认脚本语法有效。
+- 人工检查部署文档是否覆盖：
+  - Raspberry Pi 5 基础依赖
+  - `.env` 配置入口
+  - `./run.sh` 前台首启
+  - `systemd` 安装与重启
+  - `journalctl` 日志查看
+  - 24 小时观察项
+  - 回滚路径
+- 确认 README 已给出 Pi 5 部署文档和脚本的显式入口。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 这一轮完成的是“树莓派到货前的部署准备”，不是“树莓派硬件真验收”。
+- 现在你明天拿到 Pi 5 后，可以直接按文档和脚本跑首轮部署，不需要再现场拼 `systemd` service 或补部署顺序。
+- 真正的 Pi 侧通过标准，仍然要等板子到手后按这份文档跑完 `run.sh -> 单路 RTSP -> systemd -> 重启恢复 -> 24 小时观察` 才算完成硬件验证。
+
+## 9.1.32 2026-06-30 通知自测脚本准备记录
+
+做了什么：
+
+- 新增 `edge-agent/scripts/send-test-notification.sh`，直接调用现有 `POST /api/notify/test`，把本地通知通道自测收成一条命令。
+- 支持通过命令行传入标题、正文和 `extra` JSON，避免每次都手写 `curl`。
+- 在 `edge-agent/README.md` 的通知配置章节补了自测命令入口，方便配完 Bark / 飞书 / Telegram 后立刻发一条验证消息。
+
+产物位置：
+
+- `edge-agent/scripts/send-test-notification.sh`
+- `edge-agent/README.md`
+
+怎么验证：
+
+- 运行 `bash -n edge-agent/scripts/send-test-notification.sh`，确认脚本语法有效。
+- 在未配置通知通道时，脚本会命中现有 `/api/notify/test` 路径；通道配置完成后，可直接拿它发送一条真实测试消息。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 这一轮完成的是“通知闭环的自测准备”，不是“真实手机送达已通过”。
+- 真实通知送达仍取决于你最终选择的通道配置是否可用，例如 Bark Key、飞书 Webhook 或 Telegram Bot 参数。
+
 ## 9.2 2026-06-28 `connect.html` 闭环改造记录
 
 做了什么：
