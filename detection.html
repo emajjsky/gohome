@@ -6,7 +6,7 @@
     <title>视觉检测 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260629-ui3" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style1" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
@@ -20,19 +20,19 @@
         <a id="detectionBackWatchLink" href="watch.html?app=1" class="app-topbar-side" title="返回实时观看">
             <span class="material-symbols-outlined">arrow_back</span>
         </a>
-        <div class="app-topbar-title">视觉检测</div>
+        <div class="app-topbar-title">看清这一眼</div>
         <button id="detectionRefreshButton" class="app-topbar-side" type="button" title="刷新检测">
             <span class="material-symbols-outlined text-[20px]">refresh</span>
         </button>
     </header>
 
     <main class="app-main app-stack">
-        <section class="app-panel p-5 flex flex-col gap-4">
+        <section class="app-panel p-6 flex flex-col gap-5">
             <div class="flex items-start justify-between gap-4">
                 <div class="min-w-0">
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">VISION</p>
-                    <h1 id="detectionTitle" class="font-display text-[23px] leading-[1.18] font-bold text-on-surface tracking-tight mt-1">正在读取检测结果</h1>
-                    <p id="detectionSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-relaxed mt-2">这里只保留截图、检测框和规则结果。</p>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.14em]">VISION</p>
+                    <h1 id="detectionTitle" class="font-display text-[26px] leading-[1.14] font-bold text-on-surface tracking-[-0.02em] mt-1">正在读取检测结果</h1>
+                    <p id="detectionSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-[1.8] mt-2 max-w-[270px]">这里只保留截图、检测框和规则结果。</p>
                 </div>
                 <span id="detectionStatusBadge" class="app-section-badge shrink-0">连接中</span>
             </div>
@@ -43,10 +43,10 @@
                 <div class="app-detection-shade"></div>
                 <div class="absolute top-3 left-3 right-3 flex items-start justify-between gap-3">
                     <div class="flex flex-wrap gap-2">
-                        <span id="detectionRoom" class="px-2.5 py-1 rounded-full bg-black/40 backdrop-blur-md text-white text-[10px] font-bold">未选择</span>
-                        <span id="detectionTime" class="px-2.5 py-1 rounded-full bg-white/18 border border-white/20 backdrop-blur-md text-white text-[10px] font-semibold">等待截图</span>
+                        <span id="detectionRoom" class="px-3 py-1.5 rounded-full bg-white/14 backdrop-blur-md text-white text-[10px] font-bold">未选择</span>
+                        <span id="detectionTime" class="px-3 py-1.5 rounded-full bg-white/18 border border-white/20 backdrop-blur-md text-white text-[10px] font-semibold">等待截图</span>
                     </div>
-                    <span id="detectionBackend" class="px-2.5 py-1 rounded-full bg-white/18 border border-white/20 backdrop-blur-md text-white text-[10px] font-semibold">basic</span>
+                    <span id="detectionBackend" class="px-3 py-1.5 rounded-full bg-white/18 border border-white/20 backdrop-blur-md text-white text-[10px] font-semibold">basic</span>
                 </div>
                 <div id="detectionEmpty" class="app-detection-empty hidden">
                     <span class="material-symbols-outlined text-[34px]">image_search</span>
@@ -88,13 +88,13 @@
         <section class="app-panel p-5 flex flex-col gap-4">
             <div class="flex items-center justify-between gap-3">
                 <div>
-                    <h2 class="font-display text-[18px] font-bold text-on-surface">摄像头源</h2>
-                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">选择一条摄像头查看这次检测。</p>
+                    <h2 class="font-display text-[18px] font-bold text-on-surface">切换来源</h2>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">选择一条摄像头，看这一轮检测是怎么发生的。</p>
                 </div>
                 <span id="detectionCameraCount" class="app-section-badge shrink-0">加载中</span>
             </div>
             <div id="detectionCameraList" class="app-camera-list"></div>
-            <a href="connect.html?app=1" class="h-11 rounded-2xl bg-[#f4f6fb] text-on-surface font-sans text-[13px] font-bold border border-outline-variant/15 flex items-center justify-center gap-2">
+            <a href="connect.html?app=1" class="app-btn-secondary h-11 text-on-surface font-sans text-[13px] font-bold flex items-center justify-center gap-2">
                 <span class="material-symbols-outlined text-[18px]">add_circle</span>
                 接入或管理摄像头
             </a>
@@ -103,8 +103,8 @@
         <section class="app-panel p-5 flex flex-col gap-4">
             <div class="flex items-start justify-between gap-4">
                 <div>
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">RULE EVALUATION</p>
-                    <h2 class="font-display text-[18px] font-bold text-on-surface mt-1">规则判断</h2>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.14em]">RULES</p>
+                    <h2 class="font-display text-[18px] font-bold text-on-surface mt-1">它为什么会提醒你</h2>
                 </div>
                 <span id="detectionRuleBadge" class="app-mini-pill muted">等待规则</span>
             </div>
@@ -123,7 +123,7 @@
                     <p id="detectionEvalTime" class="font-display text-[15px] font-bold text-on-surface mt-1">-</p>
                 </div>
             </div>
-            <a id="detectionSecondaryEventsLink" href="events.html?app=1" class="h-11 rounded-2xl bg-[#f4f6fb] text-on-surface font-sans text-[13px] font-bold border border-outline-variant/15 flex items-center justify-center gap-2">
+            <a id="detectionSecondaryEventsLink" href="events.html?app=1" class="app-btn-secondary h-11 text-on-surface font-sans text-[13px] font-bold flex items-center justify-center gap-2">
                 <span class="material-symbols-outlined text-[18px]">history</span>
                 查看已生成事件
             </a>
@@ -131,7 +131,7 @@
 
         <section class="app-panel p-5 flex flex-col gap-4">
             <div class="flex items-center justify-between gap-3">
-                <h2 class="font-display text-[18px] font-bold text-on-surface">能力清单</h2>
+                <h2 class="font-display text-[18px] font-bold text-on-surface">系统会看什么</h2>
                 <span id="detectionCapabilityBadge" class="app-mini-pill muted">检测中</span>
             </div>
             <div>

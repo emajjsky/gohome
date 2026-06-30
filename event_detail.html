@@ -6,7 +6,7 @@
     <title>牵挂详情 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260629-ui2" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style1" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
@@ -20,14 +20,14 @@
         <a id="edgeDetailBackLink" href="events.html?app=1" class="app-topbar-side">
             <span class="material-symbols-outlined">arrow_back</span>
         </a>
-        <div class="app-topbar-title">事件详情</div>
+        <div class="app-topbar-title">这一眼的原因</div>
         <a id="edgeDetailWatchLink" href="watch.html?app=1" class="app-topbar-side">
             <span class="material-symbols-outlined">videocam</span>
         </a>
     </header>
 
     <main class="app-main app-stack">
-        <section class="app-snapshot-card bg-white">
+        <section class="app-snapshot-card bg-white/72">
             <div class="relative h-72 bg-black">
                 <img id="edgeDetailImage" src="assets/images/elderly-alone.jpg" class="w-full h-full object-cover object-[center_40%] opacity-84" alt="客厅画面">
                 <div class="absolute inset-0 bg-gradient-to-t from-black/72 via-black/10 to-black/25"></div>
@@ -36,40 +36,40 @@
                 </button>
                 <div class="absolute top-4 left-4 flex items-center gap-2">
                     <span id="edgeDetailStatus" class="px-3 py-1 rounded-full bg-[#fff4e8] text-[#c87b2a] text-[10px] font-bold tracking-[0.1em]">需要确认</span>
-                    <span id="edgeDetailTime" class="px-3 py-1 rounded-full bg-black/28 backdrop-blur-md text-white text-[10px] font-semibold">09:42</span>
+                    <span id="edgeDetailTime" class="px-3 py-1.5 rounded-full bg-white/14 backdrop-blur-md text-white text-[10px] font-semibold">09:42</span>
                 </div>
                 <div class="absolute left-4 right-4 bottom-4">
-                    <div class="rounded-2xl bg-black/30 backdrop-blur-md border border-white/10 p-4 text-white">
-                        <p class="font-sans text-[10px] font-semibold tracking-[0.14em] text-white/80">今天最让人在意的是</p>
-                        <p id="edgeDetailHero" class="font-display text-[18px] font-bold mt-1">她在客厅有一段时间保持低姿态，系统建议你尽快确认一下</p>
+                    <div class="rounded-[24px] bg-black/30 backdrop-blur-md border border-white/10 p-5 text-white">
+                        <p class="font-sans text-[10px] font-semibold tracking-[0.14em] text-white/80">THIS MOMENT</p>
+                        <p id="edgeDetailHero" class="font-display text-[20px] font-bold mt-1 tracking-[-0.02em]">她在客厅有一段时间保持低姿态，系统建议你尽快确认一下</p>
                     </div>
                 </div>
             </div>
         </section>
 
-        <section class="app-panel p-5 flex flex-col gap-3">
+        <section class="app-panel p-6 flex flex-col gap-4">
             <div class="flex items-start justify-between gap-3">
                 <div>
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">EVENT</p>
-                    <h2 id="edgeDetailTitle" class="font-display text-[22px] font-bold text-on-surface tracking-tight mt-1">这不是一定有危险，但它值得你现在看一眼</h2>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.14em]">DETAIL</p>
+                    <h2 id="edgeDetailTitle" class="font-display text-[24px] font-bold text-on-surface tracking-[-0.02em] leading-[1.18] mt-1">这不是一定有危险，但它值得你现在看一眼</h2>
                 </div>
                 <div class="w-11 h-11 rounded-full bg-[#fff4e8] text-[#c87b2a] flex items-center justify-center shrink-0">
                     <span class="material-symbols-outlined text-[22px]">warning</span>
                 </div>
             </div>
             <div class="grid grid-cols-2 gap-3">
-                <div class="rounded-2xl bg-[#fbfbff] border border-outline-variant/10 p-3">
+                <div class="app-panel-muted p-4">
                     <p class="font-sans text-[11px] font-semibold text-on-surface-variant">发生位置</p>
                     <p id="edgeDetailRoom" class="font-display text-[16px] font-bold text-on-surface mt-1">一楼客厅</p>
                     <p class="font-sans text-[11px] text-primary mt-1">沙发附近</p>
                 </div>
-                <div class="rounded-2xl bg-[#fbfbff] border border-outline-variant/10 p-3">
+                <div class="app-panel-muted p-4">
                     <p class="font-sans text-[11px] font-semibold text-on-surface-variant">持续时间</p>
                     <p id="edgeDetailDuration" class="font-display text-[16px] font-bold text-on-surface mt-1">73 秒</p>
                     <p id="edgeDetailDurationHint" class="font-sans text-[11px] text-primary mt-1">超过设定阈值</p>
                 </div>
             </div>
-            <p id="edgeDetailNote" class="font-sans text-[13px] text-on-surface-variant leading-relaxed">系统看到的是姿态变化和停留时间，并不是直接判断结果。所以这条提醒的重点不是制造紧张，而是提醒你此刻最好主动确认一下。</p>
+            <p id="edgeDetailNote" class="font-sans text-[13px] text-on-surface-variant leading-[1.8]">系统看到的是姿态变化和停留时间，并不是直接判断结果。所以这条提醒的重点不是制造紧张，而是提醒你此刻最好主动确认一下。</p>
         </section>
 
         <section class="flex flex-col gap-3">
@@ -78,7 +78,7 @@
                     <span class="material-symbols-outlined text-[18px]">visibility</span>
                 </div>
                 <div>
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.12em]">事实</p>
+                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.12em]">现在</p>
                     <p id="edgeDetailFact" class="font-display text-[16px] font-bold text-on-surface mt-1">09:42 起，客厅画面里出现了较长时间的低姿态停留</p>
                     <p id="edgeDetailFactSub" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">系统连续识别到姿态从站立变为低位，期间没有检测到明显起身动作，因此推送了这条确认提醒。</p>
                 </div>
@@ -88,7 +88,7 @@
                     <span class="material-symbols-outlined text-[18px]">favorite</span>
                 </div>
                 <div>
-                    <p class="font-sans text-[11px] font-semibold text-[#c87b2a] tracking-[0.12em]">情绪</p>
+                    <p class="font-sans text-[11px] font-semibold text-[#c87b2a] tracking-[0.12em]">感觉</p>
                     <p class="font-display text-[16px] font-bold text-on-surface mt-1">最让人放心不下的，不是数据本身，而是你不确定她现在需不需要你</p>
                     <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">这类提醒往往不一定严重，但最容易让人心里一紧。它存在的意义，是帮你尽快把“担心”变成一次真实确认。</p>
                 </div>
@@ -98,7 +98,7 @@
                     <span class="material-symbols-outlined text-[18px]">call</span>
                 </div>
                 <div>
-                    <p class="font-sans text-[11px] font-semibold text-[#2d7d5c] tracking-[0.12em]">行动</p>
+                    <p class="font-sans text-[11px] font-semibold text-[#2d7d5c] tracking-[0.12em]">下一步</p>
                     <p class="font-display text-[16px] font-bold text-on-surface mt-1">先联系她，如果没人接，再联系附近家人或邻居</p>
                     <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">现在最重要的不是反复看画面，而是尽快确认她的状态。确认后，这条提醒就可以安心地结束。</p>
                 </div>
@@ -111,15 +111,15 @@
                 <span class="font-sans text-[11px] font-semibold text-primary">按优先级</span>
             </div>
             <div class="grid grid-cols-2 gap-3">
-                <button class="bg-white border border-primary/15 text-primary rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm">
+                <button class="app-btn-secondary h-auto min-h-[96px] p-4 flex flex-col items-center justify-center gap-2 text-primary">
                     <span class="material-symbols-outlined text-[24px]">call</span>
                     <span class="font-sans text-[13px] font-bold">先打电话</span>
                 </button>
-                <button class="bg-white border border-primary/15 text-primary rounded-2xl p-4 flex flex-col items-center justify-center gap-2 shadow-sm">
+                <button class="app-btn-secondary h-auto min-h-[96px] p-4 flex flex-col items-center justify-center gap-2 text-primary">
                     <span class="material-symbols-outlined text-[24px]">record_voice_over</span>
                     <span class="font-sans text-[13px] font-bold">语音喊一声</span>
                 </button>
-                <button class="col-span-2 bg-[#f5f7fb] border border-outline-variant/15 text-on-surface rounded-2xl p-4 flex items-center justify-center gap-2">
+                <button class="col-span-2 app-btn-secondary h-auto min-h-[56px] p-4 text-on-surface flex items-center justify-center gap-2">
                     <span class="material-symbols-outlined text-[20px]">group</span>
                     <span class="font-sans text-[13px] font-semibold">联系紧急联系人或附近家人</span>
                 </button>
@@ -129,11 +129,11 @@
 
     <footer class="app-bottom-nav">
         <div class="app-bottom-nav-inner flex gap-3">
-            <button id="edgeMarkFalsePositive" class="flex-1 py-3.5 rounded-2xl bg-white border border-outline-variant/20 text-on-surface-variant font-sans text-[14px] font-bold flex justify-center items-center gap-1.5">
+            <button id="edgeMarkFalsePositive" class="flex-1 app-btn-secondary h-[54px] text-on-surface-variant font-sans text-[14px] font-bold flex justify-center items-center gap-1.5">
                 <span class="material-symbols-outlined text-[20px]">block</span>
                 标记误报
             </button>
-            <button id="edgeMarkHandled" class="flex-1 py-3.5 rounded-2xl bg-primary text-white font-sans text-[14px] font-bold shadow-float flex justify-center items-center gap-1.5">
+            <button id="edgeMarkHandled" class="flex-1 app-btn-primary h-[54px] font-sans text-[14px] font-bold flex justify-center items-center gap-1.5">
                 <span class="material-symbols-outlined fill text-[20px]">verified_user</span>
                 已确认安全
             </button>
