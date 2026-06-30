@@ -232,9 +232,11 @@
     function renderCameras() {
         const list = $("cameraList");
         const networkCameras = state.cameras.filter((camera) => !isLocalCamera(camera));
-        const active = preferredCamera(networkCameras);
-        const cameraId = state.selectedCameraId || active?.id || null;
-        syncNextStepLinks(networkCameras.length > 0, cameraId);
+        const enabledNetworkCameras = networkCameras.filter((camera) => camera.enabled);
+        const active = preferredCamera(enabledNetworkCameras.length ? enabledNetworkCameras : networkCameras);
+        const enabledSelectedCamera = enabledNetworkCameras.find((camera) => Number(camera.id) === Number(state.selectedCameraId)) || null;
+        const cameraId = enabledSelectedCamera?.id || active?.id || null;
+        syncNextStepLinks(enabledNetworkCameras.length > 0, cameraId);
         $("edgeCameraCount").textContent = String(networkCameras.length);
         $("cameraListBadge").textContent = networkCameras.length ? `${networkCameras.length} 路` : "未接入";
         setText("edgeActiveRoom", active?.room || active?.name || "-");
