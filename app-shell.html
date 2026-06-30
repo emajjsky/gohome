@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>App 壳 - 想家了吗</title>
+    <link rel="manifest" href="app.webmanifest">
+    <link href="assets/styles/tailwind.css" rel="stylesheet">
+    <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260629-ui3" rel="stylesheet">
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
+        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
+        body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { width: 0; background: transparent; }
+    </style>
+</head>
+<body class="app-phone-shell text-on-surface font-sans antialiased">
+    <header class="app-topbar">
+        <span class="app-topbar-side placeholder"></span>
+        <p class="app-topbar-title">想家了吗</p>
+        <span class="app-topbar-side placeholder"></span>
+    </header>
+
+    <main class="app-main app-stack">
+        <section class="app-home-hero p-5 flex flex-col gap-4">
+            <div class="flex items-center justify-between gap-3">
+                <p id="appShellStatusBadge" class="app-section-badge w-max">加载中</p>
+                <div class="w-10 h-10 rounded-full overflow-hidden border border-white/70 shadow-[0_10px_24px_rgba(46,64,90,0.08)] shrink-0">
+                    <img src="assets/images/avatar.jpg" alt="想家了吗" class="w-full h-full object-cover">
+                </div>
+            </div>
+            <div class="flex flex-col gap-2">
+                <p id="appShellTitle" class="font-display text-[24px] font-bold text-on-surface tracking-tight">想家了吗</p>
+                <p id="appShellSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-relaxed">正在准备 App 壳</p>
+            </div>
+            <div class="app-panel-muted px-4 py-4">
+                <p id="appShellHeadline" class="font-display text-[18px] font-bold text-on-surface">正在接住登录态</p>
+                <p id="appShellMeta" class="font-sans text-[12px] text-on-surface-variant mt-2 leading-5">稍等片刻</p>
+            </div>
+            <div class="app-kpi-grid">
+                <div class="app-kpi">
+                    <p>账号</p>
+                    <p id="appShellAccountValue">-</p>
+                </div>
+                <div class="app-kpi">
+                    <p>家庭</p>
+                    <p id="appShellFamilyValue">-</p>
+                </div>
+                <div class="app-kpi">
+                    <p>设备</p>
+                    <p id="appShellDeviceValue">-</p>
+                </div>
+                <div class="app-kpi">
+                    <p>摄像头</p>
+                    <p id="appShellCameraValue">-</p>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <a id="appShellPrimaryAction" href="login.html?next=app-shell.html&app=1" class="app-btn-primary font-sans text-[13px] font-bold flex items-center justify-center">
+                    <span id="appShellPrimaryText">登录进入</span>
+                </a>
+                <a id="appShellSecondaryAction" href="family.html?app=1" class="app-btn-secondary font-sans text-[13px] font-bold flex items-center justify-center">家庭空间</a>
+            </div>
+        </section>
+
+        <section class="app-panel p-4 flex flex-col gap-3">
+            <div class="flex items-center justify-between gap-3">
+                <h2 class="font-display text-[18px] font-bold text-on-surface">一句话导航</h2>
+                <span class="app-section-badge shrink-0">演示</span>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+                <a href="index.html?app=1" class="app-panel-muted px-3 py-4 text-center">
+                    <p class="font-display text-[15px] font-bold text-on-surface">首页</p>
+                    <p class="font-sans text-[11px] text-on-surface-variant mt-1">先讲价值</p>
+                </a>
+                <a href="watch.html?app=1" class="app-panel-muted px-3 py-4 text-center">
+                    <p class="font-display text-[15px] font-bold text-on-surface">实时</p>
+                    <p class="font-sans text-[11px] text-on-surface-variant mt-1">直接看画面</p>
+                </a>
+                <a href="events.html?app=1" class="app-panel-muted px-3 py-4 text-center">
+                    <p class="font-display text-[15px] font-bold text-on-surface">事件</p>
+                    <p class="font-sans text-[11px] text-on-surface-variant mt-1">看证据链</p>
+                </a>
+            </div>
+        </section>
+
+        <section class="app-stack">
+            <div class="flex items-center justify-between">
+                <h2 class="font-display text-[18px] font-bold text-on-surface">进入哪里</h2>
+                <span class="app-section-badge shrink-0">演示链</span>
+            </div>
+            <div id="appShellActionList" class="flex flex-col gap-3"></div>
+        </section>
+
+        <section class="app-panel px-5 py-4 flex items-center justify-between gap-4">
+            <div class="min-w-0">
+                <p class="font-sans text-[11px] font-semibold text-on-surface-variant">App 配置</p>
+                <p id="appShellBundleId" class="font-display text-[13px] font-bold text-on-surface mt-1 break-all">-</p>
+                <p id="appShellScheme" class="font-sans text-[12px] text-on-surface-variant mt-1">-</p>
+            </div>
+            <a id="appShellPrivacyLink" href="privacy.html?app=1" class="shrink-0 h-10 px-4 rounded-full bg-[#f4f6fb] text-on-surface font-sans text-[12px] font-semibold border border-outline-variant/15 flex items-center justify-center">隐私</a>
+        </section>
+    </main>
+    <script src="assets/scripts/edge-client.js?v=20260630-video1"></script>
+    <script src="assets/scripts/app-shell-live.js?v=20260629-push1"></script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>家庭空间 - 想家了吗</title>
+    <link href="assets/styles/tailwind.css" rel="stylesheet">
+    <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260629-ui2" rel="stylesheet">
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
+        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
+        body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { width: 0; background: transparent; }
+        input { outline: none; }
+        input:focus { box-shadow: 0 0 0 3px rgba(88, 108, 214, .12); }
+    </style>
+</head>
+<body class="app-phone-shell text-on-surface font-sans antialiased">
+    <header class="app-topbar">
+        <a href="index.html?app=1" class="app-topbar-side">
+            <span class="material-symbols-outlined">arrow_back</span>
+        </a>
+        <p class="app-topbar-title">家庭</p>
+        <span class="app-topbar-side placeholder"></span>
+    </header>
+
+    <main class="app-main app-stack">
+        <section class="app-home-hero p-5 flex flex-col gap-4">
+            <div class="flex items-center justify-between gap-3">
+                <div>
+                    <p id="familyUserName" class="font-display text-[24px] font-bold text-on-surface tracking-tight">家庭空间</p>
+                    <p id="familyStatusText" class="font-sans text-[12px] text-on-surface-variant mt-1.5">加载中</p>
+                </div>
+                <button id="familyLogoutBtn" type="button" class="h-9 px-3 rounded-full bg-white/78 text-on-surface text-[12px] font-semibold border border-white/70">退出</button>
+            </div>
+            <div class="app-kpi-grid">
+                <div class="app-kpi">
+                    <p>我的家庭</p>
+                    <p id="familyCount">-</p>
+                </div>
+                <div class="app-kpi">
+                    <p>下一步</p>
+                    <p id="familyNextStep">-</p>
+                </div>
+            </div>
+            <a id="familyPrimaryBindingLink" href="device_binding.html?app=1" class="app-btn-secondary font-sans text-[13px] font-bold flex items-center justify-center">继续绑定设备</a>
+        </section>
+
+        <section class="app-panel px-5 py-5 flex flex-col gap-4">
+            <div>
+                <p class="font-display text-[18px] font-bold text-on-surface">新建家庭</p>
+                <p class="font-sans text-[12px] text-on-surface-variant mt-1">这一步只做一件事，建好后会直接进入设备绑定。</p>
+            </div>
+            <form id="familyCreateForm" class="flex flex-col gap-3">
+                <label class="flex flex-col gap-1.5">
+                    <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">家庭名称</span>
+                    <input id="familyNameInput" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface" autocomplete="off" placeholder="比如：苏州老家">
+                </label>
+                <button id="familyCreateBtn" type="submit" class="h-11 rounded-2xl bg-primary text-white font-sans text-[13px] font-bold shadow-float">创建家庭</button>
+            </form>
+            <p id="familyFeedback" class="min-h-[20px] font-sans text-[12px] leading-5 text-on-surface-variant"></p>
+        </section>
+
+        <section class="app-stack">
+            <div class="flex items-center justify-between">
+                <h2 class="font-display text-[18px] font-bold text-on-surface">我的家庭</h2>
+                <a id="familyListBindingLink" href="device_binding.html?app=1" class="text-[12px] font-semibold text-primary">绑定设备</a>
+            </div>
+            <div id="familyList" class="flex flex-col gap-3"></div>
+        </section>
+    </main>
+
+    <nav class="app-bottom-nav">
+        <div class="app-bottom-nav-inner">
+            <div class="flex justify-between items-center">
+                <a href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">home</span></div>
+                    <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
+                </a>
+                <a href="family.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
+                    <div class="app-nav-pill active"><span class="material-symbols-outlined fill text-[22px]">groups</span></div>
+                    <span class="font-sans text-[11px] font-bold tracking-wide">家庭</span>
+                </a>
+                <a id="familyNavBindingLink" href="device_binding.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">devices</span></div>
+                    <span class="font-sans text-[11px] font-semibold tracking-wide">设备</span>
+                </a>
+            </div>
+        </div>
+    </nav>
+    <script src="assets/scripts/edge-client.js?v=20260630-video1"></script>
+    <script src="assets/scripts/family-live.js?v=20260630-flow1"></script>
+</body>
+</html>

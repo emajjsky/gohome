@@ -537,6 +537,61 @@ async function loadEvents() {
   `).join("");
 }
 
+function candidateStatusLabel(status) {
+  if (status === "promoted") return "已提升";
+  if (status === "suppressed") return "已抑制";
+  if (status === "new") return "待处理";
+  return status || "未知";
+}
+
+async function loadCandidates() {
+  const list = $("candidateList");
+  if (!list) return;
+  let candidates = [];
+  try {
+    candidates = await api("/api/event-candidates?limit=12");
+  } catch (error) {
+    list.innerHTML = `<div class="empty-state">候选接口暂不可用：${escapeHtml(error.message || "加载失败")}。</div>`;
+    throw error;
+  }
+  if (!candidates.length) {
+    list.innerHTML = '<div class="empty-state">当前没有候选事件。</div>';
+    return;
+  }
+  list.innerHTML = candidates.map((candidate) => {
+    const rule = candidate.payload?.rule || {};
+    const observed = rule.observed?.no_person_seconds || rule.observed?.no_motion_seconds || null;
+    const threshold = rule.threshold?.no_person_seconds || rule.threshold?.no_motion_seconds || null;
+    const explanation = rule.reason
+      || candidate.promoted_event_summary
+      || candidate.summary
+      || "候选事件";
+    const meta = [
+      candidate.event_type,
+      candidate.camera_name || candidate.camera_room || `摄像头 ${candidate.camera_id}`,
+      fmtTime(candidate.updated_at || candidate.created_at),
+    ].filter(Boolean).join(" · ");
+    const detail = [
+      observed ? `观测 ${fmtDuration(observed)}` : "",
+      threshold ? `阈值 ${fmtDuration(threshold)}` : "",
+      candidate.promoted_event_id ? `事件 #${candidate.promoted_event_id}` : "",
+    ].filter(Boolean).join(" · ");
+    return `
+      <article class="event-item ${candidate.status === "promoted" ? "done" : ""}">
+        <div class="event-mark ${candidate.status === "suppressed" ? "" : "critical"}"></div>
+        <div class="event-body">
+          <div class="event-title-row">
+            <strong>${escapeHtml(explanation)}</strong>
+            <span>${escapeHtml(candidateStatusLabel(candidate.status))}</span>
+          </div>
+          <p>${escapeHtml(meta)}</p>
+          ${detail ? `<p>${escapeHtml(detail)}</p>` : ""}
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
 async function updateEvent(eventId, payload) {
   await api(`/api/events/${eventId}`, { method: "PATCH", body: JSON.stringify(payload) });
   await loadEvents();
@@ -613,7 +668,7 @@ async function refreshAll() {
   try {
     await Promise.all([loadDevice(), loadRules().catch(() => null)]);
     await loadCameras();
-    await loadEvents();
+    await Promise.all([loadEvents(), loadCandidates().catch(() => null)]);
   } catch (error) {
     showToast(error.message || "无法连接 edge-agent");
   }
@@ -719,6 +774,7 @@ document.addEventListener("DOMContentLoaded", () => {
         loadEvaluation(state.selectedCameraId).catch(() => null);
       }
       loadEvents().catch(() => null);
+      loadCandidates().catch(() => null);
     }
   }, 6000);
 });

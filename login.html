@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>登录 - 想家了吗</title>
+    <link rel="manifest" href="app.webmanifest">
+    <link href="assets/styles/tailwind.css" rel="stylesheet">
+    <link href="assets/styles/material-symbols.css" rel="stylesheet">
+    <link href="assets/styles/app.css" rel="stylesheet">
+    <style>
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
+        .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
+        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
+        body {
+            background:
+                radial-gradient(circle at top, rgba(237, 243, 251, 0.95) 0%, rgba(245, 247, 251, 0.92) 32%, #f5f6f9 72%),
+                linear-gradient(180deg, #fbfcfe 0%, #f5f6f9 100%);
+            -webkit-tap-highlight-color: transparent;
+        }
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+        .auth-shell {
+            width: min(100%, 360px);
+            border-radius: 32px;
+            border: 1px solid rgba(186, 194, 208, 0.16);
+            background: rgba(255, 255, 255, 0.88);
+            box-shadow: 0 24px 80px rgba(31, 52, 79, 0.08);
+            backdrop-filter: blur(22px);
+        }
+        .auth-input {
+            width: 100%;
+            height: 52px;
+            border-radius: 16px;
+            border: 1px solid rgba(186, 194, 208, 0.16);
+            background: rgba(246, 248, 252, 0.88);
+            padding: 0 16px;
+            font-size: 14px;
+            color: #18212b;
+            box-shadow: none;
+            outline: none;
+            transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+        }
+        .auth-input:focus {
+            border-color: rgba(59, 95, 134, 0.28);
+            background: rgba(255, 255, 255, 0.96);
+            box-shadow: 0 0 0 4px rgba(59, 95, 134, 0.06);
+        }
+        .auth-tab {
+            height: 38px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 700;
+            transition: all 180ms ease;
+        }
+        .auth-tab.active {
+            background: rgba(255, 255, 255, 0.94);
+            color: var(--app-primary);
+            box-shadow: 0 8px 18px rgba(31, 52, 79, 0.06);
+        }
+    </style>
+</head>
+<body class="text-on-surface font-sans antialiased min-h-screen">
+    <main class="min-h-screen flex items-center justify-center px-4 py-6 sm:px-6">
+        <section class="auth-shell p-5 sm:p-7 flex flex-col gap-5">
+            <div class="flex items-center gap-2 p-1 rounded-full bg-[rgba(237,241,247,0.92)]">
+                <button id="authLoginTab" type="button" class="auth-tab active flex-1 text-on-surface">登录</button>
+                <button id="authRegisterTab" type="button" class="auth-tab flex-1 text-on-surface-variant">注册</button>
+            </div>
+
+            <div id="authLoggedInCard" class="hidden rounded-[24px] bg-[linear-gradient(180deg,rgba(245,248,252,0.96)_0%,rgba(255,255,255,0.96)_100%)] border border-[rgba(186,194,208,0.14)] p-4 sm:p-5">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <p class="font-sans text-[11px] font-semibold text-on-surface-variant">当前账号</p>
+                        <p id="authLoggedInTitle" class="font-display text-[20px] font-bold text-on-surface mt-1">已登录</p>
+                        <p id="authLoggedInSub" class="font-sans text-[13px] text-on-surface-variant mt-2">可直接进入首页。</p>
+                    </div>
+                    <div class="w-10 h-10 rounded-full bg-[rgba(59,95,134,0.08)] text-primary flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined fill text-[18px]">verified_user</span>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3 mt-4">
+                    <button id="authGoHomeBtn" type="button" class="app-btn-primary font-sans text-[14px] font-semibold">进入首页</button>
+                    <button id="authLogoutBtn" type="button" class="app-btn-secondary font-sans text-[14px] font-semibold">退出当前账号</button>
+                </div>
+            </div>
+
+            <form id="authForm" class="flex flex-col gap-3.5" novalidate>
+                <div id="authDisplayNameGroup" class="hidden">
+                    <label for="authDisplayName" class="block font-sans text-[12px] font-medium text-on-surface-variant mb-2">称呼</label>
+                    <input id="authDisplayName" name="displayName" type="text" class="auth-input" placeholder="怎么称呼你">
+                </div>
+                <div>
+                    <label for="authEmail" class="block font-sans text-[12px] font-medium text-on-surface-variant mb-2">邮箱</label>
+                    <input id="authEmail" name="email" type="email" class="auth-input" placeholder="you@example.com" autocomplete="email">
+                </div>
+                <div>
+                    <label for="authPassword" class="block font-sans text-[12px] font-medium text-on-surface-variant mb-2">密码</label>
+                    <input id="authPassword" name="password" type="password" class="auth-input" placeholder="至少 6 位" autocomplete="current-password">
+                </div>
+                <div class="flex flex-col gap-2 pt-1">
+                    <button id="authSubmitBtn" type="submit" class="app-btn-primary font-sans text-[14px] font-semibold">立即登录</button>
+                    <p id="authFeedback" class="min-h-[18px] font-sans text-[12px] leading-5"></p>
+                </div>
+            </form>
+        </section>
+    </main>
+
+    <script src="assets/scripts/edge-client.js?v=20260630-video1"></script>
+    <script src="assets/scripts/login-live.js?v=20260629-app1"></script>
+</body>
+</html>

@@ -6,7 +6,7 @@
     <title>接入摄像头 - 想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260629-ui2" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
@@ -17,22 +17,19 @@
         input:focus { box-shadow: 0 0 0 3px rgba(88, 108, 214, .14); }
     </style>
 </head>
-<body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
-    <header class="flex justify-between items-center px-container py-5 sticky top-0 z-40 bg-surface/88 backdrop-blur-xl md:bg-white/88">
-        <a href="monitor.html" class="w-10 h-10 flex items-center justify-center rounded-full bg-white shadow-sm border border-outline-variant/20 text-on-surface">
+<body class="app-phone-shell text-on-surface font-sans antialiased">
+    <header class="app-topbar">
+        <a id="connectBackLink" href="device_binding.html?app=1" class="app-topbar-side">
             <span class="material-symbols-outlined">arrow_back</span>
         </a>
-        <div class="text-center">
-            <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">CAMERA</p>
-            <p class="font-display text-[16px] font-bold text-on-surface">接入摄像头</p>
-        </div>
-        <a href="/admin/index.html?v=4" class="w-10 h-10 flex items-center justify-center rounded-full bg-white shadow-sm border border-outline-variant/20 text-on-surface">
-            <span class="material-symbols-outlined text-[20px]">settings</span>
+        <p class="app-topbar-title">接入摄像头</p>
+        <a href="monitor.html?app=1" class="app-topbar-side">
+            <span class="material-symbols-outlined text-[20px]">nest_cam_indoor</span>
         </a>
     </header>
 
-    <main class="flex-1 px-container flex flex-col gap-5 pt-3 pb-8 max-w-sm mx-auto w-full">
-        <section class="app-soft-card bg-white p-5 flex flex-col gap-4">
+    <main class="app-main app-stack">
+        <section class="app-home-hero p-5 flex flex-col gap-4">
             <div class="flex items-start justify-between gap-4">
                 <div class="min-w-0">
                     <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">本机算力服务</p>
@@ -44,25 +41,22 @@
                 </div>
             </div>
             <div class="grid grid-cols-3 gap-3">
-                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
-                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">已保存</p>
-                    <p id="edgeCameraCount" class="font-display text-[17px] font-bold text-on-surface mt-1">-</p>
-                    <p class="font-sans text-[11px] text-primary mt-1">摄像头</p>
+                <div class="app-kpi">
+                    <p>已保存</p>
+                    <p id="edgeCameraCount">-</p>
                 </div>
-                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
-                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">主位置</p>
-                    <p id="edgeActiveRoom" class="font-display text-[17px] font-bold text-on-surface mt-1">-</p>
-                    <p class="font-sans text-[11px] text-primary mt-1">当前启用</p>
+                <div class="app-kpi">
+                    <p>主位置</p>
+                    <p id="edgeActiveRoom">-</p>
                 </div>
-                <div class="rounded-2xl bg-[#fbfbff] px-3 py-3 border border-outline-variant/10">
-                    <p class="font-sans text-[10px] font-semibold text-on-surface-variant">最近测试</p>
-                    <p id="edgeLastTest" class="font-display text-[17px] font-bold text-on-surface mt-1">-</p>
-                    <p class="font-sans text-[11px] text-primary mt-1">首帧状态</p>
+                <div class="app-kpi">
+                    <p>最近测试</p>
+                    <p id="edgeLastTest">-</p>
                 </div>
             </div>
         </section>
 
-        <section class="bg-white rounded-[28px] shadow-soft p-5 border border-outline-variant/20 flex flex-col gap-4">
+        <section class="app-panel px-5 py-5 flex flex-col gap-4">
             <div>
                 <p class="font-display text-[18px] font-bold text-on-surface">添加局域网摄像头</p>
                 <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">摄像头和这台 Mac 在同一个路由器下时，只需要填 IP、账号和密码。</p>
@@ -120,7 +114,7 @@
             </form>
         </section>
 
-        <section class="bg-white rounded-[28px] shadow-soft overflow-hidden border border-outline-variant/20">
+        <section class="app-panel overflow-hidden">
             <div class="relative aspect-video bg-black">
                 <img id="connectionPreviewImage" class="hidden w-full h-full object-cover opacity-90" alt="摄像头测试截图">
                 <div id="connectionPreviewEmpty" class="absolute inset-0 grid place-content-center text-center text-white/80">
@@ -134,6 +128,17 @@
             </div>
         </section>
 
+        <section id="connectNextStepSection" class="hidden app-panel p-4 flex flex-col gap-3">
+            <div class="flex items-center justify-between gap-3">
+                <p class="font-display text-[16px] font-bold text-on-surface">下一步</p>
+                <span id="connectNextStepBadge" class="app-section-badge shrink-0">待接入</span>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <a id="connectMonitorLink" href="monitor.html?app=1" class="app-btn-secondary h-11 flex items-center justify-center font-sans text-[13px] font-bold">守护</a>
+                <a id="connectWatchLink" href="watch.html?app=1" class="app-btn-secondary h-11 flex items-center justify-center font-sans text-[13px] font-bold">实时</a>
+            </div>
+        </section>
+
         <section class="flex flex-col gap-3">
             <div class="flex items-center justify-between">
                 <h3 class="font-display text-[18px] font-bold text-on-surface">已接入摄像头</h3>
@@ -143,31 +148,29 @@
         </section>
     </main>
 
-    <nav class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
-        <div class="flex justify-between items-center">
-            <a href="index.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">home</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
-            </a>
-            <a href="monitor.html" class="flex flex-col items-center gap-1.5 text-primary">
-                <div class="app-nav-pill active"><span class="material-symbols-outlined fill text-[22px]">nest_cam_indoor</span></div>
-                <span class="font-sans text-[11px] font-bold tracking-wide">守护</span>
-            </a>
-            <a href="events.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">history</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
-            </a>
-            <a href="companionship.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">diversity_1</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">陪伴</span>
-            </a>
-            <a href="privacy.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">person</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
-            </a>
+    <nav class="app-bottom-nav">
+        <div class="app-bottom-nav-inner">
+            <div class="flex justify-between items-center">
+                <a href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">home</span></div>
+                    <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
+                </a>
+                <a href="monitor.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
+                    <div class="app-nav-pill active"><span class="material-symbols-outlined fill text-[22px]">nest_cam_indoor</span></div>
+                    <span class="font-sans text-[11px] font-bold tracking-wide">守护</span>
+                </a>
+                <a href="events.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">history</span></div>
+                    <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
+                </a>
+                <a href="privacy.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">person</span></div>
+                    <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
+                </a>
+            </div>
         </div>
     </nav>
-    <script src="assets/scripts/edge-client.js"></script>
-    <script src="assets/scripts/connect-live.js"></script>
+    <script src="assets/scripts/edge-client.js?v=20260630-video1"></script>
+    <script src="assets/scripts/connect-live.js?v=20260630-flow2"></script>
 </body>
 </html>

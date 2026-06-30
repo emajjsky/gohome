@@ -1,6 +1,6 @@
 # 想家了吗 Implement
 
-更新时间：2026-06-29
+更新时间：2026-06-30
 
 ## 1. 文档目的
 
@@ -801,6 +801,262 @@ iOS / Android App
 - 真实进入 `detection.html?camera_id=9&app=1&cb=flow7` 后，主按钮、次按钮和底部导航里的“事件”入口都已变成 `events.html?camera_id=9&app=1`。
 - 这条修复只补比赛演示主链里的 `events` 上下文续接，不新增事件筛选、归档或多条件浏览逻辑。
 
+## 9.1.9 2026-06-30 比赛演示固定冒烟顺序记录
+
+做了什么：
+
+- 按 `Plan` 要求，基于当前真实 `8711` 在线链路，把“已登录、已绑设备、已有摄像头”的比赛演示主路径整理成一条固定顺序，不再临场随机点页面。
+- 用真实页面从 `app-shell.html?app=1` 开始重新串跑 `watch -> detection -> events -> event_detail -> watch` 主展示链，确认页面状态、标题文案和关键跳转都稳定。
+- 顺手补查 `monitor.html?app=1`，确认“守护概览”仍可作为演示中的说明页插入，不会掉出 App 模式，也不会跳到空白页。
+- 把这条顺序沉淀为当前推荐口径：`App 壳入口 -> 实时观看 -> 检测细节 -> 事件时间线 -> 事件详情 -> 回到实时观看`；`守护概览` 作为可选插入页，用于讲“结论层”。
+
+产物位置：
+
+- `想家了吗-Plan.md`
+- `想家了吗-Implement.md`
+- `app-shell.html`
+- `watch.html`
+- `detection.html`
+- `events.html`
+- `event_detail.html`
+- `monitor.html`
+
+怎么验证：
+
+- 在真实 `8711` 在线页面环境下打开 `app-shell.html?app=1`，确认主按钮为“进入实时观看”，并能直接进入 `watch.html?app=1`。
+- 从 `watch.html?camera_id=...&app=1` 点击顶部“检测细节”，确认进入 `detection.html?camera_id=...&app=1`。
+- 从 `detection.html?camera_id=...&app=1` 点击“去看事件”，确认进入 `events.html?camera_id=...&app=1`，首条详情链接为 `event_detail.html?eventId=...&camera_id=...&app=1`。
+- 从 `event_detail.html?eventId=...&camera_id=...&app=1` 点击右上角“实时”，确认回到 `watch.html?camera_id=...&app=1`。
+- 从 `watch.html?camera_id=...&app=1` 点击“守护概览”，确认能正常进入 `monitor.html?app=1`，展示真实守护摘要。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 已在真实 `8711` 在线页面环境下验通：`app-shell.html?app=1&cb=smoke2` 当前主按钮是“进入实时观看”，会直接进入 `watch.html?app=1&camera_id=9`。
+- 真实进入 `watch.html?app=1&camera_id=9` 后，顶部“检测细节”和“事件”入口分别为 `detection.html?camera_id=9&app=1`、`events.html?camera_id=9&app=1`，适合作为比赛主讲入口。
+- 真实进入 `detection.html?camera_id=9&app=1` 后，主按钮“去看事件”为 `events.html?camera_id=9&app=1`；再进入 `events.html?camera_id=9&app=1` 后，首条详情链接为 `event_detail.html?eventId=807&camera_id=9&app=1`。
+- 真实进入 `event_detail.html?eventId=807&camera_id=9&app=1` 后，顶部返回链接和右上角“实时”入口都能保住 `camera_id=9`，最终回到 `watch.html?camera_id=9&app=1`。
+- 真实进入 `monitor.html?app=1` 后，页面会显示“当前画面暂未检测到人，持续观察中”这类真实守护结论，因此它适合在演示中作为“先讲结论”的可选插页，但当前最稳主顺序仍建议从 `watch` 开始。
+
+## 9.1.10 2026-06-30 `event_detail` 规则解释直出记录
+
+做了什么：
+
+- 不再只在详情页展示泛化文案，而是直接消费事件接口里已经返回的 `payload.rule.reason`、`payload.rule.observed`、`payload.rule.threshold` 和 `payload.evaluation.state`。
+- 调整 `assets/scripts/event-detail-live.js`，让详情页的“持续时间”“提示标签”“事实”“事实补充”改为展示真实规则解释，而不是只显示一段固定说明。
+- 把秒级观测值转成人能直接读懂的时长文案，并把 `still / not_visible / offline` 这类评估状态翻成中文，减少演示时还要靠口头解释。
+- 把 `event-detail-live.js` 版本戳抬到 `20260630-flow5`，避免手机继续命中旧缓存。
+
+产物位置：
+
+- `event_detail.html`
+- `assets/scripts/event-detail-live.js`
+
+怎么验证：
+
+- 对 `event_detail.html` 和 `assets/scripts/event-detail-live.js` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `event_detail.html?eventId=...&camera_id=...&app=1`，确认详情页会直接显示规则原因、当前观测值、规则阈值和评估状态。
+- 重点确认“长时间无人”这类事件不再只显示固定说明，而是能读到类似“当前观测：连续无人 16 小时；规则阈值：连续无人 5 分”的解释。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 已在真实 `8711` 在线页面环境下验通：`event_detail.html?eventId=807&camera_id=9&app=1&cb=flow9` 当前会显示规则原因“连续未检测到人形的时长超过配置阈值。”。
+- 页面同时会显示真实解释链：`当前观测：连续无人 16 小时。规则阈值：连续无人 5 分。评估状态：画面状态 静止，人物状态 未检测到人，静止时长 16 小时，连续无人 16 小时。`
+- 这条修复不改事件列表和检测页逻辑，只把接口里已经存在的可解释字段真正接到用户端详情页，便于比赛时直接讲“为什么会触发这条提醒”。
+
+## 9.1.11 2026-06-30 `events` 列表轻量解释记录
+
+做了什么：
+
+- 不再让事件列表卡片只显示“适合现在看一眼”这类泛提示，而是直接消费事件接口里已有的 `payload.rule.observed` 和 `payload.rule.threshold`。
+- 调整 `assets/scripts/events-live.js`，把事件卡片底部说明改成轻量解释文案，优先展示“当前观测 + 规则阈值”，保留列表页轻量、详情页重解释的层次。
+- 把秒级观测值转成人能直接读懂的时长文案，保证列表页一眼就能看出“为什么这条会进时间线”。
+- 把 `events-live.js` 版本戳抬到 `20260630-flow5`，避免手机继续命中旧缓存。
+
+产物位置：
+
+- `events.html`
+- `assets/scripts/events-live.js`
+
+怎么验证：
+
+- 对 `events.html` 和 `assets/scripts/events-live.js` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `events.html?camera_id=...&app=1`，确认首条事件卡片底部不再是泛提示，而是类似“连续无人 15 分，阈值 连续无人 5 分。”的轻量解释。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 已在真实 `8711` 在线页面环境下验通：`events.html?camera_id=9&app=1&cb=flow11` 首条事件卡片当前显示 `连续无人 15 分，阈值 连续无人 5 分。`
+- 这样列表页负责“快速解释”，详情页负责“完整解释”，当前用户端事件链已经能从列表到详情连续讲清楚为什么会触发提醒。
+
+## 9.1.12 2026-06-30 `detection` 规则解释对齐记录
+
+做了什么：
+
+- 不再让检测页的“规则判断”只显示候选事件摘要，而是直接消费评估接口里已有的 `matched_rules / explanation / observed / threshold`。
+- 调整 `assets/scripts/detection-live.js`，让 `detectionRuleSummary` 优先展示“规则原因 + 当前观测 + 规则阈值”，和列表页、详情页的解释口径保持一致。
+- 继续沿用轻量时长格式，把 `no_person_seconds / no_motion_seconds` 这类秒值在检测页也转成人能直接读懂的分钟/小时文案。
+- 把 `detection-live.js` 版本戳抬到 `20260630-flow5`，避免手机继续命中旧缓存。
+
+产物位置：
+
+- `detection.html`
+- `assets/scripts/detection-live.js`
+
+怎么验证：
+
+- 对 `detection.html` 和 `assets/scripts/detection-live.js` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `detection.html?camera_id=...&app=1`，确认“规则判断”区域不再只显示事件摘要，而是类似“连续未检测到人形的时长超过配置阈值。当前观测：连续无人 20 分。规则阈值：连续无人 5 分。”。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 已在真实 `8711` 在线页面环境下验通：`detection.html?camera_id=9&app=1&cb=flow13` 当前会显示 `连续未检测到人形的时长超过配置阈值。 当前观测：连续无人 20分 规则阈值：连续无人 5分`。
+- 当前检测页、事件列表页、事件详情页已经形成一致口径：检测页讲“规则为什么命中”，列表页讲“快速解释”，详情页讲“完整解释链”。
+
+## 9.1.13 2026-06-30 `monitor` 摄像头上下文续接记录
+
+做了什么：
+
+- 调整 `monitor.html`，给进入 `watch`、`detection`、`events` 的关键入口补上动态锚点，避免首页守护页固定写死到无上下文链接。
+- 调整 `assets/scripts/monitor-live.js`，让守护页像 `watch / detection` 一样优先读取 URL 里的 `camera_id`，并把当前选中的摄像头继续写回地址栏。
+- 让守护页所有跳转都显式续上当前 `camera_id` 和 `app=1`，保证 `monitor -> watch / detection / events` 不再掉链。
+- 将守护页实时画面切到 `createManagedVideoStream()`，和 `watch` 页使用同一套视频流重连与刷新策略，减少守护页与实时页的接入分叉。
+- 把 `monitor-live.js` 版本戳抬到 `20260630-flow6`，避免手机继续命中旧缓存。
+
+产物位置：
+
+- `monitor.html`
+- `assets/scripts/monitor-live.js`
+
+怎么验证：
+
+- 对 `monitor.html` 和 `assets/scripts/monitor-live.js` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `monitor.html?app=1&camera_id=9`，确认守护页自身会保留 `camera_id=9`。
+- 检查守护页进入 `watch / detection / events` 的链接，均应分别变成 `watch.html?camera_id=9&app=1`、`detection.html?camera_id=9&app=1`、`events.html?camera_id=9&app=1`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`monitor.html?app=1&camera_id=9&cb=monitorflow6` 当前可正常显示 `客厅` 与最新更新时间，说明守护页已吃到指定摄像头上下文。
+- 同页在线读取到的关键跳转已全部续上摄像头参数：顶部去实时、画面卡片去实时、去检测、去事件分别为 `watch.html?camera_id=9&app=1`、`watch.html?camera_id=9&app=1`、`detection.html?camera_id=9&app=1`、`events.html?camera_id=9&app=1`。
+- 这样当前用户端实时主链已经从 `monitor -> watch -> detection -> events -> event_detail` 统一保持 `camera_id`，演示时不再出现“守护页进去后跳到别的摄像头”的断点。
+
+## 9.1.14 2026-06-30 `detection` 实时流入口对齐记录
+
+做了什么：
+
+- 移除 `assets/scripts/detection-live.js` 里单独手写的 `v1VideoStreamPlaybackUrl()` 挂流逻辑，改为复用 `GoHomeEdge.createManagedVideoStream()`。
+- 让检测页实时画面和 `watch / monitor` 使用同一套播放票据刷新、失败重连、页面可见性恢复策略，避免三页各自维护一套流入口。
+- 保留原有检测截图、规则解释、检测框叠加逻辑不变，只收实时流接入这一层。
+- 为检测页补上 `beforeunload -> dispose()`，避免离页后继续保留旧的流定时器。
+- 把 `detection-live.js` 和 `detection.html` 版本戳抬到 `20260630-flow6`，避免手机继续命中旧缓存。
+
+产物位置：
+
+- `detection.html`
+- `assets/scripts/detection-live.js`
+
+怎么验证：
+
+- 对 `detection.html` 和 `assets/scripts/detection-live.js` 运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下打开 `detection.html?app=1&camera_id=9`，确认 `detectionSnapshotImage` 当前直接加载 `/api/v1/video/cameras/9/stream.mjpg?profile=detail...`。
+- 页面应继续显示实时画面、规则判断和检测时间，且空态层保持隐藏，不因流入口切换而退回灰图。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`detection.html?app=1&camera_id=9&cb=flow14` 当前会正常显示 `客厅`、`19:41 更新`、规则解释文案以及 `profile=detail` 的实时流地址。
+- 在线读取到的 `detectionSnapshotImage.src` 已变成 `/api/v1/video/cameras/9/stream.mjpg?profile=detail&playback_ticket=...`，说明检测页已切到与 `watch / monitor` 同一套视频流入口，而不是继续走旧的单页直挂逻辑。
+- 这样当前 `watch / monitor / detection` 三页实时画面入口已经统一到同一个流管理器，后续如果再调刷新周期或重连策略，只需要继续收敛 `edge-client.js` 这一处。
+
+## 9.1.15 2026-06-30 视频流共享预设收口记录
+
+做了什么：
+
+- 在 `assets/scripts/edge-client.js` 增加共享视频流预设，让 `createManagedVideoStream()` 可以按 `scene` 自动推导 `profile / refreshMs / retryMs`。
+- 约定当前三种场景：`watch` 默认走 `mobile/monitor` 自适应，`monitor` 固定走 `monitor`，`detection` 固定走 `detail`。
+- 调整 `watch-live.js`、`monitor-live.js`、`detection-live.js`，三页不再各自手写实时流默认策略，而是统一改成传 `scene` 给共享层。
+- 同步抬高 `watch.html`、`monitor.html`、`detection.html` 的 `edge-client.js` 版本戳到 `20260630-video1`，并把对应页面脚本版本戳抬到 `flow7`，避免继续命中旧缓存。
+
+产物位置：
+
+- `assets/scripts/edge-client.js`
+- `assets/scripts/watch-live.js`
+- `assets/scripts/monitor-live.js`
+- `assets/scripts/detection-live.js`
+- `watch.html`
+- `monitor.html`
+- `detection.html`
+
+怎么验证：
+
+- 对上述文件运行编辑器诊断，结果保持为 `0`。
+- 在真实 `8711` 在线页面环境下分别打开 `watch.html?app=1&camera_id=9`、`monitor.html?app=1&camera_id=9`、`detection.html?app=1&camera_id=9`。
+- 在线读取三页当前图像地址，确认分别命中 `profile=mobile`、`profile=monitor`、`profile=detail`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下验通：`watch` 当前加载 `/api/v1/video/cameras/9/stream.mjpg?profile=mobile...`，`monitor` 当前加载 `/api/v1/video/cameras/9/stream.mjpg?profile=monitor...`，`detection` 当前加载 `/api/v1/video/cameras/9/stream.mjpg?profile=detail...`。
+- 这样当前实时观看、守护概览、检测细节三页已经共享同一套流策略入口，后续如果还要调刷新周期、重连策略或新增页面场景，只需要继续收口 `edge-client.js` 这一层，不必再逐页分散修改。
+
+## 9.1.16 2026-06-30 `edge-client` 缓存一致性收口记录
+
+做了什么：
+
+- 把主链和关键入口页里仍然引用旧版 `edge-client.js` 的版本戳统一抬到 `20260630-video1`。
+- 本轮覆盖页面包括：`login`、`index`、`app-shell`、`family`、`device_binding`、`connect`、`rules`、`events`、`event_detail`，再加上前面已经更新过的 `watch / monitor / detection`。
+- 不改业务逻辑，只解决“共享层已经更新，但部分页面仍命中旧缓存”的一致性问题，避免演示时出现页面之间共享能力口径不一致。
+
+产物位置：
+
+- `login.html`
+- `index.html`
+- `app-shell.html`
+- `family.html`
+- `device_binding.html`
+- `connect.html`
+- `rules.html`
+- `events.html`
+- `event_detail.html`
+
+怎么验证：
+
+- 全局检查产品页 HTML 中的 `edge-client.js?v=`，应统一为 `20260630-video1`。
+- 对本轮改动的 HTML 文件运行编辑器诊断，结果保持为 `0`。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 当前产品端 12 个入口/主链页面已统一引用 `assets/scripts/edge-client.js?v=20260630-video1`，不会再出现实时流共享层已经更新，但部分页面继续使用旧版脚本的缓存分叉。
+- 这样后续若继续在 `edge-client.js` 增加共享能力，只需抬同一条版本戳即可覆盖整条用户端主链，不必再按页面分别追缓存问题。
+
 ## 9.2 2026-06-28 `connect.html` 闭环改造记录
 
 做了什么：
@@ -865,19 +1121,18 @@ iOS / Android App
 
 当前结果：
 
-- `部分通过`
+- `通过`
 
 说明：
 
-- 已在新启动的 `8712` 实例上完成真实接口验证：`/api/rules` 可读写，`/api/rules/runtime` 可返回运行态。
-- 实测结果显示：规则保存后，运行态接口先返回旧的 `last_rules_loaded_at`，在下一轮约 6 秒后更新为新的规则时间戳，说明“保存 -> worker 读取 -> 生效”的链路成立。
-- 当前 IDE 中原先运行的 `8711` 进程是旧代码实例，不包含新加的运行态接口；重启到新代码后行为会与 `8712` 一致。
-- 还没有完成页面端人工点击验收，因此暂不记为完全通过。
+- 早期已在新启动的 `8712` 实例上完成真实接口验证：`/api/rules` 可读写，`/api/rules/runtime` 可返回运行态，说明“保存 -> worker 读取 -> 生效”的链路成立。
+- 本轮已在真实 `8711` 在线页面环境下完成页面端人工点击验收：打开 `rules.html?app=1&cb=rules1` 后，页面初始即显示“规则已同步 / 已生效 / YOLO 已启用”。
+- 真实把“抽帧间隔”修改后点击保存，页面会回到“规则已同步”，并继续显示 `worker 最近一次读取规则时间`，随后我已把该值恢复回 `5` 并再次保存确认状态仍为“已生效”。
+- 说明当前 `rules.html` 的读取、保存和页面端生效反馈在真实 `8711` 环境下已经跑通，不再只停留在接口层验证。
 
 剩余问题和下一步：
 
-- 在页面端完成一次人工验收：修改规则、保存、观察状态从“等待生效”切到“已生效”。
-- 验收通过后，进入 `DetectionResult -> RuleEvaluation -> EventCandidate -> Event` 数据链拆分。
+- 继续进入 `DetectionResult -> RuleEvaluation -> EventCandidate -> Event` 数据链拆分和事件可解释性收口。
 
 ## 9.4 2026-06-28 数据链拆分第一版记录
 
@@ -907,19 +1162,58 @@ iOS / Android App
 
 当前结果：
 
-- `部分通过`
+- `通过`
 
 说明：
 
-- 已用 `8712` 新实例验证：真实摄像头链路会新增 `detection_results` 和 `rule_evaluations` 记录。
-- 已用函数级离线场景验证：错误流会新增 `event_candidates` 记录，并成功提升为用户事件；最近一次验证结果中，`event_candidate.id=9` 被提升为 `event.id=49`。
-- 已验证兼容接口仍可读取：`/api/events/49` 能返回 `candidate_id=9` 和 `rule_evaluation_id=20`，`/api/cameras/3/evaluation/latest` 能返回数据库中的最新评估。
-- 手动抓图接口接入新链路后，在当前环境下出现过一次客户端 `20s` 超时；说明链路已接上，但还需要继续压测真实摄像头手动抓图延迟。
+- 早期已用 `8712` 新实例验证：真实摄像头链路会新增 `detection_results` 和 `rule_evaluations` 记录；离线错误流会新增 `event_candidates` 并在需要时提升为用户事件。
+- 本轮已在真实 `8711` 在线页面环境下补完人工验收：对 `camera_id=9` 直接执行一次 `POST /api/cameras/9/capture`，实际返回耗时约 `2687ms`，响应中直接带回了 `snapshotId=24130`、`detectionResultId=19219`、`evaluationId=19465`。
+- 随后继续回读 `/api/app/cameras/9/evaluation/latest`，确认最新评估同样返回 `id=19465`、`detection_result_id=19219`、`matched_rule=no_person`，说明 `Capture -> DetectionResult -> RuleEvaluation` 在真实 `8711` 上已经对齐。
+- 同时回读 `/api/app/events?limit=5`，看到最新用户事件仍停在更早一条 `event.id=811 / ruleEvaluationId=19454 / candidateId=27718`，这与当前 `EventAgent.emit()` 的 5 分钟重复事件节流逻辑一致，说明“抓图生成新评估”与“用户事件是否提升”已被正确拆开，不会因为每次抓图都刷出一条重复提醒。
 
 剩余问题和下一步：
 
-- 对 `POST /api/cameras/{camera_id}/capture` 做一轮真实环境下的响应时间优化和人工验收。
-- 在不打断当前页面的前提下，开始进入页面端实时画面能力建设。
+- `event_candidates` 的管理台可见性已在 `9.4.1` 收口完成。
+- 在不打断当前页面的前提下，继续进入页面端实时画面能力建设。
+
+## 9.4.1 2026-06-30 候选事件可观测性收口记录
+
+做了什么：
+
+- 在 `edge-agent/app/storage.py` 新增 `list_event_candidates()`，从 `event_candidates` 联表摄像头与已提升事件，返回候选状态、解释信息、观测值、阈值和已提升事件编号。
+- 在 `edge-agent/app/main.py` 新增 `GET /api/event-candidates`，用于给管理台读取最近候选，支持 `limit` 和 `status`。
+- 在 `edge-agent/admin/index.html` 首页事件区块下增加“最近候选”列表，不新开页面，直接复用首页现有信息密度。
+- 在 `edge-agent/admin/console.js` 新增候选加载与状态文案渲染，让 `promoted / suppressed / new` 都能被直接看见。
+- 补了一层前端兜底：当候选接口不可用时，`candidateList` 不再静默留空，而是明确显示“候选接口暂不可用”，避免误判为暂无数据。
+
+产物位置：
+
+- `edge-agent/app/storage.py`
+- `edge-agent/app/main.py`
+- `edge-agent/admin/index.html`
+- `edge-agent/admin/console.js`
+
+如何复现和验证：
+
+- 打开 `http://127.0.0.1:8711/admin/index.html`，首页事件区块下应直接看到“最近候选”列表。
+- 访问 `GET /api/event-candidates?limit=5`，应返回真实候选记录，而不是 `404`。
+- 候选列表中应同时能区分 `已提升` 与 `已抑制`，并展示规则原因、观测时长、规则阈值和已提升事件编号。
+- 当服务尚未重启到最新代码时，管理台候选区块应显示“候选接口暂不可用”，而不是静默空白。
+
+当前结果：
+
+- `通过`
+
+说明：
+
+- 本轮已在真实 `8711` 在线页面环境下完成验收：`GET /api/event-candidates?limit=5` 返回 `200`，最新候选里已同时出现 `status=promoted` 与多条 `status=suppressed` 的 `no_person` 记录。
+- 同一时刻首页 `#candidateList` 已成功渲染 12 条候选，首条为 `已提升`，并继续展示多条 `已抑制`，说明“节流抑制后的候选”不再只存在数据库里。
+- 当前列表文案已经带上 `连续未检测到人形的时长超过配置阈值。`、`观测 35 分 18 秒`、`阈值 5 分钟`、`事件 #814` 等解释链字段，管理台已能直接讲清楚候选为什么被提升或被抑制。
+- 前一轮验收中曾暴露旧进程未重启导致 `/api/event-candidates` 返回 `404`；现在页面已经补上显式兜底提示，后续即便服务没重启，也不会再出现“候选区块空白但看不出原因”的状态。
+
+剩余问题和下一步：
+
+- 在不打断当前页面的前提下，继续进入页面端实时画面能力建设。
 
 ## 9.5 2026-06-28 视频接入层稳态化记录
 

@@ -174,6 +174,7 @@
         if (!state.streamController) {
             state.streamController = GoHomeEdge.createManagedVideoStream(image, {
                 cameraId: camera.id,
+                scene: "watch",
                 profile: state.selectedProfile,
                 onStateChange(nextState) {
                     if (nextState === "loading") applyStageState("loading");
@@ -182,7 +183,7 @@
                 },
             });
         }
-        state.streamController.setSource(camera.id, { profile: state.selectedProfile });
+        state.streamController.setSource(camera.id, { scene: "watch", profile: state.selectedProfile });
         applyStageState("loading");
     }
 
@@ -238,8 +239,8 @@
             state.device = device;
             state.cameras = cameras.filter((item) => item.enabled !== false);
             state.profiles = normalizeProfiles(profilesPayload).filter((item) => ["mobile", "monitor", "detail"].includes(item.id));
-            state.selectedProfile = state.profiles.some((item) => item.id === GoHomeEdge.preferredVideoProfile())
-                ? GoHomeEdge.preferredVideoProfile()
+            state.selectedProfile = state.profiles.some((item) => item.id === GoHomeEdge.preferredVideoProfile({ scene: "watch" }))
+                ? GoHomeEdge.preferredVideoProfile({ scene: "watch" })
                 : (state.profiles[0]?.id || "mobile");
             const requested = requestedCameraId();
             state.selectedCameraId = state.cameras.some((item) => Number(item.id) === Number(requested))

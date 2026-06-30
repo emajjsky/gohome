@@ -6,7 +6,7 @@
     <title>想家了吗</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260629-ui3" rel="stylesheet">
     <style>
         .material-symbols-outlined {
             font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
@@ -25,138 +25,108 @@
         }
     </style>
 </head>
-<body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
-    <main class="flex-1 px-container flex flex-col gap-6 pt-5 pb-8">
+<body class="app-phone-shell text-on-surface font-sans antialiased">
+    <header class="app-topbar">
+        <span class="app-topbar-side placeholder"></span>
+        <p class="app-topbar-title">首页</p>
+        <a href="app-shell.html?app=1" class="app-topbar-side">
+            <span class="material-symbols-outlined text-[20px]">apps</span>
+        </a>
+    </header>
+    <main class="app-main app-stack">
         <section class="app-home-hero p-5">
             <div class="relative z-[1] flex flex-col gap-4">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2 bg-white/68 backdrop-blur-md w-max px-3.5 py-1.5 rounded-full border border-white/70 shadow-[0_12px_24px_rgba(46,64,90,0.08)]">
+                <div class="flex items-center justify-between gap-3">
+                    <div class="flex items-center gap-2 bg-white/72 backdrop-blur-md w-max px-3.5 py-1.5 rounded-full border border-white/70 shadow-[0_12px_24px_rgba(46,64,90,0.08)]">
                         <span class="relative flex h-2 w-2">
                             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#32a071] opacity-35"></span>
                             <span class="relative inline-flex rounded-full h-2 w-2 bg-[#32a071]"></span>
                         </span>
                         <span id="edgeHomeDevice" class="font-sans text-[11px] font-semibold text-[#2d7d5c] tracking-wide">今天，你想家了吗</span>
                     </div>
-                    <div class="w-11 h-11 rounded-full overflow-hidden border border-white/80 shadow-[0_12px_28px_rgba(46,64,90,0.1)]">
+                    <div class="w-10 h-10 rounded-full overflow-hidden border border-white/80 shadow-[0_12px_28px_rgba(46,64,90,0.1)]">
                         <img src="assets/images/elderly-portrait-wiki.jpg" alt="妈妈头像" class="w-full h-full object-cover object-top">
                     </div>
                 </div>
-
-                <div class="flex flex-col gap-2.5">
-                    <p id="edgeHomeTime" class="font-sans text-[12px] text-on-surface-variant font-medium">15:20 更新 · 午饭后家里慢慢安静下来</p>
-                    <h2 id="edgeHomeTitle" class="font-display text-[24px] leading-[1.22] font-bold text-on-surface tracking-tight">她今天在客厅坐了很久，你要不要周末回去看看？</h2>
-                    <p id="edgeHomeSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-relaxed">
-                        上午自己做了饭，中午活动正常，下午大部分时间都在沙发边休息。没有异常，却很像在等一句问候。
-                    </p>
+                <div class="flex flex-col gap-2">
+                    <p id="edgeHomeTime" class="font-sans text-[12px] text-on-surface-variant font-medium">15:20 更新</p>
+                    <h2 id="edgeHomeTitle" class="font-display text-[24px] leading-[1.24] font-bold text-on-surface tracking-tight">她今天在客厅坐了很久，你要不要周末回去看看？</h2>
+                    <p id="edgeHomeSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-relaxed">上午自己做了饭，中午活动正常，下午大部分时间都在沙发边休息。</p>
                 </div>
-
-                <div class="grid grid-cols-3 gap-2.5">
-                    <div class="rounded-[20px] bg-white/66 backdrop-blur-md border border-white/74 px-3 py-3 shadow-[0_14px_30px_rgba(45,63,89,0.08)]">
-                        <p class="font-sans text-[10px] font-semibold text-on-surface-variant">上次回家</p>
-                        <p class="font-display text-[15px] font-bold text-on-surface mt-1.5">12天前</p>
-                    </div>
-                    <div class="rounded-[20px] bg-white/66 backdrop-blur-md border border-white/74 px-3 py-3 shadow-[0_14px_30px_rgba(45,63,89,0.08)]">
-                        <p class="font-sans text-[10px] font-semibold text-on-surface-variant">最近通话</p>
-                        <p class="font-display text-[15px] font-bold text-on-surface mt-1.5">昨晚20:31</p>
-                    </div>
-                    <div class="rounded-[20px] bg-[linear-gradient(180deg,rgba(255,250,245,0.94)_0%,rgba(255,243,235,0.92)_100%)] border border-white/78 px-3 py-3 shadow-[0_14px_30px_rgba(114,74,57,0.09)]">
-                        <p class="font-sans text-[10px] font-semibold text-on-surface-variant">回家建议</p>
-                        <p class="font-display text-[15px] font-bold text-[#b5765d] mt-1.5">周六晚饭</p>
-                    </div>
-                </div>
-
-                <div class="grid grid-cols-2 gap-2.5">
-                    <button class="app-btn-primary font-sans text-[14px] font-semibold transition-all active:scale-[0.98] flex items-center justify-center gap-1.5">
+                <div class="grid grid-cols-2 gap-3">
+                    <a id="edgeHomePrimaryAction" href="login.html?app=1" class="app-btn-primary font-sans text-[14px] font-semibold transition-all active:scale-[0.98] flex items-center justify-center gap-1.5">
                         <span class="material-symbols-outlined fill text-[18px]">call</span>
-                        现在打电话
-                    </button>
-                    <button class="app-btn-secondary font-sans text-[14px] font-semibold hover:bg-primary/5 transition-all active:scale-[0.98] flex items-center justify-center gap-1.5">
+                        去登录
+                    </a>
+                    <a id="edgeHomeSecondaryAction" href="family.html?app=1" class="app-btn-secondary font-sans text-[14px] font-semibold hover:bg-primary/5 transition-all active:scale-[0.98] flex items-center justify-center gap-1.5">
                         <span class="material-symbols-outlined text-[18px]">calendar_month</span>
-                        安排周末回家
-                    </button>
+                        家庭空间
+                    </a>
                 </div>
             </div>
         </section>
 
-        <section class="app-soft-card bg-white p-5 flex flex-col gap-4 overflow-hidden">
-            <div class="flex items-start justify-between gap-4">
-                <div class="min-w-0 pr-2">
-                    <p class="font-display text-[18px] leading-[1.2] font-bold text-on-surface tracking-tight">这周回家安排</p>
-                </div>
-                <div class="app-section-badge shrink-0">可执行</div>
+        <section class="app-panel px-4 py-4 flex flex-col gap-3">
+            <div class="flex items-center justify-between gap-3">
+                <p class="font-display text-[17px] font-bold text-on-surface">演示主链</p>
+                <span class="app-section-badge shrink-0">最短路径</span>
             </div>
-
-            <div class="grid grid-cols-[0.92fr_1.08fr] gap-3 items-stretch">
-                <div class="app-map-badge p-4 flex flex-col justify-between gap-3">
-                    <div>
-                        <p class="font-sans text-[10px] text-on-surface-variant font-semibold tracking-[0.16em]">本周回家</p>
-                        <p class="font-display text-[29px] leading-none font-bold text-on-surface mt-2">112<span class="text-[15px] ml-1">km</span></p>
-                        <p class="font-display text-[15px] font-bold text-primary mt-2.5">1小时42分</p>
-                    </div>
-                    <div class="flex flex-col gap-2">
-                        <div class="rounded-2xl bg-[#eef5ff] px-3 py-2.5">
-                            <p class="font-sans text-[10px] text-on-surface-variant font-semibold">出发地</p>
-                            <p class="font-display text-[14px] font-bold text-on-surface mt-1">上海 · 徐汇</p>
-                        </div>
-                        <div class="rounded-2xl bg-[#fff3eb] px-3 py-2.5">
-                            <p class="font-sans text-[10px] text-on-surface-variant font-semibold">目的地</p>
-                            <p class="font-display text-[14px] font-bold text-on-surface mt-1">苏州 · 姑苏</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="app-map-shell p-4 flex flex-col gap-3.5">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <p class="font-sans text-[11px] font-semibold text-on-surface">本周日历</p>
-                        </div>
-                        <span class="px-2.5 py-1 rounded-full bg-surface-container-low text-on-surface-variant text-[10px] font-semibold">周六</span>
-                    </div>
-                    <div class="grid grid-cols-7 gap-1 text-center">
-                        <span class="font-sans text-[10px] text-outline">一</span>
-                        <span class="font-sans text-[10px] text-outline">二</span>
-                        <span class="font-sans text-[10px] text-outline">三</span>
-                        <span class="font-sans text-[10px] text-outline">四</span>
-                        <span class="font-sans text-[10px] text-outline">五</span>
-                        <span class="font-sans text-[10px] text-outline">六</span>
-                        <span class="font-sans text-[10px] text-outline">日</span>
-                        <span class="h-8 rounded-full flex items-center justify-center font-sans text-[11px] text-on-surface-variant">24</span>
-                        <span class="h-8 rounded-full flex items-center justify-center font-sans text-[11px] text-on-surface-variant">25</span>
-                        <span class="h-8 rounded-full flex items-center justify-center font-sans text-[11px] text-on-surface-variant">26</span>
-                        <span class="h-8 rounded-full flex items-center justify-center font-sans text-[11px] text-on-surface-variant">27</span>
-                        <span class="h-8 rounded-full flex items-center justify-center font-sans text-[11px] text-on-surface-variant">28</span>
-                        <span class="h-8 rounded-full bg-primary text-white flex items-center justify-center font-sans text-[11px] font-bold shadow-sm">29</span>
-                        <span class="h-8 rounded-full flex items-center justify-center font-sans text-[11px] text-on-surface-variant">30</span>
-                    </div>
-                    <div class="flex flex-wrap gap-2">
-                        <span class="px-2.5 py-1 rounded-full bg-surface-container-low text-on-surface-variant text-[10px] font-semibold">晚饭</span>
-                        <span class="px-2.5 py-1 rounded-full bg-surface-container-low text-on-surface-variant text-[10px] font-semibold">水果</span>
-                        <span class="px-2.5 py-1 rounded-full bg-surface-container-low text-on-surface-variant text-[10px] font-semibold">买药</span>
-                    </div>
-                </div>
+            <div class="grid grid-cols-3 gap-3">
+                <a href="monitor.html?app=1" class="app-panel-muted px-3 py-4 text-center">
+                    <p class="font-display text-[15px] font-bold text-on-surface">守护</p>
+                    <p class="font-sans text-[11px] text-on-surface-variant mt-1">看结论</p>
+                </a>
+                <a href="watch.html?app=1" class="app-panel-muted px-3 py-4 text-center">
+                    <p class="font-display text-[15px] font-bold text-on-surface">实时</p>
+                    <p class="font-sans text-[11px] text-on-surface-variant mt-1">看画面</p>
+                </a>
+                <a href="events.html?app=1" class="app-panel-muted px-3 py-4 text-center">
+                    <p class="font-display text-[15px] font-bold text-on-surface">事件</p>
+                    <p class="font-sans text-[11px] text-on-surface-variant mt-1">看证据</p>
+                </a>
             </div>
+        </section>
 
-            <div class="grid grid-cols-2 gap-3">
-                <div class="app-map-stat p-3.5">
-                    <p class="font-sans text-[11px] text-on-surface-variant font-semibold">最晚出发</p>
-                    <p class="font-display text-[18px] leading-none font-extrabold text-on-surface mt-2">周六 12:00</p>
-                    <p class="font-sans text-[11px] text-primary font-semibold mt-2">傍晚前能到家</p>
+        <section id="edgeHomeSetupPanel" class="hidden app-panel px-5 py-5 flex flex-col gap-4">
+            <div class="flex items-center justify-between gap-4">
+                <p class="font-display text-[18px] font-bold text-on-surface">先把入口接上</p>
+                <div id="edgeHomeSetupBadge" class="app-section-badge shrink-0">未完成</div>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+                <div class="app-kpi">
+                    <p>账号</p>
+                    <p id="edgeHomeAccountState">未登录</p>
                 </div>
-                <div class="app-map-stat p-3.5">
-                    <p class="font-sans text-[11px] text-on-surface-variant font-semibold">回家理由</p>
-                    <p class="font-display text-[18px] leading-none font-extrabold text-on-surface mt-2">晚饭前刚好到</p>
-                    <p class="font-sans text-[11px] text-primary font-semibold mt-2">更容易把计划落地</p>
+                <div class="app-kpi">
+                    <p>家庭</p>
+                    <p id="edgeHomeFamilyState">未创建</p>
+                </div>
+                <div class="app-kpi">
+                    <p>设备</p>
+                    <p id="edgeHomeBindingState">未绑定</p>
                 </div>
             </div>
         </section>
 
-        <section class="flex flex-col gap-4">
+        <section id="edgeHomeSnapshotSection" class="app-stack">
             <div class="flex items-center justify-between">
-                <h3 class="font-display text-[19px] font-bold text-on-surface tracking-tight">今天让你想回家的理由</h3>
-                <span class="font-sans text-[11px] font-semibold text-primary">三步触发</span>
+                <h3 class="font-display text-[18px] font-bold text-on-surface">当前画面</h3>
+                <span class="font-sans text-[11px] font-semibold text-primary">实时摘要</span>
             </div>
-            <div class="app-rhythm-card p-4 flex flex-col gap-3.5">
-                <div class="app-story-note">
+            <div class="app-snapshot-card relative aspect-[1.28/1]">
+                <img id="edgeHomeSnapshotImage" src="assets/images/family-sofa.jpg" alt="客厅休息" class="w-full h-full object-cover">
+                <div class="absolute inset-0 bg-gradient-to-t from-black/62 via-black/12 to-transparent"></div>
+                <div class="absolute top-3 left-3 app-map-badge px-2.5 py-2">
+                    <p id="edgeHomeSnapshotTime" class="font-sans text-[10px] text-on-surface-variant font-semibold">15 分钟前</p>
+                    <p id="edgeHomeSnapshotRoom" class="font-display text-[13px] font-bold text-on-surface mt-0.5">客厅动态</p>
+                </div>
+                <div class="absolute bottom-0 left-0 right-0 p-4">
+                    <p id="edgeHomeSnapshotHeadline" class="font-display text-[17px] leading-snug font-bold text-white">刚刚起身走动了一会儿，随后又回到客厅坐下</p>
+                    <p id="edgeHomeSnapshotSub" class="font-sans text-[12px] text-white/80 mt-1.5">这一切都很平常，但也很容易让人想起家里的安静。</p>
+                </div>
+            </div>
+            <div class="app-panel px-4 py-4 flex flex-col gap-3">
+                <div class="grid grid-cols-[46px_1fr] gap-3 items-start">
                     <div class="app-story-icon bg-[#eef5ff] text-primary">
                         <span class="material-symbols-outlined text-[18px]">visibility</span>
                     </div>
@@ -166,7 +136,7 @@
                         <p id="edgeHomeFactSub" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">15 分钟前刚起身活动过，随后又回到沙发边坐下。</p>
                     </div>
                 </div>
-                <div class="app-story-note">
+                <div class="grid grid-cols-[46px_1fr] gap-3 items-start">
                     <div class="app-story-icon bg-[#fff3eb] text-[#b5765d]">
                         <span class="material-symbols-outlined fill text-[18px]">favorite</span>
                     </div>
@@ -176,7 +146,7 @@
                         <p id="edgeHomeFeelingSub" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">没有异常，也没有热闹，像是在等一句“你吃饭了吗”。</p>
                     </div>
                 </div>
-                <div class="app-story-note">
+                <div class="grid grid-cols-[46px_1fr] gap-3 items-start">
                     <div class="app-story-icon bg-[#edf6ee] text-[#2d7d5c]">
                         <span class="material-symbols-outlined text-[18px]">call</span>
                     </div>
@@ -188,123 +158,39 @@
                 </div>
             </div>
         </section>
-
-        <section class="flex flex-col gap-4">
-            <div class="flex items-center justify-between">
-                <h3 class="font-display text-[19px] font-bold text-on-surface tracking-tight">今天家里的样子</h3>
-                <span class="font-sans text-[11px] font-semibold text-primary">让牵挂更具体</span>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-                <div class="app-snapshot-card relative group aspect-[1.48/1] col-span-2 cursor-pointer">
-                    <img id="edgeHomeSnapshotImage" src="assets/images/family-sofa.jpg" alt="客厅休息" class="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-700">
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent"></div>
-                    <div class="absolute top-3 left-3 app-map-badge px-2.5 py-2">
-                        <p id="edgeHomeSnapshotTime" class="font-sans text-[10px] text-on-surface-variant font-semibold">15 分钟前</p>
-                        <p id="edgeHomeSnapshotRoom" class="font-display text-[13px] font-bold text-on-surface mt-0.5">客厅动态</p>
-                    </div>
-                    <div class="absolute bottom-0 left-0 right-0 p-4">
-                        <p id="edgeHomeSnapshotHeadline" class="font-display text-[17px] leading-snug font-bold text-white">刚刚起身走动了一会儿，随后又回到客厅坐下</p>
-                        <p id="edgeHomeSnapshotSub" class="font-sans text-[12px] text-white/80 mt-1.5">这一切都很平常，但也很容易让人想起家里的安静。</p>
-                    </div>
-                </div>
-                <div class="app-snapshot-card relative aspect-[1/1]">
-                    <img src="assets/images/grandma-reading.jpg" alt="窗边看书" class="w-full h-full object-cover">
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/52 via-black/0 to-transparent"></div>
-                    <div class="absolute bottom-0 left-0 right-0 p-4">
-                        <p class="font-display text-[16px] font-bold text-white">窗边翻了会儿书</p>
-                        <p class="font-sans text-[12px] text-white/80 mt-1">午后光线很好</p>
-                    </div>
-                </div>
-                <div class="app-snapshot-card relative aspect-[1/1]">
-                    <img src="assets/images/grandma-garden.jpg" alt="阳台晒太阳" class="w-full h-full object-cover">
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/46 via-black/0 to-transparent"></div>
-                    <div class="absolute bottom-0 left-0 right-0 p-4">
-                        <p class="font-display text-[16px] font-bold text-white">阳台晒了会儿太阳</p>
-                        <p class="font-sans text-[12px] text-white/80 mt-1">节奏很慢，也很安稳</p>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <section class="flex flex-col gap-4">
-            <div class="flex items-center justify-between">
-                <h3 class="font-display text-[19px] font-bold text-on-surface tracking-tight">最近让人想回家的时候</h3>
-                <button class="text-[13px] font-medium text-primary flex items-center gap-1 hover:opacity-80 transition-opacity">
-                    全部照片 <span class="material-symbols-outlined text-[18px]">chevron_right</span>
-                </button>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-                <div class="app-memory-card relative aspect-[0.92/1] group cursor-pointer">
-                    <img src="assets/images/memory-family-dinner.jpg" alt="饭桌前团聚" class="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-700">
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/65 via-black/0 to-transparent"></div>
-                    <div class="absolute bottom-0 left-0 right-0 p-4">
-                        <p class="font-display text-[17px] leading-tight font-bold text-white">饭桌前一坐下，她就笑了</p>
-                        <p class="font-sans text-[12px] text-white/80 mt-1.5">今天 14:20 · 女儿回家后一直在聊天</p>
-                    </div>
-                </div>
-                <div class="app-memory-card relative aspect-[0.92/1] group cursor-pointer">
-                    <img src="assets/images/memory-daughter-walk.jpg" alt="陪着散步" class="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-700">
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-black/0 to-transparent"></div>
-                    <div class="absolute bottom-0 left-0 right-0 p-4">
-                        <p class="font-display text-[17px] font-bold text-white">一起慢慢散步</p>
-                        <p class="font-sans text-[12px] text-white/80 mt-1">昨天傍晚 · 小区楼下</p>
-                    </div>
-                </div>
-                <div class="app-memory-card relative aspect-[0.92/1] group cursor-pointer">
-                    <img src="assets/images/memory-relax-chat.jpg" alt="坐在一起聊天" class="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-700">
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/52 via-black/0 to-transparent"></div>
-                    <div class="absolute bottom-0 left-0 right-0 p-4">
-                        <p class="font-display text-[17px] font-bold text-white">沙发边聊了很久</p>
-                        <p class="font-sans text-[12px] text-white/80 mt-1">本周最温柔的一次陪伴</p>
-                    </div>
-                </div>
-                <div class="app-memory-card relative aspect-[0.92/1] group cursor-pointer">
-                    <img src="assets/images/memory-generations.jpg" alt="一家团聚" class="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-700">
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/52 via-black/0 to-transparent"></div>
-                    <div class="absolute bottom-0 left-0 right-0 p-4">
-                        <p class="font-display text-[17px] font-bold text-white">一家人都在的时候</p>
-                        <p class="font-sans text-[12px] text-white/80 mt-1">总会更容易想回家</p>
-                    </div>
-                </div>
-            </div>
-        </section>
     </main>
 
-    <nav class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
-        <div class="flex justify-between items-center">
-            <a href="index.html" class="flex flex-col items-center gap-1.5 text-primary">
-                <div class="app-nav-pill active">
-                    <span class="material-symbols-outlined fill text-[22px]">home</span>
-                </div>
-                <span class="font-sans text-[11px] font-bold tracking-wide">首页</span>
-            </a>
-            <a href="monitor.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5">
-                    <span class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
-                </div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">守护</span>
-            </a>
-            <a href="events.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5">
-                    <span class="material-symbols-outlined text-[22px]">history</span>
-                </div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
-            </a>
-            <a href="companionship.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5">
-                    <span class="material-symbols-outlined text-[22px]">diversity_1</span>
-                </div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">陪伴</span>
-            </a>
-            <a href="privacy.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5">
-                    <span class="material-symbols-outlined text-[22px]">person</span>
-                </div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
-            </a>
+    <nav class="app-bottom-nav">
+        <div class="app-bottom-nav-inner">
+            <div class="flex justify-between items-center">
+                <a href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
+                    <div class="app-nav-pill active">
+                        <span class="material-symbols-outlined fill text-[22px]">home</span>
+                    </div>
+                    <span class="font-sans text-[11px] font-bold tracking-wide">首页</span>
+                </a>
+                <a href="monitor.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                    <div class="app-nav-pill group-hover:bg-primary/5">
+                        <span class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
+                    </div>
+                    <span class="font-sans text-[11px] font-semibold tracking-wide">守护</span>
+                </a>
+                <a href="events.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                    <div class="app-nav-pill group-hover:bg-primary/5">
+                        <span class="material-symbols-outlined text-[22px]">history</span>
+                    </div>
+                    <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
+                </a>
+                <a href="privacy.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                    <div class="app-nav-pill group-hover:bg-primary/5">
+                        <span class="material-symbols-outlined text-[22px]">person</span>
+                    </div>
+                    <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
+                </a>
+            </div>
         </div>
     </nav>
-    <script src="assets/scripts/edge-client.js"></script>
-    <script src="assets/scripts/home-live.js"></script>
+    <script src="assets/scripts/edge-client.js?v=20260630-video1"></script>
+    <script src="assets/scripts/home-live.js?v=20260629-watch1"></script>
 </body>
 </html>

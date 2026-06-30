@@ -5,6 +5,7 @@
         detectorBackend: "basic",
         latestSnapshot: null,
         streamCameraId: null,
+        streamController: null,
         refreshInFlight: false,
         toastTimer: null,
     };
@@ -44,6 +45,55 @@
         if (value < 60) return `${Math.max(0, Math.round(value))}秒`;
         if (value < 3600) return `${Math.floor(value / 60)}分`;
         return `${Math.floor(value / 3600)}小时`;
+    }
+
+    function metricLabel(key) {
+        const labels = {
+            no_person_seconds: "连续无人",
+            no_motion_seconds: "静止时长",
+            motion_score: "运动分数",
+            brightness: "亮度",
+            contrast: "对比度",
+            people: "人体框",
+        };
+        return labels[key] || key;
+    }
+
+    function metricValue(key, value) {
+        if (value === null || value === undefined || value === "") return "-";
+        if (key === "people" && Array.isArray(value)) return `${value.length} 个人体框`;
+        if (key.endsWith("_seconds")) return fmtDuration(value);
+        if (key === "motion_score") return fmtMotion(value);
+        if (key === "brightness" || key === "contrast") return fmtNumber(value, 0);
+        if (typeof value === "number") return Number.isInteger(value) ? String(value) : fmtNumber(value, 2);
+        return String(value);
+    }
+
+    function summarizeMetrics(metrics) {
+        const entries = Object.entries(metrics || {}).filter(([, value]) => value !== null && value !== undefined && value !== "");
+        if (!entries.length) return "";
+        return entries.map(([key, value]) => `${metricLabel(key)} ${metricValue(key, value)}`).join("，");
+    }
+
+    function matchedRules(evaluation) {
+        if (Array.isArray(evaluation?.matched_rules) && evaluation.matched_rules.length) return evaluation.matched_rules;
+        return (Array.isArray(evaluation?.candidates) ? evaluation.candidates : [])
+            .map((candidate) => candidate?.payload?.rule)
+            .filter(Boolean);
+    }
+
+    function evaluationSummary(evaluation) {
+        const rules = matchedRules(evaluation);
+        if (!rules.length) return evaluation?.explanation || "当前检测结果没有生成告警候选。";
+        return rules.map((rule) => {
+            const parts = [];
+            if (rule.reason) parts.push(rule.reason);
+            const observed = summarizeMetrics(rule.observed);
+            const threshold = summarizeMetrics(rule.threshold);
+            if (observed) parts.push(`当前观测：${observed}`);
+            if (threshold) parts.push(`规则阈值：${threshold}`);
+            return parts.join(" ");
+        }).join("；");
     }
 
     function clamp(value, min, max) {
@@ -305,15 +355,31 @@
         setText("detectionMotion", "-");
     }
 
-    async function streamUrl(cameraId) {
-        return GoHomeEdge.v1VideoStreamPlaybackUrl(cameraId, { profile: "detail" });
-    }
-
     async function attachStream(cameraId) {
         if (!cameraId) return;
         const numericId = Number(cameraId);
-        if (state.streamCameraId === numericId) return;
         const image = $("detectionSnapshotImage");
+        if (!image) return;
+        if (!state.streamController) {
+            state.streamController = GoHomeEdge.createManagedVideoStream(image, {
+                cameraId: numericId,
+                scene: "detection",
+                onStateChange(nextState) {
+                    if (nextState === "playing") {
+                        state.streamCameraId = Number(state.selectedCameraId);
+                        $("detectionEmpty").classList.add("hidden");
+                        renderDetectionOverlay(state.latestSnapshot);
+                        return;
+                    }
+                    if (nextState === "error") {
+                        state.streamCameraId = null;
+                        renderDetectionOverlay(state.latestSnapshot);
+                        $("detectionEmpty").classList.remove("hidden");
+                    }
+                },
+            });
+        }
+        if (state.streamCameraId === numericId) return;
         state.streamCameraId = numericId;
         $("detectionEmpty").classList.add("hidden");
         image.onload = () => renderDetectionOverlay(state.latestSnapshot);
@@ -324,7 +390,12 @@
                 $("detectionEmpty").classList.remove("hidden");
             }
         };
-        image.src = await streamUrl(numericId);
+        state.streamController.setSource(numericId, { scene: "detection" });
+    }
+
+    function detachStream() {
+        state.streamCameraId = null;
+        state.streamController?.setSource(null);
     }
 
     function renderEvaluation(evaluation) {
@@ -337,7 +408,7 @@
         setText(
             "detectionRuleSummary",
             hasCandidates
-                ? candidates.map((candidate) => candidate.summary).join("；")
+                ? evaluationSummary(evaluation)
                 : "当前检测结果没有生成告警候选。"
         );
         setText("detectionNoPerson", fmtDuration(evalState.no_person_seconds));
@@ -375,6 +446,7 @@
                 await loadEvaluation(state.selectedCameraId).catch(renderEmptyEvaluation);
             }
         } catch (error) {
+            detachStream();
             renderEmptySnapshot();
             renderEmptyEvaluation();
             if (error?.message) setText("detectionSubtitle", error.message);
@@ -418,6 +490,7 @@
             setText("detectionTitle", "本机服务未连接");
             setText("detectionSubtitle", "启动 edge-agent 后，这里会显示真实检测结果。");
             setText("detectionStatusBadge", "未连接");
+            detachStream();
             renderEmptySnapshot();
             renderEmptyEvaluation();
             showToast(error.message || "本机守护服务未连接");
@@ -465,5 +538,9 @@
         window.addEventListener("resize", () => renderDetectionOverlay(state.latestSnapshot));
         refreshAll();
         setInterval(loadCurrentSnapshot, 8000);
+    });
+
+    window.addEventListener("beforeunload", () => {
+        state.streamController?.dispose();
     });
 })();
