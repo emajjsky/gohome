@@ -462,18 +462,87 @@ class Storage:
                     FOREIGN KEY(event_id) REFERENCES events(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS elder_profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    family_id INTEGER NOT NULL,
+                    elder_id TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    relationship TEXT NOT NULL DEFAULT '',
+                    city TEXT NOT NULL DEFAULT '',
+                    birthday TEXT NOT NULL DEFAULT '',
+                    lunar_birthday TEXT NOT NULL DEFAULT '',
+                    living_status TEXT NOT NULL DEFAULT '',
+                    primary_room TEXT NOT NULL DEFAULT '',
+                    likes_json TEXT NOT NULL DEFAULT '[]',
+                    dislikes_json TEXT NOT NULL DEFAULT '[]',
+                    diet_notes_json TEXT NOT NULL DEFAULT '[]',
+                    health_conditions_json TEXT NOT NULL DEFAULT '[]',
+                    medication_notes TEXT NOT NULL DEFAULT '',
+                    routine_json TEXT NOT NULL DEFAULT '{}',
+                    emergency_contacts_json TEXT NOT NULL DEFAULT '[]',
+                    home_area TEXT NOT NULL DEFAULT '',
+                    privacy_level TEXT NOT NULL DEFAULT 'family_only',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(family_id, elder_id),
+                    FOREIGN KEY(family_id) REFERENCES families(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS calendar_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    family_id INTEGER NOT NULL,
+                    elder_id TEXT NOT NULL DEFAULT '',
+                    event_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    start_at TEXT NOT NULL,
+                    remind_before_days_json TEXT NOT NULL DEFAULT '[]',
+                    source TEXT NOT NULL DEFAULT 'manual',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(family_id) REFERENCES families(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS message_candidates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id TEXT NOT NULL UNIQUE,
+                    family_id INTEGER NOT NULL,
+                    device_id TEXT NOT NULL DEFAULT '',
+                    elder_id TEXT NOT NULL DEFAULT '',
+                    message_type TEXT NOT NULL,
+                    priority TEXT NOT NULL DEFAULT 'warm',
+                    title TEXT NOT NULL,
+                    subtitle TEXT NOT NULL DEFAULT '',
+                    body TEXT NOT NULL DEFAULT '',
+                    facts_json TEXT NOT NULL DEFAULT '[]',
+                    image_mode TEXT NOT NULL DEFAULT 'none',
+                    image_url TEXT NOT NULL DEFAULT '',
+                    actions_json TEXT NOT NULL DEFAULT '[]',
+                    source_json TEXT NOT NULL DEFAULT '[]',
+                    source_event_ids_json TEXT NOT NULL DEFAULT '[]',
+                    source_media_ids_json TEXT NOT NULL DEFAULT '[]',
+                    generated_by TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'open',
+                    expires_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(family_id) REFERENCES families(id)
+                );
+
                 CREATE TABLE IF NOT EXISTS rules (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     capture_interval_seconds INTEGER NOT NULL,
                     motion_threshold REAL NOT NULL DEFAULT 0.015,
                     black_brightness_threshold REAL NOT NULL DEFAULT 18,
                     black_contrast_threshold REAL NOT NULL DEFAULT 4,
-                    yolo_confidence REAL NOT NULL DEFAULT 0.35,
+                    yolo_confidence REAL NOT NULL DEFAULT 0.20,
                     no_motion_seconds INTEGER NOT NULL,
                     black_screen_enabled INTEGER NOT NULL,
                     no_motion_enabled INTEGER NOT NULL,
                     person_detection_enabled INTEGER NOT NULL,
                     fall_detection_enabled INTEGER NOT NULL,
+                    activity_detection_enabled INTEGER NOT NULL DEFAULT 1,
+                    fire_detection_enabled INTEGER NOT NULL DEFAULT 1,
                     no_person_seconds INTEGER NOT NULL,
                     offline_enabled INTEGER NOT NULL,
                     notification_enabled INTEGER NOT NULL,
@@ -488,13 +557,15 @@ class Storage:
             self._ensure_column(conn, "events", "detection_result_id", "INTEGER")
             self._ensure_column(conn, "events", "rule_evaluation_id", "INTEGER")
             self._ensure_column(conn, "events", "candidate_id", "INTEGER")
-            self._ensure_column(conn, "rules", "person_detection_enabled", "INTEGER NOT NULL DEFAULT 0")
-            self._ensure_column(conn, "rules", "fall_detection_enabled", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "rules", "person_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "rules", "fall_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "rules", "activity_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "rules", "fire_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column(conn, "rules", "no_person_seconds", "INTEGER NOT NULL DEFAULT 300")
             self._ensure_column(conn, "rules", "motion_threshold", "REAL NOT NULL DEFAULT 0.015")
             self._ensure_column(conn, "rules", "black_brightness_threshold", "REAL NOT NULL DEFAULT 18")
             self._ensure_column(conn, "rules", "black_contrast_threshold", "REAL NOT NULL DEFAULT 4")
-            self._ensure_column(conn, "rules", "yolo_confidence", "REAL NOT NULL DEFAULT 0.35")
+            self._ensure_column(conn, "rules", "yolo_confidence", "REAL NOT NULL DEFAULT 0.20")
             exists = conn.execute("SELECT id FROM rules WHERE id = 1").fetchone()
             if not exists:
                 conn.execute(
@@ -511,12 +582,14 @@ class Storage:
                         no_motion_enabled,
                         person_detection_enabled,
                         fall_detection_enabled,
+                        activity_detection_enabled,
+                        fire_detection_enabled,
                         no_person_seconds,
                         offline_enabled,
                         notification_enabled,
                         updated_at
                     )
-                    VALUES (1, 5, 0.015, 18, 4, 0.35, 300, 1, 1, 0, 0, 300, 1, 0, ?)
+                    VALUES (1, 5, 0.015, 18, 4, 0.20, 300, 1, 1, 1, 1, 1, 1, 300, 1, 1, ?)
                     """,
                     (now_iso(),),
                 )
@@ -545,6 +618,8 @@ class Storage:
             "no_motion_enabled",
             "person_detection_enabled",
             "fall_detection_enabled",
+            "activity_detection_enabled",
+            "fire_detection_enabled",
             "no_person_seconds",
             "offline_enabled",
             "notification_enabled",
@@ -617,6 +692,38 @@ class Storage:
             return None
         data = dict(row)
         data["response"] = json.loads(data.pop("response_json", "{}") or "{}")
+        return data
+
+    def _elder_profile_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
+        if row is None:
+            return None
+        data = dict(row)
+        data["likes"] = json.loads(data.pop("likes_json", "[]") or "[]")
+        data["dislikes"] = json.loads(data.pop("dislikes_json", "[]") or "[]")
+        data["diet_notes"] = json.loads(data.pop("diet_notes_json", "[]") or "[]")
+        data["health_conditions"] = json.loads(data.pop("health_conditions_json", "[]") or "[]")
+        data["routine"] = json.loads(data.pop("routine_json", "{}") or "{}")
+        data["emergency_contacts"] = json.loads(data.pop("emergency_contacts_json", "[]") or "[]")
+        return data
+
+    def _calendar_event_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
+        if row is None:
+            return None
+        data = dict(row)
+        data["type"] = data.pop("event_type", "")
+        data["remind_before_days"] = json.loads(data.pop("remind_before_days_json", "[]") or "[]")
+        data["metadata"] = json.loads(data.pop("metadata_json", "{}") or "{}")
+        return data
+
+    def _message_candidate_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
+        if row is None:
+            return None
+        data = dict(row)
+        data["facts"] = json.loads(data.pop("facts_json", "[]") or "[]")
+        data["actions"] = json.loads(data.pop("actions_json", "[]") or "[]")
+        data["source"] = json.loads(data.pop("source_json", "[]") or "[]")
+        data["source_event_ids"] = json.loads(data.pop("source_event_ids_json", "[]") or "[]")
+        data["source_media_ids"] = json.loads(data.pop("source_media_ids_json", "[]") or "[]")
         return data
 
     def _video_service_node_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
@@ -736,6 +843,252 @@ class Storage:
         if family is None:
             raise RuntimeError("Family was not persisted")
         return family
+
+    def get_elder_profile(self, family_id: int, elder_id: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM elder_profiles
+                WHERE family_id = ? AND elder_id = ?
+                LIMIT 1
+                """,
+                (int(family_id), str(elder_id or "").strip()),
+            ).fetchone()
+        return self._elder_profile_to_dict(row)
+
+    def upsert_elder_profile(self, family_id: int, elder_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        timestamp = now_iso()
+        clean_elder_id = str(elder_id or "").strip()
+        if not clean_elder_id:
+            raise ValueError("elder_id is required")
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM elder_profiles
+                WHERE family_id = ? AND elder_id = ?
+                LIMIT 1
+                """,
+                (int(family_id), clean_elder_id),
+            ).fetchone()
+            params = (
+                str(payload.get("display_name") or "").strip(),
+                str(payload.get("relationship") or "").strip(),
+                str(payload.get("city") or "").strip(),
+                str(payload.get("birthday") or "").strip(),
+                str(payload.get("lunar_birthday") or "").strip(),
+                str(payload.get("living_status") or "").strip(),
+                str(payload.get("primary_room") or "").strip(),
+                json.dumps(payload.get("likes") or [], ensure_ascii=False),
+                json.dumps(payload.get("dislikes") or [], ensure_ascii=False),
+                json.dumps(payload.get("diet_notes") or [], ensure_ascii=False),
+                json.dumps(payload.get("health_conditions") or [], ensure_ascii=False),
+                str(payload.get("medication_notes") or "").strip(),
+                json.dumps(payload.get("routine") or {}, ensure_ascii=False),
+                json.dumps(payload.get("emergency_contacts") or [], ensure_ascii=False),
+                str(payload.get("home_area") or "").strip(),
+                str(payload.get("privacy_level") or "family_only").strip() or "family_only",
+            )
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO elder_profiles (
+                        family_id, elder_id, display_name, relationship, city, birthday,
+                        lunar_birthday, living_status, primary_room, likes_json, dislikes_json,
+                        diet_notes_json, health_conditions_json, medication_notes, routine_json,
+                        emergency_contacts_json, home_area, privacy_level, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (int(family_id), clean_elder_id, *params, timestamp, timestamp),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE elder_profiles
+                    SET
+                        display_name = ?,
+                        relationship = ?,
+                        city = ?,
+                        birthday = ?,
+                        lunar_birthday = ?,
+                        living_status = ?,
+                        primary_room = ?,
+                        likes_json = ?,
+                        dislikes_json = ?,
+                        diet_notes_json = ?,
+                        health_conditions_json = ?,
+                        medication_notes = ?,
+                        routine_json = ?,
+                        emergency_contacts_json = ?,
+                        home_area = ?,
+                        privacy_level = ?,
+                        updated_at = ?
+                    WHERE family_id = ? AND elder_id = ?
+                    """,
+                    (*params, timestamp, int(family_id), clean_elder_id),
+                )
+        profile = self.get_elder_profile(family_id=int(family_id), elder_id=clean_elder_id)
+        if profile is None:
+            raise RuntimeError("Elder profile was not persisted")
+        return profile
+
+    def list_calendar_events(self, family_id: int, elder_id: str = "") -> list[Dict[str, Any]]:
+        query = """
+            SELECT *
+            FROM calendar_events
+            WHERE family_id = ?
+        """
+        params: list[Any] = [int(family_id)]
+        clean_elder_id = str(elder_id or "").strip()
+        if clean_elder_id:
+            query += " AND elder_id = ?"
+            params.append(clean_elder_id)
+        query += " ORDER BY start_at ASC, id ASC"
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [event for row in rows if (event := self._calendar_event_to_dict(row)) is not None]
+
+    def create_calendar_event(self, family_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+        timestamp = now_iso()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO calendar_events (
+                    family_id, elder_id, event_type, title, start_at,
+                    remind_before_days_json, source, metadata_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(family_id),
+                    str(payload.get("elder_id") or "").strip(),
+                    str(payload.get("type") or "").strip(),
+                    str(payload.get("title") or "").strip(),
+                    str(payload.get("start_at") or "").strip(),
+                    json.dumps(payload.get("remind_before_days") or [], ensure_ascii=False),
+                    str(payload.get("source") or "manual").strip() or "manual",
+                    json.dumps(payload.get("metadata") or {}, ensure_ascii=False),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+            row = conn.execute("SELECT * FROM calendar_events WHERE id = ?", (event_id,)).fetchone()
+        event = self._calendar_event_to_dict(row)
+        if event is None:
+            raise RuntimeError("Calendar event was not persisted")
+        return event
+
+    def list_message_candidates(
+        self,
+        family_id: int,
+        *,
+        limit: int = 20,
+        status: Optional[str] = None,
+    ) -> list[Dict[str, Any]]:
+        query = """
+            SELECT *
+            FROM message_candidates
+            WHERE family_id = ?
+        """
+        params: list[Any] = [int(family_id)]
+        clean_status = str(status or "").strip()
+        if clean_status:
+            query += " AND status = ?"
+            params.append(clean_status)
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(max(1, min(int(limit), 100)))
+        with self.connect() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+        return [message for row in rows if (message := self._message_candidate_to_dict(row)) is not None]
+
+    def get_message_candidate(self, family_id: int, message_id: str) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM message_candidates
+                WHERE family_id = ? AND message_id = ?
+                LIMIT 1
+                """,
+                (int(family_id), str(message_id or "").strip()),
+            ).fetchone()
+        return self._message_candidate_to_dict(row)
+
+    def clear_message_candidates(self, family_id: int, elder_id: str = "") -> int:
+        query = "DELETE FROM message_candidates WHERE family_id = ?"
+        params: list[Any] = [int(family_id)]
+        clean_elder_id = str(elder_id or "").strip()
+        if clean_elder_id:
+            query += " AND elder_id = ?"
+            params.append(clean_elder_id)
+        with self.connect() as conn:
+            cursor = conn.execute(query, tuple(params))
+        return int(cursor.rowcount or 0)
+
+    def create_message_candidate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        timestamp = now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO message_candidates (
+                    message_id, family_id, device_id, elder_id, message_type, priority,
+                    title, subtitle, body, facts_json, image_mode, image_url, actions_json,
+                    source_json, source_event_ids_json, source_media_ids_json, generated_by,
+                    status, expires_at, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(payload.get("message_id") or "").strip(),
+                    int(payload.get("family_id")),
+                    str(payload.get("device_id") or "").strip(),
+                    str(payload.get("elder_id") or "").strip(),
+                    str(payload.get("message_type") or "").strip(),
+                    str(payload.get("priority") or "warm").strip() or "warm",
+                    str(payload.get("title") or "").strip(),
+                    str(payload.get("subtitle") or "").strip(),
+                    str(payload.get("body") or "").strip(),
+                    json.dumps(payload.get("facts") or [], ensure_ascii=False),
+                    str(payload.get("image_mode") or "none").strip() or "none",
+                    str(payload.get("image_url") or "").strip(),
+                    json.dumps(payload.get("actions") or [], ensure_ascii=False),
+                    json.dumps(payload.get("source") or [], ensure_ascii=False),
+                    json.dumps(payload.get("source_event_ids") or [], ensure_ascii=False),
+                    json.dumps(payload.get("source_media_ids") or [], ensure_ascii=False),
+                    str(payload.get("generated_by") or "").strip(),
+                    str(payload.get("status") or "open").strip() or "open",
+                    str(payload.get("expires_at") or "").strip() or None,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM message_candidates WHERE message_id = ? LIMIT 1",
+                (str(payload.get("message_id") or "").strip(),),
+            ).fetchone()
+        message = self._message_candidate_to_dict(row)
+        if message is None:
+            raise RuntimeError("Message candidate was not persisted")
+        return message
+
+    def update_message_candidate_status(self, family_id: int, message_id: str, status: str) -> Optional[Dict[str, Any]]:
+        timestamp = now_iso()
+        clean_message_id = str(message_id or "").strip()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE message_candidates
+                SET status = ?, updated_at = ?
+                WHERE family_id = ? AND message_id = ?
+                """,
+                (str(status or "open").strip() or "open", timestamp, int(family_id), clean_message_id),
+            )
+            if cursor.rowcount <= 0:
+                return None
+        return self.get_message_candidate(family_id=int(family_id), message_id=clean_message_id)
 
     def is_family_member(self, family_id: int, user_id: int) -> bool:
         with self.connect() as conn:
@@ -3016,6 +3369,8 @@ class Storage:
             "no_motion_enabled",
             "person_detection_enabled",
             "fall_detection_enabled",
+            "activity_detection_enabled",
+            "fire_detection_enabled",
             "offline_enabled",
             "notification_enabled",
         ]:
@@ -3034,6 +3389,8 @@ class Storage:
             "no_motion_enabled",
             "person_detection_enabled",
             "fall_detection_enabled",
+            "activity_detection_enabled",
+            "fire_detection_enabled",
             "no_person_seconds",
             "offline_enabled",
             "notification_enabled",
@@ -3059,6 +3416,8 @@ class Storage:
                     no_motion_enabled = ?,
                     person_detection_enabled = ?,
                     fall_detection_enabled = ?,
+                    activity_detection_enabled = ?,
+                    fire_detection_enabled = ?,
                     no_person_seconds = ?,
                     offline_enabled = ?,
                     notification_enabled = ?,
@@ -3076,6 +3435,8 @@ class Storage:
                     1 if next_values["no_motion_enabled"] else 0,
                     1 if next_values["person_detection_enabled"] else 0,
                     1 if next_values["fall_detection_enabled"] else 0,
+                    1 if next_values["activity_detection_enabled"] else 0,
+                    1 if next_values["fire_detection_enabled"] else 0,
                     int(next_values["no_person_seconds"]),
                     1 if next_values["offline_enabled"] else 0,
                     1 if next_values["notification_enabled"] else 0,
@@ -3110,7 +3471,7 @@ class Storage:
         elif cameras_count == 0:
             main_message = "还没有添加摄像头，先接入一个局域网 RTSP 摄像头。"
         else:
-            main_message = "当前没有新的异常事件，守护服务正在运行。"
+            main_message = "当前没有新的异常事件，视觉服务正在运行。"
 
         return {
             "date": today,
@@ -3118,5 +3479,5 @@ class Storage:
             "events_count": events_count,
             "cameras_count": cameras_count,
             "online_cameras_count": online_count,
-            "suggested_action": "查看守护状态",
+            "suggested_action": "查看视觉状态",
         }

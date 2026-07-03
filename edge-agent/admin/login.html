@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>管理登录 - 回家</title>
+  <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
+  <link rel="stylesheet" href="/admin/styles.css?v=20260702-auth-2">
+</head>
+<body class="admin-login-page">
+  <main class="admin-login-shell" aria-label="回家盒子管理登录">
+    <section class="admin-login-copy">
+      <p class="eyebrow">回家盒子</p>
+      <h1>管理模式</h1>
+      <p>用于初始化、摄像头接入、算法预览和本地诊断。</p>
+      <div class="admin-login-device">
+        <span class="material-symbols-outlined">router</span>
+        <div>
+          <strong id="loginDeviceName">读取盒子状态</strong>
+          <small id="loginDeviceMeta">请稍等</small>
+        </div>
+      </div>
+    </section>
+
+    <section class="admin-login-card">
+      <form id="adminLoginForm" class="admin-login-form">
+        <div>
+          <h2>登录后台</h2>
+          <p>开发阶段初始账号：admin / 123456</p>
+        </div>
+        <label>用户名
+          <input id="adminUsername" name="username" autocomplete="username" value="admin">
+        </label>
+        <label>密码
+          <input id="adminPassword" name="password" type="password" autocomplete="current-password" placeholder="初始密码 123456">
+        </label>
+        <button id="adminLoginButton" class="primary-button" type="submit">
+          <span class="material-symbols-outlined">login</span>
+          登录
+        </button>
+      </form>
+
+      <form id="adminPasswordForm" class="admin-login-form hidden" hidden>
+        <div>
+          <h2>修改初始密码</h2>
+          <p>首次登录后需要换成你自己的管理密码。</p>
+        </div>
+        <label>旧密码
+          <input id="adminOldPassword" name="old_password" type="password" autocomplete="current-password">
+        </label>
+        <label>新密码
+          <input id="adminNewPassword" name="new_password" type="password" autocomplete="new-password" minlength="6">
+        </label>
+        <label>确认新密码
+          <input id="adminConfirmPassword" name="confirm_password" type="password" autocomplete="new-password" minlength="6">
+        </label>
+        <button id="adminPasswordButton" class="primary-button" type="submit">
+          <span class="material-symbols-outlined">key</span>
+          保存新密码
+        </button>
+        <button id="adminLogoutButton" class="secondary-button" type="button">退出登录</button>
+      </form>
+
+      <p id="adminLoginMessage" class="admin-login-message" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="/admin/login.js?v=20260702-auth-2"></script>
+</body>
+</html>

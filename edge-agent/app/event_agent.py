@@ -46,7 +46,7 @@ class EventAgent:
         rules = self.storage.get_rules()
         if rules.get("notification_enabled"):
             self.notifier.send(
-                title="想家了吗告警",
+                title="回家告警",
                 body=summary,
                 extra={
                     "event_id": event["id"],

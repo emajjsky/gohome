@@ -2,7 +2,7 @@
 set -euo pipefail
 
 AGENT_BASE_URL="${AGENT_BASE_URL:-http://127.0.0.1:8711}"
-TITLE="${1:-想家了吗测试通知}"
+TITLE="${1:-回家测试通知}"
 BODY="${2:-这是一条部署前自测消息。}"
 EXTRA_JSON="${3:-{}}"
 

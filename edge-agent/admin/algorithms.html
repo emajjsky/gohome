@@ -2,151 +2,149 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>算法配置 - edge-agent</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>视觉算法 - 回家</title>
   <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
-  <link rel="stylesheet" href="/admin/styles.css?v=20260628-console-7">
+  <link rel="stylesheet" href="/admin/styles.css?v=20260703-presence-1">
 </head>
-<body data-page="algorithms">
+<body data-page="algorithms" class="admin-web-page">
   <a class="skip-link" href="#main">跳到内容</a>
-  <div class="admin-frame">
-    <aside class="side-nav" aria-label="管理台导航">
-      <div class="side-brand">
-        <p class="eyebrow">想家了吗 edge-agent</p>
-        <strong>本机视觉控制台</strong>
+  <div class="admin-web-frame">
+    <aside class="admin-sidebar" aria-label="管理导航">
+      <div class="admin-brand">
+        <span class="material-symbols-outlined" data-icon="⌂">home_iot_device</span>
+        <div>
+          <small>回家盒子</small>
+          <strong>开发管理台</strong>
+        </div>
       </div>
-      <nav class="side-section">
-        <a class="side-link" href="/admin/index.html"><span class="material-symbols-outlined">dashboard</span>首页</a>
-        <a class="side-link" href="/admin/cameras.html"><span class="material-symbols-outlined">linked_camera</span>摄像头配置</a>
-        <a class="side-link active" href="/admin/algorithms.html"><span class="material-symbols-outlined">tune</span>算法配置</a>
+      <nav class="admin-nav">
+        <a href="/admin/index.html"><span class="material-symbols-outlined" data-icon="↗">monitoring</span>首页</a>
+        <a href="/admin/cameras.html"><span class="material-symbols-outlined" data-icon="□">linked_camera</span>摄像头配置</a>
+        <a class="active" href="/admin/algorithms.html"><span class="material-symbols-outlined" data-icon="≡">tune</span>视觉算法</a>
       </nav>
+      <section class="admin-sidebar-controls" aria-label="服务状态">
+        <span id="workerBadge" class="status-pill muted">检查中</span>
+      </section>
+      <section class="panel algorithm-switch-panel">
+        <div class="panel-head compact">
+          <div>
+            <h2>算法开关</h2>
+            <p>异常自动留证，联网后同步。</p>
+          </div>
+        </div>
+        <form class="rules-page-form" onsubmit="return false">
+          <section class="rules-section no-border">
+            <div class="rule-grid switch-grid">
+              <label class="switch"><input id="offlineEnabled" type="checkbox"><span>摄像头离线提醒</span></label>
+              <label class="switch"><input id="blackEnabled" type="checkbox"><span>黑屏 / 遮挡提醒</span></label>
+              <label class="switch"><input id="noMotionEnabled" type="checkbox"><span>长时间无变化</span></label>
+              <label class="switch"><input id="notificationEnabled" type="checkbox"><span>告警通知</span></label>
+              <label class="switch"><input id="personDetectionEnabled" type="checkbox"><span>人形 / 无人检测</span></label>
+              <label class="switch"><input id="fallDetectionEnabled" type="checkbox"><span>跌倒检测</span></label>
+              <label class="switch"><input id="activityDetectionEnabled" type="checkbox"><span>用餐 / 动作识别</span></label>
+              <label class="switch"><input id="fireDetectionEnabled" type="checkbox"><span>火灾应急报警</span></label>
+            </div>
+          </section>
+
+          <details class="advanced-fields">
+            <summary>高级参数</summary>
+            <div class="advanced-grid">
+              <label>抽帧间隔（秒）<input id="captureInterval" type="number" min="1" max="3600"></label>
+              <label>无变化阈值（秒）<input id="noMotionSeconds" type="number" min="10" max="86400"></label>
+              <label>无人阈值（秒）<input id="noPersonSecondsInput" type="number" min="10" max="86400"></label>
+              <label>运动阈值<input id="motionThreshold" type="number" min="0" max="1" step="0.001"></label>
+              <label>黑屏亮度阈值<input id="blackBrightnessThreshold" type="number" min="0" max="255" step="0.1"></label>
+              <label>黑屏对比度阈值<input id="blackContrastThreshold" type="number" min="0" max="255" step="0.1"></label>
+              <label>视觉置信度<input id="yoloConfidence" type="number" min="0.01" max="1" step="0.01"></label>
+            </div>
+            <p id="yoloHint" class="form-note">读取检测后端中。</p>
+          </details>
+
+          <button id="saveRules" class="primary-button" type="button">
+            <span class="material-symbols-outlined" data-icon="✓">check_circle</span>
+            保存算法配置
+          </button>
+        </form>
+      </section>
+      <section class="admin-sidebar-session" aria-label="登录操作">
+        <div class="admin-session-slot"></div>
+      </section>
     </aside>
 
-    <main id="main" class="admin-main">
-      <header class="page-head">
-        <div>
-          <p class="eyebrow">ALGORITHM SETUP</p>
-          <h1>算法配置</h1>
-          <p>这页只调算法参数、事件规则和验证抓帧；首页看现场和事件，摄像头页只接入设备。</p>
-        </div>
-        <div class="page-actions">
-          <span id="workerBadge" class="status-pill muted">检查中</span>
-          <button id="saveRules" class="primary-button" type="button">
-            <span class="material-symbols-outlined">save</span>
-            保存配置
-          </button>
-          <button id="refreshAll" class="icon-button" type="button" title="刷新">
-            <span class="material-symbols-outlined">refresh</span>
-          </button>
-        </div>
-      </header>
-
-      <section class="algorithm-config-layout">
-        <section class="panel">
+    <main id="main" class="admin-web-main">
+      <section class="guard-layout algorithm-guard-layout">
+        <section class="panel preview-card algorithm-preview-panel">
           <div class="panel-head compact">
             <div>
-              <h2>App 功能闭环</h2>
-              <p>当前 V0 先用本机 edge-agent 跑通，后续再把事件和媒体同步到云端。</p>
-            </div>
-          </div>
-          <div class="runbook">
-            <div><strong>1. 接入摄像头</strong><p>摄像头页只保存 RTSP / local 地址和账号信息；App 不直接连摄像头原始 RTSP。</p></div>
-            <div><strong>2. 边缘端拉流</strong><p>edge-agent 在本机拉流、抽帧、缓存截图；首页的实时预览走 720p MJPEG。</p></div>
-            <div><strong>3. 输出检测事实</strong><p>basic 输出亮度、对比度、运动分数；YOLO 模式再输出人数、人框和疑似跌倒候选。</p></div>
-            <div><strong>4. 规则产事件</strong><p>规则把检测事实转成离线、黑屏、无变化、无人、疑似跌倒等事件。</p></div>
-            <div><strong>5. App 处理结果</strong><p>App 首页看状态摘要，事件页看告警和截图，用户只做确认、误报、已处理。</p></div>
-          </div>
-          <div class="api-map" aria-label="App 本地接口映射">
-            <div><span>首页状态</span><code>GET /api/device</code><code>GET /api/summary/today</code></div>
-            <div><span>实时画面</span><code>GET /api/cameras/{id}/stream.mjpg?width=1280&height=720</code></div>
-            <div><span>最新证据</span><code>GET /api/cameras/{id}/snapshot/latest</code></div>
-            <div><span>事件列表</span><code>GET /api/events</code><code>PATCH /api/events/{id}</code></div>
-            <div><span>规则配置</span><code>GET /api/rules</code><code>PUT /api/rules</code></div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head compact">
-            <div>
-              <h2>运行状态</h2>
-              <p>不能热切换的内容会标出来，避免误以为页面保存就能换模型。</p>
-            </div>
-          </div>
-          <div class="status-grid">
-            <div><span>检测后端</span><strong id="detectorBackend">-</strong></div>
-            <div><span>YOLO 模型</span><strong id="yoloModel">-</strong></div>
-            <div><span>通知通道</span><strong id="notifyChannel">-</strong></div>
-            <div><span>数据目录</span><strong id="dataDir">-</strong></div>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head compact">
-            <div>
-              <h2>检测参数</h2>
-              <p>保存后，下一轮自动抓帧和手动验证都会使用这些值。</p>
-            </div>
-          </div>
-          <form class="rules-page-form" onsubmit="return false">
-            <section class="rules-section">
-              <h2>抓帧与基础视觉</h2>
-              <div class="rule-grid">
-                <label>抽帧间隔（秒）<input id="captureInterval" type="number" min="1" max="3600"></label>
-                <label>运动阈值<input id="motionThreshold" type="number" min="0" max="1" step="0.001"></label>
-                <label>黑屏亮度阈值<input id="blackBrightnessThreshold" type="number" min="0" max="255" step="0.1"></label>
-                <label>黑屏对比度阈值<input id="blackContrastThreshold" type="number" min="0" max="255" step="0.1"></label>
-              </div>
-            </section>
-
-            <section class="rules-section">
-              <h2>事件规则</h2>
-              <div class="rule-grid">
-                <label>无变化阈值（秒）<input id="noMotionSeconds" type="number" min="10" max="86400"></label>
-                <label>无人阈值（秒）<input id="noPersonSecondsInput" type="number" min="10" max="86400"></label>
-                <label class="switch"><input id="offlineEnabled" type="checkbox"><span>摄像头离线提醒</span></label>
-                <label class="switch"><input id="blackEnabled" type="checkbox"><span>黑屏 / 遮挡提醒</span></label>
-                <label class="switch"><input id="noMotionEnabled" type="checkbox"><span>长时间无变化</span></label>
-                <label class="switch"><input id="notificationEnabled" type="checkbox"><span>事件通知</span></label>
-              </div>
-            </section>
-
-            <section class="rules-section">
-              <h2>YOLO 规则</h2>
-              <div class="rule-grid">
-                <label>YOLO 置信度<input id="yoloConfidence" type="number" min="0.01" max="1" step="0.01"></label>
-                <label class="switch"><input id="personDetectionEnabled" type="checkbox"><span>人形 / 无人检测</span></label>
-                <label class="switch"><input id="fallDetectionEnabled" type="checkbox"><span>疑似跌倒候选</span></label>
-              </div>
-              <p id="yoloHint" class="form-note">YOLO 后端需要用环境变量 `GOHOME_DETECTOR_BACKEND=yolo` 启动；basic 模式下这些开关不会生效。</p>
-            </section>
-          </form>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head compact">
-            <div>
-              <h2>验证抓帧</h2>
-              <p>选摄像头后手动抓一帧，看当前参数下的分析结果。</p>
+              <h2>算法预览</h2>
+              <p>动效看识别逻辑，实时画面看当前命中。</p>
             </div>
             <button id="captureSelected" class="secondary-button" type="button">
-              <span class="material-symbols-outlined">photo_camera</span>
-              抓取验证帧
+              <span class="material-symbols-outlined" data-icon="◎">photo_camera</span>
+              抓帧
             </button>
           </div>
-          <label>摄像头<select id="cameraSelect"></select></label>
-          <div class="verify-layout">
-            <div id="previewStage" class="preview-stage">
-              <img id="snapshotImage" alt="验证截图">
-              <div id="detectionOverlay" class="detection-overlay" aria-hidden="true"></div>
-              <div id="snapshotEmpty" class="empty-preview">
-                <span class="material-symbols-outlined">image_search</span>
-                <p>还没有验证截图</p>
+          <div class="preview-picker">
+            <label>摄像头<select id="cameraSelect"></select></label>
+            <label>预览算法
+              <select id="previewAlgorithm">
+                <option value="quality">画面质量</option>
+                <option value="person">人形 / 无人</option>
+                <option value="stillness">久坐 / 静止</option>
+                <option value="fall">跌倒检测</option>
+                <option value="meal">用餐</option>
+                <option value="night">夜间活动</option>
+                <option value="fire">火灾</option>
+                <option value="camera">摄像头异常</option>
+              </select>
+            </label>
+          </div>
+          <div class="verify-layout algorithm-preview-workspace">
+            <article id="algorithmDemo" class="algorithm-demo-card" aria-label="算法动效示意"></article>
+            <section class="live-analysis-card" aria-label="实时检测画面">
+              <div class="live-analysis-head">
+                <div>
+                  <span>实时画面</span>
+                  <strong id="streamCamera">无摄像头</strong>
+                </div>
+                <span id="streamStatus" class="status-pill muted">等待视频</span>
               </div>
-            </div>
-            <div>
-              <div id="detectionSummary" class="detection-summary plain">
-                <span class="status-pill muted">等待检测</span>
-                <p>抓帧后会显示当前配置下的分析结果。</p>
+              <div id="algorithmHitStrip" class="algorithm-hit-strip" aria-live="polite">
+                <div class="algorithm-hit-card primary">
+                  <span>当前命中</span>
+                  <strong>等待检测</strong>
+                </div>
+                <div class="algorithm-hit-card">
+                  <span>模型</span>
+                  <strong>-</strong>
+                </div>
+                <div class="algorithm-hit-card">
+                  <span>延迟</span>
+                  <strong>-</strong>
+                </div>
+              </div>
+              <div id="previewStage" class="preview-stage algorithm-live-stage">
+                <img id="mjpegStream" alt="实时摄像头视频">
+                <div id="detectionOverlay" class="detection-overlay" aria-hidden="true"></div>
+                <div id="streamEmpty" class="empty-preview stream-empty">
+                  <span class="material-symbols-outlined" data-icon="□">videocam_off</span>
+                  <p>请选择摄像头</p>
+                </div>
+                <div class="stream-badge-row">
+                  <span>实时检测</span>
+                  <span id="streamFrameTime">等待检测帧</span>
+                </div>
+              </div>
+              <div class="analysis-grid">
+                <div>
+                  <span>当前算法</span>
+                  <strong id="previewModeInfo">画面质量：亮度、对比度、运动变化。</strong>
+                </div>
+                <div id="detectionSummary" class="detection-summary plain">
+                  <span class="status-pill muted">等待检测</span>
+                  <p>检测结果会随后台最新帧刷新。</p>
+                </div>
               </div>
               <div class="preview-meta">
                 <div><span>截图</span><strong id="snapshotTime">-</strong></div>
@@ -156,19 +154,13 @@
                 <div><span>人数</span><strong id="snapshotPeople">-</strong></div>
                 <div><span>标签</span><strong id="snapshotTags">-</strong></div>
               </div>
-              <div id="ruleEvaluation" class="rule-evaluation">
-                <div>
-                  <span class="status-pill muted">等待规则</span>
-                  <p>规则评估会说明是否已经生成候选事件。</p>
-                </div>
-              </div>
-            </div>
+            </section>
           </div>
         </section>
       </section>
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/admin/console.js?v=20260628-console-7"></script>
+  <script src="/admin/console.js?v=20260703-presence-1"></script>
 </body>
 </html>

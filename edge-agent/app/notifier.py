@@ -9,6 +9,15 @@ class Notifier:
     def __init__(self, settings: Any) -> None:
         self.settings = settings
 
+    def _preferred_link(self, extra: Dict[str, Any]) -> str:
+        return str(
+            extra.get("open_url")
+            or extra.get("event_url")
+            or extra.get("watch_url")
+            or extra.get("app_shell_url")
+            or ""
+        ).strip()
+
     def send(self, title: str, body: str, extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
         channel = self.settings.notify_channel
         payload_extra = extra or {}
@@ -55,6 +64,9 @@ class Notifier:
 
     def _send_feishu(self, title: str, body: str, extra: Dict[str, Any]) -> Dict[str, Any]:
         text = f"{title}\n{body}"
+        preferred_link = self._preferred_link(extra)
+        if preferred_link:
+            text += f"\n打开链接: {preferred_link}"
         if extra:
             text += "\n" + json.dumps(extra, ensure_ascii=False)
         payload = {"msg_type": "text", "content": {"text": text}}
@@ -63,7 +75,10 @@ class Notifier:
         return result
 
     def _send_bark(self, title: str, body: str, extra: Dict[str, Any]) -> Dict[str, Any]:
-        payload = {"title": title, "body": body, "group": "想家了吗", "extra": extra}
+        payload = {"title": title, "body": body, "group": "回家", "extra": extra}
+        preferred_link = self._preferred_link(extra)
+        if preferred_link:
+            payload["url"] = preferred_link
         result = self._post_json(self.settings.bark_url, payload)
         result["channel"] = "bark"
         return result
@@ -74,6 +89,9 @@ class Notifier:
 
         url = f"https://api.telegram.org/bot{self.settings.telegram_bot_token}/sendMessage"
         text = f"{title}\n{body}"
+        preferred_link = self._preferred_link(extra)
+        if preferred_link:
+            text += f"\n打开链接: {preferred_link}"
         if extra:
             text += "\n" + json.dumps(extra, ensure_ascii=False)
         data = parse.urlencode({"chat_id": self.settings.telegram_chat_id, "text": text}).encode("utf-8")

@@ -31,7 +31,11 @@ python -m pip install -r requirements-yolo.txt
 
 The agent now auto-loads `edge-agent/.env` and `edge-agent/.env.local`. Shell-exported variables still win if both are set.
 
-The default backend is `basic`, which only uses brightness and frame-difference checks. Use `yolo` when you need person count and fall-candidate experiments.
+The default backend is `basic`, which only uses brightness and frame-difference checks. Use `yolo` when you need real person boxes, person count, and fall-candidate experiments. The default model is `yolo11n.pt`; on Raspberry Pi 5, keep the 720p substream and use an exported NCNN model through `GOHOME_YOLO_MODEL=yolo11n_ncnn_model` when you need lower latency.
+
+When `GOHOME_DETECTOR_BACKEND=yolo`, the person detector runs YOLO first. If YOLO has no high-confidence person box, it then runs the seated / half-body presence enhancement layer. Enhancement candidates are returned as `presence_candidate=true` with sources such as `presence_yolo`, `presence_face`, `presence_upperbody`, or `presence_skin`, so the admin console can show them as “人体存在候选” instead of pretending they are normal high-confidence YOLO hits.
+
+`GOHOME_ENABLE_DEMO_CAMERA` defaults to `0`. Keep it disabled for real camera testing so the admin console starts from clean camera data. Set it to `1` only when you intentionally need the built-in demo source.
 
 ## Run
 
@@ -59,6 +63,89 @@ Open:
 - API docs: `http://127.0.0.1:8711/docs`
 
 For phone testing on the same Wi-Fi, replace `127.0.0.1` with this computer's LAN IP from `/health`.
+
+## Raspberry Pi clean test
+
+Use the original Pi project directory. Do not create a second `gohome-clean` project just to retest.
+
+Runtime state lives under `edge-agent/data`. For a clean test, move the old runtime data aside and reinitialize in place:
+
+```bash
+cd /home/gohome/gohome/edge-agent
+sudo bash scripts/reset-runtime-data.sh --preserve-admin
+```
+
+This keeps the existing code, `.venv`, `.env`, systemd service, device id, and admin password. It clears the local database, cameras, events, snapshots, object uploads, and algorithm runtime files. The previous data directory is moved to `data.backup-YYYYmmdd-HHMMSS`.
+
+For a full factory-style reset of the development box:
+
+```bash
+cd /home/gohome/gohome/edge-agent
+sudo bash scripts/reset-runtime-data.sh --factory
+```
+
+Factory mode also resets box identity and admin login back to `admin / 123456`. For development boxes, this initial password can be used directly so repeated clean tests do not get blocked by a forced password-change step. Set `GOHOME_ADMIN_MUST_CHANGE_PASSWORD=1` before running `scripts/init-box.sh` if you want the product-style first-login password change.
+
+## Real Wi-Fi provisioning test
+
+Product first boot must work without a preconfigured home Wi-Fi. On Raspberry Pi, install the edge service and the port-80 proxy first:
+
+```bash
+cd /home/gohome/gohome/edge-agent
+sudo bash scripts/install-systemd-service.sh
+sudo bash scripts/install-admin-proxy.sh
+```
+
+Then simulate a factory-new network state. This can drop SSH because it deletes saved Wi-Fi profiles and starts the setup hotspot:
+
+```bash
+cd /home/gohome/gohome/edge-agent
+sudo bash scripts/prepare-factory-network-test.sh --yes
+```
+
+Expected result:
+
+1. Phone sees a Wi-Fi named `GoHome-XXXX`.
+2. Phone joins it with password `gohome2026`.
+3. The phone may open the setup page automatically. If it does not, open `http://10.42.0.1`.
+4. Select the home Wi-Fi and enter its password.
+5. Phone may disconnect from `GoHome-XXXX`; reconnect the phone to the same home Wi-Fi.
+6. Open the `回家` App to bind the device. Developer/admin mode is separate at `http://gohome.local/admin`.
+
+The edge service starts after NetworkManager, not after `network-online.target`, so a factory-new box can still serve `/setup` while waiting for home Wi-Fi.
+
+## Port and local URL
+
+The FastAPI service listens on `8711` by default because a normal non-root systemd service should not bind directly to port `80`. For development, keep:
+
+```text
+http://gohome.local:8711/admin
+```
+
+For product-like access without showing a port, put nginx or Caddy in front of the agent and proxy port `80` to `127.0.0.1:8711`. Then the admin URL becomes:
+
+```text
+http://gohome.local/admin
+```
+
+On Raspberry Pi, install the nginx proxy with:
+
+```bash
+cd /home/gohome/gohome/edge-agent
+sudo bash scripts/install-admin-proxy.sh
+```
+
+With the proxy installed, the user-facing setup URL is:
+
+```text
+http://10.42.0.1
+```
+
+The local admin console is a developer/installer mode only:
+
+```text
+http://gohome.local/admin
+```
 
 ## Pilot install SOP
 
@@ -123,13 +210,15 @@ The same flow is available through the official APIs:
 ### 5. Camera setup and live verification
 
 1. Open `http://127.0.0.1:8711/admin/cameras.html`.
-2. Add one RTSP camera using a low-resolution H.264 substream.
-3. Test the stream and save it.
-4. Open the product home and live pages:
+2. Scan the LAN, select the camera IP if discovered, then fill only the required RTSP fields.
+3. Use port `554`, username `admin` unless the camera says otherwise. Keep channel `1` and stream `2` by default; the generated RTSP path is `/1/2`.
+4. Click test first. The test call does not save the camera.
+5. Save and enable only after a frame is captured.
+6. Open the product home and live pages:
    - `http://127.0.0.1:8711/ui/index.html`
    - `http://127.0.0.1:8711/ui/watch.html`
    - `http://127.0.0.1:8711/ui/monitor.html`
-5. Confirm snapshots, event list, and MJPEG live preview all work.
+7. Confirm snapshots, event list, and MJPEG live preview all work.
 
 ### 6. Enable system service
 
@@ -242,6 +331,9 @@ Recommended first fields:
 ```bash
 GOHOME_AGENT_PORT=8711
 GOHOME_DETECTOR_BACKEND=yolo
+GOHOME_YOLO_MODEL=yolo11n.pt
+GOHOME_YOLO_IMGSZ=960
+GOHOME_YOLO_CONFIDENCE=0.20
 GOHOME_APP_DEEP_LINK_SCHEME=gohome
 ```
 
@@ -322,6 +414,15 @@ Use it for:
 The shell uses `WKWebView` and the existing `window.webkit.messageHandlers.gohomeNativeApp` bridge contract already consumed by `assets/scripts/edge-client.js`.
 
 ## Minimal API flow
+
+Verify the vision pipeline without a camera:
+
+```bash
+cd /home/gohome/gohome/edge-agent
+./.venv/bin/python scripts/verify-vision-pipeline.py
+```
+
+The script checks black-screen detection, fire-candidate detection, demo person detection, and the unified `quality / person / fall / activity / fire` algorithm result envelope.
 
 Create a local laptop camera:
 

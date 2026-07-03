@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>连接 Wi-Fi - 回家</title>
+  <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
+  <link rel="stylesheet" href="/admin/styles.css?v=20260702-provision-2">
+</head>
+<body data-page="setup" class="setup-page phone-setup setup-flow-page">
+  <main class="setup-shell setup-step-shell setup-network-only" aria-label="连接家庭 Wi-Fi">
+    <section class="setup-brand-lockup" aria-label="回家盒子">
+      <span class="setup-product-mark material-symbols-outlined" aria-hidden="true">home_iot_device</span>
+      <strong>回家盒子</strong>
+    </section>
+
+    <section class="setup-title-block">
+      <h1>连接家庭 Wi-Fi</h1>
+      <p id="setupNetworkSummary">读取网络状态中</p>
+    </section>
+
+    <section class="panel setup-network-card setup-single-card setup-ios-card">
+      <div class="setup-network-current">
+        <span id="setupNetworkBadge" class="status-pill muted">检查中</span>
+        <strong id="setupNetworkName">-</strong>
+      </div>
+
+      <div class="setup-wifi-form">
+        <label>家庭 Wi-Fi
+          <select id="wifiSsidSelect">
+            <option value="">扫描中</option>
+          </select>
+        </label>
+        <label>Wi-Fi 密码
+          <input id="wifiPassword" type="password" autocomplete="current-password" placeholder="请输入密码">
+        </label>
+        <div class="setup-button-pair">
+          <button id="refreshWifiNetworks" class="secondary-button" type="button">
+            <span class="material-symbols-outlined">wifi_find</span>
+            扫描
+          </button>
+          <button id="connectWifi" class="primary-button" type="button">
+            <span class="material-symbols-outlined">wifi</span>
+            连接
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section id="wifiReconnectGuide" class="panel setup-next-network hidden">
+      <strong>网络已保存</strong>
+      <p>手机回到同一个家庭 Wi-Fi 后，打开“回家”App 扫描并绑定盒子。</p>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/admin/console.js?v=20260702-provision-2"></script>
+</body>
+</html>

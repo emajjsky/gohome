@@ -402,7 +402,7 @@ async function testNotify(button) {
     const result = await api("/api/notify/test", {
       method: "POST",
       body: JSON.stringify({
-        title: "想家了吗测试通知",
+        title: "回家测试通知",
         body: "edge-agent 检测页触发了一条测试通知",
       }),
     });

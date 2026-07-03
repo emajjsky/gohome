@@ -58,8 +58,14 @@ class RuleEngine:
         state: Dict[str, Any] = {
             "motion_state": "unknown",
             "person_state": "unknown",
+            "activity_state": "unknown",
             "no_motion_seconds": None,
             "no_person_seconds": None,
+            "meal_candidate": bool(analysis.get("meal_candidate")),
+            "meal_score": analysis.get("meal_score"),
+            "stillness_candidate": bool(analysis.get("stillness_candidate")),
+            "fall_score": analysis.get("fall_score"),
+            "fire_score": analysis.get("fire_score"),
         }
 
         if analysis.get("black_screen") and rules.get("black_screen_enabled"):
@@ -113,6 +119,7 @@ class RuleEngine:
                     )
 
         if analysis.get("fall_candidate") and rules.get("fall_detection_enabled"):
+            state["activity_state"] = "fall_candidate"
             candidates.append(
                 self._candidate(
                     event_type="fall_candidate",
@@ -125,6 +132,26 @@ class RuleEngine:
                         "label": "疑似跌倒候选",
                         "reason": "YOLO 人体框比例、面积和画面位置命中跌倒候选启发式。",
                         "observed": {"people": analysis.get("people", [])},
+                    },
+                )
+            )
+
+        fire_score = float(analysis.get("fire_score") or 0.0)
+        if rules.get("fire_detection_enabled") and (analysis.get("fire_candidate") or fire_score >= 0.035):
+            state["activity_state"] = "fire_candidate"
+            candidates.append(
+                self._candidate(
+                    event_type="fire_candidate",
+                    summary=f"{camera.get('name', '摄像头')} 检测到疑似明火视觉线索。",
+                    level="critical",
+                    snapshot_id=snapshot_id,
+                    analysis=analysis,
+                    rule={
+                        "id": "fire_candidate",
+                        "label": "火灾应急报警",
+                        "reason": "画面中高亮暖色区域达到火灾视觉线索阈值。",
+                        "observed": {"fire_score": fire_score},
+                        "threshold": {"fire_score": 0.035},
                     },
                 )
             )
@@ -158,8 +185,17 @@ class RuleEngine:
                             },
                             "threshold": {"no_motion_seconds": int(rules["no_motion_seconds"])},
                         },
+                        )
                     )
-                )
+
+        if rules.get("activity_detection_enabled"):
+            critical_state = state.get("activity_state") in {"fall_candidate", "fire_candidate"}
+            if analysis.get("meal_candidate") and not critical_state:
+                state["activity_state"] = "meal_candidate"
+            elif analysis.get("stillness_candidate") and not critical_state and state.get("activity_state") == "unknown":
+                state["activity_state"] = "stillness_candidate"
+            elif not critical_state and state.get("activity_state") == "unknown":
+                state["activity_state"] = "observing"
 
         return RuleEvaluation(
             camera_id=camera_id,

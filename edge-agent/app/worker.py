@@ -22,6 +22,7 @@ class EdgeWorker:
         self.detect_agent = detect_agent
         self.event_agent = event_agent
         self._stop = Event()
+        self._wake = Event()
         self._thread: Thread | None = None
         self.previous_frames: Dict[int, Any] = {}
         self.rule_engine = RuleEngine()
@@ -38,11 +39,13 @@ class EdgeWorker:
         if self.is_running:
             return
         self._stop.clear()
+        self._wake.clear()
         self._thread = Thread(target=self._run, name="gohome-edge-worker", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
         if self._thread:
             self._thread.join(timeout=5)
 
@@ -60,7 +63,8 @@ class EdgeWorker:
                     continue
                 self.process_camera(camera, rules)
             interval = max(1, int(rules["capture_interval_seconds"]))
-            self._stop.wait(interval)
+            self._wake.wait(interval)
+            self._wake.clear()
 
     def runtime_status(self) -> Dict[str, Any]:
         return {
@@ -70,15 +74,22 @@ class EdgeWorker:
             "rules": self.last_rules_snapshot,
         }
 
+    def request_rules_reload(self) -> None:
+        self._wake.set()
+
     def process_camera(self, camera: Dict[str, Any], rules: Dict[str, Any]) -> Dict[str, Any]:
         camera_id = int(camera["id"])
         try:
             capture = self.camera_agent.capture_frame(camera)
             frame = capture["frame"]
+            analysis_config = {
+                **rules,
+                "force_demo_vision": str(camera.get("stream_url", "")).strip().lower().startswith("demo:"),
+            }
             analysis = self.detect_agent.analyze_frame_with_config(
                 frame,
                 previous_frame=self.previous_frames.get(camera_id),
-                config=rules,
+                config=analysis_config,
             )
 
             relative_path = self.camera_agent.snapshot_relative_path(camera_id)

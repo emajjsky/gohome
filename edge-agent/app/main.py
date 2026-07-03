@@ -1,22 +1,29 @@
 from __future__ import annotations
 
 from typing import Any, Dict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import quote
+import ipaddress
 import json
+import re
+import shutil
 import socket
+import subprocess
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
 from .app_runtime_guard_service import AppRuntimeGuardService
 from .apns_relay_service import APNSRelayService
 from .app_push_service import AppPushService
+from .box_init_service import ADMIN_SESSION_COOKIE, DEFAULT_ADMIN_PASSWORD, BoxInitService
 from .camera_agent import CameraAgent, CameraError
 from .detect_agent import DetectAgent
 from .edge_bootstrap_service import EdgeBootstrapService
@@ -26,20 +33,27 @@ from .object_storage_service import ObjectStorageService, build_object_storage_r
 from .package_service import PackageService
 from .public_pilot_service import PublicPilotService
 from .schemas import (
+    CalendarEventCreate,
+    AdminLogin,
+    AdminPasswordChange,
     CameraCreate,
     CameraUpdate,
     DeviceBindingCodeCreate,
     DeviceBindingCreate,
     DeviceHeartbeatIn,
+    ElderProfileUpsert,
     DeviceTokenExchange,
     EventUpdate,
     FamilyCreate,
+    MessageGenerateRequest,
+    MessageStatusUpdate,
     NotificationTest,
     PlaybackSessionCreate,
     V1DeviceUpgradeRun,
     RulesUpdate,
     UserLogin,
     UserRegister,
+    WifiConnectRequest,
     V1AppPushTest,
     V1AppPushRelayRequest,
     V1AppPushTokenUpsert,
@@ -69,6 +83,9 @@ from .video_service import (
 from .worker import EdgeWorker
 
 bearer_scheme = HTTPBearer(auto_error=False)
+SETUP_NETWORK_PAGE = "/setup/network.html"
+SETUP_HOTSPOT_ORIGIN = "http://10.42.0.1"
+SETUP_HOTSPOT_NETWORK_PAGE = f"{SETUP_HOTSPOT_ORIGIN}{SETUP_NETWORK_PAGE}"
 
 
 def model_dump(model: Any) -> Dict[str, Any]:
@@ -100,6 +117,206 @@ def local_device_identity() -> Dict[str, Any]:
         "lan_ip": local_ip(),
         "api_port": settings.port,
     }
+
+
+def run_setup_command(args: list[str], timeout: float = 6.0) -> tuple[int, str, str]:
+    try:
+        result = subprocess.run(
+            args,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return 127, "", f"{args[0]} not found"
+    except subprocess.TimeoutExpired:
+        return 124, "", "command timed out"
+    return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+def network_permission_error(message: str) -> bool:
+    return bool(re.search(r"insufficient privileges|not authorized|permission|not allowed", message, re.IGNORECASE))
+
+
+def run_gohome_nmcli(args: list[str], timeout: float = 12.0) -> tuple[int, str, str]:
+    wrapper = shutil.which("gohome-nmcli") or "/usr/local/sbin/gohome-nmcli"
+    if not Path(wrapper).exists():
+        return 127, "", "gohome-nmcli not installed"
+    if shutil.which("sudo"):
+        return run_setup_command(["sudo", "-n", wrapper, *args], timeout=timeout)
+    return run_setup_command([wrapper, *args], timeout=timeout)
+
+
+def forget_wifi_connection(ssid: str) -> None:
+    if not nmcli_available() or not ssid:
+        return
+    run_setup_command(["nmcli", "connection", "delete", ssid], timeout=8)
+
+
+def nmcli_available() -> bool:
+    return shutil.which("nmcli") is not None
+
+
+def clean_nmcli_field(value: str) -> str:
+    return value.replace(r"\:", ":").replace(r"\\", "\\").strip()
+
+
+def connected_wifi_ssid() -> str:
+    if nmcli_available():
+        code, stdout, _stderr = run_setup_command(["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi"], timeout=4)
+        if code == 0:
+            for line in stdout.splitlines():
+                parts = line.split(":", 1)
+                if len(parts) == 2 and parts[0] == "yes":
+                    return clean_nmcli_field(parts[1])
+    if shutil.which("iwgetid"):
+        code, stdout, _stderr = run_setup_command(["iwgetid", "-r"], timeout=3)
+        if code == 0 and stdout.strip():
+            return stdout.strip()
+    return ""
+
+
+def active_network_name() -> str:
+    ssid = connected_wifi_ssid()
+    if ssid:
+        return ssid
+    if nmcli_available():
+        code, stdout, _stderr = run_setup_command(["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"], timeout=4)
+        if code == 0:
+            for line in stdout.splitlines():
+                name, _, device = line.partition(":")
+                if device and device != "lo":
+                    return clean_nmcli_field(name)
+    return "家庭网络"
+
+
+def setup_hotspot_name() -> str:
+    suffix = re.sub(r"[^A-Za-z0-9]", "", socket.gethostname())[-4:] or local_device_identity()["device_id"][-4:]
+    return f"GoHome-{suffix.upper()}"
+
+
+def is_setup_hotspot_ssid(ssid: str) -> bool:
+    return str(ssid or "").strip().startswith("GoHome-")
+
+
+def request_is_setup_hotspot(request: Request) -> bool:
+    host = request.url.hostname or ""
+    return host.startswith("10.42.") or host == "10.42.0.1" or is_setup_hotspot_ssid(connected_wifi_ssid())
+
+
+def setup_network_status() -> Dict[str, Any]:
+    lan_ip = local_ip()
+    ssid = connected_wifi_ssid()
+    hotspot_mode = is_setup_hotspot_ssid(ssid)
+    return {
+        "connected": bool(lan_ip) and not hotspot_mode,
+        "mode": "setup_hotspot" if hotspot_mode else "home_wifi" if ssid else "lan",
+        "ssid": "" if hotspot_mode else ssid,
+        "network_name": setup_hotspot_name() if hotspot_mode else ssid or active_network_name(),
+        "lan_ip": lan_ip,
+        "api_base_url": f"http://{lan_ip}:{settings.port}",
+        "hotspot_ssid": setup_hotspot_name(),
+        "hotspot_setup_url": "http://10.42.0.1/setup/network.html",
+        "hotspot_setup_url_with_port": "http://10.42.0.1:8711/setup/network.html",
+        "wifi_scan_supported": nmcli_available(),
+        "wifi_connect_supported": nmcli_available(),
+        "ble_provision_supported": False,
+    }
+
+
+def default_camera_host() -> str:
+    parts = local_ip().split(".")
+    if len(parts) == 4:
+        return ".".join(parts[:3] + ["11"])
+    return "192.168.1.11"
+
+
+def camera_setup_presets() -> Dict[str, Any]:
+    return {
+        "default_room": "客厅",
+        "default_name": "客厅摄像头",
+        "default_host": default_camera_host(),
+        "default_port": 554,
+        "default_username": "admin",
+        "default_channel": 1,
+        "default_stream": 2,
+        "default_path": "/1/2",
+        "profiles": [
+            {"key": "sub_stream", "label": "1 频道副码流", "path": "/1/2", "hint": "默认使用 1 频道副码流，适合 720p 低延迟预览。"},
+            {"key": "main_stream", "label": "1 频道主码流", "path": "/1/1", "hint": "主码流画质更高，但延迟和解码压力更大。"},
+            {"key": "hikvision", "label": "海康", "path": "/Streaming/Channels/102", "hint": "海康常见子码流，适合低延迟 720p 预览。"},
+            {"key": "dahua", "label": "大华", "path": "/cam/realmonitor?channel=1&subtype=1", "hint": "大华常见子码流，适合低延迟 720p 预览。"},
+            {"key": "custom", "label": "自定义", "path": "/1/2", "hint": "手动填写路径"},
+        ],
+    }
+
+
+def scan_camera_host(host: str, timeout: float = 0.16) -> Dict[str, Any] | None:
+    ports = [554, 8554, 80, 8000, 8080]
+    open_ports: list[int] = []
+    for port in ports:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                open_ports.append(port)
+        except OSError:
+            continue
+    rtsp_ports = [port for port in open_ports if port in {554, 8554}]
+    if not rtsp_ports:
+        return None
+    rtsp_port = 554 if 554 in rtsp_ports else rtsp_ports[0]
+    return {
+        "host": host,
+        "port": rtsp_port,
+        "open_ports": open_ports,
+        "path": "/1/2",
+        "stream_url": f"rtsp://{host}:{rtsp_port}/1/2",
+        "label": f"{host}:{rtsp_port}",
+    }
+
+
+def discover_lan_cameras(limit: int = 24) -> list[Dict[str, Any]]:
+    ip = local_ip()
+    try:
+        network = ipaddress.ip_network(f"{ip}/24", strict=False)
+    except ValueError:
+        return []
+    hosts = [str(host) for host in network.hosts() if str(host) != ip]
+    results: list[Dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=64) as executor:
+        futures = [executor.submit(scan_camera_host, host) for host in hosts]
+        for future in as_completed(futures):
+            item = future.result()
+            if item is not None:
+                results.append(item)
+                if len(results) >= limit:
+                    break
+    results.sort(key=lambda item: (554 not in item["open_ports"], item["host"]))
+    return results[:limit]
+
+
+def ensure_demo_camera_if_empty() -> None:
+    if not settings.enable_demo_camera:
+        cleanup_demo_cameras()
+        return
+    if storage.list_cameras():
+        return
+    storage.create_camera(
+        {
+            "name": "客厅演示摄像头",
+            "room": "客厅",
+            "stream_url": "demo:living_room",
+            "username": None,
+            "password": None,
+            "enabled": True,
+        }
+    )
+
+
+def cleanup_demo_cameras() -> None:
+    for camera in storage.list_cameras():
+        if str(camera.get("stream_url", "")).strip().lower() == "demo:living_room":
+            storage.delete_camera(int(camera["id"]))
 
 
 def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)) -> Dict[str, Any]:
@@ -343,6 +560,168 @@ def resolve_user_family_id(user: Dict[str, Any], requested_family_id: int | None
     if not user_family_ids:
         raise HTTPException(status_code=400, detail="Please create or join a family first")
     return int(user_family_ids[0])
+
+
+def parse_iso_day(value: str) -> datetime | None:
+    clean_value = str(value or "").strip()
+    if not clean_value:
+        return None
+    try:
+        return datetime.fromisoformat(clean_value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            return datetime.fromisoformat(f"{clean_value}T00:00:00+08:00")
+        except ValueError:
+            return None
+
+
+def build_mock_weather_signal(city: str, today: datetime | None = None) -> Dict[str, Any]:
+    current = today or datetime.now(timezone.utc)
+    signals = [
+        {"condition": "thunderstorm", "alerts": ["雷暴雨"], "temperature_min": 24, "temperature_max": 31},
+        {"condition": "cooling", "alerts": ["降温"], "temperature_min": 18, "temperature_max": 24},
+        {"condition": "hot", "alerts": ["高温"], "temperature_min": 28, "temperature_max": 36},
+        {"condition": "breezy", "alerts": ["大风"], "temperature_min": 22, "temperature_max": 29},
+    ]
+    signal = signals[current.day % len(signals)]
+    return {
+        "city": city or "苏州",
+        "date": current.astimezone(timezone.utc).date().isoformat(),
+        "condition": signal["condition"],
+        "temperature_min": signal["temperature_min"],
+        "temperature_max": signal["temperature_max"],
+        "alerts": signal["alerts"],
+        "source": "mock_weather_v1",
+    }
+
+
+def build_message_candidate_payloads(
+    *,
+    family_id: int,
+    elder_id: str,
+    device_id: str,
+    elder_profile: Dict[str, Any] | None,
+    calendar_events: list[Dict[str, Any]],
+    weather_signal: Dict[str, Any],
+    scenario_types: list[str],
+) -> list[Dict[str, Any]]:
+    requested = {item.strip() for item in scenario_types if str(item or "").strip()}
+    now = datetime.now(timezone.utc)
+    messages: list[Dict[str, Any]] = []
+    display_name = str((elder_profile or {}).get("display_name") or "妈妈")
+    likes = list((elder_profile or {}).get("likes") or [])
+    like_text = likes[0] if likes else "你回家陪她吃顿饭"
+
+    if not requested or "calendar" in requested:
+        for calendar_event in calendar_events:
+            event_type = str(calendar_event.get("type") or "").strip()
+            event_date = parse_iso_day(str(calendar_event.get("start_at") or ""))
+            if event_type != "birthday" or event_date is None:
+                continue
+            delta_days = (event_date.date() - now.date()).days
+            if delta_days < 0 or delta_days > 7:
+                continue
+            prefix = "今天" if delta_days == 0 else "明天" if delta_days == 1 else f"{delta_days} 天后"
+            messages.append(
+                {
+                    "message_id": f"msg_{uuid4().hex[:16]}",
+                    "family_id": family_id,
+                    "device_id": device_id,
+                    "elder_id": elder_id,
+                    "message_type": "gohome",
+                    "priority": "warm",
+                    "title": f"{prefix}是{display_name}生日",
+                    "subtitle": f"她喜欢{like_text}，也会更想见到你。",
+                    "body": "建议提前准备一个小心意，或者把回家时间先定下来。",
+                    "facts": [
+                        f"日历：{calendar_event.get('title') or '生日提醒'}",
+                        f"日期：{str(calendar_event.get('start_at') or '')[:10]}",
+                    ],
+                    "image_mode": "generated",
+                    "image_url": "",
+                    "actions": [
+                        {"key": "call", "label": "打电话"},
+                        {"key": "schedule_visit", "label": "安排回家"},
+                    ],
+                    "source": ["elder_profile", "calendar"],
+                    "source_event_ids": [],
+                    "source_media_ids": [],
+                    "generated_by": "calendar_rule_v1",
+                    "status": "open",
+                    "expires_at": (event_date + timedelta(days=1)).isoformat(),
+                }
+            )
+            break
+
+    if not requested or "weather" in requested:
+        alerts = list(weather_signal.get("alerts") or [])
+        if alerts:
+            first_alert = str(alerts[0])
+            messages.append(
+                {
+                    "message_id": f"msg_{uuid4().hex[:16]}",
+                    "family_id": family_id,
+                    "device_id": device_id,
+                    "elder_id": elder_id,
+                    "message_type": "accompany",
+                    "priority": "warm",
+                    "title": f"今天{weather_signal.get('city') or '家里那边'}有{first_alert}",
+                    "subtitle": f"可以提醒{display_name}少出门，先把窗户和阳台看一眼。",
+                    "body": "如果她今天要出门，建议先打个电话确认一下。",
+                    "facts": [
+                        f"天气：{first_alert}",
+                        f"温度：{weather_signal.get('temperature_min')} - {weather_signal.get('temperature_max')}°C",
+                    ],
+                    "image_mode": "generated",
+                    "image_url": "",
+                    "actions": [
+                        {"key": "call", "label": "打电话"},
+                        {"key": "send_message", "label": "发消息"},
+                    ],
+                    "source": ["weather_signal", "elder_profile"],
+                    "source_event_ids": [],
+                    "source_media_ids": [],
+                    "generated_by": "weather_rule_v1",
+                    "status": "open",
+                    "expires_at": "",
+                }
+            )
+
+    if not requested or "event" in requested:
+        latest_events = storage.list_events(limit=1, acknowledged=False)
+        if latest_events:
+            latest_event = latest_events[0]
+            messages.append(
+                {
+                    "message_id": f"msg_{uuid4().hex[:16]}",
+                    "family_id": family_id,
+                    "device_id": device_id,
+                    "elder_id": elder_id,
+                    "message_type": "alert",
+                    "priority": "warning",
+                    "title": str(latest_event.get("summary") or "家里有一条需要确认的提醒"),
+                    "subtitle": "这条消息来自盒子侧真实事件，不是情绪化猜测。",
+                    "body": "建议先看一眼事件详情，再决定要不要打电话或标记已确认。",
+                    "facts": [
+                        f"类型：{latest_event.get('type') or ''}",
+                        f"房间：{latest_event.get('room') or '未标记'}",
+                    ],
+                    "image_mode": "evidence" if latest_event.get("snapshot_path") else "none",
+                    "image_url": latest_event.get("snapshot_url") or "",
+                    "actions": [
+                        {"key": "view_event", "label": "查看事件"},
+                        {"key": "ack", "label": "标记已确认"},
+                    ],
+                    "source": ["vision_event"],
+                    "source_event_ids": [int(latest_event["id"])],
+                    "source_media_ids": [],
+                    "generated_by": "event_rule_v1",
+                    "status": "open",
+                    "expires_at": "",
+                }
+            )
+
+    return messages
 
 
 def build_device_sync_view(device_id: str, family_id: int) -> Dict[str, Any]:
@@ -602,6 +981,8 @@ def get_rollout_for_user(rollout_id: int, user: Dict[str, Any]) -> Dict[str, Any
 
 
 settings.ensure_dirs()
+box_init_service = BoxInitService(settings)
+box_init_service.initialize_if_needed()
 storage = Storage(settings.db_path)
 camera_agent = CameraAgent(settings.snapshot_dir)
 detect_agent = DetectAgent(
@@ -611,6 +992,7 @@ detect_agent = DetectAgent(
     detector_backend=settings.detector_backend,
     yolo_model=settings.yolo_model,
     yolo_confidence=settings.yolo_confidence,
+    yolo_imgsz=settings.yolo_imgsz,
 )
 notifier = Notifier(settings)
 event_agent = EventAgent(storage, notifier, settings.event_throttle_seconds)
@@ -654,6 +1036,54 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def admin_path_requires_auth(path: str) -> bool:
+    if not path.startswith("/admin"):
+        return False
+    if path in {"/admin/login.html", "/admin/login.js", "/admin/styles.css"}:
+        return False
+    return path in {"/admin", "/admin/"} or path.endswith(".html")
+
+
+def admin_api_requires_auth(path: str) -> bool:
+    protected_prefixes = (
+        "/api/cameras",
+        "/api/events",
+        "/api/event-candidates",
+        "/api/summary",
+        "/api/rules",
+        "/api/notify",
+        "/snapshots",
+    )
+    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected_prefixes)
+
+
+def admin_login_redirect(request: Request) -> RedirectResponse:
+    target = request.url.path
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(url=f"/admin/login.html?next={quote(target, safe='')}", status_code=303)
+
+
+@app.middleware("http")
+async def enforce_admin_session(request: Request, call_next: Any) -> Response:
+    requires_page_auth = admin_path_requires_auth(request.url.path)
+    requires_api_auth = admin_api_requires_auth(request.url.path)
+    if requires_page_auth or requires_api_auth:
+        token = request.cookies.get(ADMIN_SESSION_COOKIE, "")
+        session = box_init_service.session_status(token)
+        if not session:
+            if requires_page_auth and request.method == "GET":
+                return admin_login_redirect(request)
+            return JSONResponse({"detail": "请先登录盒子管理端。"}, status_code=401)
+        if box_init_service.status(token).get("must_change_password"):
+            if requires_page_auth and request.method == "GET":
+                return admin_login_redirect(request)
+            return JSONResponse({"detail": "首次登录后必须修改管理密码。"}, status_code=403)
+    return await call_next(request)
+
+
 app.include_router(
     build_video_router(
         video_service,
@@ -672,18 +1102,114 @@ app.include_router(
     )
 )
 app.mount("/snapshots", StaticFiles(directory=str(settings.snapshot_dir)), name="snapshots")
+app.mount("/setup", StaticFiles(directory=str(settings.setup_dir), html=True), name="setup")
 app.mount("/admin", StaticFiles(directory=str(settings.admin_dir), html=True), name="admin")
 app.mount("/ui", StaticFiles(directory=str(settings.frontend_dir), html=True), name="ui")
 
 
 @app.get("/", include_in_schema=False)
-def root() -> RedirectResponse:
-    return RedirectResponse(url="/ui/index.html")
+def root(request: Request) -> Response:
+    if request_is_setup_hotspot(request):
+        return captive_setup_page()
+    cameras = storage.list_cameras()
+    if not cameras or all(str(camera.get("stream_url", "")).startswith("demo:") for camera in cameras):
+        return RedirectResponse(url=SETUP_NETWORK_PAGE)
+    return RedirectResponse(url="/admin/index.html")
+
+
+def setup_network_redirect() -> RedirectResponse:
+    return RedirectResponse(url=SETUP_HOTSPOT_NETWORK_PAGE)
+
+
+def captive_setup_page() -> Response:
+    html = f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="refresh" content="0; url={SETUP_HOTSPOT_NETWORK_PAGE}">
+  <title>连接回家盒子</title>
+  <style>
+    html, body {{
+      min-height: 100%;
+      margin: 0;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+    }}
+    main {{
+      min-height: 100vh;
+      display: grid;
+      align-content: center;
+      gap: 16px;
+      padding: 28px;
+      box-sizing: border-box;
+    }}
+    h1 {{ margin: 0; font-size: 30px; line-height: 1.12; }}
+    p {{ margin: 0; color: #6e6e73; font-size: 15px; line-height: 1.5; }}
+    a {{
+      min-height: 50px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 10px;
+      border-radius: 12px;
+      background: #1d1d1f;
+      color: white;
+      font-size: 16px;
+      font-weight: 700;
+      text-decoration: none;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>连接回家盒子</h1>
+    <p>正在打开配网页。如果没有自动跳转，请点下面的按钮。</p>
+    <a href="{SETUP_HOTSPOT_NETWORK_PAGE}">打开配网页</a>
+  </main>
+  <script>window.location.replace("{SETUP_HOTSPOT_NETWORK_PAGE}");</script>
+</body>
+</html>"""
+    return Response(
+        html,
+        media_type="text/html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@app.get("/hotspot-detect.html", include_in_schema=False)
+@app.get("/library/test/success.html", include_in_schema=False)
+def apple_captive_portal(request: Request) -> Response:
+    if request_is_setup_hotspot(request):
+        return captive_setup_page()
+    return Response(
+        "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>",
+        media_type="text/html",
+    )
+
+
+@app.get("/generate_204", include_in_schema=False)
+@app.get("/gen_204", include_in_schema=False)
+def android_captive_portal(request: Request) -> Response:
+    if request_is_setup_hotspot(request):
+        return setup_network_redirect()
+    return Response(status_code=204)
+
+
+@app.get("/connecttest.txt", include_in_schema=False)
+@app.get("/ncsi.txt", include_in_schema=False)
+@app.get("/redirect", include_in_schema=False)
+def windows_captive_portal(request: Request) -> Response:
+    if request_is_setup_hotspot(request):
+        return setup_network_redirect()
+    return Response("Microsoft Connect Test", media_type="text/plain")
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     storage.init_schema()
+    ensure_demo_camera_if_empty()
     if not settings.disable_worker:
         worker.start()
     app_runtime_guard.start()
@@ -722,10 +1248,138 @@ def device() -> Dict[str, Any]:
         "notify_channel": settings.notify_channel,
         "detector_backend": settings.detector_backend,
         "yolo_model": settings.yolo_model if settings.detector_backend == "yolo" else None,
+        "yolo_imgsz": settings.yolo_imgsz if settings.detector_backend == "yolo" else None,
         "worker_running": worker.is_running,
         "video_distribution": video_distribution_service.service_info(),
         "app_runtime": app_runtime_guard.status(),
     }
+
+
+@app.get("/api/admin/auth/status")
+def admin_auth_status(request: Request) -> Dict[str, Any]:
+    return box_init_service.status(request.cookies.get(ADMIN_SESSION_COOKIE, ""))
+
+
+@app.post("/api/admin/auth/login")
+def admin_auth_login(payload: AdminLogin, response: Response) -> Dict[str, Any]:
+    session = box_init_service.authenticate(payload.username.strip(), payload.password)
+    if not session:
+        raise HTTPException(status_code=401, detail="用户名或密码不正确。")
+    response.set_cookie(
+        ADMIN_SESSION_COOKIE,
+        session["token"],
+        max_age=12 * 60 * 60,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return {
+        "authenticated": True,
+        "username": session["username"],
+        "must_change_password": session["must_change_password"],
+        "expires_at": session["expires_at"],
+    }
+
+
+@app.post("/api/admin/auth/logout")
+def admin_auth_logout(request: Request, response: Response) -> Dict[str, Any]:
+    box_init_service.logout(request.cookies.get(ADMIN_SESSION_COOKIE, ""))
+    response.delete_cookie(ADMIN_SESSION_COOKIE, path="/")
+    return {"authenticated": False}
+
+
+@app.post("/api/admin/auth/change-password")
+def admin_auth_change_password(payload: AdminPasswordChange, request: Request, response: Response) -> Dict[str, Any]:
+    if payload.new_password == payload.old_password or payload.new_password == DEFAULT_ADMIN_PASSWORD:
+        raise HTTPException(status_code=400, detail="新密码不能继续使用初始密码。")
+    changed = box_init_service.change_password(
+        request.cookies.get(ADMIN_SESSION_COOKIE, ""),
+        payload.old_password,
+        payload.new_password,
+    )
+    if not changed:
+        raise HTTPException(status_code=401, detail="旧密码不正确或登录已过期。")
+    response.delete_cookie(ADMIN_SESSION_COOKIE, path="/")
+    return {"changed": True, "message": "密码已修改，请重新登录。"}
+
+
+@app.get("/api/setup/network")
+def setup_network() -> Dict[str, Any]:
+    return setup_network_status()
+
+
+@app.get("/api/setup/wifi/networks")
+def setup_wifi_networks() -> Dict[str, Any]:
+    if not nmcli_available():
+        return {"supported": False, "networks": [], "message": "当前系统未安装 NetworkManager，无法从页面扫描 Wi-Fi。"}
+    code, stdout, stderr = run_setup_command(
+        ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "--rescan", "yes"],
+        timeout=10,
+    )
+    if code != 0 and network_permission_error(stderr or stdout):
+        code, stdout, stderr = run_gohome_nmcli(["wifi-list"], timeout=14)
+    if code != 0:
+        return {"supported": True, "networks": [], "message": stderr or "Wi-Fi 扫描失败，请稍后重试。"}
+    networks: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for line in stdout.splitlines():
+        parts = line.split(":")
+        if not parts:
+            continue
+        ssid = clean_nmcli_field(parts[0])
+        if not ssid or ssid in seen:
+            continue
+        seen.add(ssid)
+        signal = 0
+        if len(parts) > 1:
+            try:
+                signal = int(parts[1] or "0")
+            except ValueError:
+                signal = 0
+        security = clean_nmcli_field(":".join(parts[2:])) if len(parts) > 2 else ""
+        networks.append({"ssid": ssid, "signal": signal, "security": security, "secured": bool(security)})
+    networks.sort(key=lambda item: int(item["signal"]), reverse=True)
+    return {"supported": True, "networks": networks[:20], "message": ""}
+
+
+@app.post("/api/setup/wifi/connect")
+def setup_wifi_connect(payload: WifiConnectRequest) -> Dict[str, Any]:
+    if not nmcli_available():
+        raise HTTPException(status_code=501, detail="当前系统未安装 NetworkManager，无法从页面连接 Wi-Fi。")
+    ssid = payload.ssid.strip()
+    if not ssid:
+        raise HTTPException(status_code=400, detail="请选择家庭 Wi-Fi。")
+    if payload.password:
+        forget_wifi_connection(ssid)
+    args = ["nmcli", "dev", "wifi", "connect", ssid]
+    if payload.password:
+        args.extend(["password", payload.password])
+    code, stdout, stderr = run_setup_command(args, timeout=25)
+    if code != 0 and network_permission_error(stderr or stdout):
+        privileged_args = ["wifi-connect", ssid]
+        if payload.password:
+            privileged_args.append(payload.password)
+        code, stdout, stderr = run_gohome_nmcli(privileged_args, timeout=30)
+    if code != 0:
+        detail = stderr or stdout or "Wi-Fi 连接失败，请检查密码。"
+        if re.search(r"insufficient privileges|not authorized|permission", detail, re.IGNORECASE):
+            detail = "盒子还没有配网权限，请重新运行安装脚本。"
+        elif re.search(r"secrets were required|no secrets|password|key-mgmt|802-11-wireless-security", detail, re.IGNORECASE):
+            detail = "请输入正确的 Wi-Fi 密码。"
+        raise HTTPException(status_code=400, detail=detail)
+    return {"connected": True, "message": "Wi-Fi 已连接", "network": setup_network_status()}
+
+
+@app.get("/api/cameras/setup-presets")
+def camera_presets() -> Dict[str, Any]:
+    return camera_setup_presets()
+
+
+@app.get("/api/cameras/discover")
+async def discover_cameras(limit: int = 24) -> Dict[str, Any]:
+    bounded_limit = max(1, min(int(limit), 48))
+    cameras = await run_in_threadpool(discover_lan_cameras, bounded_limit)
+    return {"cameras": cameras, "count": len(cameras), "subnet": ".".join(local_ip().split(".")[:3]) + ".0/24"}
 
 
 @app.post("/api/auth/register")
@@ -790,6 +1444,145 @@ def v1_create_household(payload: FamilyCreate, user: Dict[str, Any] = Depends(cu
 @app.get("/api/v1/households/mine")
 def v1_list_households(user: Dict[str, Any] = Depends(current_user)) -> list[Dict[str, Any]]:
     return list_my_families(user)
+
+
+@app.get("/api/v1/families/{family_id}/elders/{elder_id}/profile")
+def v1_get_elder_profile(
+    family_id: int,
+    elder_id: str,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    require_family_access(user, family_id)
+    profile = storage.get_elder_profile(family_id=family_id, elder_id=elder_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Elder profile not found")
+    return profile
+
+
+@app.put("/api/v1/families/{family_id}/elders/{elder_id}/profile")
+def v1_upsert_elder_profile(
+    family_id: int,
+    elder_id: str,
+    payload: ElderProfileUpsert,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    require_family_access(user, family_id)
+    try:
+        return storage.upsert_elder_profile(family_id=family_id, elder_id=elder_id, payload=model_dump(payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/families/{family_id}/calendar-events")
+def v1_list_calendar_events(
+    family_id: int,
+    elder_id: str = Query(default=""),
+    user: Dict[str, Any] = Depends(current_user),
+) -> list[Dict[str, Any]]:
+    require_family_access(user, family_id)
+    return storage.list_calendar_events(family_id=family_id, elder_id=elder_id)
+
+
+@app.post("/api/v1/families/{family_id}/calendar-events")
+def v1_create_calendar_event(
+    family_id: int,
+    payload: CalendarEventCreate,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    require_family_access(user, family_id)
+    return storage.create_calendar_event(family_id=family_id, payload=model_dump(payload))
+
+
+@app.get("/api/v1/families/{family_id}/weather-signals")
+def v1_list_weather_signals(
+    family_id: int,
+    elder_id: str = Query(default="elder_primary"),
+    city: str = Query(default=""),
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    require_family_access(user, family_id)
+    resolved_city = city.strip()
+    if not resolved_city:
+        profile = storage.get_elder_profile(family_id=family_id, elder_id=elder_id)
+        resolved_city = str((profile or {}).get("city") or "").strip()
+    return build_mock_weather_signal(resolved_city)
+
+
+@app.post("/api/v1/internal/messages/generate")
+def v1_generate_messages(
+    payload: MessageGenerateRequest,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    family_id = resolve_user_family_id(user, payload.family_id)
+    elder_id = str(payload.elder_id or "elder_primary").strip() or "elder_primary"
+    elder_profile = storage.get_elder_profile(family_id=family_id, elder_id=elder_id)
+    calendar_events = storage.list_calendar_events(family_id=family_id, elder_id=elder_id)
+    weather_signal = build_mock_weather_signal(str((elder_profile or {}).get("city") or "").strip())
+    if payload.clear_existing:
+        storage.clear_message_candidates(family_id=family_id, elder_id=elder_id)
+    generated_messages = []
+    for message in build_message_candidate_payloads(
+        family_id=family_id,
+        elder_id=elder_id,
+        device_id=current_device_id(),
+        elder_profile=elder_profile,
+        calendar_events=calendar_events,
+        weather_signal=weather_signal,
+        scenario_types=payload.scenario_types,
+    ):
+        generated_messages.append(storage.create_message_candidate(message))
+    return {
+        "family_id": family_id,
+        "elder_id": elder_id,
+        "weather_signal": weather_signal,
+        "messages": generated_messages,
+    }
+
+
+@app.get("/api/v1/app/messages")
+def v1_list_app_messages(
+    family_id: int | None = Query(default=None),
+    limit: int = 20,
+    status: str = Query(default=""),
+    user: Dict[str, Any] = Depends(current_user),
+) -> list[Dict[str, Any]]:
+    resolved_family_id = resolve_user_family_id(user, family_id)
+    return storage.list_message_candidates(
+        family_id=resolved_family_id,
+        limit=max(1, min(limit, 100)),
+        status=status or None,
+    )
+
+
+@app.get("/api/v1/app/messages/{message_id}")
+def v1_get_app_message(
+    message_id: str,
+    family_id: int | None = Query(default=None),
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    resolved_family_id = resolve_user_family_id(user, family_id)
+    message = storage.get_message_candidate(family_id=resolved_family_id, message_id=message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return message
+
+
+@app.patch("/api/v1/app/messages/{message_id}")
+def v1_update_app_message(
+    message_id: str,
+    patch: MessageStatusUpdate,
+    family_id: int | None = Query(default=None),
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    resolved_family_id = resolve_user_family_id(user, family_id)
+    message = storage.update_message_candidate_status(
+        family_id=resolved_family_id,
+        message_id=message_id,
+        status=patch.status,
+    )
+    if message is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return message
 
 
 @app.post("/api/device-bindings")
@@ -1427,7 +2220,7 @@ def v1_ingest_device_event(
         notification_delivery = dispatch_notification(
             family_id=int(device_session["family_id"]),
             event_id=int(event["id"]),
-            title=f"想家了吗提醒：{event['summary']}",
+            title=f"回家提醒：{event['summary']}",
             body=f"{event.get('room') or '家中'} · {event['summary']}",
             extra={
                 "event_id": int(event["id"]),
@@ -1442,7 +2235,7 @@ def v1_ingest_device_event(
             event_id=int(event["id"]),
             camera_id=camera_id,
             preferred_region=str(payload.payload.get("preferred_region") or ""),
-            title=f"想家了吗提醒：{event['summary']}",
+            title=f"回家提醒：{event['summary']}",
             body=f"{event.get('room') or '家中'} · {event['summary']}",
             extra={
                 "event_type": event.get("type"),
@@ -1638,14 +2431,20 @@ def list_cameras() -> list[Dict[str, Any]]:
 
 @app.post("/api/cameras")
 def create_camera(camera: CameraCreate) -> Dict[str, Any]:
+    if len(storage.list_cameras()) >= 3:
+        raise HTTPException(status_code=400, detail="最多只能接入 3 路摄像头")
     return storage.create_camera(model_dump(camera))
 
 
 def capture_preview(camera_payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
         rules = storage.get_rules()
+        analysis_config = {
+            **rules,
+            "force_demo_vision": str(camera_payload.get("stream_url", "")).strip().lower().startswith("demo:"),
+        }
         capture = camera_agent.capture_frame(camera_payload)
-        analysis = detect_agent.analyze_frame_with_config(capture["frame"], config=rules)
+        analysis = detect_agent.analyze_frame_with_config(capture["frame"], config=analysis_config)
         relative_path = f"preview/{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
         camera_agent.save_frame(capture["frame"], relative_path)
         return {
@@ -1695,15 +2494,19 @@ def delete_camera(camera_id: int) -> Dict[str, Any]:
     return {"deleted": True, "camera_id": camera_id}
 
 
-def capture_and_store(camera_id: int) -> Dict[str, Any]:
+def capture_and_store(camera_id: int, persist_detection: bool = False) -> Dict[str, Any]:
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
 
     try:
         rules = storage.get_rules()
+        analysis_config = {
+            **rules,
+            "force_demo_vision": str(camera.get("stream_url", "")).strip().lower().startswith("demo:"),
+        }
         capture = camera_agent.capture_frame(camera)
-        analysis = detect_agent.analyze_frame_with_config(capture["frame"], config=rules)
+        analysis = detect_agent.analyze_frame_with_config(capture["frame"], config=analysis_config)
         relative_path = camera_agent.snapshot_relative_path(camera_id)
         camera_agent.save_frame(capture["frame"], relative_path)
         snapshot = storage.create_snapshot(
@@ -1717,6 +2520,16 @@ def capture_and_store(camera_id: int) -> Dict[str, Any]:
             person_count=analysis.get("person_count"),
             analysis=analysis,
         )
+        detection_result = None
+        if persist_detection:
+            detection_result = storage.create_detection_result(
+                camera_id=camera_id,
+                snapshot_id=int(snapshot["id"]),
+                captured_at=snapshot["captured_at"],
+                width=capture["width"],
+                height=capture["height"],
+                analysis=analysis,
+            )
         storage.update_camera_status(camera_id, "online")
         return {
             "ok": True,
@@ -1727,6 +2540,7 @@ def capture_and_store(camera_id: int) -> Dict[str, Any]:
             "source": capture["source"],
             "snapshot": snapshot,
             "analysis": analysis,
+            "detection_result": detection_result,
         }
     except CameraError as exc:
         storage.update_camera_status(camera_id, "offline", str(exc))
@@ -1760,6 +2574,13 @@ async def test_camera(camera_id: int) -> Dict[str, Any]:
 @app.post("/api/cameras/{camera_id}/capture")
 async def capture_camera(camera_id: int) -> Dict[str, Any]:
     return await run_in_threadpool(capture_with_pipeline, camera_id)
+
+
+@app.post("/api/cameras/{camera_id}/analysis/live")
+async def live_camera_analysis(camera_id: int, algorithm: str = Query(default="person")) -> Dict[str, Any]:
+    result = await run_in_threadpool(capture_and_store, camera_id, True)
+    result["algorithm"] = algorithm
+    return result
 
 
 @app.get("/api/cameras/{camera_id}/snapshot/latest")
