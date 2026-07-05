@@ -2178,3 +2178,15 @@ P1 用户端：
 2. 人体存在和骨架：保持 YOLO 人框 + RTMPose 骨架组合，预览页只展示当前算法相关证据，避免“所有算法看起来一样”。
 3. 火灾：从暖色区域规则升级为“暖色纹理 + 动态变化 + 连续帧 + 排除灯光/屏幕/阳光”的事件逻辑。
 4. 生活观察：用餐、久坐、长时间无变化优先作为观察日志，不默认升级高危告警。
+
+### 14.4 本地服务器验收清单
+
+本地 App API 完成后，按以下顺序验收：
+
+1. Mac 启动 `npm run app-server`。
+2. `npm run verify:app-server` 通过，确认媒体上传、事件上传、事件查询、事件处理和证据图读取都通。
+3. 树莓派 `.env` 配置 `GOHOME_APP_SERVER_BASE_URL` 和 `GOHOME_DEVICE_API_TOKEN`。
+4. 重启 `gohome-edge-agent`。
+5. 查看 `/api/device`，确认 `upload_agent.configured = true`。
+6. 触发一条事件，确认 `upload_jobs` 从 `pending` 变成 `completed`。
+7. 打开本地服务器托管的 `index.html?app=1`，确认 App/H5 可以看到事件列表和事件详情截图。

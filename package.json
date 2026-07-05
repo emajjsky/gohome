@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "app-server": "node local-app-server/server.js",
+    "verify:app-server": "node scripts/verify-local-app-server.js",
+    "test": "npm run verify:app-server"
   },
   "keywords": [],
   "author": "",

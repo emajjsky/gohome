@@ -6179,3 +6179,43 @@ python scripts/verify-fall-rule-engine.py
 - UR Fall 小样本通过只能证明规则链路在小样本上有效，不能对外宣称产品级准确率。
 - 真实产品还需要继续扩充公开样本和家庭场景负样本，尤其是坐下、弯腰、躺沙发、多人遮挡、宠物/物体遮挡和夜间低光。
 - App 和服务器未完成前，管理台只用于开发验证，不作为最终用户端。
+
+## 27. 2026-07-05 本地 App API 服务器闭环起步
+
+已新增局域网本地 App API 服务器：
+
+- 代码：`local-app-server/server.js`
+- 说明：`local-app-server/README.md`
+- 验证：`scripts/verify-local-app-server.js`
+- 启动命令：`npm run app-server`
+- 验证命令：`npm run verify:app-server`
+
+当前支持的闭环接口：
+
+- `POST /api/v1/device/media-assets/upload`
+  - 接收树莓派上传的事件截图证据。
+  - 存入 `data/app-server/media/`。
+- `POST /api/v1/device/events`
+  - 接收树莓派上传的正式事件。
+  - 关联同一 `edge_event_id` 的媒体证据。
+- `GET /api/app/events`
+  - 给 H5/App 壳读取事件列表。
+- `GET /api/app/events/:id`
+  - 给 H5/App 壳读取事件详情。
+- `PATCH /api/app/events/:id`
+  - 支持标记已处理或误报。
+- `POST /api/v1/video/sessions`
+  - 给证据图访问发放临时播放票据。
+- `GET /api/v1/video/media/snapshots/:path`
+  - 返回事件证据图片。
+
+这一步解决的问题：
+
+- 树莓派不再只能把 `upload_jobs` 堆在本地 `pending`。
+- App/H5 可以先从服务器读事件和证据，不再把用户端能力继续塞进 `/admin`。
+- 后续迁云时，可以替换存储和鉴权实现，但保持边缘端上传协议基本不变。
+
+当前限制：
+
+- 本地服务器用 JSON 文件保存数据，只用于局域网闭环和比赛演示前验证。
+- 视频直播仍需要后续接 go2rtc / MediaMTX / WebRTC；当前服务器先解决事件、截图和 App 数据链。
