@@ -128,12 +128,56 @@ async function main() {
         assert.equal(testedCamera.ok, true);
         assert.equal(testedCamera.camera.status, "pending_edge_verify");
 
+        const enabledCamera = await requestJson(baseUrl, `/api/cameras/${camera.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ enabled: true }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(enabledCamera.enabled, true);
+
         const deviceConfig = await requestJson(baseUrl, "/api/v1/device/config", {
             headers: { Authorization: `Bearer ${exchanged.device_token}` },
         });
         assert.equal(deviceConfig.ok, true);
         assert.equal(deviceConfig.cameras.length, 1);
         assert.equal(deviceConfig.cameras[0].stream_url, "rtsp://192.168.1.20:554/stream1");
+        assert.equal(deviceConfig.cameras[0].enabled, true);
+
+        const deviceSync = await requestJson(baseUrl, "/api/v1/device/sync", {
+            method: "POST",
+            body: JSON.stringify({
+                device_id: "edge-test",
+                config_version: deviceConfig.config_version,
+                worker_running: true,
+                status: { status: "online", sync_status: "healthy" },
+                cameras: [
+                    {
+                        camera_id: camera.id,
+                        local_camera_id: 11,
+                        status: "online",
+                        sync_status: "synced",
+                        enabled: true,
+                        last_error: "",
+                    },
+                ],
+            }),
+            headers: { Authorization: `Bearer ${exchanged.device_token}` },
+        });
+        assert.equal(deviceSync.ok, true);
+        assert.equal(deviceSync.current_config_version, deviceConfig.config_version);
+
+        const appCameras = await requestJson(baseUrl, "/api/app/cameras", {
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        const syncedCamera = appCameras.find((item) => String(item.id) === String(camera.id));
+        assert.equal(syncedCamera.status, "online");
+        assert.equal(syncedCamera.sync_status, "synced");
+        assert.ok(syncedCamera.last_seen_at);
+
+        const stableDeviceConfig = await requestJson(baseUrl, "/api/v1/device/config", {
+            headers: { Authorization: `Bearer ${exchanged.device_token}` },
+        });
+        assert.equal(stableDeviceConfig.config_version, deviceConfig.config_version);
 
         const imageBytes = Buffer.from("fake-jpeg-content");
         const media = await requestJson(

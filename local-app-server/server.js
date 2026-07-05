@@ -358,7 +358,17 @@ function createLocalAppServer(options = {}) {
     function cameraConfigVersion() {
         const cameras = Object.values(store.db.cameras);
         const fingerprint = cameras
-            .map((camera) => `${camera.id}:${camera.updated_at || ""}:${camera.enabled ? 1 : 0}:${camera.sync_status || ""}`)
+            .map((camera) => JSON.stringify({
+                id: camera.id,
+                family_id: camera.family_id || null,
+                device_id: camera.device_id || "",
+                name: camera.name || "",
+                room: camera.room || "",
+                stream_url: camera.stream_url || "",
+                username: camera.username || "",
+                password: camera.password || "",
+                enabled: Boolean(camera.enabled),
+            }))
             .sort()
             .join("|");
         return `camera-config-${crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 12)}`;
@@ -711,6 +721,91 @@ function createLocalAppServer(options = {}) {
         });
         store.save();
         write(res, 200, { ok: true, server_time: nowIso(), config: {} });
+    }
+
+    function cameraSyncStatusFromReport(report) {
+        const syncStatus = String(report.sync_status || "").trim();
+        if (syncStatus) return syncStatus;
+        if (report.applied === false) return "edge_error";
+        const status = String(report.status || "").toLowerCase();
+        if (["online", "configured", "disabled", "synced"].includes(status)) return "synced";
+        if (["offline", "error", "failed"].includes(status)) return "edge_error";
+        if (report.last_error) return "edge_error";
+        return "edge_reported";
+    }
+
+    async function handleDeviceSync(req, res) {
+        if (!requireDevice(req, res)) return;
+        const payload = await parseJsonBody(req);
+        const receivedAt = nowIso();
+        const issuedToken = store.db.device_tokens.find((item) => item.token === tokenFrom(req) && item.status === "active");
+        const deviceId = String(payload.device_id || issuedToken?.device_id || currentEdgeDeviceId() || "edge-local");
+        const reportedStatus = payload.status && typeof payload.status === "object" ? payload.status : {};
+
+        if (issuedToken) {
+            issuedToken.device_id = deviceId;
+            issuedToken.last_heartbeat_at = receivedAt;
+        }
+
+        store.db.devices[deviceId] = {
+            ...(store.db.devices[deviceId] || {}),
+            id: deviceId,
+            device_id: deviceId,
+            name: payload.device_name || store.db.devices[deviceId]?.name || "回家盒子",
+            status: String(reportedStatus.status || payload.device_status || "online"),
+            worker_running: payload.worker_running ?? store.db.devices[deviceId]?.worker_running ?? null,
+            last_seen_at: receivedAt,
+            last_sync_at: receivedAt,
+            reported_config_version: String(payload.config_version || payload.applied_config_version || ""),
+            app_version: String(payload.app_version || store.db.devices[deviceId]?.app_version || ""),
+            model_version: String(payload.model_version || store.db.devices[deviceId]?.model_version || ""),
+            runtime: payload.runtime || store.db.devices[deviceId]?.runtime || {},
+            sync_status: String(reportedStatus.sync_status || payload.sync_status || "reported"),
+            last_error: String(reportedStatus.last_error || payload.last_error || ""),
+            updated_at: receivedAt,
+        };
+
+        const cameraReports = Array.isArray(payload.cameras) ? payload.cameras : [];
+        const updatedCameras = [];
+        for (const report of cameraReports) {
+            const rawCameraId = report.camera_id ?? report.id;
+            if (rawCameraId === null || rawCameraId === undefined || rawCameraId === "") continue;
+            const cameraKey = String(rawCameraId);
+            const existing = store.db.cameras[cameraKey] || {};
+            const camera = {
+                ...existing,
+                id: existing.id || rawCameraId,
+                family_id: existing.family_id || issuedToken?.family_id || store.db.families[0]?.id || 1,
+                device_id: String(report.device_id || existing.device_id || deviceId),
+                name: String(existing.name || report.name || `摄像头 ${rawCameraId}`),
+                room: String(existing.room || report.room || ""),
+                enabled: "enabled" in existing ? normalizeBool(existing.enabled) : normalizeBool(report.enabled ?? true),
+                status: String(report.status || existing.status || "edge_reported"),
+                sync_status: cameraSyncStatusFromReport(report),
+                source: String(existing.source || "app_server_config"),
+                stream_url: existing.stream_url || String(report.stream_url || ""),
+                username: existing.username || report.username || "",
+                password: existing.password || null,
+                last_error: String(report.last_error || ""),
+                last_seen_at: report.last_seen_at || (String(report.status || "").toLowerCase() === "online" ? receivedAt : existing.last_seen_at || null),
+                edge_reported_at: receivedAt,
+                created_at: existing.created_at || receivedAt,
+                updated_at: existing.updated_at || receivedAt,
+            };
+            store.db.cameras[cameraKey] = camera;
+            updatedCameras.push(publicCamera(camera));
+        }
+
+        store.save();
+        write(res, 200, {
+            ok: true,
+            device_id: deviceId,
+            received_at: receivedAt,
+            reported_config_version: store.db.devices[deviceId].reported_config_version,
+            current_config_version: cameraConfigVersion(),
+            updated_cameras: updatedCameras,
+            config: deviceConfigPayload(),
+        });
     }
 
     function serveMedia(req, res, snapshotPath) {
@@ -1292,6 +1387,11 @@ function createLocalAppServer(options = {}) {
             if (req.method === "GET" && pathname === "/api/v1/device/config") {
                 if (!requireDevice(req, res)) return;
                 write(res, 200, deviceConfigPayload());
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/device/sync") {
+                await handleDeviceSync(req, res);
                 return;
             }
 

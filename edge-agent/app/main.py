@@ -25,6 +25,7 @@ from .apns_relay_service import APNSRelayService
 from .app_push_service import AppPushService
 from .box_init_service import ADMIN_SESSION_COOKIE, DEFAULT_ADMIN_PASSWORD, BoxInitService
 from .camera_agent import CameraAgent, CameraError
+from .config_sync_agent import ConfigSyncAgent
 from .detect_agent import DetectAgent
 from .edge_bootstrap_service import EdgeBootstrapService
 from .event_agent import EventAgent
@@ -463,6 +464,7 @@ def v1_device_summary() -> Dict[str, Any]:
         "model_version": current_model_version(),
         "detector_backend": settings.detector_backend,
         "upload_agent": upload_agent.status(),
+        "config_sync_agent": config_sync_agent.status(),
         "token": token,
     }
 
@@ -1055,6 +1057,17 @@ upload_agent = UploadAgent(
     device_id_resolver=current_device_id,
     token_resolver=read_local_device_token,
 )
+config_sync_agent = ConfigSyncAgent(
+    storage=storage,
+    settings=settings,
+    camera_agent=camera_agent,
+    device_id_resolver=current_device_id,
+    token_resolver=read_local_device_token,
+    runtime_status_resolver=lambda: {
+        "worker_running": worker.is_running,
+        "worker": worker.runtime_status(),
+    },
+)
 package_service = PackageService(storage=storage, settings=settings, object_storage=object_storage_service)
 app_runtime_guard = AppRuntimeGuardService(
     settings=settings,
@@ -1267,12 +1280,14 @@ def on_startup() -> None:
     if not settings.disable_worker:
         worker.start()
     upload_agent.start()
+    config_sync_agent.start()
     app_runtime_guard.start()
 
 
 @app.on_event("shutdown")
 def on_shutdown() -> None:
     app_runtime_guard.stop()
+    config_sync_agent.stop()
     upload_agent.stop()
     worker.stop()
 
@@ -1283,6 +1298,7 @@ def health() -> Dict[str, Any]:
         "status": "ok",
         "service": "gohome-edge-agent",
         "worker_running": worker.is_running,
+        "config_sync_agent": config_sync_agent.status(),
         "lan_url": f"http://{local_ip()}:{settings.port}",
         "distribution": video_distribution_service.service_info(),
         "app_runtime": app_runtime_guard.status(),
@@ -1315,6 +1331,7 @@ def device() -> Dict[str, Any]:
         "activity_max_samples": settings.activity_max_samples,
         "worker_running": worker.is_running,
         "upload_agent": upload_agent.status(),
+        "config_sync_agent": config_sync_agent.status(),
         "video_distribution": video_distribution_service.service_info(),
         "app_runtime": app_runtime_guard.status(),
     }

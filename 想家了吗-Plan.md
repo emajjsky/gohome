@@ -2166,11 +2166,11 @@ P1 用户端：
 
 ## 14. 2026-07-05 下一阶段执行路线
 
-### 14.1 先做最小云端 App API 闭环
+### 14.1 先跑通本地云语义闭环，再部署最小云端
 
-当前树莓派已经具备摄像头接入、视觉预览、规则引擎、事件证据包和上传队列。下一步不继续把功能堆在 `/admin`，也不把局域网本地服务器当成目标形态，而是先搭一个公网可访问的最小 App API：
+当前树莓派已经具备摄像头接入、视觉预览、规则引擎、事件证据包和上传队列。下一步不继续把功能堆在 `/admin`，也不让 App 直接连局域网盒子；先用 `local-app-server` 作为“云端 App API 的本地替身”跑通完整闭环，再把同一套接口部署到公网云端：
 
-1. 部署最小云端服务，第一版可以复用 `local-app-server` 的接口语义，但运行位置必须是云端。
+1. 本地启动 `local-app-server`，验证 App/H5 和树莓派都只通过 App API 交互。
 2. 提供 App 端接口：
    - 注册 / 登录
    - 家庭空间
@@ -2184,12 +2184,14 @@ P1 用户端：
    - `POST /api/v1/device/events`
    - `POST /api/v1/device/media-assets/upload`
    - `GET /api/v1/device/config`
+   - `POST /api/v1/device/sync`
 4. 给边缘盒子配置：
    - `GOHOME_APP_SERVER_BASE_URL`
    - `GOHOME_DEVICE_API_TOKEN`
-5. 验证树莓派从云端拉取摄像头配置并写入本地配置。
+5. 验证树莓派从 App API 拉取摄像头配置、写入本地 SQLite，并回传 `sync_status / status / last_error`。
 6. 验证树莓派上传队列从 `pending` 变成 `completed`。
-7. App/H5 改为从云端读取设备状态、摄像头状态、事件列表和证据图，而不是直接读取边缘端数据库或局域网盒子接口。
+7. App/H5 改为从 App API 读取设备状态、摄像头状态、事件列表和证据图，而不是直接读取边缘端数据库或局域网盒子接口。
+8. 本地闭环稳定后，把 `local-app-server` 的接口语义迁移到云端服务和正式数据库。
 
 ### 14.2 视频与算法解耦
 
