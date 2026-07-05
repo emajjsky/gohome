@@ -194,9 +194,13 @@
                 const response = await fetch(`${base}/health`, { signal: controller.signal });
                 clearTimeout(timer);
                 if (response.ok) {
+                    const payload = await response.json();
                     GoHomeEdge.apiBase = base;
                     if (base) localStorage.setItem(EDGE_KEY, base);
-                    return response.json();
+                    if (!getAuthToken() && isAppShellMode() && payload?.local_app_demo_token) {
+                        setAuthToken(payload.local_app_demo_token);
+                    }
+                    return payload;
                 }
             } catch (_error) {
                 // Try the next candidate.

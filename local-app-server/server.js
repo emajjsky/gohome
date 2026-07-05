@@ -172,7 +172,13 @@ function createLocalAppServer(options = {}) {
     }
 
     function requireApp(req, res) {
-        const token = tokenFrom(req) || new URL(req.url, "http://local").searchParams.get("access_token") || "";
+        const url = new URL(req.url, "http://local");
+        const token = tokenFrom(req) || url.searchParams.get("access_token") || "";
+        const playbackTicket = url.searchParams.get("playback_ticket") || "";
+        const ticket = playbackTicket ? playbackTickets.get(playbackTicket) : null;
+        if (ticket && Number(ticket.expires_at || 0) > Date.now()) {
+            return true;
+        }
         if (token !== appToken) {
             writeError(res, 401, "请先登录回家 App。");
             return false;
@@ -203,6 +209,13 @@ function createLocalAppServer(options = {}) {
             media_asset_id: asset?.id || null,
             payload: event.payload || {},
         };
+    }
+
+    function currentEdgeDeviceId() {
+        const device = Object.values(store.db.devices)[0];
+        if (device?.device_id || device?.id) return String(device.device_id || device.id);
+        const event = [...store.db.events].reverse().find((item) => item.payload?.edge_upload?.edge_device_id);
+        return String(event?.payload?.edge_upload?.edge_device_id || "edge-local");
     }
 
     function eventList(url) {
@@ -251,6 +264,141 @@ function createLocalAppServer(options = {}) {
         const filePath = path.resolve(mediaDir, asset.relative_path);
         if (!filePath.startsWith(mediaDir)) return "";
         return filePath;
+    }
+
+    function latestMediaEvent(cameraId = null) {
+        const targetCameraId = cameraId === null ? null : Number(cameraId);
+        return [...store.db.events]
+            .filter((event) => event.media_asset_id && (targetCameraId === null || Number(event.camera_id) === targetCameraId))
+            .sort((a, b) => String(b.occurred_at || b.created_at).localeCompare(String(a.occurred_at || a.created_at)))[0] || null;
+    }
+
+    function eventAsset(event) {
+        if (!event?.media_asset_id) return null;
+        return store.db.assets.find((asset) => Number(asset.id) === Number(event.media_asset_id)) || null;
+    }
+
+    function latestCameraSnapshotPayload(cameraId) {
+        const event = latestMediaEvent(cameraId);
+        const asset = eventAsset(event);
+        if (!event || !asset) {
+            return { available: false };
+        }
+        const evidence = event.payload?.evidence || {};
+        const metrics = evidence.metrics || {};
+        const flags = evidence.flags || {};
+        const tags = Array.isArray(evidence.tags) ? evidence.tags : [];
+        return {
+            available: true,
+            id: event.id,
+            camera_id: event.camera_id,
+            image_url: asset.snapshot_path,
+            snapshot_path: asset.snapshot_path,
+            captured_at: event.occurred_at || asset.created_at,
+            width: metrics.frame_width || null,
+            height: metrics.frame_height || null,
+            brightness: metrics.brightness ?? null,
+            motion_score: metrics.motion_score ?? null,
+            person_count: metrics.person_count ?? null,
+            tags,
+            analysis: {
+                ...flags,
+                ...(evidence.algorithms || {}),
+                event_type: event.event_type,
+                summary: event.summary,
+                rule: event.payload?.rule || evidence.rule || {},
+            },
+        };
+    }
+
+    function latestCameraEvaluationPayload(cameraId) {
+        const targetCameraId = Number(cameraId);
+        const event = [...store.db.events]
+            .filter((item) => Number(item.camera_id) === targetCameraId)
+            .sort((a, b) => String(b.occurred_at || b.created_at).localeCompare(String(a.occurred_at || a.created_at)))[0];
+        if (!event) {
+            return {
+                camera_id: targetCameraId,
+                evaluated_at: nowIso(),
+                state: { camera_state: "unknown" },
+                candidates: [],
+                explanation: "等待边缘盒子上传检测结果。",
+            };
+        }
+        const evidence = event.payload?.evidence || {};
+        const evaluation = event.payload?.evaluation || {};
+        return {
+            camera_id: targetCameraId,
+            snapshot_id: null,
+            evaluated_at: evaluation.evaluated_at || event.occurred_at || event.created_at,
+            matched_rules: event.payload?.rule ? [event.payload.rule] : [],
+            explanation: event.payload?.rule?.reason || event.summary,
+            score: evidence.metrics?.fall_score ?? evidence.metrics?.fire_score ?? null,
+            state: {
+                ...(evaluation.state || {}),
+                latest_event_type: event.event_type,
+                latest_event_level: event.level,
+            },
+            candidates: [publicEvent(event)],
+            analysis: evidence,
+        };
+    }
+
+    function serveLatestCameraSnapshot(req, res, cameraId) {
+        if (!requireApp(req, res)) return;
+        write(res, 200, latestCameraSnapshotPayload(cameraId));
+    }
+
+    function serveLatestCameraEvaluation(req, res, cameraId) {
+        if (!requireApp(req, res)) return;
+        write(res, 200, latestCameraEvaluationPayload(cameraId));
+    }
+
+    function serveCameraMjpeg(req, res, cameraId) {
+        if (!requireApp(req, res)) return;
+        const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
+        res.writeHead(200, {
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store, no-transform",
+            "Connection": "close",
+            "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
+        });
+
+        let closed = false;
+        let lastAssetId = null;
+        req.on("close", () => {
+            closed = true;
+        });
+
+        const writeFrame = () => {
+            if (closed || res.destroyed) return;
+            const event = latestMediaEvent(cameraId);
+            const asset = eventAsset(event);
+            const filePath = assetAbsolutePath(asset);
+            if (!asset || !filePath || !fs.existsSync(filePath)) {
+                return;
+            }
+            const frame = fs.readFileSync(filePath);
+            lastAssetId = asset.id;
+            res.write(`--${boundary}\r\n`);
+            res.write(`Content-Type: ${asset.content_type || "image/jpeg"}\r\n`);
+            res.write(`Content-Length: ${frame.length}\r\n`);
+            res.write(`X-GoHome-Asset-Id: ${asset.id}\r\n\r\n`);
+            res.write(frame);
+            res.write("\r\n");
+        };
+
+        writeFrame();
+        const timer = setInterval(() => {
+            if (closed || res.destroyed) {
+                clearInterval(timer);
+                return;
+            }
+            const next = eventAsset(latestMediaEvent(cameraId));
+            if (next?.id !== lastAssetId) {
+                writeFrame();
+            }
+        }, 1000);
     }
 
     async function handleDeviceMediaUpload(req, res, url) {
@@ -411,6 +559,7 @@ function createLocalAppServer(options = {}) {
                     events: store.db.events.length,
                     assets: store.db.assets.length,
                     updated_at: store.db.updated_at,
+                    local_app_demo_token: appToken,
                 });
                 return;
             }
@@ -454,11 +603,27 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
+            if (req.method === "GET" && pathname === "/api/device-bindings") {
+                if (!requireApp(req, res)) return;
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), store.db.families[0]?.id || 1);
+                const deviceId = currentEdgeDeviceId();
+                write(res, 200, [{
+                    id: 1,
+                    family_id: familyId,
+                    device_id: deviceId,
+                    device_name: "回家盒子",
+                    device_type: "edge-agent",
+                    status: "active",
+                    bound_at: store.db.created_at,
+                }]);
+                return;
+            }
+
             if (req.method === "GET" && (pathname === "/api/app/device" || pathname === "/api/device")) {
                 if (!requireApp(req, res)) return;
                 const device = Object.values(store.db.devices)[0] || {};
                 write(res, 200, {
-                    device_id: device.device_id || "edge-local",
+                    device_id: currentEdgeDeviceId(),
                     name: device.name || "回家盒子",
                     worker_running: true,
                     detector_backend: device.detector_backend || "yolo",
@@ -472,6 +637,18 @@ function createLocalAppServer(options = {}) {
             if (req.method === "GET" && (pathname === "/api/app/cameras" || pathname === "/api/cameras")) {
                 if (!requireApp(req, res)) return;
                 write(res, 200, Object.values(store.db.cameras));
+                return;
+            }
+
+            const latestSnapshotMatch = pathname.match(/^\/api\/(?:app\/)?cameras\/([^/]+)\/snapshot\/latest$/);
+            if (req.method === "GET" && latestSnapshotMatch) {
+                serveLatestCameraSnapshot(req, res, latestSnapshotMatch[1]);
+                return;
+            }
+
+            const latestEvaluationMatch = pathname.match(/^\/api\/(?:app\/)?cameras\/([^/]+)\/evaluation\/latest$/);
+            if (req.method === "GET" && latestEvaluationMatch) {
+                serveLatestCameraEvaluation(req, res, latestEvaluationMatch[1]);
                 return;
             }
 
@@ -493,6 +670,12 @@ function createLocalAppServer(options = {}) {
                 const ticket = stableId("play-");
                 playbackTickets.set(ticket, { payload, expires_at: Date.now() + 120000 });
                 write(res, 200, { ticket, expires_at: new Date(Date.now() + 120000).toISOString() });
+                return;
+            }
+
+            const v1StreamMatch = pathname.match(/^\/api\/v1\/video\/cameras\/([^/]+)\/stream\.mjpg$/);
+            if (req.method === "GET" && v1StreamMatch) {
+                serveCameraMjpeg(req, res, v1StreamMatch[1]);
                 return;
             }
 

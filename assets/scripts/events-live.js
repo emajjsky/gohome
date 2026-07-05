@@ -114,14 +114,32 @@
         return entries.map(([key, value]) => `${metricLabel(key)} ${fmtMetricValue(key, value)}`).join("，");
     }
 
+    function compactEventFacts(event) {
+        const evidence = event?.payload?.evidence || {};
+        const metrics = evidence.metrics || {};
+        const rule = event?.payload?.rule || evidence.rule || {};
+        const observed = rule.observed || {};
+        const parts = [];
+
+        const people = metrics.person_count ?? observed.person_count;
+        const pose = metrics.pose_count ?? observed.pose_count;
+        const confirmFrames = observed.confirm_frames ?? observed.confirm_count;
+        const fallScore = metrics.fall_score ?? observed.fall_score;
+        const fireScore = metrics.fire_score ?? observed.fire_score;
+
+        if (people !== null && people !== undefined) parts.push(`人数 ${people}`);
+        if (pose !== null && pose !== undefined) parts.push(`骨架 ${pose}`);
+        if (confirmFrames !== null && confirmFrames !== undefined) parts.push(`连续 ${confirmFrames} 帧`);
+        if (fallScore !== null && fallScore !== undefined) parts.push(`跌倒 ${Number(fallScore).toFixed(2)}`);
+        if (fireScore !== null && fireScore !== undefined) parts.push(`火灾 ${Number(fireScore).toFixed(3)}`);
+
+        return parts.slice(0, 3).join(" · ");
+    }
+
     function actionText(event) {
         const rule = event?.payload?.rule || {};
-        const observed = summarizeMetrics(rule.observed);
-        const threshold = summarizeMetrics(rule.threshold);
         if (event.acknowledged) return "已处理，可以作为记录查看。";
-        if (observed && threshold) return `${observed}，阈值 ${threshold}。`;
-        if (observed) return `当前观测：${observed}。`;
-        if (rule.reason) return rule.reason;
+        if (rule.reason) return compactEventFacts(event) ? `${rule.reason} ${compactEventFacts(event)}。` : rule.reason;
         if (event.type === "fall_candidate") return "建议先确认老人状态，再标记处理。";
         if (event.type === "camera_offline") return "建议检查本机服务和摄像头连接。";
         if (event.type === "black_screen") return "建议打开截图，看是否遮挡或背光。";

@@ -108,6 +108,24 @@ async function main() {
         assert.equal(events.length, 1);
         assert.equal(events[0].type, "fall_candidate");
 
+        const bindings = await requestJson(baseUrl, "/api/device-bindings?family_id=1", {
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(bindings.length, 1);
+        assert.equal(bindings[0].device_id, "edge-test");
+
+        const snapshot = await requestJson(baseUrl, "/api/app/cameras/1/snapshot/latest?allow_missing=1", {
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(snapshot.available, true);
+        assert.equal(snapshot.snapshot_path, "events/test.jpg");
+
+        const evaluation = await requestJson(baseUrl, "/api/app/cameras/1/evaluation/latest", {
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(evaluation.candidates.length, 1);
+        assert.equal(evaluation.state.latest_event_type, "fall_candidate");
+
         const detail = await requestJson(baseUrl, `/api/app/events/${events[0].id}`, {
             headers: { Authorization: `Bearer ${APP_TOKEN}` },
         });
@@ -128,11 +146,19 @@ async function main() {
         });
         assert.ok(session.ticket);
 
-        const mediaResponse = await fetch(`${baseUrl}/api/v1/video/media/snapshots/events/test.jpg?playback_ticket=${session.ticket}`, {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
-        });
+        const mediaResponse = await fetch(`${baseUrl}/api/v1/video/media/snapshots/events/test.jpg?playback_ticket=${session.ticket}`);
         assert.equal(mediaResponse.status, 200);
         assert.equal(await mediaResponse.text(), "fake-jpeg-content");
+
+        const streamSession = await requestJson(baseUrl, "/api/v1/video/sessions", {
+            method: "POST",
+            body: JSON.stringify({ resource_type: "stream", camera_id: 1 }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        const streamResponse = await fetch(`${baseUrl}/api/v1/video/cameras/1/stream.mjpg?playback_ticket=${streamSession.ticket}`);
+        assert.equal(streamResponse.status, 200);
+        assert.match(streamResponse.headers.get("content-type") || "", /multipart\/x-mixed-replace/);
+        streamResponse.body.cancel();
 
         console.log(JSON.stringify({
             ok: true,
