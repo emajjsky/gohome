@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<title>回家 - 父母资料填写</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=Hanken+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-tint": "#0060ac",
+                        "on-secondary-fixed-variant": "#474744",
+                        "surface-dim": "#dbd9d9",
+                        "outline": "#717783",
+                        "tertiary-fixed-dim": "#87dc2c",
+                        "on-secondary": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "secondary-fixed": "#e4e2dd",
+                        "on-tertiary-fixed": "#0e2000",
+                        "surface-container-high": "#eae8e7",
+                        "outline-variant": "#c1c7d3",
+                        "tertiary-container": "#498300",
+                        "surface-container-lowest": "#ffffff",
+                        "on-tertiary-container": "#f9ffeb",
+                        "background": "#fbf9f8",
+                        "secondary-fixed-dim": "#c8c6c2",
+                        "on-tertiary": "#ffffff",
+                        "on-surface-variant": "#414751",
+                        "surface-container-highest": "#e4e2e2",
+                        "on-background": "#1b1c1c",
+                        "surface-variant": "#e4e2e2",
+                        "on-tertiary-fixed-variant": "#2a5000",
+                        "on-primary-container": "#fdfcff",
+                        "on-secondary-container": "#63635f",
+                        "on-primary-fixed": "#001c39",
+                        "inverse-surface": "#303030",
+                        "tertiary-fixed": "#a1fa49",
+                        "surface": "#fbf9f8",
+                        "surface-container-low": "#f5f3f3",
+                        "surface-bright": "#fbf9f8",
+                        "primary-container": "#2976c7",
+                        "on-surface": "#1b1c1c",
+                        "primary-fixed": "#d4e3ff",
+                        "primary": "#005da7",
+                        "on-primary-fixed-variant": "#004883",
+                        "error": "#ba1a1a",
+                        "on-error": "#ffffff",
+                        "inverse-on-surface": "#f2f0f0",
+                        "error-container": "#ffdad6",
+                        "secondary-container": "#e1dfdb",
+                        "primary-fixed-dim": "#a4c9ff",
+                        "tertiary": "#386800",
+                        "inverse-primary": "#a4c9ff",
+                        "surface-container": "#efeded",
+                        "secondary": "#5e5e5b",
+                        "on-secondary-fixed": "#1b1c19",
+                        "on-primary": "#ffffff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "stack-sm": "8px",
+                        "gutter-card": "16px",
+                        "stack-md": "16px",
+                        "stack-lg": "32px",
+                        "margin-page": "20px"
+                    },
+                    "fontFamily": {
+                        "body-lg": ["Inter"],
+                        "label-md": ["Inter"],
+                        "body-md": ["Inter"],
+                        "headline-md": ["Hanken Grotesk"],
+                        "headline-lg": ["Hanken Grotesk"],
+                        "headline-lg-mobile": ["Hanken Grotesk"]
+                    },
+                    "fontSize": {
+                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
+                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined.fill-icon {
+            font-variation-settings: 'FILL' 1;
+        }
+        body {
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Smooth selection transition */
+        .relationship-card {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .relationship-card.selected {
+            background-color: theme('colors.primary-container');
+            border-color: theme('colors.primary');
+            color: theme('colors.on-primary-container');
+            transform: scale(0.98);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+
+<style id="gohome-app-minimal-adapt">
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+  }
+  html, body {
+    min-height: 100dvh;
+    background: #fbf9f8;
+  }
+  body {
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  nav.fixed.bottom-0,
+  nav.docked.bottom-0,
+  nav.pb-safe-area-bottom {
+    padding-bottom: calc(10px + var(--safe-bottom)) !important;
+  }
+  @media (display-mode: standalone) {
+    body {
+      padding-top: var(--safe-top);
+    }
+  }
+</style>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+</head>
+<body class="bg-surface text-on-surface antialiased min-h-screen flex flex-col pt-safe pb-safe">
+<!-- Top Navigation (Transactional Flow - Simplified) -->
+<header class="flex justify-between items-center w-full px-margin-page py-4 bg-surface z-40 sticky top-0">
+<button aria-label="返回" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-low transition-colors" type="button">
+<span class="material-symbols-outlined text-on-surface-variant">arrow_back</span>
+</button>
+<div class="font-headline-md text-headline-md font-bold text-primary">添加家人</div>
+<div class="w-10 h-10"></div> <!-- Placeholder for balance -->
+</header>
+<!-- Main Content Canvas -->
+<main class="flex-1 flex flex-col px-margin-page pt-stack-lg pb-stack-lg max-w-md mx-auto w-full">
+<!-- Progress Indicator -->
+<div class="flex items-center gap-2 mb-stack-md w-full max-w-xs mx-auto">
+<div class="h-1.5 flex-1 bg-primary rounded-full"></div>
+<div class="h-1.5 flex-1 bg-surface-container-highest rounded-full"></div>
+<div class="h-1.5 flex-1 bg-surface-container-highest rounded-full"></div>
+</div>
+<div class="text-center mb-stack-lg">
+<h1 class="font-headline-lg-mobile text-headline-lg-mobile text-on-surface mb-stack-sm md:font-headline-lg md:text-headline-lg">
+                我们该怎么称呼TA？
+            </h1>
+<p class="font-body-md text-body-md text-on-surface-variant">
+                设置一个亲切的称呼，让陪伴更自然
+            </p>
+</div>
+<!-- Custom Input -->
+<div class="mb-stack-lg w-full relative">
+<label class="sr-only" for="custom-name">输入称呼</label>
+<input class="w-full bg-surface-container-lowest border-2 border-outline-variant rounded-xl px-4 py-4 font-body-lg text-body-lg text-on-surface focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all placeholder:text-on-surface-variant/50 shadow-sm" id="custom-name" placeholder="请输入或选择称呼..." type="text"/>
+<button aria-label="清空" class="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary transition-colors hidden" id="clear-input" type="button">
+<span class="material-symbols-outlined fill-icon">cancel</span>
+</button>
+</div>
+<!-- Quick Select Chips (Bento-style Grid) -->
+<div class="mb-stack-lg w-full">
+<h2 class="font-label-md text-label-md text-on-surface-variant mb-stack-md px-1">常用称呼</h2>
+<div class="grid grid-cols-2 gap-gutter-card" id="relationship-grid">
+<button class="relationship-card bg-surface-container-lowest border-2 border-surface-container-highest rounded-xl p-4 flex flex-col items-center justify-center gap-2 hover:bg-surface-container-low shadow-sm" data-name="母亲" type="button">
+<span class="material-symbols-outlined text-3xl text-primary/80">face_3</span>
+<span class="font-body-lg text-body-lg font-medium">母亲</span>
+</button>
+<button class="relationship-card bg-surface-container-lowest border-2 border-surface-container-highest rounded-xl p-4 flex flex-col items-center justify-center gap-2 hover:bg-surface-container-low shadow-sm" data-name="父亲" type="button">
+<span class="material-symbols-outlined text-3xl text-primary/80">face_6</span>
+<span class="font-body-lg text-body-lg font-medium">父亲</span>
+</button>
+<button class="relationship-card bg-surface-container-lowest border-2 border-surface-container-highest rounded-xl p-4 flex flex-col items-center justify-center gap-2 hover:bg-surface-container-low shadow-sm" data-name="奶奶" type="button">
+<span class="material-symbols-outlined text-3xl text-primary/80">elderly_woman</span>
+<span class="font-body-lg text-body-lg font-medium">奶奶</span>
+</button>
+<button class="relationship-card bg-surface-container-lowest border-2 border-surface-container-highest rounded-xl p-4 flex flex-col items-center justify-center gap-2 hover:bg-surface-container-low shadow-sm" data-name="爷爷" type="button">
+<span class="material-symbols-outlined text-3xl text-primary/80">elderly</span>
+<span class="font-body-lg text-body-lg font-medium">爷爷</span>
+</button>
+<button class="relationship-card bg-surface-container-lowest border-2 border-surface-container-highest rounded-xl p-4 flex flex-col items-center justify-center gap-2 hover:bg-surface-container-low shadow-sm" data-name="外婆" type="button">
+<span class="material-symbols-outlined text-3xl text-primary/80">elderly_woman</span>
+<span class="font-body-lg text-body-lg font-medium">外婆</span>
+</button>
+<button class="relationship-card bg-surface-container-lowest border-2 border-surface-container-highest rounded-xl p-4 flex flex-col items-center justify-center gap-2 hover:bg-surface-container-low shadow-sm" data-name="外公" type="button">
+<span class="material-symbols-outlined text-3xl text-primary/80">elderly</span>
+<span class="font-body-lg text-body-lg font-medium">外公</span>
+</button>
+</div>
+</div>
+<div class="mt-auto pt-stack-lg w-full">
+<button class="w-full bg-primary text-on-primary font-body-lg text-body-lg font-semibold py-4 rounded-full shadow-md hover:bg-primary/90 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:active:scale-100" disabled="" id="next-button" type="button">
+                下一步
+                <span class="material-symbols-outlined text-lg">arrow_forward</span>
+</button>
+</div>
+</main>
+<!-- Contextual Decorative Image (Subtle, bottom aligned) -->
+<div class="fixed bottom-0 left-0 w-full h-48 pointer-events-none opacity-20 -z-10 bg-gradient-to-t from-surface-tint/10 to-transparent">
+<img class="w-full h-full object-cover mix-blend-multiply filter blur-sm" data-alt="A subtle, minimalist vector illustration of a warm, abstract family home environment. The illustration uses soft, elegant line art and pastel blue tones, blending seamlessly into a clean, modern white background. The mood is calm, domestic, and safe." src="assets/stitch-images/17-b8e2096239.jpg"/>
+</div>
+<script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const inputField = document.getElementById('custom-name');
+            const clearBtn = document.getElementById('clear-input');
+            const nextBtn = document.getElementById('next-button');
+            const cards = document.querySelectorAll('.relationship-card');
+
+            // Handle Input changes
+            inputField.addEventListener('input', (e) => {
+                const val = e.target.value.trim();
+
+                // Toggle clear button
+                if (val.length > 0) {
+                    clearBtn.classList.remove('hidden');
+                    nextBtn.disabled = false;
+                } else {
+                    clearBtn.classList.add('hidden');
+                    nextBtn.disabled = true;
+                }
+
+                // Deselect cards if typing custom
+                cards.forEach(card => card.classList.remove('selected', 'border-primary', 'bg-primary-container', 'text-on-primary-container'));
+
+                // Auto-select if typing matches exactly
+                cards.forEach(card => {
+                    if (card.dataset.name === val) {
+                        card.classList.add('selected', 'border-primary', 'bg-primary-container', 'text-on-primary-container');
+                        card.classList.remove('border-surface-container-highest', 'bg-surface-container-lowest');
+                    }
+                });
+            });
+
+            // Handle Clear button
+            clearBtn.addEventListener('click', () => {
+                inputField.value = '';
+                inputField.focus();
+                clearBtn.classList.add('hidden');
+                nextBtn.disabled = true;
+                cards.forEach(card => {
+                    card.classList.remove('selected', 'border-primary', 'bg-primary-container', 'text-on-primary-container');
+                    card.classList.add('border-surface-container-highest', 'bg-surface-container-lowest');
+                });
+            });
+
+            // Handle Card clicks
+            cards.forEach(card => {
+                card.addEventListener('click', () => {
+                    const name = card.dataset.name;
+
+                    // Reset all
+                    cards.forEach(c => {
+                        c.classList.remove('selected', 'border-primary', 'bg-primary-container', 'text-on-primary-container');
+                        c.classList.add('border-surface-container-highest', 'bg-surface-container-lowest');
+                    });
+
+                    // Select current
+                    card.classList.add('selected', 'border-primary', 'bg-primary-container', 'text-on-primary-container');
+                    card.classList.remove('border-surface-container-highest', 'bg-surface-container-lowest');
+
+                    // Update input
+                    inputField.value = name;
+                    clearBtn.classList.remove('hidden');
+                    nextBtn.disabled = false;
+
+                    // Small haptic feedback simulation
+                    if (window.navigator && window.navigator.vibrate) {
+                        window.navigator.vibrate(50);
+                    }
+                });
+            });
+        });
+    </script>
+
+<script id="gohome-stitch-route-links">
+  (() => {
+    const routes = {
+      "首页": "index.html",
+      "守护": "monitor.html",
+      "消息": "events.html",
+      "陪伴": "companionship.html",
+      "我的": "privacy.html",
+      "实时画面": "watch.html",
+      "事件列表": "events.html",
+      "规则设置": "rules.html",
+      "家庭成员": "family_members.html",
+      "通知设置": "notifications.html",
+      "隐私与数据": "privacy_data.html",
+      "添加摄像头": "connect.html",
+      "设备管理": "cameras.html"
+    };
+    document.addEventListener("click", (event) => {
+      const item = event.target.closest("a, button");
+      if (!item) return;
+      if (item.hasAttribute("onclick")) return;
+      const href = item.getAttribute("href");
+      if (href && href !== "#") return;
+      const text = (item.innerText || item.textContent || "").replace(/\s+/g, "").trim();
+      const route = routes[text];
+      if (!route) return;
+      event.preventDefault();
+      window.location.href = route;
+    });
+  })();
+</script>
+<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+</body></html>

@@ -1,236 +1,339 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>回家</title>
-    <link href="assets/styles/tailwind.css" rel="stylesheet">
-    <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
-    <style>
-        .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<title>回家</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "surface-tint": "#0060ac",
+                    "on-secondary-fixed-variant": "#474744",
+                    "surface-dim": "#dbd9d9",
+                    "outline": "#717783",
+                    "tertiary-fixed-dim": "#87dc2c",
+                    "on-secondary": "#ffffff",
+                    "on-error-container": "#93000a",
+                    "secondary-fixed": "#e4e2dd",
+                    "on-tertiary-fixed": "#0e2000",
+                    "surface-container-high": "#eae8e7",
+                    "outline-variant": "#c1c7d3",
+                    "tertiary-container": "#498300",
+                    "surface-container-lowest": "#ffffff",
+                    "on-tertiary-container": "#f9ffeb",
+                    "background": "#fbf9f8",
+                    "secondary-fixed-dim": "#c8c6c2",
+                    "on-tertiary": "#ffffff",
+                    "on-surface-variant": "#414751",
+                    "surface-container-highest": "#e4e2e2",
+                    "on-background": "#1b1c1c",
+                    "surface-variant": "#e4e2e2",
+                    "on-tertiary-fixed-variant": "#2a5000",
+                    "on-primary-container": "#fdfcff",
+                    "on-secondary-container": "#63635f",
+                    "on-primary-fixed": "#001c39",
+                    "inverse-surface": "#303030",
+                    "tertiary-fixed": "#a1fa49",
+                    "surface": "#fbf9f8",
+                    "surface-container-low": "#f5f3f3",
+                    "surface-bright": "#fbf9f8",
+                    "primary-container": "#2976c7",
+                    "on-surface": "#1b1c1c",
+                    "primary-fixed": "#d4e3ff",
+                    "primary": "#005da7",
+                    "on-primary-fixed-variant": "#004883",
+                    "error": "#ba1a1a",
+                    "on-error": "#ffffff",
+                    "inverse-on-surface": "#f2f0f0",
+                    "error-container": "#ffdad6",
+                    "secondary-container": "#e1dfdb",
+                    "primary-fixed-dim": "#a4c9ff",
+                    "tertiary": "#386800",
+                    "inverse-primary": "#a4c9ff",
+                    "surface-container": "#efeded",
+                    "secondary": "#5e5e5b",
+                    "on-secondary-fixed": "#1b1c19",
+                    "on-primary": "#ffffff"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "stack-sm": "8px",
+                    "gutter-card": "16px",
+                    "stack-md": "16px",
+                    "stack-lg": "32px",
+                    "margin-page": "20px"
+            },
+            "fontFamily": {
+                    "body-lg": [
+                            "Inter"
+                    ],
+                    "label-md": [
+                            "Inter"
+                    ],
+                    "body-md": [
+                            "Inter"
+                    ],
+                    "headline-md": [
+                            "Hanken Grotesk"
+                    ],
+                    "headline-lg": [
+                            "Hanken Grotesk"
+                    ],
+                    "headline-lg-mobile": [
+                            "Hanken Grotesk"
+                    ]
+            },
+            "fontSize": {
+                    "body-lg": [
+                            "18px",
+                            {
+                                    "lineHeight": "26px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "label-md": [
+                            "14px",
+                            {
+                                    "lineHeight": "20px",
+                                    "letterSpacing": "0.5px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "body-md": [
+                            "16px",
+                            {
+                                    "lineHeight": "24px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "headline-md": [
+                            "22px",
+                            {
+                                    "lineHeight": "28px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "headline-lg": [
+                            "28px",
+                            {
+                                    "lineHeight": "36px",
+                                    "fontWeight": "700"
+                            }
+                    ],
+                    "headline-lg-mobile": [
+                            "24px",
+                            {
+                                    "lineHeight": "32px",
+                                    "fontWeight": "700"
+                            }
+                    ]
+            }
+          }
         }
-        .material-symbols-outlined.fill {
-            font-variation-settings: 'FILL' 1;
-        }
-        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
+      }
+    </script>
+<style>
         body {
             -webkit-tap-highlight-color: transparent;
         }
-        ::-webkit-scrollbar {
-            width: 0px;
-            background: transparent;
+        .ambient-glow {
+            box-shadow: 0 4px 24px -4px rgba(0, 93, 167, 0.15);
+        }
+        .soft-shadow {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
         }
     </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+
+<style id="gohome-app-minimal-adapt">
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+  }
+  html, body {
+    min-height: 100dvh;
+    background: #fbf9f8;
+  }
+  body {
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  nav.fixed.bottom-0,
+  nav.docked.bottom-0,
+  nav.pb-safe-area-bottom {
+    padding-bottom: calc(10px + var(--safe-bottom)) !important;
+  }
+  @media (display-mode: standalone) {
+    body {
+      padding-top: var(--safe-top);
+    }
+  }
+</style>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
 </head>
-<body class="app-phone-shell text-on-surface font-sans antialiased">
-    <header class="app-topbar">
-        <span class="app-topbar-side placeholder"></span>
-        <p class="app-topbar-title">回家</p>
-        <a href="app-shell.html?app=1" class="app-topbar-side">
-            <span class="material-symbols-outlined text-[20px]">apps</span>
-        </a>
-    </header>
-    <main class="app-main app-stack">
-        <section class="app-home-hero p-6">
-            <div class="relative z-[1] flex flex-col gap-4">
-                <div class="flex items-center justify-between gap-3">
-                    <div class="flex items-center gap-2 bg-white/58 backdrop-blur-md w-max px-3.5 py-1.5 rounded-full border border-white/55 shadow-[0_12px_24px_rgba(79,70,91,0.08)]">
-                        <span class="relative flex h-2 w-2">
-                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full app-bg-good opacity-35"></span>
-                            <span class="relative inline-flex rounded-full h-2 w-2 app-bg-good"></span>
-                        </span>
-                        <span id="edgeHomeDevice" class="font-sans text-[11px] font-semibold app-tone-good tracking-wide">今天，你想家了吗</span>
-                    </div>
-                    <div class="w-11 h-11 rounded-full overflow-hidden border border-white/70 shadow-[0_14px_28px_rgba(79,70,91,0.1)]">
-                        <img src="assets/images/elderly-portrait-wiki.jpg" alt="妈妈头像" class="w-full h-full object-cover object-top">
-                    </div>
-                </div>
-                <div class="flex flex-col gap-2">
-                    <p id="edgeHomeTime" class="font-sans text-[12px] text-on-surface-variant font-medium">15:20 更新</p>
-                    <h2 id="edgeHomeTitle" class="font-display text-[28px] leading-[1.18] font-bold text-on-surface tracking-[-0.02em]">她今天在客厅坐了很久，你要不要周末回去看看？</h2>
-                    <p id="edgeHomeSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-[1.8] max-w-[270px]">上午自己做了饭，中午活动正常，下午大部分时间都在沙发边休息。</p>
-                </div>
-                <div class="grid grid-cols-2 gap-3 pt-1">
-                    <a id="edgeHomePrimaryAction" href="login.html?app=1" class="app-btn-primary font-sans text-[14px] font-semibold flex items-center justify-center gap-1.5">
-                        <span class="material-symbols-outlined fill text-[18px]">call</span>
-                        去登录
-                    </a>
-                    <a id="edgeHomeSecondaryAction" href="family.html?app=1" class="app-btn-secondary font-sans text-[14px] font-semibold flex items-center justify-center gap-1.5">
-                        <span class="material-symbols-outlined text-[18px]">calendar_month</span>
-                        家庭空间
-                    </a>
-                </div>
-            </div>
-        </section>
+<body class="bg-background text-on-background min-h-screen pb-[90px] md:pb-0">
+<!-- TopAppBar -->
+<header class="flex justify-between items-center w-full px-margin-page py-4 max-w-screen-xl mx-auto bg-surface dark:bg-background docked full-width top-0 z-40 sticky">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-full overflow-hidden bg-surface-container-high shrink-0">
+<img alt="用户头像" class="w-full h-full object-cover" data-alt="A warm, inviting portrait photo of an elderly person smiling gently, bathed in soft, natural morning light, creating a sense of peace and comfort. Corporate modern aesthetic." src="assets/stitch-images/23-f0455eccfc.jpg"/>
+</div>
+<h1 class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed-dim">回家</h1>
+</div>
+<button aria-label="通知" class="w-10 h-10 rounded-full flex items-center justify-center text-primary dark:text-primary-fixed-dim hover:bg-surface-container-low dark:hover:bg-surface-container-highest transition-colors active:opacity-80 active:scale-95 duration-200">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">notifications</span>
+</button>
+</header>
+<main class="max-w-screen-xl mx-auto px-margin-page pb-stack-lg">
+<!-- Today's Priority Card -->
+<section class="mt-stack-md">
+<div class="bg-surface-container-lowest rounded-[24px] p-6 ambient-glow border border-surface-variant relative overflow-hidden">
+<div class="absolute inset-0 bg-gradient-to-br from-primary-fixed/30 to-transparent pointer-events-none"></div>
+<div class="relative z-10">
+<div class="flex items-start justify-between mb-4">
+<div>
+<p class="font-label-md text-label-md text-primary mb-1">今日居家提醒</p>
+<h2 class="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg text-on-surface">环境舒适，适合午休</h2>
+</div>
+<div class="bg-primary/10 p-3 rounded-full text-primary">
+<span class="material-symbols-outlined text-3xl" style="font-variation-settings: 'FILL' 1;">bedtime</span>
+</div>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant mb-6">当前室内温度 24°C，湿度 55%。各项环境指标良好，建议休息片刻。</p>
+<button class="w-full bg-primary text-on-primary font-label-md text-label-md py-3 rounded-full hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
+<span class="material-symbols-outlined">settings_remote</span>
+                        调整睡眠模式
+                    </button>
+</div>
+</div>
+</section>
+<!-- Home Status Summary -->
+<section class="mt-stack-lg">
+<h3 class="font-headline-md text-headline-md text-on-surface mb-stack-md">家庭状态</h3>
+<div class="grid grid-cols-2 gap-gutter-card">
+<div class="bg-surface-container-lowest rounded-[20px] p-4 soft-shadow flex flex-col gap-2">
+<div class="flex items-center gap-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-primary">thermostat</span>
+<span class="font-label-md text-label-md">客厅环境</span>
+</div>
+<div class="font-headline-md text-headline-md">24°C <span class="font-body-md text-body-md text-on-surface-variant ml-1">优</span></div>
+</div>
+<div class="bg-surface-container-lowest rounded-[20px] p-4 soft-shadow flex flex-col gap-2">
+<div class="flex items-center gap-2 text-on-surface-variant">
+<span class="material-symbols-outlined text-tertiary">health_and_safety</span>
+<span class="font-label-md text-label-md">安防系统</span>
+</div>
+<div class="font-headline-md text-headline-md text-tertiary-container">已布防</div>
+</div>
+</div>
+</section>
+<!-- Quick Actions -->
+<section class="mt-stack-lg">
+<h3 class="font-headline-md text-headline-md text-on-surface mb-stack-md">快捷操作</h3>
+<div class="grid grid-cols-4 gap-3 md:gap-gutter-card">
+<button class="flex flex-col items-center gap-2 group">
+<div class="w-14 h-14 md:w-16 md:h-16 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors">
+<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">call</span>
+</div>
+<span class="font-label-md text-label-md text-on-surface-variant">通话</span>
+</button>
+<button class="flex flex-col items-center gap-2 group">
+<div class="w-14 h-14 md:w-16 md:h-16 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors">
+<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">chat_bubble</span>
+</div>
+<span class="font-label-md text-label-md text-on-surface-variant">留言</span>
+</button>
+<button class="flex flex-col items-center gap-2 group">
+<div class="w-14 h-14 md:w-16 md:h-16 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors">
+<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">videocam</span>
+</div>
+<span class="font-label-md text-label-md text-on-surface-variant">查看</span>
+</button>
+<button class="flex flex-col items-center gap-2 group">
+<div class="w-14 h-14 md:w-16 md:h-16 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center group-hover:bg-primary-container group-hover:text-on-primary-container transition-colors">
+<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">event_note</span>
+</div>
+<span class="font-label-md text-label-md text-on-surface-variant">行程</span>
+</button>
+</div>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full flex justify-around items-center px-2 pb-6 pt-3 bg-surface dark:bg-surface-dim shadow-[0_-4px_12px_rgba(0,0,0,0.04)] shadow-lg docked full-width z-50 rounded-t-xl md:hidden">
+<a class="flex flex-col items-center justify-center bg-primary-container dark:bg-primary text-on-primary-container dark:text-on-primary rounded-2xl px-4 py-1.5 scale-90 duration-150 ease-in-out hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
+<span class="material-symbols-outlined mb-1" style="font-variation-settings: 'FILL' 1;">home</span>
+<span class="font-label-md text-label-md">首页</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
+<span class="material-symbols-outlined mb-1">security</span>
+<span class="font-label-md text-label-md">守护</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
+<span class="material-symbols-outlined mb-1">chat_bubble</span>
+<span class="font-label-md text-label-md">消息</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
+<span class="material-symbols-outlined mb-1">volunteer_activism</span>
+<span class="font-label-md text-label-md">陪伴</span>
+</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
+<span class="material-symbols-outlined mb-1">person</span>
+<span class="font-label-md text-label-md">我的</span>
+</a>
+</nav>
 
-        <section class="app-panel px-5 py-5 flex flex-col gap-4">
-            <div class="flex items-center justify-between gap-3">
-                <p class="font-display text-[17px] font-bold text-on-surface">现在去看</p>
-                <span class="app-section-badge shrink-0">直接进入</span>
-            </div>
-            <div class="grid grid-cols-3 gap-3">
-                <a id="edgeHomeMonitorLink" href="monitor.html?app=1" class="app-panel-muted px-3 py-4 text-center">
-                    <p class="font-display text-[15px] font-bold text-on-surface">守护</p>
-                    <p class="font-sans text-[11px] text-on-surface-variant mt-1">看结论</p>
-                </a>
-                <a id="edgeHomeWatchLink" href="watch.html?app=1" class="app-panel-muted px-3 py-4 text-center">
-                    <p class="font-display text-[15px] font-bold text-on-surface">实时</p>
-                    <p class="font-sans text-[11px] text-on-surface-variant mt-1">看画面</p>
-                </a>
-                <a id="edgeHomeEventsLink" href="events.html?app=1" class="app-panel-muted px-3 py-4 text-center">
-                    <p class="font-display text-[15px] font-bold text-on-surface">事件</p>
-                    <p class="font-sans text-[11px] text-on-surface-variant mt-1">看证据</p>
-                </a>
-            </div>
-        </section>
-
-        <section id="edgeHomeMessageSection" class="hidden app-panel px-5 py-5 flex flex-col gap-4">
-            <div class="flex items-center justify-between gap-3">
-                <div>
-                    <p class="font-display text-[17px] font-bold text-on-surface">今日牵挂</p>
-                    <p id="edgeHomeMessageMeta" class="font-sans text-[11px] text-on-surface-variant mt-1">来自本地盒子的场景化消息</p>
-                </div>
-                <span id="edgeHomeMessageBadge" class="app-status-badge info shrink-0">陪伴</span>
-            </div>
-            <div class="app-panel-muted p-4 flex flex-col gap-3">
-                <div class="flex items-start gap-3">
-                    <div id="edgeHomeMessageIcon" class="app-icon-chip info shrink-0">
-                        <span class="material-symbols-outlined text-[18px]">favorite</span>
-                    </div>
-                    <div class="min-w-0">
-                        <p id="edgeHomeMessageTitle" class="font-display text-[18px] leading-snug font-bold text-on-surface">今天适合给妈妈打一通电话</p>
-                        <p id="edgeHomeMessageSubtitle" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">系统会把天气、日历和家里状态合成一张更像人的提醒。</p>
-                    </div>
-                </div>
-                <div class="grid grid-cols-1 gap-2">
-                    <div class="rounded-[18px] bg-white/68 border border-white/55 px-3.5 py-3">
-                        <p class="font-sans text-[10px] font-semibold text-primary tracking-[0.12em]">依据</p>
-                        <p id="edgeHomeMessageFacts" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">天气、日历和事件会在这里合并展示。</p>
-                    </div>
-                    <div class="rounded-[18px] bg-white/68 border border-white/55 px-3.5 py-3">
-                        <p class="font-sans text-[10px] font-semibold app-tone-good tracking-[0.12em]">建议动作</p>
-                        <p id="edgeHomeMessageActions" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">打电话 / 安排回家 / 查看事件</p>
-                    </div>
-                </div>
-                <div class="grid grid-cols-2 gap-3 pt-1">
-                    <a id="edgeHomeMessagePrimaryAction" href="watch.html?app=1" class="app-btn-primary font-sans text-[14px] font-semibold flex items-center justify-center gap-1.5">
-                        <span class="material-symbols-outlined text-[18px]">notifications_active</span>
-                        打开消息
-                    </a>
-                    <a id="edgeHomeMessageSecondaryAction" href="events.html?app=1" class="app-btn-secondary font-sans text-[14px] font-semibold flex items-center justify-center gap-1.5">
-                        <span class="material-symbols-outlined text-[18px]">history</span>
-                        查看事件
-                    </a>
-                </div>
-            </div>
-        </section>
-
-        <section id="edgeHomeSetupPanel" class="hidden app-panel px-5 py-5 flex flex-col gap-4">
-            <div class="flex items-center justify-between gap-4">
-                <p class="font-display text-[18px] font-bold text-on-surface">先把入口接上</p>
-                <div id="edgeHomeSetupBadge" class="app-section-badge shrink-0">未完成</div>
-            </div>
-            <div class="grid grid-cols-3 gap-3">
-                <div class="app-kpi">
-                    <p>账号</p>
-                    <p id="edgeHomeAccountState">未登录</p>
-                </div>
-                <div class="app-kpi">
-                    <p>家庭</p>
-                    <p id="edgeHomeFamilyState">未创建</p>
-                </div>
-                <div class="app-kpi">
-                    <p>设备</p>
-                    <p id="edgeHomeBindingState">未绑定</p>
-                </div>
-            </div>
-        </section>
-
-        <section id="edgeHomeSnapshotSection" class="app-stack">
-            <div class="flex items-center justify-between">
-                <h3 class="font-display text-[18px] font-bold text-on-surface">刚刚看见</h3>
-                <span class="font-sans text-[11px] font-semibold text-primary">实时摘要</span>
-            </div>
-            <div class="app-snapshot-card relative aspect-[1.28/1]">
-                <img id="edgeHomeSnapshotImage" src="assets/images/family-sofa.jpg" alt="客厅休息" class="w-full h-full object-cover">
-                <div class="absolute inset-0 bg-gradient-to-t from-black/62 via-black/12 to-transparent"></div>
-                <div class="absolute top-3 left-3 app-map-badge px-2.5 py-2">
-                    <p id="edgeHomeSnapshotTime" class="font-sans text-[10px] text-on-surface-variant font-semibold">15 分钟前</p>
-                    <p id="edgeHomeSnapshotRoom" class="font-display text-[13px] font-bold text-on-surface mt-0.5">客厅动态</p>
-                </div>
-                <div class="absolute bottom-0 left-0 right-0 p-4">
-                    <p id="edgeHomeSnapshotHeadline" class="font-display text-[17px] leading-snug font-bold text-white">刚刚起身走动了一会儿，随后又回到客厅坐下</p>
-                    <p id="edgeHomeSnapshotSub" class="font-sans text-[12px] text-white/80 mt-1.5">这一切都很平常，但也很容易让人想起家里的安静。</p>
-                </div>
-            </div>
-            <div class="app-panel px-5 py-5 flex flex-col gap-4">
-                <div class="grid grid-cols-[46px_1fr] gap-3 items-start">
-                    <div class="app-story-icon info">
-                        <span class="material-symbols-outlined text-[18px]">visibility</span>
-                    </div>
-                    <div>
-                        <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.12em]">现在</p>
-                        <p id="edgeHomeFactTitle" class="font-display text-[16px] font-bold text-on-surface mt-1">下午大部分时间都在客厅</p>
-                        <p id="edgeHomeFactSub" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">15 分钟前刚起身活动过，随后又回到沙发边坐下。</p>
-                    </div>
-                </div>
-                <div class="grid grid-cols-[46px_1fr] gap-3 items-start">
-                    <div class="app-story-icon warn">
-                        <span class="material-symbols-outlined fill text-[18px]">favorite</span>
-                    </div>
-                    <div>
-                        <p class="font-sans text-[11px] font-semibold app-tone-warn tracking-[0.12em]">感觉</p>
-                        <p id="edgeHomeFeelingTitle" class="font-display text-[16px] font-bold text-on-surface mt-1">今天家里有点安静</p>
-                        <p id="edgeHomeFeelingSub" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">没有异常，也没有热闹，像是在等一句“你吃饭了吗”。</p>
-                    </div>
-                </div>
-                <div class="grid grid-cols-[46px_1fr] gap-3 items-start">
-                    <div class="app-story-icon good">
-                        <span class="material-symbols-outlined text-[18px]">call</span>
-                    </div>
-                    <div>
-                        <p class="font-sans text-[11px] font-semibold app-tone-good tracking-[0.12em]">下一步</p>
-                        <p id="edgeHomeActionTitle" class="font-display text-[16px] font-bold text-on-surface mt-1">晚饭前打一通电话，周六再回去陪她吃饭</p>
-                        <p id="edgeHomeActionSub" class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">一句问候能立刻发生，一个周末计划也可以现在定下来。</p>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </main>
-
-    <nav class="app-bottom-nav">
-        <div class="app-bottom-nav-inner">
-            <div class="flex justify-between items-center">
-                <a href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
-                    <div class="app-nav-pill active">
-                        <span class="material-symbols-outlined fill text-[22px]">home</span>
-                    </div>
-                    <span class="font-sans text-[11px] font-bold tracking-wide">首页</span>
-                </a>
-                <a id="edgeHomeNavMonitorLink" href="monitor.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill">
-                        <span class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
-                    </div>
-                    <span class="font-sans text-[11px] font-semibold tracking-wide">守护</span>
-                </a>
-                <a id="edgeHomeNavEventsLink" href="events.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill">
-                        <span class="material-symbols-outlined text-[22px]">history</span>
-                    </div>
-                    <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
-                </a>
-                <a href="privacy.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill">
-                        <span class="material-symbols-outlined text-[22px]">person</span>
-                    </div>
-                    <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
-                </a>
-            </div>
-        </div>
-    </nav>
-    <script src="assets/scripts/edge-client.js?v=20260701-msg1"></script>
-    <script src="assets/scripts/home-live.js?v=20260701-msg1"></script>
-</body>
-</html>
+<script id="gohome-stitch-route-links">
+  (() => {
+    const routes = {
+      "首页": "index.html",
+      "守护": "monitor.html",
+      "消息": "events.html",
+      "陪伴": "companionship.html",
+      "我的": "privacy.html",
+      "实时画面": "watch.html",
+      "事件列表": "events.html",
+      "规则设置": "rules.html",
+      "家庭成员": "family_members.html",
+      "通知设置": "notifications.html",
+      "隐私与数据": "privacy_data.html",
+      "添加摄像头": "connect.html",
+      "设备管理": "cameras.html"
+    };
+    document.addEventListener("click", (event) => {
+      const item = event.target.closest("a, button");
+      if (!item) return;
+      if (item.hasAttribute("onclick")) return;
+      const href = item.getAttribute("href");
+      if (href && href !== "#") return;
+      const text = (item.innerText || item.textContent || "").replace(/\s+/g, "").trim();
+      const route = routes[text];
+      if (!route) return;
+      event.preventDefault();
+      window.location.href = route;
+    });
+  })();
+</script>
+<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+</body></html>

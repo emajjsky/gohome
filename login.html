@@ -1,111 +1,281 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>登录 - 回家</title>
-    <link rel="manifest" href="app.webmanifest">
-    <link href="assets/styles/tailwind.css" rel="stylesheet">
-    <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
-    <style>
-        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
-        .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
-        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
+
+<html class="light" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<title>回家 - 登录</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=Hanken+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-tint": "#0060ac",
+                        "on-secondary-fixed-variant": "#474744",
+                        "surface-dim": "#dbd9d9",
+                        "outline": "#717783",
+                        "tertiary-fixed-dim": "#87dc2c",
+                        "on-secondary": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "secondary-fixed": "#e4e2dd",
+                        "on-tertiary-fixed": "#0e2000",
+                        "surface-container-high": "#eae8e7",
+                        "outline-variant": "#c1c7d3",
+                        "tertiary-container": "#498300",
+                        "surface-container-lowest": "#ffffff",
+                        "on-tertiary-container": "#f9ffeb",
+                        "background": "#fbf9f8",
+                        "secondary-fixed-dim": "#c8c6c2",
+                        "on-tertiary": "#ffffff",
+                        "on-surface-variant": "#414751",
+                        "surface-container-highest": "#e4e2e2",
+                        "on-background": "#1b1c1c",
+                        "surface-variant": "#e4e2e2",
+                        "on-tertiary-fixed-variant": "#2a5000",
+                        "on-primary-container": "#fdfcff",
+                        "on-secondary-container": "#63635f",
+                        "on-primary-fixed": "#001c39",
+                        "inverse-surface": "#303030",
+                        "tertiary-fixed": "#a1fa49",
+                        "surface": "#fbf9f8",
+                        "surface-container-low": "#f5f3f3",
+                        "surface-bright": "#fbf9f8",
+                        "primary-container": "#2976c7",
+                        "on-surface": "#1b1c1c",
+                        "primary-fixed": "#d4e3ff",
+                        "primary": "#005da7",
+                        "on-primary-fixed-variant": "#004883",
+                        "error": "#ba1a1a",
+                        "on-error": "#ffffff",
+                        "inverse-on-surface": "#f2f0f0",
+                        "error-container": "#ffdad6",
+                        "secondary-container": "#e1dfdb",
+                        "primary-fixed-dim": "#a4c9ff",
+                        "tertiary": "#386800",
+                        "inverse-primary": "#a4c9ff",
+                        "surface-container": "#efeded",
+                        "secondary": "#5e5e5b",
+                        "on-secondary-fixed": "#1b1c19",
+                        "on-primary": "#ffffff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "stack-sm": "8px",
+                        "gutter-card": "16px",
+                        "stack-md": "16px",
+                        "stack-lg": "32px",
+                        "margin-page": "20px"
+                    },
+                    "fontFamily": {
+                        "body-lg": ["Inter"],
+                        "label-md": ["Inter"],
+                        "body-md": ["Inter"],
+                        "headline-md": ["Hanken Grotesk"],
+                        "headline-lg": ["Hanken Grotesk"],
+                        "headline-lg-mobile": ["Hanken Grotesk"]
+                    },
+                    "fontSize": {
+                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
+                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
         body {
-            background:
-                radial-gradient(circle at top, rgba(237, 243, 251, 0.95) 0%, rgba(245, 247, 251, 0.92) 32%, #f5f6f9 72%),
-                linear-gradient(180deg, #fbfcfe 0%, #f5f6f9 100%);
             -webkit-tap-highlight-color: transparent;
         }
-        ::-webkit-scrollbar { width: 0px; background: transparent; }
-        .auth-shell {
-            width: min(100%, 360px);
-            border-radius: 32px;
-            border: 1px solid rgba(186, 194, 208, 0.16);
-            background: rgba(255, 255, 255, 0.88);
-            box-shadow: 0 24px 80px rgba(31, 52, 79, 0.08);
-            backdrop-filter: blur(22px);
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
         }
-        .auth-input {
-            width: 100%;
-            height: 52px;
-            border-radius: 16px;
-            border: 1px solid rgba(186, 194, 208, 0.16);
-            background: rgba(246, 248, 252, 0.88);
-            padding: 0 16px;
-            font-size: 14px;
-            color: #18212b;
-            box-shadow: none;
-            outline: none;
-            transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+        .icon-fill {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
         }
-        .auth-input:focus {
-            border-color: rgba(59, 95, 134, 0.28);
-            background: rgba(255, 255, 255, 0.96);
-            box-shadow: 0 0 0 4px rgba(59, 95, 134, 0.06);
-        }
-        .auth-tab {
-            height: 38px;
-            border-radius: 9999px;
-            font-size: 12px;
-            font-weight: 700;
-            transition: all 180ms ease;
-        }
-        .auth-tab.active {
-            background: rgba(255, 255, 255, 0.94);
-            color: var(--app-primary);
-            box-shadow: 0 8px 18px rgba(31, 52, 79, 0.06);
+        /* Custom input styles */
+        .glass-input:focus-within {
+            box-shadow: inset 0 0 0 2px #005da7;
+            background-color: #ffffff;
         }
     </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+
+<style id="gohome-app-minimal-adapt">
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+  }
+  html, body {
+    min-height: 100dvh;
+    background: #fbf9f8;
+  }
+  body {
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  nav.fixed.bottom-0,
+  nav.docked.bottom-0,
+  nav.pb-safe-area-bottom {
+    padding-bottom: calc(10px + var(--safe-bottom)) !important;
+  }
+  @media (display-mode: standalone) {
+    body {
+      padding-top: var(--safe-top);
+    }
+  }
+</style>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
 </head>
-<body class="text-on-surface font-sans antialiased min-h-screen">
-    <main class="min-h-screen flex items-center justify-center px-4 py-6 sm:px-6">
-        <section class="auth-shell p-5 sm:p-7 flex flex-col gap-5">
-            <div class="flex items-center gap-2 p-1 rounded-full bg-[rgba(237,241,247,0.92)]">
-                <button id="authLoginTab" type="button" class="auth-tab active flex-1 text-on-surface">登录</button>
-                <button id="authRegisterTab" type="button" class="auth-tab flex-1 text-on-surface-variant">注册</button>
-            </div>
+<body class="bg-background text-on-background min-h-screen flex flex-col font-body-md selection:bg-primary-container selection:text-on-primary-container">
+<!-- TopAppBar (Transactional - Hidden Navigation Elements) -->
+<header class="flex justify-between items-center w-full px-margin-page py-4 bg-surface z-40">
+<!-- Back action implies temporary departure from main flow if this was a sub-page,
+             but for a top-level transactional page like Login, we might just have a close or empty left. -->
+<button aria-label="Close" class="w-10 h-10 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low transition-colors">
+<span class="material-symbols-outlined">close</span>
+</button>
+<div class="font-headline-md text-headline-md font-bold text-primary opacity-0">
+            回家
+        </div>
+<div class="w-10 h-10"></div> <!-- Spacer -->
+</header>
+<!-- Main Content Canvas -->
+<main class="flex-grow flex flex-col px-margin-page pt-stack-lg pb-stack-lg max-w-md mx-auto w-full relative">
+<!-- Ambient Background Image (Soft, evocative) -->
+<div class="absolute inset-0 -z-10 overflow-hidden pointer-events-none opacity-[0.03]">
+<img class="w-full h-full object-cover" data-alt="A highly detailed, soft-focus lifestyle image depicting a warm, sunlit living room with comfortable seating and indoor plants. The lighting is high-key and serene, casting gentle shadows. The color palette consists of warm whites, soft creams, and subtle earthy tones, creating a calming, safe, and domestic atmosphere suitable for a background texture in a dignified companionship app." src="assets/stitch-images/21-17bb061017.jpg"/>
+</div>
+<!-- Branding / Hero -->
+<div class="mb-12">
+<h1 class="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg text-on-background mb-stack-sm">
+                欢迎回到「回家」
+            </h1>
+<p class="font-body-md text-body-md text-on-surface-variant">
+                用最简单的陪伴，连接最深的牵挂。
+            </p>
+</div>
+<!-- Login Form -->
+<form class="flex flex-col gap-stack-md w-full" onsubmit="event.preventDefault();">
+<!-- Phone Input Group -->
+<div class="flex flex-col gap-2">
+<label class="font-label-md text-label-md text-on-surface-variant sr-only" for="phone">手机号码</label>
+<div class="glass-input flex items-center bg-surface-container-low rounded-xl px-4 py-3 transition-all duration-200">
+<span class="font-body-md text-body-md text-on-surface-variant mr-3 border-r border-outline-variant pr-3">+86</span>
+<input class="bg-transparent border-none p-0 w-full font-body-md text-body-md text-on-background focus:ring-0 placeholder:text-outline" id="phone" pattern="[0-9]{11}" placeholder="请输入手机号码" required="" type="tel"/>
+</div>
+</div>
+<!-- Verification Code Input Group -->
+<div class="flex flex-col gap-2">
+<label class="font-label-md text-label-md text-on-surface-variant sr-only" for="code">验证码</label>
+<div class="glass-input flex items-center bg-surface-container-low rounded-xl px-4 py-3 transition-all duration-200">
+<input class="bg-transparent border-none p-0 w-full font-body-md text-body-md text-on-background focus:ring-0 placeholder:text-outline" id="code" placeholder="请输入验证码" required="" type="text"/>
+<button class="whitespace-nowrap font-label-md text-label-md text-primary ml-3 pl-3 border-l border-outline-variant hover:text-primary-fixed-dim transition-colors" type="button">
+                        获取验证码
+                    </button>
+</div>
+</div>
+<!-- Login Button -->
+<button class="mt-stack-sm w-full bg-primary text-on-primary font-label-md text-label-md py-4 rounded-full shadow-[0_4px_12px_rgba(0,93,167,0.15)] hover:bg-on-primary-fixed-variant active:scale-[0.98] transition-all duration-200 flex justify-center items-center" type="submit">
+                一键登录
+            </button>
+<!-- User Agreement -->
+<div class="mt-stack-sm flex items-start gap-2">
+<div class="pt-0.5">
+<input class="w-4 h-4 rounded-sm border-outline text-primary focus:ring-primary focus:ring-offset-0 bg-surface-container-lowest" id="agreement" required="" type="checkbox"/>
+</div>
+<label class="font-body-md text-[13px] leading-relaxed text-on-surface-variant select-none" for="agreement">
+                    我已阅读并同意
+                    <a class="text-primary hover:underline" href="#">《用户服务协议》</a>、
+                    <a class="text-primary hover:underline" href="#">《隐私政策》</a>
+<span>及</span>
+<a class="text-primary hover:underline" href="#">《中国移动认证服务协议》</a>
+</label>
+</div>
+</form>
+<!-- Spacer to push third-party login to bottom -->
+<div class="flex-grow"></div>
+<!-- Third Party Login -->
+<div class="mt-12 flex flex-col items-center">
+<div class="flex items-center w-full mb-6">
+<div class="flex-grow border-t border-outline-variant opacity-50"></div>
+<span class="mx-4 font-body-md text-[13px] text-outline">其他登录方式</span>
+<div class="flex-grow border-t border-outline-variant opacity-50"></div>
+</div>
+<div class="flex gap-6">
+<!-- WeChat -->
+<button aria-label="微信登录" class="w-12 h-12 rounded-full bg-surface-container-low flex items-center justify-center text-[#07C160] hover:bg-surface-container-high transition-colors">
+<svg class="w-6 h-6 fill-current" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M8.28 12.3c2.97 0 5.4-2 5.4-4.5S11.25 3.3 8.28 3.3 2.88 5.3 2.88 7.8s2.43 4.5 5.4 4.5zM17.43 20.7c2.56 0 4.65-1.74 4.65-3.9 0-2.16-2.09-3.9-4.65-3.9s-4.65 1.74-4.65 3.9c0 2.16 2.09 3.9 4.65 3.9z"></path>
+<circle cx="6.5" cy="6.5" fill="#fff" r="0.8"></circle>
+<circle cx="10" cy="6.5" fill="#fff" r="0.8"></circle>
+<circle cx="15.5" cy="15" fill="#fff" r="0.6"></circle>
+<circle cx="19" cy="15" fill="#fff" r="0.6"></circle>
+</svg>
+</button>
+<!-- Apple -->
+<button aria-label="Apple登录" class="w-12 h-12 rounded-full bg-surface-container-low flex items-center justify-center text-on-background hover:bg-surface-container-high transition-colors">
+<svg class="w-6 h-6 fill-current" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M16.365 1.053a4.706 4.706 0 0 1 1.097 3.35 5.093 5.093 0 0 1-3.23 2.766 4.417 4.417 0 0 1-1.077-3.328 4.887 4.887 0 0 1 3.21-2.788zM17.49 19.345c-1.127 1.637-2.316 3.255-4.108 3.273-1.774.02-2.355-1.07-4.383-1.07-2.029 0-2.666 1.05-4.348 1.09-1.737.04-3.08-1.77-4.225-3.42C-1.892 12.637-.624 6.772 2.68 4.823c1.62-1.037 3.364-1.693 4.968-1.711 1.693-.02 3.344 1.155 4.383 1.155 1.018 0 3.025-1.42 5.076-1.205 2.148.113 4.07 1.048 5.174 2.674-4.402 2.52-3.69 8.788.665 10.41-1.042 2.668-2.616 5.37-4.456 8.199z"></path>
+</svg>
+</button>
+</div>
+</div>
+</main>
+<!-- Bottom Navigation IS SUPPRESSED as per instructions for Transactional/Login screens -->
 
-            <div id="authLoggedInCard" class="hidden rounded-[24px] bg-[linear-gradient(180deg,rgba(245,248,252,0.96)_0%,rgba(255,255,255,0.96)_100%)] border border-[rgba(186,194,208,0.14)] p-4 sm:p-5">
-                <div class="flex items-start justify-between gap-3">
-                    <div>
-                        <p class="font-sans text-[11px] font-semibold text-on-surface-variant">当前账号</p>
-                        <p id="authLoggedInTitle" class="font-display text-[20px] font-bold text-on-surface mt-1">已登录</p>
-                        <p id="authLoggedInSub" class="font-sans text-[13px] text-on-surface-variant mt-2">可直接进入首页。</p>
-                    </div>
-                    <div class="w-10 h-10 rounded-full bg-[rgba(59,95,134,0.08)] text-primary flex items-center justify-center shrink-0">
-                        <span class="material-symbols-outlined fill text-[18px]">verified_user</span>
-                    </div>
-                </div>
-                <div class="grid grid-cols-2 gap-3 mt-4">
-                    <button id="authGoHomeBtn" type="button" class="app-btn-primary font-sans text-[14px] font-semibold">进入首页</button>
-                    <button id="authLogoutBtn" type="button" class="app-btn-secondary font-sans text-[14px] font-semibold">退出当前账号</button>
-                </div>
-            </div>
-
-            <form id="authForm" class="flex flex-col gap-3.5" novalidate>
-                <div id="authDisplayNameGroup" class="hidden">
-                    <label for="authDisplayName" class="block font-sans text-[12px] font-medium text-on-surface-variant mb-2">称呼</label>
-                    <input id="authDisplayName" name="displayName" type="text" class="auth-input" placeholder="怎么称呼你">
-                </div>
-                <div>
-                    <label for="authEmail" class="block font-sans text-[12px] font-medium text-on-surface-variant mb-2">邮箱</label>
-                    <input id="authEmail" name="email" type="email" class="auth-input" placeholder="you@example.com" autocomplete="email">
-                </div>
-                <div>
-                    <label for="authPassword" class="block font-sans text-[12px] font-medium text-on-surface-variant mb-2">密码</label>
-                    <input id="authPassword" name="password" type="password" class="auth-input" placeholder="至少 6 位" autocomplete="current-password">
-                </div>
-                <div class="flex flex-col gap-2 pt-1">
-                    <button id="authSubmitBtn" type="submit" class="app-btn-primary font-sans text-[14px] font-semibold">立即登录</button>
-                    <p id="authFeedback" class="min-h-[18px] font-sans text-[12px] leading-5"></p>
-                </div>
-            </form>
-        </section>
-    </main>
-
-    <script src="assets/scripts/edge-client.js?v=20260630-video1"></script>
-    <script src="assets/scripts/login-live.js?v=20260629-app1"></script>
-</body>
-</html>
+<script id="gohome-stitch-route-links">
+  (() => {
+    const routes = {
+      "首页": "index.html",
+      "守护": "monitor.html",
+      "消息": "events.html",
+      "陪伴": "companionship.html",
+      "我的": "privacy.html",
+      "实时画面": "watch.html",
+      "事件列表": "events.html",
+      "规则设置": "rules.html",
+      "家庭成员": "family_members.html",
+      "通知设置": "notifications.html",
+      "隐私与数据": "privacy_data.html",
+      "添加摄像头": "connect.html",
+      "设备管理": "cameras.html"
+    };
+    document.addEventListener("click", (event) => {
+      const item = event.target.closest("a, button");
+      if (!item) return;
+      if (item.hasAttribute("onclick")) return;
+      const href = item.getAttribute("href");
+      if (href && href !== "#") return;
+      const text = (item.innerText || item.textContent || "").replace(/\s+/g, "").trim();
+      const route = routes[text];
+      if (!route) return;
+      event.preventDefault();
+      window.location.href = route;
+    });
+  })();
+</script>
+<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+</body></html>

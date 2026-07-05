@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 
-<html class="light" lang="zh-CN"><head>
+<html lang="zh-CN"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
-<title>回家 - 消息详情</title>
+<title>回家 - 新用户引导</title>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
@@ -66,7 +66,9 @@
                         "DEFAULT": "0.25rem",
                         "lg": "0.5rem",
                         "xl": "0.75rem",
-                        "full": "9999px"
+                        "full": "9999px",
+                        "2xl": "1rem",
+                        "3xl": "1.5rem"
                     },
                     "spacing": {
                         "stack-sm": "8px",
@@ -98,6 +100,36 @@
 <style>
         body {
             -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Subtle entrance animation */
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-fade-up {
+            animation: fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .delay-100 { animation-delay: 100ms; }
+        .delay-200 { animation-delay: 200ms; }
+        .delay-300 { animation-delay: 300ms; }
+        .delay-400 { animation-delay: 400ms; }
+
+        /* Glassmorphism card subtle effect */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
         }
     </style>
 <style>
@@ -136,81 +168,71 @@
 </style>
 <link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
 </head>
-<body class="bg-background text-on-background antialiased min-h-screen flex flex-col">
-<!-- TopAppBar -->
-<header class="bg-surface docked full-width top-0 z-40 flex justify-between items-center w-full px-margin-page py-4 max-w-screen-xl mx-auto flat no shadows">
-<div class="flex items-center gap-4">
-<button class="p-2 -ml-2 rounded-full hover:bg-surface-container-low transition-colors" onclick="history.back()">
-<span class="material-symbols-outlined text-primary text-[24px]">arrow_back</span>
-</button>
-<h1 class="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary">消息详情</h1>
-</div>
-<button class="w-10 h-10 rounded-full overflow-hidden hover:bg-surface-container-low transition-colors flex items-center justify-center">
-<img alt="User Profile Photo" class="w-full h-full object-cover" data-alt="A warm, inviting portrait of an elderly person, well-lit, soft focus background, conveying safety and trust. High quality, realistic." src="assets/stitch-images/31-f8df9d6791.jpg"/>
-</button>
+<body class="bg-background text-on-background min-h-screen flex flex-col font-body-lg">
+<!-- Top App Bar (Simplified for Onboarding) -->
+<header class="w-full px-margin-page py-4 flex justify-between items-center z-40 bg-surface">
+<div class="font-headline-md text-headline-md font-bold text-primary">回家</div>
+<!-- Suppressing global nav elements per rules for onboarding screen -->
+<button class="text-on-surface-variant font-label-md text-label-md bg-surface-container-low px-4 py-2 rounded-full">跳过</button>
 </header>
-<!-- Main Content Canvas (Transactional/Focused Journey - No Nav Shells) -->
-<main class="flex-1 px-margin-page pb-stack-lg max-w-2xl mx-auto w-full flex flex-col gap-stack-md mt-4">
-<!-- Alert Status Card -->
-<div class="bg-error-container rounded-xl p-gutter-card flex items-start gap-4 shadow-sm border border-error/20">
-<span class="material-symbols-outlined text-error text-[28px]" style="font-variation-settings: 'FILL' 1;">warning</span>
-<div class="flex-1">
-<h2 class="font-headline-md text-headline-md text-error mb-1">异常警告：检测到人员跌倒</h2>
-<p class="font-body-md text-body-md text-on-error-container">客厅摄像头于 10:42 AM 侦测到异常动作，疑似跌倒事件。</p>
+<!-- Main Content Canvas -->
+<main class="flex-grow flex flex-col items-center justify-center px-margin-page py-8 pb-32">
+<!-- Hero Illustration Area -->
+<div class="w-full max-w-md aspect-square mb-stack-lg rounded-3xl overflow-hidden shadow-lg animate-fade-up opacity-0" data-alt="A warm, high-quality, modern minimalist vector illustration depicting a peaceful scene of an adult child setting up a smart home device for an elderly parent in a bright, comfortable living room. The aesthetic uses the app's corporate light-mode palette: soft cream backgrounds, clean white elements, and subtle primary blue accents. The mood is dignified companionship, safety, and modern domestic tranquility. No harsh edges." style="background-image: url('assets/stitch-images/04-047f4d8895.jpg')">
+</div>
+<!-- Headline & Intro -->
+<div class="text-center w-full max-w-md mb-stack-lg animate-fade-up opacity-0 delay-100">
+<h1 class="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg text-on-background mb-stack-sm">
+                开启您的陪伴之旅
+            </h1>
+<p class="font-body-md text-body-md text-on-surface-variant">
+                只需简单的三步，即可为家人建立全天候的数字守护与贴心连接。
+            </p>
+</div>
+<!-- Bento Grid / Stack for Steps -->
+<div class="w-full max-w-md flex flex-col gap-stack-sm">
+<!-- Step 1 -->
+<div class="glass-card rounded-2xl p-gutter-card flex items-center gap-stack-md animate-fade-up opacity-0 delay-200">
+<div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">person_add</span>
+</div>
+<div>
+<h3 class="font-label-md text-label-md text-on-surface mb-1">1. 填写家人信息</h3>
+<p class="font-body-md text-body-md text-on-surface-variant text-sm">完善基础资料，定制个性化关怀。</p>
 </div>
 </div>
-<!-- Media Snapshot -->
-<div class="rounded-xl overflow-hidden bg-surface-container-highest shadow-sm relative group">
-<div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent z-10"></div>
-<img alt="Incident Snapshot" class="w-full aspect-video object-cover" data-alt="A high-quality, wide-angle interior shot of a modern, softly lit living room. In the center, a subtle blur suggests a sudden movement or a person on the floor. The lighting is warm and natural, emphasizing a domestic, safe environment despite the event. High resolution, realistic style." src="assets/stitch-images/06-05ce0c3df4.jpg"/>
-<div class="absolute bottom-4 left-4 z-20 text-white">
-<div class="flex items-center gap-2 mb-1">
-<span class="material-symbols-outlined text-[18px]">videocam</span>
-<span class="font-label-md text-label-md">客厅全景摄像机</span>
+<!-- Step 2 -->
+<div class="glass-card rounded-2xl p-gutter-card flex items-center gap-stack-md animate-fade-up opacity-0 delay-300">
+<div class="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-surface-variant" style="font-variation-settings: 'FILL' 1;">devices</span>
 </div>
-<span class="font-body-md text-body-md opacity-80">2023年10月24日 10:42:15 AM</span>
+<div>
+<h3 class="font-label-md text-label-md text-on-surface mb-1">2. 绑定守护设备</h3>
+<p class="font-body-md text-body-md text-on-surface-variant text-sm">连接智能硬件，实时掌握安全动态。</p>
 </div>
-<!-- Play Overlay (visual only) -->
-<button class="absolute inset-0 m-auto w-16 h-16 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center z-20 group-hover:bg-white/30 transition-colors">
-<span class="material-symbols-outlined text-white text-[32px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
-</button>
 </div>
-<!-- Details List -->
-<div class="bg-surface-container-lowest rounded-xl p-gutter-card shadow-[0_4px_12px_rgba(0,0,0,0.04)] flex flex-col gap-stack-sm">
-<div class="flex justify-between items-center py-2 border-b border-surface-variant">
-<span class="font-body-md text-body-md text-on-surface-variant">事件类型</span>
-<span class="font-label-md text-label-md text-on-surface">AI 跌倒检测</span>
+<!-- Step 3 -->
+<div class="glass-card rounded-2xl p-gutter-card flex items-center gap-stack-md animate-fade-up opacity-0 delay-400">
+<div class="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-surface-variant" style="font-variation-settings: 'FILL' 1;">favorite</span>
 </div>
-<div class="flex justify-between items-center py-2 border-b border-surface-variant">
-<span class="font-body-md text-body-md text-on-surface-variant">发生位置</span>
-<span class="font-label-md text-label-md text-on-surface">一楼 客厅</span>
+<div>
+<h3 class="font-label-md text-label-md text-on-surface mb-1">3. 开启全天候陪伴</h3>
+<p class="font-body-md text-body-md text-on-surface-variant text-sm">体验无缝沟通，让爱随时相伴。</p>
 </div>
-<div class="flex justify-between items-center py-2 border-b border-surface-variant">
-<span class="font-body-md text-body-md text-on-surface-variant">状态</span>
-<span class="font-label-md text-label-md text-error flex items-center gap-1">
-<span class="w-2 h-2 rounded-full bg-error"></span> 待处理
-                </span>
-</div>
-<div class="flex justify-between items-center py-2">
-<span class="font-body-md text-body-md text-on-surface-variant">设备连通性</span>
-<span class="font-label-md text-label-md text-tertiary flex items-center gap-1">
-<span class="material-symbols-outlined text-[16px]">wifi</span> 正常在线
-                </span>
 </div>
 </div>
 </main>
-<!-- Bottom Action Bar (Sticky) -->
-<div class="fixed bottom-0 left-0 w-full bg-surface-container-lowest p-gutter-card pb-[calc(16px+env(safe-area-inset-bottom))] shadow-[0_-4px_12px_rgba(0,0,0,0.08)] flex gap-4 z-50">
-<button class="flex-1 bg-surface-container-high text-on-surface font-label-md text-label-md py-3 rounded-full hover:bg-surface-variant transition-colors">
-            查看详情
-        </button>
-<button class="flex-[2] bg-error text-on-error font-label-md text-label-md py-3 rounded-full shadow-md flex items-center justify-center gap-2 hover:bg-on-error-container transition-colors">
-<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">call</span>
-            立即联系
-        </button>
+<!-- Persistent Bottom Action Area -->
+<div class="fixed bottom-0 left-0 w-full p-margin-page pb-8 bg-surface/90 backdrop-blur-md z-50">
+<div class="max-w-md mx-auto">
+<button class="w-full bg-primary text-on-primary font-label-md text-label-md py-4 rounded-full shadow-[0_4px_12px_rgba(0,93,167,0.2)] hover:opacity-90 active:scale-[0.98] transition-all flex justify-center items-center gap-2">
+                立即开始
+                <span class="material-symbols-outlined text-lg">arrow_forward</span>
+</button>
 </div>
-<!-- Padding spacer for sticky bottom bar -->
-<div class="h-24"></div>
+</div>
+<!-- Note: BottomNavBar is suppressed here per the Semantic Shell Mandate (Linear/Transactional Onboarding page) -->
 
 <script id="gohome-stitch-route-links">
   (() => {

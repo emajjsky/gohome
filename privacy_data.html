@@ -3,12 +3,12 @@
 <html lang="zh-CN"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
-<title>创建家庭空间 - 回家</title>
+<title>隐私与数据 - 回家 App</title>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com" rel="preconnect"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,100..900;1,100..900&amp;family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
 <script id="tailwind-config">
         tailwind.config = {
@@ -93,20 +93,17 @@
                         "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
                         "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
                     }
-                }
-            }
+                },
+            },
         }
     </script>
 <style>
-        body {
-            -webkit-tap-highlight-color: transparent;
-        }
-        .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-        }
-        .icon-fill {
-            font-variation-settings: 'FILL' 1;
-        }
+        body { background-color: theme('colors.background'); color: theme('colors.on-background'); }
+        /* Toggles */
+        .toggle-checkbox:checked { right: 0; border-color: theme('colors.primary'); }
+        .toggle-checkbox:checked + .toggle-label { background-color: theme('colors.primary'); }
+        .toggle-checkbox { right: 0; z-index: 1; border-color: theme('colors.outline'); }
+        .toggle-label { background-color: theme('colors.surface-variant'); }
     </style>
 <style>
     body {
@@ -144,42 +141,100 @@
 </style>
 <link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
 </head>
-<body class="bg-background text-on-background font-body-md min-h-screen flex flex-col antialiased">
-<!-- Top App Bar (Suppressed because this is an onboarding/transactional flow) -->
-<header class="w-full px-margin-page py-4 flex justify-between items-center z-40 bg-surface">
-<button aria-label="Back" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-low transition-colors">
-<span class="material-symbols-outlined text-on-surface">arrow_back</span>
+<body class="min-h-screen font-body-md antialiased md:bg-surface-container-low flex justify-center">
+<div class="w-full max-w-md bg-surface min-h-screen relative shadow-sm">
+<!-- Header -->
+<header class="sticky top-0 z-40 bg-surface/90 backdrop-blur-md px-margin-page py-4 flex items-center border-b border-surface-variant">
+<button aria-label="返回" class="mr-4 text-on-surface-variant hover:text-on-surface transition-colors rounded-full p-2 hover:bg-surface-container-low">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">arrow_back</span>
 </button>
-<span class="font-headline-md text-headline-md text-primary font-bold tracking-tight">回家</span>
-<div class="w-10 h-10"></div> <!-- Spacer for centering -->
+<h1 class="font-headline-md text-headline-md text-on-surface flex-1 text-center pr-[48px]">隐私与数据</h1>
 </header>
-<!-- Main Content Canvas -->
-<main class="flex-1 flex flex-col px-margin-page pb-stack-lg max-w-lg mx-auto w-full">
-<div class="mt-stack-md mb-stack-lg flex flex-col gap-stack-sm">
-<h1 class="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg text-on-background">创建您的家庭空间</h1>
-<p class="font-body-lg text-body-lg text-on-surface-variant">给您的家起个名字，开始建立专属的数字陪伴空间。</p>
+<!-- Main Content -->
+<main class="px-margin-page py-6 pb-24 space-y-8">
+<div class="text-center space-y-2 mb-4">
+<div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary-container text-primary mb-2">
+<span class="material-symbols-outlined text-4xl" style="font-variation-settings: 'FILL' 1;">security</span>
 </div>
-<!-- Illustration -->
-<div class="w-full aspect-[4/3] rounded-xl overflow-hidden mb-stack-lg shadow-[0_4px_12px_rgba(0,0,0,0.04)] bg-surface-container-lowest">
-<img class="w-full h-full object-cover" data-alt="A warm, high-quality modern illustration of a multi-generational family gathering comfortably in a sunlit, contemporary living room. The scene evokes domestic tranquility and safety. The color palette features soft creams, warm whites, and subtle primary blue accents, aligned with a corporate yet minimalist high-end iOS aesthetic." src="assets/stitch-images/13-0028165750.jpg"/>
+<h2 class="font-headline-md text-headline-md text-on-surface">我们承诺保护您的隐私</h2>
+<p class="font-body-md text-body-md text-on-surface-variant">您的数据由您完全掌控，我们仅将其用于提供更好的陪伴与守护服务。</p>
+<p class="font-label-md text-label-md text-on-surface-variant mt-2">最近更新：今天</p>
 </div>
-<!-- Input Field -->
-<div class="flex flex-col gap-stack-sm mb-stack-lg">
-<label class="font-label-md text-label-md text-on-surface" for="spaceName">家庭空间名称</label>
-<div class="relative">
-<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant icon-fill">home</span>
-<input class="w-full pl-12 pr-4 py-4 rounded-xl bg-surface-container-low border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary font-body-lg text-body-lg text-on-surface placeholder:text-on-surface-variant transition-colors outline-none shadow-inner" id="spaceName" placeholder="例如：李家的温馨小窝" type="text"/>
+<!-- Storage Settings Section -->
+<section class="space-y-4">
+<h3 class="font-label-md text-label-md text-primary tracking-wide pl-2 uppercase">存储设置</h3>
+<div class="bg-surface-container-lowest rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.02)] border border-surface-variant/50 overflow-hidden">
+<div class="p-5 border-b border-surface-variant/50 flex justify-between items-center group cursor-pointer hover:bg-surface-container-low transition-colors">
+<div class="flex-1 pr-4">
+<h4 class="font-body-md text-body-md text-on-surface font-semibold mb-1">监控截图保留时长</h4>
+<p class="font-body-md text-body-md text-on-surface-variant text-sm">自动清理过期监控截图以节省空间</p>
+</div>
+<div class="flex items-center text-on-surface-variant group-hover:text-primary transition-colors">
+<span class="font-label-md text-label-md mr-2">30天</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">chevron_right</span>
 </div>
 </div>
-<!-- Spacer to push button to bottom on short screens -->
-<div class="flex-1"></div>
-<!-- Primary Action -->
-<button class="w-full py-4 rounded-full bg-primary text-on-primary font-label-md text-label-md flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_4px_12px_rgba(0,93,167,0.2)] mt-stack-lg">
-<span>创建并邀请成员</span>
-<span class="material-symbols-outlined text-[20px]">person_add</span>
+<div class="p-5 flex justify-between items-center group cursor-pointer hover:bg-surface-container-low transition-colors">
+<div class="flex-1 pr-4">
+<h4 class="font-body-md text-body-md text-on-surface font-semibold mb-1">录像云端保存期限</h4>
+<p class="font-body-md text-body-md text-on-surface-variant text-sm">历史监控视频的云端留存时间</p>
+</div>
+<div class="flex items-center text-on-surface-variant group-hover:text-primary transition-colors">
+<span class="font-label-md text-label-md mr-2">7天</span>
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">chevron_right</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Access Control Section -->
+<section class="space-y-4">
+<h3 class="font-label-md text-label-md text-primary tracking-wide pl-2 uppercase">访问权限管理</h3>
+<div class="bg-surface-container-lowest rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.02)] border border-surface-variant/50 overflow-hidden p-5 space-y-6">
+<div class="flex items-start justify-between">
+<div class="flex-1 pr-4">
+<h4 class="font-body-md text-body-md text-on-surface font-semibold mb-1">家人共享实时画面</h4>
+<p class="font-body-md text-body-md text-on-surface-variant text-sm">允许已绑定的家庭成员查看家中的实时监控画面</p>
+</div>
+<div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in mt-1">
+<input checked="" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-all duration-300" id="toggle1" name="toggle" type="checkbox"/>
+<label class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer transition-colors duration-300" for="toggle1"></label>
+</div>
+</div>
+<div class="w-full h-px bg-surface-variant"></div>
+<div class="flex items-start justify-between">
+<div class="flex-1 pr-4">
+<h4 class="font-body-md text-body-md text-on-surface font-semibold mb-1">健康数据报告分析</h4>
+<p class="font-body-md text-body-md text-on-surface-variant text-sm">授权App生成每日健康活动摘要并发送给指定亲属</p>
+</div>
+<div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in mt-1">
+<input checked="" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-all duration-300" id="toggle2" name="toggle" type="checkbox"/>
+<label class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer transition-colors duration-300" for="toggle2"></label>
+</div>
+</div>
+</div>
+</section>
+<!-- Data Management Section -->
+<section class="space-y-4">
+<h3 class="font-label-md text-label-md text-primary tracking-wide pl-2 uppercase">数据与账号管理</h3>
+<div class="bg-surface-container-lowest rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.02)] border border-surface-variant/50 overflow-hidden flex flex-col">
+<button class="p-5 flex items-center w-full text-left hover:bg-surface-container-low transition-colors border-b border-surface-variant/50 group">
+<span class="material-symbols-outlined mr-4 text-on-surface-variant group-hover:text-primary transition-colors" style="font-variation-settings: 'FILL' 0;">download</span>
+<div class="flex-1">
+<h4 class="font-body-md text-body-md text-on-surface font-semibold">导出我的数据</h4>
+<p class="font-body-md text-body-md text-on-surface-variant text-sm mt-0.5">获取您的账号信息、历史记录副本</p>
+</div>
 </button>
+<button class="p-5 flex items-center w-full text-left hover:bg-error-container/20 transition-colors group">
+<span class="material-symbols-outlined mr-4 text-error" style="font-variation-settings: 'FILL' 0;">delete_forever</span>
+<div class="flex-1">
+<h4 class="font-body-md text-body-md text-error font-semibold">注销账号</h4>
+<p class="font-body-md text-body-md text-error/80 text-sm mt-0.5">永久删除您的账号及所有相关数据</p>
+</div>
+</button>
+</div>
+</section>
 </main>
-<!-- Bottom Nav Bar (Suppressed as per rules for transactional/onboarding screens) -->
+</div>
 
 <script id="gohome-stitch-route-links">
   (() => {

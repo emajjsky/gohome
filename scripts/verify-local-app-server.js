@@ -57,6 +57,84 @@ async function main() {
         });
         assert.equal(login.token, APP_TOKEN);
 
+        const registered = await requestJson(baseUrl, "/api/auth/register", {
+            method: "POST",
+            body: JSON.stringify({ email: "daughter@gohome.local", password: "secret123", display_name: "女儿" }),
+        });
+        assert.equal(registered.user.email, "daughter@gohome.local");
+
+        const family = await requestJson(baseUrl, "/api/families", {
+            method: "POST",
+            body: JSON.stringify({ name: "测试家庭" }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(family.name, "测试家庭");
+
+        const elderProfile = await requestJson(baseUrl, `/api/v1/families/${family.id}/elders/elder_primary/profile`, {
+            method: "PUT",
+            body: JSON.stringify({ display_name: "张阿姨", relationship: "母亲", city: "杭州" }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(elderProfile.display_name, "张阿姨");
+
+        const bindingCode = await requestJson(baseUrl, "/api/device/binding-codes", {
+            method: "POST",
+            body: JSON.stringify({ family_id: family.id, expires_in_minutes: 10 }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(bindingCode.status, "active");
+
+        const exchanged = await requestJson(baseUrl, "/api/device/token/exchange", {
+            method: "POST",
+            body: JSON.stringify({ code: bindingCode.code, device_id: "edge-test", device_name: "测试盒子" }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(exchanged.ok, true);
+        assert.ok(exchanged.device_token);
+
+        const heartbeat = await requestJson(baseUrl, "/api/v1/device/heartbeat", {
+            method: "POST",
+            body: JSON.stringify({ device_id: "edge-test", name: "测试盒子", status: "online" }),
+            headers: { Authorization: `Bearer ${exchanged.device_token}` },
+        });
+        assert.equal(heartbeat.ok, true);
+
+        const camera = await requestJson(baseUrl, "/api/cameras", {
+            method: "POST",
+            body: JSON.stringify({
+                name: "客厅主视",
+                room: "客厅",
+                stream_url: "rtsp://192.168.1.20:554/stream1",
+                enabled: true,
+            }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(camera.room, "客厅");
+        assert.equal(camera.connection_owner, "edge_agent");
+        assert.equal(camera.stream_url, undefined);
+        assert.equal(camera.status, "pending_edge_sync");
+
+        const patchedCamera = await requestJson(baseUrl, `/api/cameras/${camera.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ enabled: false }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(patchedCamera.enabled, false);
+
+        const testedCamera = await requestJson(baseUrl, `/api/cameras/${camera.id}/test`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(testedCamera.ok, true);
+        assert.equal(testedCamera.camera.status, "pending_edge_verify");
+
+        const deviceConfig = await requestJson(baseUrl, "/api/v1/device/config", {
+            headers: { Authorization: `Bearer ${exchanged.device_token}` },
+        });
+        assert.equal(deviceConfig.ok, true);
+        assert.equal(deviceConfig.cameras.length, 1);
+        assert.equal(deviceConfig.cameras[0].stream_url, "rtsp://192.168.1.20:554/stream1");
+
         const imageBytes = Buffer.from("fake-jpeg-content");
         const media = await requestJson(
             baseUrl,
@@ -111,8 +189,13 @@ async function main() {
         const bindings = await requestJson(baseUrl, "/api/device-bindings?family_id=1", {
             headers: { Authorization: `Bearer ${APP_TOKEN}` },
         });
-        assert.equal(bindings.length, 1);
-        assert.equal(bindings[0].device_id, "edge-test");
+        assert.equal(bindings.length, 0);
+
+        const newFamilyBindings = await requestJson(baseUrl, `/api/device-bindings?family_id=${family.id}`, {
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(newFamilyBindings.length, 1);
+        assert.equal(newFamilyBindings[0].device_id, "edge-test");
 
         const snapshot = await requestJson(baseUrl, "/api/app/cameras/1/snapshot/latest?allow_missing=1", {
             headers: { Authorization: `Bearer ${APP_TOKEN}` },

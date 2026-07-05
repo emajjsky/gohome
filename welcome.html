@@ -3,12 +3,10 @@
 <html lang="zh-CN"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
-<title>创建家庭空间 - 回家</title>
+<title>回家 - 欢迎使用</title>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com" rel="preconnect"/>
-<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
 <script id="tailwind-config">
         tailwind.config = {
@@ -98,14 +96,21 @@
         }
     </script>
 <style>
-        body {
-            -webkit-tap-highlight-color: transparent;
+        .fade-in-up {
+            animation: fadeInUp 0.8s ease-out forwards;
+            opacity: 0;
+            transform: translateY(20px);
         }
-        .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-        }
-        .icon-fill {
-            font-variation-settings: 'FILL' 1;
+        .delay-100 { animation-delay: 0.1s; }
+        .delay-200 { animation-delay: 0.2s; }
+        .delay-300 { animation-delay: 0.3s; }
+        .delay-400 { animation-delay: 0.4s; }
+
+        @keyframes fadeInUp {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
     </style>
 <style>
@@ -113,105 +118,51 @@
       min-height: max(884px, 100dvh);
     }
   </style>
-
-<style id="gohome-app-minimal-adapt">
-  :root {
-    --safe-top: env(safe-area-inset-top, 0px);
-    --safe-right: env(safe-area-inset-right, 0px);
-    --safe-bottom: env(safe-area-inset-bottom, 0px);
-    --safe-left: env(safe-area-inset-left, 0px);
-  }
-  html, body {
-    min-height: 100dvh;
-    background: #fbf9f8;
-  }
-  body {
-    padding-left: var(--safe-left);
-    padding-right: var(--safe-right);
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
-  nav.fixed.bottom-0,
-  nav.docked.bottom-0,
-  nav.pb-safe-area-bottom {
-    padding-bottom: calc(10px + var(--safe-bottom)) !important;
-  }
-  @media (display-mode: standalone) {
-    body {
-      padding-top: var(--safe-top);
-    }
-  }
-</style>
 <link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
-</head>
-<body class="bg-background text-on-background font-body-md min-h-screen flex flex-col antialiased">
-<!-- Top App Bar (Suppressed because this is an onboarding/transactional flow) -->
-<header class="w-full px-margin-page py-4 flex justify-between items-center z-40 bg-surface">
-<button aria-label="Back" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-low transition-colors">
-<span class="material-symbols-outlined text-on-surface">arrow_back</span>
-</button>
-<span class="font-headline-md text-headline-md text-primary font-bold tracking-tight">回家</span>
-<div class="w-10 h-10"></div> <!-- Spacer for centering -->
+  </head>
+<body class="bg-surface text-on-surface min-h-screen flex flex-col items-center justify-center relative overflow-hidden font-body-md antialiased pt-safe pb-safe">
+<!-- Ambient Background Effect -->
+<div class="absolute inset-0 pointer-events-none overflow-hidden z-0">
+<div class="absolute top-[-10%] right-[-10%] w-[442px] h-[442px] rounded-full bg-primary-fixed-dim/30 blur-3xl opacity-60"></div>
+<div class="absolute bottom-[-10%] left-[-10%] w-[530px] h-[530px] rounded-full bg-surface-container-high/50 blur-3xl opacity-50"></div>
+</div>
+<!-- Main Content Container -->
+<main class="relative z-10 w-full max-w-md h-[884px] flex flex-col justify-between px-margin-page py-stack-lg mx-auto">
+<!-- Top Section: Brand Logo -->
+<header class="flex-none pt-8 fade-in-up">
+<div class="flex items-center justify-center space-x-2">
+<span class="material-symbols-outlined text-primary text-4xl" style="font-variation-settings: 'FILL' 1;">home_health</span>
+<h1 class="font-headline-lg-mobile text-headline-lg-mobile text-primary tracking-tight">回家</h1>
+</div>
 </header>
-<!-- Main Content Canvas -->
-<main class="flex-1 flex flex-col px-margin-page pb-stack-lg max-w-lg mx-auto w-full">
-<div class="mt-stack-md mb-stack-lg flex flex-col gap-stack-sm">
-<h1 class="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg text-on-background">创建您的家庭空间</h1>
-<p class="font-body-lg text-body-lg text-on-surface-variant">给您的家起个名字，开始建立专属的数字陪伴空间。</p>
+<!-- Middle Section: Illustration & Slogan -->
+<div class="flex-grow flex flex-col items-center justify-center space-y-stack-lg w-full mt-4">
+<!-- Hero Illustration -->
+<div class="w-full aspect-square max-w-[320px] rounded-3xl overflow-hidden relative shadow-lg bg-surface-container-lowest fade-in-up delay-100">
+<img class="w-full h-full object-cover" data-alt="A warm, highly detailed illustration of an elderly person reading a book in a sunlit, modern minimalist living room. The aesthetic is clean, soothing, and corporate yet domestic, utilizing a soft warm white foundation with subtle deep sea blue (primary) accents. Gentle natural light streams through a window, creating a serene, safe, and dignified atmosphere. Focus on human connection and tranquility, avoiding sterile clinical vibes." src="assets/stitch-images/09-cc5ea760d2.jpg"/>
 </div>
-<!-- Illustration -->
-<div class="w-full aspect-[4/3] rounded-xl overflow-hidden mb-stack-lg shadow-[0_4px_12px_rgba(0,0,0,0.04)] bg-surface-container-lowest">
-<img class="w-full h-full object-cover" data-alt="A warm, high-quality modern illustration of a multi-generational family gathering comfortably in a sunlit, contemporary living room. The scene evokes domestic tranquility and safety. The color palette features soft creams, warm whites, and subtle primary blue accents, aligned with a corporate yet minimalist high-end iOS aesthetic." src="assets/stitch-images/13-0028165750.jpg"/>
-</div>
-<!-- Input Field -->
-<div class="flex flex-col gap-stack-sm mb-stack-lg">
-<label class="font-label-md text-label-md text-on-surface" for="spaceName">家庭空间名称</label>
-<div class="relative">
-<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant icon-fill">home</span>
-<input class="w-full pl-12 pr-4 py-4 rounded-xl bg-surface-container-low border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary font-body-lg text-body-lg text-on-surface placeholder:text-on-surface-variant transition-colors outline-none shadow-inner" id="spaceName" placeholder="例如：李家的温馨小窝" type="text"/>
+<!-- Slogan & Subtext -->
+<div class="text-center space-y-stack-sm w-full px-4 fade-in-up delay-200">
+<h2 class="font-headline-lg-mobile text-headline-lg-mobile text-on-surface">看看家里，<br/>也记得回家</h2>
+<p class="font-body-md text-body-md text-on-surface-variant max-w-[280px] mx-auto mt-4 leading-relaxed">
+                    用科技搭建爱的桥梁，随时感知长辈的安康，传递无形的陪伴。
+                </p>
 </div>
 </div>
-<!-- Spacer to push button to bottom on short screens -->
-<div class="flex-1"></div>
-<!-- Primary Action -->
-<button class="w-full py-4 rounded-full bg-primary text-on-primary font-label-md text-label-md flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_4px_12px_rgba(0,93,167,0.2)] mt-stack-lg">
-<span>创建并邀请成员</span>
-<span class="material-symbols-outlined text-[20px]">person_add</span>
+<!-- Bottom Section: CTA -->
+<div class="flex-none w-full pb-8 pt-4 fade-in-up delay-300">
+<button class="w-full bg-primary text-on-primary font-label-md text-label-md py-4 rounded-full shadow-[0_8px_16px_rgba(0,93,167,0.2)] hover:bg-on-primary-fixed-variant hover:shadow-[0_4px_8px_rgba(0,93,167,0.3)] transition-all duration-300 active:scale-[0.98] flex items-center justify-center group">
+<span>开启温情守护</span>
+<span class="material-symbols-outlined ml-2 group-hover:translate-x-1 transition-transform">
+                    arrow_forward
+                </span>
 </button>
+<!-- Optional subtle login link if needed later -->
+<div class="text-center mt-6 fade-in-up delay-400">
+<a class="font-label-md text-label-md text-primary/80 hover:text-primary transition-colors" href="#">已有账号？点击登录</a>
+</div>
+</div>
 </main>
-<!-- Bottom Nav Bar (Suppressed as per rules for transactional/onboarding screens) -->
-
-<script id="gohome-stitch-route-links">
-  (() => {
-    const routes = {
-      "首页": "index.html",
-      "守护": "monitor.html",
-      "消息": "events.html",
-      "陪伴": "companionship.html",
-      "我的": "privacy.html",
-      "实时画面": "watch.html",
-      "事件列表": "events.html",
-      "规则设置": "rules.html",
-      "家庭成员": "family_members.html",
-      "通知设置": "notifications.html",
-      "隐私与数据": "privacy_data.html",
-      "添加摄像头": "connect.html",
-      "设备管理": "cameras.html"
-    };
-    document.addEventListener("click", (event) => {
-      const item = event.target.closest("a, button");
-      if (!item) return;
-      if (item.hasAttribute("onclick")) return;
-      const href = item.getAttribute("href");
-      if (href && href !== "#") return;
-      const text = (item.innerText || item.textContent || "").replace(/\s+/g, "").trim();
-      const route = routes[text];
-      if (!route) return;
-      event.preventDefault();
-      window.location.href = route;
-    });
-  })();
-</script>
 <script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>

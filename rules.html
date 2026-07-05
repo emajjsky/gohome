@@ -1,211 +1,362 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>守护规则 - 回家</title>
-    <link href="assets/styles/tailwind.css" rel="stylesheet">
-    <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
-    <style>
-        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
-        .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
-        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
-        ::-webkit-scrollbar { width: 0px; background: transparent; }
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<title>回家 - 规则设置</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@100..900&family=Inter:wght@100..900&display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Theme Configuration -->
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "surface-tint": "#0060ac",
+                    "on-secondary-fixed-variant": "#474744",
+                    "surface-dim": "#dbd9d9",
+                    "outline": "#717783",
+                    "tertiary-fixed-dim": "#87dc2c",
+                    "on-secondary": "#ffffff",
+                    "on-error-container": "#93000a",
+                    "secondary-fixed": "#e4e2dd",
+                    "on-tertiary-fixed": "#0e2000",
+                    "surface-container-high": "#eae8e7",
+                    "outline-variant": "#c1c7d3",
+                    "tertiary-container": "#498300",
+                    "surface-container-lowest": "#ffffff",
+                    "on-tertiary-container": "#f9ffeb",
+                    "background": "#fbf9f8",
+                    "secondary-fixed-dim": "#c8c6c2",
+                    "on-tertiary": "#ffffff",
+                    "on-surface-variant": "#414751",
+                    "surface-container-highest": "#e4e2e2",
+                    "on-background": "#1b1c1c",
+                    "surface-variant": "#e4e2e2",
+                    "on-tertiary-fixed-variant": "#2a5000",
+                    "on-primary-container": "#fdfcff",
+                    "on-secondary-container": "#63635f",
+                    "on-primary-fixed": "#001c39",
+                    "inverse-surface": "#303030",
+                    "tertiary-fixed": "#a1fa49",
+                    "surface": "#fbf9f8",
+                    "surface-container-low": "#f5f3f3",
+                    "surface-bright": "#fbf9f8",
+                    "primary-container": "#2976c7",
+                    "on-surface": "#1b1c1c",
+                    "primary-fixed": "#d4e3ff",
+                    "primary": "#005da7",
+                    "on-primary-fixed-variant": "#004883",
+                    "error": "#ba1a1a",
+                    "on-error": "#ffffff",
+                    "inverse-on-surface": "#f2f0f0",
+                    "error-container": "#ffdad6",
+                    "secondary-container": "#e1dfdb",
+                    "primary-fixed-dim": "#a4c9ff",
+                    "tertiary": "#386800",
+                    "inverse-primary": "#a4c9ff",
+                    "surface-container": "#efeded",
+                    "secondary": "#5e5e5b",
+                    "on-secondary-fixed": "#1b1c19",
+                    "on-primary": "#ffffff"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "stack-sm": "8px",
+                    "gutter-card": "16px",
+                    "stack-md": "16px",
+                    "stack-lg": "32px",
+                    "margin-page": "20px"
+            },
+            "fontFamily": {
+                    "body-lg": ["Inter"],
+                    "label-md": ["Inter"],
+                    "body-md": ["Inter"],
+                    "headline-md": ["Hanken Grotesk"],
+                    "headline-lg": ["Hanken Grotesk"],
+                    "headline-lg-mobile": ["Hanken Grotesk"]
+            },
+            "fontSize": {
+                    "body-lg": ["18px", {"lineHeight": "26px", "fontWeight": "400"}],
+                    "label-md": ["14px", {"lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600"}],
+                    "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                    "headline-md": ["22px", {"lineHeight": "28px", "fontWeight": "600"}],
+                    "headline-lg": ["28px", {"lineHeight": "36px", "fontWeight": "700"}],
+                    "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "700"}]
+            }
+          }
+        }
+      }
+    </script>
+<style>
+        /* Custom Toggle Switch Styles */
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #68D391; /* success color placeholder */
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: var(--color-primary, #005da7); /* Map to primary */
+        }
+
+        /* Subtle Pattern Background */
+        .bg-pattern {
+            background-image: radial-gradient(var(--color-outline-variant, #c1c7d3) 1px, transparent 1px);
+            background-size: 24px 24px;
+            background-position: -12px -12px;
+        }
     </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+
+<style id="gohome-app-minimal-adapt">
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+  }
+  html, body {
+    min-height: 100dvh;
+    background: #fbf9f8;
+  }
+  body {
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  nav.fixed.bottom-0,
+  nav.docked.bottom-0,
+  nav.pb-safe-area-bottom {
+    padding-bottom: calc(10px + var(--safe-bottom)) !important;
+  }
+  @media (display-mode: standalone) {
+    body {
+      padding-top: var(--safe-top);
+    }
+  }
+</style>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
 </head>
-<body class="app-phone-shell text-on-surface font-sans antialiased">
-    <header class="app-topbar">
-        <a href="monitor.html?app=1" class="app-topbar-side">
-            <span class="material-symbols-outlined">arrow_back</span>
-        </a>
-        <div class="min-w-0 text-center">
-            <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">RULES</p>
-            <p class="font-display text-[16px] font-bold text-on-surface">守护规则</p>
-        </div>
-        <button id="saveRulesButton" class="app-topbar-side" type="button" title="保存规则">
-            <span class="material-symbols-outlined text-[20px]">save</span>
-        </button>
-    </header>
+<body class="bg-surface text-on-surface font-body-md min-h-screen flex flex-col relative pb-32 overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
+<!-- Ambient Background Pattern -->
+<div class="fixed inset-0 bg-pattern opacity-30 pointer-events-none z-0"></div>
+<!-- TopAppBar (from JSON) -->
+<header class="docked full-width top-0 z-40 bg-surface dark:bg-background flex justify-between items-center w-full px-margin-page py-4 max-w-screen-xl mx-auto border-none sticky">
+<!-- Leading Avatar -->
+<div class="w-10 h-10 rounded-full bg-surface-container-high overflow-hidden shadow-sm flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity">
+<img alt="User Profile Photo" class="w-full h-full object-cover" data-alt="A close-up, warm and dignified profile photo of a modern elderly person or caring family member. Soft, natural light mode lighting, conveying trust and safety. Professional corporate style with high-end iOS aesthetic." src="assets/stitch-images/19-870083332d.jpg"/>
+</div>
+<!-- Headline -->
+<h1 class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed-dim tracking-tight">回家</h1>
+<!-- Trailing Icon -->
+<button aria-label="Notifications" class="w-10 h-10 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low transition-colors duration-200">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">notifications</span>
+</button>
+</header>
+<!-- Main Content -->
+<main class="flex-1 w-full max-w-screen-md mx-auto px-margin-page py-stack-md z-10 flex flex-col gap-stack-lg">
+<!-- Page Header -->
+<div class="flex flex-col gap-2">
+<h2 class="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg text-on-surface">守护规则设置</h2>
+<p class="font-body-md text-body-md text-on-surface-variant">个性化调整监测选项与灵敏度，为家人提供最适宜的安全保障。</p>
+</div>
+<!-- Settings Cards Container -->
+<div class="flex flex-col gap-stack-md">
+<!-- Card 1: Fall Detection -->
+<section class="bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.03)] p-gutter-card flex flex-col gap-stack-md border border-surface-variant transition-transform hover:-translate-y-1 duration-300">
+<div class="flex justify-between items-start">
+<div class="flex gap-4 items-start">
+<div class="w-12 h-12 rounded-full bg-error-container text-on-error-container flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">personal_injury</span>
+</div>
+<div class="flex flex-col gap-1">
+<h3 class="font-headline-md text-headline-md text-on-surface">跌倒监测</h3>
+<p class="font-body-md text-body-md text-on-surface-variant max-w-[280px]">实时监测老人姿态，发生疑似跌倒时立即向紧急联系人发送警报与位置信息。</p>
+</div>
+</div>
+<!-- Toggle -->
+<label class="relative inline-flex items-center cursor-pointer mt-2">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<div class="border-t border-surface-variant pt-4">
+<div class="flex justify-between items-center mb-3">
+<span class="font-label-md text-label-md text-on-surface-variant">灵敏度调节</span>
+<span class="font-label-md text-label-md text-primary">高 (推荐)</span>
+</div>
+<!-- Segmented Control -->
+<div class="flex bg-surface-container rounded-lg p-1 w-full relative">
+<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">低</button>
+<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">中</button>
+<button class="flex-1 py-2 font-label-md text-label-md bg-surface-container-lowest text-primary shadow-sm rounded-md z-10">高</button>
+</div>
+<p class="font-body-md text-body-md text-outline text-sm mt-2">高灵敏度可能产生误报，但能最大限度避免遗漏严重跌倒事件。</p>
+</div>
+</section>
+<!-- Card 2: Abnormal Wandering -->
+<section class="bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.03)] p-gutter-card flex flex-col gap-stack-md border border-surface-variant transition-transform hover:-translate-y-1 duration-300">
+<div class="flex justify-between items-start">
+<div class="flex gap-4 items-start">
+<div class="w-12 h-12 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">directions_walk</span>
+</div>
+<div class="flex flex-col gap-1">
+<h3 class="font-headline-md text-headline-md text-on-surface">异常徘徊</h3>
+<p class="font-body-md text-body-md text-on-surface-variant max-w-[280px]">智能识别长时间在同一区域无目的走动，预防认知障碍长者走失风险。</p>
+</div>
+</div>
+<!-- Toggle -->
+<label class="relative inline-flex items-center cursor-pointer mt-2">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<div class="border-t border-surface-variant pt-4">
+<div class="flex justify-between items-center mb-3">
+<span class="font-label-md text-label-md text-on-surface-variant">判定时长 (灵敏度)</span>
+<span class="font-label-md text-label-md text-on-surface">中 (15分钟)</span>
+</div>
+<!-- Segmented Control -->
+<div class="flex bg-surface-container rounded-lg p-1 w-full relative">
+<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">低 (30分)</button>
+<button class="flex-1 py-2 font-label-md text-label-md bg-surface-container-lowest text-on-surface shadow-sm rounded-md z-10">中 (15分)</button>
+<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">高 (5分)</button>
+</div>
+</div>
+</section>
+<!-- Card 3: Sound Alert -->
+<section class="bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.03)] p-gutter-card flex flex-col gap-stack-md border border-surface-variant transition-transform hover:-translate-y-1 duration-300">
+<div class="flex justify-between items-start">
+<div class="flex gap-4 items-start">
+<div class="w-12 h-12 rounded-full bg-tertiary-container text-on-tertiary-container flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">record_voice_over</span>
+</div>
+<div class="flex flex-col gap-1">
+<h3 class="font-headline-md text-headline-md text-on-surface">响声预警</h3>
+<p class="font-body-md text-body-md text-on-surface-variant max-w-[280px]">持续分析环境异常声响特征（如呼救声、玻璃破碎声等），及时捕捉潜在危险信号。</p>
+</div>
+</div>
+<!-- Toggle -->
+<label class="relative inline-flex items-center cursor-pointer mt-2">
+<input class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<div class="border-t border-surface-variant pt-4 opacity-50 pointer-events-none">
+<div class="flex justify-between items-center mb-3">
+<span class="font-label-md text-label-md text-on-surface-variant">识别灵敏度</span>
+<span class="font-label-md text-label-md text-on-surface-variant">未开启</span>
+</div>
+<!-- Segmented Control -->
+<div class="flex bg-surface-container rounded-lg p-1 w-full relative">
+<button class="flex-1 py-2 font-label-md text-label-md bg-surface-container-lowest text-on-surface shadow-sm rounded-md z-10">低</button>
+<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">中</button>
+<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">高</button>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- BottomNavBar (from JSON) -->
+<nav class="docked full-width bottom-0 z-50 rounded-t-xl bg-surface dark:bg-surface-dim shadow-[0_-4px_12px_rgba(0,0,0,0.04)] fixed bottom-0 left-0 w-full flex justify-around items-center px-2 pb-6 pt-3 md:hidden">
+<!-- Item 1: 首页 (Inactive) -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-2xl group" href="#">
+<span class="material-symbols-outlined text-[24px] mb-1 group-hover:scale-110 transition-transform" style="font-variation-settings: 'FILL' 0;">home</span>
+<span class="font-label-md text-label-md text-[12px]">首页</span>
+</a>
+<!-- Item 2: 守护 (Active - matches monitoring settings) -->
+<a class="flex flex-col items-center justify-center bg-primary-container dark:bg-primary text-on-primary-container dark:text-on-primary rounded-2xl px-4 py-1.5 scale-90 duration-150 ease-in-out hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
+<span class="material-symbols-outlined text-[24px] mb-1" style="font-variation-settings: 'FILL' 1;">security</span>
+<span class="font-label-md text-label-md text-[12px]">守护</span>
+</a>
+<!-- Item 3: 消息 (Inactive) -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-2xl group" href="#">
+<div class="relative">
+<span class="material-symbols-outlined text-[24px] mb-1 group-hover:scale-110 transition-transform" style="font-variation-settings: 'FILL' 0;">chat_bubble</span>
+<span class="absolute top-0 right-0 w-2 h-2 bg-error rounded-full"></span>
+</div>
+<span class="font-label-md text-label-md text-[12px]">消息</span>
+</a>
+<!-- Item 4: 陪伴 (Inactive) -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-2xl group" href="#">
+<span class="material-symbols-outlined text-[24px] mb-1 group-hover:scale-110 transition-transform" style="font-variation-settings: 'FILL' 0;">volunteer_activism</span>
+<span class="font-label-md text-label-md text-[12px]">陪伴</span>
+</a>
+<!-- Item 5: 我的 (Inactive) -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-2xl group" href="#">
+<span class="material-symbols-outlined text-[24px] mb-1 group-hover:scale-110 transition-transform" style="font-variation-settings: 'FILL' 0;">person</span>
+<span class="font-label-md text-label-md text-[12px]">我的</span>
+</a>
+</nav>
+<!-- Desktop Navigation Alternative (Hidden on Mobile) -->
+<nav class="hidden md:flex flex-col fixed top-1/2 -translate-y-1/2 left-4 gap-4 z-50">
+<div class="bg-surface-container-lowest shadow-lg rounded-2xl p-2 flex flex-col gap-2 border border-surface-variant">
+<button class="w-12 h-12 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors" title="首页">
+<span class="material-symbols-outlined">home</span>
+</button>
+<button class="w-12 h-12 rounded-xl flex items-center justify-center bg-primary-container text-on-primary-container shadow-inner" title="守护">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">security</span>
+</button>
+<button class="w-12 h-12 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors relative" title="消息">
+<span class="material-symbols-outlined">chat_bubble</span>
+<span class="absolute top-3 right-3 w-2 h-2 bg-error rounded-full"></span>
+</button>
+<button class="w-12 h-12 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors" title="陪伴">
+<span class="material-symbols-outlined">volunteer_activism</span>
+</button>
+<button class="w-12 h-12 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors" title="我的">
+<span class="material-symbols-outlined">person</span>
+</button>
+</div>
+</nav>
 
-    <main class="app-main app-stack">
-        <section class="app-panel p-5 flex flex-col gap-4">
-            <div class="flex items-start justify-between gap-4">
-                <div>
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">本机执行</p>
-                    <h2 id="rulesStatusTitle" class="font-display text-[22px] font-bold text-on-surface tracking-tight mt-1">正在读取规则</h2>
-                    <p id="rulesStatusText" class="font-sans text-[13px] text-on-surface-variant leading-relaxed mt-2">保存后会同步给这台 Mac 上的 edge-agent。</p>
-                </div>
-                <span id="rulesSaveState" class="app-section-badge shrink-0">加载中</span>
-            </div>
-            <div class="grid grid-cols-3 gap-3">
-                <label class="app-rhythm-mini px-3 py-3">
-                    <span class="font-sans text-[10px] font-semibold text-on-surface-variant">抽帧间隔</span>
-                    <input id="captureInterval" type="number" min="1" max="3600" class="w-full bg-transparent font-display text-[18px] font-bold text-on-surface mt-1" value="5">
-                    <span class="font-sans text-[11px] text-primary">秒</span>
-                </label>
-                <label class="app-rhythm-mini px-3 py-3">
-                    <span class="font-sans text-[10px] font-semibold text-on-surface-variant">无变化</span>
-                    <input id="noMotionSeconds" type="number" min="10" max="86400" class="w-full bg-transparent font-display text-[18px] font-bold text-on-surface mt-1" value="300">
-                    <span class="font-sans text-[11px] text-primary">秒提醒</span>
-                </label>
-                <label class="app-rhythm-mini px-3 py-3">
-                    <span class="font-sans text-[10px] font-semibold text-on-surface-variant">无人</span>
-                    <input id="noPersonSeconds" type="number" min="10" max="86400" class="w-full bg-transparent font-display text-[18px] font-bold text-on-surface mt-1" value="300">
-                    <span class="font-sans text-[11px] text-primary">秒提醒</span>
-                </label>
-            </div>
-        </section>
-
-        <section class="app-soft-card p-5 flex flex-col">
-            <div class="flex items-center justify-between gap-3 mb-2">
-                <div class="flex items-center gap-2">
-                    <span class="material-symbols-outlined text-primary">security</span>
-                    <h3 class="font-display text-lg font-bold text-on-surface">高优先级提醒</h3>
-                </div>
-                <span class="app-status-badge good">已接入</span>
-            </div>
-
-            <div class="flex flex-col divide-y divide-outline-variant/10">
-                <label class="flex justify-between items-center py-3 gap-4">
-                    <div class="flex flex-col gap-0.5 pr-2">
-                        <span class="font-display text-base font-bold text-on-surface">设备离线提醒</span>
-                        <span class="font-sans text-[12px] text-on-surface-variant">摄像头断开或无法拉流时提醒。</span>
-                    </div>
-                    <input id="offlineEnabled" data-rule-input type="checkbox" class="sr-only peer">
-                    <span class="app-switch"></span>
-                </label>
-
-                <label class="flex justify-between items-center py-3 gap-4">
-                    <div class="flex flex-col gap-0.5 pr-2">
-                        <span class="font-display text-base font-bold text-on-surface">黑屏 / 遮挡提醒</span>
-                        <span class="font-sans text-[12px] text-on-surface-variant">画面亮度和对比度异常时提醒。</span>
-                    </div>
-                    <input id="blackEnabled" data-rule-input type="checkbox" class="sr-only peer">
-                    <span class="app-switch"></span>
-                </label>
-
-                <label class="flex justify-between items-center py-3 gap-4">
-                    <div class="flex flex-col gap-0.5 pr-2">
-                        <span class="font-display text-base font-bold text-on-surface">疑似跌倒候选</span>
-                        <span id="fallHint" class="font-sans text-[12px] text-on-surface-variant">需要 YOLO 后端。</span>
-                    </div>
-                    <input id="fallDetectionEnabled" data-rule-input type="checkbox" class="sr-only peer">
-                    <span class="app-switch"></span>
-                </label>
-            </div>
-        </section>
-
-        <section class="app-soft-card p-5 flex flex-col">
-            <div class="flex items-center justify-between gap-3 mb-2">
-                <div class="flex items-center gap-2">
-                    <span class="material-symbols-outlined text-primary">visibility</span>
-                    <h3 class="font-display text-lg font-bold text-on-surface">画面观察</h3>
-                </div>
-                <span id="detectorBadge" class="app-status-badge muted">检测中</span>
-            </div>
-
-            <div class="flex flex-col divide-y divide-outline-variant/10">
-                <label class="flex justify-between items-center py-3 gap-4">
-                    <div class="flex flex-col gap-0.5 pr-2">
-                        <span class="font-display text-base font-bold text-on-surface">人形检测</span>
-                        <span id="personHint" class="font-sans text-[12px] text-on-surface-variant">识别画面里是否有人。</span>
-                    </div>
-                    <input id="personDetectionEnabled" data-rule-input type="checkbox" class="sr-only peer">
-                    <span class="app-switch"></span>
-                </label>
-
-                <label class="flex justify-between items-center py-3 gap-4">
-                    <div class="flex flex-col gap-0.5 pr-2">
-                        <span class="font-display text-base font-bold text-on-surface">长时间未检测到人</span>
-                        <span class="font-sans text-[12px] text-on-surface-variant">超过无人阈值后生成提醒。</span>
-                    </div>
-                    <input id="noPersonMirror" data-rule-input type="checkbox" class="sr-only peer">
-                    <span class="app-switch"></span>
-                </label>
-
-                <label class="flex justify-between items-center py-3 gap-4">
-                    <div class="flex flex-col gap-0.5 pr-2">
-                        <span class="font-display text-base font-bold text-on-surface">长时间无画面变化</span>
-                        <span class="font-sans text-[12px] text-on-surface-variant">画面变化低于阈值并持续一段时间后提醒。</span>
-                    </div>
-                    <input id="noMotionEnabled" data-rule-input type="checkbox" class="sr-only peer">
-                    <span class="app-switch"></span>
-                </label>
-            </div>
-        </section>
-
-        <section class="app-soft-card p-5 flex flex-col">
-            <div class="flex items-center justify-between gap-3 mb-2">
-                <div class="flex items-center gap-2">
-                    <span class="material-symbols-outlined text-primary">schedule</span>
-                    <h3 class="font-display text-lg font-bold text-on-surface">生活节奏观察</h3>
-                </div>
-                <span class="app-status-badge warn">待接入</span>
-            </div>
-
-            <div class="flex flex-col divide-y divide-outline-variant/10">
-                <div class="flex justify-between items-center py-3 gap-4 opacity-70">
-                    <div class="flex flex-col gap-0.5 pr-2">
-                        <span class="font-display text-base font-bold text-on-surface">夜间异常活动</span>
-                        <span class="font-sans text-[12px] text-on-surface-variant">需要时间窗 + 人形 + 移动联合判断。</span>
-                    </div>
-                    <span class="app-status-badge muted shrink-0">P1</span>
-                </div>
-                <div class="flex justify-between items-center py-3 gap-4 opacity-70">
-                    <div class="flex flex-col gap-0.5 pr-2">
-                        <span class="font-display text-base font-bold text-on-surface">区域停留提醒</span>
-                        <span class="font-sans text-[12px] text-on-surface-variant">需要在画面里配置看护区域。</span>
-                    </div>
-                    <span class="app-status-badge muted shrink-0">P1</span>
-                </div>
-                <div class="flex justify-between items-center py-3 gap-4 opacity-70">
-                    <div class="flex flex-col gap-0.5 pr-2">
-                        <span class="font-display text-base font-bold text-on-surface">未按时起床 / 用餐</span>
-                        <span class="font-sans text-[12px] text-on-surface-variant">需要房间、时间窗和多日基线。</span>
-                    </div>
-                    <span class="app-status-badge muted shrink-0">P1</span>
-                </div>
-            </div>
-        </section>
-
-        <section class="app-soft-card p-5 flex items-center justify-between gap-4">
-            <div>
-                <p class="font-display text-base font-bold text-on-surface">事件通知</p>
-                <p class="font-sans text-[12px] text-on-surface-variant mt-1">当前先控制本机事件通知开关，后续接 Bark / 飞书。</p>
-            </div>
-            <label class="shrink-0">
-                <input id="notificationEnabled" data-rule-input type="checkbox" class="sr-only peer">
-                <span class="app-switch"></span>
-            </label>
-        </section>
-    </main>
-
-    <nav class="app-bottom-nav">
-        <div class="app-bottom-nav-inner flex justify-between items-center">
-            <a href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">home</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
-            </a>
-            <a href="monitor.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
-                <div class="app-nav-pill active"><span class="material-symbols-outlined fill text-[22px]">nest_cam_indoor</span></div>
-                <span class="font-sans text-[11px] font-bold tracking-wide">守护</span>
-            </a>
-            <a href="events.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">history</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
-            </a>
-            <a href="companionship.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">diversity_1</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">陪伴</span>
-            </a>
-            <a href="privacy.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">person</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
-            </a>
-        </div>
-    </nav>
-    <script src="assets/scripts/edge-client.js?v=20260630-video1"></script>
-    <script src="assets/scripts/rules-live.js?v=20260629-video1"></script>
-</body>
-</html>
+<script id="gohome-stitch-route-links">
+  (() => {
+    const routes = {
+      "首页": "index.html",
+      "守护": "monitor.html",
+      "消息": "events.html",
+      "陪伴": "companionship.html",
+      "我的": "privacy.html",
+      "实时画面": "watch.html",
+      "事件列表": "events.html",
+      "规则设置": "rules.html",
+      "家庭成员": "family_members.html",
+      "通知设置": "notifications.html",
+      "隐私与数据": "privacy_data.html",
+      "添加摄像头": "connect.html",
+      "设备管理": "cameras.html"
+    };
+    document.addEventListener("click", (event) => {
+      const item = event.target.closest("a, button");
+      if (!item) return;
+      if (item.hasAttribute("onclick")) return;
+      const href = item.getAttribute("href");
+      if (href && href !== "#") return;
+      const text = (item.innerText || item.textContent || "").replace(/\s+/g, "").trim();
+      const route = routes[text];
+      if (!route) return;
+      event.preventDefault();
+      window.location.href = route;
+    });
+  })();
+</script>
+<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+</body></html>

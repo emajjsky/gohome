@@ -1,175 +1,297 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>接入摄像头 - 回家</title>
-    <link href="assets/styles/tailwind.css" rel="stylesheet">
-    <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
-    <style>
-        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
-        .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
-        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
-        body { -webkit-tap-highlight-color: transparent; }
-        ::-webkit-scrollbar { width: 0px; background: transparent; }
-        input { outline: none; }
+
+<html class="light" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<title>添加摄像头 - 回家 App</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=Hanken+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "surface-tint": "#0060ac",
+                        "on-secondary-fixed-variant": "#474744",
+                        "surface-dim": "#dbd9d9",
+                        "outline": "#717783",
+                        "tertiary-fixed-dim": "#87dc2c",
+                        "on-secondary": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "secondary-fixed": "#e4e2dd",
+                        "on-tertiary-fixed": "#0e2000",
+                        "surface-container-high": "#eae8e7",
+                        "outline-variant": "#c1c7d3",
+                        "tertiary-container": "#498300",
+                        "surface-container-lowest": "#ffffff",
+                        "on-tertiary-container": "#f9ffeb",
+                        "background": "#fbf9f8",
+                        "secondary-fixed-dim": "#c8c6c2",
+                        "on-tertiary": "#ffffff",
+                        "on-surface-variant": "#414751",
+                        "surface-container-highest": "#e4e2e2",
+                        "on-background": "#1b1c1c",
+                        "surface-variant": "#e4e2e2",
+                        "on-tertiary-fixed-variant": "#2a5000",
+                        "on-primary-container": "#fdfcff",
+                        "on-secondary-container": "#63635f",
+                        "on-primary-fixed": "#001c39",
+                        "inverse-surface": "#303030",
+                        "tertiary-fixed": "#a1fa49",
+                        "surface": "#fbf9f8",
+                        "surface-container-low": "#f5f3f3",
+                        "surface-bright": "#fbf9f8",
+                        "primary-container": "#2976c7",
+                        "on-surface": "#1b1c1c",
+                        "primary-fixed": "#d4e3ff",
+                        "primary": "#005da7",
+                        "on-primary-fixed-variant": "#004883",
+                        "error": "#ba1a1a",
+                        "on-error": "#ffffff",
+                        "inverse-on-surface": "#f2f0f0",
+                        "error-container": "#ffdad6",
+                        "secondary-container": "#e1dfdb",
+                        "primary-fixed-dim": "#a4c9ff",
+                        "tertiary": "#386800",
+                        "inverse-primary": "#a4c9ff",
+                        "surface-container": "#efeded",
+                        "secondary": "#5e5e5b",
+                        "on-secondary-fixed": "#1b1c19",
+                        "on-primary": "#ffffff"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    spacing: {
+                        "stack-sm": "8px",
+                        "gutter-card": "16px",
+                        "stack-md": "16px",
+                        "stack-lg": "32px",
+                        "margin-page": "20px"
+                    },
+                    fontFamily: {
+                        "body-lg": ["Inter"],
+                        "label-md": ["Inter"],
+                        "body-md": ["Inter"],
+                        "headline-md": ["Hanken Grotesk"],
+                        "headline-lg": ["Hanken Grotesk"],
+                        "headline-lg-mobile": ["Hanken Grotesk"]
+                    },
+                    fontSize: {
+                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
+                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .icon-filled {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+
+        /* Custom radio button styles for tags */
+        input[type="radio"]:checked + label {
+            background-color: var(--tw-colors-primary-container);
+            color: var(--tw-colors-on-primary-container);
+            border-color: var(--tw-colors-primary-container);
+        }
     </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+
+<style id="gohome-app-minimal-adapt">
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+  }
+  html, body {
+    min-height: 100dvh;
+    background: #fbf9f8;
+  }
+  body {
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  nav.fixed.bottom-0,
+  nav.docked.bottom-0,
+  nav.pb-safe-area-bottom {
+    padding-bottom: calc(10px + var(--safe-bottom)) !important;
+  }
+  @media (display-mode: standalone) {
+    body {
+      padding-top: var(--safe-top);
+    }
+  }
+</style>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
 </head>
-<body class="app-phone-shell text-on-surface font-sans antialiased">
-    <header class="app-topbar">
-        <a id="connectBackLink" href="device_binding.html?app=1" class="app-topbar-side">
-            <span class="material-symbols-outlined">arrow_back</span>
-        </a>
-        <p class="app-topbar-title">让家里被看见</p>
-        <a id="connectTopMonitorLink" href="monitor.html?app=1" class="app-topbar-side">
-            <span class="material-symbols-outlined text-[20px]">nest_cam_indoor</span>
-        </a>
-    </header>
-
-    <main class="app-main app-stack">
-        <section class="app-home-hero p-6 flex flex-col gap-4">
-            <div class="flex items-start justify-between gap-4">
-                <div class="min-w-0">
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.14em]">EDGE SETUP</p>
-                    <h2 id="edgeConnectionStatus" class="font-display text-[26px] font-bold text-on-surface tracking-[-0.02em] leading-[1.14] mt-1">正在连接守护服务</h2>
-                    <p id="edgeConnectionSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-[1.8] mt-2 max-w-[270px]">这一步只负责把家里的摄像头接到本机服务。</p>
-                </div>
-                <div class="app-icon-chip info w-11 h-11 shrink-0">
-                    <span class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
-                </div>
-            </div>
-            <div class="grid grid-cols-3 gap-3">
-                <div class="app-kpi">
-                    <p>已保存</p>
-                    <p id="edgeCameraCount">-</p>
-                </div>
-                <div class="app-kpi">
-                    <p>主位置</p>
-                    <p id="edgeActiveRoom">-</p>
-                </div>
-                <div class="app-kpi">
-                    <p>最近测试</p>
-                    <p id="edgeLastTest">-</p>
-                </div>
-            </div>
-        </section>
-
-        <section class="app-panel px-5 py-5 flex flex-col gap-4">
-            <div>
-                <p class="font-display text-[18px] font-bold text-on-surface">把摄像头接进来</p>
-                <p class="font-sans text-[12px] text-on-surface-variant leading-[1.8] mt-1.5">摄像头和这台 Mac 在同一个路由器下时，只需要填 IP、账号和密码。</p>
-            </div>
-
-            <form id="cameraConnectForm" class="flex flex-col gap-3">
-                <div class="grid grid-cols-2 gap-3">
-                    <label class="flex flex-col gap-1.5">
-                        <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">名称</span>
-                        <input id="cameraName" class="app-form-field" value="局域网摄像头" autocomplete="off">
-                    </label>
-                    <label class="flex flex-col gap-1.5">
-                        <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">房间</span>
-                        <input id="cameraRoom" class="app-form-field" value="客厅" autocomplete="off">
-                    </label>
-                </div>
-
-                <div class="grid grid-cols-[1fr_86px] gap-3">
-                    <label class="flex flex-col gap-1.5">
-                        <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">摄像头 IP</span>
-                        <input id="cameraHost" class="app-form-field" value="192.168.1.11" inputmode="decimal" autocomplete="off">
-                    </label>
-                    <label class="flex flex-col gap-1.5">
-                        <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">端口</span>
-                        <input id="cameraPort" class="app-form-field" value="554" inputmode="numeric" autocomplete="off">
-                    </label>
-                </div>
-
-                <div class="grid grid-cols-2 gap-3">
-                    <label class="flex flex-col gap-1.5">
-                        <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">账号</span>
-                        <input id="cameraUsername" class="app-form-field" value="admin" autocomplete="off">
-                    </label>
-                    <label class="flex flex-col gap-1.5">
-                        <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">密码</span>
-                        <input id="cameraPassword" type="password" class="app-form-field" autocomplete="off" placeholder="已保存可留空">
-                    </label>
-                </div>
-
-                <label class="flex flex-col gap-1.5">
-                    <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">视频路径</span>
-                    <input id="cameraPath" class="app-form-field" value="/" autocomplete="off">
-                </label>
-
-                <div class="grid grid-cols-2 gap-3 pt-1">
-                    <button id="testCameraButton" class="app-btn-primary h-11 text-white font-sans text-[13px] font-bold flex items-center justify-center gap-2" type="button">
-                        <span class="material-symbols-outlined text-[18px]">play_circle</span>
-                        测试画面
+<body class="bg-background text-on-background min-h-screen flex flex-col font-body-md antialiased selection:bg-primary-container selection:text-on-primary-container">
+<!-- TopAppBar - Suppressed main nav, using back button for transactional flow -->
+<header class="bg-surface sticky top-0 z-40 w-full px-margin-page py-4 flex items-center justify-between shadow-[0_4px_12px_rgba(0,0,0,0.02)]">
+<button class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-low transition-colors text-on-surface-variant active:scale-95">
+<span class="material-symbols-outlined text-[24px]">arrow_back</span>
+</button>
+<h1 class="font-headline-md text-headline-md font-bold text-on-surface">添加摄像头</h1>
+<div class="w-10 h-10"></div> <!-- Spacer for centering -->
+</header>
+<main class="flex-1 overflow-y-auto pb-24">
+<!-- Setup Progress Visualizer -->
+<div class="w-full bg-surface-container-lowest pt-stack-lg pb-stack-md px-margin-page mb-stack-sm flex flex-col items-center">
+<div class="relative w-48 h-48 mb-stack-md rounded-2xl overflow-hidden bg-surface-container shadow-[0_8px_24px_rgba(0,0,0,0.04)]">
+<!-- Placeholder for camera hardware illustration -->
+<div class="w-full h-full bg-cover bg-center" data-alt="A clean, minimalist 3D rendering of a modern white smart home security camera on a soft, warm cream background. The lighting is soft and studio-like, emphasizing the smooth curves and premium build quality of the device, fitting a dignified, high-end corporate aesthetic." style="background-image: url('assets/stitch-images/07-4ca547aed1.jpg')"></div>
+</div>
+<h2 class="font-headline-md text-headline-md text-primary mb-2 text-center">提交给家庭盒子接入</h2>
+<p class="font-body-md text-body-md text-on-surface-variant text-center max-w-[280px]">App 只负责命名和房间配置，摄像头由家庭盒子在老人家网络内接入。</p>
+</div>
+<div class="px-margin-page py-stack-md space-y-stack-lg">
+<!-- Section: Camera Name -->
+<section class="bg-surface-container-lowest rounded-2xl p-gutter-card shadow-[0_4px_12px_rgba(0,0,0,0.02)] border border-surface-container-low">
+<div class="flex items-center gap-3 mb-stack-sm text-primary">
+<span class="material-symbols-outlined icon-filled">edit_square</span>
+<h3 class="font-label-md text-label-md text-on-surface">设备名称</h3>
+</div>
+<div class="relative">
+<input class="w-full bg-surface-container-lowest border-b-2 border-outline-variant focus:border-primary text-on-surface font-body-lg text-body-lg py-3 px-1 transition-colors outline-none placeholder:text-outline" placeholder="例如：客厅主干道监控" type="text" value="智能摄像头"/>
+<button class="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface-variant transition-colors p-2 rounded-full">
+<span class="material-symbols-outlined text-[20px]">cancel</span>
+</button>
+</div>
+</section>
+<!-- Section: Location Tags -->
+<section class="bg-surface-container-lowest rounded-2xl p-gutter-card shadow-[0_4px_12px_rgba(0,0,0,0.02)] border border-surface-container-low">
+<div class="flex items-center justify-between mb-stack-md">
+<div class="flex items-center gap-3 text-primary">
+<span class="material-symbols-outlined icon-filled">home_pin</span>
+<h3 class="font-label-md text-label-md text-on-surface">安装位置</h3>
+</div>
+</div>
+<div class="flex flex-wrap gap-3">
+<div>
+<input checked="" class="hidden" id="loc-living" name="location" type="radio"/>
+<label class="inline-flex items-center justify-center px-4 py-2 rounded-full border border-outline-variant text-on-surface-variant font-body-md text-body-md cursor-pointer transition-all hover:bg-surface-container-low" for="loc-living">
+                            客厅
+                        </label>
+</div>
+<div>
+<input class="hidden" id="loc-dining" name="location" type="radio"/>
+<label class="inline-flex items-center justify-center px-4 py-2 rounded-full border border-outline-variant text-on-surface-variant font-body-md text-body-md cursor-pointer transition-all hover:bg-surface-container-low" for="loc-dining">
+                            餐厅
+                        </label>
+</div>
+<div>
+<input class="hidden" id="loc-entryway" name="location" type="radio"/>
+<label class="inline-flex items-center justify-center px-4 py-2 rounded-full border border-outline-variant text-on-surface-variant font-body-md text-body-md cursor-pointer transition-all hover:bg-surface-container-low" for="loc-entryway">
+                            玄关
+                        </label>
+</div>
+<div>
+<input class="hidden" id="loc-bedroom" name="location" type="radio"/>
+<label class="inline-flex items-center justify-center px-4 py-2 rounded-full border border-outline-variant text-on-surface-variant font-body-md text-body-md cursor-pointer transition-all hover:bg-surface-container-low" for="loc-bedroom">
+                            卧室
+                        </label>
+</div>
+<button class="inline-flex items-center justify-center px-4 py-2 rounded-full border border-dashed border-outline text-outline font-body-md text-body-md cursor-pointer transition-all hover:bg-surface-container-low hover:text-on-surface gap-1">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                        自定义
                     </button>
-                    <button id="saveCameraButton" class="app-btn-secondary h-11 text-on-surface font-sans text-[13px] font-semibold flex items-center justify-center gap-2" type="submit">
-                        <span class="material-symbols-outlined text-[18px]">save</span>
-                        保存启用
-                    </button>
-                </div>
-            </form>
-        </section>
+</div>
+</section>
+<!-- Section: Wi-Fi Setup Guide -->
+<section class="bg-surface-container-lowest rounded-2xl p-gutter-card shadow-[0_4px_12px_rgba(0,0,0,0.02)] border border-surface-container-low relative overflow-hidden">
+<!-- Decorative subtle background -->
+<div class="absolute -right-12 -top-12 w-40 h-40 bg-primary-fixed opacity-30 rounded-full blur-2xl pointer-events-none"></div>
+<div class="flex items-center gap-3 mb-stack-md text-primary relative z-10">
+<span class="material-symbols-outlined icon-filled">wifi</span>
+<h3 class="font-label-md text-label-md text-on-surface">盒子本地接入</h3>
+</div>
+<div class="space-y-4 relative z-10">
+<div class="flex items-start gap-4">
+<div class="w-8 h-8 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center font-label-md text-label-md shrink-0">1</div>
+<div>
+<p class="font-body-md text-body-md text-on-surface mb-1">确认摄像头在线</p>
+<p class="font-body-md text-[14px] leading-5 text-on-surface-variant">摄像头需要先接入老人家网络，家庭盒子会在本地读取视频流。</p>
+</div>
+</div>
+<div class="w-0.5 h-6 bg-outline-variant ml-4 rounded-full opacity-50"></div>
+<div class="flex items-start gap-4">
+<div class="w-8 h-8 rounded-full bg-surface-container-highest text-on-surface-variant flex items-center justify-center font-label-md text-label-md shrink-0">2</div>
+<div class="w-full">
+<p class="font-body-md text-body-md text-on-surface mb-2">等待家庭盒子同步</p>
+<button class="w-full flex items-center justify-between bg-surface-container-low p-3 rounded-xl border border-outline-variant hover:bg-surface-container-highest transition-colors text-left">
+<div class="flex items-center gap-3 overflow-hidden">
+<span class="material-symbols-outlined text-outline">router</span>
+<span class="font-body-md text-body-md text-on-surface truncate">家庭盒子 · 本地接入</span>
+</div>
+<span class="material-symbols-outlined text-outline">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Bottom Action Bar (Transactional Context) -->
+<div class="fixed bottom-0 left-0 w-full bg-surface-container-lowest p-margin-page pb-8 shadow-[0_-8px_24px_rgba(0,0,0,0.06)] z-50">
+<button class="w-full bg-primary text-on-primary font-label-md text-label-md py-4 rounded-full shadow-md active:scale-[0.98] transition-all hover:bg-surface-tint flex items-center justify-center gap-2">
+            提交给家庭盒子同步
+        </button>
+</div>
+<!-- Note: BottomNavBar is suppressed due to 'Linear/Transactional' context rule (Setup flow). -->
 
-        <section class="app-snapshot-card bg-white/72 overflow-hidden">
-            <div class="relative aspect-video bg-black">
-                <img id="connectionPreviewImage" class="hidden w-full h-full object-cover opacity-90" alt="摄像头测试截图">
-                <div id="connectionPreviewEmpty" class="absolute inset-0 grid place-content-center text-center text-white/80">
-                    <span class="material-symbols-outlined text-[36px]">photo_camera</span>
-                    <p class="font-sans text-[12px] font-semibold mt-2">测试后显示真实画面</p>
-                </div>
-                <div class="absolute left-4 right-4 bottom-4 rounded-[24px] bg-black/30 backdrop-blur-md border border-white/10 p-4 text-white">
-                    <p id="connectionResultTitle" class="font-display text-[17px] font-bold tracking-[-0.02em]">等待测试</p>
-                    <p id="connectionResultText" class="font-sans text-[12px] text-white/78 mt-1 leading-[1.8]">保存前先测试一帧，确认本机服务能读到画面。</p>
-                </div>
-            </div>
-        </section>
-
-        <section id="connectNextStepSection" class="hidden app-panel p-5 flex flex-col gap-3">
-            <div class="flex items-center justify-between gap-3">
-                <p class="font-display text-[16px] font-bold text-on-surface">接下来去哪里</p>
-                <span id="connectNextStepBadge" class="app-section-badge shrink-0">待接入</span>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-                <a id="connectMonitorLink" href="monitor.html?app=1" class="app-btn-secondary h-11 flex items-center justify-center font-sans text-[13px] font-bold">守护</a>
-                <a id="connectWatchLink" href="watch.html?app=1" class="app-btn-secondary h-11 flex items-center justify-center font-sans text-[13px] font-bold">实时</a>
-            </div>
-        </section>
-
-        <section class="flex flex-col gap-3">
-            <div class="flex items-center justify-between">
-                <h3 class="font-display text-[18px] font-bold text-on-surface">已经接住的画面</h3>
-                <span id="cameraListBadge" class="app-section-badge shrink-0">加载中</span>
-            </div>
-            <div id="cameraList" class="flex flex-col gap-3"></div>
-        </section>
-    </main>
-
-    <nav class="app-bottom-nav">
-        <div class="app-bottom-nav-inner">
-            <div class="flex justify-between items-center">
-                <a href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">home</span></div>
-                    <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
-                </a>
-                <a id="connectNavMonitorLink" href="monitor.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
-                    <div class="app-nav-pill active"><span class="material-symbols-outlined fill text-[22px]">nest_cam_indoor</span></div>
-                    <span class="font-sans text-[11px] font-bold tracking-wide">守护</span>
-                </a>
-                <a id="connectNavEventsLink" href="events.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">history</span></div>
-                    <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
-                </a>
-                <a href="privacy.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">person</span></div>
-                    <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
-                </a>
-            </div>
-        </div>
-    </nav>
-    <script src="assets/scripts/edge-client.js?v=20260630-video1"></script>
-    <script src="assets/scripts/connect-live.js?v=20260630-flow5"></script>
-</body>
-</html>
+<script id="gohome-stitch-route-links">
+  (() => {
+    const routes = {
+      "首页": "index.html",
+      "守护": "monitor.html",
+      "消息": "events.html",
+      "陪伴": "companionship.html",
+      "我的": "privacy.html",
+      "实时画面": "watch.html",
+      "事件列表": "events.html",
+      "规则设置": "rules.html",
+      "家庭成员": "family_members.html",
+      "通知设置": "notifications.html",
+      "隐私与数据": "privacy_data.html",
+      "添加摄像头": "connect.html",
+      "设备管理": "cameras.html"
+    };
+    document.addEventListener("click", (event) => {
+      const item = event.target.closest("a, button");
+      if (!item) return;
+      if (item.hasAttribute("onclick")) return;
+      const href = item.getAttribute("href");
+      if (href && href !== "#") return;
+      const text = (item.innerText || item.textContent || "").replace(/\s+/g, "").trim();
+      const route = routes[text];
+      if (!route) return;
+      event.preventDefault();
+      window.location.href = route;
+    });
+  })();
+</script>
+<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+</body></html>

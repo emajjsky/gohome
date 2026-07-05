@@ -1,0 +1,203 @@
+/*
+ * Stitch mobile app adaptation.
+ * Keeps the Stitch-generated visual language intact while making desktop
+ * preview render as the intended phone app instead of a stretched web page.
+ */
+:root {
+  --gohome-app-width: 430px;
+  --gohome-safe-top: env(safe-area-inset-top, 0px);
+  --gohome-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --gohome-safe-left: env(safe-area-inset-left, 0px);
+  --gohome-safe-right: env(safe-area-inset-right, 0px);
+}
+
+html {
+  min-height: 100%;
+  background: #f1efec;
+}
+
+body {
+  min-height: 100dvh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body.gohome-app-shell-page {
+  background: #fbf9f8;
+}
+
+.gohome-redundant-node {
+  display: none !important;
+}
+
+body.gohome-app-shell-page > header.gohome-compact-topbar {
+  box-shadow: none !important;
+  border: 0 !important;
+}
+
+body.gohome-app-shell-page > header.gohome-topbar-collapsed {
+  display: none !important;
+}
+
+body.gohome-main-tab-page > main {
+  padding-top: max(18px, calc(14px + var(--gohome-safe-top))) !important;
+}
+
+body.gohome-app-shell-page > header.gohome-topbar-back-only {
+  position: sticky !important;
+  top: 0 !important;
+  min-height: 52px;
+  padding-top: max(8px, calc(8px + var(--gohome-safe-top))) !important;
+  padding-bottom: 0 !important;
+  background: color-mix(in srgb, #fbf9f8 92%, transparent) !important;
+  backdrop-filter: blur(14px);
+}
+
+body.gohome-app-shell-page > header.gohome-topbar-back-only button:not(.gohome-redundant-node),
+body.gohome-app-shell-page > header.gohome-topbar-back-only a:not(.gohome-redundant-node) {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+body.gohome-page-cameras > main,
+body.gohome-page-rules > main,
+body.gohome-page-family_members > main {
+  padding-top: 10px !important;
+}
+
+img {
+  background-color: #efeded;
+}
+
+.user-card-gradient {
+  background:
+    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.34), transparent 34%),
+    linear-gradient(135deg, #2f7ed0 0%, #005da7 58%, #014779 100%) !important;
+  color: #ffffff !important;
+}
+
+.user-card-gradient .text-primary-fixed,
+.user-card-gradient .text-white\/90 {
+  color: rgba(255, 255, 255, 0.86) !important;
+}
+
+.user-card-gradient .text-white {
+  color: #ffffff !important;
+}
+
+.user-card-gradient .bg-black\/10 {
+  background: rgba(0, 0, 0, 0.18) !important;
+}
+
+.user-card-gradient .text-tertiary-fixed-dim {
+  color: #a1fa49 !important;
+}
+
+.bg-primary-container {
+  background-color: #d4e3ff;
+}
+
+.text-on-primary-container {
+  color: #001c39;
+}
+
+.bg-primary {
+  background-color: #005da7;
+}
+
+.text-on-primary {
+  color: #ffffff;
+}
+
+nav.fixed.bottom-0,
+.fixed.bottom-0.left-0.w-full,
+.fixed.bottom-0.inset-x-0,
+.pb-safe-area-bottom {
+  padding-bottom: max(1rem, calc(1rem + var(--gohome-safe-bottom))) !important;
+}
+
+@media (min-width: 500px) {
+  html {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+  }
+
+  body {
+    width: min(100vw, var(--gohome-app-width));
+    flex: 0 0 min(100vw, var(--gohome-app-width));
+    min-height: 100dvh;
+    margin: 0;
+    background: #fbf9f8;
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.05),
+      0 28px 90px rgba(54, 42, 29, 0.14);
+  }
+
+  header,
+  main,
+  footer,
+  .max-w-screen-xl,
+  .max-w-md,
+  .max-w-lg {
+    max-width: var(--gohome-app-width) !important;
+  }
+
+  .fixed.left-0.w-full,
+  .fixed.inset-x-0,
+  nav.fixed {
+    right: auto !important;
+    left: 50% !important;
+    width: min(100vw, var(--gohome-app-width)) !important;
+    transform: translateX(-50%) !important;
+  }
+
+  .fixed.left-0.w-full *,
+  .fixed.inset-x-0 *,
+  nav.fixed * {
+    transform: none;
+  }
+}
+
+/*
+ * Stitch pages were generated mobile-first with Tailwind md:* variants for
+ * desktop web. This product is a phone app, so desktop preview must keep the
+ * mobile IA and bottom nav instead of switching to web layout.
+ */
+@media (min-width: 768px) {
+  .md\:hidden {
+    display: flex !important;
+  }
+
+  .hidden.md\:flex {
+    display: none !important;
+  }
+
+  .md\:grid-cols-2,
+  .md\:grid-cols-3,
+  .md\:grid-cols-4 {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .md\:pb-0 {
+    padding-bottom: 90px !important;
+  }
+
+  .md\:w-16 {
+    width: 3.5rem !important;
+  }
+
+  .md\:h-16 {
+    height: 3.5rem !important;
+  }
+
+  .md\:text-headline-lg {
+    font-size: 24px !important;
+    line-height: 32px !important;
+  }
+
+  .md\:font-headline-lg {
+    font-family: Hanken Grotesk, Inter, system-ui, sans-serif !important;
+  }
+}

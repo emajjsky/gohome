@@ -76,10 +76,17 @@ function createDefaultDb() {
         created_at: timestamp,
         updated_at: timestamp,
         next_ids: {
+            user: 2,
+            family: 2,
+            elder_profile: 1,
+            binding: 1,
+            binding_code: 1,
+            device_token: 1,
             asset: 1,
             event: 1,
             camera: 1,
             heartbeat: 1,
+            calendar_event: 1,
         },
         users: [
             {
@@ -94,14 +101,20 @@ function createDefaultDb() {
             {
                 id: 1,
                 name: "默认家庭",
+                member_count: 1,
                 created_at: timestamp,
             },
         ],
+        elder_profiles: {},
+        device_bindings: [],
+        binding_codes: [],
+        device_tokens: [],
         devices: {},
         cameras: {},
         assets: [],
         events: [],
         heartbeats: [],
+        calendar_events: [],
     };
 }
 
@@ -109,10 +122,28 @@ class JsonStore {
     constructor(filePath) {
         this.filePath = filePath;
         ensureDir(path.dirname(filePath));
-        this.db = fs.existsSync(filePath)
+        this.db = this.normalize(fs.existsSync(filePath)
             ? { ...createDefaultDb(), ...safeJsonParse(fs.readFileSync(filePath, "utf8"), {}) }
-            : createDefaultDb();
+            : createDefaultDb());
         this.save();
+    }
+
+    normalize(db) {
+        const defaults = createDefaultDb();
+        db.next_ids = { ...defaults.next_ids, ...(db.next_ids || {}) };
+        db.users = Array.isArray(db.users) ? db.users : defaults.users;
+        db.families = Array.isArray(db.families) ? db.families : defaults.families;
+        db.elder_profiles = db.elder_profiles && typeof db.elder_profiles === "object" ? db.elder_profiles : {};
+        db.device_bindings = Array.isArray(db.device_bindings) ? db.device_bindings : [];
+        db.binding_codes = Array.isArray(db.binding_codes) ? db.binding_codes : [];
+        db.device_tokens = Array.isArray(db.device_tokens) ? db.device_tokens : [];
+        db.devices = db.devices && typeof db.devices === "object" ? db.devices : {};
+        db.cameras = db.cameras && typeof db.cameras === "object" ? db.cameras : {};
+        db.assets = Array.isArray(db.assets) ? db.assets : [];
+        db.events = Array.isArray(db.events) ? db.events : [];
+        db.heartbeats = Array.isArray(db.heartbeats) ? db.heartbeats : [];
+        db.calendar_events = Array.isArray(db.calendar_events) ? db.calendar_events : [];
+        return db;
     }
 
     save() {
@@ -164,7 +195,9 @@ function createLocalAppServer(options = {}) {
     }
 
     function requireDevice(req, res) {
-        if (tokenFrom(req) !== deviceToken) {
+        const token = tokenFrom(req);
+        const issued = store.db.device_tokens.find((item) => item.token === token && item.status === "active");
+        if (token !== deviceToken && !issued) {
             writeError(res, 401, "device token invalid");
             return false;
         }
@@ -184,6 +217,182 @@ function createLocalAppServer(options = {}) {
             return false;
         }
         return true;
+    }
+
+    function publicUser(user) {
+        return {
+            id: user.id,
+            email: user.email,
+            display_name: user.display_name,
+            created_at: user.created_at,
+        };
+    }
+
+    function publicFamily(family) {
+        return {
+            id: family.id,
+            name: family.name,
+            member_count: Number(family.member_count || 1),
+            created_at: family.created_at,
+            updated_at: family.updated_at || family.created_at,
+        };
+    }
+
+    function selectedFamily(familyId = null) {
+        if (familyId !== null && familyId !== undefined && familyId !== "") {
+            return store.db.families.find((item) => Number(item.id) === Number(familyId)) || null;
+        }
+        return store.db.families[0] || null;
+    }
+
+    function elderProfileKey(familyId, elderId = "elder_primary") {
+        return `${familyId}:${elderId || "elder_primary"}`;
+    }
+
+    function defaultElderProfile(familyId, elderId = "elder_primary") {
+        return {
+            id: elderId,
+            elder_id: elderId,
+            family_id: Number(familyId),
+            display_name: "张阿姨",
+            relationship: "母亲",
+            age: null,
+            city: "杭州",
+            health_notes: "",
+            care_preferences: {
+                fall_detection: true,
+                fire_detection: true,
+                inactivity_observation: true,
+                daily_weather: true,
+                daily_news: true,
+            },
+            created_at: store.db.created_at,
+            updated_at: store.db.updated_at,
+        };
+    }
+
+    function publicBinding(binding) {
+        const device = store.db.devices[String(binding.device_id)] || {};
+        return {
+            id: binding.id,
+            family_id: binding.family_id,
+            device_id: binding.device_id,
+            device_name: binding.device_name || device.name || "回家盒子",
+            device_type: binding.device_type || "edge-agent",
+            status: binding.status || "active",
+            bound_at: binding.bound_at,
+            last_seen_at: device.last_seen_at || binding.last_seen_at || null,
+        };
+    }
+
+    function publicBindingCode(code) {
+        return {
+            id: code.id,
+            family_id: code.family_id,
+            code: code.code,
+            status: code.status,
+            note: code.note || "",
+            expires_at: code.expires_at,
+            created_at: code.created_at,
+            used_at: code.used_at || null,
+            device_id: code.device_id || "",
+        };
+    }
+
+    function activeDeviceToken() {
+        return [...store.db.device_tokens].reverse().find((item) => item.status === "active") || null;
+    }
+
+    function publicDeviceAuthStatus() {
+        const token = activeDeviceToken();
+        return {
+            configured: Boolean(token),
+            token: token ? {
+                id: token.id,
+                device_id: token.device_id,
+                family_id: token.family_id,
+                status: token.status,
+                created_at: token.created_at,
+                last_heartbeat_at: token.last_heartbeat_at || null,
+            } : null,
+        };
+    }
+
+    function normalizeCameraPayload(payload = {}, existing = {}) {
+        const id = existing.id || payload.id || store.nextId("camera");
+        const streamUrl = String(payload.stream_url || existing.stream_url || "").trim();
+        const hasStreamUrl = Boolean(streamUrl);
+        const explicitStatus = payload.status || existing.status || "";
+        const defaultStatus = hasStreamUrl ? "pending_edge_sync" : "pending_edge_setup";
+        return {
+            id,
+            family_id: normalizeNumber(payload.family_id, existing.family_id ?? store.db.families[0]?.id ?? 1),
+            device_id: String(payload.device_id || existing.device_id || currentEdgeDeviceId()),
+            name: String(payload.name || existing.name || "客厅主视"),
+            room: String(payload.room || existing.room || "客厅"),
+            stream_url: streamUrl,
+            enabled: "enabled" in payload ? normalizeBool(payload.enabled) : ("enabled" in existing ? normalizeBool(existing.enabled) : true),
+            status: String(explicitStatus || defaultStatus),
+            sync_status: String(payload.sync_status || existing.sync_status || "pending_edge_sync"),
+            source: String(payload.source || existing.source || "app_server_config"),
+            username: payload.username ?? existing.username ?? null,
+            password: payload.password !== undefined ? String(payload.password || "") : (existing.password || null),
+            last_error: String(payload.last_error || existing.last_error || ""),
+            last_seen_at: existing.last_seen_at || null,
+            edge_reported_at: existing.edge_reported_at || null,
+            created_at: existing.created_at || nowIso(),
+            updated_at: nowIso(),
+        };
+    }
+
+    function publicCamera(camera) {
+        const { stream_url: _streamUrl, username: _username, password: _password, ...safeCamera } = camera;
+        return {
+            ...safeCamera,
+            connection_owner: "edge_agent",
+            password_set: Boolean(camera.password),
+            has_stream_config: Boolean(camera.stream_url),
+        };
+    }
+
+    function cameraConfigVersion() {
+        const cameras = Object.values(store.db.cameras);
+        const fingerprint = cameras
+            .map((camera) => `${camera.id}:${camera.updated_at || ""}:${camera.enabled ? 1 : 0}:${camera.sync_status || ""}`)
+            .sort()
+            .join("|");
+        return `camera-config-${crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 12)}`;
+    }
+
+    function deviceCameraConfig(camera) {
+        return {
+            id: camera.id,
+            camera_id: camera.id,
+            family_id: camera.family_id || store.db.families[0]?.id || 1,
+            device_id: camera.device_id || currentEdgeDeviceId(),
+            name: camera.name,
+            room: camera.room,
+            enabled: Boolean(camera.enabled),
+            status: camera.status || "pending_edge_setup",
+            sync_status: camera.sync_status || "pending_edge_sync",
+            source: camera.source || "app_server_config",
+            stream_url: camera.stream_url || "",
+            username: camera.username || "",
+            password: camera.password || "",
+            setup_required: !camera.stream_url,
+            updated_at: camera.updated_at || null,
+        };
+    }
+
+    function deviceConfigPayload() {
+        return {
+            ok: true,
+            device_id: currentEdgeDeviceId(),
+            generated_at: nowIso(),
+            config_version: cameraConfigVersion(),
+            cameras: Object.values(store.db.cameras).map(deviceCameraConfig),
+            rules: {},
+        };
     }
 
     function publicEvent(event) {
@@ -212,6 +421,8 @@ function createLocalAppServer(options = {}) {
     }
 
     function currentEdgeDeviceId() {
+        const token = activeDeviceToken();
+        if (token?.device_id) return String(token.device_id);
         const device = Object.values(store.db.devices)[0];
         if (device?.device_id || device?.id) return String(device.device_id || device.id);
         const event = [...store.db.events].reverse().find((item) => item.payload?.edge_upload?.edge_device_id);
@@ -243,11 +454,21 @@ function createLocalAppServer(options = {}) {
         const existing = store.db.cameras[cameraKey] || {};
         store.db.cameras[cameraKey] = {
             id: rawCameraId,
+            family_id: existing.family_id || store.db.families[0]?.id || 1,
+            device_id: eventPayload.payload?.edge_upload?.edge_device_id || existing.device_id || currentEdgeDeviceId(),
             name: existing.name || room || `摄像头 ${rawCameraId}`,
             room: room || existing.room || "",
-            enabled: true,
+            enabled: "enabled" in existing ? existing.enabled : true,
             status: "online",
+            sync_status: "edge_reported",
+            source: existing.source || "edge_reported",
+            stream_url: existing.stream_url || "",
+            username: existing.username || "",
+            password: existing.password || null,
             updated_at: nowIso(),
+            edge_reported_at: nowIso(),
+            last_seen_at: nowIso(),
+            last_error: "",
         };
         return store.db.cameras[cameraKey];
     }
@@ -470,6 +691,11 @@ function createLocalAppServer(options = {}) {
         if (!requireDevice(req, res)) return;
         const payload = await parseJsonBody(req);
         const deviceId = String(payload.device_id || payload.id || "edge-local");
+        const issuedToken = store.db.device_tokens.find((item) => item.token === tokenFrom(req) && item.status === "active");
+        if (issuedToken) {
+            issuedToken.device_id = deviceId;
+            issuedToken.last_heartbeat_at = nowIso();
+        }
         store.db.devices[deviceId] = {
             ...store.db.devices[deviceId],
             ...payload,
@@ -566,8 +792,17 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "POST" && (pathname === "/api/auth/login" || pathname === "/api/v1/identity/login")) {
                 const payload = await parseJsonBody(req);
-                const user = store.db.users.find((item) => item.email === payload.email) || store.db.users[0];
-                write(res, 200, { token: appToken, user: { id: user.id, email: user.email, display_name: user.display_name } });
+                const email = String(payload.email || "admin@gohome.local").trim();
+                const user = store.db.users.find((item) => item.email === email) || store.db.users[0];
+                if (!user) {
+                    writeError(res, 401, "账号不存在");
+                    return;
+                }
+                if (user.password && payload.password && String(user.password) !== String(payload.password)) {
+                    writeError(res, 401, "密码不正确");
+                    return;
+                }
+                write(res, 200, { token: appToken, user: publicUser(user) });
                 return;
             }
 
@@ -577,7 +812,7 @@ function createLocalAppServer(options = {}) {
                 let user = store.db.users.find((item) => item.email === email);
                 if (!user) {
                     user = {
-                        id: store.db.users.length + 1,
+                        id: store.nextId("user"),
                         email,
                         display_name: String(payload.display_name || payload.name || "回家用户"),
                         password: String(payload.password || ""),
@@ -586,36 +821,318 @@ function createLocalAppServer(options = {}) {
                     store.db.users.push(user);
                     store.save();
                 }
-                write(res, 200, { token: appToken, user: { id: user.id, email: user.email, display_name: user.display_name } });
+                write(res, 200, { token: appToken, user: publicUser(user) });
                 return;
             }
 
             if (req.method === "GET" && (pathname === "/api/users/me" || pathname === "/api/v1/identity/me")) {
                 if (!requireApp(req, res)) return;
                 const user = store.db.users[0];
-                write(res, 200, { id: user.id, email: user.email, display_name: user.display_name });
+                write(res, 200, publicUser(user));
                 return;
             }
 
-            if (req.method === "GET" && pathname === "/api/families/mine") {
+            if (req.method === "GET" && (pathname === "/api/families/mine" || pathname === "/api/v1/households/mine")) {
                 if (!requireApp(req, res)) return;
-                write(res, 200, store.db.families);
+                write(res, 200, store.db.families.map(publicFamily));
+                return;
+            }
+
+            if (req.method === "POST" && (pathname === "/api/families" || pathname === "/api/v1/households")) {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req);
+                const name = String(payload.name || payload.household_name || "我的家庭").trim();
+                let family = store.db.families.find((item) => item.name === name);
+                if (!family) {
+                    family = {
+                        id: store.nextId("family"),
+                        name,
+                        member_count: 1,
+                        created_at: nowIso(),
+                        updated_at: nowIso(),
+                    };
+                    store.db.families.push(family);
+                    store.save();
+                }
+                write(res, 200, publicFamily(family));
                 return;
             }
 
             if (req.method === "GET" && pathname === "/api/device-bindings") {
                 if (!requireApp(req, res)) return;
                 const familyId = normalizeNumber(url.searchParams.get("family_id"), store.db.families[0]?.id || 1);
-                const deviceId = currentEdgeDeviceId();
-                write(res, 200, [{
-                    id: 1,
-                    family_id: familyId,
+                const bindings = store.db.device_bindings.filter((item) => Number(item.family_id) === Number(familyId));
+                write(res, 200, bindings.map(publicBinding));
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/device-bindings") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req);
+                const familyId = normalizeNumber(payload.family_id, store.db.families[0]?.id || 1);
+                const family = selectedFamily(familyId);
+                if (!family) {
+                    writeError(res, 404, "family not found");
+                    return;
+                }
+                const deviceId = String(payload.device_id || currentEdgeDeviceId());
+                let binding = store.db.device_bindings.find((item) => Number(item.family_id) === Number(familyId) && item.device_id === deviceId);
+                if (!binding) {
+                    binding = {
+                        id: store.nextId("binding"),
+                        family_id: Number(familyId),
+                        device_id: deviceId,
+                        device_name: String(payload.device_name || "回家盒子"),
+                        device_type: "edge-agent",
+                        status: "active",
+                        note: String(payload.note || ""),
+                        bound_at: nowIso(),
+                    };
+                    store.db.device_bindings.push(binding);
+                } else {
+                    binding.status = "active";
+                    binding.device_name = String(payload.device_name || binding.device_name || "回家盒子");
+                    binding.note = String(payload.note || binding.note || "");
+                }
+                store.db.devices[deviceId] = {
+                    ...(store.db.devices[deviceId] || {}),
+                    id: deviceId,
                     device_id: deviceId,
-                    device_name: "回家盒子",
-                    device_type: "edge-agent",
+                    name: binding.device_name,
                     status: "active",
-                    bound_at: store.db.created_at,
-                }]);
+                    last_seen_at: store.db.devices[deviceId]?.last_seen_at || null,
+                    updated_at: nowIso(),
+                };
+                store.save();
+                write(res, 200, publicBinding(binding));
+                return;
+            }
+
+            const elderProfileMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/elders\/([^/]+)\/profile$/);
+            if (elderProfileMatch && req.method === "GET") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(elderProfileMatch[1]);
+                const elderId = decodeURIComponent(elderProfileMatch[2]);
+                const key = elderProfileKey(familyId, elderId);
+                write(res, 200, store.db.elder_profiles[key] || defaultElderProfile(familyId, elderId));
+                return;
+            }
+
+            if (elderProfileMatch && req.method === "PUT") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(elderProfileMatch[1]);
+                const elderId = decodeURIComponent(elderProfileMatch[2]);
+                if (!selectedFamily(familyId)) {
+                    writeError(res, 404, "family not found");
+                    return;
+                }
+                const payload = await parseJsonBody(req);
+                const key = elderProfileKey(familyId, elderId);
+                const existing = store.db.elder_profiles[key] || defaultElderProfile(familyId, elderId);
+                store.db.elder_profiles[key] = {
+                    ...existing,
+                    ...payload,
+                    id: elderId,
+                    elder_id: elderId,
+                    family_id: familyId,
+                    updated_at: nowIso(),
+                };
+                store.save();
+                write(res, 200, store.db.elder_profiles[key]);
+                return;
+            }
+
+            const calendarMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/calendar-events$/);
+            if (calendarMatch && req.method === "GET") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(calendarMatch[1]);
+                const elderId = url.searchParams.get("elder_id") || "";
+                write(res, 200, store.db.calendar_events.filter((item) => (
+                    Number(item.family_id) === familyId && (!elderId || item.elder_id === elderId)
+                )));
+                return;
+            }
+
+            if (calendarMatch && req.method === "POST") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(calendarMatch[1]);
+                const payload = await parseJsonBody(req);
+                const event = {
+                    id: store.nextId("calendar_event"),
+                    family_id: familyId,
+                    elder_id: String(payload.elder_id || "elder_primary"),
+                    title: String(payload.title || "家庭行程"),
+                    starts_at: String(payload.starts_at || nowIso()),
+                    note: String(payload.note || ""),
+                    created_at: nowIso(),
+                    updated_at: nowIso(),
+                };
+                store.db.calendar_events.push(event);
+                store.save();
+                write(res, 200, event);
+                return;
+            }
+
+            const weatherMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/weather-signals$/);
+            if (weatherMatch && req.method === "GET") {
+                if (!requireApp(req, res)) return;
+                write(res, 200, {
+                    family_id: Number(weatherMatch[1]),
+                    city: url.searchParams.get("city") || "杭州",
+                    condition: "多云",
+                    temperature_c: 24,
+                    humidity: 55,
+                    advice: "环境舒适，适合午休。下午注意通风。",
+                    updated_at: nowIso(),
+                });
+                return;
+            }
+
+            if (req.method === "GET" && (pathname === "/api/v1/devices" || pathname === "/api/v1/devices/current")) {
+                if (!requireApp(req, res)) return;
+                const device = {
+                    device_id: currentEdgeDeviceId(),
+                    name: store.db.devices[currentEdgeDeviceId()]?.name || "回家盒子",
+                    status: store.db.devices[currentEdgeDeviceId()]?.status || "active",
+                    last_seen_at: store.db.devices[currentEdgeDeviceId()]?.last_seen_at || null,
+                    bindings: store.db.device_bindings.map(publicBinding),
+                };
+                write(res, 200, pathname.endsWith("/current") ? device : [device]);
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/v1/devices/current/sync-state") {
+                if (!requireApp(req, res)) return;
+                write(res, 200, {
+                    device_id: currentEdgeDeviceId(),
+                    server_time: nowIso(),
+                    config_version: cameraConfigVersion(),
+                    cameras: Object.values(store.db.cameras).map(publicCamera),
+                    rules_version: "local-demo-v1",
+                    pending_commands: [],
+                });
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/device/binding-codes") {
+                if (!requireApp(req, res)) return;
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), store.db.families[0]?.id || 1);
+                write(res, 200, store.db.binding_codes
+                    .filter((item) => Number(item.family_id) === Number(familyId))
+                    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+                    .map(publicBindingCode));
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/device/binding-codes") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req);
+                const familyId = normalizeNumber(payload.family_id, store.db.families[0]?.id || 1);
+                if (!selectedFamily(familyId)) {
+                    writeError(res, 404, "family not found");
+                    return;
+                }
+                const code = {
+                    id: store.nextId("binding_code"),
+                    family_id: Number(familyId),
+                    code: String(Math.floor(100000 + Math.random() * 900000)),
+                    status: "active",
+                    note: String(payload.note || ""),
+                    expires_at: new Date(Date.now() + Math.max(1, normalizeNumber(payload.expires_in_minutes, 10)) * 60000).toISOString(),
+                    created_at: nowIso(),
+                };
+                store.db.binding_codes
+                    .filter((item) => Number(item.family_id) === Number(familyId) && item.status === "active")
+                    .forEach((item) => { item.status = "revoked"; });
+                store.db.binding_codes.push(code);
+                store.save();
+                write(res, 200, publicBindingCode(code));
+                return;
+            }
+
+            if (req.method === "POST" && (pathname === "/api/device/token/exchange" || pathname === "/api/v1/device/token/exchange")) {
+                const payload = await parseJsonBody(req);
+                const code = store.db.binding_codes.find((item) => item.code === String(payload.code || "") && item.status === "active");
+                if (!code || Date.parse(code.expires_at) < Date.now()) {
+                    writeError(res, 400, "binding code invalid or expired");
+                    return;
+                }
+                const deviceId = String(payload.device_id || currentEdgeDeviceId() || `edge-${crypto.randomBytes(6).toString("hex")}`);
+                const token = `dev_${crypto.randomBytes(18).toString("hex")}`;
+                const deviceTokenRecord = {
+                    id: store.nextId("device_token"),
+                    family_id: code.family_id,
+                    device_id: deviceId,
+                    token,
+                    status: "active",
+                    note: String(payload.note || code.note || ""),
+                    created_at: nowIso(),
+                    last_heartbeat_at: null,
+                };
+                store.db.device_tokens.forEach((item) => {
+                    if (item.device_id === deviceId) item.status = "revoked";
+                });
+                store.db.device_tokens.push(deviceTokenRecord);
+                code.status = "used";
+                code.used_at = nowIso();
+                code.device_id = deviceId;
+                let binding = store.db.device_bindings.find((item) => Number(item.family_id) === Number(code.family_id) && item.device_id === deviceId);
+                if (!binding) {
+                    binding = {
+                        id: store.nextId("binding"),
+                        family_id: Number(code.family_id),
+                        device_id: deviceId,
+                        device_name: String(payload.device_name || "回家盒子"),
+                        device_type: "edge-agent",
+                        status: "active",
+                        note: String(payload.note || ""),
+                        bound_at: nowIso(),
+                    };
+                    store.db.device_bindings.push(binding);
+                }
+                store.db.devices[deviceId] = {
+                    ...(store.db.devices[deviceId] || {}),
+                    id: deviceId,
+                    device_id: deviceId,
+                    name: binding.device_name || "回家盒子",
+                    status: "active",
+                    updated_at: nowIso(),
+                };
+                store.save();
+                write(res, 200, {
+                    ok: true,
+                    device_token: token,
+                    token,
+                    device_id: deviceId,
+                    family_id: code.family_id,
+                    binding: publicBinding(binding),
+                    config: { upload_enabled: true },
+                });
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/device/auth-status") {
+                if (!requireApp(req, res)) return;
+                write(res, 200, publicDeviceAuthStatus());
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/device/heartbeat/self") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req);
+                const token = activeDeviceToken();
+                const deviceId = String(token?.device_id || currentEdgeDeviceId());
+                store.db.devices[deviceId] = {
+                    ...(store.db.devices[deviceId] || {}),
+                    ...payload,
+                    id: deviceId,
+                    device_id: deviceId,
+                    status: String(payload.status || "online"),
+                    last_seen_at: nowIso(),
+                };
+                if (token) token.last_heartbeat_at = nowIso();
+                store.save();
+                write(res, 200, { ok: true, device: store.db.devices[deviceId], auth: publicDeviceAuthStatus() });
                 return;
             }
 
@@ -636,7 +1153,85 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && (pathname === "/api/app/cameras" || pathname === "/api/cameras")) {
                 if (!requireApp(req, res)) return;
-                write(res, 200, Object.values(store.db.cameras));
+                write(res, 200, Object.values(store.db.cameras).map(publicCamera));
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/cameras") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req);
+                const camera = normalizeCameraPayload(payload);
+                store.db.cameras[String(camera.id)] = camera;
+                store.save();
+                write(res, 200, publicCamera(camera));
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/cameras/test-connection") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req);
+                const streamUrl = String(payload.stream_url || "").trim();
+                write(res, 200, {
+                    ok: true,
+                    status: streamUrl ? "pending_edge_verify" : "pending_edge_setup",
+                    connection_owner: "edge_agent",
+                    has_stream_config: Boolean(streamUrl),
+                    latency_ms: streamUrl ? 42 : null,
+                    message: streamUrl
+                        ? "配置已保存到服务器，等待家庭盒子同步后实际抓帧验证。"
+                        : "App 不直接连接摄像头，等待家庭盒子在本地完成接入。",
+                });
+                return;
+            }
+
+            const cameraMatch = pathname.match(/^\/api\/cameras\/([^/]+)$/);
+            if (cameraMatch && req.method === "PATCH") {
+                if (!requireApp(req, res)) return;
+                const cameraId = String(cameraMatch[1]);
+                const existing = store.db.cameras[cameraId];
+                if (!existing) {
+                    writeError(res, 404, "camera not found");
+                    return;
+                }
+                const patch = await parseJsonBody(req);
+                const camera = normalizeCameraPayload({ ...existing, ...patch, id: existing.id }, existing);
+                store.db.cameras[cameraId] = camera;
+                store.save();
+                write(res, 200, publicCamera(camera));
+                return;
+            }
+
+            if (cameraMatch && req.method === "DELETE") {
+                if (!requireApp(req, res)) return;
+                const cameraId = String(cameraMatch[1]);
+                if (!store.db.cameras[cameraId]) {
+                    writeError(res, 404, "camera not found");
+                    return;
+                }
+                delete store.db.cameras[cameraId];
+                store.save();
+                write(res, 200, { ok: true, deleted: Number(cameraId) || cameraId });
+                return;
+            }
+
+            const cameraTestMatch = pathname.match(/^\/api\/cameras\/([^/]+)\/test$/);
+            if (cameraTestMatch && req.method === "POST") {
+                if (!requireApp(req, res)) return;
+                const camera = store.db.cameras[String(cameraTestMatch[1])];
+                if (!camera) {
+                    writeError(res, 404, "camera not found");
+                    return;
+                }
+                camera.status = camera.stream_url ? "pending_edge_verify" : "pending_edge_setup";
+                camera.sync_status = "pending_edge_sync";
+                camera.last_error = "";
+                camera.updated_at = nowIso();
+                store.save();
+                write(res, 200, {
+                    ok: true,
+                    camera: publicCamera(camera),
+                    message: "已提交给家庭盒子，等待同步并回传在线状态。",
+                });
                 return;
             }
 
@@ -696,7 +1291,7 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && pathname === "/api/v1/device/config") {
                 if (!requireDevice(req, res)) return;
-                write(res, 200, { ok: true, config: {} });
+                write(res, 200, deviceConfigPayload());
                 return;
             }
 

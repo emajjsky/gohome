@@ -1,108 +1,320 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>实时观看 - 回家</title>
-    <link href="assets/styles/tailwind.css" rel="stylesheet">
-    <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
-    <style>
-        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
-        .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
-        html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
-        body { -webkit-tap-highlight-color: transparent; }
-        ::-webkit-scrollbar { width: 0; background: transparent; }
+
+<html class="light" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<title>回家 - 实时查看</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=Hanken+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-tint": "#0060ac",
+                        "on-secondary-fixed-variant": "#474744",
+                        "surface-dim": "#dbd9d9",
+                        "outline": "#717783",
+                        "tertiary-fixed-dim": "#87dc2c",
+                        "on-secondary": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "secondary-fixed": "#e4e2dd",
+                        "on-tertiary-fixed": "#0e2000",
+                        "surface-container-high": "#eae8e7",
+                        "outline-variant": "#c1c7d3",
+                        "tertiary-container": "#498300",
+                        "surface-container-lowest": "#ffffff",
+                        "on-tertiary-container": "#f9ffeb",
+                        "background": "#fbf9f8",
+                        "secondary-fixed-dim": "#c8c6c2",
+                        "on-tertiary": "#ffffff",
+                        "on-surface-variant": "#414751",
+                        "surface-container-highest": "#e4e2e2",
+                        "on-background": "#1b1c1c",
+                        "surface-variant": "#e4e2e2",
+                        "on-tertiary-fixed-variant": "#2a5000",
+                        "on-primary-container": "#fdfcff",
+                        "on-secondary-container": "#63635f",
+                        "on-primary-fixed": "#001c39",
+                        "inverse-surface": "#303030",
+                        "tertiary-fixed": "#a1fa49",
+                        "surface": "#fbf9f8",
+                        "surface-container-low": "#f5f3f3",
+                        "surface-bright": "#fbf9f8",
+                        "primary-container": "#2976c7",
+                        "on-surface": "#1b1c1c",
+                        "primary-fixed": "#d4e3ff",
+                        "primary": "#005da7",
+                        "on-primary-fixed-variant": "#004883",
+                        "error": "#ba1a1a",
+                        "on-error": "#ffffff",
+                        "inverse-on-surface": "#f2f0f0",
+                        "error-container": "#ffdad6",
+                        "secondary-container": "#e1dfdb",
+                        "primary-fixed-dim": "#a4c9ff",
+                        "tertiary": "#386800",
+                        "inverse-primary": "#a4c9ff",
+                        "surface-container": "#efeded",
+                        "secondary": "#5e5e5b",
+                        "on-secondary-fixed": "#1b1c19",
+                        "on-primary": "#ffffff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "stack-sm": "8px",
+                        "gutter-card": "16px",
+                        "stack-md": "16px",
+                        "stack-lg": "32px",
+                        "margin-page": "20px"
+                    },
+                    "fontFamily": {
+                        "body-lg": ["Inter"],
+                        "label-md": ["Inter"],
+                        "body-md": ["Inter"],
+                        "headline-md": ["Hanken Grotesk"],
+                        "headline-lg": ["Hanken Grotesk"],
+                        "headline-lg-mobile": ["Hanken Grotesk"]
+                    },
+                    "fontSize": {
+                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
+                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        .video-overlay-gradient {
+            background: linear-gradient(to bottom, rgba(0,0,0,0.4) 0%, transparent 20%, transparent 70%, rgba(0,0,0,0.6) 100%);
+        }
     </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+
+<style id="gohome-app-minimal-adapt">
+  :root {
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+  }
+  html, body {
+    min-height: 100dvh;
+    background: #fbf9f8;
+  }
+  body {
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  nav.fixed.bottom-0,
+  nav.docked.bottom-0,
+  nav.pb-safe-area-bottom {
+    padding-bottom: calc(10px + var(--safe-bottom)) !important;
+  }
+  @media (display-mode: standalone) {
+    body {
+      padding-top: var(--safe-top);
+    }
+  }
+</style>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
 </head>
-<body class="app-phone-shell text-on-surface font-sans antialiased">
-    <header class="app-topbar">
-        <a id="watchMonitorTopLink" href="monitor.html?app=1" class="app-topbar-side">
-            <span class="material-symbols-outlined text-[20px]">arrow_back</span>
-        </a>
-        <div class="min-w-0 text-center">
-            <p id="watchHeaderTitle" class="app-topbar-title">家里现在</p>
-            <p id="watchHeaderSub" class="font-sans text-[11px] text-on-surface-variant mt-0.5">连接中</p>
-        </div>
-        <div class="flex items-center gap-2">
-            <a id="watchDetectionTopLink" href="detection.html?app=1" class="app-topbar-side">
-                <span class="material-symbols-outlined text-[20px]">frame_inspect</span>
-            </a>
-            <button id="watchFullscreenButton" type="button" class="app-topbar-side">
-                <span class="material-symbols-outlined text-[20px]">fullscreen</span>
-            </button>
-        </div>
-    </header>
+<body class="bg-background text-on-background font-body-md min-h-screen flex flex-col antialiased">
+<!-- Top Navigation (Contextual 'Back' -> Suppressing Main Shell Nav) -->
+<header class="fixed top-0 left-0 w-full z-50 transition-colors duration-300 bg-transparent" id="app-header">
+<div class="flex justify-between items-center w-full px-margin-page py-4 max-w-screen-xl mx-auto h-16">
+<button aria-label="返回" class="w-10 h-10 flex items-center justify-center rounded-full bg-surface/50 backdrop-blur-md text-on-surface shadow-sm active:scale-95 transition-transform">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">arrow_back_ios_new</span>
+</button>
+<div class="flex gap-2">
+<button aria-label="全屏" class="w-10 h-10 flex items-center justify-center rounded-full bg-surface/50 backdrop-blur-md text-on-surface shadow-sm active:scale-95 transition-transform">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">fullscreen</span>
+</button>
+<button aria-label="设置" class="w-10 h-10 flex items-center justify-center rounded-full bg-surface/50 backdrop-blur-md text-on-surface shadow-sm active:scale-95 transition-transform">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">settings</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="flex-1 flex flex-col">
+<!-- Video Feed Area (Full width, responsive height) -->
+<div class="relative w-full aspect-[4/3] md:aspect-video bg-inverse-surface mt-0 flex-shrink-0 group overflow-hidden">
+<!-- Simulated Video Content -->
+<img alt="客厅实时画面" class="w-full h-full object-cover" data-alt="A high-quality, wide-angle interior view of a bright, modern, and warm living room, styled for elderly care. The room features soft, comfortable beige furniture, minimal clutter, large windows letting in bright daytime sunlight, and potted indoor plants. The image is clear and crisp, resembling a high-definition security camera feed, set in a domestic, calm environment. Corporate modern aesthetic, safe and tranquil mood." src="assets/stitch-images/10-31f4f39247.jpg"/>
+<!-- Video Overlay (Gradient for text readability) -->
+<div class="absolute inset-0 video-overlay-gradient pointer-events-none"></div>
+<!-- On-Video Status Display -->
+<div class="absolute top-20 left-4 px-3 py-1.5 rounded-full bg-surface/60 backdrop-blur-md border border-surface-variant flex items-center gap-2 shadow-sm">
+<div class="w-2 h-2 rounded-full bg-tertiary-fixed-dim animate-pulse"></div>
+<span class="font-label-md text-label-md text-on-surface">客厅 - 直播中</span>
+</div>
+<!-- On-Video Time/Connection -->
+<div class="absolute bottom-4 right-4 text-on-primary font-body-md text-body-md opacity-90 flex items-center gap-3 drop-shadow-md">
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[18px]">wifi</span> 良好</span>
+<span id="current-time">14:23:45</span>
+</div>
+</div>
+<!-- Scrollable Content Area -->
+<div class="flex-1 overflow-y-auto no-scrollbar pb-stack-lg rounded-t-3xl -mt-6 bg-background relative z-10 shadow-[0_-8px_24px_rgba(0,0,0,0.05)]">
+<div class="max-w-screen-xl mx-auto px-margin-page pt-8">
+<!-- Status & Information Panel -->
+<section class="mb-stack-lg">
+<h2 class="font-headline-lg-mobile text-headline-lg-mobile text-on-surface mb-stack-md">环境状态</h2>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-gutter-card">
+<!-- Status Item 1: Temperature -->
+<div class="bg-surface-container-lowest p-4 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-low flex flex-col gap-2">
+<div class="flex items-center justify-between">
+<span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">thermostat</span>
+<span class="font-label-md text-label-md text-secondary">适宜</span>
+</div>
+<div>
+<div class="font-headline-md text-headline-md text-on-surface">24°C</div>
+<div class="font-body-md text-body-md text-on-surface-variant text-sm">室内温度</div>
+</div>
+</div>
+<!-- Status Item 2: Connection -->
+<div class="bg-surface-container-lowest p-4 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-low flex flex-col gap-2">
+<div class="flex items-center justify-between">
+<span class="material-symbols-outlined text-tertiary-container" style="font-variation-settings: 'FILL' 1;">router</span>
+<span class="font-label-md text-label-md text-tertiary-container">稳定</span>
+</div>
+<div>
+<div class="font-headline-md text-headline-md text-on-surface">连接正常</div>
+<div class="font-body-md text-body-md text-on-surface-variant text-sm">设备网络</div>
+</div>
+</div>
+<!-- Status Item 3: Motion -->
+<div class="bg-surface-container-lowest p-4 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-low flex flex-col gap-2">
+<div class="flex items-center justify-between">
+<span class="material-symbols-outlined text-on-surface-variant" style="font-variation-settings: 'FILL' 1;">directions_run</span>
+<span class="font-label-md text-label-md text-secondary">静息</span>
+</div>
+<div>
+<div class="font-headline-md text-headline-md text-on-surface">无活动</div>
+<div class="font-body-md text-body-md text-on-surface-variant text-sm">过去 30 分钟</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Location Switcher (Horizontal List) -->
+<section class="mt-stack-lg">
+<h2 class="font-headline-md text-headline-md text-on-surface mb-stack-md">切换位置</h2>
+<div class="flex overflow-x-auto no-scrollbar gap-gutter-card pb-4 -mx-margin-page px-margin-page snap-x">
+<!-- Location 1 (Active) -->
+<div class="snap-start flex-shrink-0 w-32 cursor-pointer group">
+<div class="w-full aspect-square rounded-2xl overflow-hidden mb-2 relative ring-2 ring-primary ring-offset-2 ring-offset-background">
+<img alt="客厅缩略图" class="w-full h-full object-cover transition-transform group-hover:scale-105" data-alt="A close-up, high-quality shot of a modern, clean living room area, focusing on a comfortable armchair and a small side table. Bright, warm natural light, light mode aesthetic, safe and inviting mood, minimalist corporate style." src="assets/stitch-images/16-fa7d16a256.jpg"/>
+<div class="absolute inset-0 bg-black/10"></div>
+</div>
+<p class="font-label-md text-label-md text-center text-primary">客厅</p>
+</div>
+<!-- Location 2 -->
+<div class="snap-start flex-shrink-0 w-32 cursor-pointer group opacity-80 hover:opacity-100 transition-opacity">
+<div class="w-full aspect-square rounded-2xl overflow-hidden mb-2 relative border border-surface-variant">
+<img alt="餐厅缩略图" class="w-full h-full object-cover transition-transform group-hover:scale-105" data-alt="A high-quality view of a neat, minimalist kitchen and dining area. White cabinets, warm wood tones, clean countertops, bright daylight. Calm, domestic, safe environment, modern corporate style." src="assets/stitch-images/12-1c1c8ba778.jpg"/>
+</div>
+<p class="font-label-md text-label-md text-center text-on-surface-variant">餐厅</p>
+</div>
+<!-- Location 3 -->
+<div class="snap-start flex-shrink-0 w-32 cursor-pointer group opacity-80 hover:opacity-100 transition-opacity">
+<div class="w-full aspect-square rounded-2xl overflow-hidden mb-2 relative border border-surface-variant flex items-center justify-center bg-surface-container-high">
+<span class="material-symbols-outlined text-outline text-3xl" style="font-variation-settings: 'FILL' 0;">videocam_off</span>
+</div>
+<p class="font-label-md text-label-md text-center text-on-surface-variant flex items-center justify-center gap-1">
+                                卧室 <span class="w-1.5 h-1.5 rounded-full bg-outline"></span>
+</p>
+</div>
+</div>
+</section>
+</div>
+</div>
+</main>
+<script>
+        // Simple time updater for the video overlay
+        function updateTime() {
+            const timeElement = document.getElementById('current-time');
+            if (timeElement) {
+                const now = new Date();
+                timeElement.textContent = now.toLocaleTimeString('zh-CN', { hour12: false });
+            }
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
 
-    <main class="app-main app-stack">
-        <section class="app-panel p-5 flex flex-col gap-3">
-            <div class="flex items-center justify-between gap-3">
-                <div>
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.14em]">LIVE</p>
-                    <p id="watchFact" class="font-display text-[22px] font-bold text-on-surface mt-1 tracking-[-0.02em]">正在连接家里画面</p>
-                </div>
-                <span id="watchStatusBadge" class="app-section-badge shrink-0">连接中</span>
-            </div>
-            <p id="watchMeta" class="font-sans text-[12px] text-on-surface-variant leading-relaxed">等待摄像头</p>
-        </section>
+        // Subtle header background reveal on scroll
+        const scrollArea = document.querySelector('.overflow-y-auto');
+        const header = document.getElementById('app-header');
 
-        <section class="app-snapshot-card bg-white/70 overflow-hidden">
-            <div id="watchStage" class="relative bg-black min-h-[200px]" style="aspect-ratio: 16 / 9;">
-                <img id="watchStageImage" alt="家里实时画面" class="w-full h-full object-cover">
-                <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/14"></div>
-                <div class="absolute top-3 left-3 right-3 flex items-start justify-between gap-3">
-                    <div class="flex flex-wrap gap-2">
-                        <span id="watchRoomBadge" class="px-3 py-1.5 rounded-full bg-white/14 backdrop-blur-md text-white text-[10px] font-semibold">未选择</span>
-                    </div>
-                    <span id="watchProfileBadge" class="px-3 py-1.5 rounded-full bg-white/14 backdrop-blur-md text-white text-[10px] font-semibold">mobile</span>
-                </div>
-                <div class="absolute bottom-0 left-0 right-0 p-5 flex flex-col gap-1.5">
-                    <p id="watchLiveLabel" class="font-sans text-[11px] font-semibold text-white/78 tracking-[0.12em]">LIVE</p>
-                    <p class="font-display text-[24px] font-bold text-white leading-[1.12] tracking-[-0.02em]">家里此刻的样子</p>
-                    <p class="font-sans text-[12px] text-white/80 leading-relaxed max-w-[220px]">上方切检测，下方切摄像头和档位，尽量把动作留到最少。</p>
-                </div>
-                <div id="watchEmptyState" class="absolute inset-0 hidden items-center justify-center bg-black/70 text-white text-center px-8">
-                    <div class="flex flex-col items-center gap-3">
-                        <span class="material-symbols-outlined text-[34px]">videocam_off</span>
-                        <p id="watchEmptyText" class="font-sans text-[13px] font-semibold">还没有可看的摄像头</p>
-                    </div>
-                </div>
-            </div>
-        </section>
+        if (scrollArea && header) {
+            scrollArea.addEventListener('scroll', () => {
+                if (scrollArea.scrollTop > 20) {
+                    header.classList.add('bg-surface/80', 'backdrop-blur-md', 'shadow-sm');
+                    header.classList.remove('bg-transparent');
+                } else {
+                    header.classList.remove('bg-surface/80', 'backdrop-blur-md', 'shadow-sm');
+                    header.classList.add('bg-transparent');
+                }
+            });
+        }
+    </script>
 
-        <section class="app-panel p-5 flex flex-col gap-3">
-            <div class="flex items-center justify-between gap-3">
-                <p class="font-display text-[16px] font-bold text-on-surface">切换画面</p>
-                <span id="watchCameraCount" class="app-section-badge shrink-0">加载中</span>
-            </div>
-            <div id="watchCameraList" class="flex gap-2 overflow-x-auto pb-1"></div>
-        </section>
-
-        <section class="app-panel p-5 flex flex-col gap-3">
-            <div class="flex items-center justify-between gap-3">
-                <p class="font-display text-[16px] font-bold text-on-surface">观看方式</p>
-                <span id="watchDetectorBadge" class="app-section-badge shrink-0">等待</span>
-            </div>
-            <div id="watchProfileList" class="flex gap-2 overflow-x-auto pb-1"></div>
-        </section>
-
-        <section class="app-panel p-5 flex flex-col gap-4">
-            <div class="flex items-center justify-between gap-3">
-                <p class="font-display text-[16px] font-bold text-on-surface">刚刚发生</p>
-                <a id="watchEventsLink" href="events.html?app=1" class="font-sans text-[12px] font-semibold text-primary">事件</a>
-            </div>
-            <div class="app-panel-muted p-4">
-                <p id="watchEventTitle" class="font-display text-[16px] font-bold text-on-surface">等待事件</p>
-                <p id="watchEventMeta" class="font-sans text-[12px] text-on-surface-variant mt-1 leading-relaxed">画面接通后自动刷新</p>
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-                <a id="watchMonitorLink" href="monitor.html?app=1" class="app-btn-secondary h-11 flex items-center justify-center font-sans text-[13px] font-bold">守护概览</a>
-                <a id="watchDetectionLink" href="detection.html?app=1" class="app-btn-secondary h-11 flex items-center justify-center font-sans text-[13px] font-bold">检测细节</a>
-            </div>
-        </section>
-    </main>
-
-    <script src="assets/scripts/edge-client.js?v=20260630-video1"></script>
-    <script src="assets/scripts/watch-live.js?v=20260701-watchui1"></script>
-</body>
-</html>
+<script id="gohome-stitch-route-links">
+  (() => {
+    const routes = {
+      "首页": "index.html",
+      "守护": "monitor.html",
+      "消息": "events.html",
+      "陪伴": "companionship.html",
+      "我的": "privacy.html",
+      "实时画面": "watch.html",
+      "事件列表": "events.html",
+      "规则设置": "rules.html",
+      "家庭成员": "family_members.html",
+      "通知设置": "notifications.html",
+      "隐私与数据": "privacy_data.html",
+      "添加摄像头": "connect.html",
+      "设备管理": "cameras.html"
+    };
+    document.addEventListener("click", (event) => {
+      const item = event.target.closest("a, button");
+      if (!item) return;
+      if (item.hasAttribute("onclick")) return;
+      const href = item.getAttribute("href");
+      if (href && href !== "#") return;
+      const text = (item.innerText || item.textContent || "").replace(/\s+/g, "").trim();
+      const route = routes[text];
+      if (!route) return;
+      event.preventDefault();
+      window.location.href = route;
+    });
+  })();
+</script>
+<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+</body></html>
