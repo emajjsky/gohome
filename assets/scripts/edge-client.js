@@ -180,6 +180,7 @@
         const candidates = [];
         const requested = requestedBase();
         if (requested) candidates.push(requested);
+        if (window.location.protocol.startsWith("http")) candidates.push("");
         candidates.push(defaultBase());
         if (window.location.hostname && window.location.hostname !== "127.0.0.1") {
             candidates.push(`http://${window.location.hostname}:8711`);
