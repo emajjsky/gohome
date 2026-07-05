@@ -69,6 +69,13 @@ function normalizeBool(value) {
     return Boolean(value);
 }
 
+function maxExistingId(items) {
+    return items.reduce((maxId, item) => {
+        const id = Number(item?.id);
+        return Number.isFinite(id) ? Math.max(maxId, id) : maxId;
+    }, 0);
+}
+
 function createDefaultDb() {
     const timestamp = nowIso();
     return {
@@ -143,6 +150,21 @@ class JsonStore {
         db.events = Array.isArray(db.events) ? db.events : [];
         db.heartbeats = Array.isArray(db.heartbeats) ? db.heartbeats : [];
         db.calendar_events = Array.isArray(db.calendar_events) ? db.calendar_events : [];
+        const idSources = {
+            user: db.users,
+            family: db.families,
+            binding: db.device_bindings,
+            binding_code: db.binding_codes,
+            device_token: db.device_tokens,
+            asset: db.assets,
+            event: db.events,
+            camera: Object.values(db.cameras),
+            heartbeat: db.heartbeats,
+            calendar_event: db.calendar_events,
+        };
+        for (const [type, items] of Object.entries(idSources)) {
+            db.next_ids[type] = Math.max(Number(db.next_ids[type] || 1), maxExistingId(items) + 1);
+        }
         return db;
     }
 
@@ -771,6 +793,10 @@ function createLocalAppServer(options = {}) {
             const rawCameraId = report.camera_id ?? report.id;
             if (rawCameraId === null || rawCameraId === undefined || rawCameraId === "") continue;
             const cameraKey = String(rawCameraId);
+            const reportedStatus = String(report.status || "").toLowerCase();
+            if (report.deleted === true || ["deleted", "removed"].includes(reportedStatus)) {
+                continue;
+            }
             const existing = store.db.cameras[cameraKey] || {};
             const camera = {
                 ...existing,

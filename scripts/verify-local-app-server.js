@@ -179,6 +179,42 @@ async function main() {
         });
         assert.equal(stableDeviceConfig.config_version, deviceConfig.config_version);
 
+        const deleteProbe = await requestJson(baseUrl, "/api/cameras", {
+            method: "POST",
+            body: JSON.stringify({
+                name: "删除同步验证",
+                room: "验证",
+                stream_url: "demo:delete_probe",
+                enabled: true,
+            }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        const deletedProbe = await requestJson(baseUrl, `/api/cameras/${deleteProbe.id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(deletedProbe.ok, true);
+        const deleteSync = await requestJson(baseUrl, "/api/v1/device/sync", {
+            method: "POST",
+            body: JSON.stringify({
+                device_id: "edge-test",
+                config_version: stableDeviceConfig.config_version,
+                cameras: [
+                    {
+                        camera_id: deleteProbe.id,
+                        status: "deleted",
+                        sync_status: "synced",
+                    },
+                ],
+            }),
+            headers: { Authorization: `Bearer ${exchanged.device_token}` },
+        });
+        assert.equal(deleteSync.ok, true);
+        const camerasAfterDeleteSync = await requestJson(baseUrl, "/api/app/cameras", {
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(camerasAfterDeleteSync.some((item) => String(item.id) === String(deleteProbe.id)), false);
+
         const imageBytes = Buffer.from("fake-jpeg-content");
         const media = await requestJson(
             baseUrl,

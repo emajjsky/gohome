@@ -6330,3 +6330,83 @@ python scripts/verify-fall-rule-engine.py
 - 被删除文档里的有效方向已经归并到 PRD / Plan / Implement。
 - Implement 前文提到这些 README 或补充文档的位置属于历史记录，不再作为当前操作入口。
 - 后续新增产品、路线、进度、验收信息时，必须先写入三份核心文档，不再另开零散 Markdown。
+
+## 31. 2026-07-06 本地 App 服务到树莓派配置同步闭环
+
+本轮按“先本地跑通云端语义闭环，再上云”的顺序，补齐 App API 与树莓派之间的摄像头配置同步链路。
+
+改动前存档：
+
+- 本地当前状态已提交并推送：`5e9565b chore: archive current local progress`
+- 已打远端 tag：`archive-before-edge-sync-20260706-001736`
+- 树莓派 SSH 确认可用：`gohome@192.168.1.12`
+- 树莓派代码目录已备份：
+  - `/home/gohome/gohome-backups/gohome-before-local-sync-20260706-001845.tar.gz`
+  - `/home/gohome/gohome-backups/gohome-before-config-sync-deploy-20260706-003124.tar.gz`
+
+已完成：
+
+- `local-app-server/server.js`
+  - 新增 `POST /api/v1/device/sync`，接收盒子回传的设备状态、配置版本、摄像头同步状态和错误原因。
+  - `cameraConfigVersion()` 改为只根据期望配置生成版本，不再因为盒子在线状态变化而反复变更。
+  - 修复 JSON DB `next_ids` 未按已有记录回补的问题，避免新增摄像头覆盖旧 ID。
+  - 修复盒子回报 `deleted / removed` 时 App 服务反向复活已删除摄像头的问题。
+- `edge-agent/app/config_sync_agent.py`
+  - 新增 `ConfigSyncAgent`，定期调用 App API `GET /api/v1/device/config`。
+  - 将 App 摄像头配置写入盒子本地 SQLite 摄像头表。
+  - 维护远端 camera_id 到本地 camera_id 的映射。
+  - 对 App 删除的摄像头执行本地清理，并通过 `/api/v1/device/sync` 回报。
+- `edge-agent/app/main.py`
+  - 接入 `config_sync_agent` 启停生命周期。
+  - `/health` 和 `/api/device` 暴露 `config_sync_agent.status()`。
+- `edge-agent/app/settings.py`
+  - 新增 `GOHOME_CONFIG_SYNC_ENABLED`
+  - 新增 `GOHOME_CONFIG_SYNC_INTERVAL_SECONDS`
+  - 新增 `GOHOME_CONFIG_SYNC_REQUEST_TIMEOUT_SECONDS`
+  - 新增 `GOHOME_CONFIG_SYNC_TEST_CAPTURE_ENABLED`
+- `scripts/verify-local-app-server.js`
+  - 覆盖 App 写摄像头配置、设备拉配置、设备回报 sync、App 读取同步状态。
+  - 覆盖删除回报不应复活摄像头。
+- `edge-agent/scripts/verify-config-sync-agent.py`
+  - 覆盖盒子配置同步 worker 的创建、更新和删除路径。
+
+本地验证：
+
+- `node --check local-app-server/server.js` 通过。
+- `npm test` 通过。
+- `edge-agent/.venv/bin/python -m py_compile edge-agent/app/config_sync_agent.py edge-agent/app/settings.py edge-agent/app/main.py` 通过。
+- `edge-agent/.venv/bin/python edge-agent/scripts/verify-config-sync-agent.py` 通过。
+- `edge-agent/.venv/bin/python edge-agent/scripts/verify-upload-agent.py` 通过。
+- `edge-agent/.venv/bin/python edge-agent/scripts/verify-observation-logs.py` 通过。
+- `edge-agent/.venv/bin/python edge-agent/scripts/verify-fall-rule-engine.py` 通过。
+- `edge-agent/.venv/bin/python edge-agent/scripts/verify-vision-pipeline.py` 通过。
+
+树莓派验收：
+
+- 已同步代码到 `/home/gohome/gohome`。
+- 已重启 `gohome-edge-agent`，服务运行中。
+- `/health` 已显示：
+  - `config_sync_agent.enabled = true`
+  - `config_sync_agent.running = true`
+  - `config_sync_agent.configured = true`
+  - `config_sync_agent.reason = ready`
+- 真实本地闭环已跑通：
+  - App API 创建临时摄像头配置 `stream_url = demo:living_room`
+  - 树莓派拉取配置并创建本地摄像头映射
+  - 树莓派回传 `sync_status = synced`
+  - App API 能看到摄像头状态更新
+  - App API 删除临时摄像头后，树莓派删除本地映射并回传 `deleted`
+  - 删除后 App API 不再残留该临时摄像头
+
+当前状态：
+
+- 本地闭环已经从“只有事件/媒体上传”推进到“App 摄像头配置下发 + 盒子应用 + 状态回传”。
+- 当前 App API 中仍有两条无 `stream_url` 的摄像头配置，盒子按预期回报 `pending_local_setup / stream_url_missing`。
+- `GOHOME_CONFIG_SYNC_TEST_CAPTURE_ENABLED` 默认关闭，所以新配置默认回报 `configured / synced`；如果要在同步时立即抓帧验证，可在盒子 `.env` 打开。
+
+下一步：
+
+1. 把 App 摄像头配置页的输入收口，确保真实 RTSP / ONVIF 信息能保存到 App API。
+2. 用真实摄像头配置跑一次本地闭环：App 提交配置 -> 树莓派应用 -> worker 拉流 -> App 看到在线/错误。
+3. 真实事件触发后，验收 `upload_jobs pending -> completed`。
+4. 本地闭环稳定后，把 `local-app-server` 接口语义迁移到云端数据库和公网 HTTPS。
