@@ -156,7 +156,7 @@
             const statusIcon = $("edgeStatusIcon");
             if (statusIcon) {
                 const alertTone = (snapshot.tags || []).includes("black_screen") || (snapshot.tags || []).includes("fall_candidate");
-                statusIcon.className = `w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${alertTone ? "bg-[#fff4e8] text-[#c87b2a]" : "bg-[#edf6ee] text-[#2d7d5c]"}`;
+                statusIcon.className = `app-story-icon ${alertTone ? "warn" : "good"} shrink-0`;
             }
         } catch (error) {
             syncNavLinks();

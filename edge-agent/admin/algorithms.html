@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>视觉算法 - 回家</title>
   <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
-  <link rel="stylesheet" href="/admin/styles.css?v=20260703-presence-1">
+  <link rel="stylesheet" href="/admin/styles.css?v=20260705-lowlatency-1">
 </head>
 <body data-page="algorithms" class="admin-web-page">
   <a class="skip-link" href="#main">跳到内容</a>
@@ -74,55 +74,37 @@
 
     <main id="main" class="admin-web-main">
       <section class="guard-layout algorithm-guard-layout">
-        <section class="panel preview-card algorithm-preview-panel">
-          <div class="panel-head compact">
-            <div>
-              <h2>算法预览</h2>
-              <p>动效看识别逻辑，实时画面看当前命中。</p>
+        <section class="panel preview-card algorithm-preview-panel algorithm-theater-panel">
+          <div class="algorithm-stage-toolbar">
+            <div class="preview-picker">
+              <label>摄像头<select id="cameraSelect"></select></label>
+              <label>预览算法
+                <select id="previewAlgorithm">
+                  <option value="quality">画面质量</option>
+                  <option value="person">人形 / 无人</option>
+                  <option value="stillness">久坐 / 静止</option>
+                  <option value="fall">跌倒检测</option>
+                  <option value="meal">用餐</option>
+                  <option value="night">夜间活动</option>
+                  <option value="fire">火灾</option>
+                  <option value="camera">摄像头异常</option>
+                </select>
+              </label>
             </div>
-            <button id="captureSelected" class="secondary-button" type="button">
+            <button id="captureSelected" class="secondary-button icon-command" type="button" title="抓取当前检测帧">
               <span class="material-symbols-outlined" data-icon="◎">photo_camera</span>
               抓帧
             </button>
           </div>
-          <div class="preview-picker">
-            <label>摄像头<select id="cameraSelect"></select></label>
-            <label>预览算法
-              <select id="previewAlgorithm">
-                <option value="quality">画面质量</option>
-                <option value="person">人形 / 无人</option>
-                <option value="stillness">久坐 / 静止</option>
-                <option value="fall">跌倒检测</option>
-                <option value="meal">用餐</option>
-                <option value="night">夜间活动</option>
-                <option value="fire">火灾</option>
-                <option value="camera">摄像头异常</option>
-              </select>
-            </label>
-          </div>
-          <div class="verify-layout algorithm-preview-workspace">
-            <article id="algorithmDemo" class="algorithm-demo-card" aria-label="算法动效示意"></article>
-            <section class="live-analysis-card" aria-label="实时检测画面">
+
+          <div class="algorithm-theater">
+            <section class="algorithm-stage-main" aria-label="实时检测画面">
               <div class="live-analysis-head">
                 <div>
-                  <span>实时画面</span>
+                  <span>实时检测</span>
                   <strong id="streamCamera">无摄像头</strong>
                 </div>
                 <span id="streamStatus" class="status-pill muted">等待视频</span>
-              </div>
-              <div id="algorithmHitStrip" class="algorithm-hit-strip" aria-live="polite">
-                <div class="algorithm-hit-card primary">
-                  <span>当前命中</span>
-                  <strong>等待检测</strong>
-                </div>
-                <div class="algorithm-hit-card">
-                  <span>模型</span>
-                  <strong>-</strong>
-                </div>
-                <div class="algorithm-hit-card">
-                  <span>延迟</span>
-                  <strong>-</strong>
-                </div>
               </div>
               <div id="previewStage" class="preview-stage algorithm-live-stage">
                 <img id="mjpegStream" alt="实时摄像头视频">
@@ -131,11 +113,25 @@
                   <span class="material-symbols-outlined" data-icon="□">videocam_off</span>
                   <p>请选择摄像头</p>
                 </div>
-                <div class="stream-badge-row">
-                  <span>实时检测</span>
-                  <span id="streamFrameTime">等待检测帧</span>
+              </div>
+              <div id="algorithmHitStrip" class="algorithm-hit-strip" aria-live="polite">
+                <div class="algorithm-hit-card primary">
+                  <span>本算法状态</span>
+                  <strong>等待检测</strong>
+                </div>
+                <div class="algorithm-hit-card">
+                  <span>本算法指标</span>
+                  <strong>-</strong>
+                </div>
+                <div class="algorithm-hit-card">
+                  <span>分析延迟</span>
+                  <strong>-</strong>
                 </div>
               </div>
+            </section>
+
+            <aside class="algorithm-evidence-rail" aria-label="算法证据">
+              <article id="algorithmDemo" class="algorithm-demo-card" aria-label="算法动效示意"></article>
               <div class="analysis-grid">
                 <div>
                   <span>当前算法</span>
@@ -154,13 +150,27 @@
                 <div><span>人数</span><strong id="snapshotPeople">-</strong></div>
                 <div><span>标签</span><strong id="snapshotTags">-</strong></div>
               </div>
-            </section>
+              <section class="algorithm-candidate-panel" aria-label="最近命中">
+                <div class="compact-section-head">
+                  <strong id="candidatePanelTitle">相关后台记录</strong>
+                  <span id="uploadQueueSummary">后台留证记录</span>
+                </div>
+                <div id="candidateList" class="candidate-list compact" aria-live="polite"></div>
+              </section>
+              <section class="algorithm-candidate-panel observation-panel" aria-label="生活观察">
+                <div class="compact-section-head">
+                  <strong id="observationPanelTitle">相关生活观察</strong>
+                  <span id="observationPanelSubtitle">按当前算法筛选</span>
+                </div>
+                <div id="observationList" class="candidate-list observation-list compact" aria-live="polite"></div>
+              </section>
+            </aside>
           </div>
         </section>
       </section>
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/admin/console.js?v=20260703-presence-1"></script>
+  <script src="/admin/console.js?v=20260705-lowlatency-1"></script>
 </body>
 </html>

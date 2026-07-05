@@ -315,6 +315,55 @@ class Storage:
                     FOREIGN KEY(event_id) REFERENCES events(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS upload_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_type TEXT NOT NULL,
+                    object_type TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    priority INTEGER NOT NULL DEFAULT 100,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    family_id INTEGER,
+                    device_id TEXT NOT NULL DEFAULT '',
+                    event_id INTEGER,
+                    snapshot_id INTEGER,
+                    camera_id INTEGER,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    next_attempt_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    FOREIGN KEY(event_id) REFERENCES events(id),
+                    FOREIGN KEY(snapshot_id) REFERENCES snapshots(id),
+                    FOREIGN KEY(camera_id) REFERENCES cameras(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS observation_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    camera_id INTEGER NOT NULL,
+                    observation_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    started_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    duration_seconds INTEGER NOT NULL DEFAULT 0,
+                    sample_count INTEGER NOT NULL DEFAULT 1,
+                    last_snapshot_id INTEGER,
+                    last_detection_result_id INTEGER,
+                    last_rule_evaluation_id INTEGER,
+                    last_event_candidate_id INTEGER,
+                    summary TEXT NOT NULL DEFAULT '',
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(camera_id) REFERENCES cameras(id),
+                    FOREIGN KEY(last_snapshot_id) REFERENCES snapshots(id),
+                    FOREIGN KEY(last_detection_result_id) REFERENCES detection_results(id),
+                    FOREIGN KEY(last_rule_evaluation_id) REFERENCES rule_evaluations(id),
+                    FOREIGN KEY(last_event_candidate_id) REFERENCES event_candidates(id)
+                );
+
                 CREATE TABLE IF NOT EXISTS device_sync_states (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     device_id TEXT NOT NULL UNIQUE,
@@ -541,8 +590,16 @@ class Storage:
                     no_motion_enabled INTEGER NOT NULL,
                     person_detection_enabled INTEGER NOT NULL,
                     fall_detection_enabled INTEGER NOT NULL,
+                    fall_score_threshold REAL NOT NULL DEFAULT 0.50,
+                    fall_confirm_frames INTEGER NOT NULL DEFAULT 2,
+                    fall_confirm_seconds INTEGER NOT NULL DEFAULT 4,
+                    fall_recover_frames INTEGER NOT NULL DEFAULT 2,
                     activity_detection_enabled INTEGER NOT NULL DEFAULT 1,
                     fire_detection_enabled INTEGER NOT NULL DEFAULT 1,
+                    fire_event_score_threshold REAL NOT NULL DEFAULT 0.12,
+                    fire_motion_threshold REAL NOT NULL DEFAULT 0.035,
+                    fire_temporal_threshold REAL NOT NULL DEFAULT 0.018,
+                    fire_confirm_frames INTEGER NOT NULL DEFAULT 5,
                     no_person_seconds INTEGER NOT NULL,
                     offline_enabled INTEGER NOT NULL,
                     notification_enabled INTEGER NOT NULL,
@@ -559,8 +616,16 @@ class Storage:
             self._ensure_column(conn, "events", "candidate_id", "INTEGER")
             self._ensure_column(conn, "rules", "person_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column(conn, "rules", "fall_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "rules", "fall_score_threshold", "REAL NOT NULL DEFAULT 0.50")
+            self._ensure_column(conn, "rules", "fall_confirm_frames", "INTEGER NOT NULL DEFAULT 2")
+            self._ensure_column(conn, "rules", "fall_confirm_seconds", "INTEGER NOT NULL DEFAULT 4")
+            self._ensure_column(conn, "rules", "fall_recover_frames", "INTEGER NOT NULL DEFAULT 2")
             self._ensure_column(conn, "rules", "activity_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column(conn, "rules", "fire_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "rules", "fire_event_score_threshold", "REAL NOT NULL DEFAULT 0.12")
+            self._ensure_column(conn, "rules", "fire_motion_threshold", "REAL NOT NULL DEFAULT 0.035")
+            self._ensure_column(conn, "rules", "fire_temporal_threshold", "REAL NOT NULL DEFAULT 0.018")
+            self._ensure_column(conn, "rules", "fire_confirm_frames", "INTEGER NOT NULL DEFAULT 5")
             self._ensure_column(conn, "rules", "no_person_seconds", "INTEGER NOT NULL DEFAULT 300")
             self._ensure_column(conn, "rules", "motion_threshold", "REAL NOT NULL DEFAULT 0.015")
             self._ensure_column(conn, "rules", "black_brightness_threshold", "REAL NOT NULL DEFAULT 18")
@@ -582,14 +647,22 @@ class Storage:
                         no_motion_enabled,
                         person_detection_enabled,
                         fall_detection_enabled,
+                        fall_score_threshold,
+                        fall_confirm_frames,
+                        fall_confirm_seconds,
+                        fall_recover_frames,
                         activity_detection_enabled,
                         fire_detection_enabled,
+                        fire_event_score_threshold,
+                        fire_motion_threshold,
+                        fire_temporal_threshold,
+                        fire_confirm_frames,
                         no_person_seconds,
                         offline_enabled,
                         notification_enabled,
                         updated_at
                     )
-                    VALUES (1, 5, 0.015, 18, 4, 0.20, 300, 1, 1, 1, 1, 1, 1, 300, 1, 1, ?)
+                    VALUES (1, 5, 0.015, 18, 4, 0.20, 300, 1, 1, 1, 1, 0.50, 2, 4, 2, 1, 1, 0.12, 0.035, 0.018, 5, 300, 1, 1, ?)
                     """,
                     (now_iso(),),
                 )
@@ -618,8 +691,16 @@ class Storage:
             "no_motion_enabled",
             "person_detection_enabled",
             "fall_detection_enabled",
+            "fall_score_threshold",
+            "fall_confirm_frames",
+            "fall_confirm_seconds",
+            "fall_recover_frames",
             "activity_detection_enabled",
             "fire_detection_enabled",
+            "fire_event_score_threshold",
+            "fire_motion_threshold",
+            "fire_temporal_threshold",
+            "fire_confirm_frames",
             "no_person_seconds",
             "offline_enabled",
             "notification_enabled",
@@ -2196,7 +2277,19 @@ class Storage:
     def list_event_candidates(self, limit: int = 20, status: Optional[str] = None) -> list[Dict[str, Any]]:
         where = ""
         params: list[Any] = []
-        if status:
+        if status == "active":
+            where = """
+                WHERE ec.status NOT IN ('suppressed', 'aggregated')
+                  AND ec.event_type NOT IN ('no_motion', 'no_person')
+                  AND ec.id IN (
+                    SELECT MAX(latest.id)
+                    FROM event_candidates latest
+                    WHERE latest.status NOT IN ('suppressed', 'aggregated')
+                      AND latest.event_type NOT IN ('no_motion', 'no_person')
+                    GROUP BY latest.camera_id, latest.event_type
+                  )
+            """
+        elif status:
             where = "WHERE ec.status = ?"
             params.append(status)
         params.append(limit)
@@ -2219,6 +2312,192 @@ class Storage:
                 params,
             ).fetchall()
         return [self._event_candidate_to_dict(row) for row in rows]
+
+    def _observation_log_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
+        if row is None:
+            return None
+        data = dict(row)
+        data["payload"] = json.loads(data.pop("payload_json", "{}") or "{}")
+        if data.get("snapshot_path"):
+            data["snapshot_url"] = f"/snapshots/{data['snapshot_path']}"
+        return data
+
+    def upsert_observation_log(
+        self,
+        *,
+        camera_id: int,
+        observation_type: str,
+        summary: str,
+        evaluated_at: str,
+        snapshot_id: Optional[int],
+        detection_result_id: Optional[int],
+        rule_evaluation_id: Optional[int],
+        event_candidate_id: Optional[int],
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        clean_type = str(observation_type or "").strip()
+        if not clean_type:
+            raise ValueError("observation_type is required")
+        timestamp = now_iso()
+        seen_at = str(evaluated_at or "").strip() or timestamp
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM observation_logs
+                WHERE camera_id = ? AND observation_type = ? AND status = 'open'
+                ORDER BY started_at DESC, id DESC
+                LIMIT 1
+                """,
+                (int(camera_id), clean_type),
+            ).fetchone()
+            if row is None:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO observation_logs (
+                        camera_id, observation_type, status, started_at, last_seen_at,
+                        ended_at, duration_seconds, sample_count, last_snapshot_id,
+                        last_detection_result_id, last_rule_evaluation_id, last_event_candidate_id,
+                        summary, payload_json, created_at, updated_at
+                    )
+                    VALUES (?, ?, 'open', ?, ?, NULL, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(camera_id),
+                        clean_type,
+                        seen_at,
+                        seen_at,
+                        int(snapshot_id) if snapshot_id else None,
+                        int(detection_result_id) if detection_result_id else None,
+                        int(rule_evaluation_id) if rule_evaluation_id else None,
+                        int(event_candidate_id) if event_candidate_id else None,
+                        str(summary or "").strip(),
+                        json.dumps(payload or {}, ensure_ascii=False),
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                log_id = int(cursor.lastrowid)
+            else:
+                started_at = datetime.fromisoformat(str(row["started_at"]))
+                last_seen_at = datetime.fromisoformat(seen_at)
+                duration_seconds = max(0, int((last_seen_at - started_at).total_seconds()))
+                log_id = int(row["id"])
+                conn.execute(
+                    """
+                    UPDATE observation_logs
+                    SET
+                        last_seen_at = ?,
+                        duration_seconds = ?,
+                        sample_count = sample_count + 1,
+                        last_snapshot_id = ?,
+                        last_detection_result_id = ?,
+                        last_rule_evaluation_id = ?,
+                        last_event_candidate_id = ?,
+                        summary = ?,
+                        payload_json = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        seen_at,
+                        duration_seconds,
+                        int(snapshot_id) if snapshot_id else None,
+                        int(detection_result_id) if detection_result_id else None,
+                        int(rule_evaluation_id) if rule_evaluation_id else None,
+                        int(event_candidate_id) if event_candidate_id else None,
+                        str(summary or "").strip(),
+                        json.dumps(payload or {}, ensure_ascii=False),
+                        timestamp,
+                        log_id,
+                    ),
+                )
+            updated = conn.execute(
+                """
+                SELECT
+                    ol.*,
+                    c.name AS camera_name,
+                    c.room AS camera_room,
+                    s.image_path AS snapshot_path
+                FROM observation_logs ol
+                LEFT JOIN cameras c ON c.id = ol.camera_id
+                LEFT JOIN snapshots s ON s.id = ol.last_snapshot_id
+                WHERE ol.id = ?
+                """,
+                (log_id,),
+            ).fetchone()
+        log = self._observation_log_to_dict(updated)
+        if log is None:
+            raise RuntimeError("Observation log was not persisted")
+        return log
+
+    def close_observation_log(
+        self,
+        *,
+        camera_id: int,
+        observation_type: str,
+        ended_at: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        clean_type = str(observation_type or "").strip()
+        timestamp = now_iso()
+        end_time = str(ended_at or "").strip() or timestamp
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM observation_logs
+                WHERE camera_id = ? AND observation_type = ? AND status = 'open'
+                ORDER BY started_at DESC, id DESC
+                LIMIT 1
+                """,
+                (int(camera_id), clean_type),
+            ).fetchone()
+            if row is None:
+                return None
+            started_at = datetime.fromisoformat(str(row["started_at"]))
+            ended = datetime.fromisoformat(end_time)
+            duration_seconds = max(0, int((ended - started_at).total_seconds()))
+            conn.execute(
+                """
+                UPDATE observation_logs
+                SET status = 'closed', ended_at = ?, duration_seconds = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (end_time, duration_seconds, timestamp, int(row["id"])),
+            )
+            updated = conn.execute("SELECT * FROM observation_logs WHERE id = ?", (int(row["id"]),)).fetchone()
+        return self._observation_log_to_dict(updated)
+
+    def list_observation_logs(
+        self,
+        *,
+        limit: int = 20,
+        status: Optional[str] = None,
+    ) -> list[Dict[str, Any]]:
+        where = ""
+        params: list[Any] = []
+        if status:
+            where = "WHERE ol.status = ?"
+            params.append(status)
+        params.append(max(1, min(int(limit), 200)))
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    ol.*,
+                    c.name AS camera_name,
+                    c.room AS camera_room,
+                    s.image_path AS snapshot_path
+                FROM observation_logs ol
+                LEFT JOIN cameras c ON c.id = ol.camera_id
+                LEFT JOIN snapshots s ON s.id = ol.last_snapshot_id
+                {where}
+                ORDER BY ol.updated_at DESC, ol.id DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [log for row in rows if (log := self._observation_log_to_dict(row)) is not None]
 
     def create_snapshot(
         self,
@@ -2295,6 +2574,14 @@ class Storage:
             ).fetchone()
         return self._media_asset_to_dict(row)
 
+    def get_media_asset_by_event(self, event_id: int) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM media_assets WHERE event_id = ? ORDER BY uploaded_at DESC, id DESC LIMIT 1",
+                (int(event_id),),
+            ).fetchone()
+        return self._media_asset_to_dict(row)
+
     def get_media_asset_by_source_path(self, snapshot_path: str) -> Optional[Dict[str, Any]]:
         clean_path = str(snapshot_path or "").strip().lstrip("/")
         if not clean_path:
@@ -2315,6 +2602,20 @@ class Storage:
                 "SELECT * FROM media_assets WHERE object_key = ? LIMIT 1",
                 (clean_key,),
             ).fetchone()
+        return self._media_asset_to_dict(row)
+
+    def attach_media_asset_to_event(self, asset_id: int, event_id: int) -> Optional[Dict[str, Any]]:
+        timestamp = now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE media_assets
+                SET event_id = ?, uploaded_at = COALESCE(uploaded_at, ?)
+                WHERE id = ?
+                """,
+                (int(event_id), timestamp, int(asset_id)),
+            )
+            row = conn.execute("SELECT * FROM media_assets WHERE id = ? LIMIT 1", (int(asset_id),)).fetchone()
         return self._media_asset_to_dict(row)
 
     def create_media_asset(
@@ -2782,6 +3083,328 @@ class Storage:
         if event is None:
             raise RuntimeError("Event was not persisted")
         return event
+
+    def _upload_job_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
+        if row is None:
+            return None
+        data = dict(row)
+        data["payload"] = json.loads(data.pop("payload_json", "{}") or "{}")
+        return data
+
+    def enqueue_upload_job(
+        self,
+        *,
+        job_type: str,
+        object_type: str,
+        idempotency_key: str,
+        payload: Optional[Dict[str, Any]] = None,
+        priority: int = 100,
+        family_id: Optional[int] = None,
+        device_id: str = "",
+        event_id: Optional[int] = None,
+        snapshot_id: Optional[int] = None,
+        camera_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        clean_key = str(idempotency_key or "").strip()
+        clean_type = str(job_type or "").strip()
+        if not clean_key:
+            raise ValueError("idempotency_key is required")
+        if not clean_type:
+            raise ValueError("job_type is required")
+        timestamp = now_iso()
+        with self.connect() as conn:
+            try:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO upload_jobs (
+                        job_type, object_type, status, priority, idempotency_key,
+                        family_id, device_id, event_id, snapshot_id, camera_id,
+                        payload_json, attempt_count, last_error, next_attempt_at,
+                        created_at, updated_at, completed_at
+                    )
+                    VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, 0, '', NULL, ?, ?, NULL)
+                    """,
+                    (
+                        clean_type,
+                        str(object_type or "").strip(),
+                        int(priority),
+                        clean_key,
+                        int(family_id) if family_id else None,
+                        str(device_id or "").strip(),
+                        int(event_id) if event_id else None,
+                        int(snapshot_id) if snapshot_id else None,
+                        int(camera_id) if camera_id else None,
+                        json.dumps(payload or {}, ensure_ascii=False),
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                job_id = int(cursor.lastrowid)
+            except sqlite3.IntegrityError:
+                row = conn.execute(
+                    "SELECT * FROM upload_jobs WHERE idempotency_key = ? LIMIT 1",
+                    (clean_key,),
+                ).fetchone()
+                job = self._upload_job_to_dict(row)
+                if job is None:
+                    raise RuntimeError("Upload job dedupe failed")
+                return job
+            row = conn.execute("SELECT * FROM upload_jobs WHERE id = ?", (job_id,)).fetchone()
+        job = self._upload_job_to_dict(row)
+        if job is None:
+            raise RuntimeError("Upload job was not persisted")
+        return job
+
+    def enqueue_event_upload_jobs(self, event: Dict[str, Any]) -> list[Dict[str, Any]]:
+        event_id = int(event["id"])
+        camera_id = int(event["camera_id"]) if event.get("camera_id") else None
+        snapshot_id = int(event["snapshot_id"]) if event.get("snapshot_id") else None
+        base_payload = {
+            "schema_version": "gohome-upload-job-v1",
+            "event_id": event_id,
+            "event_type": event.get("type"),
+            "summary": event.get("summary"),
+            "level": event.get("level"),
+            "room": event.get("room") or "",
+            "camera_id": camera_id,
+            "snapshot_id": snapshot_id,
+            "snapshot_path": event.get("snapshot_path") or "",
+            "occurred_at": event.get("occurred_at"),
+            "payload": event.get("payload") or {},
+        }
+        jobs = [
+            self.enqueue_upload_job(
+                job_type="event_upload",
+                object_type="event",
+                idempotency_key=f"event:{event_id}",
+                priority=10 if event.get("level") == "critical" else 50,
+                event_id=event_id,
+                snapshot_id=snapshot_id,
+                camera_id=camera_id,
+                payload={
+                    **base_payload,
+                    "target": "app_server",
+                    "endpoint": "/api/v1/device/events",
+                },
+            )
+        ]
+        if snapshot_id:
+            jobs.append(
+                self.enqueue_upload_job(
+                    job_type="media_upload",
+                    object_type="snapshot",
+                    idempotency_key=f"snapshot:{snapshot_id}:event:{event_id}",
+                    priority=5 if event.get("level") == "critical" else 40,
+                    event_id=event_id,
+                    snapshot_id=snapshot_id,
+                    camera_id=camera_id,
+                    payload={
+                        **base_payload,
+                        "target": "object_storage",
+                        "content_type": "image/jpeg",
+                    },
+                )
+            )
+        return jobs
+
+    def list_upload_jobs(
+        self,
+        *,
+        limit: int = 50,
+        status: Optional[str] = None,
+        job_type: Optional[str] = None,
+    ) -> list[Dict[str, Any]]:
+        where: list[str] = []
+        params: list[Any] = []
+        if status:
+            where.append("uj.status = ?")
+            params.append(status)
+        if job_type:
+            where.append("uj.job_type = ?")
+            params.append(job_type)
+        params.append(max(1, min(int(limit), 500)))
+        where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    uj.*,
+                    e.type AS event_type,
+                    e.summary AS event_summary,
+                    e.level AS event_level,
+                    s.image_path AS snapshot_path,
+                    c.name AS camera_name,
+                    c.room AS camera_room
+                FROM upload_jobs uj
+                LEFT JOIN events e ON e.id = uj.event_id
+                LEFT JOIN snapshots s ON s.id = uj.snapshot_id
+                LEFT JOIN cameras c ON c.id = uj.camera_id
+                {where_clause}
+                ORDER BY
+                    CASE uj.status
+                        WHEN 'pending' THEN 0
+                        WHEN 'failed' THEN 1
+                        WHEN 'uploading' THEN 2
+                        WHEN 'completed' THEN 3
+                        ELSE 4
+                    END,
+                    uj.priority ASC,
+                    uj.created_at DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [job for row in rows if (job := self._upload_job_to_dict(row)) is not None]
+
+    def claim_next_upload_job(self) -> Optional[Dict[str, Any]]:
+        timestamp = now_iso()
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM upload_jobs
+                WHERE status IN ('pending', 'failed')
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                ORDER BY priority ASC, created_at ASC
+                LIMIT 1
+                """,
+                (timestamp,),
+            ).fetchone()
+            if row is None:
+                return None
+            job_id = int(row["id"])
+            conn.execute(
+                """
+                UPDATE upload_jobs
+                SET status = 'uploading',
+                    attempt_count = attempt_count + 1,
+                    last_error = '',
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (timestamp, job_id),
+            )
+            claimed = conn.execute("SELECT * FROM upload_jobs WHERE id = ? LIMIT 1", (job_id,)).fetchone()
+        return self._upload_job_to_dict(claimed)
+
+    def complete_upload_job(self, job_id: int, result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        timestamp = now_iso()
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM upload_jobs WHERE id = ? LIMIT 1", (int(job_id),)).fetchone()
+            job = self._upload_job_to_dict(row)
+            if job is None:
+                return None
+            payload = dict(job.get("payload") or {})
+            payload["upload_result"] = result
+            conn.execute(
+                """
+                UPDATE upload_jobs
+                SET status = 'completed',
+                    payload_json = ?,
+                    last_error = '',
+                    next_attempt_at = NULL,
+                    updated_at = ?,
+                    completed_at = ?
+                WHERE id = ?
+                """,
+                (json.dumps(payload, ensure_ascii=False), timestamp, timestamp, int(job_id)),
+            )
+            updated = conn.execute("SELECT * FROM upload_jobs WHERE id = ? LIMIT 1", (int(job_id),)).fetchone()
+        return self._upload_job_to_dict(updated)
+
+    def fail_upload_job(self, job_id: int, error: str, *, retry_after_seconds: int = 60) -> Optional[Dict[str, Any]]:
+        from datetime import datetime, timedelta, timezone
+
+        timestamp = now_iso()
+        next_attempt_at = (datetime.now(timezone.utc) + timedelta(seconds=max(5, int(retry_after_seconds)))).isoformat()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE upload_jobs
+                SET status = 'failed',
+                    last_error = ?,
+                    next_attempt_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (str(error or "")[:1000], next_attempt_at, timestamp, int(job_id)),
+            )
+            row = conn.execute("SELECT * FROM upload_jobs WHERE id = ? LIMIT 1", (int(job_id),)).fetchone()
+        return self._upload_job_to_dict(row)
+
+    def latest_completed_upload_job(
+        self,
+        *,
+        event_id: int,
+        job_type: str,
+    ) -> Optional[Dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM upload_jobs
+                WHERE event_id = ? AND job_type = ? AND status = 'completed'
+                ORDER BY completed_at DESC, updated_at DESC
+                LIMIT 1
+                """,
+                (int(event_id), str(job_type or "").strip()),
+            ).fetchone()
+        return self._upload_job_to_dict(row)
+
+    def upload_queue_summary(self) -> Dict[str, Any]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT status, COUNT(*) AS count
+                FROM upload_jobs
+                GROUP BY status
+                """
+            ).fetchall()
+            pending_critical = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM upload_jobs uj
+                JOIN events e ON e.id = uj.event_id
+                WHERE uj.status IN ('pending', 'failed') AND e.level = 'critical'
+                """
+            ).fetchone()
+        counts = {str(row["status"]): int(row["count"]) for row in rows}
+        return {
+            "pending": counts.get("pending", 0),
+            "uploading": counts.get("uploading", 0),
+            "failed": counts.get("failed", 0),
+            "completed": counts.get("completed", 0),
+            "pending_critical": int(pending_critical["count"] if pending_critical else 0),
+            "total": sum(counts.values()),
+        }
+
+    def update_upload_job_status(
+        self,
+        job_id: int,
+        *,
+        status: str,
+        last_error: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        normalized = str(status or "").strip()
+        if normalized not in {"pending", "uploading", "completed", "failed"}:
+            raise ValueError("Unsupported upload job status")
+        timestamp = now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE upload_jobs
+                SET
+                    status = ?,
+                    last_error = ?,
+                    attempt_count = attempt_count + CASE WHEN ? IN ('failed', 'uploading') THEN 1 ELSE 0 END,
+                    updated_at = ?,
+                    completed_at = CASE WHEN ? = 'completed' THEN ? ELSE completed_at END
+                WHERE id = ?
+                """,
+                (normalized, str(last_error or ""), normalized, timestamp, normalized, timestamp, int(job_id)),
+            )
+            row = conn.execute("SELECT * FROM upload_jobs WHERE id = ?", (int(job_id),)).fetchone()
+        return self._upload_job_to_dict(row)
 
     def _event_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
         data = dict(row)
@@ -3389,8 +4012,16 @@ class Storage:
             "no_motion_enabled",
             "person_detection_enabled",
             "fall_detection_enabled",
+            "fall_score_threshold",
+            "fall_confirm_frames",
+            "fall_confirm_seconds",
+            "fall_recover_frames",
             "activity_detection_enabled",
             "fire_detection_enabled",
+            "fire_event_score_threshold",
+            "fire_motion_threshold",
+            "fire_temporal_threshold",
+            "fire_confirm_frames",
             "no_person_seconds",
             "offline_enabled",
             "notification_enabled",
@@ -3416,8 +4047,16 @@ class Storage:
                     no_motion_enabled = ?,
                     person_detection_enabled = ?,
                     fall_detection_enabled = ?,
+                    fall_score_threshold = ?,
+                    fall_confirm_frames = ?,
+                    fall_confirm_seconds = ?,
+                    fall_recover_frames = ?,
                     activity_detection_enabled = ?,
                     fire_detection_enabled = ?,
+                    fire_event_score_threshold = ?,
+                    fire_motion_threshold = ?,
+                    fire_temporal_threshold = ?,
+                    fire_confirm_frames = ?,
                     no_person_seconds = ?,
                     offline_enabled = ?,
                     notification_enabled = ?,
@@ -3435,8 +4074,16 @@ class Storage:
                     1 if next_values["no_motion_enabled"] else 0,
                     1 if next_values["person_detection_enabled"] else 0,
                     1 if next_values["fall_detection_enabled"] else 0,
+                    float(next_values["fall_score_threshold"]),
+                    int(next_values["fall_confirm_frames"]),
+                    int(next_values["fall_confirm_seconds"]),
+                    int(next_values["fall_recover_frames"]),
                     1 if next_values["activity_detection_enabled"] else 0,
                     1 if next_values["fire_detection_enabled"] else 0,
+                    float(next_values["fire_event_score_threshold"]),
+                    float(next_values["fire_motion_threshold"]),
+                    float(next_values["fire_temporal_threshold"]),
+                    int(next_values["fire_confirm_frames"]),
                     int(next_values["no_person_seconds"]),
                     1 if next_values["offline_enabled"] else 0,
                     1 if next_values["notification_enabled"] else 0,

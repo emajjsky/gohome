@@ -1,0 +1,4 @@
+-r requirements.txt
+onnxruntime==1.27.0
+opencv-contrib-python==4.10.0.84
+rtmlib==0.0.15

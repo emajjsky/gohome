@@ -3,22 +3,29 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>记忆馆 - 想家了吗</title>
+    <title>记忆馆 - 回家</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
         html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
-        body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
     </style>
 </head>
-<body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
+<body class="app-phone-shell text-on-surface font-sans antialiased">
 
-    <main class="flex-1 px-container flex flex-col gap-6 pt-5 pb-8">
-        <section class="rounded-[28px] overflow-hidden shadow-soft border border-outline-variant/20 bg-white">
+    <main class="app-main app-stack">
+        <section class="app-panel px-5 py-4 flex items-center justify-between gap-4">
+            <div>
+                <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.18em]">MEMORY GALLERY</p>
+                <p class="font-sans text-[13px] text-on-surface-variant leading-relaxed mt-1.5">今天适合先从最像家的那组画面开始回看，再慢慢把人带回那种有人等你回家的感觉里。</p>
+            </div>
+            <span class="app-section-badge shrink-0">先看一组</span>
+        </section>
+
+        <section class="app-soft-card overflow-hidden">
             <div class="relative">
                 <img src="assets/images/memory-generations.jpg" alt="家庭回忆" class="w-full h-60 object-cover">
                 <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent"></div>
@@ -39,32 +46,32 @@
                     <p class="font-sans text-[13px] text-on-surface-variant leading-relaxed mt-2.5">如果今天家里有点安静，就别从资料库开始翻。先打开最有人气、最像家的那段画面，回家的念头会来得更快一点。</p>
                 </div>
                 <div class="grid grid-cols-3 gap-3">
-                    <div class="app-soft-card bg-[#fbfbff] p-3 flex flex-col gap-1">
+                    <div class="app-rhythm-mini p-3 flex flex-col gap-1">
                         <span class="font-sans text-[11px] font-semibold text-on-surface-variant">照片</span>
                         <span class="font-display text-[22px] font-bold text-on-surface">42</span>
                         <span class="font-sans text-[11px] text-primary">日常最动人</span>
                     </div>
-                    <div class="app-soft-card bg-[#fbfbff] p-3 flex flex-col gap-1">
+                    <div class="app-rhythm-mini p-3 flex flex-col gap-1">
                         <span class="font-sans text-[11px] font-semibold text-on-surface-variant">视频</span>
                         <span class="font-display text-[22px] font-bold text-on-surface">6</span>
                         <span class="font-sans text-[11px] text-primary">饭桌和团聚</span>
                     </div>
-                    <div class="app-soft-card bg-[#fbfbff] p-3 flex flex-col gap-1">
+                    <div class="app-rhythm-mini p-3 flex flex-col gap-1">
                         <span class="font-sans text-[11px] font-semibold text-on-surface-variant">录音</span>
                         <span class="font-display text-[22px] font-bold text-on-surface">18</span>
                         <span class="font-sans text-[11px] text-primary">叮嘱和问候</span>
                     </div>
                 </div>
                 <div class="grid grid-cols-2 gap-3">
-                    <button class="h-11 rounded-2xl bg-primary text-white text-[12px] font-bold shadow-sm">先看饭桌照片</button>
-                    <button class="h-11 rounded-2xl bg-[#f4f6fb] text-on-surface text-[12px] font-semibold border border-outline-variant/15">先听一句叮嘱</button>
+                    <button class="app-btn-primary h-11 text-[12px] font-bold">先看饭桌照片</button>
+                    <button class="app-btn-secondary h-11 text-[12px] font-semibold">先听一句叮嘱</button>
                 </div>
             </div>
         </section>
 
         <section class="flex flex-col gap-3">
             <div class="app-story-note">
-                <div class="app-story-icon bg-[#eef5ff] text-primary">
+                <div class="app-story-icon info">
                     <span class="material-symbols-outlined text-[18px]">image</span>
                 </div>
                 <div>
@@ -74,21 +81,21 @@
                 </div>
             </div>
             <div class="app-story-note">
-                <div class="app-story-icon bg-[#fff4e8] text-[#c87b2a]">
+                <div class="app-story-icon warn">
                     <span class="material-symbols-outlined text-[18px]">favorite</span>
                 </div>
                 <div>
-                    <p class="font-sans text-[11px] font-semibold text-[#c87b2a] tracking-[0.12em]">情绪</p>
+                    <p class="font-sans text-[11px] font-semibold app-tone-warn tracking-[0.12em]">情绪</p>
                     <p class="font-display text-[16px] font-bold text-on-surface mt-1">你想念的，其实不是照片本身，而是那种家里有人等你的感觉</p>
                     <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">比起精心整理的相册，那些带着饭香、说笑声和叮嘱的瞬间，更容易一下子把人拉回去。</p>
                 </div>
             </div>
             <div class="app-story-note">
-                <div class="app-story-icon bg-[#edf6ee] text-[#2d7d5c]">
+                <div class="app-story-icon good">
                     <span class="material-symbols-outlined text-[18px]">directions_walk</span>
                 </div>
                 <div>
-                    <p class="font-sans text-[11px] font-semibold text-[#2d7d5c] tracking-[0.12em]">行动</p>
+                    <p class="font-sans text-[11px] font-semibold app-tone-good tracking-[0.12em]">行动</p>
                     <p class="font-display text-[16px] font-bold text-on-surface mt-1">看完这一组后，顺手把周末留给回家</p>
                     <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">如果已经开始想她，就别只停在翻看回忆。回去一起吃顿饭，会比继续收藏更多片段更重要。</p>
                 </div>
@@ -104,22 +111,22 @@
                 <span class="font-sans text-xs font-semibold text-primary">按情绪排序</span>
             </div>
             <div class="grid grid-cols-2 gap-3">
-                <article class="rounded-[24px] overflow-hidden shadow-soft border border-outline-variant/15 bg-white">
+                <article class="app-memory-card bg-white/70">
                     <img src="assets/images/memory-family-dinner.jpg" alt="饭桌重逢" class="w-full h-40 object-cover">
                     <div class="p-4">
                         <div class="flex items-center justify-between gap-2">
-                            <span class="px-2.5 py-1 rounded-full bg-[#fff4e8] text-[#c87b2a] text-[10px] font-bold tracking-[0.08em]">最想回家</span>
+                            <span class="app-status-badge warn tracking-[0.08em]">最想回家</span>
                             <span class="font-sans text-[11px] font-semibold text-primary">视频 01:42</span>
                         </div>
                         <h4 class="font-display text-[17px] font-bold text-on-surface mt-2.5">饭桌边那句“人回来就行”</h4>
                         <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">她笑着说不用带东西，只要你能回来一起吃饭，她就已经很高兴。</p>
                     </div>
                 </article>
-                <article class="rounded-[24px] overflow-hidden shadow-soft border border-outline-variant/15 bg-white">
+                <article class="app-memory-card bg-white/70">
                     <img src="assets/images/memory-relax-chat.jpg" alt="客厅说话" class="w-full h-40 object-cover">
                     <div class="p-4">
                         <div class="flex items-center justify-between gap-2">
-                            <span class="px-2.5 py-1 rounded-full bg-[#eef5ff] text-primary text-[10px] font-bold tracking-[0.08em]">有点想她</span>
+                            <span class="app-status-badge info tracking-[0.08em]">有点想她</span>
                             <span class="font-sans text-[11px] font-semibold text-primary">录音 00:58</span>
                         </div>
                         <h4 class="font-display text-[17px] font-bold text-on-surface mt-2.5">晚饭后沙发边的碎碎念</h4>
@@ -138,13 +145,13 @@
                 <span class="font-sans text-xs font-semibold text-primary">人生片段</span>
             </div>
             <div class="flex flex-wrap gap-2">
-                <button class="px-3.5 py-2 rounded-full bg-primary text-white text-[12px] font-bold">饭桌团圆</button>
-                <button class="px-3.5 py-2 rounded-full bg-white border border-outline-variant/20 text-on-surface-variant text-[12px] font-semibold">客厅闲聊</button>
-                <button class="px-3.5 py-2 rounded-full bg-white border border-outline-variant/20 text-on-surface-variant text-[12px] font-semibold">一起散步</button>
-                <button class="px-3.5 py-2 rounded-full bg-white border border-outline-variant/20 text-on-surface-variant text-[12px] font-semibold">院子晒太阳</button>
+                <button class="app-pill-button active text-[12px] font-bold">饭桌团圆</button>
+                <button class="app-pill-button text-[12px] font-semibold text-on-surface-variant">客厅闲聊</button>
+                <button class="app-pill-button text-[12px] font-semibold text-on-surface-variant">一起散步</button>
+                <button class="app-pill-button text-[12px] font-semibold text-on-surface-variant">院子晒太阳</button>
             </div>
             <div class="flex flex-col gap-3">
-                <div class="app-soft-card bg-white p-4 flex gap-4">
+                <div class="app-soft-card p-4 flex gap-4">
                     <img src="assets/images/memory-family-dinner.jpg" alt="生日饭桌" class="w-20 h-20 rounded-2xl object-cover shrink-0">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center justify-between gap-2">
@@ -154,7 +161,7 @@
                         <p class="font-sans text-[12px] text-on-surface-variant mt-2 leading-relaxed">最适合在想回家却还没下决定的时候打开。热闹、真实，也最像“下一次还要一起吃饭”。</p>
                     </div>
                 </div>
-                <div class="app-soft-card bg-white p-4 flex gap-4">
+                <div class="app-soft-card p-4 flex gap-4">
                     <img src="assets/images/memory-daughter-walk.jpg" alt="一起散步" class="w-20 h-20 rounded-2xl object-cover shrink-0">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center justify-between gap-2">
@@ -164,7 +171,7 @@
                         <p class="font-sans text-[12px] text-on-surface-variant mt-2 leading-relaxed">她总会走慢一点，等你把一天的话讲完。这组画面适合在你想找人说话的时候看。</p>
                     </div>
                 </div>
-                <div class="app-soft-card bg-white p-4 flex gap-4">
+                <div class="app-soft-card p-4 flex gap-4">
                     <img src="assets/images/memory-garden-sun.jpg" alt="院子晒太阳" class="w-20 h-20 rounded-2xl object-cover shrink-0">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center justify-between gap-2">
@@ -186,55 +193,55 @@
                 <span class="font-sans text-xs font-semibold text-primary">6 组精选</span>
             </div>
             <div class="grid grid-cols-3 gap-3">
-                <div class="rounded-2xl overflow-hidden shadow-soft aspect-square">
+                <div class="app-memory-card aspect-square">
                     <img src="assets/images/memory-family-dinner.jpg" alt="饭桌记忆" class="w-full h-full object-cover">
                 </div>
-                <div class="rounded-2xl overflow-hidden shadow-soft aspect-square">
+                <div class="app-memory-card aspect-square">
                     <img src="assets/images/memory-relax-chat.jpg" alt="沙发记忆" class="w-full h-full object-cover">
                 </div>
-                <div class="rounded-2xl overflow-hidden shadow-soft aspect-square">
+                <div class="app-memory-card aspect-square">
                     <img src="assets/images/memory-garden-sun.jpg" alt="晒太阳记忆" class="w-full h-full object-cover">
                 </div>
-                <div class="rounded-2xl overflow-hidden shadow-soft aspect-square">
+                <div class="app-memory-card aspect-square">
                     <img src="assets/images/grandma-reading.jpg" alt="读书记忆" class="w-full h-full object-cover">
                 </div>
-                <div class="rounded-2xl overflow-hidden shadow-soft aspect-square">
+                <div class="app-memory-card aspect-square">
                     <img src="assets/images/memory-daughter-walk.jpg" alt="散步记忆" class="w-full h-full object-cover">
                 </div>
-                <div class="rounded-2xl overflow-hidden shadow-soft aspect-square">
+                <div class="app-memory-card aspect-square">
                     <img src="assets/images/memory-generations.jpg" alt="团圆记忆" class="w-full h-full object-cover">
                 </div>
             </div>
         </section>
     </main>
 
-    <nav class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
-        <div class="flex justify-between items-center">
-            <a href="memorial_home.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
+    <nav class="app-bottom-nav">
+        <div class="app-bottom-nav-inner flex justify-between items-center">
+            <a href="memorial_home.html?app=1&memorial=on" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
                 <div class="app-nav-pill">
                     <span class="material-symbols-outlined text-[22px]">home</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
             </a>
-            <a href="digital_human.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
+            <a href="digital_human.html?app=1&memorial=on" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
                 <div class="app-nav-pill">
                     <span class="material-symbols-outlined text-[22px]">forum</span>
                 </div>
                 <span class="font-sans text-[10px] font-semibold tracking-wide">平行世界</span>
             </a>
-            <a href="memory_gallery.html" class="flex flex-col items-center gap-1.5 text-primary">
+            <a href="memory_gallery.html?app=1&memorial=on" class="flex flex-col items-center gap-1.5 text-primary">
                 <div class="app-nav-pill active">
                     <span class="material-symbols-outlined fill text-[22px]">photo_library</span>
                 </div>
                 <span class="font-sans text-[11px] font-bold tracking-wide">记忆馆</span>
             </a>
-            <a href="voice_archive.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
+            <a href="voice_archive.html?app=1&memorial=on" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
                 <div class="app-nav-pill">
                     <span class="material-symbols-outlined text-[22px] fill">mic</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">声音</span>
             </a>
-            <a href="privacy.html?memorial=on" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
+            <a href="privacy.html?app=1&memorial=on" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors">
                 <div class="app-nav-pill">
                     <span class="material-symbols-outlined text-[22px]">person</span>
                 </div>

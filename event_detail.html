@@ -3,10 +3,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>牵挂详情 - 想家了吗</title>
+    <title>牵挂详情 - 回家</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260630-style1" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
@@ -35,7 +35,7 @@
                     <span class="material-symbols-outlined fill text-[34px]">play_arrow</span>
                 </button>
                 <div class="absolute top-4 left-4 flex items-center gap-2">
-                    <span id="edgeDetailStatus" class="px-3 py-1 rounded-full bg-[#fff4e8] text-[#c87b2a] text-[10px] font-bold tracking-[0.1em]">需要确认</span>
+                    <span id="edgeDetailStatus" class="app-status-badge warn tracking-[0.1em]">需要确认</span>
                     <span id="edgeDetailTime" class="px-3 py-1.5 rounded-full bg-white/14 backdrop-blur-md text-white text-[10px] font-semibold">09:42</span>
                 </div>
                 <div class="absolute left-4 right-4 bottom-4">
@@ -53,7 +53,7 @@
                     <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.14em]">DETAIL</p>
                     <h2 id="edgeDetailTitle" class="font-display text-[24px] font-bold text-on-surface tracking-[-0.02em] leading-[1.18] mt-1">这不是一定有危险，但它值得你现在看一眼</h2>
                 </div>
-                <div class="w-11 h-11 rounded-full bg-[#fff4e8] text-[#c87b2a] flex items-center justify-center shrink-0">
+                <div class="app-icon-chip warn w-11 h-11 shrink-0">
                     <span class="material-symbols-outlined text-[22px]">warning</span>
                 </div>
             </div>
@@ -74,7 +74,7 @@
 
         <section class="flex flex-col gap-3">
             <div class="app-story-note">
-                <div class="app-story-icon bg-[#eef5ff] text-primary">
+                <div class="app-story-icon info">
                     <span class="material-symbols-outlined text-[18px]">visibility</span>
                 </div>
                 <div>
@@ -84,21 +84,21 @@
                 </div>
             </div>
             <div class="app-story-note">
-                <div class="app-story-icon bg-[#fff4e8] text-[#c87b2a]">
+                <div class="app-story-icon warn">
                     <span class="material-symbols-outlined text-[18px]">favorite</span>
                 </div>
                 <div>
-                    <p class="font-sans text-[11px] font-semibold text-[#c87b2a] tracking-[0.12em]">感觉</p>
+                    <p class="font-sans text-[11px] font-semibold app-tone-warn tracking-[0.12em]">感觉</p>
                     <p class="font-display text-[16px] font-bold text-on-surface mt-1">最让人放心不下的，不是数据本身，而是你不确定她现在需不需要你</p>
                     <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">这类提醒往往不一定严重，但最容易让人心里一紧。它存在的意义，是帮你尽快把“担心”变成一次真实确认。</p>
                 </div>
             </div>
             <div class="app-story-note">
-                <div class="app-story-icon bg-[#edf6ee] text-[#2d7d5c]">
+                <div class="app-story-icon good">
                     <span class="material-symbols-outlined text-[18px]">call</span>
                 </div>
                 <div>
-                    <p class="font-sans text-[11px] font-semibold text-[#2d7d5c] tracking-[0.12em]">下一步</p>
+                    <p class="font-sans text-[11px] font-semibold app-tone-good tracking-[0.12em]">下一步</p>
                     <p class="font-display text-[16px] font-bold text-on-surface mt-1">先联系她，如果没人接，再联系附近家人或邻居</p>
                     <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">现在最重要的不是反复看画面，而是尽快确认她的状态。确认后，这条提醒就可以安心地结束。</p>
                 </div>

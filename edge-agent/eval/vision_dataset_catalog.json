@@ -1,0 +1,118 @@
+{
+  "schema_version": "gohome-vision-dataset-catalog-v1",
+  "updated_at": "2026-07-04",
+  "purpose": "Catalog of external datasets for validating GoHome edge vision algorithms before tuning models and thresholds.",
+  "datasets": [
+    {
+      "id": "coco-person-pose",
+      "name": "COCO / COCO-Pose",
+      "url": "https://cocodataset.org/",
+      "tasks": ["person_detection", "pose_keypoints", "negative_context"],
+      "priority": "p0",
+      "access": "direct_download",
+      "size_note": "Large; use validation split and person/keypoint subset first.",
+      "fit_for_gohome": "Baseline for person boxes and pose keypoints; not elderly-home-specific.",
+      "caveats": ["Image dataset, not video; weak for temporal fall/action logic."]
+    },
+    {
+      "id": "open-images-v7-person-indoor-negative",
+      "name": "Open Images V7",
+      "url": "https://storage.googleapis.com/openimages/web/factsfigures_v7.html",
+      "tasks": ["person_detection", "negative_context", "indoor_objects"],
+      "priority": "p1",
+      "access": "direct_metadata_download",
+      "size_note": "Very large; sample validation images by class labels only.",
+      "fit_for_gohome": "Good source of broad negative cases and indoor objects for false-positive testing.",
+      "caveats": ["Some image-level labels are machine generated; verify label quality before training."]
+    },
+    {
+      "id": "dfire",
+      "name": "D-Fire",
+      "url": "https://github.com/gaia-solutions-on-demand/DFireDataset",
+      "tasks": ["fire_detection", "smoke_detection", "fire_negative"],
+      "priority": "p0",
+      "access": "download_links",
+      "size_note": "More than 21k images; YOLO-format labels.",
+      "fit_for_gohome": "Best first public source for fire/smoke object detection model evaluation.",
+      "caveats": ["Image dataset; still needs surveillance video validation for temporal logic."]
+    },
+    {
+      "id": "unidatapro-fire-smoke-video",
+      "name": "Smoke and Fire Detection Videos Dataset",
+      "url": "https://huggingface.co/datasets/UniDataPro/fire-and-smoke-dataset",
+      "tasks": ["fire_video", "smoke_video", "temporal_fire_validation"],
+      "priority": "p0",
+      "access": "provider_download",
+      "size_note": "85 annotated videos.",
+      "fit_for_gohome": "Useful to validate temporal fire/smoke rules, not just single-frame color heuristics.",
+      "caveats": ["Check provider terms before commercial use."]
+    },
+    {
+      "id": "ur-fall",
+      "name": "UR Fall Detection Dataset",
+      "url": "https://fenix.ur.edu.pl/~mkepski/ds/uf.html",
+      "tasks": ["fall_detection", "adl_negative", "temporal_fall_validation"],
+      "priority": "p0",
+      "access": "direct_download",
+      "local_importer": "scripts/run-ur-fall-eval.sh; scripts/run-ur-fall-eval-expanded.sh",
+      "size_note": "70 sequences: 30 falls and 40 activities of daily living.",
+      "fit_for_gohome": "Small but suitable for first fall-vs-ADL temporal rule regression.",
+      "caveats": ["Kinect setup differs from normal home IP camera; use as regression, not final accuracy proof."]
+    },
+    {
+      "id": "ntu-rgbd",
+      "name": "NTU RGB+D / NTU RGB+D 120",
+      "url": "https://rose1.ntu.edu.sg/dataset/actionRecognition/",
+      "tasks": ["action_recognition", "falling_down", "eat_meal", "drink_water", "sit_stand"],
+      "priority": "p1",
+      "access": "registration_required",
+      "size_note": "Large; RGB videos are over 100GB. Skeleton modality is smaller and useful.",
+      "fit_for_gohome": "Strong source for daily actions and health-related actions.",
+      "caveats": ["Requires request approval and release agreement; privacy/demo restrictions apply."]
+    },
+    {
+      "id": "eatsense",
+      "name": "EatSense",
+      "url": "https://groups.inf.ed.ac.uk/vision/DATASETS/EATSENSE/",
+      "tasks": ["eating", "drinking", "upper_body_pose", "fine_grained_action"],
+      "priority": "p1",
+      "access": "dataset_page",
+      "size_note": "135 long RGBD videos averaging about 11 minutes each.",
+      "fit_for_gohome": "Best known public match for eating/drinking behavior, but not edge-lightweight.",
+      "caveats": ["Research dataset; validate license and download terms before product use."]
+    },
+    {
+      "id": "kinetics",
+      "name": "Kinetics",
+      "url": "https://github.com/cvdfoundation/kinetics-dataset",
+      "tasks": ["general_action_recognition", "pretraining_reference"],
+      "priority": "p2",
+      "access": "youtube_url_lists",
+      "size_note": "Hundreds of thousands of short clips depending on version.",
+      "fit_for_gohome": "Good for model pretraining/reference; too broad for direct elderly-home validation.",
+      "caveats": ["YouTube link availability changes; licensing is video-source dependent."]
+    },
+    {
+      "id": "ucf101",
+      "name": "UCF101",
+      "url": "https://www.crcv.ucf.edu/data/UCF101.php",
+      "tasks": ["general_action_recognition", "baseline_action_model"],
+      "priority": "p2",
+      "access": "direct_download",
+      "size_note": "13k+ clips across 101 action classes.",
+      "fit_for_gohome": "Useful for action-recognition tooling tests, not elderly-home specific.",
+      "caveats": ["Mostly unconstrained YouTube clips; limited direct coverage of our target events."]
+    },
+    {
+      "id": "virat",
+      "name": "VIRAT Video Dataset",
+      "url": "https://viratdata.org/",
+      "tasks": ["surveillance_activity", "multi_person_scene", "video_pipeline_stress"],
+      "priority": "p2",
+      "access": "agreement_required_for_ground_camera",
+      "size_note": "Ground camera release has hours of HD surveillance video.",
+      "fit_for_gohome": "Good for stressing surveillance video pipelines and background motion.",
+      "caveats": ["Outdoor/public scenes, not home elder care; access terms vary by release."]
+    }
+  ]
+}

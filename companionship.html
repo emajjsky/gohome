@@ -3,20 +3,19 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>陪伴日志 - 想家了吗</title>
+    <title>陪伴日志 - 回家</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
         html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
-        body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
     </style>
 </head>
-<body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
-    <main class="flex-1 px-container flex flex-col gap-6 pt-5 pb-8">
+<body class="app-phone-shell text-on-surface font-sans antialiased">
+    <main class="app-main app-stack">
         <section class="app-home-hero p-5">
             <div class="relative z-[1] flex flex-col gap-4">
                 <div class="flex items-center justify-between">
@@ -41,7 +40,7 @@
                     </div>
                     <div class="rounded-[18px] bg-[linear-gradient(180deg,#fffaf5_0%,#fff4eb_100%)] border border-white/85 px-3 py-3 shadow-sm">
                         <p class="font-sans text-[10px] font-semibold text-on-surface-variant">最优建议</p>
-                        <p class="font-display text-[15px] font-bold text-[#b5765d] mt-1.5">周六回家</p>
+                        <p class="font-display text-[15px] font-bold app-tone-warn mt-1.5">周六回家</p>
                     </div>
                 </div>
             </div>
@@ -56,7 +55,7 @@
                 <div class="app-section-badge shrink-0">优先去做</div>
             </div>
             <div class="bg-white/82 rounded-[18px] border border-white px-3.5 py-3.5 flex items-start gap-3 shadow-sm">
-                <div class="w-10 h-10 rounded-full bg-[#eef5ff] text-primary flex items-center justify-center shrink-0">
+                <div class="app-story-icon info w-10 h-10 shrink-0">
                     <span class="material-symbols-outlined fill text-[18px]">lightbulb</span>
                 </div>
                 <div>
@@ -73,6 +72,18 @@
                     定周六回家
                 </button>
             </div>
+        </section>
+
+        <section id="companionshipMessageSection" class="hidden app-panel px-5 py-5 flex flex-col gap-4">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <p class="font-display text-[18px] font-bold text-on-surface">陪伴消息</p>
+                    <p id="companionshipMessageMeta" class="font-sans text-[11px] text-on-surface-variant mt-1">来自本地盒子的 MessageCandidate 列表</p>
+                    <p id="companionshipMessageFeedback" class="hidden font-sans text-[11px] text-primary mt-1.5">消息状态已更新</p>
+                </div>
+                <span id="companionshipMessageCount" class="app-section-badge shrink-0">0 条</span>
+            </div>
+            <div id="companionshipMessageList" class="flex flex-col gap-3"></div>
         </section>
 
         <section class="grid grid-cols-2 gap-3">
@@ -96,7 +107,7 @@
             <div class="app-soft-card bg-white p-4 flex flex-col gap-2.5">
                 <p class="font-sans text-[11px] font-semibold text-on-surface-variant">最近一次视频</p>
                 <p class="font-display text-[17px] font-bold text-on-surface">3天前</p>
-                <p class="font-sans text-[12px] text-[#b5765d] font-semibold">看了一眼就挂了</p>
+                <p class="font-sans text-[12px] app-tone-warn font-semibold">看了一眼就挂了</p>
             </div>
         </section>
 
@@ -107,7 +118,7 @@
             </div>
             <div class="app-rhythm-card p-4 flex flex-col gap-3">
                 <div class="app-story-note">
-                    <div class="app-story-icon bg-[#eef5ff] text-primary">
+                    <div class="app-story-icon info">
                         <span class="material-symbols-outlined text-[18px]">phone_in_talk</span>
                     </div>
                     <div>
@@ -116,7 +127,7 @@
                     </div>
                 </div>
                 <div class="app-story-note">
-                    <div class="app-story-icon bg-[#fff3eb] text-[#b5765d]">
+                    <div class="app-story-icon warn">
                         <span class="material-symbols-outlined text-[18px]">home</span>
                     </div>
                     <div>
@@ -125,7 +136,7 @@
                     </div>
                 </div>
                 <div class="app-story-note">
-                    <div class="app-story-icon bg-[#edf6ee] text-[#2d7d5c]">
+                    <div class="app-story-icon good">
                         <span class="material-symbols-outlined fill text-[18px]">favorite</span>
                     </div>
                     <div>
@@ -143,7 +154,7 @@
             </div>
             <div class="flex flex-col gap-3">
                 <div class="app-soft-card bg-white p-4 flex items-start gap-3">
-                    <div class="w-10 h-10 rounded-full bg-[#eef5ff] text-primary flex items-center justify-center shrink-0">
+                    <div class="app-story-icon info w-10 h-10 shrink-0">
                         <span class="material-symbols-outlined fill text-[18px]">call</span>
                     </div>
                     <div class="flex-1">
@@ -155,7 +166,7 @@
                     </div>
                 </div>
                 <div class="app-soft-card bg-white p-4 flex items-start gap-3">
-                    <div class="w-10 h-10 rounded-full bg-[#fff3eb] text-[#b5765d] flex items-center justify-center shrink-0">
+                    <div class="app-story-icon warn w-10 h-10 shrink-0">
                         <span class="material-symbols-outlined text-[18px]">videocam</span>
                     </div>
                     <div class="flex-1">
@@ -167,7 +178,7 @@
                     </div>
                 </div>
                 <div class="app-soft-card bg-white p-4 flex items-start gap-3">
-                    <div class="w-10 h-10 rounded-full bg-[#edf6ee] text-[#2d7d5c] flex items-center justify-center shrink-0">
+                    <div class="app-story-icon good w-10 h-10 shrink-0">
                         <span class="material-symbols-outlined text-[18px]">restaurant</span>
                     </div>
                     <div class="flex-1">
@@ -225,39 +236,41 @@
         </section>
     </main>
 
-    <nav class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
-        <div class="flex justify-between items-center">
-            <a href="index.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5">
+    <nav class="app-bottom-nav">
+        <div class="app-bottom-nav-inner flex justify-between items-center">
+            <a href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill">
                     <span class="material-symbols-outlined text-[22px]">home</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
             </a>
-            <a href="monitor.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5">
+            <a href="monitor.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill">
                     <span class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">守护</span>
             </a>
-            <a href="events.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5">
+            <a href="events.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill">
                     <span class="material-symbols-outlined text-[22px]">history</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
             </a>
-            <a href="companionship.html" class="flex flex-col items-center gap-1.5 text-primary">
+            <a href="companionship.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
                 <div class="app-nav-pill active">
                     <span class="material-symbols-outlined fill text-[22px]">diversity_1</span>
                 </div>
                 <span class="font-sans text-[11px] font-bold tracking-wide">陪伴</span>
             </a>
-            <a href="privacy.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill group-hover:bg-primary/5">
+            <a href="privacy.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div class="app-nav-pill">
                     <span class="material-symbols-outlined text-[22px]">person</span>
                 </div>
                 <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
             </a>
         </div>
     </nav>
+    <script src="assets/scripts/edge-client.js?v=20260701-msg4"></script>
+    <script src="assets/scripts/companionship-live.js?v=20260701-msg4"></script>
 </body>
 </html>

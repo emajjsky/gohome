@@ -709,6 +709,48 @@
             body: JSON.stringify(payload),
         }),
         v1Households: () => request("/api/v1/households/mine"),
+        v1ElderProfile: (familyId, elderId = "elder_primary") =>
+            request(`/api/v1/families/${encodeURIComponent(familyId)}/elders/${encodeURIComponent(elderId)}/profile`),
+        v1UpsertElderProfile: (familyId, elderId = "elder_primary", payload = {}) =>
+            request(`/api/v1/families/${encodeURIComponent(familyId)}/elders/${encodeURIComponent(elderId)}/profile`, {
+                method: "PUT",
+                body: JSON.stringify(payload),
+            }),
+        v1CalendarEvents: (familyId, elderId = "") => {
+            const query = elderId ? `?elder_id=${encodeURIComponent(elderId)}` : "";
+            return request(`/api/v1/families/${encodeURIComponent(familyId)}/calendar-events${query}`);
+        },
+        v1CreateCalendarEvent: (familyId, payload = {}) =>
+            request(`/api/v1/families/${encodeURIComponent(familyId)}/calendar-events`, {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }),
+        v1WeatherSignals: (familyId, params = {}) => {
+            const query = new URLSearchParams();
+            if (params.elder_id) query.set("elder_id", params.elder_id);
+            if (params.city) query.set("city", params.city);
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return request(`/api/v1/families/${encodeURIComponent(familyId)}/weather-signals${suffix}`);
+        },
+        v1GenerateMessages: (payload = {}) => request("/api/v1/internal/messages/generate", {
+            method: "POST",
+            body: JSON.stringify(payload),
+        }),
+        v1AppMessages: (params = {}) => {
+            const query = new URLSearchParams();
+            if (params.family_id) query.set("family_id", String(params.family_id));
+            if (params.limit) query.set("limit", String(params.limit));
+            if (params.status) query.set("status", String(params.status));
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return request(`/api/v1/app/messages${suffix}`);
+        },
+        v1AppMessage: (messageId, familyId = "") =>
+            request(`/api/v1/app/messages/${encodeURIComponent(messageId)}${familyId ? `?family_id=${encodeURIComponent(familyId)}` : ""}`),
+        v1UpdateAppMessage: (messageId, patch = {}, familyId = "") =>
+            request(`/api/v1/app/messages/${encodeURIComponent(messageId)}${familyId ? `?family_id=${encodeURIComponent(familyId)}` : ""}`, {
+                method: "PATCH",
+                body: JSON.stringify(patch),
+            }),
         createFamily: (payload) => request("/api/families", {
             method: "POST",
             body: JSON.stringify(payload),

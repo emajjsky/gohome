@@ -23,7 +23,8 @@ class EventAgent:
         force: bool = False,
     ) -> Optional[Dict[str, Any]]:
         camera_id = camera["id"] if camera else None
-        if not force and self.storage.event_exists_recent(camera_id, event_type, self.throttle_seconds):
+        throttle_seconds = self._throttle_seconds(event_type)
+        if not force and self.storage.event_exists_recent(camera_id, event_type, throttle_seconds):
             if candidate_id is not None:
                 self.storage.update_event_candidate_status(candidate_id, "suppressed")
             return None
@@ -43,8 +44,10 @@ class EventAgent:
         if candidate_id is not None:
             self.storage.update_event_candidate_status(candidate_id, "promoted", promoted_event_id=event["id"])
 
+        self.storage.enqueue_event_upload_jobs(event)
+
         rules = self.storage.get_rules()
-        if rules.get("notification_enabled"):
+        if rules.get("notification_enabled") and self._should_notify(event_type, level):
             self.notifier.send(
                 title="回家告警",
                 body=summary,
@@ -57,3 +60,17 @@ class EventAgent:
             )
 
         return event
+
+    def _throttle_seconds(self, event_type: str) -> int:
+        if event_type in {"no_motion", "no_person"}:
+            return max(self.throttle_seconds, 3600)
+        if event_type == "fire_candidate":
+            return max(self.throttle_seconds, 1800)
+        if event_type in {"black_screen", "camera_offline"}:
+            return max(self.throttle_seconds, 900)
+        return self.throttle_seconds
+
+    def _should_notify(self, event_type: str, level: str) -> bool:
+        if level != "critical":
+            return False
+        return event_type in {"fall_candidate", "fire_candidate", "camera_offline"}

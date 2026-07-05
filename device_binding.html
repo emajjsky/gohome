@@ -3,10 +3,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>绑定设备 - 想家了吗</title>
+    <title>绑定设备 - 回家</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260630-style1" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
@@ -51,11 +51,11 @@
             <form id="bindingForm" class="flex flex-col gap-3">
                 <label class="flex flex-col gap-1.5">
                     <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">选择家庭</span>
-                    <select id="bindingFamilySelect" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface"></select>
+                    <select id="bindingFamilySelect" class="app-form-field"></select>
                 </label>
                 <label class="flex flex-col gap-1.5">
                     <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">备注</span>
-                    <input id="bindingNoteInput" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface" autocomplete="off" placeholder="比如：家里主设备">
+                    <input id="bindingNoteInput" class="app-form-field" autocomplete="off" placeholder="比如：家里主设备">
                 </label>
                 <button id="bindingSubmitBtn" type="submit" class="app-btn-primary h-11 font-sans text-[13px] font-bold">绑定当前设备</button>
             </form>
@@ -103,11 +103,11 @@
         <div class="app-bottom-nav-inner">
             <div class="flex justify-between items-center">
                 <a href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">home</span></div>
+                    <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">home</span></div>
                     <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
                 </a>
                 <a id="bindingNavFamilyLink" href="family.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">groups</span></div>
+                    <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">groups</span></div>
                     <span class="font-sans text-[11px] font-semibold tracking-wide">家庭</span>
                 </a>
                 <a id="bindingNavSelfLink" href="device_binding.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">

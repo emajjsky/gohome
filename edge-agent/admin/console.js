@@ -14,6 +14,7 @@ const state = {
   maxCameras: 3,
   detectorBackend: "basic",
   latestSnapshot: null,
+  latestEvaluation: null,
   cameraFormPrefilled: false,
   wifiConnecting: false,
   refreshTimer: null,
@@ -21,6 +22,8 @@ const state = {
   liveAnalysisTimer: null,
   liveAnalysisBusy: false,
   liveAnalysisErrorShown: false,
+  candidateRecords: [],
+  observationLogs: [],
   toastTimer: null,
 };
 
@@ -47,6 +50,12 @@ function fmtNumber(value, digits = 2) {
   if (value === null || value === undefined || value === "") return "-";
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(digits) : "-";
+}
+
+function fmtPercent(value, digits = 0) {
+  if (value === null || value === undefined || value === "") return "-";
+  const number = Number(value);
+  return Number.isFinite(number) ? `${(number * 100).toFixed(digits)}%` : "-";
 }
 
 function fmtDuration(seconds) {
@@ -258,33 +267,6 @@ function cameraStreamPath() {
   return `/${channel}/${stream}`;
 }
 
-function selectedCameraProfile() {
-  const key = $("cameraProfile")?.value || "auto";
-  return (state.cameraPresets?.profiles || []).find((profile) => profile.key === key)
-    || { key: "sub_stream", label: "副码流", path: "/1/2", hint: "默认使用 1 频道副码流。" };
-}
-
-function renderCameraProfiles() {
-  const select = $("cameraProfile");
-  if (!select || !state.cameraPresets?.profiles) return;
-  const current = select.value || "auto";
-  select.innerHTML = state.cameraPresets.profiles.map((profile) => `
-    <option value="${escapeHtml(profile.key)}" ${profile.key === current ? "selected" : ""}>${escapeHtml(profile.label)}</option>
-  `).join("");
-  if ([...select.options].some((option) => option.value === current)) select.value = current;
-  applyCameraProfile();
-}
-
-function applyCameraProfile() {
-  const profile = selectedCameraProfile();
-  if ($("cameraChannel") && profile.key !== "custom") {
-    setCameraStreamControls(profile.path || "/1/2");
-  }
-  setText("cameraProfileHint", profile.hint || "默认使用 1 频道副码流。");
-  syncLanUrlPreview();
-  updateCameraLimitState();
-}
-
 function syncCameraName() {
   const room = $("cameraRoom")?.value.trim() || "客厅";
   if ($("cameraName")) $("cameraName").value = `${room}摄像头`;
@@ -422,9 +404,8 @@ function showWifiReconnectGuide(network = state.setupNetwork) {
 }
 
 async function loadCameraPresets() {
-  if (!($("cameraProfile") || $("cameraHost"))) return;
+  if (!$("cameraHost")) return;
   state.cameraPresets = await api("/api/cameras/setup-presets");
-  renderCameraProfiles();
   prefillCameraForm();
 }
 
@@ -764,17 +745,45 @@ function renderStream() {
     }
     setText("streamStatus", "视频流不可用");
   };
-  stream.src = `/api/cameras/${camera.id}/stream.mjpg?fps=5&width=1280&height=720&quality=70&drop=4&t=${Date.now()}`;
+  const streamProfile = pageName === "algorithms"
+    ? { fps: 8, width: 768, height: 432, quality: 56, drop: 8, label: "低延迟实时视频" }
+    : { fps: 6, width: 1280, height: 720, quality: 64, drop: 4, label: "720p 低延迟视频" };
+  stream.src = `/api/cameras/${camera.id}/stream.mjpg?fps=${streamProfile.fps}&width=${streamProfile.width}&height=${streamProfile.height}&quality=${streamProfile.quality}&drop=${streamProfile.drop}&t=${Date.now()}`;
   state.streamMaskTimer = setTimeout(() => {
     if (stream.getAttribute("src") && empty) empty.style.display = "none";
   }, 900);
-  setText("streamStatus", "720p 实时视频");
+  setText("streamStatus", streamProfile.label);
   setText("streamCamera", `${cameraDisplayName(camera)} · ${camera.room || "未设置"}`);
 }
 
 function snapshotPeople(snapshot) {
   const people = snapshot?.analysis?.people;
   return Array.isArray(people) ? people : [];
+}
+
+function snapshotPoses(snapshot) {
+  const poses = snapshot?.analysis?.poses;
+  return Array.isArray(poses) ? poses : [];
+}
+
+function snapshotPoseEdges(snapshot) {
+  const edges = snapshot?.analysis?.pose_skeleton_edges;
+  return Array.isArray(edges) && edges.length
+    ? edges
+    : [
+      ["left_shoulder", "right_shoulder"],
+      ["left_shoulder", "left_elbow"],
+      ["left_elbow", "left_wrist"],
+      ["right_shoulder", "right_elbow"],
+      ["right_elbow", "right_wrist"],
+      ["left_shoulder", "left_hip"],
+      ["right_shoulder", "right_hip"],
+      ["left_hip", "right_hip"],
+      ["left_hip", "left_knee"],
+      ["left_knee", "left_ankle"],
+      ["right_hip", "right_knee"],
+      ["right_knee", "right_ankle"],
+    ];
 }
 
 function isPresenceCandidate(person) {
@@ -790,15 +799,71 @@ function tagLabel(tag) {
   const labels = {
     black_screen: "黑屏/遮挡",
     low_motion: "低变化",
-    person_detected: "检测到人",
+    person_detected: "有人",
     person_presence_candidate: "人体存在候选",
+    pose_detected: "骨架确认",
+    pose_tracked: "骨架跟踪",
+    pose_validated_person: "骨架确认人形",
+    pose_low_body: "低位姿态",
+    pose_fall_candidate: "骨架跌倒观察",
+    pose_hand_near_face: "手部接近面部",
     no_person_detected: "暂未检测到人",
-    fall_candidate: "疑似跌倒",
-    fire_candidate: "疑似明火",
-    meal_candidate: "用餐候选",
-    stillness_candidate: "静止候选",
+    fall_candidate: "跌倒观察候选",
+    fire_candidate: "火灾视觉线索",
+    meal_candidate: "用餐观察候选",
+    stillness_candidate: "静止观察候选",
+    daze_candidate: "久坐观察候选",
   };
   return labels[tag] || tag;
+}
+
+function algorithmVisibleTags(snapshot, mode = state.previewAlgorithm || "quality") {
+  const analysis = snapshot?.analysis || {};
+  const sourceTags = [
+    ...new Set([
+      ...(Array.isArray(snapshot?.tags) ? snapshot.tags : []),
+      ...(Array.isArray(analysis.tags) ? analysis.tags : []),
+    ]),
+  ];
+  const allowlist = {
+    quality: ["black_screen", "low_motion"],
+    person: ["person_detected", "no_person_detected", "person_presence_candidate", "pose_detected", "pose_tracked", "pose_validated_person"],
+    stillness: ["stillness_candidate", "daze_candidate", "low_motion", "person_detected", "pose_detected", "pose_tracked"],
+    fall: ["fall_candidate", "pose_fall_candidate", "pose_low_body", "person_detected", "pose_detected", "pose_tracked"],
+    meal: ["meal_candidate", "pose_hand_near_face", "person_detected", "pose_detected", "pose_tracked"],
+    night: ["person_detected", "low_motion"],
+    fire: ["fire_candidate"],
+    camera: ["black_screen", "low_motion"],
+  };
+  const allowed = new Set(allowlist[mode] || allowlist.quality);
+  return sourceTags.filter((tag) => allowed.has(tag));
+}
+
+function algorithmNormalTagLabel(mode = state.previewAlgorithm || "quality", snapshot = state.latestSnapshot) {
+  const analysis = snapshot?.analysis || {};
+  if (!snapshot) return "-";
+  if (mode === "person") return Number(snapshot.person_count ?? analysis.person_count ?? 0) > 0 ? "有人" : "无人";
+  if (mode === "fall") return "未出现跌倒候选";
+  if (mode === "meal") return "未形成用餐候选";
+  if (mode === "stillness") return "活动正常";
+  if (mode === "night") return "夜间规则待命";
+  if (mode === "fire") return "未确认火灾线索";
+  if (mode === "camera") return analysis.black_screen ? "摄像头异常" : "链路正常";
+  return analysis.black_screen ? "质量异常" : "质量正常";
+}
+
+function overlayPeopleForMode(snapshot, mode = state.previewAlgorithm || "quality") {
+  if (!["person", "fall", "meal", "stillness", "night"].includes(mode)) return [];
+  const people = snapshotPeople(snapshot);
+  if (mode === "fall") {
+    return people.filter((person) => person.fall_candidate || String(person.source || "").startsWith("fall_") || String(person.method || "").includes("fall"));
+  }
+  if (mode === "person") return people;
+  return people.filter((person) => person.pose_validated || person.source === "pose_person" || !isPresenceCandidate(person));
+}
+
+function shouldRenderPoseForMode(mode = state.previewAlgorithm || "quality") {
+  return ["person", "fall", "meal", "stillness"].includes(mode);
 }
 
 function imageFitRect(snapshot) {
@@ -820,20 +885,23 @@ function renderDetectionOverlay(snapshot) {
   const overlay = $("detectionOverlay");
   if (!overlay) return;
   const rect = imageFitRect(snapshot);
-  const people = snapshotPeople(snapshot);
+  const mode = state.previewAlgorithm || "quality";
+  const people = overlayPeopleForMode(snapshot, mode);
+  const poses = shouldRenderPoseForMode(mode) ? snapshotPoses(snapshot) : [];
   const boxes = people.length
     ? people.map((person, index) => {
         const [x1, y1, x2, y2] = person.bbox || [0, 0, 0, 0];
         const confidence = person.confidence ? ` · ${Math.round(person.confidence * 100)}%` : "";
-        const mode = state.previewAlgorithm || "person";
         const presence = isPresenceCandidate(person);
-        const kind = presence ? "presence" : person.fall_candidate ? "fall" : mode === "fall" ? "watch" : "person";
-        const prefix = presence ? "人体存在" : mode === "person" ? "人形命中" : mode === "fall" ? "跌倒观察" : "人像";
+        const poseValidated = Boolean(person.pose_validated || person.source === "pose_person");
+        const tracked = person.pose_tracking_state === "cached";
+        const kind = presence && !poseValidated ? "presence" : person.fall_candidate ? "fall" : "person";
+        const prefix = tracked ? "骨架跟踪" : poseValidated ? "骨架确认" : presence ? "存在候选" : mode === "person" ? "人形识别" : mode === "fall" ? "跌倒证据" : "人像";
         const label = `${prefix} ${index + 1}${confidence}`;
-        return { bbox: [x1, y1, x2, y2], label: person.fall_candidate ? `${label} · 疑似跌倒` : label, kind };
+        return { bbox: [x1, y1, x2, y2], label: person.fall_candidate ? `${label} · 疑似跌倒` : label, kind: tracked ? "tracked" : kind };
       })
     : [];
-  if (!snapshot || !rect || !boxes.length) {
+  if (!snapshot || !rect || (!boxes.length && !poses.length)) {
     overlay.innerHTML = "";
     overlay.removeAttribute("style");
     return;
@@ -842,7 +910,8 @@ function renderDetectionOverlay(snapshot) {
   overlay.style.top = `${rect.top}px`;
   overlay.style.width = `${rect.width}px`;
   overlay.style.height = `${rect.height}px`;
-  overlay.innerHTML = boxes.map((box) => {
+  const poseMarkup = renderPoseSkeleton(snapshot, rect);
+  const boxMarkup = boxes.map((box) => {
     const [x1, y1, x2, y2] = box.bbox || [0, 0, 0, 0];
     const left = clamp((Number(x1) / rect.imageWidth) * 100, 0, 100);
     const top = clamp((Number(y1) / rect.imageHeight) * 100, 0, 100);
@@ -856,6 +925,40 @@ function renderDetectionOverlay(snapshot) {
       </div>
     `;
   }).join("");
+  overlay.innerHTML = `${poseMarkup}${boxMarkup}`;
+}
+
+function renderPoseSkeleton(snapshot, rect) {
+  const poses = snapshotPoses(snapshot);
+  if (!poses.length || !rect?.imageWidth || !rect?.imageHeight) return "";
+  const edges = snapshotPoseEdges(snapshot);
+  const lines = [];
+  const points = [];
+  const cached = poses.length > 0 && poses.every((pose) => pose.tracking_state === "cached");
+  for (const [poseIndex, pose] of poses.entries()) {
+    const byName = {};
+    for (const point of pose.keypoints || []) {
+      if (point?.name && point.visible && Number(point.confidence || 0) >= 0.22) {
+        byName[point.name] = point;
+      }
+    }
+    for (const [fromName, toName] of edges) {
+      const from = byName[fromName];
+      const to = byName[toName];
+      if (!from || !to) continue;
+      lines.push(`<line class="pose-skeleton-line pose-${poseIndex % 3}" x1="${Number(from.x)}" y1="${Number(from.y)}" x2="${Number(to.x)}" y2="${Number(to.y)}"></line>`);
+    }
+    for (const point of Object.values(byName)) {
+      const core = ["nose", "left_shoulder", "right_shoulder", "left_hip", "right_hip"].includes(point.name) ? " core" : "";
+      points.push(`<circle class="pose-keypoint${core} pose-${poseIndex % 3}" cx="${Number(point.x)}" cy="${Number(point.y)}" r="${core ? 4.2 : 3.2}"></circle>`);
+    }
+  }
+  return `
+    <svg class="pose-skeleton${cached ? " cached" : ""}" viewBox="0 0 ${rect.imageWidth} ${rect.imageHeight}" preserveAspectRatio="none" aria-hidden="true">
+      ${lines.join("")}
+      ${points.join("")}
+    </svg>
+  `;
 }
 
 function renderSnapshot(snapshot) {
@@ -873,16 +976,24 @@ function renderSnapshot(snapshot) {
   setText("snapshotContrast", fmtNumber(analysis.contrast, 1));
   setText("snapshotMotion", analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4));
   setText("snapshotPeople", snapshot.person_count ?? analysis.person_count ?? "-");
-  setText("snapshotTags", snapshot.tags?.length ? snapshot.tags.map(tagLabel).join("，") : "正常");
+  const visibleTags = algorithmVisibleTags(snapshot);
+  setText("snapshotTags", visibleTags.length ? visibleTags.map(tagLabel).join("，") : algorithmNormalTagLabel(state.previewAlgorithm, snapshot));
   renderDetectionSummary(snapshot);
   renderDetectionOverlay(snapshot);
   renderAlgorithmHitStrip(snapshot);
   renderAlgorithmDemo(snapshot);
+  renderAlgorithmPreviewMeta(snapshot);
 }
 
 function renderDetectionSummary(snapshot) {
   const target = $("detectionSummary");
   if (!target) return;
+  if (pageName === "algorithms") {
+    const stateInfo = algorithmHitState(snapshot);
+    const levelClass = stateInfo.level === "critical" ? "bad" : stateInfo.level === "idle" ? "muted" : stateInfo.level;
+    target.innerHTML = `<span class="status-pill ${escapeHtml(levelClass)}">本算法状态</span><p><strong>${escapeHtml(stateInfo.title)}</strong> · ${escapeHtml(stateInfo.detail)}</p>`;
+    return;
+  }
   const analysis = snapshot?.analysis || {};
   const people = snapshotPeople(snapshot);
   const fallCandidate = Boolean(analysis.fall_candidate);
@@ -910,6 +1021,124 @@ function renderDetectionSummary(snapshot) {
   target.innerHTML = `<span class="status-pill ${levelClass}">${escapeHtml(title)}</span><p>${escapeHtml(details.join(" · "))}</p>`;
 }
 
+function renderAlgorithmPreviewMeta(snapshot) {
+  if (pageName !== "algorithms") return;
+  const container = document.querySelector(".preview-meta");
+  if (!container) return;
+  const slots = Array.from(container.children).filter((item) => item instanceof HTMLElement);
+  const items = algorithmPreviewMetaItems(state.previewAlgorithm || "quality", snapshot);
+  for (const [index, slot] of slots.entries()) {
+    const item = items[index] || { label: "-", value: "-" };
+    const label = slot.querySelector("span");
+    const value = slot.querySelector("strong");
+    if (label) label.textContent = item.label;
+    if (value) value.textContent = item.value;
+  }
+}
+
+function algorithmPreviewMetaItems(mode, snapshot) {
+  const analysis = snapshot?.analysis || {};
+  const temporal = analysis.activity_temporal || analysis.activity?.temporal || {};
+  const peopleCount = snapshot ? snapshot.person_count ?? analysis.person_count ?? 0 : "-";
+  const poseCount = snapshot ? analysis.pose_count ?? snapshotPoses(snapshot).length : "-";
+  const tags = snapshot ? algorithmVisibleTags(snapshot, mode) : [];
+  const tagText = tags.length ? tags.map(tagLabel).join("，") : algorithmNormalTagLabel(mode, snapshot);
+  const capturedAt = snapshot ? fmtTime(snapshot.captured_at) : "-";
+  if (!snapshot) {
+    return [
+      { label: "检测帧", value: "-" },
+      { label: "算法状态", value: "等待检测" },
+      { label: "指标一", value: "-" },
+      { label: "指标二", value: "-" },
+      { label: "指标三", value: "-" },
+      { label: "标签", value: "-" },
+    ];
+  }
+  if (mode === "person") {
+    return [
+      { label: "检测帧", value: capturedAt },
+      { label: "人数", value: String(peopleCount) },
+      { label: "骨架", value: String(poseCount) },
+      { label: "最高置信", value: algorithmPeopleConfidence(snapshot) ? `${algorithmPeopleConfidence(snapshot)}%` : "-" },
+      { label: "存在增强", value: analysis.presence_enhanced ? "启用" : "未启用" },
+      { label: "标签", value: tagText },
+    ];
+  }
+  if (mode === "fall") {
+    const fallScore = maxMetricScore([analysis.fall_score, analysis.pose_fall_score]);
+    const fallRuntime = latestFallRuntime();
+    const threshold = fallRuntime.threshold || analysis.thresholds || {};
+    return [
+      { label: "检测帧", value: capturedAt },
+      { label: "人数", value: String(peopleCount) },
+      { label: "骨架", value: String(poseCount) },
+      { label: "倒地分数", value: fallScore === null ? "-" : `${Math.round(fallScore * 100)}%` },
+      { label: "复核进度", value: `${fallRuntime.confirmFrames || 0}/${threshold.confirm_frames || 2} 帧` },
+      { label: "持续时间", value: `${Math.round(fallRuntime.durationSeconds || 0)}/${threshold.confirm_seconds ?? 4} 秒` },
+    ];
+  }
+  if (mode === "meal") {
+    return [
+      { label: "检测帧", value: capturedAt },
+      { label: "人数", value: String(peopleCount) },
+      { label: "手部窗口", value: fmtPercent(temporal.hand_near_face_ratio, 0) },
+      { label: "动作窗口", value: fmtPercent(temporal.active_motion_ratio, 0) },
+      { label: "用餐分数", value: analysis.meal_score === undefined || analysis.meal_score === null ? "-" : `${Math.round(Number(analysis.meal_score) * 100)}%` },
+      { label: "标签", value: tagText },
+    ];
+  }
+  if (mode === "stillness") {
+    const stillnessScore = analysis.daze_score ?? analysis.stillness_score;
+    return [
+      { label: "检测帧", value: capturedAt },
+      { label: "窗口帧", value: temporal.sample_count ? `${temporal.sample_count}` : "-" },
+      { label: "低变化", value: fmtPercent(temporal.low_motion_ratio, 0) },
+      { label: "坐姿/半身", value: fmtPercent(temporal.seated_or_upper_body_ratio, 0) },
+      { label: "静止分数", value: stillnessScore === undefined || stillnessScore === null ? "-" : `${Math.round(Number(stillnessScore) * 100)}%` },
+      { label: "标签", value: tagText },
+    ];
+  }
+  if (mode === "night") {
+    return [
+      { label: "检测帧", value: capturedAt },
+      { label: "亮度", value: fmtNumber(analysis.brightness ?? snapshot.brightness, 1) },
+      { label: "变化", value: analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4) },
+      { label: "人数", value: String(peopleCount) },
+      { label: "夜间活动", value: algorithmDemoMetric("night", snapshot).value },
+      { label: "标签", value: tagText },
+    ];
+  }
+  if (mode === "fire") {
+    const features = analysis.fire_features || {};
+    return [
+      { label: "检测帧", value: capturedAt },
+      { label: "火灾分数", value: fmtNumber(analysis.fire_score || 0, 4) },
+      { label: "动态", value: fmtNumber(analysis.fire_temporal_score, 4) },
+      { label: "暖色占比", value: fmtPercent(features.warm_ratio, 1) },
+      { label: "连通区域", value: features.component_candidate ? "通过" : "未通过" },
+      { label: "标签", value: tagText },
+    ];
+  }
+  if (mode === "camera") {
+    return [
+      { label: "检测帧", value: capturedAt },
+      { label: "链路状态", value: analysis.black_screen ? "异常" : "正常" },
+      { label: "亮度", value: fmtNumber(analysis.brightness ?? snapshot.brightness, 1) },
+      { label: "对比度", value: fmtNumber(analysis.contrast, 1) },
+      { label: "变化", value: analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4) },
+      { label: "标签", value: tagText },
+    ];
+  }
+  return [
+    { label: "检测帧", value: capturedAt },
+    { label: "质量分数", value: algorithmQualityScore(snapshot) === null ? "-" : `${algorithmQualityScore(snapshot)}%` },
+    { label: "亮度", value: fmtNumber(analysis.brightness ?? snapshot.brightness, 1) },
+    { label: "对比度", value: fmtNumber(analysis.contrast, 1) },
+    { label: "变化", value: analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4) },
+    { label: "标签", value: tagText },
+  ];
+}
+
 function previewSummaryTitle(baseTitle, context) {
   if (pageName !== "algorithms") return { title: baseTitle, level: "" };
   const mode = state.previewAlgorithm || "quality";
@@ -922,12 +1151,14 @@ function previewSummaryTitle(baseTitle, context) {
     return { title: context.people.length ? "检测到人" : "暂未检测到人", level: context.people.length ? "" : "muted" };
   }
   if (mode === "stillness") return { title: "久坐观察中", level: "muted" };
-  if (mode === "fall") return { title: context.fallCandidate ? "疑似跌倒" : "跌倒风险演示", level: "bad" };
+  if (mode === "fall") return { title: context.fallCandidate ? "倒地候选复核中" : "姿态复核中", level: context.fallCandidate ? "watch" : "muted" };
   if (mode === "meal") return { title: "用餐识别演示", level: "" };
   if (mode === "night") return { title: "夜间活动演示", level: "muted" };
   if (mode === "fire") {
     const fireScore = Number(context.analysis.fire_score || 0);
-    return { title: fireScore >= 0.035 ? "火灾视觉线索" : "火灾应急演示", level: "bad" };
+    return fireScore >= 0.035
+      ? { title: "火灾线索观察", level: "muted" }
+      : { title: "未确认火灾线索", level: "muted" };
   }
   if (mode === "camera") return { title: context.blackScreen ? "摄像头异常" : "摄像头正常", level: context.blackScreen ? "bad" : "muted" };
   return { title: baseTitle, level: "" };
@@ -937,6 +1168,9 @@ function backendLabel(snapshot = state.latestSnapshot) {
   const analysis = snapshot?.analysis || {};
   const backend = analysis.detector_backend || state.detectorBackend || "basic";
   const model = analysis.model_name || state.device?.yolo_model || "";
+  const poseModel = analysis.pose_model_name || state.device?.pose_model || "";
+  if (analysis.pose_count > 0 && poseModel) return `${model || "YOLO"} + ${poseModel}`;
+  if (analysis.pose_model_status === "unavailable") return "姿态模型未安装";
   if (analysis.presence_enhanced) return model ? `${model} + 存在增强` : "YOLO + 存在增强";
   if (backend === "yolo") return model || "YOLO";
   if (backend === "demo") return "演示视觉";
@@ -954,61 +1188,97 @@ function algorithmHitState(snapshot) {
   const analysis = snapshot?.analysis || {};
   const people = snapshotPeople(snapshot);
   const presenceCount = presenceCandidateCount(snapshot);
+  const poses = snapshotPoses(snapshot);
   const result = analysis.algorithm_results?.[selectedAlgorithmKey(mode)] || {};
   const personCount = Number(snapshot?.person_count ?? analysis.person_count ?? people.length ?? 0);
   const confidence = algorithmPeopleConfidence(snapshot);
+  const poseConfidence = algorithmPoseConfidence(snapshot);
   let hit = false;
   let level = "idle";
   let title = "等待检测";
   let detail = "选择摄像头后自动分析当前画面";
   let score = confidence ? `${confidence}%` : result.score !== undefined && result.score !== null ? `${Math.round(Number(result.score) * 100)}%` : "-";
+  let scoreLabel = "本算法指标";
 
-  if (!snapshot) return { hit, level, title, detail, score, model: backendLabel(snapshot), latency: "-" };
+  if (!snapshot) return { hit, level, title, detail, score, scoreLabel, model: backendLabel(snapshot), latency: "-" };
 
   if (mode === "person") {
-    hit = personCount > 0;
+    scoreLabel = poses.length ? "骨架置信" : "人形置信";
+    hit = personCount > 0 || poses.length > 0;
     level = hit ? presenceCount && presenceCount === personCount ? "watch" : "hit" : "idle";
-    title = hit ? presenceCount && presenceCount === personCount ? `人体存在候选 ${personCount} 个` : `检测到 ${personCount} 人` : "暂未检测到人";
-    detail = hit ? presenceCount ? "坐姿/半身增强框已叠加到画面" : "实时人像框已叠加到画面" : "当前帧没有人形框";
-    score = confidence ? `${presenceCount ? "增强 " : ""}${confidence}%` : score;
+    const poseState = analysis.pose_tracking_state || "";
+    const poseLabel = poseState === "cached" ? "骨架跟踪" : "骨架";
+    title = poses.length ? `${poseLabel} ${poses.length} 组 / 人体 ${personCount}` : hit ? presenceCount && presenceCount === personCount ? `人体存在候选 ${personCount} 个` : `检测到 ${personCount} 人` : "暂未检测到人";
+    detail = poses.length ? poseState === "cached" ? "短暂沿用上一组可信骨架稳定画面" : "骨架关键点和人像框已叠加到画面" : hit ? presenceCount ? "坐姿/半身增强框已叠加到画面" : "实时人像框已叠加到画面" : "当前帧没有人形框";
+    score = poseConfidence ? `骨架 ${poseConfidence}%` : confidence ? `${presenceCount ? "增强 " : ""}${confidence}%` : score;
   } else if (mode === "fall") {
-    hit = Boolean(analysis.fall_candidate);
-    level = hit ? "critical" : personCount > 0 ? "watch" : "idle";
-    title = hit ? "疑似跌倒命中" : personCount > 0 ? "跌倒观察中" : "未检测到人";
-    detail = hit ? "建议立即进入告警确认" : "需要连续帧复核姿态";
+    scoreLabel = "倒地分数";
+    const runtime = latestFallRuntime();
+    const stage = fallStageInfo(runtime.stage, { analysis, personCount, poses });
+    hit = runtime.stage === "confirmed" || runtime.stage === "confirming" || runtime.stage === "suspect";
+    level = stage.level;
+    title = stage.title;
+    detail = stage.detail;
+    const fallScore = maxMetricScore([
+      analysis.fall_score,
+      analysis.pose_fall_score,
+      result?.score,
+    ]);
+    score = fallScore === null ? score : `${Math.round(fallScore * 100)}%`;
+    if (runtime.confirmFrames !== null) {
+      const threshold = runtime.threshold || {};
+      detail = `${detail} · ${runtime.confirmFrames || 0}/${threshold.confirm_frames || 2} 帧 · ${Math.round(runtime.durationSeconds || 0)}/${threshold.confirm_seconds ?? 4} 秒`;
+    }
   } else if (mode === "fire") {
-    hit = Boolean(analysis.fire_candidate);
-    level = hit ? "critical" : "idle";
-    title = hit ? "火灾线索命中" : "未命中火灾线索";
-    detail = `火灾分数 ${fmtNumber(analysis.fire_score || 0, 4)}`;
+    scoreLabel = "火灾视觉分数";
+    const fireScore = Number(analysis.fire_score || 0);
+    const temporalScore = Number(analysis.fire_temporal_score || 0);
+    hit = fireScore >= 0.035;
+    level = hit ? "watch" : "idle";
+    title = analysis.fire_event_candidate ? "火灾事件候选" : hit ? "火灾视觉线索" : "未确认火灾线索";
+    detail = analysis.fire_event_candidate
+      ? "已满足动态火焰候选，等待连续帧确认"
+      : hit ? `仅视觉线索，动态变化 ${fmtNumber(temporalScore, 4)}` : "当前帧未达到火灾视觉阈值";
     score = `${Math.round(clamp(Number(analysis.fire_score || 0) * 2800, 0, 98))}%`;
   } else if (mode === "meal") {
+    scoreLabel = "用餐窗口";
     hit = Boolean(analysis.meal_candidate);
-    level = hit ? "hit" : personCount > 0 ? "watch" : "idle";
-    title = hit ? "用餐动作命中" : personCount > 0 ? "动作观察中" : "未检测到人";
-    detail = "结合人像、运动和时段判断";
+    level = hit ? "watch" : personCount > 0 ? "watch" : "idle";
+    title = hit ? "用餐观察候选" : personCount > 0 ? "动作观察中" : "未检测到人";
+    detail = hit ? "观察候选，不作为安全告警" : "结合骨架手部、运动变化和时间窗口判断";
+    if (analysis.meal_score !== undefined && analysis.meal_score !== null) score = `${Math.round(Number(analysis.meal_score) * 100)}%`;
   } else if (mode === "stillness") {
-    hit = Boolean(analysis.stillness_candidate);
+    scoreLabel = "静止窗口";
+    hit = Boolean(analysis.stillness_candidate || analysis.daze_candidate);
     level = hit ? "watch" : "idle";
-    title = hit ? "静止候选" : "活动正常";
-    detail = `变化 ${analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4)}`;
-    score = algorithmMotionScore(snapshot, true) === null ? "-" : `${algorithmMotionScore(snapshot, true)}%`;
+    title = analysis.daze_candidate ? "久坐观察候选" : hit ? "静止观察候选" : "活动正常";
+    const temporal = analysis.activity_temporal || analysis.activity?.temporal || {};
+    detail = temporal.sample_count
+      ? `窗口 ${temporal.sample_count} 帧 · 低变化 ${Math.round(Number(temporal.low_motion_ratio || 0) * 100)}%`
+      : `变化 ${analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4)}`;
+    score = algorithmDemoMetric("stillness", snapshot).value;
   } else if (mode === "night") {
+    scoreLabel = "夜间活动";
     const brightness = Number(analysis.brightness ?? snapshot.brightness);
     hit = Number.isFinite(brightness) && brightness < 70 && Number(analysis.motion_score || 0) > 0.006;
     level = hit ? "watch" : "idle";
     title = hit ? "夜间活动命中" : "夜间规则待命";
     detail = `亮度 ${fmtNumber(brightness, 1)} · 变化 ${fmtNumber(analysis.motion_score, 4)}`;
+    score = algorithmDemoMetric("night", snapshot).value;
   } else if (mode === "camera") {
+    scoreLabel = "链路健康";
     hit = Boolean(analysis.black_screen);
     level = hit ? "critical" : "hit";
     title = hit ? "摄像头异常" : "链路正常";
     detail = `亮度 ${fmtNumber(analysis.brightness ?? snapshot.brightness, 1)} · 对比度 ${fmtNumber(analysis.contrast, 1)}`;
+    score = algorithmQualityScore(snapshot) === null ? "-" : `${algorithmQualityScore(snapshot)}%`;
   } else {
+    scoreLabel = "画面质量";
     hit = !analysis.black_screen;
     level = hit ? "hit" : "critical";
     title = hit ? "画面质量通过" : "画面质量异常";
     detail = `亮度 ${fmtNumber(analysis.brightness ?? snapshot.brightness, 1)} · 对比度 ${fmtNumber(analysis.contrast, 1)}`;
+    score = algorithmQualityScore(snapshot) === null ? "-" : `${algorithmQualityScore(snapshot)}%`;
   }
 
   const latency = snapshot.live_elapsed_ms ?? snapshot.elapsed_ms ?? snapshot.analysis_elapsed_ms;
@@ -1018,6 +1288,7 @@ function algorithmHitState(snapshot) {
     title,
     detail,
     score,
+    scoreLabel,
     model: backendLabel(snapshot),
     latency: latency === undefined || latency === null ? "轮询中" : `${latency}ms`,
   };
@@ -1035,12 +1306,12 @@ function renderAlgorithmHitStrip(snapshot = state.latestSnapshot) {
   }
   target.innerHTML = `
     <div class="algorithm-hit-card primary">
-      <span>当前命中</span>
+      <span>本算法状态</span>
       <strong>${escapeHtml(stateInfo.title)}</strong>
       <small>${escapeHtml(stateInfo.detail)}</small>
     </div>
     <div class="algorithm-hit-card">
-      <span>置信度</span>
+      <span>${escapeHtml(stateInfo.scoreLabel)}</span>
       <strong>${escapeHtml(stateInfo.score)}</strong>
       <small>${escapeHtml(stateInfo.model)}</small>
     </div>
@@ -1062,6 +1333,7 @@ function renderEmptySnapshot() {
   }
   renderAlgorithmHitStrip(null);
   renderAlgorithmDemo(null);
+  renderAlgorithmPreviewMeta(null);
 }
 
 function renderCameraTestResult(level, title, message) {
@@ -1090,9 +1362,10 @@ async function loadSnapshot(cameraId) {
 
 function liveAnalysisDelay() {
   const mode = state.previewAlgorithm || "person";
-  if (mode === "person") return 1800;
-  if (["fall", "fire"].includes(mode)) return 2200;
-  return 2600;
+  if (["fall", "meal", "stillness"].includes(mode)) return 9000;
+  if (mode === "person" || mode === "night") return 7000;
+  if (mode === "fire") return 5200;
+  return 6000;
 }
 
 function stopLiveAnalysisLoop() {
@@ -1135,7 +1408,7 @@ async function loadLiveAnalysis() {
     const snapshot = {
       ...(result.snapshot || {}),
       analysis: result.analysis || result.snapshot?.analysis || {},
-      live_elapsed_ms: result.elapsed_ms,
+      live_elapsed_ms: result.analysis_elapsed_ms ?? result.elapsed_ms,
     };
     state.liveAnalysisErrorShown = false;
     renderSnapshot(snapshot);
@@ -1172,9 +1445,15 @@ async function captureSelected(button) {
 async function loadEvaluation(cameraId) {
   const evaluation = await api(`/api/cameras/${cameraId}/evaluation/latest`);
   renderEvaluation(evaluation);
+  if (pageName === "algorithms" && state.latestSnapshot) {
+    renderAlgorithmHitStrip(state.latestSnapshot);
+    renderAlgorithmPreviewMeta(state.latestSnapshot);
+    renderDetectionSummary(state.latestSnapshot);
+  }
 }
 
 function renderEvaluation(evaluation) {
+  state.latestEvaluation = evaluation || null;
   if (!$("ruleEvaluation")) return;
   const candidates = Array.isArray(evaluation?.candidates) ? evaluation.candidates : [];
   const evalState = evaluation?.state || {};
@@ -1191,6 +1470,7 @@ function renderEvaluation(evaluation) {
 }
 
 function renderEmptyEvaluation() {
+  state.latestEvaluation = null;
   if (!$("ruleEvaluation")) return;
   $("ruleEvaluation").innerHTML = `
     <div>
@@ -1200,11 +1480,66 @@ function renderEmptyEvaluation() {
   `;
 }
 
+function latestFallRuntime() {
+  const stateData = state.latestEvaluation?.state || {};
+  const threshold = stateData.fall_threshold || {};
+  const target = stateData.fall_target || null;
+  const stage = String(stateData.fall_stage || stateData.fall_state || "clear");
+  const confirmFrames = stateData.fall_confirm_count === undefined || stateData.fall_confirm_count === null
+    ? null
+    : Number(stateData.fall_confirm_count);
+  return {
+    stage,
+    target,
+    threshold,
+    confirmFrames,
+    durationSeconds: Number(stateData.fall_confirm_seconds || 0),
+    clearFrames: Number(stateData.fall_clear_count || 0),
+    alertEmitted: Boolean(stateData.fall_alert_emitted),
+  };
+}
+
+function fallStageInfo(stage, context = {}) {
+  const labels = {
+    clear: {
+      title: "未命中跌倒证据",
+      detail: context.personCount > 0 ? "画面有人，但未出现低位倒地姿态" : "当前没有可复核人体",
+      level: "idle",
+    },
+    visual_only: {
+      title: "疑似姿态观察",
+      detail: "出现弱倒地线索，但未达到告警阈值",
+      level: "watch",
+    },
+    suspect: {
+      title: "疑似跌倒，开始复核",
+      detail: "已捕捉到倒地姿态，等待连续帧确认",
+      level: "watch",
+    },
+    confirming: {
+      title: "连续复核中",
+      detail: "同一人体轨迹持续出现倒地证据",
+      level: "watch",
+    },
+    confirmed: {
+      title: "已确认疑似跌倒",
+      detail: "事件和截图已进入上传队列",
+      level: "critical",
+    },
+    recovered: {
+      title: "跌倒状态已恢复",
+      detail: "连续恢复帧已清除本次复核状态",
+      level: "hit",
+    },
+  };
+  return labels[stage] || labels.clear;
+}
+
 const previewAlgorithmCopy = {
   quality: "画面质量：亮度、对比度、运动变化。",
   person: "人形 / 无人：实时框选画面里的人像并显示置信度。",
   stillness: "久坐 / 静止：看时间窗和画面变化。",
-  fall: "跌倒检测：识别疑似倒地姿态并触发告警通知。",
+  fall: "跌倒检测：先捕捉疑似姿态，再按同一人体轨迹连续复核，确认后生成事件和证据包。",
   meal: "用餐：结合时段、区域和姿态线索。",
   night: "夜间活动：结合时段和运动变化。",
   fire: "火灾：识别明火视觉线索，命中后触发应急联系人。",
@@ -1229,8 +1564,8 @@ const algorithmDemoProfiles = {
   },
   fall: {
     title: "跌倒检测",
-    badge: "高优先级",
-    summary: "识别人体低位横向姿态，命中后进入报警候选并触发应急流程。",
+    badge: "状态机",
+    summary: "捕捉低位倒地线索后进入连续复核，达到帧数、持续时间和置信度阈值才触发事件。",
   },
   meal: {
     title: "用餐 / 动作识别",
@@ -1282,10 +1617,22 @@ function algorithmEvidenceLine(mode, snapshot) {
     return confidence ? `真实指标：检测到 ${people.length} 人，最高置信度 ${Math.round(confidence * 100)}%。` : `真实指标：当前人数 ${snapshot.person_count ?? analysis.person_count ?? 0}。`;
   }
   if (mode === "fire") {
-    return `真实指标：火灾分数 ${fmtNumber(analysis.fire_score || 0, 4)}，亮度 ${fmtNumber(analysis.brightness ?? snapshot.brightness, 1)}。`;
+    return `真实指标：火灾分数 ${fmtNumber(analysis.fire_score || 0, 4)}，动态 ${fmtNumber(analysis.fire_temporal_score, 4)}，亮度 ${fmtNumber(analysis.brightness ?? snapshot.brightness, 1)}。`;
   }
   if (mode === "fall") {
-    return `真实指标：跌倒候选 ${analysis.fall_candidate ? "命中" : "未命中"}，人数 ${snapshot.person_count ?? analysis.person_count ?? 0}。`;
+    return `真实指标：倒地候选 ${analysis.fall_candidate ? "需要复核" : "未出现"}，人数 ${snapshot.person_count ?? analysis.person_count ?? 0}。`;
+  }
+  if (mode === "stillness") {
+    const temporal = analysis.activity_temporal || analysis.activity?.temporal || {};
+    if (temporal.sample_count) {
+      return `真实指标：窗口 ${temporal.sample_count} 帧，低变化 ${Math.round(Number(temporal.low_motion_ratio || 0) * 100)}%，坐姿 ${Math.round(Number(temporal.seated_or_upper_body_ratio || 0) * 100)}%。`;
+    }
+  }
+  if (mode === "meal") {
+    const temporal = analysis.activity_temporal || analysis.activity?.temporal || {};
+    if (temporal.sample_count) {
+      return `真实指标：窗口 ${temporal.sample_count} 帧，手部靠近 ${Math.round(Number(temporal.hand_near_face_ratio || 0) * 100)}%，动作 ${Math.round(Number(temporal.active_motion_ratio || 0) * 100)}%。`;
+    }
   }
   return `真实指标：变化 ${analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4)}，人数 ${snapshot.person_count ?? analysis.person_count ?? 0}。`;
 }
@@ -1308,7 +1655,7 @@ function algorithmAccuracyLine(mode, snapshot) {
     return "准确率口径：YOLO 模型已启用，以模型置信度和连续帧复核作为主要依据。";
   }
   if (snapshot?.analysis?.detector_backend === "demo") {
-    return "准确率口径：当前为演示检测，适合讲解效果；正式识别需接入 YOLO / MediaPipe 模型。";
+    return "准确率口径：当前为演示检测，适合讲解效果；正式识别需接入 YOLO / RTMPose 模型。";
   }
   return "准确率口径：当前 basic 模式只做基础视觉信号，动效为演示示意；正式模型接入后显示模型置信度。";
 }
@@ -1342,6 +1689,22 @@ function algorithmPeopleConfidence(snapshot) {
   return confidence ? Math.round(confidence * 100) : null;
 }
 
+function algorithmPoseConfidence(snapshot) {
+  const poses = snapshotPoses(snapshot);
+  const confidence = poses
+    .map((pose) => Number(pose.confidence || 0))
+    .filter(Boolean)
+    .sort((a, b) => b - a)[0];
+  return confidence ? Math.round(confidence * 100) : null;
+}
+
+function maxMetricScore(values) {
+  const scores = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return scores.length ? Math.max(...scores) : null;
+}
+
 function algorithmDemoMetric(mode, snapshot) {
   if (!snapshot) return { label: "当前帧", value: "--", tone: "muted" };
   const analysis = snapshot.analysis || {};
@@ -1361,17 +1724,29 @@ function algorithmDemoMetric(mode, snapshot) {
       : { label: "当前人数", value: `${snapshot.person_count ?? analysis.person_count ?? 0}`, tone: "muted" };
   }
   if (mode === "stillness") {
-    const score = algorithmMotionScore(snapshot, true);
+    const temporal = analysis.activity_temporal || analysis.activity?.temporal || {};
+    const score = analysis.daze_score !== undefined && analysis.daze_score !== null
+      ? Math.round(Number(analysis.daze_score) * 100)
+      : analysis.stillness_score !== undefined && analysis.stillness_score !== null
+        ? Math.round(Number(analysis.stillness_score) * 100)
+        : algorithmMotionScore(snapshot, true);
     return score === null
-      ? { label: "静止可信度", value: "--", tone: "muted" }
-      : { label: "静止可信度", value: `${score}%`, tone: score >= 72 ? "ok" : "muted" };
+      ? { label: "时序静止", value: "--", tone: "muted" }
+      : { label: temporal.sample_count ? "时序静止" : "静止可信度", value: `${score}%`, tone: score >= 72 ? "ok" : "muted" };
   }
   if (mode === "fall") {
     const confidence = algorithmPeopleConfidence(snapshot);
-    const score = analysis.fall_candidate ? Math.max(confidence || 0, 86) : confidence ? Math.min(confidence, 58) : 32;
-    return { label: "跌倒候选", value: `${score}%`, tone: analysis.fall_candidate ? "bad" : "muted" };
+    const fallScore = maxMetricScore([analysis.fall_score, analysis.pose_fall_score]);
+    const score = fallScore === null
+      ? analysis.fall_candidate ? Math.max(confidence || 0, 68) : confidence ? Math.min(confidence, 58) : 32
+      : Math.round(fallScore * 100);
+    return { label: "倒地复核", value: `${score}%`, tone: analysis.fall_candidate ? "watch" : "muted" };
   }
   if (mode === "meal") {
+    const temporal = analysis.activity_temporal || analysis.activity?.temporal || {};
+    if (analysis.meal_score !== undefined && analysis.meal_score !== null) {
+      return { label: temporal.sample_count ? "时序用餐" : "动作线索", value: `${Math.round(Number(analysis.meal_score) * 100)}%`, tone: analysis.meal_candidate ? "watch" : "muted" };
+    }
     const motionScore = algorithmMotionScore(snapshot, false);
     const hasPerson = Number(snapshot.person_count ?? analysis.person_count ?? 0) > 0;
     const score = Math.round(clamp((motionScore ?? 45) * .38 + (hasPerson ? 46 : 18), 0, 92));
@@ -1386,8 +1761,8 @@ function algorithmDemoMetric(mode, snapshot) {
   }
   if (mode === "fire") {
     const fireScore = Number(analysis.fire_score || 0);
-    const score = Math.round(clamp(fireScore * 2800, analysis.fire_candidate ? 82 : 12, 98));
-    return { label: "火焰线索", value: `${score}%`, tone: analysis.fire_candidate || fireScore >= .035 ? "bad" : "muted" };
+    const score = Math.round(clamp(fireScore * 2800, 0, 98));
+    return { label: "视觉线索", value: `${score}%`, tone: fireScore >= .035 ? "muted" : "muted" };
   }
   return { label: "当前帧", value: "--", tone: "muted" };
 }
@@ -1402,7 +1777,7 @@ function renderAlgorithmDemo(snapshot = state.latestSnapshot) {
   target.innerHTML = `
     <div class="algorithm-demo-head">
       <div>
-        <span>循环动效示意</span>
+        <span>算法示意</span>
         <strong>${escapeHtml(profile.title)}</strong>
       </div>
       <div class="algorithm-demo-head-side">
@@ -1438,6 +1813,9 @@ function updatePreviewAlgorithmInfo() {
   setText("previewModeInfo", previewAlgorithmCopy[value] || previewAlgorithmCopy.quality);
   renderAlgorithmHitStrip(state.latestSnapshot);
   renderAlgorithmDemo(state.latestSnapshot);
+  renderAlgorithmPreviewMeta(state.latestSnapshot);
+  renderCandidatePanel();
+  renderObservationPanel();
   renderDetectionOverlay(state.latestSnapshot);
   if (pageName === "algorithms") startLiveAnalysisLoop();
 }
@@ -1481,30 +1859,192 @@ function candidateStatusLabel(status) {
   return status || "未知";
 }
 
-async function loadCandidates() {
+function eventTypeLabel(type) {
+  const labels = {
+    black_screen: "黑屏 / 遮挡",
+    no_motion: "长时间无变化",
+    no_person: "长时间无人",
+    fall_candidate: "疑似跌倒",
+    fire_candidate: "疑似火灾",
+    camera_offline: "摄像头离线",
+  };
+  return labels[type] || type || "提醒";
+}
+
+function eventCategoryLabel(category, type) {
+  const value = category || ({
+    fall_candidate: "safety_alert",
+    fire_candidate: "safety_alert",
+    black_screen: "device_alert",
+    camera_offline: "device_alert",
+    no_motion: "life_observation",
+    no_person: "life_observation",
+  }[type] || "system_event");
+  const labels = {
+    safety_alert: "安全告警",
+    device_alert: "设备异常",
+    life_observation: "生活观察",
+    system_event: "系统记录",
+  };
+  return labels[value] || "系统记录";
+}
+
+function evidencePills(candidate) {
+  const evidence = candidate?.payload?.evidence || {};
+  const metrics = evidence.metrics || {};
+  const observed = evidence.rule?.observed || candidate?.payload?.rule?.observed || {};
+  const model = evidence.model || {};
+  const pills = [];
+  const pushMetric = (label, value, digits = 2) => {
+    if (value === null || value === undefined || value === "") return;
+    pills.push(`${label} ${typeof value === "number" ? fmtNumber(value, digits) : value}`);
+  };
+  const maxMetric = (...values) => {
+    const numbers = values
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+    return numbers.length ? Math.max(...numbers) : null;
+  };
+  const pushPill = (value) => {
+    if (value) pills.push(value);
+  };
+  if (candidate.event_type === "fall_candidate") {
+    pushMetric("人数", metrics.person_count, 0);
+    pushMetric("骨架", metrics.pose_count, 0);
+    pushMetric("跌倒", maxMetric(metrics.fall_score, metrics.pose_fall_score, observed.fall_score, observed.pose_fall_score), 2);
+    pushMetric("连续帧", observed.confirm_frames, 0);
+    const evidenceTypes = observed.evidence?.types || [];
+    if (Array.isArray(evidenceTypes) && evidenceTypes.length) {
+      pushPill(`依据 ${evidenceTypes.slice(0, 2).join(" / ")}`);
+    }
+  } else if (candidate.event_type === "fire_candidate") {
+    pushMetric("火灾", metrics.fire_score, 4);
+    pushMetric("变化", metrics.motion_score, 4);
+    pushMetric("动态", metrics.fire_temporal_score ?? observed.temporal_score, 4);
+    pushMetric("连续帧", observed.confirm_frames, 0);
+  } else if (candidate.event_type === "no_motion") {
+    pushMetric("人数", metrics.person_count, 0);
+    pushPill(observed.no_motion_seconds ? `静止 ${fmtDuration(observed.no_motion_seconds)}` : "");
+    pushMetric("变化", metrics.motion_score, 4);
+  } else if (candidate.event_type === "no_person") {
+    pushPill(observed.no_person_seconds ? `无人 ${fmtDuration(observed.no_person_seconds)}` : "");
+    pushMetric("人数", metrics.person_count, 0);
+  } else if (candidate.event_type === "black_screen") {
+    pushMetric("亮度", metrics.brightness, 1);
+    pushMetric("对比", metrics.contrast, 1);
+  } else {
+    pushMetric("人数", metrics.person_count, 0);
+    pushMetric("变化", metrics.motion_score, 4);
+  }
+  if (model.model_name || model.pose_model_name) {
+    pills.push(model.pose_model_name ? `${model.model_name || "YOLO"} + ${model.pose_model_name}` : model.model_name);
+  }
+  return pills.slice(0, 5);
+}
+
+function algorithmRecordScope(mode = state.previewAlgorithm || "quality") {
+  const scopes = {
+    quality: {
+      candidateTypes: ["black_screen"],
+      observationTypes: ["no_motion"],
+      candidateTitle: "质量相关记录",
+      observationTitle: "质量观察",
+      observationSubtitle: "低变化区间",
+      candidateEmpty: "当前没有画面质量相关告警。",
+      observationEmpty: "当前没有画面质量相关观察区间。",
+    },
+    person: {
+      candidateTypes: ["no_person"],
+      observationTypes: ["no_person"],
+      candidateTitle: "无人相关记录",
+      observationTitle: "无人观察",
+      observationSubtitle: "离开时间区间",
+      candidateEmpty: "当前没有无人相关后台记录。",
+      observationEmpty: "当前没有无人观察区间。",
+    },
+    stillness: {
+      candidateTypes: ["no_motion"],
+      observationTypes: ["no_motion"],
+      candidateTitle: "静止相关记录",
+      observationTitle: "静止观察",
+      observationSubtitle: "无变化区间",
+      candidateEmpty: "当前没有静止相关后台记录。",
+      observationEmpty: "当前没有静止观察区间。",
+    },
+    fall: {
+      candidateTypes: ["fall_candidate"],
+      observationTypes: [],
+      candidateTitle: "跌倒相关记录",
+      observationTitle: "跌倒观察",
+      observationSubtitle: "实时复核为主",
+      candidateEmpty: "当前没有跌倒候选记录。",
+      observationEmpty: "跌倒属于安全告警，不单独生成生活观察区间。",
+    },
+    meal: {
+      candidateTypes: [],
+      observationTypes: [],
+      candidateTitle: "用餐相关记录",
+      observationTitle: "用餐观察",
+      observationSubtitle: "实时窗口候选",
+      candidateEmpty: "用餐目前只在实时画面中形成观察候选，不生成安全告警。",
+      observationEmpty: "当前版本还没有把用餐候选沉淀为后台观察区间。",
+    },
+    night: {
+      candidateTypes: [],
+      observationTypes: [],
+      candidateTitle: "夜间相关记录",
+      observationTitle: "夜间观察",
+      observationSubtitle: "实时规则候选",
+      candidateEmpty: "夜间活动目前按实时规则复核，暂无独立后台记录。",
+      observationEmpty: "当前没有夜间活动观察区间。",
+    },
+    fire: {
+      candidateTypes: ["fire_candidate"],
+      observationTypes: [],
+      candidateTitle: "火灾相关记录",
+      observationTitle: "火灾观察",
+      observationSubtitle: "安全告警为主",
+      candidateEmpty: "当前没有火灾候选记录。",
+      observationEmpty: "火灾属于安全告警，不生成生活观察区间。",
+    },
+    camera: {
+      candidateTypes: ["black_screen", "camera_offline"],
+      observationTypes: [],
+      candidateTitle: "摄像头相关记录",
+      observationTitle: "摄像头观察",
+      observationSubtitle: "链路诊断",
+      candidateEmpty: "当前没有摄像头异常记录。",
+      observationEmpty: "摄像头异常属于设备记录，不生成生活观察区间。",
+    },
+  };
+  return scopes[mode] || scopes.quality;
+}
+
+function matchesTypeScope(recordType, allowedTypes) {
+  return allowedTypes.length > 0 && allowedTypes.includes(String(recordType || ""));
+}
+
+function renderCandidatePanel(candidates = state.candidateRecords) {
   const list = $("candidateList");
   if (!list) return;
-  let candidates = [];
-  try {
-    candidates = await api("/api/event-candidates?limit=12");
-  } catch (error) {
-    list.innerHTML = `<div class="empty-state">记录暂不可用：${escapeHtml(error.message || "加载失败")}。</div>`;
-    throw error;
-  }
-  if (!candidates.length) {
-    list.innerHTML = '<div class="empty-state">当前没有提醒记录。</div>';
+  const scope = algorithmRecordScope();
+  setText("candidatePanelTitle", scope.candidateTitle);
+  const filtered = candidates.filter((candidate) => matchesTypeScope(candidate.event_type, scope.candidateTypes));
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty-state">${escapeHtml(scope.candidateEmpty)}</div>`;
     return;
   }
-  list.innerHTML = candidates.map((candidate) => {
+  list.innerHTML = filtered.map((candidate) => {
     const rule = candidate.payload?.rule || {};
+    const evidence = candidate.payload?.evidence || {};
     const observed = rule.observed?.no_person_seconds || rule.observed?.no_motion_seconds || null;
     const threshold = rule.threshold?.no_person_seconds || rule.threshold?.no_motion_seconds || null;
     const explanation = rule.reason
       || candidate.promoted_event_summary
       || candidate.summary
-      || "提醒记录";
+      || `${eventTypeLabel(candidate.event_type)}记录`;
     const meta = [
-      candidate.event_type,
+      eventTypeLabel(candidate.event_type),
       candidate.camera_name || candidate.camera_room || `摄像头 ${candidate.camera_id}`,
       fmtTime(candidate.updated_at || candidate.created_at),
     ].filter(Boolean).join(" · ");
@@ -1512,21 +2052,125 @@ async function loadCandidates() {
       observed ? `观测 ${fmtDuration(observed)}` : "",
       threshold ? `阈值 ${fmtDuration(threshold)}` : "",
       candidate.promoted_event_id ? `事件 #${candidate.promoted_event_id}` : "",
+      evidence.schema_version ? "证据包已生成" : "",
     ].filter(Boolean).join(" · ");
+    const pills = evidencePills(candidate);
+    const category = eventCategoryLabel(evidence.event_category, candidate.event_type);
     return `
-      <article class="event-item ${candidate.status === "promoted" ? "done" : ""}">
-        <div class="event-mark ${candidate.status === "suppressed" ? "" : "critical"}"></div>
-        <div class="event-body">
-          <div class="event-title-row">
-            <strong>${escapeHtml(explanation)}</strong>
-            <span>${escapeHtml(candidateStatusLabel(candidate.status))}</span>
-          </div>
-          <p>${escapeHtml(meta)}</p>
-          ${detail ? `<p>${escapeHtml(detail)}</p>` : ""}
+      <article class="candidate-card ${candidate.status === "promoted" ? "done" : ""}" data-category="${escapeHtml(evidence.event_category || "")}">
+        <div class="candidate-card-head">
+          <strong>${escapeHtml(explanation)}</strong>
+          <span>${escapeHtml(candidateStatusLabel(candidate.status))}</span>
         </div>
+        <p>${escapeHtml(category)} · ${escapeHtml(meta || `记录 #${candidate.id || "-"}`)}</p>
+        ${detail ? `<p>${escapeHtml(detail)}</p>` : ""}
+        ${pills.length ? `<div class="candidate-evidence">${pills.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
       </article>
     `;
   }).join("");
+}
+
+async function loadCandidates() {
+  const list = $("candidateList");
+  if (!list) return;
+  let candidates = [];
+  try {
+    candidates = await api("/api/event-candidates?limit=12&status=active");
+  } catch (error) {
+    list.innerHTML = `<div class="empty-state">记录暂不可用：${escapeHtml(error.message || "加载失败")}。</div>`;
+    throw error;
+  }
+  state.candidateRecords = candidates;
+  renderCandidatePanel(candidates);
+}
+
+function observationStatusLabel(status) {
+  if (status === "open") return "进行中";
+  if (status === "closed") return "已恢复";
+  return status || "未知";
+}
+
+function observationPills(log) {
+  const payload = log?.payload || {};
+  const evidence = payload.evidence || {};
+  const metrics = evidence.metrics || {};
+  const observed = evidence.rule?.observed || payload.rule?.observed || {};
+  const pills = [];
+  const duration = Number(log?.duration_seconds || observed.no_motion_seconds || observed.no_person_seconds || 0);
+  if (duration > 0) pills.push(`持续 ${fmtDuration(duration)}`);
+  if (log?.sample_count) pills.push(`采样 ${log.sample_count} 次`);
+  if (log?.observation_type === "no_motion" && metrics.motion_score !== undefined) {
+    pills.push(`变化 ${fmtNumber(metrics.motion_score, 4)}`);
+  }
+  if (metrics.person_count !== undefined) pills.push(`人数 ${fmtNumber(metrics.person_count, 0)}`);
+  return pills.slice(0, 4);
+}
+
+function renderObservationPanel(logs = state.observationLogs) {
+  const list = $("observationList");
+  if (!list) return;
+  const scope = algorithmRecordScope();
+  setText("observationPanelTitle", scope.observationTitle);
+  setText("observationPanelSubtitle", scope.observationSubtitle);
+  const filtered = logs.filter((log) => matchesTypeScope(log.observation_type, scope.observationTypes));
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty-state">${escapeHtml(scope.observationEmpty)}</div>`;
+    return;
+  }
+  list.innerHTML = filtered.map((log) => {
+    const payload = log.payload || {};
+    const rule = payload.rule || {};
+    const explanation = rule.reason || log.summary || `${eventTypeLabel(log.observation_type)}记录`;
+    const meta = [
+      eventTypeLabel(log.observation_type),
+      log.camera_name || log.camera_room || `摄像头 ${log.camera_id}`,
+      fmtTime(log.started_at),
+    ].filter(Boolean).join(" · ");
+    const pills = observationPills(log);
+    return `
+      <article class="candidate-card observation-card ${log.status === "closed" ? "done" : ""}" data-category="life_observation">
+        <div class="candidate-card-head">
+          <strong>${escapeHtml(explanation)}</strong>
+          <span>${escapeHtml(observationStatusLabel(log.status))}</span>
+        </div>
+        <p>${escapeHtml(meta)}</p>
+        ${log.status === "open" ? `<p>最后更新 ${escapeHtml(fmtTime(log.last_seen_at))}</p>` : `<p>恢复时间 ${escapeHtml(fmtTime(log.ended_at))}</p>`}
+        ${pills.length ? `<div class="candidate-evidence">${pills.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+      </article>
+    `;
+  }).join("");
+}
+
+async function loadObservationLogs() {
+  const list = $("observationList");
+  if (!list) return;
+  let logs = [];
+  try {
+    logs = await api("/api/observation-logs?limit=8");
+  } catch (error) {
+    list.innerHTML = `<div class="empty-state">观察日志暂不可用：${escapeHtml(error.message || "加载失败")}。</div>`;
+    throw error;
+  }
+  state.observationLogs = logs;
+  renderObservationPanel(logs);
+}
+
+async function loadUploadQueueSummary() {
+  const target = $("uploadQueueSummary");
+  if (!target) return;
+  try {
+    const summary = await api("/api/upload-jobs/summary");
+    const pending = Number(summary.pending || 0);
+    const failed = Number(summary.failed || 0);
+    const critical = Number(summary.pending_critical || 0);
+    if (!pending && !failed) {
+      target.textContent = "后台留证记录";
+      return;
+    }
+    target.textContent = `待上传 ${pending}${failed ? ` / 失败 ${failed}` : ""}${critical ? ` / 高优先 ${critical}` : ""}`;
+  } catch (_error) {
+    target.textContent = "上传队列暂不可用";
+  }
 }
 
 async function updateEvent(eventId, payload) {
@@ -1613,6 +2257,8 @@ async function refreshAll() {
     ]);
     await loadCameras();
     await loadCandidates().catch(() => null);
+    await loadObservationLogs().catch(() => null);
+    await loadUploadQueueSummary().catch(() => null);
   } catch (error) {
     showToast(userSafeError(error.message || "无法连接 edge-agent"));
   }
@@ -1648,7 +2294,6 @@ function bindEvents() {
   on("modeRtsp", "click", () => setCameraMode("rtsp"));
   on("quickLocal", "click", () => setCameraMode("local"));
   on("previewAlgorithm", "change", updatePreviewAlgorithmInfo);
-  on("cameraProfile", "change", applyCameraProfile);
   on("cameraRoom", "input", () => {
     syncCameraName();
     updateCameraLimitState();
@@ -1763,6 +2408,8 @@ document.addEventListener("DOMContentLoaded", () => {
         loadEvaluation(state.selectedCameraId).catch(() => null);
       }
       loadCandidates().catch(() => null);
+      loadObservationLogs().catch(() => null);
+      loadUploadQueueSummary().catch(() => null);
     }
   }, 6000);
 });

@@ -1,0 +1,16 @@
+{
+  "name": "回家",
+  "short_name": "回家",
+  "start_url": "app-shell.html?app=1",
+  "display": "standalone",
+  "background_color": "#f9f9ff",
+  "theme_color": "#f9f9ff",
+  "description": "家属端第一版 App 壳，承接登录、家庭、设备和实时观看。",
+  "icons": [
+    {
+      "src": "assets/images/avatar.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}

@@ -26,6 +26,7 @@ class QualityAnalyzer:
         contrast = float(sample.std())
         black_screen = brightness < black_brightness_threshold and contrast < black_contrast_threshold
 
+        previous_sample = None
         motion_score = None
         if previous_frame is not None:
             previous_sample = previous_frame[::8, ::8].astype("float32")
@@ -61,6 +62,7 @@ class QualityAnalyzer:
         )
         return {
             "sample": sample,
+            "previous_sample": previous_sample,
             "brightness": brightness,
             "contrast": contrast,
             "black_screen": black_screen,

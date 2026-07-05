@@ -3,47 +3,61 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>我的 - 想家了吗</title>
+    <title>我的 - 回家</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
         html, body, .font-display, .font-sans { font-family: var(--app-font-family); }
-        body { background-color: #f9f9ff; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
         .collapsed-panel { max-height: 0; opacity: 0; overflow: hidden; margin-top: 0; transition: all 220ms ease; }
         .expanded-panel { max-height: 320px; opacity: 1; margin-top: 0.75rem; transition: all 260ms ease; }
     </style>
 </head>
-<body class="text-on-surface font-sans antialiased min-h-screen flex flex-col md:max-w-[480px] md:mx-auto md:shadow-2xl md:bg-white relative pb-24">
+<body class="app-phone-shell text-on-surface font-sans antialiased">
+    <header class="app-topbar">
+        <a id="privacyBackLink" href="index.html?app=1" class="app-topbar-side">
+            <span class="material-symbols-outlined">arrow_back</span>
+        </a>
+        <div id="privacyTopbarTitle" class="app-topbar-title">我的</div>
+        <div class="app-topbar-side placeholder"></div>
+    </header>
 
-    <main class="flex-1 px-container flex flex-col gap-6 pt-5 pb-8">
-        <section class="app-soft-card p-4 flex flex-col gap-3">
-            <div class="flex items-center justify-between gap-4">
-                <h3 class="font-display text-[17px] font-bold text-on-surface">回家提醒</h3>
-                <span class="font-sans text-[12px] font-semibold text-primary">12天</span>
+    <main class="app-main app-stack">
+        <section class="app-panel p-5 flex flex-col gap-4">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p id="privacyHeroEyebrow" class="font-sans text-[11px] font-semibold text-primary tracking-[0.16em]">PROFILE</p>
+                    <h1 id="privacyHeroTitle" class="font-display text-[24px] font-bold text-on-surface mt-1">比赛演示版设置</h1>
+                    <p id="privacyHeroSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-relaxed mt-2">这里只保留和演示最相关的几项，不再堆太多说明。</p>
+                </div>
+                <span id="privacyHeroBadge" class="app-section-badge shrink-0">演示模式</span>
             </div>
-            <div class="grid grid-cols-4 gap-2">
-                <button class="h-10 rounded-2xl bg-white border border-outline-variant/20 text-on-surface-variant text-[12px] font-semibold">7天</button>
-                <button class="h-10 rounded-2xl bg-primary text-white text-[12px] font-bold shadow-sm">12天</button>
-                <button class="h-10 rounded-2xl bg-white border border-outline-variant/20 text-on-surface-variant text-[12px] font-semibold">15天</button>
-                <button class="h-10 rounded-2xl bg-white border border-outline-variant/20 text-on-surface-variant text-[12px] font-semibold">21天</button>
+            <div class="app-kpi-grid">
+                <div class="app-kpi">
+                    <p>回家提醒</p>
+                    <p>12 天</p>
+                </div>
+                <div class="app-kpi">
+                    <p>柔性提醒</p>
+                    <p>已开启</p>
+                </div>
             </div>
         </section>
 
-        <section class="app-soft-card p-5 flex flex-col gap-1">
+        <section class="app-panel p-5 flex flex-col gap-1">
             <div class="flex items-center justify-between">
-                <h3 class="font-display text-[18px] font-bold text-on-surface tracking-tight">关系提醒</h3>
-                <span class="material-symbols-outlined text-primary">notifications_active</span>
+                <h3 id="privacyReminderTitle" class="font-display text-[18px] font-bold text-on-surface tracking-tight">关系提醒</h3>
+                <span id="privacyReminderIcon" class="material-symbols-outlined text-primary">notifications_active</span>
             </div>
 
             <div class="flex items-center justify-between gap-4 py-3 border-b border-outline-variant/10">
                 <div class="pr-3">
                     <p class="font-display text-[16px] font-bold text-on-surface">多久没打电话开始提醒</p>
                 </div>
-                <span class="px-3 py-1 rounded-full bg-[#eef5ff] text-primary text-[11px] font-semibold shrink-0">3天</span>
+                <span class="app-status-badge info shrink-0 text-[11px] font-semibold">3天</span>
             </div>
 
             <div class="flex items-center justify-between gap-4 py-3 border-b border-outline-variant/10">
@@ -52,7 +66,7 @@
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
                     <input type="checkbox" class="sr-only peer" checked>
-                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    <div class="app-switch"></div>
                 </label>
             </div>
 
@@ -62,15 +76,15 @@
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
                     <input type="checkbox" class="sr-only peer" checked>
-                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    <div class="app-switch"></div>
                 </label>
             </div>
         </section>
 
-        <section class="app-soft-card p-5 flex flex-col gap-3">
+        <section class="app-panel p-5 flex flex-col gap-3">
             <div class="flex items-center justify-between">
                 <h3 class="font-display text-[18px] font-bold text-on-surface tracking-tight">纪念日与回忆</h3>
-                <span class="material-symbols-outlined text-[#b5765d]">cake</span>
+                <span class="material-symbols-outlined app-tone-warn">cake</span>
             </div>
             <div class="grid grid-cols-2 gap-3">
                 <div class="rounded-2xl bg-surface-container-low p-4">
@@ -86,8 +100,7 @@
             </div>
         </section>
 
-        <section class="flex flex-col gap-3">
-            <div class="app-soft-card p-5 flex flex-col gap-4 overflow-hidden">
+        <section class="app-panel p-5 flex flex-col gap-4 overflow-hidden">
                 <div class="flex items-start justify-between gap-4">
                     <div class="pr-2">
                         <div class="flex items-center gap-2">
@@ -101,37 +114,36 @@
                     </label>
                 </div>
                 <div id="memorial-mode-panel" class="collapsed-panel">
-                    <div class="rounded-2xl bg-surface-container-low p-4 flex flex-col gap-3">
+                    <div class="rounded-[22px] bg-[linear-gradient(180deg,rgba(235,238,248,0.92)_0%,rgba(244,246,252,0.98)_100%)] border border-white/80 p-4 flex flex-col gap-3 shadow-[0_18px_38px_rgba(52,62,90,0.08)]">
                         <div class="flex items-center justify-between">
                             <span class="font-display text-base font-bold text-on-surface">资料准备</span>
                             <span class="font-sans text-xs font-semibold text-primary">已可体验</span>
                         </div>
                         <div class="grid grid-cols-3 gap-3">
-                            <div class="rounded-xl bg-surface-container-low p-3">
+                            <div class="rounded-xl bg-white/76 border border-white/80 p-3">
                                 <p class="font-sans text-[11px] text-on-surface-variant font-semibold">照片</p>
                                 <p class="font-display text-lg font-bold text-on-surface mt-1">42 张</p>
                             </div>
-                            <div class="rounded-xl bg-surface-container-low p-3">
+                            <div class="rounded-xl bg-white/76 border border-white/80 p-3">
                                 <p class="font-sans text-[11px] text-on-surface-variant font-semibold">录音</p>
                                 <p class="font-display text-lg font-bold text-on-surface mt-1">18 段</p>
                             </div>
-                            <div class="rounded-xl bg-surface-container-low p-3">
+                            <div class="rounded-xl bg-white/76 border border-white/80 p-3">
                                 <p class="font-sans text-[11px] text-on-surface-variant font-semibold">视频</p>
                                 <p class="font-display text-lg font-bold text-on-surface mt-1">6 段</p>
                             </div>
                         </div>
-                        <div class="rounded-xl bg-white px-3.5 py-3 border border-outline-variant/10">
+                        <div class="rounded-xl bg-white/84 px-3.5 py-3 border border-white/80">
                             <p class="font-display text-[15px] font-bold text-on-surface">建议补 3 段节日语音</p>
                         </div>
                     </div>
                 </div>
-            </div>
         </section>
 
-        <section class="app-soft-card p-5 flex flex-col gap-1">
+        <section class="app-panel p-5 flex flex-col gap-1">
             <div class="flex items-center justify-between">
-                <h3 class="font-display text-[18px] font-bold text-on-surface tracking-tight">守护方式</h3>
-                <span class="material-symbols-outlined text-primary">shield</span>
+                <h3 id="privacyProtectionTitle" class="font-display text-[18px] font-bold text-on-surface tracking-tight">守护方式</h3>
+                <span id="privacyProtectionIcon" class="material-symbols-outlined text-primary">shield</span>
             </div>
 
             <div class="flex justify-between items-center py-3 border-b border-outline-variant/10">
@@ -140,7 +152,7 @@
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
                     <input type="checkbox" class="sr-only peer" checked>
-                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    <div class="app-switch"></div>
                 </label>
             </div>
 
@@ -150,7 +162,7 @@
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
                     <input type="checkbox" class="sr-only peer" checked>
-                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    <div class="app-switch"></div>
                 </label>
             </div>
 
@@ -160,41 +172,40 @@
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
                     <input type="checkbox" class="sr-only peer">
-                    <div class="w-11 h-6 bg-outline-variant/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    <div class="app-switch"></div>
                 </label>
             </div>
         </section>
 
     </main>
 
-    <!-- 底部悬浮导航 -->
-    <nav class="fixed bottom-0 left-0 w-full z-50 px-6 pb-8 pt-4 bg-white/90 backdrop-blur-xl border-t border-outline-variant/20 md:max-w-[480px] md:left-1/2 md:-translate-x-1/2 shadow-[0_-10px_40px_rgba(0,0,0,0.03)]">
-        <div class="flex justify-between items-center">
-            <a id="nav-item-1" href="index.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div id="nav-item-1-box" class="app-nav-pill group-hover:bg-primary/5">
+    <nav class="app-bottom-nav">
+        <div class="app-bottom-nav-inner flex justify-between items-center">
+            <a id="nav-item-1" href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div id="nav-item-1-box" class="app-nav-pill">
                     <span id="nav-item-1-icon" class="material-symbols-outlined text-[22px]">home</span>
                 </div>
                 <span id="nav-item-1-label" class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
             </a>
-            <a id="nav-item-2" href="monitor.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div id="nav-item-2-box" class="app-nav-pill group-hover:bg-primary/5">
+            <a id="nav-item-2" href="monitor.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div id="nav-item-2-box" class="app-nav-pill">
                     <span id="nav-item-2-icon" class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
                 </div>
                 <span id="nav-item-2-label" class="font-sans text-[11px] font-semibold tracking-wide">守护</span>
             </a>
-            <a id="nav-item-3" href="events.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div id="nav-item-3-box" class="app-nav-pill group-hover:bg-primary/5">
+            <a id="nav-item-3" href="events.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div id="nav-item-3-box" class="app-nav-pill">
                     <span id="nav-item-3-icon" class="material-symbols-outlined text-[22px]">history</span>
                 </div>
                 <span id="nav-item-3-label" class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
             </a>
-            <a id="nav-item-4" href="companionship.html" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div id="nav-item-4-box" class="app-nav-pill group-hover:bg-primary/5">
+            <a id="nav-item-4" href="companionship.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
+                <div id="nav-item-4-box" class="app-nav-pill">
                     <span id="nav-item-4-icon" class="material-symbols-outlined text-[22px]">diversity_1</span>
                 </div>
                 <span id="nav-item-4-label" class="font-sans text-[11px] font-semibold tracking-wide">陪伴</span>
             </a>
-            <a id="nav-item-5" href="privacy.html" class="flex flex-col items-center gap-1.5 text-primary">
+            <a id="nav-item-5" href="privacy.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
                 <div id="nav-item-5-box" class="app-nav-pill active">
                     <span id="nav-item-5-icon" class="material-symbols-outlined fill text-[22px]">person</span>
                 </div>
@@ -202,6 +213,7 @@
             </a>
         </div>
     </nav>
+    <script src="assets/scripts/edge-client.js?v=20260701-privacy1"></script>
     <script>
         const memorialToggle = document.getElementById('memorial-mode-toggle');
         const memorialPanel = document.getElementById('memorial-mode-panel');
@@ -219,20 +231,21 @@
         }
 
         function renderBottomNav(memorialModeOn) {
+            const href = (path) => window.GoHomeEdge?.pageHref?.(path) || path;
             const items = {
                 regular: [
-                    { href: 'index.html', icon: 'home', label: '首页', fill: false },
-                    { href: 'monitor.html', icon: 'nest_cam_indoor', label: '守护', fill: false },
-                    { href: 'events.html', icon: 'history', label: '事件', fill: false },
-                    { href: 'companionship.html', icon: 'diversity_1', label: '陪伴', fill: false },
-                    { href: 'privacy.html', icon: 'person', label: '我的', fill: true }
+                    { href: href('index.html'), icon: 'home', label: '首页', fill: false },
+                    { href: href('monitor.html'), icon: 'nest_cam_indoor', label: '守护', fill: false },
+                    { href: href('events.html'), icon: 'history', label: '事件', fill: false },
+                    { href: href('companionship.html'), icon: 'diversity_1', label: '陪伴', fill: false },
+                    { href: href('privacy.html'), icon: 'person', label: '我的', fill: true }
                 ],
                 memorial: [
-                    { href: 'memorial_home.html', icon: 'home', label: '首页', fill: true },
-                    { href: 'digital_human.html', icon: 'forum', label: '平行世界', fill: false },
-                    { href: 'memory_gallery.html', icon: 'photo_library', label: '记忆馆', fill: false },
-                    { href: 'voice_archive.html', icon: 'mic', label: '声音', fill: true },
-                    { href: 'privacy.html?memorial=on', icon: 'person', label: '我的', fill: true }
+                    { href: href('memorial_home.html?memorial=on'), icon: 'home', label: '首页', fill: true },
+                    { href: href('digital_human.html?memorial=on'), icon: 'forum', label: '平行世界', fill: false },
+                    { href: href('memory_gallery.html?memorial=on'), icon: 'photo_library', label: '记忆馆', fill: false },
+                    { href: href('voice_archive.html?memorial=on'), icon: 'mic', label: '声音', fill: true },
+                    { href: href('privacy.html?memorial=on'), icon: 'person', label: '我的', fill: true }
                 ]
             };
 
@@ -253,10 +266,28 @@
                     label.className = 'font-sans text-[11px] font-bold tracking-wide';
                 } else {
                     link.className = 'flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group';
-                    box.className = 'app-nav-pill group-hover:bg-primary/5';
+                    box.className = 'app-nav-pill';
                     label.className = 'font-sans text-[11px] font-semibold tracking-wide';
                 }
             });
+        }
+
+        function renderProfileShell(memorialModeOn) {
+            const href = (path) => window.GoHomeEdge?.pageHref?.(path) || path;
+            document.getElementById('privacyBackLink').href = memorialModeOn
+                ? href('memorial_home.html?memorial=on')
+                : href('index.html');
+            document.getElementById('privacyTopbarTitle').textContent = memorialModeOn ? '回忆设置' : '我的';
+            document.getElementById('privacyHeroEyebrow').textContent = memorialModeOn ? 'MEMORY' : 'PROFILE';
+            document.getElementById('privacyHeroTitle').textContent = memorialModeOn ? '回忆模式设置' : '比赛演示版设置';
+            document.getElementById('privacyHeroSubtitle').textContent = memorialModeOn
+                ? '这里保留和回忆模式最相关的几项，让“纪念、回看、保存”保持在同一套安静口径里。'
+                : '这里只保留和演示最相关的几项，不再堆太多说明。';
+            document.getElementById('privacyHeroBadge').textContent = memorialModeOn ? '回忆模式' : '演示模式';
+            document.getElementById('privacyReminderTitle').textContent = memorialModeOn ? '回忆陪伴' : '关系提醒';
+            document.getElementById('privacyReminderIcon').textContent = memorialModeOn ? 'favorite' : 'notifications_active';
+            document.getElementById('privacyProtectionTitle').textContent = memorialModeOn ? '资料保护' : '守护方式';
+            document.getElementById('privacyProtectionIcon').textContent = memorialModeOn ? 'lock' : 'shield';
         }
 
         function readMemorialStorage() {
@@ -268,6 +299,7 @@
             const storedMemorialMode = localStorage.getItem(MEMORIAL_STORAGE_KEY);
             memorialToggle.checked = storedMemorialMode === 'on';
             syncMemorialPanel();
+            renderProfileShell(memorialToggle.checked);
             renderBottomNav(memorialToggle.checked);
         }
 
@@ -275,6 +307,7 @@
         memorialToggle.addEventListener('change', () => {
             syncMemorialStorage();
             syncMemorialPanel();
+            renderProfileShell(memorialToggle.checked);
             renderBottomNav(memorialToggle.checked);
         });
         window.addEventListener('pageshow', readMemorialStorage);

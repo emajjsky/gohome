@@ -9,7 +9,7 @@ import os
 import time
 
 
-NETWORK_CAPTURE_OPTIONS = "rtsp_transport;tcp|stimeout;3000000|fflags;nobuffer|max_delay;500000"
+NETWORK_CAPTURE_OPTIONS = "rtsp_transport;tcp|stimeout;3000000|fflags;nobuffer|flags;low_delay|max_delay;100000|probesize;32|analyzeduration;0"
 LOCAL_CAPTURE_WARMUP_SECONDS = 1.0
 NETWORK_CAPTURE_WARMUP_SECONDS = 3.0
 NETWORK_CAPTURE_MIN_READS = 8
@@ -33,6 +33,8 @@ class CameraAgent:
     def __init__(self, snapshot_dir: Path) -> None:
         self.snapshot_dir = snapshot_dir
         self._capture_lock = Lock()
+        self._frame_cache_lock = Lock()
+        self._frame_cache: Dict[str, Dict[str, Any]] = {}
 
     def resolve_capture_source(self, camera: Dict[str, Any]) -> Tuple[Any, int | None, str]:
         stream_url = str(camera["stream_url"]).strip()
@@ -68,9 +70,59 @@ class CameraAgent:
         netloc = f"{credentials}@{parts.netloc}"
         return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
-    def capture_frame(self, camera: Dict[str, Any]) -> Dict[str, Any]:
+    def capture_frame(
+        self,
+        camera: Dict[str, Any],
+        prefer_cache: bool = True,
+        max_cache_age_seconds: float = 2.0,
+    ) -> Dict[str, Any]:
+        if prefer_cache:
+            cached = self.latest_cached_frame(camera, max_age_seconds=max_cache_age_seconds)
+            if cached is not None:
+                return cached
         with self._capture_lock:
-            return self._capture_frame_unlocked(camera)
+            capture = self._capture_frame_unlocked(camera)
+        self._store_latest_frame(camera, capture["frame"], capture["source"])
+        return capture
+
+    def latest_cached_frame(self, camera: Dict[str, Any], max_age_seconds: float = 2.0) -> Dict[str, Any] | None:
+        key = self._frame_cache_key(camera)
+        now = time.monotonic()
+        with self._frame_cache_lock:
+            cached = self._frame_cache.get(key)
+            if not cached:
+                return None
+            age = now - float(cached.get("monotonic", 0.0))
+            if age > max(0.1, float(max_age_seconds)):
+                return None
+            frame = cached["frame"].copy()
+            return {
+                "frame": frame,
+                "width": cached["width"],
+                "height": cached["height"],
+                "elapsed_ms": int(age * 1000),
+                "source": f"{cached['source']} cached",
+            }
+
+    def _store_latest_frame(self, camera: Dict[str, Any], frame: Any, source_label: str) -> None:
+        try:
+            height, width = frame.shape[:2]
+        except (AttributeError, ValueError):
+            return
+        key = self._frame_cache_key(camera)
+        with self._frame_cache_lock:
+            self._frame_cache[key] = {
+                "frame": frame.copy(),
+                "width": width,
+                "height": height,
+                "source": source_label,
+                "monotonic": time.monotonic(),
+            }
+
+    def _frame_cache_key(self, camera: Dict[str, Any]) -> str:
+        camera_id = camera.get("id")
+        stream_url = str(camera.get("stream_url", "")).strip()
+        return f"{camera_id or 'source'}::{stream_url}"
 
     def _is_demo_source(self, source: Any) -> bool:
         return isinstance(source, str) and source.strip().lower().startswith(DEMO_STREAM_PREFIXES)
@@ -252,6 +304,7 @@ class CameraAgent:
                 ok, frame = self._latest_stream_frame(cap, stale_frame_reads)
                 if not ok or frame is None:
                     break
+                self._store_latest_frame(camera, frame, source_label)
                 frame = self._resize_for_stream(cv2, frame, max_width=max_width, max_height=max_height)
                 ok, encoded = cv2.imencode(".jpg", frame, encode_params)
                 if not ok:
@@ -312,6 +365,7 @@ class CameraAgent:
         frame_index = 0
         while True:
             frame = self._demo_frame(cv2, camera, frame_index=frame_index)
+            self._store_latest_frame(camera, frame, "demo stream")
             frame = self._resize_for_stream(cv2, frame, max_width=max_width, max_height=max_height)
             ok, encoded = cv2.imencode(".jpg", frame, encode_params)
             if ok:

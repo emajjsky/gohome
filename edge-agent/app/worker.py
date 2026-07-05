@@ -9,6 +9,9 @@ from .camera_agent import CameraError
 from .rule_engine import RuleEngine, RuleEvaluation
 
 
+LIFE_OBSERVATION_TYPES = {"no_motion", "no_person"}
+
+
 class EdgeWorker:
     def __init__(
         self,
@@ -25,6 +28,7 @@ class EdgeWorker:
         self._wake = Event()
         self._thread: Thread | None = None
         self.previous_frames: Dict[int, Any] = {}
+        self.pose_frame_counts: Dict[int, int] = {}
         self.rule_engine = RuleEngine()
         self.latest_evaluations: Dict[int, Dict[str, Any]] = {}
         self.last_loop_started_at: str | None = None
@@ -85,6 +89,8 @@ class EdgeWorker:
             analysis_config = {
                 **rules,
                 "force_demo_vision": str(camera.get("stream_url", "")).strip().lower().startswith("demo:"),
+                "camera_id": camera_id,
+                **self._pose_runtime_config(camera_id, rules),
             }
             analysis = self.detect_agent.analyze_frame_with_config(
                 frame,
@@ -125,6 +131,7 @@ class EdgeWorker:
                 rule_set_version=str(rules.get("updated_at") or ""),
             )
             self.latest_evaluations[camera_id] = persisted_evaluation
+            self._close_recovered_observations(camera, evaluation)
             self._emit_candidates(
                 camera,
                 evaluation=evaluation,
@@ -163,6 +170,23 @@ class EdgeWorker:
             self.storage.update_camera_status(camera_id, "error", str(exc))
             return {"ok": False, "error": str(exc)}
 
+    def _pose_runtime_config(self, camera_id: int, rules: Dict[str, Any]) -> Dict[str, Any]:
+        needs_pose = bool(rules.get("fall_detection_enabled") or rules.get("activity_detection_enabled"))
+        if not needs_pose:
+            return {
+                "pose_detection_enabled": False,
+                "pose_runtime_reason": "worker_pose_not_required",
+            }
+        interval = max(2, int(rules.get("worker_pose_interval_frames") or 5))
+        count = self.pose_frame_counts.get(camera_id, 0) + 1
+        self.pose_frame_counts[camera_id] = count
+        enabled = (count % interval) == 1
+        return {
+            "pose_detection_enabled": enabled,
+            "pose_runtime_reason": "worker_pose_sampled" if enabled else "worker_pose_skipped_for_latency",
+            "worker_pose_interval_frames": interval,
+        }
+
     def _emit_candidates(
         self,
         camera: Dict[str, Any],
@@ -171,13 +195,43 @@ class EdgeWorker:
         rule_evaluation_id: int | None,
     ) -> None:
         for candidate in evaluation.candidates:
+            payload = {
+                **(candidate.payload or {}),
+                "evaluation": {
+                    "camera_id": evaluation.camera_id,
+                    "snapshot_id": evaluation.snapshot_id,
+                    "evaluated_at": evaluation.evaluated_at,
+                    "state": evaluation.state,
+                },
+                "data_chain": {
+                    "detection_result_id": detection_result_id,
+                    "rule_evaluation_id": rule_evaluation_id,
+                },
+            }
+            candidate_dict = candidate.to_dict()
+            candidate_dict["payload"] = payload
             persisted_candidate = self.storage.create_event_candidate(
                 camera_id=int(camera["id"]),
                 detection_result_id=detection_result_id,
                 rule_evaluation_id=rule_evaluation_id,
-                candidate=candidate.to_dict(),
+                candidate=candidate_dict,
                 evaluated_at=evaluation.evaluated_at,
             )
+            payload["data_chain"]["event_candidate_id"] = int(persisted_candidate["id"])
+            if candidate.event_type in LIFE_OBSERVATION_TYPES:
+                self.storage.upsert_observation_log(
+                    camera_id=int(camera["id"]),
+                    observation_type=candidate.event_type,
+                    summary=candidate.summary,
+                    evaluated_at=evaluation.evaluated_at,
+                    snapshot_id=candidate.snapshot_id,
+                    detection_result_id=detection_result_id,
+                    rule_evaluation_id=rule_evaluation_id,
+                    event_candidate_id=int(persisted_candidate["id"]),
+                    payload=payload,
+                )
+                self.storage.update_event_candidate_status(int(persisted_candidate["id"]), "aggregated")
+                continue
             self.event_agent.emit(
                 event_type=candidate.event_type,
                 summary=candidate.summary,
@@ -187,18 +241,22 @@ class EdgeWorker:
                 detection_result_id=detection_result_id,
                 rule_evaluation_id=rule_evaluation_id,
                 candidate_id=int(persisted_candidate["id"]),
-                payload={
-                    **(candidate.payload or {}),
-                    "evaluation": {
-                        "camera_id": evaluation.camera_id,
-                        "snapshot_id": evaluation.snapshot_id,
-                        "evaluated_at": evaluation.evaluated_at,
-                        "state": evaluation.state,
-                    },
-                    "data_chain": {
-                        "detection_result_id": detection_result_id,
-                        "rule_evaluation_id": rule_evaluation_id,
-                        "event_candidate_id": int(persisted_candidate["id"]),
-                    },
-                },
+                payload=payload,
+            )
+
+    def _close_recovered_observations(self, camera: Dict[str, Any], evaluation: RuleEvaluation) -> None:
+        state = evaluation.state or {}
+        camera_id = int(camera["id"])
+        evaluated_at = evaluation.evaluated_at
+        if state.get("motion_state") == "moving" or state.get("person_state") == "not_visible":
+            self.storage.close_observation_log(
+                camera_id=camera_id,
+                observation_type="no_motion",
+                ended_at=evaluated_at,
+            )
+        if state.get("person_state") == "visible":
+            self.storage.close_observation_log(
+                camera_id=camera_id,
+                observation_type="no_person",
+                ended_at=evaluated_at,
             )

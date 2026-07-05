@@ -38,6 +38,12 @@ class Settings:
         self.video_service_region = os.getenv("GOHOME_VIDEO_SERVICE_REGION", "local").strip() or "local"
         self.video_service_role = os.getenv("GOHOME_VIDEO_SERVICE_ROLE", "origin").strip() or "origin"
         self.video_distribution_name = os.getenv("GOHOME_VIDEO_DISTRIBUTION_NAME", "single-origin").strip() or "single-origin"
+        self.app_server_base_url = os.getenv("GOHOME_APP_SERVER_BASE_URL", "").strip().rstrip("/")
+        self.device_api_token = os.getenv("GOHOME_DEVICE_API_TOKEN", "").strip()
+        self.upload_worker_enabled = os.getenv("GOHOME_UPLOAD_WORKER_ENABLED", "1") == "1"
+        self.upload_worker_interval_seconds = float(os.getenv("GOHOME_UPLOAD_WORKER_INTERVAL_SECONDS", "5"))
+        self.upload_worker_batch_size = int(os.getenv("GOHOME_UPLOAD_WORKER_BATCH_SIZE", "4"))
+        self.upload_request_timeout_seconds = float(os.getenv("GOHOME_UPLOAD_REQUEST_TIMEOUT_SECONDS", "12"))
 
         self.host = os.getenv("GOHOME_AGENT_HOST", "0.0.0.0")
         self.port = int(os.getenv("GOHOME_AGENT_PORT", "8711"))
@@ -55,6 +61,20 @@ class Settings:
         self.yolo_model = os.getenv("GOHOME_YOLO_MODEL", "yolo11n.pt")
         self.yolo_confidence = float(os.getenv("GOHOME_YOLO_CONFIDENCE", "0.20"))
         self.yolo_imgsz = int(os.getenv("GOHOME_YOLO_IMGSZ", "960"))
+        self.pose_enabled = os.getenv("GOHOME_POSE_ENABLED", "0") == "1"
+        self.pose_backend = os.getenv("GOHOME_POSE_BACKEND", "rtmpose").strip().lower() or "rtmpose"
+        self.pose_mode = os.getenv("GOHOME_POSE_MODE", "lightweight").strip().lower() or "lightweight"
+        self.pose_runtime_backend = os.getenv("GOHOME_POSE_RUNTIME_BACKEND", "onnxruntime").strip().lower() or "onnxruntime"
+        self.pose_device = os.getenv("GOHOME_POSE_DEVICE", "cpu").strip().lower() or "cpu"
+        self.pose_fall_threshold = float(os.getenv("GOHOME_POSE_FALL_THRESHOLD", "0.78"))
+        self.pose_det_frequency = int(os.getenv("GOHOME_POSE_DET_FREQUENCY", "8"))
+        self.pose_min_keypoint_confidence = float(os.getenv("GOHOME_POSE_MIN_KEYPOINT_CONFIDENCE", "0.30"))
+        self.pose_max_poses = int(os.getenv("GOHOME_POSE_MAX_POSES", "3"))
+        self.pose_tracking = os.getenv("GOHOME_POSE_TRACKING", "0") == "1"
+        self.pose_cache_seconds = float(os.getenv("GOHOME_POSE_CACHE_SECONDS", "1.8"))
+        self.pose_cache_max_motion = float(os.getenv("GOHOME_POSE_CACHE_MAX_MOTION", "0.06"))
+        self.activity_window_seconds = float(os.getenv("GOHOME_ACTIVITY_WINDOW_SECONDS", "30"))
+        self.activity_max_samples = int(os.getenv("GOHOME_ACTIVITY_MAX_SAMPLES", "90"))
         self.enable_demo_camera = os.getenv("GOHOME_ENABLE_DEMO_CAMERA", "0") == "1"
 
         self.notify_channel = os.getenv("GOHOME_NOTIFY_CHANNEL", "off").lower()

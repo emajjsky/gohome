@@ -72,6 +72,7 @@ from .schemas import (
 )
 from .settings import settings
 from .storage import Storage
+from .upload_agent import UploadAgent
 from .video_distribution_service import VideoDistributionService
 from .video_service import (
     VideoService,
@@ -415,6 +416,8 @@ def event_for_v1(event: Dict[str, Any]) -> Dict[str, Any]:
     if data.get("snapshot_path"):
         data["snapshot_url"] = v1_video_snapshot_url(data["snapshot_path"])
     asset = storage.get_media_asset_by_snapshot(int(data["snapshot_id"])) if data.get("snapshot_id") else None
+    if asset is None:
+        asset = storage.get_media_asset_by_event(int(data["id"]))
     if asset:
         data["media_asset"] = video_service.media_asset_for_api(asset)
     return data
@@ -459,12 +462,14 @@ def v1_device_summary() -> Dict[str, Any]:
         "app_version": package_service.current_app_version(default_version=APP_VERSION),
         "model_version": current_model_version(),
         "detector_backend": settings.detector_backend,
+        "upload_agent": upload_agent.status(),
         "token": token,
     }
 
 
 def v1_event_summary(event: Dict[str, Any]) -> Dict[str, Any]:
     data = event_for_v1(event)
+    payload = data.get("payload") or {}
     return {
         "id": data["id"],
         "type": data["type"],
@@ -475,10 +480,38 @@ def v1_event_summary(event: Dict[str, Any]) -> Dict[str, Any]:
         "camera_name": data.get("camera_name"),
         "occurred_at": data["occurred_at"],
         "acknowledged": data["acknowledged"],
+        "snapshot_path": data.get("snapshot_path") or "",
         "snapshot_url": data.get("snapshot_url"),
         "candidate_status": data.get("candidate_status"),
-        "payload": data.get("payload") or {},
+        "idempotency_key": payload.get("idempotency_key") or f"edge-event-{data['id']}",
+        "evidence": payload.get("evidence") or {},
+        "payload": payload,
         "media_asset": data.get("media_asset"),
+    }
+
+
+def event_server_payload(event: Dict[str, Any]) -> Dict[str, Any]:
+    data = event_for_v1(event)
+    payload = data.get("payload") or {}
+    identity = local_device_identity()
+    return {
+        "idempotency_key": f"{identity['device_id']}:event:{data['id']}",
+        "event_type": data["type"],
+        "summary": data["summary"],
+        "level": data["level"],
+        "room": data.get("room") or "",
+        "camera_id": data.get("camera_id"),
+        "snapshot_path": data.get("snapshot_path") or "",
+        "occurred_at": data["occurred_at"],
+        "payload": {
+            **payload,
+            "schema_version": "gohome-device-event-v1",
+            "edge_event_id": data["id"],
+            "edge_device_id": identity["device_id"],
+            "edge_device_name": identity["device_name"],
+            "snapshot_url": data.get("snapshot_url") or "",
+            "media_asset": data.get("media_asset"),
+        },
     }
 
 
@@ -993,6 +1026,19 @@ detect_agent = DetectAgent(
     yolo_model=settings.yolo_model,
     yolo_confidence=settings.yolo_confidence,
     yolo_imgsz=settings.yolo_imgsz,
+    pose_enabled=settings.pose_enabled,
+    pose_mode=settings.pose_mode,
+    pose_runtime_backend=settings.pose_runtime_backend,
+    pose_device=settings.pose_device,
+    pose_fall_threshold=settings.pose_fall_threshold,
+    pose_det_frequency=settings.pose_det_frequency,
+    pose_min_keypoint_confidence=settings.pose_min_keypoint_confidence,
+    pose_max_poses=settings.pose_max_poses,
+    pose_tracking=settings.pose_tracking,
+    pose_cache_seconds=settings.pose_cache_seconds,
+    pose_cache_max_motion=settings.pose_cache_max_motion,
+    activity_window_seconds=settings.activity_window_seconds,
+    activity_max_samples=settings.activity_max_samples,
 )
 notifier = Notifier(settings)
 event_agent = EventAgent(storage, notifier, settings.event_throttle_seconds)
@@ -1003,6 +1049,12 @@ video_distribution_service = VideoDistributionService(
     current_device_identity_resolver=local_device_identity,
 )
 object_storage_service = ObjectStorageService(storage=storage, settings=settings, distribution=video_distribution_service)
+upload_agent = UploadAgent(
+    storage=storage,
+    settings=settings,
+    device_id_resolver=current_device_id,
+    token_resolver=read_local_device_token,
+)
 package_service = PackageService(storage=storage, settings=settings, object_storage=object_storage_service)
 app_runtime_guard = AppRuntimeGuardService(
     settings=settings,
@@ -1054,6 +1106,8 @@ def admin_api_requires_auth(path: str) -> bool:
         "/api/summary",
         "/api/rules",
         "/api/notify",
+        "/api/observation-logs",
+        "/api/upload-jobs",
         "/snapshots",
     )
     return any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected_prefixes)
@@ -1212,12 +1266,14 @@ def on_startup() -> None:
     ensure_demo_camera_if_empty()
     if not settings.disable_worker:
         worker.start()
+    upload_agent.start()
     app_runtime_guard.start()
 
 
 @app.on_event("shutdown")
 def on_shutdown() -> None:
     app_runtime_guard.stop()
+    upload_agent.stop()
     worker.stop()
 
 
@@ -1249,7 +1305,16 @@ def device() -> Dict[str, Any]:
         "detector_backend": settings.detector_backend,
         "yolo_model": settings.yolo_model if settings.detector_backend == "yolo" else None,
         "yolo_imgsz": settings.yolo_imgsz if settings.detector_backend == "yolo" else None,
+        "pose_enabled": settings.pose_enabled,
+        "pose_backend": settings.pose_backend,
+        "pose_model": f"RTMPose-{settings.pose_mode}",
+        "pose_runtime_backend": settings.pose_runtime_backend,
+        "pose_cache_seconds": settings.pose_cache_seconds,
+        "pose_cache_max_motion": settings.pose_cache_max_motion,
+        "activity_window_seconds": settings.activity_window_seconds,
+        "activity_max_samples": settings.activity_max_samples,
         "worker_running": worker.is_running,
+        "upload_agent": upload_agent.status(),
         "video_distribution": video_distribution_service.service_info(),
         "app_runtime": app_runtime_guard.status(),
     }
@@ -2194,6 +2259,10 @@ def v1_ingest_device_event(
         "ingested_family_id": int(device_session["family_id"]),
         "idempotency_key": payload.idempotency_key,
     }
+    uploaded_asset = payload.payload.get("media_upload_result") if isinstance(payload.payload.get("media_upload_result"), dict) else {}
+    uploaded_asset_id = None
+    if isinstance(uploaded_asset.get("asset"), dict):
+        uploaded_asset_id = uploaded_asset["asset"].get("id")
     event = storage.create_event(
         event_type=payload.event_type,
         summary=payload.summary,
@@ -2205,7 +2274,11 @@ def v1_ingest_device_event(
         occurred_at=payload.occurred_at,
     )
     media_asset = None
-    if snapshot is not None:
+    if uploaded_asset_id:
+        asset = storage.attach_media_asset_to_event(int(uploaded_asset_id), int(event["id"]))
+        if asset is not None:
+            media_asset = object_storage_service.media_asset_for_api(asset)
+    if media_asset is None and snapshot is not None:
         media_asset = video_service.promote_snapshot_media_asset(
             family_id=int(device_session["family_id"]),
             device_id=device_id,
@@ -2254,6 +2327,36 @@ def v1_ingest_device_event(
         "notification_delivery": notification_delivery,
         "app_push_delivery": app_push_delivery,
     }
+
+
+@app.post("/api/v1/device/media-assets/upload")
+async def v1_upload_device_media_asset(
+    request: Request,
+    file_name: str = Query(default="snapshot.jpg", min_length=1, max_length=200),
+    snapshot_path: str = Query(default="", max_length=300),
+    content_type: str = Query(default="image/jpeg", max_length=120),
+    edge_event_id: str = Query(default="", max_length=80),
+    device_session: Dict[str, Any] = Depends(current_v1_device_session),
+) -> Dict[str, Any]:
+    normalized_snapshot_path = normalize_snapshot_reference(snapshot_path)
+    if not normalized_snapshot_path:
+        raise HTTPException(status_code=400, detail="snapshot_path is required")
+    body = await request.body()
+    snapshot = storage.get_snapshot_by_path(normalized_snapshot_path)
+    asset = object_storage_service.store_device_media_bytes(
+        family_id=int(device_session["family_id"]),
+        device_id=str(device_session["device_id"]),
+        file_name=file_name,
+        content_type=content_type or request.headers.get("content-type", "image/jpeg"),
+        content_bytes=body,
+        source_snapshot_path=normalized_snapshot_path,
+        snapshot_id=int(snapshot["id"]) if snapshot else None,
+        metadata={
+            "edge_event_id": edge_event_id,
+            "uploaded_by_device_id": str(device_session["device_id"]),
+        },
+    )
+    return {"created": True, "asset": asset}
 
 
 @app.post("/api/v1/device/media-assets")
@@ -2443,7 +2546,7 @@ def capture_preview(camera_payload: Dict[str, Any]) -> Dict[str, Any]:
             **rules,
             "force_demo_vision": str(camera_payload.get("stream_url", "")).strip().lower().startswith("demo:"),
         }
-        capture = camera_agent.capture_frame(camera_payload)
+        capture = camera_agent.capture_frame(camera_payload, prefer_cache=False)
         analysis = detect_agent.analyze_frame_with_config(capture["frame"], config=analysis_config)
         relative_path = f"preview/{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
         camera_agent.save_frame(capture["frame"], relative_path)
@@ -2494,34 +2597,73 @@ def delete_camera(camera_id: int) -> Dict[str, Any]:
     return {"deleted": True, "camera_id": camera_id}
 
 
-def capture_and_store(camera_id: int, persist_detection: bool = False) -> Dict[str, Any]:
+def capture_and_store(
+    camera_id: int,
+    persist_detection: bool = False,
+    *,
+    store_snapshot: bool = True,
+    prefer_cache: bool = True,
+    cache_only: bool = False,
+    max_cache_age_seconds: float = 6.0,
+    analysis_overrides: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
 
     try:
+        started_at = datetime.now(timezone.utc)
         rules = storage.get_rules()
         analysis_config = {
             **rules,
             "force_demo_vision": str(camera.get("stream_url", "")).strip().lower().startswith("demo:"),
+            "camera_id": camera_id,
+            **(analysis_overrides or {}),
         }
-        capture = camera_agent.capture_frame(camera)
+        if cache_only:
+            capture = camera_agent.latest_cached_frame(camera, max_age_seconds=max_cache_age_seconds)
+            if capture is None:
+                raise CameraError("实时视频缓存未就绪，请先保持当前页面视频流打开。")
+        else:
+            capture = camera_agent.capture_frame(
+                camera,
+                prefer_cache=prefer_cache,
+                max_cache_age_seconds=max_cache_age_seconds,
+            )
         analysis = detect_agent.analyze_frame_with_config(capture["frame"], config=analysis_config)
-        relative_path = camera_agent.snapshot_relative_path(camera_id)
-        camera_agent.save_frame(capture["frame"], relative_path)
-        snapshot = storage.create_snapshot(
-            camera_id=camera_id,
-            image_path=relative_path,
-            width=capture["width"],
-            height=capture["height"],
-            brightness=analysis["brightness"],
-            motion_score=analysis["motion_score"],
-            tags=analysis["tags"],
-            person_count=analysis.get("person_count"),
-            analysis=analysis,
-        )
+        if store_snapshot:
+            relative_path = camera_agent.snapshot_relative_path(camera_id)
+            camera_agent.save_frame(capture["frame"], relative_path)
+            snapshot = storage.create_snapshot(
+                camera_id=camera_id,
+                image_path=relative_path,
+                width=capture["width"],
+                height=capture["height"],
+                brightness=analysis["brightness"],
+                motion_score=analysis["motion_score"],
+                tags=analysis["tags"],
+                person_count=analysis.get("person_count"),
+                analysis=analysis,
+            )
+        else:
+            captured_at = started_at.isoformat()
+            snapshot = {
+                "id": None,
+                "camera_id": camera_id,
+                "image_path": "",
+                "image_url": "",
+                "width": capture["width"],
+                "height": capture["height"],
+                "brightness": analysis["brightness"],
+                "motion_score": analysis["motion_score"],
+                "tags": analysis["tags"],
+                "person_count": analysis.get("person_count"),
+                "analysis": analysis,
+                "captured_at": captured_at,
+                "created_at": captured_at,
+            }
         detection_result = None
-        if persist_detection:
+        if persist_detection and snapshot.get("id"):
             detection_result = storage.create_detection_result(
                 camera_id=camera_id,
                 snapshot_id=int(snapshot["id"]),
@@ -2537,6 +2679,7 @@ def capture_and_store(camera_id: int, persist_detection: bool = False) -> Dict[s
             "width": capture["width"],
             "height": capture["height"],
             "elapsed_ms": capture["elapsed_ms"],
+            "analysis_elapsed_ms": int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000),
             "source": capture["source"],
             "snapshot": snapshot,
             "analysis": analysis,
@@ -2568,7 +2711,7 @@ def capture_with_pipeline(camera_id: int) -> Dict[str, Any]:
 
 @app.post("/api/cameras/{camera_id}/test")
 async def test_camera(camera_id: int) -> Dict[str, Any]:
-    return await run_in_threadpool(capture_and_store, camera_id)
+    return await run_in_threadpool(capture_and_store, camera_id, False, prefer_cache=False)
 
 
 @app.post("/api/cameras/{camera_id}/capture")
@@ -2578,8 +2721,25 @@ async def capture_camera(camera_id: int) -> Dict[str, Any]:
 
 @app.post("/api/cameras/{camera_id}/analysis/live")
 async def live_camera_analysis(camera_id: int, algorithm: str = Query(default="person")) -> Dict[str, Any]:
-    result = await run_in_threadpool(capture_and_store, camera_id, True)
-    result["algorithm"] = algorithm
+    normalized_algorithm = str(algorithm or "person").strip().lower()
+    pose_enabled = normalized_algorithm in {"fall", "meal", "stillness"}
+    reuse_cached_pose = normalized_algorithm in {"person", "night"}
+    result = await run_in_threadpool(
+        capture_and_store,
+        camera_id,
+        False,
+        store_snapshot=False,
+        prefer_cache=True,
+        cache_only=True,
+        max_cache_age_seconds=8.0,
+        analysis_overrides={
+            "preview_algorithm": normalized_algorithm,
+            "pose_detection_enabled": pose_enabled,
+            "pose_reuse_cache_only": reuse_cached_pose,
+            "pose_cache_seconds": 8.0 if reuse_cached_pose else settings.pose_cache_seconds,
+        },
+    )
+    result["algorithm"] = normalized_algorithm
     return result
 
 
@@ -2622,7 +2782,12 @@ def camera_mjpeg_stream(
             drop_stale_frames=drop,
         ),
         media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={"Cache-Control": "no-store"},
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -2647,12 +2812,44 @@ def list_event_candidates(limit: int = 20, status: str | None = None) -> list[Di
     return storage.list_event_candidates(limit=max(1, min(limit, 200)), status=normalized_status)
 
 
+@app.get("/api/observation-logs")
+def list_observation_logs(limit: int = 20, status: str | None = None) -> list[Dict[str, Any]]:
+    normalized_status = (status or "").strip().lower() or None
+    return storage.list_observation_logs(limit=max(1, min(limit, 200)), status=normalized_status)
+
+
+@app.get("/api/upload-jobs")
+def list_upload_jobs(
+    limit: int = 50,
+    status: str | None = None,
+    job_type: str | None = None,
+) -> list[Dict[str, Any]]:
+    return storage.list_upload_jobs(
+        limit=max(1, min(limit, 200)),
+        status=(status or "").strip().lower() or None,
+        job_type=(job_type or "").strip().lower() or None,
+    )
+
+
+@app.get("/api/upload-jobs/summary")
+def upload_jobs_summary() -> Dict[str, Any]:
+    return storage.upload_queue_summary()
+
+
 @app.get("/api/events/{event_id}")
 def get_event(event_id: int) -> Dict[str, Any]:
     event = storage.get_event(event_id)
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
+
+
+@app.get("/api/events/{event_id}/server-payload")
+def get_event_server_payload(event_id: int) -> Dict[str, Any]:
+    event = storage.get_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return event_server_payload(event)
 
 
 @app.patch("/api/events/{event_id}")

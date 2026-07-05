@@ -112,10 +112,14 @@
             list.innerHTML = "";
             return;
         }
+        list.className = state.cameras.length === 1
+            ? "flex gap-2 pb-1"
+            : "flex gap-2 overflow-x-auto pb-1";
         list.innerHTML = state.cameras.map((camera) => {
             const active = Number(camera.id) === Number(state.selectedCameraId);
+            const stretch = state.cameras.length === 1 ? "flex-1 w-full" : "shrink-0";
             return `
-                <button type="button" data-camera-id="${camera.id}" class="shrink-0 min-w-[120px] rounded-2xl border px-3 py-3 text-left transition-colors ${active ? "bg-primary text-white border-primary" : "bg-[#fbfbff] text-on-surface border-outline-variant/10"}">
+                <button type="button" data-camera-id="${camera.id}" class="${stretch} min-w-[120px] rounded-2xl border px-3 py-3 text-left transition-colors ${active ? "bg-primary text-white border-primary" : "bg-[#fbfbff] text-on-surface border-outline-variant/10"}">
                     <p class="font-display text-[14px] font-bold">${escapeHtml(cameraLabel(camera))}</p>
                     <p class="font-sans text-[11px] mt-1 ${active ? "text-white/78" : "text-on-surface-variant"}">${escapeHtml(cameraMeta(camera))}</p>
                 </button>

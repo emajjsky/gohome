@@ -149,12 +149,14 @@ Use the provided helper script:
 
 ```bash
 cd /home/pi/gohome/edge-agent
-bash scripts/install-systemd-service.sh
+sudo bash scripts/install-systemd-service.sh
+sudo bash scripts/install-admin-proxy.sh
 ```
 
 This installs:
 
 - `/etc/systemd/system/gohome-edge-agent.service`
+- nginx port-80 proxy for `http://10.42.0.1` and `http://gohome.local/admin`
 
 Then verify:
 
@@ -282,9 +284,10 @@ sudo systemctl daemon-reload
 4. Run `./run.sh` in foreground
 5. Open admin and product pages from LAN
 6. Add one RTSP camera
-7. Install `systemd`
-8. Reboot once and verify recovery
-9. Start 24-hour observation
+7. Install `systemd` and the nginx port-80 proxy
+8. Run the real setup hotspot test and open `http://10.42.0.1`
+9. Reboot once and verify recovery
+10. Start 24-hour observation
 
 ## Pass Signal
 
@@ -292,6 +295,7 @@ This Pi preparation is considered ready when:
 
 - the Pi can start `edge-agent` without editing source files
 - `systemd` can start and restart the service
+- phone setup can use `GoHome-XXXX` -> `http://10.42.0.1` without typing `:8711`
 - one camera can complete `connect -> watch -> monitor -> events`
 - logs are readable through `journalctl`
 - reboot does not require manual re-entry

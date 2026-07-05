@@ -82,8 +82,92 @@
         return "这条提醒来自本机守护服务的检测结果，建议结合截图和现实情况确认。";
     }
 
+    function fmtMetricValue(key, value) {
+        if (value === null || value === undefined || value === "") return "-";
+        if (key === "people" && Array.isArray(value)) return `${value.length} 个人体框`;
+        if (key.endsWith("_seconds")) {
+            const seconds = Math.max(0, Math.round(Number(value) || 0));
+            if (seconds < 60) return `${seconds} 秒`;
+            if (seconds < 3600) return `${Math.floor(seconds / 60)} 分`;
+            return `${(seconds / 3600).toFixed(seconds >= 36000 ? 0 : 1)} 小时`;
+        }
+        if (key === "motion_score") return Number(value).toFixed(4);
+        if (key === "brightness" || key === "contrast") return Number(value).toFixed(0);
+        if (key === "motion_state") {
+            return value === "still" ? "静止" : value === "moving" ? "有变化" : String(value);
+        }
+        if (key === "person_state") {
+            return value === "not_visible" ? "未检测到人" : value === "visible" ? "检测到人" : String(value);
+        }
+        if (key === "camera_state") {
+            return value === "offline" ? "离线" : String(value);
+        }
+        if (typeof value === "boolean") return value ? "是" : "否";
+        if (Array.isArray(value)) return `${value.length} 项`;
+        if (typeof value === "number") return Number.isInteger(value) ? String(value) : Number(value).toFixed(2);
+        return String(value);
+    }
+
+    function metricLabel(key) {
+        const labels = {
+            no_person_seconds: "连续无人",
+            no_motion_seconds: "静止时长",
+            motion_score: "运动分数",
+            brightness: "亮度",
+            contrast: "对比度",
+            people: "人体框",
+            camera_state: "摄像头状态",
+            person_state: "人物状态",
+            motion_state: "画面状态",
+            error: "错误信息",
+        };
+        return labels[key] || key;
+    }
+
+    function summarizeMetrics(metrics) {
+        const entries = Object.entries(metrics || {}).filter(([, value]) => value !== null && value !== undefined && value !== "");
+        if (!entries.length) return "";
+        return entries.map(([key, value]) => `${metricLabel(key)} ${fmtMetricValue(key, value)}`).join("，");
+    }
+
+    function durationText(event, payload, rule) {
+        const observed = rule?.observed || {};
+        const seconds = payload.no_motion_seconds
+            ?? payload.no_person_seconds
+            ?? observed.no_motion_seconds
+            ?? observed.no_person_seconds
+            ?? null;
+        if (seconds !== null && seconds !== undefined) return fmtMetricValue("duration_seconds", seconds);
+        if (event.type === "camera_offline") return "连接中断";
+        return "实时事件";
+    }
+
+    function durationHint(event, _payload, rule) {
+        const observedSummary = summarizeMetrics(rule?.observed);
+        return rule?.label || observedSummary || GoHomeEdge.eventLabel(event.type);
+    }
+
+    function factText(event, _payload, rule) {
+        const label = rule?.label || GoHomeEdge.eventLabel(event.type);
+        const reason = rule?.reason ? `，原因是：${rule.reason}` : "";
+        return `${GoHomeEdge.fmtDateTime(event.occurred_at)}，${event.camera_name || "摄像头"} 触发了${label}${reason}`;
+    }
+
+    function factSubText(payload, rule) {
+        const observed = summarizeMetrics(rule?.observed);
+        const threshold = summarizeMetrics(rule?.threshold);
+        const state = summarizeMetrics(payload?.evaluation?.state);
+        const parts = [];
+        if (observed) parts.push(`当前观测：${observed}`);
+        if (threshold) parts.push(`规则阈值：${threshold}`);
+        if (state) parts.push(`评估状态：${state}`);
+        if (!parts.length) return `原始亮度：${Number(payload?.brightness || 0).toFixed(0)}。`;
+        return `${parts.join("。")}。`;
+    }
+
     async function applyEvent(event) {
         const payload = event.payload || {};
+        const rule = payload.rule || {};
         const image = $("edgeDetailImage");
         syncDetailLinks(event);
         if (image && event.snapshot_url) {
@@ -94,13 +178,11 @@
         setText("edgeDetailHero", event.summary);
         setText("edgeDetailTitle", event.summary);
         setText("edgeDetailRoom", event.room || event.camera_name || "本机测试");
-        setText("edgeDetailDuration", payload.no_motion_seconds ? `${payload.no_motion_seconds} 秒` : "实时事件");
-        setText("edgeDetailDurationHint", GoHomeEdge.eventLabel(event.type));
-        setText("edgeDetailNote", detailNote(event));
-        setText("edgeDetailFact", `${GoHomeEdge.fmtDateTime(event.occurred_at)}，${event.camera_name || "摄像头"} 触发了${GoHomeEdge.eventLabel(event.type)}。`);
-        setText("edgeDetailFactSub", payload.person_count !== null && payload.person_count !== undefined
-            ? `当时画面人数：${payload.person_count}，原始亮度：${Number(payload.brightness || 0).toFixed(0)}。`
-            : `原始亮度：${Number(payload.brightness || 0).toFixed(0)}。`);
+        setText("edgeDetailDuration", durationText(event, payload, rule));
+        setText("edgeDetailDurationHint", durationHint(event, payload, rule));
+        setText("edgeDetailNote", rule.reason || detailNote(event));
+        setText("edgeDetailFact", factText(event, payload, rule));
+        setText("edgeDetailFactSub", factSubText(payload, rule));
         syncActionState(event);
     }
 

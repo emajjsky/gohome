@@ -197,6 +197,8 @@ class PersonDetector:
             "area_ratio": round(area_ratio, 4),
             "height_ratio": round(height_ratio, 3),
             "center_y_ratio": round(center_y_ratio, 3),
+            "frame_width": width,
+            "frame_height": height,
             "fall_candidate": fall_candidate,
         }
 

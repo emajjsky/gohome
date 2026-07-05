@@ -1,0 +1,31 @@
+{
+  "app_name": "回家",
+  "subtitle": "把登录、家庭、设备和实时观看收进一个轻量 App 壳。",
+  "bundle_id": "com.gohome.family",
+  "scheme": "gohome",
+  "start_path": "app-shell.html",
+  "privacy_path": "privacy.html",
+  "tabs": [
+    {
+      "id": "watch",
+      "label": "实时观看",
+      "hint": "直接看家里画面",
+      "href": "watch.html",
+      "icon": "nest_cam_indoor"
+    },
+    {
+      "id": "family",
+      "label": "家庭空间",
+      "hint": "查看家庭和成员入口",
+      "href": "family.html",
+      "icon": "groups"
+    },
+    {
+      "id": "device",
+      "label": "设备绑定",
+      "hint": "接住设备和绑定码",
+      "href": "device_binding.html",
+      "icon": "devices"
+    }
+  ]
+}

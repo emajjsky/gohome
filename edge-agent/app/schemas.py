@@ -62,8 +62,16 @@ class RulesUpdate(BaseModel):
     no_motion_enabled: Optional[bool] = None
     person_detection_enabled: Optional[bool] = None
     fall_detection_enabled: Optional[bool] = None
+    fall_score_threshold: Optional[float] = Field(None, ge=0, le=1)
+    fall_confirm_frames: Optional[int] = Field(None, ge=1, le=120)
+    fall_confirm_seconds: Optional[int] = Field(None, ge=0, le=300)
+    fall_recover_frames: Optional[int] = Field(None, ge=1, le=120)
     activity_detection_enabled: Optional[bool] = None
     fire_detection_enabled: Optional[bool] = None
+    fire_event_score_threshold: Optional[float] = Field(None, ge=0, le=1)
+    fire_motion_threshold: Optional[float] = Field(None, ge=0, le=1)
+    fire_temporal_threshold: Optional[float] = Field(None, ge=0, le=1)
+    fire_confirm_frames: Optional[int] = Field(None, ge=1, le=120)
     offline_enabled: Optional[bool] = None
     notification_enabled: Optional[bool] = None
 

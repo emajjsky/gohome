@@ -2,11 +2,22 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import math
 from typing import Any, Dict, Optional
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def event_category(event_type: str) -> str:
+    if event_type in {"fall_candidate", "fire_candidate"}:
+        return "safety_alert"
+    if event_type in {"black_screen", "camera_offline"}:
+        return "device_alert"
+    if event_type in {"no_motion", "no_person"}:
+        return "life_observation"
+    return "system_event"
 
 
 @dataclass
@@ -43,6 +54,8 @@ class RuleEngine:
     def __init__(self) -> None:
         self.last_motion_at: Dict[int, datetime] = {}
         self.last_person_seen_at: Dict[int, datetime] = {}
+        self.fall_tracks: Dict[int, Dict[str, Any]] = {}
+        self.fire_confirm_counts: Dict[int, int] = {}
 
     def evaluate_snapshot(
         self,
@@ -64,8 +77,14 @@ class RuleEngine:
             "meal_candidate": bool(analysis.get("meal_candidate")),
             "meal_score": analysis.get("meal_score"),
             "stillness_candidate": bool(analysis.get("stillness_candidate")),
+            "daze_candidate": bool(analysis.get("daze_candidate")),
+            "daze_score": analysis.get("daze_score"),
             "fall_score": analysis.get("fall_score"),
+            "fall_state": "clear",
+            "fall_confirm_count": 0,
             "fire_score": analysis.get("fire_score"),
+            "fire_state": "clear",
+            "fire_confirm_count": 0,
         }
 
         if analysis.get("black_screen") and rules.get("black_screen_enabled"):
@@ -104,7 +123,7 @@ class RuleEngine:
                         self._candidate(
                             event_type="no_person",
                             summary=f"{camera.get('name', '摄像头')} 已长时间没有检测到人。",
-                            level="warning",
+                            level="info",
                             snapshot_id=snapshot_id,
                             analysis=analysis,
                             extra={"no_person_seconds": no_person_seconds},
@@ -118,26 +137,53 @@ class RuleEngine:
                         )
                     )
 
-        if analysis.get("fall_candidate") and rules.get("fall_detection_enabled"):
+        fall_runtime = self._evaluate_fall_state(camera_id, now, analysis, rules)
+        state.update(fall_runtime["state"])
+        if rules.get("fall_detection_enabled") and fall_runtime["emit_event"]:
             state["activity_state"] = "fall_candidate"
             candidates.append(
                 self._candidate(
                     event_type="fall_candidate",
-                    summary=f"{camera.get('name', '摄像头')} 检测到疑似跌倒姿态。",
+                    summary=f"{camera.get('name', '摄像头')} 连续复核确认疑似跌倒。",
                     level="critical",
                     snapshot_id=snapshot_id,
                     analysis=analysis,
                     rule={
                         "id": "fall_candidate",
-                        "label": "疑似跌倒候选",
-                        "reason": "YOLO 人体框比例、面积和画面位置命中跌倒候选启发式。",
-                        "observed": {"people": analysis.get("people", [])},
+                        "label": "跌倒应急报警",
+                        "reason": "同一人体轨迹连续出现倒地姿态证据，达到帧数、持续时间和置信度阈值。",
+                        "observed": {
+                            **fall_runtime["observed"],
+                            "people": analysis.get("people", []),
+                            "poses": analysis.get("poses", []),
+                        },
+                        "threshold": fall_runtime["threshold"],
                     },
                 )
             )
 
         fire_score = float(analysis.get("fire_score") or 0.0)
-        if rules.get("fire_detection_enabled") and (analysis.get("fire_candidate") or fire_score >= 0.035):
+        motion_score = analysis.get("motion_score")
+        fire_threshold = float((analysis.get("thresholds") or {}).get("fire_score_threshold") or 0.035)
+        fire_event_threshold = max(fire_threshold, float(rules.get("fire_event_score_threshold") or 0.12))
+        fire_motion_threshold = float(rules.get("fire_motion_threshold") or 0.035)
+        fire_temporal_threshold = float(rules.get("fire_temporal_threshold") or 0.018)
+        fire_confirm_frames = max(5, int(rules.get("fire_confirm_frames") or 5))
+        fire_temporal_score = analysis.get("fire_temporal_score")
+        fire_event_candidate = bool(analysis.get("fire_event_candidate"))
+        fire_visual_hit = fire_event_candidate and fire_score >= fire_event_threshold
+        fire_motion_ok = motion_score is not None and float(motion_score) >= fire_motion_threshold
+        fire_temporal_ok = fire_temporal_score is not None and float(fire_temporal_score) >= fire_temporal_threshold
+        if fire_visual_hit and fire_motion_ok and fire_temporal_ok:
+            self.fire_confirm_counts[camera_id] = self.fire_confirm_counts.get(camera_id, 0) + 1
+            state["fire_state"] = "confirming"
+        else:
+            self.fire_confirm_counts[camera_id] = 0
+            if bool(analysis.get("fire_candidate")):
+                state["fire_state"] = "visual_only"
+        state["fire_confirm_count"] = self.fire_confirm_counts.get(camera_id, 0)
+        fire_confirmed = state["fire_confirm_count"] >= fire_confirm_frames
+        if rules.get("fire_detection_enabled") and fire_confirmed:
             state["activity_state"] = "fire_candidate"
             candidates.append(
                 self._candidate(
@@ -149,9 +195,20 @@ class RuleEngine:
                     rule={
                         "id": "fire_candidate",
                         "label": "火灾应急报警",
-                        "reason": "画面中高亮暖色区域达到火灾视觉线索阈值。",
-                        "observed": {"fire_score": fire_score},
-                        "threshold": {"fire_score": 0.035},
+                        "reason": "连续帧中出现橙黄高亮纹理且画面存在变化，达到火灾视觉线索阈值。",
+                        "observed": {
+                            "fire_score": fire_score,
+                            "motion_score": motion_score,
+                            "temporal_score": fire_temporal_score,
+                            "confirm_frames": state["fire_confirm_count"],
+                            "fire_features": analysis.get("fire_features") or {},
+                        },
+                        "threshold": {
+                            "fire_score": fire_event_threshold,
+                            "motion_score": fire_motion_threshold,
+                            "temporal_score": fire_temporal_threshold,
+                            "confirm_frames": fire_confirm_frames,
+                        },
                     },
                 )
             )
@@ -166,12 +223,13 @@ class RuleEngine:
             no_motion_seconds = int((now - last_motion_at).total_seconds())
             state["motion_state"] = "still"
             state["no_motion_seconds"] = no_motion_seconds
-            if rules.get("no_motion_enabled") and no_motion_seconds >= int(rules["no_motion_seconds"]):
+            person_present = int(analysis.get("person_count") or 0) > 0
+            if rules.get("no_motion_enabled") and person_present and no_motion_seconds >= int(rules["no_motion_seconds"]):
                 candidates.append(
                     self._candidate(
                         event_type="no_motion",
                         summary=f"{camera.get('name', '摄像头')} 已长时间没有明显画面变化。",
-                        level="warning",
+                        level="info",
                         snapshot_id=snapshot_id,
                         analysis=analysis,
                         extra={"no_motion_seconds": no_motion_seconds},
@@ -192,6 +250,8 @@ class RuleEngine:
             critical_state = state.get("activity_state") in {"fall_candidate", "fire_candidate"}
             if analysis.get("meal_candidate") and not critical_state:
                 state["activity_state"] = "meal_candidate"
+            elif analysis.get("daze_candidate") and not critical_state:
+                state["activity_state"] = "daze_candidate"
             elif analysis.get("stillness_candidate") and not critical_state and state.get("activity_state") == "unknown":
                 state["activity_state"] = "stillness_candidate"
             elif not critical_state and state.get("activity_state") == "unknown":
@@ -214,17 +274,27 @@ class RuleEngine:
         now = utc_now()
         candidate = None
         if rules.get("offline_enabled"):
+            rule = {
+                "id": "camera_offline",
+                "label": "摄像头离线提醒",
+                "reason": "edge-agent 无法打开或读取摄像头视频流。",
+            }
+            summary = f"{camera.get('name', '摄像头')} 无法连接：{error}"
             candidate = EventCandidate(
                 event_type="camera_offline",
-                summary=f"{camera.get('name', '摄像头')} 无法连接：{error}",
+                summary=summary,
                 level="critical",
                 payload={
                     "error": error,
-                    "rule": {
-                        "id": "camera_offline",
-                        "label": "摄像头离线提醒",
-                        "reason": "edge-agent 无法打开或读取摄像头视频流。",
-                    },
+                    "rule": rule,
+                    "evidence": build_event_evidence(
+                        event_type="camera_offline",
+                        summary=summary,
+                        level="critical",
+                        analysis={"tags": ["camera_offline"]},
+                        rule=rule,
+                        extra={"error": error},
+                    ),
                 },
             )
         return RuleEvaluation(
@@ -247,6 +317,14 @@ class RuleEngine:
     ) -> EventCandidate:
         payload = {**analysis, **(extra or {})}
         payload["rule"] = rule
+        payload["evidence"] = build_event_evidence(
+            event_type=event_type,
+            summary=summary,
+            level=level,
+            analysis=analysis,
+            rule=rule,
+            extra=extra,
+        )
         return EventCandidate(
             event_type=event_type,
             summary=summary,
@@ -254,3 +332,317 @@ class RuleEngine:
             snapshot_id=snapshot_id,
             payload=payload,
         )
+
+    def _fall_evidence(self, analysis: Dict[str, Any]) -> Dict[str, Any]:
+        algorithm_results = analysis.get("algorithm_results") if isinstance(analysis.get("algorithm_results"), dict) else {}
+        fall_result = algorithm_results.get("fall") if isinstance(algorithm_results.get("fall"), dict) else {}
+        fall_data = fall_result.get("data") if isinstance(fall_result.get("data"), dict) else {}
+        people = fall_data.get("people") if isinstance(fall_data.get("people"), list) else []
+        evidence_types = []
+        if bool(analysis.get("pose_fall_candidate")):
+            evidence_types.append("pose")
+        for item in people:
+            method = str(item.get("method") or item.get("source") or "").strip()
+            if method and method not in evidence_types:
+                evidence_types.append(method)
+        if fall_data.get("single_low_body") and "single_low_body" not in evidence_types:
+            evidence_types.append("single_low_body")
+        if fall_data.get("floor_cluster") and "floor_cluster" not in evidence_types:
+            evidence_types.append("floor_cluster")
+        return {
+            "types": evidence_types,
+            "candidate_count": fall_data.get("candidate_count"),
+            "single_low_body": fall_data.get("single_low_body"),
+            "floor_cluster": fall_data.get("floor_cluster"),
+        }
+
+    def _evaluate_fall_state(
+        self,
+        camera_id: int,
+        now: datetime,
+        analysis: Dict[str, Any],
+        rules: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        fall_candidate = bool(analysis.get("fall_candidate"))
+        pose_fall = bool(analysis.get("pose_fall_candidate"))
+        fall_score = float(analysis.get("fall_score") or 0.0)
+        pose_fall_score = float(analysis.get("pose_fall_score") or 0.0)
+        thresholds = analysis.get("thresholds") if isinstance(analysis.get("thresholds"), dict) else {}
+        fall_score_threshold = float(rules.get("fall_score_threshold") or 0.50)
+        pose_fall_threshold = float(thresholds.get("pose_fall_threshold") or 0.78)
+        confirm_frames = max(2, int(rules.get("fall_confirm_frames") or 2))
+        confirm_seconds = max(0, int(rules.get("fall_confirm_seconds", 4)))
+        recover_frames = max(2, int(rules.get("fall_recover_frames") or 2))
+        fall_evidence = self._fall_evidence(analysis)
+        target = self._fall_target(analysis, fall_evidence)
+
+        fall_score_ok = fall_score >= fall_score_threshold
+        pose_score_ok = pose_fall and pose_fall_score >= pose_fall_threshold
+        strong_candidate = bool(target) and fall_candidate and (fall_score_ok or pose_score_ok)
+        visual_candidate = bool(target) and fall_candidate
+        previous = self.fall_tracks.get(camera_id) or {}
+        same_target = bool(strong_candidate and previous and self._same_fall_target(previous.get("target"), target))
+
+        if strong_candidate:
+            if not same_target or previous.get("stage") in {"clear", "recovered"}:
+                track = {
+                    "stage": "suspect",
+                    "started_at": now,
+                    "last_seen_at": now,
+                    "confirm_count": 1,
+                    "clear_count": 0,
+                    "target": target,
+                    "alert_emitted": False,
+                    "first_score": fall_score,
+                    "max_score": max(fall_score, pose_fall_score),
+                }
+            else:
+                track = {
+                    **previous,
+                    "last_seen_at": now,
+                    "confirm_count": int(previous.get("confirm_count") or 0) + 1,
+                    "clear_count": 0,
+                    "target": target,
+                    "max_score": max(float(previous.get("max_score") or 0.0), fall_score, pose_fall_score),
+                }
+            duration = max(0.0, (now - track["started_at"]).total_seconds())
+            track["duration_seconds"] = duration
+            if track["confirm_count"] >= confirm_frames and duration >= confirm_seconds:
+                track["stage"] = "confirmed"
+            elif track["confirm_count"] > 1:
+                track["stage"] = "confirming"
+            emit_event = track["stage"] == "confirmed" and not bool(track.get("alert_emitted"))
+            if emit_event:
+                track["alert_emitted"] = True
+            self.fall_tracks[camera_id] = track
+        else:
+            track = {**previous} if previous else {}
+            if track.get("stage") in {"suspect", "confirming", "confirmed"}:
+                track["clear_count"] = int(track.get("clear_count") or 0) + 1
+                if track["clear_count"] >= recover_frames:
+                    track = {
+                        "stage": "recovered",
+                        "started_at": previous.get("started_at"),
+                        "last_seen_at": now,
+                        "confirm_count": 0,
+                        "clear_count": int(track["clear_count"]),
+                        "target": previous.get("target"),
+                        "alert_emitted": bool(previous.get("alert_emitted")),
+                        "duration_seconds": max(0.0, (now - previous.get("started_at", now)).total_seconds()) if previous.get("started_at") else 0.0,
+                    }
+            elif visual_candidate:
+                track = {
+                    "stage": "visual_only",
+                    "started_at": now,
+                    "last_seen_at": now,
+                    "confirm_count": 0,
+                    "clear_count": 0,
+                    "target": target,
+                    "alert_emitted": False,
+                    "duration_seconds": 0.0,
+                }
+            else:
+                track = {
+                    "stage": "clear",
+                    "started_at": None,
+                    "last_seen_at": now,
+                    "confirm_count": 0,
+                    "clear_count": int(track.get("clear_count") or 0),
+                    "target": None,
+                    "alert_emitted": False,
+                    "duration_seconds": 0.0,
+                }
+            emit_event = False
+            self.fall_tracks[camera_id] = track
+
+        duration_seconds = float(track.get("duration_seconds") or 0.0)
+        stage = str(track.get("stage") or "clear")
+        threshold = {
+            "fall_score": fall_score_threshold,
+            "pose_fall_score": pose_fall_threshold,
+            "confirm_frames": confirm_frames,
+            "confirm_seconds": confirm_seconds,
+            "recover_frames": recover_frames,
+        }
+        observed = {
+            "fall_score": fall_score,
+            "pose_fall_score": pose_fall_score,
+            "confirm_frames": int(track.get("confirm_count") or 0),
+            "duration_seconds": round(duration_seconds, 3),
+            "same_target": bool(same_target),
+            "target": target,
+            "evidence": fall_evidence,
+        }
+        return {
+            "emit_event": bool(emit_event),
+            "observed": observed,
+            "threshold": threshold,
+            "state": {
+                "fall_state": stage,
+                "fall_stage": stage,
+                "fall_confirm_count": int(track.get("confirm_count") or 0),
+                "fall_confirm_seconds": round(duration_seconds, 3),
+                "fall_clear_count": int(track.get("clear_count") or 0),
+                "fall_alert_emitted": bool(track.get("alert_emitted")),
+                "fall_target": target,
+                "fall_score": fall_score,
+                "pose_fall_score": pose_fall_score,
+                "fall_threshold": threshold,
+            },
+        }
+
+    def _fall_target(self, analysis: Dict[str, Any], fall_evidence: Dict[str, Any]) -> Dict[str, Any] | None:
+        candidates = []
+        for key in ("single_low_body", "floor_cluster"):
+            item = fall_evidence.get(key)
+            if isinstance(item, dict) and self._valid_bbox(item.get("bbox")):
+                candidates.append(item)
+        people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
+        candidates.extend([person for person in people if person.get("fall_candidate") and self._valid_bbox(person.get("bbox"))])
+        if not candidates:
+            poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
+            candidates.extend([pose for pose in poses if self._valid_bbox(pose.get("bbox")) and float(pose.get("fall_score") or 0.0) > 0])
+        if not candidates:
+            return None
+        best = max(candidates, key=lambda item: float(item.get("score") or item.get("fall_score") or item.get("confidence") or 0.0))
+        bbox = [float(value) for value in best.get("bbox")]
+        x1, y1, x2, y2 = bbox
+        width = max(1.0, float(best.get("frame_width") or analysis.get("image_width") or 640))
+        height = max(1.0, float(best.get("frame_height") or analysis.get("image_height") or 360))
+        return {
+            "bbox": [round(value, 1) for value in bbox],
+            "center": [round(((x1 + x2) / 2.0) / width, 4), round(((y1 + y2) / 2.0) / height, 4)],
+            "size": [round((x2 - x1) / width, 4), round((y2 - y1) / height, 4)],
+            "source": best.get("source") or best.get("method") or "fall_candidate",
+            "score": round(float(best.get("score") or best.get("fall_score") or best.get("confidence") or 0.0), 4),
+        }
+
+    def _same_fall_target(self, previous: Any, current: Any) -> bool:
+        if not isinstance(previous, dict) or not isinstance(current, dict):
+            return False
+        prev_center = previous.get("center")
+        curr_center = current.get("center")
+        if not isinstance(prev_center, list) or not isinstance(curr_center, list) or len(prev_center) != 2 or len(curr_center) != 2:
+            return False
+        dx = float(prev_center[0]) - float(curr_center[0])
+        dy = float(prev_center[1]) - float(curr_center[1])
+        distance = math.sqrt(dx * dx + dy * dy)
+        return distance <= 0.22 or self._bbox_overlap(previous.get("bbox"), current.get("bbox")) >= 0.20
+
+    def _valid_bbox(self, bbox: Any) -> bool:
+        if not isinstance(bbox, list) or len(bbox) != 4:
+            return False
+        try:
+            x1, y1, x2, y2 = [float(value) for value in bbox]
+        except (TypeError, ValueError):
+            return False
+        return x2 > x1 and y2 > y1
+
+    def _bbox_overlap(self, first: Any, second: Any) -> float:
+        if not self._valid_bbox(first) or not self._valid_bbox(second):
+            return 0.0
+        ax1, ay1, ax2, ay2 = [float(value) for value in first]
+        bx1, by1, bx2, by2 = [float(value) for value in second]
+        ix1 = max(ax1, bx1)
+        iy1 = max(ay1, by1)
+        ix2 = min(ax2, bx2)
+        iy2 = min(ay2, by2)
+        inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+        if inter <= 0:
+            return 0.0
+        first_area = max(1.0, (ax2 - ax1) * (ay2 - ay1))
+        second_area = max(1.0, (bx2 - bx1) * (by2 - by1))
+        return inter / min(first_area, second_area)
+
+
+def build_event_evidence(
+    *,
+    event_type: str,
+    summary: str,
+    level: str,
+    analysis: Dict[str, Any],
+    rule: Dict[str, Any],
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
+    poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
+    algorithm_results = analysis.get("algorithm_results") if isinstance(analysis.get("algorithm_results"), dict) else {}
+    relevant_algorithms = {
+        "black_screen": ["quality"],
+        "no_motion": ["quality", "activity"],
+        "no_person": ["person", "pose"],
+        "fall_candidate": ["person", "pose", "fall"],
+        "fire_candidate": ["quality", "fire"],
+        "camera_offline": [],
+    }.get(event_type, ["quality", "person", "pose", "activity", "fall", "fire"])
+
+    return {
+        "schema_version": "gohome-event-evidence-v1",
+        "event_type": event_type,
+        "event_category": event_category(event_type),
+        "summary": summary,
+        "level": level,
+        "model": {
+            "pipeline_version": analysis.get("pipeline_version") or analysis.get("model_version") or "",
+            "detector_backend": analysis.get("detector_backend") or "",
+            "model_name": analysis.get("model_name") or "",
+            "pose_model_status": analysis.get("pose_model_status") or "",
+            "pose_model_name": analysis.get("pose_model_name") or "",
+        },
+        "algorithms": {
+            key: algorithm_results[key]
+            for key in relevant_algorithms
+            if key in algorithm_results
+        },
+        "metrics": {
+            "brightness": analysis.get("brightness"),
+            "contrast": analysis.get("contrast"),
+            "motion_score": analysis.get("motion_score"),
+            "person_count": analysis.get("person_count"),
+            "pose_count": analysis.get("pose_count"),
+            "fall_score": analysis.get("fall_score"),
+            "pose_fall_score": analysis.get("pose_fall_score"),
+            "meal_score": analysis.get("meal_score"),
+            "stillness_score": analysis.get("stillness_score"),
+            "daze_score": analysis.get("daze_score"),
+            "fire_score": analysis.get("fire_score"),
+            "fire_temporal_score": analysis.get("fire_temporal_score"),
+        },
+        "flags": {
+            "black_screen": bool(analysis.get("black_screen")),
+            "motion_detected": bool(analysis.get("motion_detected")),
+            "fall_candidate": bool(analysis.get("fall_candidate")),
+            "pose_fall_candidate": bool(analysis.get("pose_fall_candidate")),
+            "meal_candidate": bool(analysis.get("meal_candidate")),
+            "stillness_candidate": bool(analysis.get("stillness_candidate")),
+            "daze_candidate": bool(analysis.get("daze_candidate")),
+            "fire_candidate": bool(analysis.get("fire_candidate")),
+            "fire_event_candidate": bool(analysis.get("fire_event_candidate")),
+        },
+        "objects": {
+            "people": [
+                {
+                    "bbox": person.get("bbox"),
+                    "confidence": person.get("confidence"),
+                    "source": person.get("source"),
+                    "fall_candidate": bool(person.get("fall_candidate")),
+                    "presence_candidate": bool(person.get("presence_candidate")),
+                }
+                for person in people[:3]
+            ],
+            "poses": [
+                {
+                    "confidence": pose.get("confidence"),
+                    "bbox": pose.get("bbox"),
+                    "fall_score": pose.get("fall_score"),
+                    "action_hints": pose.get("action_hints") or [],
+                    "keypoint_count": len(pose.get("keypoints") or []),
+                }
+                for pose in poses[:2]
+            ],
+        },
+        "rule": rule,
+        "thresholds": analysis.get("thresholds") or {},
+        "tags": analysis.get("tags") or [],
+        "extra": extra or {},
+    }

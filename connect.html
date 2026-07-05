@@ -3,10 +3,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>接入摄像头 - 想家了吗</title>
+    <title>接入摄像头 - 回家</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260630-style1" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
@@ -35,7 +35,7 @@
                     <h2 id="edgeConnectionStatus" class="font-display text-[26px] font-bold text-on-surface tracking-[-0.02em] leading-[1.14] mt-1">正在连接守护服务</h2>
                     <p id="edgeConnectionSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-[1.8] mt-2 max-w-[270px]">这一步只负责把家里的摄像头接到本机服务。</p>
                 </div>
-                <div class="w-11 h-11 rounded-full bg-[#eef5ff] text-primary flex items-center justify-center shrink-0">
+                <div class="app-icon-chip info w-11 h-11 shrink-0">
                     <span class="material-symbols-outlined text-[22px]">nest_cam_indoor</span>
                 </div>
             </div>
@@ -65,39 +65,39 @@
                 <div class="grid grid-cols-2 gap-3">
                     <label class="flex flex-col gap-1.5">
                         <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">名称</span>
-                        <input id="cameraName" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface" value="局域网摄像头" autocomplete="off">
+                        <input id="cameraName" class="app-form-field" value="局域网摄像头" autocomplete="off">
                     </label>
                     <label class="flex flex-col gap-1.5">
                         <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">房间</span>
-                        <input id="cameraRoom" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface" value="客厅" autocomplete="off">
+                        <input id="cameraRoom" class="app-form-field" value="客厅" autocomplete="off">
                     </label>
                 </div>
 
                 <div class="grid grid-cols-[1fr_86px] gap-3">
                     <label class="flex flex-col gap-1.5">
                         <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">摄像头 IP</span>
-                        <input id="cameraHost" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface" value="192.168.1.11" inputmode="decimal" autocomplete="off">
+                        <input id="cameraHost" class="app-form-field" value="192.168.1.11" inputmode="decimal" autocomplete="off">
                     </label>
                     <label class="flex flex-col gap-1.5">
                         <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">端口</span>
-                        <input id="cameraPort" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface" value="554" inputmode="numeric" autocomplete="off">
+                        <input id="cameraPort" class="app-form-field" value="554" inputmode="numeric" autocomplete="off">
                     </label>
                 </div>
 
                 <div class="grid grid-cols-2 gap-3">
                     <label class="flex flex-col gap-1.5">
                         <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">账号</span>
-                        <input id="cameraUsername" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface" value="admin" autocomplete="off">
+                        <input id="cameraUsername" class="app-form-field" value="admin" autocomplete="off">
                     </label>
                     <label class="flex flex-col gap-1.5">
                         <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">密码</span>
-                        <input id="cameraPassword" type="password" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface" autocomplete="off" placeholder="已保存可留空">
+                        <input id="cameraPassword" type="password" class="app-form-field" autocomplete="off" placeholder="已保存可留空">
                     </label>
                 </div>
 
                 <label class="flex flex-col gap-1.5">
                     <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">视频路径</span>
-                    <input id="cameraPath" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface" value="/" autocomplete="off">
+                    <input id="cameraPath" class="app-form-field" value="/" autocomplete="off">
                 </label>
 
                 <div class="grid grid-cols-2 gap-3 pt-1">
@@ -151,7 +151,7 @@
         <div class="app-bottom-nav-inner">
             <div class="flex justify-between items-center">
                 <a href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">home</span></div>
+                    <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">home</span></div>
                     <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
                 </a>
                 <a id="connectNavMonitorLink" href="monitor.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
@@ -159,11 +159,11 @@
                     <span class="font-sans text-[11px] font-bold tracking-wide">守护</span>
                 </a>
                 <a id="connectNavEventsLink" href="events.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">history</span></div>
+                    <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">history</span></div>
                     <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
                 </a>
                 <a href="privacy.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">person</span></div>
+                    <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">person</span></div>
                     <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
                 </a>
             </div>

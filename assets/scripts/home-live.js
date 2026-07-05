@@ -12,6 +12,10 @@
         if (node) node.textContent = value;
     }
 
+    function toggleMessageSection(show) {
+        $("edgeHomeMessageSection")?.classList.toggle("hidden", !show);
+    }
+
     function setAction(id, href, label, icon) {
         const node = $(id);
         if (!node) return;
@@ -27,6 +31,78 @@
         } else {
             node.append(document.createTextNode(` ${label}`));
         }
+    }
+
+    function messageBadge(messageType) {
+        const type = String(messageType || "").trim();
+        if (type === "alert") return { label: "告警", tone: "warn", icon: "notifications_active" };
+        if (type === "gohome") return { label: "回家", tone: "good", icon: "home" };
+        if (type === "explain") return { label: "解释", tone: "info", icon: "visibility" };
+        return { label: "陪伴", tone: "info", icon: "favorite" };
+    }
+
+    function messageActionConfig(message) {
+        const messageType = String(message?.message_type || "").trim();
+        const sourceEventIds = Array.isArray(message?.source_event_ids) ? message.source_event_ids : [];
+        if (messageType === "alert" || sourceEventIds.length) {
+            return {
+                primary: { href: "events.html", label: "查看事件", icon: "history" },
+                secondary: { href: "watch.html", label: "实时看看", icon: "nest_cam_indoor" },
+            };
+        }
+        return {
+            primary: { href: "companionship.html", label: "去陪伴页", icon: "favorite" },
+            secondary: { href: "watch.html", label: "看看家里", icon: "nest_cam_indoor" },
+        };
+    }
+
+    function renderMessageCard(message) {
+        if (!message) {
+            toggleMessageSection(false);
+            return;
+        }
+        const badge = messageBadge(message.message_type);
+        const badgeNode = $("edgeHomeMessageBadge");
+        const iconNode = $("edgeHomeMessageIcon");
+        const facts = Array.isArray(message.facts) ? message.facts : [];
+        const actions = Array.isArray(message.actions) ? message.actions : [];
+        const actionConfig = messageActionConfig(message);
+
+        toggleMessageSection(true);
+        setText("edgeHomeMessageMeta", `${message.generated_by || "message-service"} · ${window.GoHomeEdge?.fmtDateTime?.(message.created_at) || ""}`);
+        setText("edgeHomeMessageTitle", message.title || "今天有一条新的牵挂提醒");
+        setText("edgeHomeMessageSubtitle", message.subtitle || message.body || "");
+        setText("edgeHomeMessageFacts", facts.length ? facts.join(" / ") : "这条消息目前还没有补充依据。");
+        setText("edgeHomeMessageActions", actions.length ? actions.map((item) => item.label || item.key || "").filter(Boolean).join(" / ") : "先打开消息，再决定是否联系。");
+        if (badgeNode) {
+            badgeNode.textContent = badge.label;
+            badgeNode.className = `app-status-badge ${badge.tone} shrink-0`;
+        }
+        if (iconNode) {
+            iconNode.className = `app-icon-chip ${badge.tone} shrink-0`;
+            const iconGlyph = iconNode.querySelector(".material-symbols-outlined");
+            if (iconGlyph) iconGlyph.textContent = badge.icon;
+        }
+        setAction("edgeHomeMessagePrimaryAction", actionConfig.primary.href, actionConfig.primary.label, actionConfig.primary.icon);
+        setAction("edgeHomeMessageSecondaryAction", actionConfig.secondary.href, actionConfig.secondary.label, actionConfig.secondary.icon);
+    }
+
+    async function loadPrimaryMessage(familyId) {
+        if (!window.GoHomeEdge?.v1AppMessages || !window.GoHomeEdge?.v1GenerateMessages) return null;
+        let messages = [];
+        try {
+            messages = await window.GoHomeEdge.v1AppMessages({ family_id: familyId, limit: 6, status: "open" });
+        } catch (_error) {
+            return null;
+        }
+        if (messages.length) return messages[0];
+        try {
+            const generated = await window.GoHomeEdge.v1GenerateMessages({ family_id: familyId, clear_existing: true });
+            messages = Array.isArray(generated?.messages) ? generated.messages : [];
+        } catch (_error) {
+            return null;
+        }
+        return messages[0] || null;
     }
 
     function syncCameraEntryLinks(camera) {
@@ -157,6 +233,7 @@
     }
 
     function fallbackGuestHome() {
+        toggleMessageSection(false);
         toggleSetupMode(true);
         setSetupStates("未登录", "未开始", "未绑定", "先登录");
         setText("edgeHomeDevice", "先接身份");
@@ -168,6 +245,7 @@
     }
 
     function renderNoFamilyHome(user) {
+        toggleMessageSection(false);
         toggleSetupMode(true);
         setSetupStates("已登录", "未创建", "待绑定", "下一步");
         setText("edgeHomeDevice", user.display_name || user.email || "已登录");
@@ -179,6 +257,7 @@
     }
 
     function renderNeedsBindingHome(user, family) {
+        toggleMessageSection(false);
         toggleSetupMode(true);
         setSetupStates("已登录", family?.name || "已创建", "待绑定", "待绑定");
         setText("edgeHomeDevice", user.display_name || user.email || "已登录");
@@ -226,10 +305,12 @@
             toggleSetupMode(false);
             setAction("edgeHomePrimaryAction", "watch.html", "实时观看", "nest_cam_indoor");
             setAction("edgeHomeSecondaryAction", "family.html", "家庭空间", "groups");
-            const [cameras, events] = await Promise.all([
+            const [cameras, events, primaryMessage] = await Promise.all([
                 GoHomeEdge.appCameras(),
                 GoHomeEdge.appEvents("limit=10&acknowledged=false"),
+                loadPrimaryMessage(primaryFamily.id),
             ]);
+            renderMessageCard(primaryMessage);
             const enabledCameras = cameras.filter((camera) => camera.enabled !== false);
             const camera = preferredCamera(enabledCameras);
 
@@ -299,6 +380,7 @@
                 return;
             }
             toggleSetupMode(true);
+            toggleMessageSection(false);
             setSetupStates("未连接", "未连接", "未连接", "离线");
             setText("edgeHomeDevice", "本机守护服务未连接");
             setText("edgeHomeTime", "等待 edge-agent");

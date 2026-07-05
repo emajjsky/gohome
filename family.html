@@ -3,10 +3,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>家庭空间 - 想家了吗</title>
+    <title>家庭空间 - 回家</title>
     <link href="assets/styles/tailwind.css" rel="stylesheet">
     <link href="assets/styles/material-symbols.css" rel="stylesheet">
-    <link href="assets/styles/app.css?v=20260630-style1" rel="stylesheet">
+    <link href="assets/styles/app.css?v=20260630-style16" rel="stylesheet">
     <style>
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24; }
         .material-symbols-outlined.fill { font-variation-settings: 'FILL' 1; }
@@ -55,7 +55,7 @@
             <form id="familyCreateForm" class="flex flex-col gap-3">
                 <label class="flex flex-col gap-1.5">
                     <span class="font-sans text-[11px] font-bold text-on-surface-variant ml-1">家庭名称</span>
-                    <input id="familyNameInput" class="h-11 rounded-2xl bg-surface-container px-4 font-sans text-[13px] font-semibold text-on-surface" autocomplete="off" placeholder="比如：苏州老家">
+                    <input id="familyNameInput" class="app-form-field" autocomplete="off" placeholder="比如：苏州老家">
                 </label>
                 <button id="familyCreateBtn" type="submit" class="app-btn-primary h-11 font-sans text-[13px] font-bold">创建家庭</button>
             </form>
@@ -75,7 +75,7 @@
         <div class="app-bottom-nav-inner">
             <div class="flex justify-between items-center">
                 <a id="familyNavHomeLink" href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">home</span></div>
+                    <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">home</span></div>
                     <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
                 </a>
                 <a id="familyNavSelfLink" href="family.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
@@ -83,7 +83,7 @@
                     <span class="font-sans text-[11px] font-bold tracking-wide">家庭</span>
                 </a>
                 <a id="familyNavBindingLink" href="device_binding.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                    <div class="app-nav-pill group-hover:bg-primary/5"><span class="material-symbols-outlined text-[22px]">devices</span></div>
+                    <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">devices</span></div>
                     <span class="font-sans text-[11px] font-semibold tracking-wide">设备</span>
                 </a>
             </div>

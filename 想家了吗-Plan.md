@@ -1,12 +1,31 @@
-# 想家了吗 Plan
+# 回家 Plan
 
-更新时间：2026-06-28
+更新时间：2026-07-03
 
 ## 1. 文档定位
 
-这份 Plan 定义 `想家了吗` 从当前本机验证走向商业化产品的实施路径。
+这份 Plan 定义 `回家` 从当前本机验证走向商业化产品的实施路径。
 
-当前已有的 `edge-agent`、管理台、Web 页面接入和 YOLO 检测，是阶段 0 的技术基线。当前这台 M4 / 24GB Mac 先作为本地算力服务，负责拉流、检测、规则、事件和前端服务；后续树莓派或边缘盒只在本地闭环稳定后进入硬件验证。
+### 1.1 对齐要求
+
+`Plan` 不是自由发挥的任务清单，而是 `PRD` 的执行展开。
+
+固定要求：
+
+- `PRD` 没定义清楚的能力，不进入 `Plan`。
+- `Plan` 没排到当前阶段的能力，不进入代码主线。
+- `Implement` 只能回写 `Plan` 已经允许进入当前阶段的事项。
+
+固定顺序：
+
+1. 先改 `PRD`，确认产品方案和边界。
+2. 再改 `Plan`，确认阶段、优先级和执行顺序。
+3. 再做实现与验收。
+4. 最后回写 `Implement`。
+
+如果这四步顺序被打乱，默认视为方案尚未对齐，不进入正式实现。
+
+当前已有的 `edge-agent`、管理台、Web 页面接入和 YOLO 检测，是阶段 0 的技术基线。Mac 继续作为开发对照和回退环境；当前主验证对象切到树莓派盒子，目标是证明它能独立完成联网、拉流、检测、事件、预览、日志和报警。
 
 商业化目标系统包含：
 
@@ -46,8 +65,8 @@
 
 当前技术选型可以服务验证，但要保留替换空间：
 
-- 本机电脑后续替换为边缘盒。
-- 当前 M4 / 24GB Mac 先承担本地算力服务，树莓派先作为后续硬件试点，不抢当前主开发路径。
+- Mac 只作为开发对照和临时回退，不能继续承接正式产品主路径。
+- 当前主验证设备切到树莓派盒子，必须尽快验证部署、自启、720p 拉流、算法负载、散热和 24 小时稳定性。
 - SQLite 后续替换为云端 PostgreSQL / MySQL。
 - 本地文件截图后续替换为对象存储。
 - 临时通知后续替换为 APNs / 厂商推送。
@@ -99,20 +118,22 @@ GOHOME_AGENT_PORT=8711 GOHOME_DETECTOR_BACKEND=yolo ./run.sh
 
 当前明确状态：
 
-- 主运行设备：当前 M4 / 24GB Mac。
+- 开发对照设备：当前 M4 / 24GB Mac。
+- 当前主验证设备：树莓派盒子。
 - 主摄像头：局域网 RTSP 摄像头，不再以 `local:0` 为主线路。
 - 当前服务端口：`8711`。
-- 当前阶段目标：本地算力服务先跑通产品闭环，再开始树莓派或边缘盒稳定性验证。
+- `8711` 是 edge-agent 的开发/内部监听端口；产品化访问不让用户看到端口，使用 nginx/Caddy 在 `80` 端口反向代理到 `127.0.0.1:8711`，对外呈现 `http://gohome.local/admin`。树莓派可用 `sudo bash scripts/install-admin-proxy.sh` 安装该代理。
+- 当前阶段目标：树莓派盒子先跑通本地视觉闭环，再进入最小服务器和正式 App 调整。
 
 ## 4. 总体路线
 
 ```text
-阶段 0：本机验证
--> 阶段 1：边缘端产品化
--> 阶段 2：云端和 API 中台
+阶段 0：树莓派盒子本地闭环
+-> 阶段 1：盒子安装与本地管理台产品化
+-> 阶段 2：最小服务器和设备通道
 -> 阶段 3：用户端 App / H5
 -> 阶段 4：视觉模型产品化
--> 阶段 5：硬件试点
+-> 阶段 5：真实家庭试点
 -> 阶段 6：商业化运营
 ```
 
@@ -130,7 +151,7 @@ GOHOME_AGENT_PORT=8711 GOHOME_DETECTOR_BACKEND=yolo ./run.sh
 | 边缘端 | `edge-agent` 本机服务 | 设备身份、配置、日志、断网缓存、RTSP 稳定性 | 可部署边缘运行时 |
 | 视觉算法 | basic + YOLO 人形 | 检测框、模型版本、DetectionResult、规则链路 | 可灰度、可解释、可评估的算法系统 |
 | 通知链路 | 测试接口 | Bark / 飞书真实通知 | APNs、短信、电话、升级通知 |
-| 硬件端 | 当前 M4 / 24GB Mac | Mac 本地算力服务固化、树莓派试点准备、开机自启、watchdog | 低功耗边缘盒 |
+| 硬件端 | Mac 已完成开发基线，树莓派已到位 | 树莓派部署、自启、720p 拉流、散热、24 小时稳定性、安装模式 | 低功耗边缘盒 |
 | 数据治理 | SQLite 简表 | 商业对象模型、事件状态机、媒体留存策略 | 可审计、可迁移、可运营的数据平台 |
 | 运营后台 | 管理台雏形 | 设备诊断、告警质量、日志查看 | 售后、运营、模型灰度和工单 |
 
@@ -145,17 +166,17 @@ GOHOME_AGENT_PORT=8711 GOHOME_DETECTOR_BACKEND=yolo ./run.sh
 - 硬件试点依赖 edge-agent 开机自启、watchdog、日志和断网恢复。
 - 运营后台依赖设备心跳、事件状态、通知状态和日志上报。
 
-因此当前最优先的不是马上写完整 App，而是先把 `DetectionResult -> RuleEvaluation -> EventCandidate -> Event` 这条数据链路做清楚。
+因此当前最优先的不是马上写完整 App，而是在树莓派上把盒子本地闭环跑稳，并同步把 `DetectionResult -> RuleEvaluation -> EventCandidate -> Event` 这条数据链路做清楚。
 
 ### 4.3 里程碑产物
 
 | 里程碑 | 产物 | 完成后能证明什么 |
 | --- | --- | --- |
-| M0 Mac 本地闭环 | RTSP 摄像头、YOLO、事件、Web、通知 | 强本机算力链路可跑 |
-| M1 真实摄像头闭环 | RTSP 摄像头、稳定抽帧、断线事件 | 家庭摄像头可接入 |
-| M2 边缘端运行时 | 设备身份、开机自启、watchdog、日志 | 设备可无人值守 |
-| M3 云端事件平台 | 设备心跳、事件上报、媒体上传、API v1 | App 不依赖局域网 |
-| M4 用户端产品 | H5/App、告警详情、规则配置、推送 | 家属可以真实使用 |
+| M0 技术基线 | Mac 上 RTSP 摄像头、YOLO、事件、Web、通知 | 基础链路可跑，作为开发对照 |
+| M1 树莓派盒子闭环 | `edge-agent`、systemd、自启、720p 实时流、事件、截图、日志 | 盒子能独立运行 |
+| M2 配网和本地管理台 | `/setup` 只做配网；`/admin` 承接摄像头接入、算法配置、算法预览、日志诊断、报警测试 | 盒子可配网、可管理、可演示、可诊断 |
+| M3 最小云端事件平台 | 设备注册、绑定、心跳、事件上报、媒体上传、API v1 | App 不依赖局域网 |
+| M4 用户端产品 | H5/App、告警详情、规则配置、推送、图文消息卡片 | 家属可以真实使用 |
 | M5 家庭试点 | 边缘盒、真实家庭、7 天运行报告 | 商业化风险可评估 |
 | M6 商业版本 | 运营后台、套餐、安装 SOP、售后流程 | 可以销售和交付 |
 
@@ -163,18 +184,19 @@ GOHOME_AGENT_PORT=8711 GOHOME_DETECTOR_BACKEND=yolo ./run.sh
 
 后续开发必须严格按下面顺序推进，避免同时铺太多线导致每条都不闭环。
 
-1. 跑通本地 Mac 小盒子原型。
-2. 跑通真实 RTSP 摄像头接入和规则配置。
-3. 跑通 `DetectionResult -> RuleEvaluation -> EventCandidate -> Event` 数据链。
-4. 跑通视频服务后台和实时画面会话。
-5. 跑通页面端实时画面查看。
-6. 跑通真实手机通知。
-7. 跑通 Mac 的开机自启、watchdog、日志和状态诊断。
-8. 跑通最小云端：注册、登录、用户身份、家庭、设备绑定、心跳、事件、媒体、实时画面鉴权。
-9. 跑通正式 App/H5：登录、绑定、事件、规则、实时画面。
-10. 跑通算法模块化、后台算法配置和解释链路。
-11. 跑通边缘盒硬件试点。
-12. 跑通商业化交付：安装 SOP、售后诊断、套餐和运营后台。
+1. 固定 Mac 基线，只作为开发对照和回退。
+2. 跑通树莓派上的 `edge-agent`、`systemd` 自启和单路 RTSP 摄像头。
+3. 把实时画面默认压到 720p 档位，先解决延迟、花屏、码流和稳定性问题。
+4. 做手机优先的 `/setup` 配网页，只覆盖热点连接、家庭 Wi-Fi 选择、密码输入、连接结果和回到 App / 管理端提示。
+5. 重构本地 `/admin` 为盒子开发管理模式：首页、网络状态、摄像头配置、算法配置、算法预览、报警、日志诊断。
+6. 跑通算法预览：每次选择一个摄像头和一个算法，看实时效果、阈值、置信度、规则解释和最近日志。
+7. 跑通 `DetectionResult -> RuleEvaluation -> EventCandidate -> Event` 数据链，并完成同类事件归并和频控。
+8. 跑通跌倒、火灾候选等高优先级报警的测试渠道和应急处置动作。
+9. 跑通真实手机通知或至少一个可验证报警通道。
+10. 完成树莓派 24 小时稳定性记录和故障诊断记录。
+11. 跑通最小云端：设备注册、绑定、心跳、事件、媒体、实时画面鉴权、规则下发。
+12. 跑通正式 App/H5：安装模式、日常首页、事件、规则、实时画面、图文消息卡片。
+13. 跑通视觉模型产品化、真实家庭试点和商业化交付。
 
 阶段切换原则：
 
@@ -183,37 +205,381 @@ GOHOME_AGENT_PORT=8711 GOHOME_DETECTOR_BACKEND=yolo ./run.sh
 - 没有形成可重复部署方式的能力，不视为真正完成。
 - 没有把数据层、算法层、规则层、视频层、展示层拆开，不进入后续扩张阶段。
 
-## 5. 阶段 0：本机验证
+### 4.5 面向正式产品的最小闭环定义
+
+围绕“树莓派盒子作为本地视觉载体，App 运行在云端并支持任意网络访问”的目标，后续实施必须按以下最小闭环判断是否真正前进：
+
+1. 本地盒子闭环：
+   - 盒子能启动 `edge-agent`
+   - 盒子能连接家庭 Wi-Fi
+   - 首次安装时有手机可操作的 `/setup` 配网流程，且该页面不混入摄像头、算法、事件和日志
+   - 盒子入网后可通过 `gohome.local/admin` 或局域网 IP 进入开发管理模式
+   - `/admin` 具备登录保护，并能接入局域网 RTSP 摄像头
+   - 盒子能本地生成事件、截图和状态
+   - 盒子能通过 `/admin` 的算法预览能力展示单算法实时效果
+   - 盒子能通过本地诊断页查看拉流、检测、报警和系统日志
+   - 跌倒、火灾候选等高优先级事件有测试报警和应急动作
+2. 设备上云闭环：
+   - 盒子具备设备 ID、设备密钥和绑定码
+   - 盒子能主动连云、发送心跳、上报事件、上传媒体
+   - 云端能追踪设备在线状态和最近事件
+3. 远程使用闭环：
+   - 用户手机退出配网页后，改走正式 App 登录
+   - App 不依赖局域网地址
+   - App 通过云端查看设备状态、实时画面、事件和规则
+   - 用户在任意网络下都能继续使用
+
+当前阶段只允许宣称“完成了本地盒子闭环”，不能把它表述成“已经完成远程家庭版产品”。
+
+### 4.6 当前推荐执行步骤
+
+基于当前项目状态，执行顺序明确为：
+
+1. 先完成本地盒子闭环，不直接铺完整云端。
+2. 本地盒子闭环通过后，只上最小云，不做大全套平台。
+3. 最小云跑通后，再让正式 App/H5 改走云端。
+
+原因：
+
+- 当前最大风险仍在盒子稳定性、RTSP 兼容、检测链路和 24 小时运行。
+- 如果本地链路不稳，提前铺云会把盒子问题、网络问题、云端问题和 App 问题叠在一起。
+- 当前最优策略是先把“盒子能不能独立跑”做成硬结果，再补“用户能不能异地使用”。
+
+对应执行动作：
+
+第一段，先盒子侧跑通：
+
+1. 在树莓派上启动 `edge-agent`。
+2. 完成盒子初始化：生成设备身份、本地密钥、管理员初始凭证、hostname / mDNS 名称、数据目录和日志目录。
+3. 完成盒子基础联网和运行检查；开发阶段可先用 Pi Imager，产品化必须补 Wi-Fi 热点配网。
+4. 将 `/setup` 收口成手机配网页，只验证热点、选网、输密码、连接中断提示、成功后地址提示。
+5. 将 `/admin` 收口成开发管理模式，验证登录、管理地址、设备状态、网络状态和服务状态。
+6. 在 `/admin` 接入一路真实 RTSP 摄像头并完成扫描、测试、保存、启停和删除。
+7. 将实时画面和抓帧固定到 H.264 / 720p 子码流优先，验证延迟、花屏和断流恢复。
+8. 跑通算法预览：每次只选择一个摄像头和一个算法。
+9. 做本地日志诊断，覆盖服务、拉流、检测、报警、CPU、温度、磁盘和上传队列。
+10. 做事件归并、频控和高优先级报警测试。
+11. 跑通至少一个真实通知或报警通道。
+12. 验证重启恢复、自启和 24 小时稳定性。
+
+第二段，再上最小云：
+
+1. 只先做 `device-service`、`event-service`、`media-service` 的最小子集。
+2. 跑通设备注册、绑定、心跳。
+3. 跑通事件上报、事件列表、事件详情、事件处理状态同步。
+4. 跑通截图或短视频片段上传与授权访问。
+5. 跑通实时画面的播放会话和播放鉴权。
+
+第三段，最后切正式用户端：
+
+1. App/H5 不再读取局域网地址。
+2. App/H5 统一改走云端 API。
+3. 用户在任意网络下查看设备状态、告警、媒体和实时画面。
+
+## 5. 阶段 0：树莓派盒子本地闭环
 
 目标：
 
-- 用当前 M4 / 24GB Mac 证明“局域网摄像头 -> 本地算力服务 -> 视觉检测 -> 规则判断 -> 事件 -> 前端展示 -> 通知”的技术链路成立。
+- 用树莓派证明“家庭盒子上电 -> 联网 -> 局域网摄像头 -> 本地视觉检测 -> 规则判断 -> 事件 -> 本地预览 / 日志 -> 报警测试”的技术链路成立。
+- Mac 已完成开发基线验证，后续只作为开发对照和问题排查环境。
 
 ### 5.1 要完成的能力
 
-- RTSP 摄像头接入验证，当前主摄像头为 `192.168.1.11:554`。
+- 树莓派前台启动 `edge-agent` 并完成 `systemd` 自启。
+- RTSP 摄像头接入验证，当前主摄像头为 `192.168.1.11:554`，优先使用 H.264 / 720p 子码流。
+- 实时画面默认提供 720p 档位，先降低延迟和花屏风险。
 - YOLO 模式下输出人形数量、检测框、置信度和模型信息。
 - 黑屏、离线、无变化、无人、疑似跌倒候选事件。
 - 页面端实时画面能力可跑通。
-- 管理台支持摄像头、规则、事件和截图。
-- 产品 Web 首页、监控、规则、告警全量接入真实数据。
-- 临时通知通道真实推到手机。
-- Mac 本地服务具备可重复启动、日志、配置和基本守护能力。
+- `/setup` 支持手机优先的配网流程，不暴露摄像头、算法、事件和日志。
+- `/admin` 支持登录、网络状态、摄像头配置、算法配置、事件和截图。
+- `/admin` 支持一次选择一个摄像头和一个算法查看实时效果。
+- `/admin` 支持查看服务、拉流、检测、报警和系统状态。
+- 跌倒和火灾候选支持测试报警和应急动作展示。
+- 临时通知或报警通道能真实推到手机或完成可验证触达。
 
 ### 5.2 当前下一步
 
 按顺序做：
 
-1. 固化当前 Mac 本地运行方式：启动命令、配置文件、日志目录、数据目录和端口。
-2. 完成 `connect.html` 真实摄像头添加、保存、测试和选择房间。
-3. 完成 `rules.html` 真实规则读取和保存。
-4. 清理或归档旧 `local:0` / `basic` 测试事件，避免影响用户端判断。
-5. 补齐 YOLO 检测框、置信度、模型版本和规则命中原因。
-6. 将检测链路拆成 `DetectionResult -> RuleEvaluation -> EventCandidate -> Event`。
-7. 跑通本地视频服务和页面端实时画面。
-8. 配置 Bark 或飞书通知，把真实事件推到手机。
-9. 增加 Mac 开机自启 / watchdog / 日志轮转方案。
-10. 准备树莓派试点文档和部署脚本，但不把主开发迁移过去。
+1. 树莓派前台启动 `edge-agent`，确认 `/health`、`/admin` 和 `/ui` 可打开。
+2. 安装 `systemd` 并验证重启恢复。
+3. 接入一路真实 RTSP 摄像头，优先 H.264 / 720p 子码流。
+4. 跑通实时画面、抓帧、规则评估、事件列表和事件详情。
+5. 做手机优先 `/setup` 配网页，只保留 Wi-Fi 配网和成功提示。
+6. 做本地 `/admin` 开发管理模式，补齐登录、摄像头配置、算法预览和日志诊断。
+7. 验证 `gohome.local/admin` 和局域网 IP 两种进入方式。
+8. 补齐跌倒候选、火灾候选、用餐候选、久坐/静止、夜间活动等演示级算法预览。
+9. 将检测链路拆成 `DetectionResult -> RuleEvaluation -> EventCandidate -> Event`，并补事件归并和频控。
+10. 配置一个真实通知或报警通道，完成至少一次送达或可验证触达。
+
+### 5.2.1 树莓派到货后的执行顺序
+
+树莓派到位后，阶段 0 按下面顺序执行：
+
+1. 上电、散热、存储和网络检查。
+2. 拉起 `edge-agent` 前台运行，确认页面和接口可打开。
+3. 配置 `.env` 并确认端口、检测后端和数据目录正确。
+4. 接入一路 RTSP 摄像头，完成测试、保存和启用。
+5. 打开 `/setup` 验证配网流程不暴露摄像头、算法、事件和日志。
+6. 打开 `/admin` 验证登录、设备状态、网络状态和管理入口。
+7. 在 `/admin` 选择一个算法查看实时效果，并确认能看到服务、摄像头、检测和报警日志。
+8. 触发至少一条真实事件，确认截图、事件详情和规则解释可读。
+9. 触发一次跌倒或火灾候选的测试报警，确认应急动作可见。
+10. 配置一个真实通知通道并完成送达。
+11. 安装 `systemd`，验证重启恢复。
+12. 开始 24 小时观察。
+
+阶段 0 完成前，不进入正式云端开发。
+
+### 5.2.2 树莓派逐条验收清单
+
+明天实际执行时，按下面清单逐条打勾：
+
+#### A0. 盒子初始化
+
+1. 生成或读取唯一设备 ID。
+2. 生成本地设备密钥。
+3. 设置管理员账号：开发阶段固定为 `admin / 123456`。
+4. 设置 hostname / mDNS 名称，如 `gohome.local` 或带序列号后缀的名称。
+5. 创建数据目录、日志目录和初始化标记。
+6. 确认恢复出厂入口的设计，不依赖树莓派本体按钮完成产品级初始化。
+
+通过信号：
+
+- 能看到设备 ID 和本地管理地址
+- `/admin` 登录规则明确，开发阶段默认账号为 `admin / 123456`
+- 当前开发演示盒子允许初始密码直接登录；正式交付时再开启首次改密要求。
+- 重启后初始化状态不会丢失
+- 清除初始化标记后能重新进入初始化流程
+
+执行命令：
+
+```bash
+bash scripts/init-box.sh init
+```
+
+需要重置开发阶段管理密码时：
+
+```bash
+bash scripts/init-box.sh reset-admin
+```
+
+需要做白纸测试时，不新建第二个项目目录，只在原 `edge-agent` 目录内移动旧运行数据并重新初始化：
+
+```bash
+sudo bash scripts/reset-runtime-data.sh --preserve-admin
+```
+
+该命令保留代码、`.venv`、`.env`、systemd、设备 ID 和 admin 密码，只清空本地数据库、摄像头、事件、截图、对象上传和算法运行状态。完整出厂化开发测试才使用：
+
+```bash
+sudo bash scripts/reset-runtime-data.sh --factory
+```
+
+#### A. 硬件与系统
+
+1. 电源稳定，散热方案已装好。
+2. 系统已启动，网络可用。
+3. `python3`、`ffmpeg`、`git`、`curl` 已安装。
+4. 仓库已放到固定目录，`.venv` 已创建。
+5. `.env` 已复制并按当前口径填写。
+
+通过信号：
+
+- `python3 --version`
+- `ffmpeg -version`
+- `curl http://127.0.0.1:8711/health`
+
+#### B. 服务启动
+
+1. `./run.sh` 能前台启动。
+2. `admin/index.html` 可打开。
+3. `ui/index.html` 可打开。
+4. 数据目录和日志目录正常生成。
+
+通过信号：
+
+- `/health` 正常返回
+- `data/agent.db` 已创建
+- 页面无白屏、无启动即崩溃
+
+#### C. 配网与管理入口
+
+1. `/setup` 在手机视口可打开。
+2. `/setup` 只展示 Wi-Fi 配网，不展示摄像头、算法、事件和日志。
+3. 配网成功页能提示手机回到家庭 Wi-Fi 或打开 `回家` App。
+4. `/admin` 作为开发者 / 安装人员模式单独访问，不从普通配网页引导。
+
+通过信号：
+
+- `http://10.42.0.1` 或开发环境等价入口可打开
+- 页面只有选网、密码、连接、重新扫描和成功提示
+- 切换 Wi-Fi 后页面把断连视为预期状态，不显示误导性失败
+
+#### D. 开发管理模式
+
+1. 家庭网络下可访问 `http://gohome.local/admin` 或局域网 IP。
+2. 管理端具备登录保护，初始用户名和密码规则清楚。
+3. 首页能看到网络、IP、服务、CPU、温度、磁盘和云连接状态。
+4. 管理端不面向普通用户入口暴露。
+
+通过信号：
+
+- `/admin` 可登录
+- 页面能显示当前 IP 和服务状态
+- 退出登录或无凭证时不能直接进入管理功能
+
+#### E. 摄像头接入
+
+1. 接入一路真实 RTSP 摄像头。
+2. 测试接口返回成功。
+3. 保存后摄像头状态为启用。
+4. 能抓到首帧截图。
+5. 优先使用 H.264 / 720p 子码流，记录延迟、FPS 和花屏情况。
+
+通过信号：
+
+- `/admin` 可完成添加、测试、保存
+- `POST /api/cameras/{camera_id}/test` 成功
+- `POST /api/cameras/{camera_id}/capture` 成功
+
+#### F. 视觉预览和产品主链
+
+1. 管理端一次只选择一个摄像头和一个算法预览。
+2. 预览能显示实时画面、检测框或状态、置信度、阈值和最近日志。
+3. `watch.html` 能打开实时画面。
+4. `monitor.html` 能显示真实状态。
+5. `events.html` 能显示真实事件列表。
+6. `event_detail.html` 能看到截图和解释字段。
+
+通过信号：
+
+- 至少有一条真实截图
+- 至少有一条真实事件
+- 详情页能读到时间、房间、原因或规则解释
+- 管理端至少一个算法预览可用
+
+#### G. 通知闭环
+
+1. 配置至少一个真实通知通道。
+2. 触发一次真实事件。
+3. 手机收到至少一条通知。
+
+通过信号：
+
+- `scripts/send-test-notification.sh` 可跑通
+- 手机能看到通知送达
+
+#### H. 自启与恢复
+
+1. 安装 `systemd` 服务。
+2. 手动重启服务后恢复正常。
+3. 机器重启后服务自动恢复。
+
+通过信号：
+
+- `systemctl status gohome-edge-agent` 正常
+- 重启后页面仍能打开
+- 摄像头无需手工重新添加
+
+#### I. 24 小时观察
+
+1. 无持续崩溃重启。
+2. 摄像头持续在线。
+3. 事件链路未中断。
+4. 温度、磁盘、内存可接受。
+
+通过信号：
+
+- `journalctl` 无明显 crash loop
+- `vcgencmd measure_temp` 在可接受范围
+- `df -h`、`free -h` 正常
+
+### 5.2.3 树莓派当天命令清单
+
+下面这组命令按顺序执行，目标是当天把阶段 0 盒子闭环跑起来：
+
+#### A. 系统准备
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip ffmpeg git curl jq rsync
+sudo apt install -y htop iotop
+```
+
+#### B. 拉取仓库与 Python 环境
+
+```bash
+cd /home/pi
+git clone <your-repo-url> gohome
+cd /home/pi/gohome/edge-agent
+python3 -m venv .venv
+./.venv/bin/pip install --upgrade pip
+./.venv/bin/pip install -r requirements.txt
+```
+
+如果当天需要一起验证 YOLO，再补：
+
+```bash
+cd /home/pi/gohome/edge-agent
+./.venv/bin/pip install -r requirements-yolo.txt
+```
+
+#### C. 配置与前台启动
+
+```bash
+cd /home/pi/gohome/edge-agent
+cp .env.example .env
+sed -n '1,120p' .env
+./run.sh
+```
+
+前台启动后优先检查：
+
+```bash
+curl http://127.0.0.1:8711/health
+curl -I http://127.0.0.1:8711/ui/index.html
+curl -I http://127.0.0.1:8711/admin/index.html
+```
+
+#### D. 摄像头与主链验证
+
+```bash
+curl -X POST http://127.0.0.1:8711/api/cameras/1/test
+curl -X POST http://127.0.0.1:8711/api/cameras/1/capture
+curl 'http://127.0.0.1:8711/api/events?limit=10'
+```
+
+这里的 `camera_id` 需要换成树莓派当天真实保存成功后的那一路摄像头。
+
+#### E. 通知测试
+
+```bash
+cd /home/pi/gohome/edge-agent
+bash scripts/send-test-notification.sh
+```
+
+#### F. 安装 systemd
+
+```bash
+cd /home/pi/gohome/edge-agent
+bash scripts/install-systemd-service.sh
+sudo systemctl status gohome-edge-agent --no-pager
+sudo systemctl restart gohome-edge-agent
+sudo systemctl enable gohome-edge-agent
+```
+
+#### G. 24 小时观察命令
+
+```bash
+journalctl -u gohome-edge-agent -n 200 --no-pager
+journalctl -u gohome-edge-agent -f
+free -h
+df -h
+uptime
+vcgencmd measure_temp
+```
 
 ### 5.3 验收标准
 
@@ -300,6 +666,76 @@ GOHOME_AGENT_PORT=8711 GOHOME_DETECTOR_BACKEND=yolo ./run.sh
 - 服务崩溃自动重启。
 - 模型文件版本管理。
 
+### 6.3.1 盒子安装闭环
+
+阶段 1 需要把“拿到盒子后如何落地到家庭”明确成可执行安装流程：
+
+1. 盒子首次启动进入待配网状态。
+2. 安装人员或家属通过 `/setup` 完成家庭 Wi-Fi 配网；`/setup` 不做摄像头、算法和日志。
+3. 盒子联网后，安装人员通过 `gohome.local/admin` 或局域网 IP 登录开发管理模式。
+4. `/admin` 完成 RTSP 摄像头扫描、接入、测试、保存和启用。
+5. `/admin` 完成算法开关、单算法预览、报警测试和日志诊断。
+6. 盒子向云端完成设备注册或激活，并被绑定到某个家庭。
+7. 盒子开始稳定心跳、抓帧、检测和事件上报。
+
+这一步的交付物不是单个页面，而是一套可重复执行的安装 SOP。
+
+### 6.3.2 设备注册 / 绑定 / 心跳状态机
+
+设备状态必须明确，避免后续接口和页面各自理解。
+
+```text
+factory_new
+-> wifi_config_pending
+-> registered
+-> activation_pending
+-> bound
+-> online
+-> offline
+```
+
+状态说明：
+
+- `factory_new`
+  - 刚出厂或刚刷机
+  - 还没有设备身份
+- `wifi_config_pending`
+  - 盒子等待配网
+  - 还不能进入正式用户流程
+- `registered`
+  - 已向云端注册
+  - 已拿到 `device_id`
+  - 但还没有归属家庭
+- `activation_pending`
+  - 已经展示绑定码或等待激活
+  - 等待某个家庭完成绑定
+- `bound`
+  - 设备已归属家庭
+  - 已具备访问控制语义
+- `online`
+  - 最近心跳有效
+  - 可以接收配置、上报事件和提供播放会话
+- `offline`
+  - 心跳超时或服务不可达
+  - 仍保留绑定关系，但对用户显示离线
+
+状态迁移规则：
+
+1. 首次上电：`factory_new -> wifi_config_pending`
+2. 配网成功并完成注册：`wifi_config_pending -> registered`
+3. 生成绑定码后等待家庭激活：`registered -> activation_pending`
+4. 家庭完成绑定：`activation_pending -> bound`
+5. 首次成功心跳：`bound -> online`
+6. 心跳超时：`online -> offline`
+7. 离线恢复并重新心跳：`offline -> online`
+
+异常约束：
+
+- 未到 `registered`，不允许上报正式事件。
+- 未到 `bound`，不允许暴露给家属端列表。
+- `offline` 不等于解绑，不能自动丢失家庭关系。
+- 解绑必须走显式用户动作，不能由心跳超时触发。
+
 ### 6.4 验收标准
 
 - 断网后本地继续检测。
@@ -333,6 +769,8 @@ GOHOME_AGENT_PORT=8711 GOHOME_DETECTOR_BACKEND=yolo ./run.sh
 - `event-service`：事件入库、查询、状态机。
 - `media-service`：截图、短视频、访问授权。
 - `notification-service`：App 推送、短信、Webhook。
+- `message-service`：回家消息、陪伴消息、解释消息生成。
+- `log-service`：边缘端日志摘要、推送回执、审计日志接入。
 
 后续补：
 
@@ -359,6 +797,778 @@ GOHOME_AGENT_PORT=8711 GOHOME_DETECTOR_BACKEND=yolo ./run.sh
 - 不要求老人家有公网 IP。
 - 不暴露 RTSP 到公网。
 - 云端不直接拉家庭摄像头。
+
+### 7.2.1 远程访问最小范围
+
+阶段 2 只做支撑正式远程使用所必需的能力：
+
+- 设备在线状态和最近心跳。
+- 设备绑定后的家庭可见性控制。
+- 事件上报、事件查询和事件状态同步。
+- 截图或短视频片段上传与授权访问。
+- 实时画面播放会话和播放鉴权。
+
+不在这个阶段做的内容：
+
+- 公网直暴露 RTSP。
+- 复杂多端聊天或社交功能。
+- 大而全的运营系统。
+
+### 7.2.2 最小云第一批接口
+
+最小云第一批只做能支撑“盒子上云 + 用户远程可用”的接口，不扩张。
+
+#### 设备身份
+
+- `POST /api/v1/devices/register`
+  - 用途：盒子首次注册，获取 `device_id`
+- `POST /api/v1/devices/activate`
+  - 用途：用绑定码或激活码把设备挂到家庭
+- `POST /api/v1/devices/heartbeat`
+  - 用途：上报在线状态、版本、IP、最近时间
+- `GET /api/v1/devices/{device_id}`
+  - 用途：查询设备状态和绑定关系
+
+#### 事件链路
+
+- `POST /api/v1/devices/{device_id}/events`
+  - 用途：盒子上报结构化事件
+- `GET /api/v1/app/events`
+  - 用途：家属端读取事件列表
+- `GET /api/v1/app/events/{event_id}`
+  - 用途：家属端读取事件详情
+- `PATCH /api/v1/app/events/{event_id}`
+  - 用途：确认、误报、已处理等状态回写
+
+#### 媒体与播放
+
+- `POST /api/v1/devices/{device_id}/media`
+  - 用途：上传截图或短视频片段
+- `GET /api/v1/app/media/{media_id}`
+  - 用途：获取媒体元数据
+- `POST /api/v1/app/playback-sessions`
+  - 用途：签发短时播放票据
+- `GET /api/v1/app/streams/{camera_id}`
+  - 用途：基于播放票据拉取被授权实时流
+
+#### 第一批接口的完成定义
+
+只有满足下面四点，才算“最小云第一批完成”：
+
+1. 盒子能注册、激活并稳定心跳。
+2. 盒子能把真实事件和截图上报到云端。
+3. 用户不在老人家局域网时，仍能通过云端读事件列表和详情。
+4. 用户不暴露 RTSP 和局域网地址，也能拿到被授权的媒体和实时画面。
+
+### 7.2.3 最小云接口字段草案
+
+下面是第一批接口的最小字段口径，优先保证盒子和 App 可以对齐，不追求一次做全。
+
+#### `POST /api/v1/devices/register`
+
+请求体：
+
+```json
+{
+  "device_name": "gohome-pi-001",
+  "hardware_model": "raspberry-pi-5-8gb",
+  "software_version": "0.1.0",
+  "lan_ip": "192.168.1.20"
+}
+```
+
+响应体：
+
+```json
+{
+  "device_id": "dev_xxx",
+  "device_secret": "sec_xxx",
+  "status": "registered"
+}
+```
+
+#### `POST /api/v1/devices/activate`
+
+请求体：
+
+```json
+{
+  "device_id": "dev_xxx",
+  "binding_code": "FQ4SNX"
+}
+```
+
+响应体：
+
+```json
+{
+  "device_id": "dev_xxx",
+  "family_id": "fam_xxx",
+  "status": "bound"
+}
+```
+
+#### `POST /api/v1/devices/heartbeat`
+
+请求体：
+
+```json
+{
+  "device_id": "dev_xxx",
+  "status": "online",
+  "lan_ip": "192.168.1.20",
+  "software_version": "0.1.0",
+  "camera_count": 1,
+  "detector_backend": "basic"
+}
+```
+
+响应体：
+
+```json
+{
+  "ok": true,
+  "server_time": "2026-07-01T10:00:00Z"
+}
+```
+
+#### `POST /api/v1/devices/{device_id}/events`
+
+请求体：
+
+```json
+{
+  "camera_id": "cam_xxx",
+  "event_type": "no_person",
+  "occurred_at": "2026-07-01T10:00:00Z",
+  "room": "客厅",
+  "severity": "medium",
+  "reason": "连续 300 秒未检测到人",
+  "snapshot_id": "media_xxx"
+}
+```
+
+响应体：
+
+```json
+{
+  "event_id": "evt_xxx",
+  "accepted": true
+}
+```
+
+#### `POST /api/v1/devices/{device_id}/media`
+
+请求体：
+
+```json
+{
+  "media_type": "snapshot",
+  "file_name": "snapshot-001.jpg",
+  "content_type": "image/jpeg"
+}
+```
+
+响应体：
+
+```json
+{
+  "media_id": "media_xxx",
+  "upload_url": "https://example.com/upload",
+  "expires_in": 300
+}
+```
+
+#### `GET /api/v1/app/events`
+
+响应体：
+
+```json
+{
+  "items": [
+    {
+      "event_id": "evt_xxx",
+      "event_type": "no_person",
+      "room": "客厅",
+      "occurred_at": "2026-07-01T10:00:00Z",
+      "severity": "medium",
+      "status": "open"
+    }
+  ]
+}
+```
+
+### 7.2.4 最小云核心对象 schema 草案
+
+为了避免接口先写了、对象语义后面对不上，第一批先固定这些核心对象。
+
+#### Device
+
+```json
+{
+  "device_id": "dev_xxx",
+  "family_id": "fam_xxx",
+  "device_name": "gohome-pi-001",
+  "hardware_model": "raspberry-pi-5-8gb",
+  "software_version": "0.1.0",
+  "status": "online",
+  "lan_ip": "192.168.1.20",
+  "camera_count": 1,
+  "last_heartbeat_at": "2026-07-01T10:00:00Z",
+  "created_at": "2026-07-01T09:00:00Z"
+}
+```
+
+#### Event
+
+```json
+{
+  "event_id": "evt_xxx",
+  "device_id": "dev_xxx",
+  "camera_id": "cam_xxx",
+  "event_type": "no_person",
+  "room": "客厅",
+  "severity": "medium",
+  "status": "open",
+  "reason": "连续 300 秒未检测到人",
+  "occurred_at": "2026-07-01T10:00:00Z",
+  "snapshot_id": "media_xxx"
+}
+```
+
+#### MediaAsset
+
+```json
+{
+  "media_id": "media_xxx",
+  "device_id": "dev_xxx",
+  "camera_id": "cam_xxx",
+  "media_type": "snapshot",
+  "content_type": "image/jpeg",
+  "file_name": "snapshot-001.jpg",
+  "storage_key": "devices/dev_xxx/media/snapshot-001.jpg",
+  "created_at": "2026-07-01T10:00:00Z"
+}
+```
+
+#### PlaybackSession
+
+```json
+{
+  "session_id": "play_xxx",
+  "device_id": "dev_xxx",
+  "camera_id": "cam_xxx",
+  "viewer_user_id": "usr_xxx",
+  "playback_ticket": "ticket_xxx",
+  "expires_at": "2026-07-01T10:05:00Z"
+}
+```
+
+#### 字段约束
+
+- `device_id`、`event_id`、`media_id`、`session_id` 统一用服务端生成的稳定 ID。
+- `status` 必须是枚举值，不能页面自己随便拼字符串。
+- `occurred_at`、`created_at`、`last_heartbeat_at` 统一用 ISO8601 UTC 时间。
+- `snapshot_id` 指向 `MediaAsset.media_id`，不直接在事件对象里塞文件路径。
+
+### 7.2.5 第一批开发任务顺序
+
+最小云第一批按下面顺序开发，不并行大扩张：
+
+#### T1 设备身份
+
+1. 建 `Device` 表和状态枚举。
+2. 实现 `POST /api/v1/devices/register`。
+3. 实现 `POST /api/v1/devices/activate`。
+4. 实现 `POST /api/v1/devices/heartbeat`。
+5. 实现 `GET /api/v1/devices/{device_id}`。
+
+完成信号：
+
+- 盒子能从 `registered` 进入 `bound`。
+- 心跳能把设备状态推到 `online / offline`。
+
+#### T2 事件对象
+
+1. 建 `Event` 表和状态枚举。
+2. 实现 `POST /api/v1/devices/{device_id}/events`。
+3. 实现 `GET /api/v1/app/events`。
+4. 实现 `GET /api/v1/app/events/{event_id}`。
+5. 实现 `PATCH /api/v1/app/events/{event_id}`。
+
+完成信号：
+
+- 盒子能把真实事件送到云端。
+- 家属端能读到事件列表、详情并修改状态。
+
+#### T3 媒体对象
+
+1. 建 `MediaAsset` 表。
+2. 实现 `POST /api/v1/devices/{device_id}/media` 预签名或上传地址下发。
+3. 实现 `GET /api/v1/app/media/{media_id}`。
+4. 让 `Event.snapshot_id` 和 `MediaAsset` 打通。
+
+完成信号：
+
+- 事件详情能读到授权后的截图。
+
+#### T4 播放会话
+
+1. 建 `PlaybackSession` 表或短期票据服务。
+2. 实现 `POST /api/v1/app/playback-sessions`。
+3. 实现 `GET /api/v1/app/streams/{camera_id}` 的播放鉴权。
+
+完成信号：
+
+- 用户离开局域网后仍能通过云端打开被授权的实时流。
+
+#### T5 边缘端接入改造
+
+1. `edge-agent` 新增设备注册和心跳上报客户端。
+2. `edge-agent` 新增事件上报客户端。
+3. `edge-agent` 新增媒体上传客户端。
+4. 当前本地 token 方案保持兼容，但逐步迁到云端设备身份体系。
+
+完成信号：
+
+- 本地模式仍可跑。
+- 云端模式已经可以跑通最小远程闭环。
+
+#### T6 日志与诊断链路
+
+在最小云第一批主链稳定后，优先补日志链路：
+
+1. 增加设备日志摘要上报接口。
+2. 增加推送送达与失败回执记录。
+3. 增加用户关键动作审计日志。
+4. 在运营侧提供最小诊断查询能力。
+
+完成信号：
+
+- 能回答“设备为什么离线”“为什么没出事件”“为什么推送没送达”。
+
+#### T7 回家消息与陪伴消息
+
+在事件、媒体和推送链路稳定后，再补消息生成能力：
+
+1. 定义 `MessageCandidate` 对象。
+2. 基于事件趋势、节奏基线、回忆触发和家庭规则生成消息候选。
+3. 区分 `alert / explain / accompany / gohome` 四类消息。
+4. 把消息候选接入 `notification-service` 和 App 消息卡片。
+
+完成信号：
+
+- App 不只看到硬事件，也能看到“建议回家”“建议联系”“今天适合打电话”这类可解释消息。
+
+##### T7.1 场景化图文消息输入域
+
+`T7` 不只生成抽象消息，还需要在第二批接入这些输入域：
+
+1. `ElderProfile`
+   - 展示称呼、关系、城市、生日、喜好、作息、敏感备注
+2. `CalendarEvent`
+   - 生日、节日、体检、复诊、回家计划
+3. `WeatherSignal`
+   - 雷暴雨、降温、高温、大风、空气质量
+4. `ContactRecord`
+   - 最近一次通话、消息或手动联系记录
+5. `VisitRecord`
+   - 最近一次回家、探访计划、已完成陪伴
+
+阶段约束：
+
+- `阶段 0` 允许本地 mock 或手动录入验证卡片展示。
+- `阶段 2` 才把这些对象正式收进云端接口和存储。
+- 这些输入域不允许抢跑在最小云第一批之前。
+
+#### T8 通知结果与审计
+
+在消息生成链路稳定后，补通知结果追踪和审计闭环：
+
+1. 建 `NotificationReceipt` 表。
+2. 建 `AuditLog` 表。
+3. 打通推送回执写入。
+4. 打通查看事件、查看媒体、开始播放、确认处理等关键动作审计。
+
+完成信号：
+
+- 能回答“推送是否真的到达”和“谁查看并处理过该事件/消息”。
+
+#### T9 表结构、错误码与 OpenAPI 固化
+
+在对象 schema 稳定后，立刻补最小契约固化层：
+
+1. 建第一批表结构迁移草案。
+2. 固化业务错误码枚举。
+3. 为第一批 `/api/v1` 接口输出 OpenAPI 草案。
+4. 把表结构、错误码和 schema 名互相对齐。
+
+完成信号：
+
+- 后续进入代码实现时，不再出现“对象名、表名、返回结构、错误语义各写各的”。
+
+### 7.2.6 日志接口最小范围
+
+最小日志链路先不做全量日志平台，只做必要诊断接口：
+
+- `POST /api/v1/devices/{device_id}/logs`
+  - 上报边缘端运行摘要、拉流错误、检测错误、同步错误
+- `GET /api/v1/ops/devices/{device_id}/logs`
+  - 运营或售后查询最近日志摘要
+- `POST /api/v1/notifications/receipts`
+  - 记录推送送达、点击、失败回执
+- `POST /api/v1/audit/events`
+  - 记录关键查看、确认、误报、播放等用户动作
+
+第一版日志字段必须包含：
+
+- `device_id`
+- `log_type`
+- `level`
+- `message`
+- `occurred_at`
+- `context`
+
+### 7.2.7 回家消息接口最小范围
+
+回家消息和陪伴消息第一版不单独起复杂新系统，先落成最小接口：
+
+- `POST /api/v1/internal/messages/generate`
+  - 内部根据事件、节奏和规则生成消息候选
+- `GET /api/v1/app/messages`
+  - 家属端读取消息列表
+- `GET /api/v1/app/messages/{message_id}`
+  - 家属端读取消息详情
+- `PATCH /api/v1/app/messages/{message_id}`
+  - 标记已读、忽略、已处理
+
+消息对象最小字段：
+
+- `message_id`
+- `message_type`
+- `priority`
+- `title`
+- `body`
+- `source_event_ids`
+- `source_media_ids`
+- `created_at`
+- `status`
+
+### 7.2.7.1 场景化图文消息第二批输入域接口
+
+这批接口属于 `message-service` 的第二批输入域，应晚于最小消息主链：
+
+- `GET /api/v1/families/{family_id}/elders/{elder_id}/profile`
+- `PUT /api/v1/families/{family_id}/elders/{elder_id}/profile`
+- `GET /api/v1/families/{family_id}/calendar-events`
+- `POST /api/v1/families/{family_id}/calendar-events`
+- `GET /api/v1/families/{family_id}/weather-signals`
+- `GET /api/v1/families/{family_id}/contact-records`
+- `POST /api/v1/families/{family_id}/contact-records`
+- `GET /api/v1/families/{family_id}/visit-records`
+- `POST /api/v1/families/{family_id}/visit-records`
+
+约束：
+
+- 这批接口服务于 `MessageCandidate` 生成，不另起新的顶层消息对象。
+- 用户端正式读取消息仍统一通过 `/api/v1/app/messages`。
+- 场景化图文卡片属于 `MessageCandidate` 的渲染结果，不再单独开 `/api/v1/.../reminder-cards` 主接口。
+
+### 7.2.8 日志与消息对象 schema 草案
+
+为了让 `message-service`、`notification-service`、`log-service` 和 App 一开始就按同一套语义开发，先固定下面四个对象。
+
+#### MessageCandidate
+
+```json
+{
+  "message_id": "msg_xxx",
+  "family_id": "fam_xxx",
+  "device_id": "dev_xxx",
+  "message_type": "gohome",
+  "priority": "medium",
+  "title": "这周可以回家看看",
+  "body": "最近 12 天没有回去，客厅晚间活动明显减少。",
+  "source_event_ids": ["evt_xxx"],
+  "source_media_ids": ["media_xxx"],
+  "generated_by": "rhythm_rule_v1",
+  "subtitle": "她喜欢桂花糕，也喜欢你回家吃顿饭。",
+  "facts": ["生日：7 月 2 日", "你上次回家：5 天前"],
+  "image_mode": "generated",
+  "image_url": "/cards/images/msg_xxx.png",
+  "created_at": "2026-07-01T10:00:00Z",
+  "status": "open"
+}
+```
+
+补充说明：
+
+- `subtitle`、`facts`、`image_mode`、`image_url` 属于卡片渲染辅助字段。
+- 这些字段服务于“场景化图文消息卡片”，但不改变 `MessageCandidate` 作为正式主对象的定位。
+
+#### DeviceLog
+
+```json
+{
+  "log_id": "log_xxx",
+  "device_id": "dev_xxx",
+  "log_type": "stream_error",
+  "level": "error",
+  "message": "RTSP read timeout",
+  "occurred_at": "2026-07-01T10:00:00Z",
+  "context": {
+    "camera_id": "cam_xxx",
+    "retry_count": 3
+  }
+}
+```
+
+#### NotificationReceipt
+
+```json
+{
+  "receipt_id": "rcp_xxx",
+  "notification_id": "ntf_xxx",
+  "channel": "apns",
+  "receipt_type": "delivered",
+  "provider_message_id": "apns_msg_xxx",
+  "occurred_at": "2026-07-01T10:00:00Z",
+  "detail": {
+    "device_token_suffix": "9ab3"
+  }
+}
+```
+
+#### AuditLog
+
+```json
+{
+  "audit_id": "adt_xxx",
+  "actor_type": "user",
+  "actor_id": "usr_xxx",
+  "action": "view_event_detail",
+  "target_type": "event",
+  "target_id": "evt_xxx",
+  "occurred_at": "2026-07-01T10:00:00Z",
+  "context": {
+    "device_id": "dev_xxx"
+  }
+}
+```
+
+字段约束：
+
+- `message_type` 固定为 `alert / explain / accompany / gohome`。
+- `receipt_type` 固定为 `accepted / delivered / clicked / failed`。
+- `context` 和 `detail` 允许扩展，但必须是结构化 JSON。
+- 所有时间字段统一 ISO8601 UTC。
+
+### 7.2.9 第一批数据库表结构草案
+
+第一批云端不追求复杂分库，先以最小可迁移表结构为目标。
+
+建议优先建表：
+
+1. `devices`
+   - `id`
+   - `family_id`
+   - `device_name`
+   - `hardware_model`
+   - `software_version`
+   - `status`
+   - `device_secret_hash`
+   - `lan_ip`
+   - `camera_count`
+   - `last_heartbeat_at`
+   - `created_at`
+   - `updated_at`
+2. `events`
+   - `id`
+   - `device_id`
+   - `camera_id`
+   - `event_type`
+   - `room`
+   - `severity`
+   - `status`
+   - `reason`
+   - `snapshot_media_id`
+   - `occurred_at`
+   - `created_at`
+3. `media_assets`
+   - `id`
+   - `device_id`
+   - `camera_id`
+   - `media_type`
+   - `content_type`
+   - `file_name`
+   - `storage_key`
+   - `created_at`
+4. `message_candidates`
+   - `id`
+   - `family_id`
+   - `device_id`
+   - `message_type`
+   - `priority`
+   - `title`
+   - `body`
+   - `generated_by`
+   - `status`
+   - `created_at`
+5. `message_candidate_sources`
+   - `id`
+   - `message_id`
+   - `source_type`
+   - `source_id`
+6. `notifications`
+   - `id`
+   - `family_id`
+   - `device_id`
+   - `message_id`
+   - `channel`
+   - `title`
+   - `body`
+   - `status`
+   - `created_at`
+7. `notification_receipts`
+   - `id`
+   - `notification_id`
+   - `channel`
+   - `receipt_type`
+   - `provider_message_id`
+   - `detail_json`
+   - `occurred_at`
+8. `device_logs`
+   - `id`
+   - `device_id`
+   - `log_type`
+   - `level`
+   - `message`
+   - `context_json`
+   - `occurred_at`
+9. `audit_logs`
+   - `id`
+   - `actor_type`
+   - `actor_id`
+   - `action`
+   - `target_type`
+   - `target_id`
+   - `context_json`
+   - `occurred_at`
+
+最小索引要求：
+
+- `devices.family_id`
+- `devices.status`
+- `events.device_id, occurred_at`
+- `events.status`
+- `media_assets.device_id, created_at`
+- `message_candidates.family_id, created_at`
+- `notifications.message_id`
+- `notification_receipts.notification_id, occurred_at`
+- `device_logs.device_id, occurred_at`
+- `audit_logs.target_type, target_id, occurred_at`
+
+### 7.2.10 错误码规范
+
+第一批接口统一用“HTTP 状态码 + 业务错误码”双层表达。
+
+通用错误码：
+
+- `AUTH_REQUIRED`
+- `PERMISSION_DENIED`
+- `INVALID_ARGUMENT`
+- `RESOURCE_NOT_FOUND`
+- `CONFLICT`
+- `RATE_LIMITED`
+- `INTERNAL_ERROR`
+
+设备链路错误码：
+
+- `DEVICE_NOT_REGISTERED`
+- `DEVICE_ALREADY_BOUND`
+- `DEVICE_BINDING_CODE_INVALID`
+- `DEVICE_BINDING_CODE_EXPIRED`
+- `DEVICE_OFFLINE`
+- `DEVICE_HEARTBEAT_STALE`
+
+事件与媒体错误码：
+
+- `EVENT_NOT_FOUND`
+- `EVENT_STATUS_INVALID`
+- `MEDIA_NOT_FOUND`
+- `MEDIA_ACCESS_DENIED`
+- `PLAYBACK_SESSION_EXPIRED`
+
+消息与通知错误码：
+
+- `MESSAGE_NOT_FOUND`
+- `MESSAGE_STATUS_INVALID`
+- `NOTIFICATION_CHANNEL_UNAVAILABLE`
+- `NOTIFICATION_RECEIPT_INVALID`
+
+日志与审计错误码：
+
+- `DEVICE_LOG_INVALID`
+- `AUDIT_EVENT_INVALID`
+
+约束：
+
+- 任何 4xx/5xx 都必须返回稳定 `code`，不能只返回自然语言。
+- 同一业务错误在不同接口必须复用同一个 `code`。
+- 页面提示文案由前端映射，不让后端错误文案直接决定用户表达。
+
+### 7.2.11 OpenAPI 契约口径
+
+从第一批云端接口开始，OpenAPI 必须与对象和阶段边界一起维护。
+
+固定要求：
+
+1. 所有正式接口统一在 `/api/v1`。
+2. schema 名与核心对象保持一致，如 `Device`, `Event`, `MediaAsset`, `MessageCandidate`。
+3. 每个写接口必须声明：
+   - 鉴权方式
+   - 请求体 schema
+   - 成功响应 schema
+   - 错误码列表
+4. 每个读接口必须声明：
+   - 列表过滤条件
+   - 排序字段
+   - 分页方式
+   - 可见性约束
+5. 设备端接口和 App 端接口分组展示，不混写。
+
+建议的 tags：
+
+- `Device API`
+- `Event API`
+- `Media API`
+- `Message API`
+- `Notification API`
+- `Audit API`
+- `Ops API`
+
+统一响应包裹：
+
+```json
+{
+  "request_id": "req_xxx",
+  "data": {},
+  "error": null
+}
+```
+
+错误响应示例：
+
+```json
+{
+  "request_id": "req_xxx",
+  "data": null,
+  "error": {
+    "code": "DEVICE_BINDING_CODE_INVALID",
+    "message": "binding code is invalid"
+  }
+}
+```
 
 ### 7.3 API 管理
 
@@ -459,6 +1669,9 @@ P1 用户端：
 - 多家属能看到一致事件状态。
 - 推送点击能打开正确告警详情。
 
+- 用户手机离开老人家局域网后仍能正常查看设备状态和事件。
+- App 或 H5 不出现要求用户填写 RTSP、端口、局域网 IP 的操作。
+
 ### 8.4 App 推进顺序
 
 用户端按以下顺序实现，不能一上来做全量 App：
@@ -507,10 +1720,18 @@ P1 用户端：
 
 第四层：姿态和行为
 
-- YOLO Pose 或轻量姿态模型。
+- RTMLib + RTMPose 主线，MoveNet / Hailo 备用。
 - 坐、躺、倒地候选。
 - 夜间异常活动。
 - 疑似跌倒。
+
+当前模型路线纠偏：
+
+- 不继续把刚才未验证的 YOLO Pose 实验推进到主线。
+- 先做视频性能修正，避免管理台预览和算法分析分别打开 RTSP。
+- 再做 RTMLib + RTMPose POC，用真实实时帧输出骨架关键点、姿态摘要和跌倒候选依据。
+- 如果 Pi5 CPU 帧率不够，再切 MoveNet；如果要产品化实时效果，再评估 Hailo AI HAT+。
+- 没有样本库、误报反馈和标注规范前，不进入自训练。
 
 ### 9.2 算法工程
 
@@ -554,7 +1775,7 @@ P1 用户端：
 1. 先把当前 YOLO 结果标准化并存证。
 2. 再把算法拆成一算法一文件并形成统一输入输出。
 3. 再补多帧时序、区域和时间窗规则。
-4. 再补姿态模型或跌倒候选升级。
+4. 再补 RTMPose 或等价轻量姿态模型，升级跌倒和动作候选。
 5. 最后做灰度、回滚和多硬件性能对比。
 
 没有数据闭环前，不进入大规模模型优化。
@@ -569,28 +1790,29 @@ P1 用户端：
 - 能区分“检测框结果”和“姿态/行为/规则解释结果”。
 - 不能把所有算法逻辑堆在单个文件或单个巨大类里。
 
-## 10. 阶段 5：硬件试点
+## 10. 阶段 5：真实家庭试点
 
 目标：
 
-- 从当前 Mac 本地算力服务迁移到可长期运行的边缘盒。
+- 在树莓派盒子本地闭环、最小服务器和 App/H5 主链完成后，进入真实家庭连续运行验证。
+- 这一阶段不是第一次把代码跑到树莓派，而是验证“一个家庭拿回去通电后能长期使用”。
 
 ### 10.1 硬件候选
 
 优先顺序：
 
-1. 当前 M4 / 24GB Mac：主开发和本地算力验证。
-2. Raspberry Pi 5：低功耗部署和 24 小时稳定性验证。
-3. Raspberry Pi 5 + AI HAT+：需要本地高频视觉推理时验证。
-4. Mac mini / N100 小主机：小批量家庭试点候选。
-5. 工控机：稳定性试点。
-6. 带 NPU 的低功耗盒子：产品化候选。
+1. Raspberry Pi 5：当前盒子验证主设备，优先跑通安装、720p 拉流、自启、预览、日志和报警。
+2. Raspberry Pi 5 + AI HAT+：需要本地高频视觉推理时验证。
+3. Mac mini / N100 小主机：小批量家庭试点候选。
+4. 工控机：稳定性试点。
+5. 带 NPU 的低功耗盒子：产品化候选。
+6. 当前 M4 / 24GB Mac：开发对照和问题排查环境，不作为交付硬件。
 
 树莓派使用边界：
 
 - 适合验证开机自启、低功耗、散热、断网恢复和长期运行。
 - 适合低频抽帧、黑屏/离线/运动检测和轻量 YOLO。
-- 不应在当前阶段作为主算法开发机。
+- 适合当前阶段作为盒子侧主验证设备，但不作为重型算法训练或大模型开发机。
 - 不建议直接用 2880x1620 主码流跑高频 YOLO，应优先使用低分辨率子码流或抽帧降采样。
 - 如需更高频推理，再评估 AI HAT+、ONNX、NCNN、TFLite 或其他量化路线。
 
@@ -620,12 +1842,12 @@ P1 用户端：
 
 必须同时满足：
 
-- Mac 本地小盒子原型已稳定。
-- 云端事件和设备链路已跑通。
-- 注册、登录、家庭和设备绑定后端已可用。
-- H5/App 至少有一个家属端可用版本。
-- 页面端和 App 端实时画面都已打通。
-- 真实通知已经可用。
+- 树莓派盒子本地闭环已通过：自启、720p 拉流、事件、截图、预览、日志和报警测试。
+- `/setup` 纯配网页、`/admin` 开发管理模式、算法预览和日志诊断已可用。
+- 云端事件、设备身份、绑定、心跳、配置下发和媒体链路已跑通。
+- H5/App 至少有一个家属端可用版本，且不依赖局域网地址。
+- 页面端和 App 端实时画面都已通过鉴权链路打通。
+- 真实通知或报警通道已经可用。
 - 安装 SOP 和回收/排障流程已经写清楚。
 
 ## 11. 阶段 6：商业化运营
@@ -688,70 +1910,128 @@ P1 用户端：
 
 ## 12. 当前开发优先级
 
-现在不是直接做完整 App，也不是马上把主开发切到树莓派。当前重点是把 Mac 本地算力服务跑成一个可交付的小盒子原型。
+现在不是直接做完整 App，也不是马上铺完整云端。树莓派已经到位后，当前重点调整为：先把树莓派盒子侧做成可配网、可管理、可接摄像头、可演示、可诊断的本地视觉盒子。
 
 当前最合理顺序：
 
-1. 把 `connect.html` 做成真实的人可操作连接流程。
-2. 把 `rules.html` 接入真实规则 API。
-3. 把 `edge-agent` 的检测结果结构化，尤其是 YOLO 检测框、置信度、模型版本和规则命中原因。
-4. 跑通视频服务后台和页面端实时画面。
-5. 给管理台补摄像头编辑、禁用、删除和清理开发数据。
-6. 接入一个真实手机通知通道。
-7. 增加 Mac 本地服务的配置文件、日志轮转、开机自启和 watchdog。
-8. 新增云端数据模型草案和 API v1 草案。
-9. 先做注册、登录、家庭空间、设备绑定最小后端。
-10. 再做事件上报、媒体访问和实时画面鉴权。
-11. 再做 App / H5 用户端流程和实时画面能力。
-12. 输出 Raspberry Pi 部署验证文档，但等本地闭环稳定后再迁移验证。
-13. 推进算法模块化与后台可视化配置。
+1. 在树莓派上跑稳 `edge-agent` 前台启动、`systemd` 自启和单路 RTSP 摄像头。
+2. 把本地管理台重构为盒子开发管理模式，不再只是开发调试页。
+3. 新增手机优先的 `/setup` 纯配网页。
+4. 在 `/admin` 补齐算法预览能力，每次只选择一个算法看实时效果。
+5. 在 `/admin` 补齐日志诊断能力。
+6. 将算法预览覆盖到图像质量、人形检测、长时间无人、久坐/静止、跌倒候选、用餐候选、夜间活动、火灾候选、摄像头异常。
+7. 做高优先级报警测试和应急处置动作，至少覆盖跌倒候选和火灾候选。
+8. 做事件归并和频控，避免同类事件刷屏。
+9. 跑通一个真实通知或报警通道。
+10. 盒子侧稳定后，再进入最小云端：设备绑定、心跳、配置下发、事件和媒体上云。
+11. 最后调整正式 App/H5：安装模式和日常使用模式分开。
 
 ### 12.0 当前唯一主线
 
 为了避免并行失控，从现在开始只保留一条主线：
 
-- 先把本地 Mac 小盒子原型做成“可运行、可解释、可通知、可恢复”。
-- 然后补视频服务后台和云端最小用户/设备/事件平台。
-- 最后做家属端 App/H5、算法模块化和硬件试点。
+- 先把树莓派盒子做成“可安装、可配网、可接摄像头、可看算法预览、可报警、可诊断、可自启”。
+- 然后补最小服务器：设备绑定、心跳、配置下发、事件上云、媒体访问和通知。
+- 最后做家属端 App/H5：安装模式和日常模式分离，普通用户只看到状态、事件、规则和图文消息卡片。
 
 任何新需求如果不能直接推动这条主线，就延后。
 
-### 12.0.1 当前执行任务
+### 12.0.1 最新纠偏：先盒子，再服务器，再 App
+
+本轮根据树莓派到位、盒子配网、算法预览、动作识别和应急报警需求，执行顺序调整为：
+
+1. 盒子侧优先：
+   - 树莓派部署和自启
+   - Wi-Fi 热点配网方案
+   - 手机优先 `/setup` 纯配网页
+   - 本地 `/admin`
+   - 算法预览
+   - 日志诊断
+   - 高优先级报警和事件频控
+2. 服务器侧第二：
+   - 设备身份
+   - 绑定
+   - 心跳
+   - 配置下发
+   - 事件和媒体上云
+   - 正式通知
+3. App 前端最后：
+   - 安装模式
+   - 日常首页
+   - 事件和应急处理
+   - 简化规则开关
+   - 场景化图文消息卡片
+
+普通 App 不展示 RTSP 密码、底层模型阈值、算法原始输出和大段日志；这些能力留在盒子本地 `/admin` 或后续运维后台。
+
+### 12.0.2 当前执行任务
 
 当前正在执行的任务是：
 
-- 视频接入层稳态化与实时画面前置优化
+- 树莓派盒子侧能力收口
 
 本次任务目标：
 
-- 降低 RTSP 摄像头抓帧超时和 H.265 兼容性问题对主链路的影响。
-- 让单次抓图、后台抽帧和 MJPEG 实时预览具备更清晰的超时与降级策略。
-- 在不打断现有页面的前提下，为后续页面端实时画面和 App 实时画面打基础。
+- 基于树莓派真实环境，把盒子侧最短路径收成可反复安装和演示的闭环：`通电 -> 联网 -> 启动 edge-agent -> 接入摄像头 -> 算法预览 -> 事件报警 -> 日志诊断 -> 自启恢复`。
+- 新增或调整本地盒子页面，优先服务安装人员和现场演示，不把复杂调试能力塞进普通 App。
+- 明确动作识别、火灾候选和跌倒候选都先作为“候选检测 + 规则解释 + 应急动作”，不承诺医疗或消防级判断。
+- 在盒子侧稳定前，不继续扩张完整云端和正式 App 页面。
 
 本次任务不扩张到的范围：
 
-- 不在本轮同时处理云端绑定。
-- 不在本轮同时处理 App 推送。
-- 不在本轮同时重写现有页面展示结构。
-- 不在本轮同时处理完整 WebRTC/云视频服务。
+- 不在本轮同时继续扩张 Android 原生壳、FCM、多 topic 推送证书托管和商店发布流程。
+- 不在本轮做完整云端设备平台，只保留必要接口契约。
+- 不在本轮把 App 改成完整正式产品，只保留安装和演示所需入口。
+- 不在本轮承诺高精度动作识别或消防级火灾识别，只做演示级候选和报警流程。
+- 不在本轮同时把所有陪伴、消息和纪念模式页面做完。
 
 本次任务完成后，按顺序进入：
 
-1. 页面端实时画面能力。
-2. `connect.html` 的真实 RTSP 最终验收补记录。
-3. 最小云端 API v1 草案。
+1. 做一轮树莓派盒子侧真实冒烟验收，并沉淀固定安装演示顺序。
+2. 回到最小服务器：设备绑定、心跳、配置下发、事件和媒体上云。
+3. 再回到 App：安装模式、日常首页、事件应急处理和图文消息卡片。
+
+### 12.0.3 2026-07-03 算法路线纠偏
+
+本轮对算法路线做一次强制纠偏：先退回未验证的 YOLO Pose 实验，不把它作为主线继续扩；接下来按“视频性能 -> 姿态 POC -> 事件上报”的顺序推进。
+
+原因：
+
+- 当前页面卡顿和视频冻结的根因更可能是 RTSP 被多处打开、模型分析阻塞和分辨率/频率过高，继续叠加姿态模型会把问题放大。
+- 用户要的是实时演示命中，示意图和静态 GIF 只能辅助解释，不能替代当前摄像头画面上的检测结果。
+- 只靠人框无法支撑坐姿、半身、躺倒和动作解释，必须补骨架关键点或等价姿态结果。
+- Pi5 是当前主验证硬件，任何模型进入主线前必须通过 Pi5 上的帧率、延迟、温度和稳定性验证。
+
+新的执行顺序：
+
+1. 回退未验证的 YOLO Pose 代码实验，只保留已验证的 YOLO 人形检测和人体存在增强。
+2. 新增单路帧源缓存，让视频预览、截图和算法分析共享同一摄像头最新帧，避免重复打开 RTSP。
+3. 调整算法预览：预览流低频低码率，分析结果异步刷新，页面不能因为推理变慢而卡死。
+4. 接入 RTMLib + RTMPose POC，先输出骨架关键点、姿态摘要、坐/躺/倒地候选和置信度。
+5. 把跌倒、久坐/静止、用餐候选改成“人框 + 骨架 + 时间窗 + 场景规则”的组合判断。
+6. 将命中日志拆成三类：预览结果只给管理台看；跌倒/火灾/离线/黑屏进入正式事件；长时间无人/无变化进入生活观察区间。
+7. 打通 `DetectionResult -> RuleEvaluation -> EventCandidate -> Event -> UploadQueue` 和 `DetectionResult -> RuleEvaluation -> ObservationLog` 双链路，让后续 App 服务器能分别接收告警、截图 URL、结构化证据和老人日志。
+8. 用真实摄像头在 Pi5 上完成一次演示验收：框、骨架、命中状态、最近日志、事件截帧和报警测试都能解释清楚。
+
+模型和资料参考：
+
+- RTMLib：`https://github.com/Tau-J/rtmlib`
+- MMPose / RTMPose：`https://github.com/open-mmlab/mmpose`
+- ONNX Runtime：`https://onnxruntime.ai/`
+- Ultralytics Pose 备用：`https://docs.ultralytics.com/tasks/pose/`
 
 ### 12.1 近期两周建议排期
 
-第 1 批任务：稳定阶段 0
+第 1 批任务：跑通树莓派盒子本地闭环
 
-- 固化 Mac 本地算力服务运行方式。
-- 验证局域网 RTSP 摄像头预览、截图、事件列表。
-- 清理旧事件对本地验证的干扰。
-- 完成连接页、规则页真实接口接入。
-- 为 YOLO 结果增加检测框、置信度和模型版本字段。
-- 跑通页面端实时画面查看。
-- 管理台显示检测框和规则命中原因。
+- 在树莓派上部署当前代码，前台启动 `edge-agent`。
+- 安装 `systemd`，验证重启恢复。
+- 接入一路 H.264 / 720p RTSP 子码流，验证实时画面、截图和事件列表。
+- 新增单路帧源缓存，先解决实时画面卡顿、算法预览冻结和 RTSP 重复打开问题。
+- 清理旧事件对盒子验证的干扰，并补同类事件归并和频控。
+- 新增或补齐 `/setup` 手机配网页。
+- 新增或补齐 `/admin` 单算法预览。
+- 新增或补齐 `/admin` 日志诊断。
 
 第 2 批任务：建立产品化数据链
 
@@ -759,18 +2039,18 @@ P1 用户端：
 - 新增 `RuleEvaluation` 数据结构。
 - 新增 `EventCandidate` 数据结构。
 - 将 `Event` 从检测逻辑中拆出来，作为用户可见业务事件。
-- 设计实时画面会话和视频服务接口草案。
-- 输出云端 API v1 草案。
-- 明确注册、登录、家庭和设备绑定的数据模型。
+- 为 YOLO 和后续模型结果增加检测框、置信度、模型版本和规则解释字段。
+- 接入 RTMLib + RTMPose POC，输出骨架关键点、姿态摘要和跌倒候选依据；如果 Pi5 CPU 帧率不够，再切 MoveNet 或 Hailo 加速路线。
+- 补齐跌倒候选、火灾候选、用餐候选、久坐/静止、夜间活动、摄像头异常的演示级预览输出。
+- 设计实时画面会话、事件媒体和设备上报接口草案。
 
-第 3 批任务：准备商业化路径
+第 3 批任务：准备最小服务器和 App 承接
 
 - 选择一个临时通知通道并跑通手机接收。
-- 增加 Mac 开机自启、watchdog、日志轮转。
+- 补跌倒和火灾候选的测试报警、升级策略和应急动作。
 - 规划算法模块一算法一文件的工程拆分。
-- 先做最小用户后端和设备绑定链路，再进入正式 App。
-- 写硬件试点要求和安装 SOP 草案。
-- 写 Raspberry Pi 部署验证文档和脚本骨架。
+- 写树莓派安装 SOP、Wi-Fi 热点配网方案和现场演示顺序。
+- 先做最小设备后端、心跳、配置下发、事件和媒体上云，再进入正式 App。
 - 设计设备绑定码、设备 token、心跳上报草案。
 
 ### 12.2 近期不做清单
@@ -790,20 +2070,22 @@ P1 用户端：
 
 这份清单就是接下来实际开发的执行顺序：
 
-1. 跑通 `connect.html` 的真实摄像头接入。
-2. 跑通 `rules.html` 的真实规则保存。
-3. 跑通 `DetectionResult` 数据表和接口。
-4. 跑通 `RuleEvaluation` 数据表和接口。
-5. 跑通 `EventCandidate` 数据表和事件晋升逻辑。
-6. 跑通视频服务后台与页面端实时画面。
-7. 跑通真实 Bark / 飞书手机通知。
-8. 跑通 Mac 开机自启、watchdog、日志轮转、状态页。
-9. 跑通最小云端 `api/v1` 与注册、登录、设备身份、实时画面鉴权。
-10. 跑通设备绑定码和家庭绑定流程。
-11. 跑通 H5/App 家属端登录、首页、事件列表、事件详情、规则页、实时画面页。
-12. 跑通算法模块一算法一文件和后台算法配置。
-13. 跑通边缘盒试点部署。
-14. 跑通商业化交付与售后流程。
+1. 树莓派同步当前代码并跑通 `edge-agent` 前台启动。
+2. 树莓派安装并验证 `systemd` 自启、重启恢复和日志查看。
+3. 跑通单路 RTSP 摄像头接入，优先 H.264 / 720p 子码流。
+4. 做手机优先 `/setup` 纯配网页，只保留家庭 Wi-Fi 选择、密码输入、连接结果和回到 App / 管理端提示。
+5. 重构本地 `/admin` 为桌面 Web 开发管理台，主导航固定为：首页、摄像头配置、视觉算法。
+6. 收口 `/admin/cameras` 摄像头配置，只保留局域网扫描、选择扫描结果、填写 IP / 端口 / 用户名 / 密码、选择频道和主副码流、测试不保存、保存启用、启停和删除；默认频道 `1`、码流 `2`，生成 RTSP 路径 `/1/2`。
+7. 收口 `/admin/algorithms` 算法配置，只保留开关、阈值、模型版本和保存生效。
+8. 新增 `/admin` 算法预览能力，每次选择一个摄像头和一个算法。
+9. 第一批算法预览覆盖图像质量、人形检测、长时间无人、久坐/静止、疑似跌倒、用餐候选、夜间活动、火灾候选、摄像头异常。
+10. 新增 `/admin/alerts` 或等价报警配置页，覆盖跌倒和火灾候选的报警渠道、升级策略和测试报警。
+11. 新增 `/admin` 日志诊断能力，覆盖服务状态、拉流错误、检测错误、最近报警和诊断包导出。
+12. 跑通 `DetectionResult / RuleEvaluation / EventCandidate / Event / ObservationLog` 数据链，并补事件归并、生活观察聚合、频控和误报反馈。
+13. 跑通真实 Bark / 飞书 / Telegram / APNs relay 中至少一个报警通道。
+14. 盒子侧完成后，再进入最小服务器 `api/v1`：设备身份、绑定、心跳、配置下发、事件、媒体、实时画面鉴权。
+15. 最小服务器完成后，再调整 H5/App：安装模式、首页消息卡片、事件应急处理、简化规则页和实时查看。
+16. 最后再推进算法模块化、模型版本、样本闭环、边缘盒试点和商业化交付。
 
 ## 13. 风险和应对
 
@@ -856,3 +2138,43 @@ P1 用户端：
 应对：
 
 - 从现在开始按数据层、规则层、算法层、事件层、展示层拆分。
+
+## 14. 2026-07-05 下一阶段执行路线
+
+### 14.1 先做本地 App API 闭环
+
+当前树莓派已经具备摄像头接入、视觉预览、规则引擎、事件证据包和上传队列。下一步不继续把功能堆在 `/admin`，而是先搭一个局域网内可用的 App API：
+
+1. 新增本地服务器，先跑在 Mac 或局域网服务器上。
+2. 提供设备上报接口：
+   - `POST /api/v1/device/heartbeat`
+   - `POST /api/v1/device/events`
+   - `POST /api/v1/device/media-assets/upload`
+   - `GET /api/v1/device/config`
+3. 给边缘盒子配置：
+   - `GOHOME_APP_SERVER_BASE_URL`
+   - `GOHOME_DEVICE_API_TOKEN`
+4. 验证树莓派上传队列从 `pending` 变成 `completed`。
+5. App/H5 改为从服务器读取事件列表和证据图，而不是直接读取边缘端数据库或局域网盒子接口。
+
+### 14.2 视频与算法解耦
+
+为保证“画面流畅、算法实时、展示可信”，后续按两条链路推进：
+
+- 视频链路：优先保持低延迟预览，短期继续优化 MJPEG/OpenCV 的队列和缓存；中期切到 go2rtc / MediaMTX / WebRTC。
+- 算法链路：按固定抽帧频率运行 YOLO + RTMPose + 规则引擎，推理慢时丢弃旧帧，只处理最新帧，不阻塞视频预览。
+
+验收口径：
+
+- 视频预览不能因为算法推理耗时出现持续卡死。
+- 算法页展示必须明确当前算法、当前状态、命中依据、连续帧、置信度、模型版本。
+- 正式告警不能由单帧直接生成，必须经过规则引擎确认。
+
+### 14.3 算法继续做准的顺序
+
+优先级：
+
+1. 跌倒：继续扩大 UR Fall 样本，补坐下、弯腰、躺沙发、多人遮挡、低光负样本；正式事件使用状态机确认。
+2. 人体存在和骨架：保持 YOLO 人框 + RTMPose 骨架组合，预览页只展示当前算法相关证据，避免“所有算法看起来一样”。
+3. 火灾：从暖色区域规则升级为“暖色纹理 + 动态变化 + 连续帧 + 排除灯光/屏幕/阳光”的事件逻辑。
+4. 生活观察：用餐、久坐、长时间无变化优先作为观察日志，不默认升级高危告警。

@@ -171,6 +171,48 @@ class ObjectStorageService:
             "complete_url": f"/api/v1/media/upload-sessions/{session['id']}/complete?upload_token={token}",
         }
 
+    def store_device_media_bytes(
+        self,
+        *,
+        family_id: int,
+        device_id: str,
+        file_name: str,
+        content_type: str,
+        content_bytes: bytes,
+        source_snapshot_path: str,
+        snapshot_id: int | None = None,
+        event_id: int | None = None,
+        metadata: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        if not content_bytes:
+            raise HTTPException(status_code=400, detail="Media body is empty")
+        clean_source = str(source_snapshot_path or "").strip().lstrip("/")
+        if not clean_source:
+            raise HTTPException(status_code=400, detail="snapshot_path is required")
+        object_key = self.build_object_key(family_id=int(family_id), file_name=file_name)
+        target_path = self.object_path_from_key(object_key)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(content_bytes)
+        asset = self.storage.create_media_asset(
+            family_id=int(family_id),
+            device_id=str(device_id or "").strip(),
+            event_id=event_id,
+            snapshot_id=snapshot_id,
+            source_snapshot_path=clean_source,
+            object_key=object_key,
+            content_type=str(content_type or "application/octet-stream").strip() or "application/octet-stream",
+            byte_size=target_path.stat().st_size,
+            checksum_sha256=self.checksum_sha256(target_path),
+            provider=self.settings.object_storage_provider,
+            bucket=self.settings.object_storage_bucket,
+            metadata={
+                "source": "device-media-upload",
+                "file_name": self.sanitize_filename(file_name),
+                **(metadata or {}),
+            },
+        )
+        return self.media_asset_for_api(asset)
+
     def verify_upload_session_token(self, session_id: int, upload_token: str) -> Dict[str, Any]:
         payload = self.verify_token(upload_token)
         if payload.get("kind") != "upload":
