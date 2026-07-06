@@ -6469,3 +6469,75 @@ Chrome 页面级验证：
 1. 用真实摄像头 RTSP 地址走一遍同样路径，确认盒子端从 `configured/synced` 进一步进入真实抓帧与事件链路。
 2. 将摄像头管理页补一个“编辑接入信息”入口，避免用户改 RTSP 时必须删除重建。
 3. 跑真实事件上传验收，确认 `upload_jobs pending -> completed`。
+
+## 33. 2026-07-06 摄像头入口与守护页同步修复
+
+本轮根据手机端实际验证反馈，修复“找不到摄像头配置入口 / 设备管理没入口 / 回到守护页不同步”的产品路径问题。
+
+已完成：
+
+- `cameras.html`
+  - 手机端顶部新增明确的“添加摄像头”和“回守护”入口。
+  - 桌面端“添加新设备”改为“添加摄像头”，统一进入 App 摄像头配置页。
+- `assets/scripts/stitch-app-data.js`
+  - 摄像头卡片新增“配置”按钮，可进入 `connect.html?camera_id=...` 编辑已有摄像头。
+  - 空状态新增“添加摄像头”按钮。
+  - `connect.html` 支持新增和编辑两种模式：
+    - 新增时必须填写 IP / RTSP / 演示源。
+    - 编辑已有流配置时，RTSP、账号、密码留空表示保留服务器现有配置。
+    - 编辑缺配置的旧摄像头时，会提示补齐接入信息。
+- `monitor.html`
+  - 接入 `monitor-live.js`，守护页不再只显示静态示例卡。
+  - 新增“设备管理”入口。
+  - 快捷入口补齐“设备管理”。
+  - 顶部状态显示 App API / 家庭盒子同步状态。
+- `assets/scripts/monitor-live.js`
+  - 从 App API 读取摄像头列表并渲染到守护页。
+  - 在线摄像头显示“家庭盒子已接入并回传状态”。
+  - 缺少接入信息的摄像头显示“还缺少 RTSP / 摄像头接入信息”。
+  - 守护页链接会携带当前 `camera_id` 跳转到实时画面 / 规则 / 事件页。
+- `assets/scripts/stitch-app-routes.js`
+  - 修复旧路由脚本捕获 `add` 图标后跳到 `camera_intro.html` 的问题。
+  - 带 `data-action` 的业务按钮交给页面脚本处理。
+  - 摄像头管理页的“添加摄像头”统一进入 `connect.html`。
+
+Chrome 验证：
+
+- `cameras.html?app=1`
+  - 手机端可见“添加摄像头”和“回守护”。
+  - 摄像头卡片可见“配置 / 停用 / 删除 / 同步”。
+- 点击“添加摄像头”
+  - 正确进入 `connect.html?app=1`。
+  - 页面可见摄像头 IP / RTSP、端口、码流路径、账号、密码字段。
+- 点击旧摄像头“配置”
+  - 正确进入 `connect.html?camera_id=2&app=1`。
+  - 对缺配置摄像头提示补齐接入信息。
+- 打开已有流配置摄像头：
+  - `connect.html?camera_id=5&app=1`
+  - 页面显示“配置摄像头 / 保存并同步”。
+  - RTSP、账号、密码输入框为空，并提示“留空保留当前配置”。
+- `monitor.html?app=1`
+  - 页面显示 4 台 App API 摄像头。
+  - 在线摄像头显示“家庭盒子已接入并回传状态”。
+  - 顶部状态显示“服务在线 / YOLO 检测中”。
+  - 守护页“设备管理”入口可返回 `cameras.html?app=1`。
+
+本地验证：
+
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `node --check assets/scripts/monitor-live.js` 通过。
+- `node --check assets/scripts/stitch-app-routes.js` 通过。
+- `npm test` 通过。
+- `git diff --check` 通过。
+
+当前状态：
+
+- App 端摄像头配置、设备管理、守护页同步路径已经打通。
+- 旧数据中仍可能存在无 `stream_url` 的摄像头，页面会明确提示“还缺少 RTSP / 摄像头接入信息”。
+
+下一步：
+
+1. 用真实摄像头 RTSP 地址替换演示源跑一次全链路。
+2. 验证树莓派 worker 能真实拉流并产生检测摘要。
+3. 验证真实事件上传：`upload_jobs pending -> completed`。
+4. 本地闭环稳定后，再把 App API / 数据库迁移到云端 HTTPS 服务。

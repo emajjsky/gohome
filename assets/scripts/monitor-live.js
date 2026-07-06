@@ -11,6 +11,44 @@
         if (node) node.textContent = value;
     }
 
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function pageHref(path) {
+        return window.GoHomeEdge?.pageHref?.(path) || path;
+    }
+
+    function cameraSuffix(camera) {
+        return camera?.id ? `?camera_id=${encodeURIComponent(camera.id)}` : "";
+    }
+
+    function statusLabel(status) {
+        if (status === "online") return "在线";
+        if (status === "offline") return "离线";
+        if (status === "disabled") return "未启用";
+        return "待同步";
+    }
+
+    function statusTone(status) {
+        if (status === "online") return "good";
+        if (status === "offline") return "warn";
+        return "muted";
+    }
+
+    function statusText(camera) {
+        if (!camera) return "等待接入摄像头";
+        if (camera.status === "online") return "家庭盒子已接入并回传状态";
+        if (camera.status === "offline") return camera.last_error || "家庭盒子暂未回传画面";
+        if (!camera.has_stream_config) return "还缺少 RTSP / 摄像头接入信息";
+        return "等待家庭盒子同步配置并完成本地接入";
+    }
+
     function snapshotMessage(snapshot) {
         const tags = snapshot.tags || [];
         if (tags.includes("black_screen")) return "画面疑似黑屏或遮挡，建议打开详情确认一下";
@@ -20,7 +58,7 @@
                 ? `当前画面检测到 ${snapshot.person_count} 个人，未发现高优先级异常`
                 : "当前画面暂未检测到人，持续观察中";
         }
-        return "本机守护服务正在检测画面变化";
+        return "家庭盒子正在检测画面变化";
     }
 
     function statusTitle(snapshot) {
@@ -67,19 +105,119 @@
     function syncNavLinks() {
         const camera = selectedCamera();
         const suffix = camera?.id ? `?camera_id=${encodeURIComponent(camera.id)}` : "";
-        const watchHref = GoHomeEdge.pageHref(`watch.html${suffix}`) || `watch.html${suffix}`;
-        const detectionHref = GoHomeEdge.pageHref(`detection.html${suffix}`) || `detection.html${suffix}`;
-        const eventsHref = GoHomeEdge.pageHref(`events.html${suffix}`) || `events.html${suffix}`;
+        const watchHref = pageHref(`watch.html${suffix}`);
+        const detectionHref = pageHref(`detection.html${suffix}`);
+        const eventsHref = pageHref(`events.html${suffix}`);
+        const camerasHref = pageHref("cameras.html");
         const watchTop = $("edgeMonitorWatchTopLink");
         const watchPreview = $("edgeMonitorWatchPreviewLink");
         const detectionLink = $("edgeMonitorDetectionLink");
         const eventsLink = $("edgeMonitorEventsLink");
         const eventsNavLink = $("edgeMonitorNavEventsLink");
+        const deviceLink = $("edgeMonitorDeviceLink");
         if (watchTop) watchTop.href = watchHref;
         if (watchPreview) watchPreview.href = watchHref;
         if (detectionLink) detectionLink.href = detectionHref;
         if (eventsLink) eventsLink.href = eventsHref;
         if (eventsNavLink) eventsNavLink.href = eventsHref;
+        if (deviceLink) deviceLink.href = camerasHref;
+    }
+
+    function emptyCameraGrid() {
+        return `
+            <div class="bg-surface-container-lowest rounded-xl ambient-shadow p-5 md:col-span-2">
+                <div class="flex items-start gap-4">
+                    <div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center shrink-0">
+                        <span class="material-symbols-outlined text-on-primary-fixed-variant">linked_camera</span>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h4 id="edgeCameraRoom" class="font-headline-md text-headline-md text-on-background">还没有接入摄像头</h4>
+                        <p id="edgeUpdateTime" class="font-body-md text-sm text-on-surface-variant mt-1">App 提交配置后，家庭盒子会自动同步。</p>
+                        <p id="edgeMainMessage" class="font-body-md text-body-md text-on-surface mt-3">先在设备管理里添加摄像头接入信息。</p>
+                        <div class="flex flex-wrap gap-2 mt-4">
+                            <span id="edgeFact" class="app-mini-pill muted">未接入</span>
+                            <span id="edgeFeeling" class="app-mini-pill muted">待接入</span>
+                            <span id="edgeNext" class="app-mini-pill warn">添加摄像头</span>
+                            <span id="edgeBrightness" class="app-mini-pill muted">等待画面</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 mt-5">
+                            <a class="min-h-11 inline-flex items-center justify-center rounded-full bg-primary text-on-primary font-label-md text-label-md" href="${pageHref("connect.html")}">添加摄像头</a>
+                            <a class="min-h-11 inline-flex items-center justify-center rounded-full bg-surface-container-low text-on-surface font-label-md text-label-md" href="${pageHref("cameras.html")}">设备管理</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function cameraCard(camera, index, active) {
+        const image = ["08-b67c5310d5.jpg", "11-f593aca78d.jpg", "24-125d3cfee1.jpg"][index % 3];
+        const suffix = cameraSuffix(camera);
+        const watchHref = pageHref(`watch.html${suffix}`);
+        const editHref = pageHref(`connect.html${suffix}`);
+        const tone = statusTone(camera.status);
+        const liveClass = camera.status === "online" ? "bg-error text-on-error" : "bg-surface/90 text-on-surface";
+        const activeAttrs = active
+            ? {
+                previewId: "edgeMonitorWatchPreviewLink",
+                imageId: "edgeSnapshotImage",
+                roomId: "edgeCameraRoom",
+                updateId: "edgeUpdateTime",
+                messageId: "edgeMainMessage",
+                factId: "edgeFact",
+                feelingId: "edgeFeeling",
+                nextId: "edgeNext",
+                brightnessId: "edgeBrightness",
+            }
+            : {};
+        return `
+            <article class="bg-surface-container-lowest rounded-xl overflow-hidden ambient-shadow relative">
+                <a ${activeAttrs.previewId ? `id="${activeAttrs.previewId}"` : ""} href="${watchHref}" class="block aspect-video w-full bg-surface-variant relative overflow-hidden">
+                    <img ${activeAttrs.imageId ? `id="${activeAttrs.imageId}"` : ""} class="absolute inset-0 w-full h-full object-cover ${camera.status === "online" ? "" : "grayscale"}" src="assets/stitch-images/${image}" alt="${escapeHtml(camera.name || "摄像头")}"/>
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20"></div>
+                    <div class="absolute top-3 left-3 ${liveClass} px-2 py-1 rounded-md flex items-center gap-1">
+                        <div class="w-2 h-2 rounded-full ${camera.status === "online" ? "bg-on-error animate-pulse" : "bg-outline"}"></div>
+                        <span class="font-label-md text-label-md text-xs">${camera.status === "online" ? "LIVE" : statusLabel(camera.status)}</span>
+                    </div>
+                    <div class="absolute bottom-3 left-3 right-3 text-white">
+                        <h4 class="font-label-md text-label-md truncate">${escapeHtml(camera.room || camera.name || "摄像头")}</h4>
+                        <p class="font-body-md text-sm opacity-80 truncate">${escapeHtml(statusText(camera))}</p>
+                    </div>
+                </a>
+                <div class="p-4 space-y-3">
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                            <h4 ${activeAttrs.roomId ? `id="${activeAttrs.roomId}"` : ""} class="font-headline-md text-headline-md text-on-background truncate">${escapeHtml(camera.room || camera.name || "摄像头")}</h4>
+                            <p ${activeAttrs.updateId ? `id="${activeAttrs.updateId}"` : ""} class="font-body-md text-sm text-on-surface-variant">${escapeHtml(statusText(camera))}</p>
+                        </div>
+                        <span class="app-mini-pill ${tone}">${statusLabel(camera.status)}</span>
+                    </div>
+                    <p ${activeAttrs.messageId ? `id="${activeAttrs.messageId}"` : ""} class="font-body-md text-body-md text-on-surface">${escapeHtml(statusText(camera))}</p>
+                    <div class="flex flex-wrap gap-2">
+                        <span ${activeAttrs.factId ? `id="${activeAttrs.factId}"` : ""} class="app-mini-pill muted">等待检测</span>
+                        <span ${activeAttrs.feelingId ? `id="${activeAttrs.feelingId}"` : ""} class="app-mini-pill ${tone}">${statusLabel(camera.status)}</span>
+                        <span ${activeAttrs.nextId ? `id="${activeAttrs.nextId}"` : ""} class="app-mini-pill muted">继续观察</span>
+                        <span ${activeAttrs.brightnessId ? `id="${activeAttrs.brightnessId}"` : ""} class="app-mini-pill muted">等待亮度</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <a class="min-h-10 inline-flex items-center justify-center rounded-lg bg-primary-container text-on-primary-container font-label-md text-label-md" href="${editHref}">配置</a>
+                        <a class="min-h-10 inline-flex items-center justify-center rounded-lg bg-surface-container-low text-on-surface font-label-md text-label-md" href="${watchHref}">看画面</a>
+                    </div>
+                </div>
+            </article>
+        `;
+    }
+
+    function renderCameraGrid(camera) {
+        const grid = $("edgeMonitorCameraGrid");
+        if (!grid) return;
+        if (!state.cameras.length) {
+            grid.innerHTML = emptyCameraGrid();
+            return;
+        }
+        grid.innerHTML = state.cameras
+            .map((item, index) => cameraCard(item, index, Number(item.id) === Number(camera?.id)))
+            .join("");
     }
 
     async function attachMonitorStream(camera) {
@@ -106,19 +244,21 @@
                 ? requested
                 : (preferredCamera(state.cameras)?.id || null);
             syncSelectedCameraParam(state.selectedCameraId);
-            syncNavLinks();
             const camera = selectedCamera();
+            renderCameraGrid(camera);
+            syncNavLinks();
 
             setText("edgeDeviceStatus", device.worker_running ? "服务在线" : "服务暂停");
             setText("edgeDetector", device.detector_backend === "yolo" ? "YOLO 检测中" : "基础检测中");
 
             if (!camera) {
                 setText("edgeStatusTitle", "还没有摄像头");
-                setText("edgeStatusText", "先在本机守护服务里添加 local:0 或 RTSP 摄像头。");
+                setText("edgeStatusText", "先在设备管理里添加摄像头接入信息。");
                 setText("edgeMainMessage", "还没有接入摄像头");
                 setText("edgeFact", "接入摄像头后查看检测细节。");
                 setText("edgeFeeling", "待接入");
                 setText("edgeNext", "添加摄像头");
+                setText("edgeBrightness", "等待画面");
                 setPillTone("edgeFeeling", "muted");
                 setPillTone("edgeNext", "warn");
                 return;
@@ -145,7 +285,7 @@
             setText("edgeUpdateTime", `${GoHomeEdge.fmtTime(snapshot.captured_at)} 更新`);
             setText("edgeMainMessage", snapshotMessage(snapshot));
             setText("edgeStatusTitle", statusTitle(snapshot));
-            setText("edgeStatusText", camera.status === "online" ? "本机守护服务正在运行。" : "摄像头当前不在线。");
+            setText("edgeStatusText", camera.status === "online" ? "家庭盒子正在运行并回传状态。" : "摄像头当前不在线。");
             setText("edgeFact", snapshot.person_count === null || snapshot.person_count === undefined ? "画面正常" : `${snapshot.person_count} 人`);
             setText("edgeFeeling", (snapshot.tags || []).length ? "需要看一眼" : "家里平稳");
             setText("edgeNext", (snapshot.tags || []).includes("fall_candidate") ? "立即联系" : "继续观察");
@@ -167,9 +307,9 @@
             }
             setText("edgeDeviceStatus", "未连接");
             setText("edgeDetector", "等待服务");
-            setText("edgeStatusTitle", "本机服务未连接");
-            setText("edgeStatusText", "启动 edge-agent 后，这里会自动切换成真实画面。");
-            setText("edgeMainMessage", error.message || "本机守护服务未连接");
+            setText("edgeStatusTitle", "App 服务未连接");
+            setText("edgeStatusText", "启动 App API 后，这里会自动读取家庭盒子回传状态。");
+            setText("edgeMainMessage", error.message || "App 服务未连接");
             setText("edgeFact", "连接服务后查看检测细节。");
             setText("edgeFeeling", "未连接");
             setText("edgeNext", "启动服务");

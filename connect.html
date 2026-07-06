@@ -149,10 +149,10 @@
 <body class="bg-background text-on-background min-h-screen flex flex-col font-body-md antialiased selection:bg-primary-container selection:text-on-primary-container">
 <!-- TopAppBar - Suppressed main nav, using back button for transactional flow -->
 <header class="bg-surface sticky top-0 z-40 w-full px-margin-page py-4 flex items-center justify-between shadow-[0_4px_12px_rgba(0,0,0,0.02)]">
-<button class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-low transition-colors text-on-surface-variant active:scale-95">
+<button type="button" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-low transition-colors text-on-surface-variant active:scale-95" onclick="history.length > 1 ? history.back() : location.href='cameras.html'">
 <span class="material-symbols-outlined text-[24px]">arrow_back</span>
 </button>
-<h1 class="font-headline-md text-headline-md font-bold text-on-surface">添加摄像头</h1>
+<h1 id="cameraConfigTitle" class="font-headline-md text-headline-md font-bold text-on-surface">添加摄像头</h1>
 <div class="w-10 h-10"></div> <!-- Spacer for centering -->
 </header>
 <main class="flex-1 overflow-y-auto pb-24">
@@ -162,7 +162,7 @@
 <!-- Placeholder for camera hardware illustration -->
 <div class="w-full h-full bg-cover bg-center" data-alt="A clean, minimalist 3D rendering of a modern white smart home security camera on a soft, warm cream background. The lighting is soft and studio-like, emphasizing the smooth curves and premium build quality of the device, fitting a dignified, high-end corporate aesthetic." style="background-image: url('assets/stitch-images/07-4ca547aed1.jpg')"></div>
 </div>
-<h2 class="font-headline-md text-headline-md text-primary mb-2 text-center">提交给家庭盒子接入</h2>
+<h2 id="cameraConfigHeroTitle" class="font-headline-md text-headline-md text-primary mb-2 text-center">提交给家庭盒子接入</h2>
 <p class="font-body-md text-body-md text-on-surface-variant text-center max-w-[280px]">App 只负责命名和房间配置，摄像头由家庭盒子在老人家网络内接入。</p>
 </div>
 <div class="px-margin-page py-stack-md space-y-stack-lg">
@@ -327,5 +327,5 @@
 </script>
 <script src="assets/scripts/edge-client.js?v=20260706-config-flow-1"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260706-config-flow-1"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260706-route-action-1"></script>
 </body></html>

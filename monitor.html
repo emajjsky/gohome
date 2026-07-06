@@ -108,6 +108,50 @@
         .ambient-shadow {
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
         }
+        .app-mini-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 24px;
+            padding: 4px 9px;
+            border-radius: 9999px;
+            background: rgba(108, 111, 147, 0.09);
+            color: #004883;
+            font-size: 10px;
+            font-weight: 700;
+            white-space: nowrap;
+            border: 1px solid rgba(108, 111, 147, 0.06);
+        }
+        .app-mini-pill.good {
+            background: rgba(45, 125, 92, 0.1);
+            color: #2d7d5c;
+        }
+        .app-mini-pill.warn {
+            background: rgba(182, 110, 63, 0.1);
+            color: #b66e3f;
+        }
+        .app-mini-pill.muted {
+            background: rgba(122, 116, 124, 0.08);
+            color: #6f6872;
+        }
+        .app-story-icon {
+            width: 46px;
+            height: 46px;
+            border-radius: 9999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(45, 125, 92, 0.1);
+            color: #2d7d5c;
+        }
+        .app-story-icon.warn {
+            background: rgba(182, 110, 63, 0.1);
+            color: #b66e3f;
+        }
+        .app-story-icon.good {
+            background: rgba(45, 125, 92, 0.1);
+            color: #2d7d5c;
+        }
     </style>
 <style>
     body {
@@ -173,9 +217,15 @@
 <div class="absolute inset-4 rounded-full border-4 border-tertiary-container"></div>
 <!-- Status Content -->
 <div class="z-10 flex flex-col items-center text-center">
-<span class="material-symbols-outlined text-4xl text-tertiary-container mb-2" style="font-variation-settings: 'FILL' 1;">health_and_safety</span>
-<h2 class="font-headline-lg-mobile text-headline-lg-mobile text-on-background">家中平稳</h2>
-<p class="font-body-md text-body-md text-on-surface-variant mt-1">守护运行中</p>
+<span id="edgeStatusIcon" class="app-story-icon good mb-2">
+<span class="material-symbols-outlined text-3xl" style="font-variation-settings: 'FILL' 1;">health_and_safety</span>
+</span>
+<h2 id="edgeStatusTitle" class="font-headline-lg-mobile text-headline-lg-mobile text-on-background">正在同步</h2>
+<p id="edgeStatusText" class="font-body-md text-body-md text-on-surface-variant mt-1">正在读取家庭盒子回传状态</p>
+<div class="flex items-center justify-center gap-2 mt-4">
+<span id="edgeDeviceStatus" class="app-mini-pill muted">连接中</span>
+<span id="edgeDetector" class="app-mini-pill muted">检测中</span>
+</div>
 </div>
 </div>
 </section>
@@ -183,8 +233,12 @@
 <section class="flex flex-col gap-gutter-card">
 <div class="flex justify-between items-end mb-2">
 <h3 class="font-headline-md text-headline-md text-on-background">实时画面</h3>
+<a id="edgeMonitorDeviceLink" class="inline-flex items-center gap-1 rounded-full bg-surface-container-low px-3 py-2 text-primary font-label-md text-label-md" href="cameras.html">
+<span class="material-symbols-outlined text-[18px]">settings</span>
+设备管理
+</a>
 </div>
-<div class="grid grid-cols-1 md:grid-cols-2 gap-gutter-card">
+<div id="edgeMonitorCameraGrid" class="grid grid-cols-1 md:grid-cols-2 gap-gutter-card">
 <!-- Camera 1: Living Room -->
 <div class="bg-surface-container-lowest rounded-xl overflow-hidden ambient-shadow relative group cursor-pointer">
 <div class="aspect-video w-full bg-surface-variant relative overflow-hidden">
@@ -224,25 +278,31 @@
 </div>
 </section>
 <!-- Quick Actions Bento -->
-<section class="grid grid-cols-3 gap-gutter-card pb-8">
-<button class="flex flex-col items-center justify-center p-4 bg-surface-container-lowest rounded-xl ambient-shadow hover:bg-surface-container-low transition-colors group">
+<section class="grid grid-cols-2 sm:grid-cols-4 gap-gutter-card pb-8">
+<a id="edgeMonitorWatchTopLink" href="watch.html" class="flex flex-col items-center justify-center p-4 bg-surface-container-lowest rounded-xl ambient-shadow hover:bg-surface-container-low transition-colors group">
 <div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
 <span class="material-symbols-outlined text-on-primary-fixed-variant" style="font-variation-settings: 'FILL' 1;">videocam</span>
 </div>
 <span class="font-label-md text-label-md text-on-surface">实时画面</span>
-</button>
-<button class="flex flex-col items-center justify-center p-4 bg-surface-container-lowest rounded-xl ambient-shadow hover:bg-surface-container-low transition-colors group">
+</a>
+<a id="edgeMonitorEventsLink" href="events.html" class="flex flex-col items-center justify-center p-4 bg-surface-container-lowest rounded-xl ambient-shadow hover:bg-surface-container-low transition-colors group">
 <div class="w-12 h-12 rounded-full bg-secondary-fixed flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
 <span class="material-symbols-outlined text-on-secondary-fixed-variant" style="font-variation-settings: 'FILL' 1;">list_alt</span>
 </div>
 <span class="font-label-md text-label-md text-on-surface">事件列表</span>
-</button>
-<button class="flex flex-col items-center justify-center p-4 bg-surface-container-lowest rounded-xl ambient-shadow hover:bg-surface-container-low transition-colors group">
+</a>
+<a id="edgeMonitorDetectionLink" href="detection.html" class="flex flex-col items-center justify-center p-4 bg-surface-container-lowest rounded-xl ambient-shadow hover:bg-surface-container-low transition-colors group">
 <div class="w-12 h-12 rounded-full bg-secondary-fixed flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
 <span class="material-symbols-outlined text-on-secondary-fixed-variant" style="font-variation-settings: 'FILL' 1;">settings_suggest</span>
 </div>
 <span class="font-label-md text-label-md text-on-surface">规则设置</span>
-</button>
+</a>
+<a href="cameras.html" class="flex flex-col items-center justify-center p-4 bg-surface-container-lowest rounded-xl ambient-shadow hover:bg-surface-container-low transition-colors group">
+<div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
+<span class="material-symbols-outlined text-on-primary-fixed-variant" style="font-variation-settings: 'FILL' 1;">linked_camera</span>
+</div>
+<span class="font-label-md text-label-md text-on-surface">设备管理</span>
+</a>
 </section>
 </main>
 <!-- BottomNavBar (Mobile Only) -->
@@ -305,7 +365,8 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/edge-client.js?v=20260706-monitor-sync-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260706-monitor-sync-1"></script>
+<script src="assets/scripts/monitor-live.js?v=20260706-monitor-sync-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260706-route-action-1"></script>
 </body></html>

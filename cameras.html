@@ -159,9 +159,21 @@
 <!-- Main Content -->
 <main class="flex-grow w-full max-w-screen-xl mx-auto px-margin-page py-stack-md flex flex-col gap-stack-lg">
 <!-- Header Section -->
-<section class="flex flex-col gap-stack-sm">
+<section class="flex flex-col md:flex-row md:items-end md:justify-between gap-stack-sm">
+<div class="space-y-2">
 <h2 class="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg text-on-background">设备管理</h2>
 <p class="font-body-md text-body-md text-on-surface-variant">查看家庭盒子同步回来的摄像头状态，App 不直接连接摄像头。</p>
+</div>
+<div class="grid grid-cols-2 gap-2 md:flex md:justify-end">
+<button id="cameraAddButton" data-action="add" class="min-h-11 inline-flex items-center justify-center gap-2 rounded-full bg-primary px-4 py-2 text-on-primary font-label-md text-label-md shadow-lg">
+<span class="material-symbols-outlined text-[20px]">add</span>
+添加摄像头
+</button>
+<button id="cameraMonitorButton" data-action="monitor" class="min-h-11 inline-flex items-center justify-center gap-2 rounded-full bg-surface-container-low px-4 py-2 text-on-surface font-label-md text-label-md">
+<span class="material-symbols-outlined text-[20px]">security</span>
+回守护
+</button>
+</div>
 </section>
 <!-- Device Grid -->
 <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-gutter-card">
@@ -258,9 +270,9 @@
 </section>
 <!-- Add Device FAB (Desktop) -->
 <div class="hidden md:flex justify-end mt-stack-md">
-<button class="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-full font-label-md text-label-md hover:opacity-90 transition-opacity shadow-lg">
+<button data-action="add" class="flex items-center gap-2 bg-primary text-on-primary px-6 py-3 rounded-full font-label-md text-label-md hover:opacity-90 transition-opacity shadow-lg">
 <span class="material-symbols-outlined">add</span>
-                添加新设备
+                添加摄像头
             </button>
 </div>
 </main>
@@ -322,5 +334,5 @@
 </script>
 <script src="assets/scripts/edge-client.js?v=20260706-config-flow-1"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260706-config-flow-1"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260706-route-action-1"></script>
 </body></html>

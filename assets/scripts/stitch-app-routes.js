@@ -51,8 +51,8 @@
       ["下一步", "cameras.html"]
     ],
     "cameras.html": [
-      ["添加新设备", "camera_intro.html"],
-      ["添加摄像头", "camera_intro.html"],
+      ["添加新设备", "connect.html"],
+      ["添加摄像头", "connect.html"],
       ["重新连接", "connect.html"],
       ["规则设置", "rules.html"],
       ["查看", "watch.html"]
@@ -120,7 +120,7 @@
   const globalRoutes = [
     ["设备管理", "cameras.html"],
     ["添加设备", "camera_intro.html"],
-    ["添加摄像头", "camera_intro.html"],
+    ["添加摄像头", "connect.html"],
     ["家庭成员", "family_members.html"],
     ["通知设置", "notifications.html"],
     ["隐私与数据", "privacy_data.html"],
@@ -153,6 +153,7 @@
   const routeFor = (item) => {
     if (!item || item.disabled || item.getAttribute("aria-disabled") === "true") return null;
     if (item.tagName === "BUTTON" && item.type === "submit" && item.form) return null;
+    if (item.dataset.action && !item.dataset.route) return null;
 
     const explicit = item.dataset.route;
     if (explicit) return explicit;

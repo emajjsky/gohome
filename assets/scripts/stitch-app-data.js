@@ -7,6 +7,7 @@
   const state = {
     connected: false,
     families: [],
+    editingCamera: null,
   };
 
   const mainTabPages = new Set([
@@ -217,6 +218,10 @@
     return new URLSearchParams(window.location.search).get("family_id") || state.families[0]?.id || 1;
   }
 
+  function currentCameraId() {
+    return new URLSearchParams(window.location.search).get("camera_id") || "";
+  }
+
   function wireDeviceBinding() {
     const buttons = $$("button").filter((item) => /扫描包装二维码|手动输入序列号|稍后设置/.test(item.innerText || ""));
     buttons.forEach((button) => {
@@ -252,11 +257,11 @@
     else node.classList.add("text-on-surface-variant");
   }
 
-  function setCameraSubmitBusy(button, busy) {
+  function setCameraSubmitBusy(button, busy, editing = false) {
     if (!button) return;
     button.disabled = busy;
     button.classList.toggle("opacity-70", busy);
-    button.textContent = busy ? "正在提交..." : "提交给家庭盒子同步";
+    button.textContent = busy ? "正在提交..." : (editing ? "保存并同步" : "提交给家庭盒子同步");
   }
 
   function normalizeCameraPath(value) {
@@ -279,25 +284,87 @@
     return `rtsp://${hostOrUrl}:${port}${path}`;
   }
 
-  function cameraPayloadFromConnectForm() {
+  function cameraPayloadFromConnectForm({ editing = false, existing = null } = {}) {
     const room = checkedRoom();
     const username = $("#cameraUsernameInput")?.value.trim() || "";
     const password = $("#cameraPasswordInput")?.value || "";
-    return {
+    const hostOrUrl = $("#cameraHostInput")?.value.trim() || "";
+    const payload = {
       family_id: currentFamilyId(),
       name: $("#cameraNameInput")?.value.trim() || `${room}摄像头`,
       room,
-      stream_url: cameraStreamUrlFromInputs(),
-      username: username || null,
-      password: password || null,
       enabled: true,
       status: "pending_edge_sync",
       sync_status: "pending_edge_sync",
       source: "app_server_config",
     };
+
+    if (hostOrUrl) {
+      payload.stream_url = cameraStreamUrlFromInputs();
+    } else if (!editing || !existing?.has_stream_config) {
+      throw new Error("请填写摄像头 IP 或 RTSP 地址。");
+    }
+
+    if (!editing || username) payload.username = username || null;
+    if (!editing || password) payload.password = password || null;
+    return payload;
+  }
+
+  function setCheckedRoom(room) {
+    const target = String(room || "").trim();
+    if (!target) return;
+    const match = $$("input[name='location']").find((input) => {
+      const label = $(`label[for='${input.id}']`);
+      return label && text(label.innerText) === text(target);
+    });
+    if (match) match.checked = true;
+  }
+
+  async function hydrateConnectEditMode() {
+    const cameraId = currentCameraId();
+    if (!cameraId) return null;
+    if (!(await ensureApi())) return null;
+    const cameras = await GoHomeEdge.cameras();
+    const camera = cameras.find((item) => String(item.id) === String(cameraId));
+    if (!camera) {
+      setCameraFeedback("没有找到这台摄像头，可以重新添加。", "error");
+      return null;
+    }
+    state.editingCamera = camera;
+    const title = $("#cameraConfigTitle");
+    const heroTitle = $("#cameraConfigHeroTitle");
+    const submit = $("#cameraSubmitButton");
+    if (title) title.textContent = "配置摄像头";
+    if (heroTitle) heroTitle.textContent = "更新家庭盒子接入信息";
+    if (submit) submit.textContent = "保存并同步";
+    const nameInput = $("#cameraNameInput");
+    if (nameInput) nameInput.value = camera.name || "";
+    setCheckedRoom(camera.room);
+    const hostInput = $("#cameraHostInput");
+    const usernameInput = $("#cameraUsernameInput");
+    const passwordInput = $("#cameraPasswordInput");
+    if (hostInput) {
+      hostInput.value = "";
+      hostInput.placeholder = camera.has_stream_config
+        ? "留空保留当前 RTSP 配置，或填写新地址"
+        : "请填写摄像头 IP 或 rtsp:// 地址";
+    }
+    if (usernameInput) {
+      usernameInput.value = "";
+      usernameInput.placeholder = camera.password_set ? "留空保留当前账号" : "admin";
+    }
+    if (passwordInput) {
+      passwordInput.value = "";
+      passwordInput.placeholder = camera.password_set ? "留空保留当前密码" : "摄像头密码";
+    }
+    setCameraFeedback(camera.has_stream_config
+      ? "当前摄像头已有接入配置。只改名称/位置时，RTSP 和密码可以留空。"
+      : "这台摄像头还缺少接入信息，请补齐后同步给家庭盒子。");
+    return camera;
   }
 
   function wireConnect() {
+    hydrateConnectEditMode().catch((error) => setCameraFeedback(error.message || "读取摄像头失败", "error"));
     const clearName = $("[data-clear-camera-name]");
     clearName?.addEventListener("click", (event) => {
       event.preventDefault();
@@ -318,19 +385,23 @@
       event.preventDefault();
       event.stopImmediatePropagation();
       if (!(await ensureApi())) return;
+      const editing = Boolean(currentCameraId());
       try {
-        setCameraSubmitBusy(action, true);
-        setCameraFeedback("正在保存配置并等待家庭盒子同步...");
-        const camera = await GoHomeEdge.createCamera(cameraPayloadFromConnectForm());
+        setCameraSubmitBusy(action, true, editing);
+        setCameraFeedback(editing ? "正在更新配置并等待家庭盒子同步..." : "正在保存配置并等待家庭盒子同步...");
+        const payload = cameraPayloadFromConnectForm({ editing, existing: state.editingCamera });
+        const camera = editing
+          ? await GoHomeEdge.updateCamera(currentCameraId(), payload)
+          : await GoHomeEdge.createCamera(payload);
         await GoHomeEdge.testCamera(camera.id).catch(() => null);
-        toast("已提交给家庭盒子");
+        toast(editing ? "已更新并提交同步" : "已提交给家庭盒子");
         setCameraFeedback("已提交。家庭盒子会在 10 秒内拉取配置并回传状态。", "success");
         window.setTimeout(() => go(`cameras.html?camera_id=${camera.id}`), 420);
       } catch (error) {
         setCameraFeedback(error.message || "添加失败", "error");
         toast(error.message || "添加失败", "error");
       } finally {
-        setCameraSubmitBusy(action, false);
+        setCameraSubmitBusy(action, false, editing);
       }
     }, true);
   }
@@ -368,15 +439,18 @@
               <h3 class="font-headline-md text-headline-md text-on-background">${escapeHtml(camera.name || "摄像头")}</h3>
               <p class="font-body-md text-body-md text-on-surface-variant">${escapeHtml(camera.room || "未设置")} · ${escapeHtml(state.detail)}</p>
             </div>
-            <button aria-label="同步状态" class="p-2 rounded-full hover:bg-surface-container-low text-primary" data-action="sync" data-id="${camera.id}">
+            <button aria-label="同步状态" class="p-2 rounded-full hover:bg-surface-container-low text-primary shrink-0" data-action="sync" data-id="${camera.id}">
               <span class="material-symbols-outlined">sync</span>
             </button>
           </div>
-          <div class="flex gap-2 mt-auto">
-            <button class="flex-1 py-2 px-3 rounded-lg bg-surface-container-low text-on-surface font-label-md text-label-md" data-action="toggle" data-id="${camera.id}">
+          <div class="grid grid-cols-3 gap-2 mt-auto">
+            <button class="min-h-10 py-2 px-2 rounded-lg bg-primary-container text-on-primary-container font-label-md text-label-md" data-action="edit" data-id="${camera.id}">
+              配置
+            </button>
+            <button class="min-h-10 py-2 px-2 rounded-lg bg-surface-container-low text-on-surface font-label-md text-label-md" data-action="toggle" data-id="${camera.id}">
               ${camera.enabled ? "停用" : "启用"}
             </button>
-            <button class="flex-1 py-2 px-3 rounded-lg bg-[#fff4f1] text-[#93000a] font-label-md text-label-md" data-action="delete" data-id="${camera.id}">
+            <button class="min-h-10 py-2 px-2 rounded-lg bg-[#fff4f1] text-[#93000a] font-label-md text-label-md" data-action="delete" data-id="${camera.id}">
               删除
             </button>
           </div>
@@ -392,7 +466,13 @@
     const cameras = await GoHomeEdge.cameras();
     grid.innerHTML = cameras.length
       ? cameras.map(cameraCard).join("")
-      : `<div class="bg-surface-container-lowest rounded-2xl p-6 text-center text-on-surface-variant">还没有摄像头，点击下方添加新设备。</div>`;
+      : `<div class="bg-surface-container-lowest rounded-2xl p-6 text-center text-on-surface-variant md:col-span-2 lg:col-span-3">
+          <p class="mb-4">还没有摄像头，先在 App 里提交摄像头接入信息。</p>
+          <button class="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-5 py-3 text-on-primary font-label-md text-label-md" data-action="add">
+            <span class="material-symbols-outlined text-[20px]">add</span>
+            添加摄像头
+          </button>
+        </div>`;
   }
 
   function wireCameras() {
@@ -405,7 +485,16 @@
       event.stopImmediatePropagation();
       const id = button.dataset.id;
       try {
-        if (button.dataset.action === "delete") {
+        if (button.dataset.action === "add") {
+          go("connect.html");
+          return;
+        } else if (button.dataset.action === "monitor") {
+          go("monitor.html");
+          return;
+        } else if (button.dataset.action === "edit") {
+          go(`connect.html?camera_id=${encodeURIComponent(id)}`);
+          return;
+        } else if (button.dataset.action === "delete") {
           await GoHomeEdge.deleteCamera(id);
           toast("已删除摄像头");
         } else if (button.dataset.action === "toggle") {
