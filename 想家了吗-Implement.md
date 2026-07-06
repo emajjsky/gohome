@@ -6541,3 +6541,99 @@ Chrome 验证：
 2. 验证树莓派 worker 能真实拉流并产生检测摘要。
 3. 验证真实事件上传：`upload_jobs pending -> completed`。
 4. 本地闭环稳定后，再把 App API / 数据库迁移到云端 HTTPS 服务。
+
+## 34. 2026-07-06 本地 App API 实时画面闭环修复
+
+本轮根据手机端反馈，修复“在线但没画面 / 守护页回来看不到同步 / 页面用假图误导 / 布局溢出”的问题。
+
+已完成：
+
+- `local-app-server/server.js`
+  - `POST /api/v1/device/sync` 入库时保存盒子的 `lan_url / service_url`。
+  - 摄像头同步入库时保存 `local_camera_id`，用于把 App 端 camera id 映射到树莓派本地 camera id。
+  - `GET /api/v1/video/cameras/{id}/stream.mjpg` 先代理到树莓派真实 MJPEG 流。
+  - 当前树莓派未重启到新设备流接口时，本地闭环临时使用盒子管理端 cookie 代理旧 `/api/cameras/{local_id}/stream.mjpg`。
+  - 不再把旧事件截图伪装成实时流；没有真实帧时保持等待状态。
+- `edge-agent/app/main.py`
+  - 配置同步运行状态补充 `lan_url / service_url`。
+  - 新增设备 token 保护的 `/api/v1/device/cameras/{camera_id}/stream.mjpg`。
+  - 新增本地默认设备 token 对设备流接口的兼容认证。
+- `watch.html` / `assets/scripts/watch-live.js`
+  - 去掉静态假画面。
+  - 只有真实视频帧加载成功后才显示“有画面”。
+  - 在线但无帧时显示“盒子已在线，但 App API 还没有收到可显示的视频帧。”
+- `monitor.html` / `assets/scripts/monitor-live.js`
+  - 守护页只对当前 active 摄像头加载真实 `<img>` 视频流。
+  - 修复 8 秒定时重渲染后视频控制器仍绑定旧 `<img>`，导致画面变灰的问题。
+  - 真实帧返回后，顶部状态、卡片浮层和摘要统一显示“实时画面已返回”。
+- `cameras.html` / `assets/scripts/stitch-app-data.js`
+  - 摄像头列表改成紧凑状态行，不再展示假图。
+  - 手机端按钮文案压缩为“添加 / 守护”，避免竖排和溢出。
+
+真实链路验证：
+
+- 本地 App API 当前摄像头：
+  - App camera id: `8`
+  - 树莓派 local camera id: `6`
+  - 盒子地址：`http://192.168.1.12:8711`
+  - 状态：`online / synced`
+- 本地 App API 直播接口：
+  - `GET http://127.0.0.1:8788/api/v1/video/cameras/8/stream.mjpg?profile=mobile`
+  - 返回 `200 multipart/x-mixed-replace`
+  - 响应头包含 `X-GoHome-Stream-State: proxied`
+  - 响应头包含 `X-GoHome-Proxy-Mode: admin-cookie`
+  - 已收到 JPEG 帧。
+
+Chrome 验证：
+
+- `watch.html?camera_id=8&app=1`
+  - `watchStageImage.naturalWidth = 640`
+  - `watchStageImage.naturalHeight = 360`
+  - 状态显示“有画面”
+  - 无横向溢出。
+- `monitor.html?camera_id=8&app=1`
+  - 等待 12 秒后仍有真实画面。
+  - `edgeSnapshotImage.naturalWidth = 640`
+  - `edgeSnapshotImage.naturalHeight = 360`
+  - 顶部状态、浮层、卡片摘要均显示“实时画面已返回”。
+  - 无横向溢出。
+- `cameras.html?app=1`
+  - 无横向溢出。
+  - 顶部入口显示“添加 / 守护”。
+  - 摄像头卡片是状态行，不再展示假图片。
+
+本地验证：
+
+- `node --check assets/scripts/edge-client.js` 通过。
+- `node --check assets/scripts/watch-live.js` 通过。
+- `node --check assets/scripts/monitor-live.js` 通过。
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `node --check local-app-server/server.js` 通过。
+- `python3 -m py_compile edge-agent/app/main.py` 通过。
+- `npm test` 通过。
+- `git diff --check` 通过。
+
+已同步到树莓派：
+
+- `watch.html`
+- `monitor.html`
+- `cameras.html`
+- `assets/scripts/edge-client.js`
+- `assets/scripts/watch-live.js`
+- `assets/scripts/monitor-live.js`
+- `assets/scripts/stitch-app-data.js`
+- `local-app-server/server.js`
+- `edge-agent/app/main.py`
+
+当前限制：
+
+- 树莓派当前运行进程还没有重启到新的 `/api/v1/device/cameras/{id}/stream.mjpg` 代码。
+- 树莓派磁盘上的 `.venv` 存在历史路径污染，直接重启有依赖不可用风险。本轮没有贸然重启。
+- 本地闭环当前通过 App API 兼容代理盒子旧管理端直播接口跑通；上云前需要切换成正式设备 token / 反向通道，不能依赖管理端默认密码。
+
+下一步：
+
+1. 修复树莓派 `.venv`，让盒子服务可以安全重启。
+2. 重启树莓派 edge-agent，使新的设备 token 视频接口生效。
+3. 把本地 App API 的临时 `admin-cookie` 代理改为正式设备 token 代理。
+4. 在本地闭环稳定后，再迁移 App API / 数据库到云端 HTTPS 服务。

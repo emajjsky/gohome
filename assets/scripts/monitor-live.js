@@ -4,6 +4,8 @@
         cameras: [],
         selectedCameraId: null,
         streamController: null,
+        streamImage: null,
+        streamState: "idle",
     };
 
     function setText(id, value) {
@@ -43,7 +45,7 @@
 
     function statusText(camera) {
         if (!camera) return "等待接入摄像头";
-        if (camera.status === "online") return "家庭盒子已接入并回传状态";
+        if (camera.status === "online") return "盒子在线，等待 App API 返回画面帧";
         if (camera.status === "offline") return camera.last_error || "家庭盒子暂未回传画面";
         if (!camera.has_stream_config) return "还缺少 RTSP / 摄像头接入信息";
         return "等待家庭盒子同步配置并完成本地接入";
@@ -65,6 +67,47 @@
         const tags = snapshot.tags || [];
         if (tags.includes("black_screen") || tags.includes("fall_candidate")) return "需要确认";
         return "暂无异常";
+    }
+
+    function applyStreamState(camera, nextState) {
+        state.streamState = nextState;
+        if (nextState === "playing") {
+            setText("edgeStatusTitle", "实时画面已返回");
+            setText("edgeStatusText", "App API 已经从家庭盒子拿到实时画面帧。");
+            setText("edgeUpdateTime", "实时画面");
+            setText("edgeStreamLabel", "实时画面已返回");
+            setText("edgeMainMessage", "实时画面已返回。");
+            setText("edgeFact", "画面在线");
+            setText("edgeFeeling", "继续观察");
+            setText("edgeNext", "看事件");
+            setText("edgeBrightness", "实时帧");
+            setPillTone("edgeFeeling", "good");
+            setPillTone("edgeNext", "muted");
+            return;
+        }
+        if (nextState === "waiting") {
+            setText("edgeStatusTitle", "等待画面帧");
+            setText("edgeStatusText", "盒子在线，但 App API 暂未收到第一帧。");
+            setText("edgeUpdateTime", "等待第一帧");
+            setText("edgeStreamLabel", "等待第一帧");
+            setText("edgeMainMessage", "盒子在线，但 App API 暂未收到第一帧。");
+            return;
+        }
+        if (nextState === "loading") {
+            setText("edgeStatusTitle", "正在连接画面");
+            setText("edgeStatusText", "正在通过 App API 请求家庭盒子实时画面。");
+            setText("edgeUpdateTime", "连接中");
+            setText("edgeStreamLabel", "连接中");
+            setText("edgeMainMessage", "正在请求实时画面...");
+            return;
+        }
+        if (nextState === "error") {
+            setText("edgeStatusTitle", camera?.status === "online" ? "画面暂时断开" : "摄像头离线");
+            setText("edgeStatusText", camera?.status === "online" ? "画面请求失败，正在重试。" : "摄像头当前不在线。");
+            setText("edgeUpdateTime", "重连中");
+            setText("edgeStreamLabel", "重连中");
+            setText("edgeMainMessage", "画面请求失败，正在重试。");
+        }
     }
 
     function setPillTone(id, tone) {
@@ -151,12 +194,10 @@
     }
 
     function cameraCard(camera, index, active) {
-        const image = ["08-b67c5310d5.jpg", "11-f593aca78d.jpg", "24-125d3cfee1.jpg"][index % 3];
         const suffix = cameraSuffix(camera);
         const watchHref = pageHref(`watch.html${suffix}`);
         const editHref = pageHref(`connect.html${suffix}`);
         const tone = statusTone(camera.status);
-        const liveClass = camera.status === "online" ? "bg-error text-on-error" : "bg-surface/90 text-on-surface";
         const activeAttrs = active
             ? {
                 previewId: "edgeMonitorWatchPreviewLink",
@@ -172,18 +213,17 @@
             : {};
         return `
             <article class="bg-surface-container-lowest rounded-xl overflow-hidden ambient-shadow relative">
-                <a ${activeAttrs.previewId ? `id="${activeAttrs.previewId}"` : ""} href="${watchHref}" class="block aspect-video w-full bg-surface-variant relative overflow-hidden">
-                    <img ${activeAttrs.imageId ? `id="${activeAttrs.imageId}"` : ""} class="absolute inset-0 w-full h-full object-cover ${camera.status === "online" ? "" : "grayscale"}" src="assets/stitch-images/${image}" alt="${escapeHtml(camera.name || "摄像头")}"/>
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20"></div>
-                    <div class="absolute top-3 left-3 ${liveClass} px-2 py-1 rounded-md flex items-center gap-1">
-                        <div class="w-2 h-2 rounded-full ${camera.status === "online" ? "bg-on-error animate-pulse" : "bg-outline"}"></div>
-                        <span class="font-label-md text-label-md text-xs">${camera.status === "online" ? "LIVE" : statusLabel(camera.status)}</span>
+                ${active ? `
+                <a id="${activeAttrs.previewId}" href="${watchHref}" class="block aspect-video w-full bg-[#101820] relative overflow-hidden">
+                    <img id="${activeAttrs.imageId}" class="absolute inset-0 w-full h-full object-cover" alt="${escapeHtml(camera.name || "摄像头")}"/>
+                    <div class="absolute inset-0 bg-gradient-to-t from-black/62 via-transparent to-black/22 pointer-events-none"></div>
+                    <div class="absolute left-3 top-3 rounded-md bg-error text-on-error px-2 py-1 flex items-center gap-1">
+                        <div class="w-2 h-2 rounded-full bg-on-error animate-pulse"></div>
+                        <span class="font-label-md text-label-md text-xs">LIVE</span>
                     </div>
-                    <div class="absolute bottom-3 left-3 right-3 text-white">
-                        <h4 class="font-label-md text-label-md truncate">${escapeHtml(camera.room || camera.name || "摄像头")}</h4>
-                        <p class="font-body-md text-sm opacity-80 truncate">${escapeHtml(statusText(camera))}</p>
-                    </div>
+                    <p id="edgeStreamLabel" class="absolute left-3 right-3 bottom-3 text-white font-body-md text-sm">等待画面帧</p>
                 </a>
+                ` : ""}
                 <div class="p-4 space-y-3">
                     <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">
@@ -192,7 +232,7 @@
                         </div>
                         <span class="app-mini-pill ${tone}">${statusLabel(camera.status)}</span>
                     </div>
-                    <p ${activeAttrs.messageId ? `id="${activeAttrs.messageId}"` : ""} class="font-body-md text-body-md text-on-surface">${escapeHtml(statusText(camera))}</p>
+                    <p ${activeAttrs.messageId ? `id="${activeAttrs.messageId}"` : ""} class="font-body-md text-[14px] leading-5 text-on-surface">${escapeHtml(statusText(camera))}</p>
                     <div class="flex flex-wrap gap-2">
                         <span ${activeAttrs.factId ? `id="${activeAttrs.factId}"` : ""} class="app-mini-pill muted">等待检测</span>
                         <span ${activeAttrs.feelingId ? `id="${activeAttrs.feelingId}"` : ""} class="app-mini-pill ${tone}">${statusLabel(camera.status)}</span>
@@ -223,12 +263,21 @@
     async function attachMonitorStream(camera) {
         const image = $("edgeSnapshotImage");
         if (!image || !camera) return;
+        if (state.streamImage !== image) {
+            state.streamController?.dispose();
+            state.streamController = null;
+            state.streamImage = image;
+        }
         if (!state.streamController) {
             state.streamController = GoHomeEdge.createManagedVideoStream(image, {
                 cameraId: camera.id,
                 scene: "monitor",
+                onStateChange(nextState) {
+                    applyStreamState(camera, nextState);
+                },
             });
         }
+        applyStreamState(camera, "loading");
         state.streamController.setSource(camera.id, { scene: "monitor" });
         image.classList.remove("object-[center_38%]");
     }
@@ -268,16 +317,17 @@
             const snapshot = await GoHomeEdge.appLatestSnapshot(camera.id, { allowMissing: true });
             if (snapshot?.available === false) {
                 setText("edgeCameraRoom", camera.room || camera.name || "摄像头");
-                setText("edgeUpdateTime", "实时预览中");
-                setText("edgeMainMessage", "实时画面已连接，等待后台生成最新检测摘要");
-                setText("edgeStatusTitle", "实时预览已恢复");
-                setText("edgeStatusText", camera.status === "online" ? "视频流正常，检测摘要会在下一轮抽帧后补上。" : "摄像头当前不在线。");
-                setText("edgeFact", "等待检测摘要");
-                setText("edgeFeeling", "继续观察");
-                setText("edgeNext", "等待下一轮");
-                setText("edgeBrightness", "等待亮度");
-                setPillTone("edgeFeeling", "muted");
-                setPillTone("edgeNext", "muted");
+                if (state.streamState === "playing") {
+                    applyStreamState(camera, "playing");
+                } else {
+                    applyStreamState(camera, camera.status === "online" ? "waiting" : "error");
+                    setText("edgeFact", "等待检测摘要");
+                    setText("edgeFeeling", "继续观察");
+                    setText("edgeNext", "等待下一轮");
+                    setText("edgeBrightness", "等待亮度");
+                    setPillTone("edgeFeeling", "muted");
+                    setPillTone("edgeNext", "muted");
+                }
                 return;
             }
 

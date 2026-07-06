@@ -395,6 +395,7 @@
         let disposed = false;
         let refreshTimer = null;
         let retryTimer = null;
+        let frameCheckTimer = null;
         let onStateChange = typeof options.onStateChange === "function" ? options.onStateChange : () => {};
 
         function clearTimers() {
@@ -406,6 +407,10 @@
                 clearTimeout(retryTimer);
                 retryTimer = null;
             }
+            if (frameCheckTimer) {
+                clearTimeout(frameCheckTimer);
+                frameCheckTimer = null;
+            }
         }
 
         async function refresh() {
@@ -414,7 +419,14 @@
             onStateChange("loading");
             try {
                 image.src = await v1VideoStreamPlaybackUrl(cameraId, { profile });
-                onStateChange("playing");
+                frameCheckTimer = setTimeout(() => {
+                    if (disposed || !cameraId) return;
+                    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+                        onStateChange("playing");
+                    } else {
+                        onStateChange("waiting");
+                    }
+                }, 1500);
                 refreshTimer = setTimeout(refresh, refreshMs);
             } catch (error) {
                 onStateChange("error", error);
@@ -444,11 +456,19 @@
             retryTimer = setTimeout(refresh, retryMs);
         }
 
+        function handleLoad() {
+            if (disposed || !cameraId) return;
+            if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+                onStateChange("playing");
+            }
+        }
+
         function handleVisibilityChange() {
             if (!document.hidden && cameraId) refresh();
         }
 
         image?.addEventListener("error", handleError);
+        image?.addEventListener("load", handleLoad);
         document.addEventListener("visibilitychange", handleVisibilityChange);
         if (cameraId) refresh();
 
@@ -459,6 +479,7 @@
                 disposed = true;
                 clearTimers();
                 image?.removeEventListener("error", handleError);
+                image?.removeEventListener("load", handleLoad);
                 document.removeEventListener("visibilitychange", handleVisibilityChange);
             },
         };

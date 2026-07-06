@@ -208,21 +208,16 @@
 </header>
 <!-- Main Content Area -->
 <main class="flex-grow px-margin-page pt-4 max-w-screen-md mx-auto w-full flex flex-col gap-stack-lg">
-<!-- Status Header - Today's Priority Card equivalent -->
-<section class="flex flex-col items-center justify-center py-8">
-<div class="relative w-48 h-48 flex items-center justify-center">
-<!-- Outer Pulse Ring -->
-<div class="absolute inset-0 rounded-full border-4 border-tertiary-fixed-dim pulse-ring opacity-30"></div>
-<!-- Inner Solid Ring -->
-<div class="absolute inset-4 rounded-full border-4 border-tertiary-container"></div>
-<!-- Status Content -->
-<div class="z-10 flex flex-col items-center text-center">
-<span id="edgeStatusIcon" class="app-story-icon good mb-2">
-<span class="material-symbols-outlined text-3xl" style="font-variation-settings: 'FILL' 1;">health_and_safety</span>
+<!-- Status Header -->
+<section class="bg-surface-container-lowest rounded-xl border border-surface-container-low p-4 ambient-shadow">
+<div class="flex items-start gap-3">
+<span id="edgeStatusIcon" class="app-story-icon good shrink-0">
+<span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;">health_and_safety</span>
 </span>
-<h2 id="edgeStatusTitle" class="font-headline-lg-mobile text-headline-lg-mobile text-on-background">正在同步</h2>
-<p id="edgeStatusText" class="font-body-md text-body-md text-on-surface-variant mt-1">正在读取家庭盒子回传状态</p>
-<div class="flex items-center justify-center gap-2 mt-4">
+<div class="min-w-0 flex-1">
+<h2 id="edgeStatusTitle" class="font-headline-md text-headline-md text-on-background">正在同步</h2>
+<p id="edgeStatusText" class="font-body-md text-[14px] leading-5 text-on-surface-variant mt-1">正在读取家庭盒子回传状态</p>
+<div class="flex flex-wrap gap-2 mt-3">
 <span id="edgeDeviceStatus" class="app-mini-pill muted">连接中</span>
 <span id="edgeDetector" class="app-mini-pill muted">检测中</span>
 </div>
@@ -365,8 +360,8 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260706-monitor-sync-1"></script>
+<script src="assets/scripts/edge-client.js?v=20260706-layout-truth-1"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260706-monitor-sync-1"></script>
-<script src="assets/scripts/monitor-live.js?v=20260706-monitor-sync-1"></script>
+<script src="assets/scripts/monitor-live.js?v=20260706-layout-truth-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260706-route-action-1"></script>
 </body></html>

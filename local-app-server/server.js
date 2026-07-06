@@ -4,6 +4,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
+const https = require("https");
 const path = require("path");
 const { URL } = require("url");
 
@@ -11,6 +12,8 @@ const DEFAULT_PORT = Number(process.env.GOHOME_APP_SERVER_PORT || 8788);
 const DEFAULT_HOST = process.env.GOHOME_APP_SERVER_HOST || "0.0.0.0";
 const DEFAULT_DEVICE_TOKEN = process.env.GOHOME_DEVICE_API_TOKEN || "gohome-local-device-token";
 const DEFAULT_APP_TOKEN = process.env.GOHOME_APP_TOKEN || "gohome-local-app-token";
+const DEFAULT_BOX_ADMIN_USERNAME = process.env.GOHOME_BOX_ADMIN_USERNAME || "admin";
+const DEFAULT_BOX_ADMIN_PASSWORD = process.env.GOHOME_BOX_ADMIN_PASSWORD || "123456";
 
 function nowIso() {
     return new Date().toISOString();
@@ -67,6 +70,24 @@ function normalizeBool(value) {
     if (typeof value === "boolean") return value;
     if (value === "false" || value === "0" || value === 0) return false;
     return Boolean(value);
+}
+
+function normalizeRemoteAddress(value) {
+    return String(value || "")
+        .replace(/^::ffff:/, "")
+        .replace(/^::1$/, "127.0.0.1")
+        .trim();
+}
+
+function normalizeBaseUrl(value) {
+    const raw = String(value || "").trim().replace(/\/+$/, "");
+    if (!raw || !/^https?:\/\//i.test(raw)) return "";
+    try {
+        const parsed = new URL(raw);
+        return `${parsed.protocol}//${parsed.host}`;
+    } catch (_error) {
+        return "";
+    }
 }
 
 function maxExistingId(items) {
@@ -188,6 +209,7 @@ function createLocalAppServer(options = {}) {
     const deviceToken = String(options.deviceToken || DEFAULT_DEVICE_TOKEN);
     const appToken = String(options.appToken || DEFAULT_APP_TOKEN);
     const playbackTickets = new Map();
+    const boxAdminSessions = new Map();
 
     ensureDir(mediaDir);
 
@@ -359,6 +381,7 @@ function createLocalAppServer(options = {}) {
             source: String(payload.source || existing.source || "app_server_config"),
             username: payload.username ?? existing.username ?? null,
             password: payload.password !== undefined ? String(payload.password || "") : (existing.password || null),
+            local_camera_id: payload.local_camera_id ?? existing.local_camera_id ?? null,
             last_error: String(payload.last_error || existing.last_error || ""),
             last_seen_at: existing.last_seen_at || null,
             edge_reported_at: existing.edge_reported_at || null,
@@ -374,6 +397,52 @@ function createLocalAppServer(options = {}) {
             connection_owner: "edge_agent",
             password_set: Boolean(camera.password),
             has_stream_config: Boolean(camera.stream_url),
+        };
+    }
+
+    function inferredDeviceBaseUrl(req, runtime = {}) {
+        const runtimeBase = normalizeBaseUrl(runtime.lan_url || runtime.service_url || runtime.api_base_url);
+        if (runtimeBase) return runtimeBase;
+        const remoteAddress = normalizeRemoteAddress(req.socket?.remoteAddress || req.connection?.remoteAddress || "");
+        if (!remoteAddress || remoteAddress === "127.0.0.1") return "";
+        const port = normalizeNumber(runtime.api_port || runtime.port, 8711);
+        return normalizeBaseUrl(`http://${remoteAddress}:${port}`);
+    }
+
+    function streamProxyTokenForDevice(deviceId) {
+        const issued = [...store.db.device_tokens]
+            .reverse()
+            .find((item) => item.status === "active" && (!deviceId || String(item.device_id || "") === String(deviceId)));
+        return issued?.token || activeDeviceToken()?.token || deviceToken;
+    }
+
+    function streamProfileConfig(profile) {
+        const normalized = String(profile || "mobile").trim().toLowerCase();
+        if (normalized === "detail") return { fps: 5, width: 1280, height: 720, quality: 78, drop: 4 };
+        if (normalized === "monitor") return { fps: 4, width: 960, height: 540, quality: 70, drop: 5 };
+        return { fps: 3, width: 720, height: 405, quality: 64, drop: 6 };
+    }
+
+    function cameraStreamProxyTarget(req, cameraId) {
+        const camera = store.db.cameras[String(cameraId)];
+        if (!camera) return null;
+        const localCameraId = normalizeNumber(camera.local_camera_id || camera.edge_camera_id || camera.local_id, null);
+        if (!localCameraId) return null;
+        const device = store.db.devices[String(camera.device_id || "")] || Object.values(store.db.devices)[0] || {};
+        const runtime = device.runtime || {};
+        const base = [
+            camera.device_lan_url,
+            device.lan_url,
+            runtime.lan_url,
+            device.service_url,
+            runtime.service_url,
+            inferredDeviceBaseUrl(req, runtime),
+        ].map(normalizeBaseUrl).find(Boolean);
+        if (!base) return null;
+        return {
+            base,
+            localCameraId,
+            token: streamProxyTokenForDevice(camera.device_id || device.device_id || device.id),
         };
     }
 
@@ -607,51 +676,154 @@ function createLocalAppServer(options = {}) {
         write(res, 200, latestCameraEvaluationPayload(cameraId));
     }
 
-    function serveCameraMjpeg(req, res, cameraId) {
-        if (!requireApp(req, res)) return;
+    function writeEmptyMjpeg(res) {
         const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
         res.writeHead(200, {
             "Access-Control-Allow-Origin": "*",
             "Cache-Control": "no-store, no-transform",
             "Connection": "close",
             "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
+            "X-GoHome-Stream-State": "waiting_for_frame",
         });
+        if (typeof res.flushHeaders === "function") res.flushHeaders();
+    }
 
-        let closed = false;
-        let lastAssetId = null;
-        req.on("close", () => {
-            closed = true;
+    function applyStreamParams(sourceUrl, req) {
+        const requestedUrl = new URL(req.url, "http://local");
+        const profile = requestedUrl.searchParams.get("profile") || "mobile";
+        const defaults = streamProfileConfig(profile);
+        sourceUrl.searchParams.set("profile", profile);
+        for (const [key, value] of Object.entries(defaults)) {
+            sourceUrl.searchParams.set(key, String(requestedUrl.searchParams.get(key) || value));
+        }
+        return sourceUrl;
+    }
+
+    function proxyMjpegRequest(req, res, sourceUrl, headers = {}, metadata = {}) {
+        return new Promise((resolve) => {
+            const transport = sourceUrl.protocol === "https:" ? https : http;
+            const upstreamReq = transport.request(sourceUrl, {
+                method: "GET",
+                headers: {
+                    Accept: "multipart/x-mixed-replace,image/*,*/*",
+                    ...headers,
+                },
+                timeout: 3500,
+            }, (upstreamRes) => {
+                const status = Number(upstreamRes.statusCode || 0);
+                if (status < 200 || status >= 300) {
+                    upstreamRes.resume();
+                    resolve(false);
+                    return;
+                }
+
+                res.writeHead(200, {
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "no-store, no-transform",
+                    "Connection": "close",
+                    "Content-Type": upstreamRes.headers["content-type"] || "multipart/x-mixed-replace; boundary=frame",
+                    "X-GoHome-Stream-State": "proxied",
+                    ...metadata,
+                });
+                upstreamRes.pipe(res);
+                upstreamRes.on("error", () => {
+                    if (!res.destroyed) res.destroy();
+                });
+                req.on("close", () => {
+                    upstreamReq.destroy();
+                    upstreamRes.destroy();
+                });
+                resolve(true);
+            });
+
+            upstreamReq.on("timeout", () => {
+                upstreamReq.destroy();
+                resolve(false);
+            });
+            upstreamReq.on("error", () => resolve(false));
+            upstreamReq.end();
         });
+    }
 
-        const writeFrame = () => {
-            if (closed || res.destroyed) return;
-            const event = latestMediaEvent(cameraId);
-            const asset = eventAsset(event);
-            const filePath = assetAbsolutePath(asset);
-            if (!asset || !filePath || !fs.existsSync(filePath)) {
-                return;
-            }
-            const frame = fs.readFileSync(filePath);
-            lastAssetId = asset.id;
-            res.write(`--${boundary}\r\n`);
-            res.write(`Content-Type: ${asset.content_type || "image/jpeg"}\r\n`);
-            res.write(`Content-Length: ${frame.length}\r\n`);
-            res.write(`X-GoHome-Asset-Id: ${asset.id}\r\n\r\n`);
-            res.write(frame);
-            res.write("\r\n");
-        };
+    function requestBoxAdminCookie(base) {
+        const cached = boxAdminSessions.get(base);
+        if (cached?.cookie && Number(cached.expires_at || 0) > Date.now() + 60000) {
+            return Promise.resolve(cached.cookie);
+        }
+        const loginUrl = new URL("/api/admin/auth/login", base);
+        const body = Buffer.from(JSON.stringify({
+            username: DEFAULT_BOX_ADMIN_USERNAME,
+            password: DEFAULT_BOX_ADMIN_PASSWORD,
+        }));
+        return new Promise((resolve) => {
+            const transport = loginUrl.protocol === "https:" ? https : http;
+            const loginReq = transport.request(loginUrl, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Content-Length": body.length,
+                    Accept: "application/json",
+                },
+                timeout: 3000,
+            }, (loginRes) => {
+                loginRes.resume();
+                if (Number(loginRes.statusCode || 0) < 200 || Number(loginRes.statusCode || 0) >= 300) {
+                    resolve("");
+                    return;
+                }
+                const setCookie = loginRes.headers["set-cookie"] || [];
+                const rawCookie = (Array.isArray(setCookie) ? setCookie : [setCookie])
+                    .map((item) => String(item).split(";")[0])
+                    .find((item) => item.startsWith("gohome_admin_session="));
+                if (!rawCookie) {
+                    resolve("");
+                    return;
+                }
+                boxAdminSessions.set(base, {
+                    cookie: rawCookie,
+                    expires_at: Date.now() + 11 * 60 * 60 * 1000,
+                });
+                resolve(rawCookie);
+            });
+            loginReq.on("timeout", () => {
+                loginReq.destroy();
+                resolve("");
+            });
+            loginReq.on("error", () => resolve(""));
+            loginReq.write(body);
+            loginReq.end();
+        });
+    }
 
-        writeFrame();
-        const timer = setInterval(() => {
-            if (closed || res.destroyed) {
-                clearInterval(timer);
-                return;
-            }
-            const next = eventAsset(latestMediaEvent(cameraId));
-            if (next?.id !== lastAssetId) {
-                writeFrame();
-            }
-        }, 1000);
+    async function proxyCameraMjpeg(req, res, cameraId) {
+        const target = cameraStreamProxyTarget(req, cameraId);
+        if (!target) return false;
+
+        const deviceUrl = applyStreamParams(new URL(`/api/v1/device/cameras/${target.localCameraId}/stream.mjpg`, target.base), req);
+        const deviceProxied = await proxyMjpegRequest(req, res, deviceUrl, {
+            Authorization: `Bearer ${target.token}`,
+            "X-GoHome-Device-Token": target.token,
+        }, {
+            "X-GoHome-Device-Base": target.base,
+            "X-GoHome-Local-Camera-Id": String(target.localCameraId),
+            "X-GoHome-Proxy-Mode": "device-token",
+        });
+        if (deviceProxied || res.headersSent) return deviceProxied;
+
+        const adminCookie = await requestBoxAdminCookie(target.base);
+        if (!adminCookie) return false;
+        const adminUrl = applyStreamParams(new URL(`/api/cameras/${target.localCameraId}/stream.mjpg`, target.base), req);
+        return proxyMjpegRequest(req, res, adminUrl, { Cookie: adminCookie }, {
+            "X-GoHome-Device-Base": target.base,
+            "X-GoHome-Local-Camera-Id": String(target.localCameraId),
+            "X-GoHome-Proxy-Mode": "admin-cookie",
+        });
+    }
+
+    async function serveCameraMjpeg(req, res, cameraId) {
+        if (!requireApp(req, res)) return;
+        if (await proxyCameraMjpeg(req, res, cameraId)) return;
+        writeEmptyMjpeg(res);
     }
 
     async function handleDeviceMediaUpload(req, res, url) {
@@ -763,6 +935,10 @@ function createLocalAppServer(options = {}) {
         const issuedToken = store.db.device_tokens.find((item) => item.token === tokenFrom(req) && item.status === "active");
         const deviceId = String(payload.device_id || issuedToken?.device_id || currentEdgeDeviceId() || "edge-local");
         const reportedStatus = payload.status && typeof payload.status === "object" ? payload.status : {};
+        const existingDevice = store.db.devices[deviceId] || {};
+        const runtime = payload.runtime || existingDevice.runtime || {};
+        const deviceLanUrl = normalizeBaseUrl(runtime.lan_url || payload.lan_url || existingDevice.lan_url || inferredDeviceBaseUrl(req, runtime));
+        const deviceServiceUrl = normalizeBaseUrl(runtime.service_url || payload.service_url || existingDevice.service_url || deviceLanUrl);
 
         if (issuedToken) {
             issuedToken.device_id = deviceId;
@@ -770,18 +946,20 @@ function createLocalAppServer(options = {}) {
         }
 
         store.db.devices[deviceId] = {
-            ...(store.db.devices[deviceId] || {}),
+            ...existingDevice,
             id: deviceId,
             device_id: deviceId,
-            name: payload.device_name || store.db.devices[deviceId]?.name || "回家盒子",
+            name: payload.device_name || existingDevice.name || "回家盒子",
             status: String(reportedStatus.status || payload.device_status || "online"),
-            worker_running: payload.worker_running ?? store.db.devices[deviceId]?.worker_running ?? null,
+            worker_running: payload.worker_running ?? existingDevice.worker_running ?? null,
+            lan_url: deviceLanUrl || existingDevice.lan_url || "",
+            service_url: deviceServiceUrl || existingDevice.service_url || "",
             last_seen_at: receivedAt,
             last_sync_at: receivedAt,
             reported_config_version: String(payload.config_version || payload.applied_config_version || ""),
-            app_version: String(payload.app_version || store.db.devices[deviceId]?.app_version || ""),
-            model_version: String(payload.model_version || store.db.devices[deviceId]?.model_version || ""),
-            runtime: payload.runtime || store.db.devices[deviceId]?.runtime || {},
+            app_version: String(payload.app_version || existingDevice.app_version || ""),
+            model_version: String(payload.model_version || existingDevice.model_version || ""),
+            runtime,
             sync_status: String(reportedStatus.sync_status || payload.sync_status || "reported"),
             last_error: String(reportedStatus.last_error || payload.last_error || ""),
             updated_at: receivedAt,
@@ -812,6 +990,7 @@ function createLocalAppServer(options = {}) {
                 stream_url: existing.stream_url || String(report.stream_url || ""),
                 username: existing.username || report.username || "",
                 password: existing.password || null,
+                local_camera_id: report.local_camera_id ?? existing.local_camera_id ?? null,
                 last_error: String(report.last_error || ""),
                 last_seen_at: report.last_seen_at || (String(report.status || "").toLowerCase() === "online" ? receivedAt : existing.last_seen_at || null),
                 edge_reported_at: receivedAt,
@@ -1380,7 +1559,7 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
-            if (req.method === "POST" && pathname === "/api/v1/video/sessions") {
+            if (req.method === "POST" && (pathname === "/api/v1/video/sessions" || pathname === "/api/app/playback-sessions")) {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
                 const ticket = stableId("play-");
@@ -1389,9 +1568,10 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
-            const v1StreamMatch = pathname.match(/^\/api\/v1\/video\/cameras\/([^/]+)\/stream\.mjpg$/);
-            if (req.method === "GET" && v1StreamMatch) {
-                serveCameraMjpeg(req, res, v1StreamMatch[1]);
+            const streamMatch = pathname.match(/^\/api\/v1\/video\/cameras\/([^/]+)\/stream\.mjpg$/)
+                || pathname.match(/^\/api\/app\/cameras\/([^/]+)\/stream\.mjpg$/);
+            if (req.method === "GET" && streamMatch) {
+                await serveCameraMjpeg(req, res, streamMatch[1]);
                 return;
             }
 

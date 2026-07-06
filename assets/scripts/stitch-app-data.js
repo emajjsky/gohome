@@ -420,40 +420,27 @@
   }
 
   function cameraCard(camera, index) {
-    const image = ["24-125d3cfee1.jpg", "05-39ce55119f.jpg", "01-3efe3aae4e.jpg"][index % 3];
     const state = cameraState(camera);
-    const active = state.tone === "ok";
     const dotClass = state.tone === "ok" ? "bg-tertiary" : (state.tone === "error" ? "bg-error" : "bg-primary");
     return `
-      <article class="glass-card rounded-xl overflow-hidden flex flex-col transition-transform duration-300" data-camera-id="${camera.id}">
-        <div class="relative h-48 w-full bg-surface-container-high">
-          <img class="absolute inset-0 w-full h-full object-cover ${active ? "" : "grayscale"}" src="assets/stitch-images/${image}" alt="${escapeHtml(camera.name || "摄像头")}"/>
-          <div class="absolute top-3 left-3 bg-surface/90 backdrop-blur-sm px-3 py-1 rounded-full flex items-center gap-1">
-            <div class="w-2 h-2 rounded-full ${dotClass}"></div>
-            <span class="font-label-md text-label-md text-on-surface">${state.label}</span>
-          </div>
-        </div>
-        <div class="p-4 flex flex-col gap-4">
-          <div class="flex justify-between items-start gap-3">
-            <div class="min-w-0">
-              <h3 class="font-headline-md text-headline-md text-on-background">${escapeHtml(camera.name || "摄像头")}</h3>
-              <p class="font-body-md text-body-md text-on-surface-variant">${escapeHtml(camera.room || "未设置")} · ${escapeHtml(state.detail)}</p>
+      <article class="rounded-xl border border-surface-container-low bg-surface-container-lowest p-4 shadow-[0_4px_12px_rgba(0,0,0,0.035)] flex flex-col gap-3" data-camera-id="${camera.id}">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="w-2 h-2 rounded-full ${dotClass} shrink-0"></span>
+              <span class="font-label-md text-label-md text-on-surface">${state.label}</span>
             </div>
-            <button aria-label="同步状态" class="p-2 rounded-full hover:bg-surface-container-low text-primary shrink-0" data-action="sync" data-id="${camera.id}">
-              <span class="material-symbols-outlined">sync</span>
-            </button>
+            <h3 class="font-headline-md text-headline-md text-on-background truncate">${escapeHtml(camera.room || camera.name || "摄像头")}</h3>
+            <p class="font-body-md text-[14px] leading-5 text-on-surface-variant">${escapeHtml(camera.name || "摄像头")} · ${escapeHtml(state.detail)}</p>
           </div>
-          <div class="grid grid-cols-3 gap-2 mt-auto">
-            <button class="min-h-10 py-2 px-2 rounded-lg bg-primary-container text-on-primary-container font-label-md text-label-md" data-action="edit" data-id="${camera.id}">
-              配置
-            </button>
-            <button class="min-h-10 py-2 px-2 rounded-lg bg-surface-container-low text-on-surface font-label-md text-label-md" data-action="toggle" data-id="${camera.id}">
-              ${camera.enabled ? "停用" : "启用"}
-            </button>
-            <button class="min-h-10 py-2 px-2 rounded-lg bg-[#fff4f1] text-[#93000a] font-label-md text-label-md" data-action="delete" data-id="${camera.id}">
-              删除
-            </button>
-          </div>
+          <button aria-label="同步状态" class="w-10 h-10 rounded-full hover:bg-surface-container-low text-primary shrink-0 inline-flex items-center justify-center" data-action="sync" data-id="${camera.id}">
+            <span class="material-symbols-outlined">sync</span>
+          </button>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <button class="min-h-10 rounded-lg bg-primary text-on-primary font-label-md text-label-md whitespace-nowrap" data-action="edit" data-id="${camera.id}">配置</button>
+          <button class="min-h-10 rounded-lg bg-surface-container-low text-on-surface font-label-md text-label-md whitespace-nowrap" data-action="toggle" data-id="${camera.id}">${camera.enabled ? "停用" : "启用"}</button>
+          <button class="min-h-10 rounded-lg bg-[#fff4f1] text-[#93000a] font-label-md text-label-md whitespace-nowrap" data-action="delete" data-id="${camera.id}">删除</button>
         </div>
       </article>
     `;

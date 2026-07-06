@@ -1,320 +1,372 @@
 <!DOCTYPE html>
-
-<html class="light" lang="zh-CN"><head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
-<title>回家 - 实时查看</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=Hanken+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "surface-tint": "#0060ac",
-                        "on-secondary-fixed-variant": "#474744",
-                        "surface-dim": "#dbd9d9",
-                        "outline": "#717783",
-                        "tertiary-fixed-dim": "#87dc2c",
-                        "on-secondary": "#ffffff",
-                        "on-error-container": "#93000a",
-                        "secondary-fixed": "#e4e2dd",
-                        "on-tertiary-fixed": "#0e2000",
-                        "surface-container-high": "#eae8e7",
-                        "outline-variant": "#c1c7d3",
-                        "tertiary-container": "#498300",
-                        "surface-container-lowest": "#ffffff",
-                        "on-tertiary-container": "#f9ffeb",
-                        "background": "#fbf9f8",
-                        "secondary-fixed-dim": "#c8c6c2",
-                        "on-tertiary": "#ffffff",
-                        "on-surface-variant": "#414751",
-                        "surface-container-highest": "#e4e2e2",
-                        "on-background": "#1b1c1c",
-                        "surface-variant": "#e4e2e2",
-                        "on-tertiary-fixed-variant": "#2a5000",
-                        "on-primary-container": "#fdfcff",
-                        "on-secondary-container": "#63635f",
-                        "on-primary-fixed": "#001c39",
-                        "inverse-surface": "#303030",
-                        "tertiary-fixed": "#a1fa49",
-                        "surface": "#fbf9f8",
-                        "surface-container-low": "#f5f3f3",
-                        "surface-bright": "#fbf9f8",
-                        "primary-container": "#2976c7",
-                        "on-surface": "#1b1c1c",
-                        "primary-fixed": "#d4e3ff",
-                        "primary": "#005da7",
-                        "on-primary-fixed-variant": "#004883",
-                        "error": "#ba1a1a",
-                        "on-error": "#ffffff",
-                        "inverse-on-surface": "#f2f0f0",
-                        "error-container": "#ffdad6",
-                        "secondary-container": "#e1dfdb",
-                        "primary-fixed-dim": "#a4c9ff",
-                        "tertiary": "#386800",
-                        "inverse-primary": "#a4c9ff",
-                        "surface-container": "#efeded",
-                        "secondary": "#5e5e5b",
-                        "on-secondary-fixed": "#1b1c19",
-                        "on-primary": "#ffffff"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px"
-                    },
-                    "spacing": {
-                        "stack-sm": "8px",
-                        "gutter-card": "16px",
-                        "stack-md": "16px",
-                        "stack-lg": "32px",
-                        "margin-page": "20px"
-                    },
-                    "fontFamily": {
-                        "body-lg": ["Inter"],
-                        "label-md": ["Inter"],
-                        "body-md": ["Inter"],
-                        "headline-md": ["Hanken Grotesk"],
-                        "headline-lg": ["Hanken Grotesk"],
-                        "headline-lg-mobile": ["Hanken Grotesk"]
-                    },
-                    "fontSize": {
-                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
-                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
-                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
-                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
-                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
-                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
-                    }
-                }
-            }
-        }
-    </script>
-<style>
-        .no-scrollbar::-webkit-scrollbar {
-            display: none;
-        }
-        .no-scrollbar {
-            -ms-overflow-style: none;
-            scrollbar-width: none;
-        }
-        .video-overlay-gradient {
-            background: linear-gradient(to bottom, rgba(0,0,0,0.4) 0%, transparent 20%, transparent 70%, rgba(0,0,0,0.6) 100%);
-        }
-    </style>
-<style>
-    body {
-      min-height: max(884px, 100dvh);
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+  <title>回家 - 实时查看</title>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --bg: #fbf8f4;
+      --surface: #fffdfb;
+      --line: #ece5de;
+      --text: #161b22;
+      --muted: #667085;
+      --primary: #0b68b7;
+      --good: #2d7d5c;
+      --warn: #b66e3f;
+      --danger: #ba1a1a;
     }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+    a { color: inherit; text-decoration: none; }
+    button { font: inherit; }
+    .phone-page {
+      width: min(100vw, 430px);
+      min-height: 100dvh;
+      margin: 0 auto;
+      padding: calc(12px + var(--safe-top)) 16px calc(98px + var(--safe-bottom));
+      background: var(--bg);
+    }
+    .topbar {
+      height: 48px;
+      display: grid;
+      grid-template-columns: 48px 1fr 48px;
+      align-items: center;
+      gap: 8px;
+    }
+    .icon-button {
+      width: 44px;
+      height: 44px;
+      border: 0;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 253, 251, 0.86);
+      color: #4b5563;
+      box-shadow: 0 8px 22px rgba(70, 60, 50, 0.08);
+    }
+    .page-title {
+      margin: 0;
+      text-align: center;
+      font-size: 17px;
+      line-height: 24px;
+      font-weight: 700;
+      color: #5d6673;
+    }
+    .panel {
+      margin-top: 16px;
+      padding: 18px;
+      border-radius: 26px;
+      background: var(--surface);
+      border: 1px solid rgba(236, 229, 222, 0.9);
+      box-shadow: 0 18px 45px rgba(72, 61, 49, 0.08);
+    }
+    .eyebrow {
+      display: block;
+      margin-bottom: 8px;
+      color: #486d92;
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+    }
+    .panel h1, .panel h2 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 31px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .subtitle {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 21px;
+      font-weight: 500;
+    }
+    .badge-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+    .pill {
+      min-height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: #f3f1ef;
+      color: #5f6672;
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .pill.good { background: #eaf5ef; color: var(--good); }
+    .pill.warn { background: #fbefe8; color: var(--warn); }
+    .stage {
+      position: relative;
+      margin-top: 18px;
+      aspect-ratio: 16 / 10;
+      overflow: hidden;
+      border-radius: 22px;
+      background: #101820;
+      border: 1px solid #1f2937;
+    }
+    .stage img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+      background: #101820;
+    }
+    .stage-shade {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(180deg, rgba(4, 10, 18, 0.58), rgba(4, 10, 18, 0.04) 42%, rgba(4, 10, 18, 0.64));
+    }
+    .stage-badges {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      top: 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .stage-badges .pill { background: rgba(255,255,255,0.18); color: #fff; backdrop-filter: blur(10px); }
+    .empty-state {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 24px;
+      text-align: center;
+      color: rgba(255,255,255,0.86);
+      background: radial-gradient(circle at top, rgba(35, 82, 125, 0.45), rgba(5, 12, 20, 0.96));
+    }
+    .hidden { display: none !important; }
+    .empty-state strong { font-size: 18px; line-height: 24px; }
+    .empty-state span { max-width: 260px; color: rgba(255,255,255,0.72); font-size: 13px; line-height: 20px; }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .metric {
+      min-height: 70px;
+      padding: 12px;
+      border-radius: 18px;
+      background: #fbf8f5;
+      border: 1px solid var(--line);
+    }
+    .metric span { display: block; color: #79818e; font-size: 12px; font-weight: 800; }
+    .metric strong { display: block; margin-top: 10px; font-size: 16px; line-height: 20px; }
+    .action-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .btn {
+      min-height: 46px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 14px;
+      background: #fffdfb;
+      color: #4d5870;
+      font-size: 14px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .btn.primary {
+      background: #586293;
+      border-color: #586293;
+      color: #fff;
+      box-shadow: 0 10px 24px rgba(88, 98, 147, 0.22);
+    }
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .section-head h2 { font-size: 21px; line-height: 28px; }
+    .source-list, .profile-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .profile-list {
+      flex-direction: row;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .watch-source-button {
+      width: 100%;
+      min-height: 66px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 12px 14px;
+      background: #fffdfb;
+      text-align: left;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--text);
+    }
+    .watch-source-button em { font-style: normal; align-self: center; }
+    .watch-source-button.active {
+      border-color: #cec9f0;
+      background: #f6f3ff;
+    }
+    .watch-source-button strong, .watch-source-button span { display: block; }
+    .watch-source-button span { margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .profile-button {
+      min-width: 86px;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fffdfb;
+      color: #566071;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .profile-button.active { background: #586293; border-color: #586293; color: #fff; }
+    .bottom-nav {
+      position: fixed;
+      left: 50%;
+      bottom: calc(12px + var(--safe-bottom));
+      transform: translateX(-50%);
+      width: min(calc(100vw - 32px), 398px);
+      height: 72px;
+      border-radius: 28px;
+      background: rgba(255,253,251,0.94);
+      box-shadow: 0 12px 34px rgba(70,60,50,0.12);
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      align-items: center;
+      z-index: 20;
+    }
+    .bottom-nav a {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      color: #596273;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .bottom-nav a.active { color: var(--primary); }
+    .material-symbols-outlined { font-size: 22px; line-height: 1; }
   </style>
-
-<style id="gohome-app-minimal-adapt">
-  :root {
-    --safe-top: env(safe-area-inset-top, 0px);
-    --safe-right: env(safe-area-inset-right, 0px);
-    --safe-bottom: env(safe-area-inset-bottom, 0px);
-    --safe-left: env(safe-area-inset-left, 0px);
-  }
-  html, body {
-    min-height: 100dvh;
-    background: #fbf9f8;
-  }
-  body {
-    padding-left: var(--safe-left);
-    padding-right: var(--safe-right);
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
-  nav.fixed.bottom-0,
-  nav.docked.bottom-0,
-  nav.pb-safe-area-bottom {
-    padding-bottom: calc(10px + var(--safe-bottom)) !important;
-  }
-  @media (display-mode: standalone) {
-    body {
-      padding-top: var(--safe-top);
-    }
-  }
-</style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
 </head>
-<body class="bg-background text-on-background font-body-md min-h-screen flex flex-col antialiased">
-<!-- Top Navigation (Contextual 'Back' -> Suppressing Main Shell Nav) -->
-<header class="fixed top-0 left-0 w-full z-50 transition-colors duration-300 bg-transparent" id="app-header">
-<div class="flex justify-between items-center w-full px-margin-page py-4 max-w-screen-xl mx-auto h-16">
-<button aria-label="返回" class="w-10 h-10 flex items-center justify-center rounded-full bg-surface/50 backdrop-blur-md text-on-surface shadow-sm active:scale-95 transition-transform">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">arrow_back_ios_new</span>
-</button>
-<div class="flex gap-2">
-<button aria-label="全屏" class="w-10 h-10 flex items-center justify-center rounded-full bg-surface/50 backdrop-blur-md text-on-surface shadow-sm active:scale-95 transition-transform">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">fullscreen</span>
-</button>
-<button aria-label="设置" class="w-10 h-10 flex items-center justify-center rounded-full bg-surface/50 backdrop-blur-md text-on-surface shadow-sm active:scale-95 transition-transform">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">settings</span>
-</button>
-</div>
-</div>
-</header>
-<!-- Main Content Canvas -->
-<main class="flex-1 flex flex-col">
-<!-- Video Feed Area (Full width, responsive height) -->
-<div class="relative w-full aspect-[4/3] md:aspect-video bg-inverse-surface mt-0 flex-shrink-0 group overflow-hidden">
-<!-- Simulated Video Content -->
-<img alt="客厅实时画面" class="w-full h-full object-cover" data-alt="A high-quality, wide-angle interior view of a bright, modern, and warm living room, styled for elderly care. The room features soft, comfortable beige furniture, minimal clutter, large windows letting in bright daytime sunlight, and potted indoor plants. The image is clear and crisp, resembling a high-definition security camera feed, set in a domestic, calm environment. Corporate modern aesthetic, safe and tranquil mood." src="assets/stitch-images/10-31f4f39247.jpg"/>
-<!-- Video Overlay (Gradient for text readability) -->
-<div class="absolute inset-0 video-overlay-gradient pointer-events-none"></div>
-<!-- On-Video Status Display -->
-<div class="absolute top-20 left-4 px-3 py-1.5 rounded-full bg-surface/60 backdrop-blur-md border border-surface-variant flex items-center gap-2 shadow-sm">
-<div class="w-2 h-2 rounded-full bg-tertiary-fixed-dim animate-pulse"></div>
-<span class="font-label-md text-label-md text-on-surface">客厅 - 直播中</span>
-</div>
-<!-- On-Video Time/Connection -->
-<div class="absolute bottom-4 right-4 text-on-primary font-body-md text-body-md opacity-90 flex items-center gap-3 drop-shadow-md">
-<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[18px]">wifi</span> 良好</span>
-<span id="current-time">14:23:45</span>
-</div>
-</div>
-<!-- Scrollable Content Area -->
-<div class="flex-1 overflow-y-auto no-scrollbar pb-stack-lg rounded-t-3xl -mt-6 bg-background relative z-10 shadow-[0_-8px_24px_rgba(0,0,0,0.05)]">
-<div class="max-w-screen-xl mx-auto px-margin-page pt-8">
-<!-- Status & Information Panel -->
-<section class="mb-stack-lg">
-<h2 class="font-headline-lg-mobile text-headline-lg-mobile text-on-surface mb-stack-md">环境状态</h2>
-<div class="grid grid-cols-2 md:grid-cols-4 gap-gutter-card">
-<!-- Status Item 1: Temperature -->
-<div class="bg-surface-container-lowest p-4 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-low flex flex-col gap-2">
-<div class="flex items-center justify-between">
-<span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">thermostat</span>
-<span class="font-label-md text-label-md text-secondary">适宜</span>
-</div>
-<div>
-<div class="font-headline-md text-headline-md text-on-surface">24°C</div>
-<div class="font-body-md text-body-md text-on-surface-variant text-sm">室内温度</div>
-</div>
-</div>
-<!-- Status Item 2: Connection -->
-<div class="bg-surface-container-lowest p-4 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-low flex flex-col gap-2">
-<div class="flex items-center justify-between">
-<span class="material-symbols-outlined text-tertiary-container" style="font-variation-settings: 'FILL' 1;">router</span>
-<span class="font-label-md text-label-md text-tertiary-container">稳定</span>
-</div>
-<div>
-<div class="font-headline-md text-headline-md text-on-surface">连接正常</div>
-<div class="font-body-md text-body-md text-on-surface-variant text-sm">设备网络</div>
-</div>
-</div>
-<!-- Status Item 3: Motion -->
-<div class="bg-surface-container-lowest p-4 rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-low flex flex-col gap-2">
-<div class="flex items-center justify-between">
-<span class="material-symbols-outlined text-on-surface-variant" style="font-variation-settings: 'FILL' 1;">directions_run</span>
-<span class="font-label-md text-label-md text-secondary">静息</span>
-</div>
-<div>
-<div class="font-headline-md text-headline-md text-on-surface">无活动</div>
-<div class="font-body-md text-body-md text-on-surface-variant text-sm">过去 30 分钟</div>
-</div>
-</div>
-</div>
-</section>
-<!-- Location Switcher (Horizontal List) -->
-<section class="mt-stack-lg">
-<h2 class="font-headline-md text-headline-md text-on-surface mb-stack-md">切换位置</h2>
-<div class="flex overflow-x-auto no-scrollbar gap-gutter-card pb-4 -mx-margin-page px-margin-page snap-x">
-<!-- Location 1 (Active) -->
-<div class="snap-start flex-shrink-0 w-32 cursor-pointer group">
-<div class="w-full aspect-square rounded-2xl overflow-hidden mb-2 relative ring-2 ring-primary ring-offset-2 ring-offset-background">
-<img alt="客厅缩略图" class="w-full h-full object-cover transition-transform group-hover:scale-105" data-alt="A close-up, high-quality shot of a modern, clean living room area, focusing on a comfortable armchair and a small side table. Bright, warm natural light, light mode aesthetic, safe and inviting mood, minimalist corporate style." src="assets/stitch-images/16-fa7d16a256.jpg"/>
-<div class="absolute inset-0 bg-black/10"></div>
-</div>
-<p class="font-label-md text-label-md text-center text-primary">客厅</p>
-</div>
-<!-- Location 2 -->
-<div class="snap-start flex-shrink-0 w-32 cursor-pointer group opacity-80 hover:opacity-100 transition-opacity">
-<div class="w-full aspect-square rounded-2xl overflow-hidden mb-2 relative border border-surface-variant">
-<img alt="餐厅缩略图" class="w-full h-full object-cover transition-transform group-hover:scale-105" data-alt="A high-quality view of a neat, minimalist kitchen and dining area. White cabinets, warm wood tones, clean countertops, bright daylight. Calm, domestic, safe environment, modern corporate style." src="assets/stitch-images/12-1c1c8ba778.jpg"/>
-</div>
-<p class="font-label-md text-label-md text-center text-on-surface-variant">餐厅</p>
-</div>
-<!-- Location 3 -->
-<div class="snap-start flex-shrink-0 w-32 cursor-pointer group opacity-80 hover:opacity-100 transition-opacity">
-<div class="w-full aspect-square rounded-2xl overflow-hidden mb-2 relative border border-surface-variant flex items-center justify-center bg-surface-container-high">
-<span class="material-symbols-outlined text-outline text-3xl" style="font-variation-settings: 'FILL' 0;">videocam_off</span>
-</div>
-<p class="font-label-md text-label-md text-center text-on-surface-variant flex items-center justify-center gap-1">
-                                卧室 <span class="w-1.5 h-1.5 rounded-full bg-outline"></span>
-</p>
-</div>
-</div>
-</section>
-</div>
-</div>
-</main>
-<script>
-        // Simple time updater for the video overlay
-        function updateTime() {
-            const timeElement = document.getElementById('current-time');
-            if (timeElement) {
-                const now = new Date();
-                timeElement.textContent = now.toLocaleTimeString('zh-CN', { hour12: false });
-            }
-        }
-        setInterval(updateTime, 1000);
-        updateTime();
+<body>
+  <main class="phone-page">
+    <header class="topbar">
+      <a id="watchMonitorTopLink" class="icon-button" href="monitor.html" aria-label="返回守护">
+        <span class="material-symbols-outlined">arrow_back</span>
+      </a>
+      <p class="page-title">实时查看</p>
+      <button id="watchFullscreenButton" class="icon-button" type="button" aria-label="全屏">
+        <span class="material-symbols-outlined">fullscreen</span>
+      </button>
+    </header>
 
-        // Subtle header background reveal on scroll
-        const scrollArea = document.querySelector('.overflow-y-auto');
-        const header = document.getElementById('app-header');
+    <section class="panel">
+      <span class="eyebrow">LIVE</span>
+      <h1 id="watchFact">正在连接画面</h1>
+      <p id="watchMeta" class="subtitle">等待家庭盒子返回第一帧。</p>
+      <div class="badge-row">
+        <span id="watchHeaderSub" class="pill">连接中</span>
+        <span id="watchStatusBadge" class="pill warn">等待帧</span>
+      </div>
 
-        if (scrollArea && header) {
-            scrollArea.addEventListener('scroll', () => {
-                if (scrollArea.scrollTop > 20) {
-                    header.classList.add('bg-surface/80', 'backdrop-blur-md', 'shadow-sm');
-                    header.classList.remove('bg-transparent');
-                } else {
-                    header.classList.remove('bg-surface/80', 'backdrop-blur-md', 'shadow-sm');
-                    header.classList.add('bg-transparent');
-                }
-            });
-        }
-    </script>
+      <div id="watchStage" class="stage">
+        <img id="watchStageImage" alt="实时画面"/>
+        <div class="stage-shade"></div>
+        <div class="stage-badges">
+          <span id="watchRoomBadge" class="pill">未选择</span>
+          <span id="watchProfileBadge" class="pill">mobile</span>
+          <span id="watchDetectorBadge" class="pill">YOLO</span>
+        </div>
+        <div id="watchEmptyState" class="empty-state">
+          <strong>等待实时画面</strong>
+          <span id="watchEmptyText">在线只代表盒子已接入；这里会在 App API 收到第一帧后显示画面。</span>
+        </div>
+      </div>
 
-<script id="gohome-stitch-route-links">
-  (() => {
-    const routes = {
-      "首页": "index.html",
-      "守护": "monitor.html",
-      "消息": "events.html",
-      "陪伴": "companionship.html",
-      "我的": "privacy.html",
-      "实时画面": "watch.html",
-      "事件列表": "events.html",
-      "规则设置": "rules.html",
-      "家庭成员": "family_members.html",
-      "通知设置": "notifications.html",
-      "隐私与数据": "privacy_data.html",
-      "添加摄像头": "connect.html",
-      "设备管理": "cameras.html"
-    };
-    document.addEventListener("click", (event) => {
-      const item = event.target.closest("a, button");
-      if (!item) return;
-      if (item.hasAttribute("onclick")) return;
-      const href = item.getAttribute("href");
-      if (href && href !== "#") return;
-      const text = (item.innerText || item.textContent || "").replace(/\s+/g, "").trim();
-      const route = routes[text];
-      if (!route) return;
-      event.preventDefault();
-      window.location.href = route;
-    });
-  })();
-</script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
-</body></html>
+      <div class="metric-grid">
+        <div class="metric"><span>状态</span><strong id="watchEventTitle">等待事件</strong></div>
+        <div class="metric"><span>最近</span><strong id="watchEventMeta">画面接通后刷新</strong></div>
+      </div>
+
+      <div class="action-row">
+        <a id="watchDetectionLink" class="btn primary" href="detection.html">
+          <span class="material-symbols-outlined">center_focus_strong</span>
+          看检测
+        </a>
+        <a id="watchEventsLink" class="btn" href="events.html">
+          <span class="material-symbols-outlined">history</span>
+          看事件
+        </a>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <h2>切换来源</h2>
+        <span id="watchCameraCount" class="pill">未接入</span>
+      </div>
+      <div id="watchCameraList" class="source-list"></div>
+      <a id="watchMonitorLink" class="btn" style="width:100%; margin-top:14px;" href="monitor.html">
+        <span class="material-symbols-outlined">shield</span>
+        回到守护
+      </a>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <h2>清晰度</h2>
+      </div>
+      <div id="watchProfileList" class="profile-list"></div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav">
+    <a href="index.html"><span class="material-symbols-outlined">home</span>首页</a>
+    <a class="active" href="monitor.html"><span class="material-symbols-outlined">shield</span>守护</a>
+    <a href="events.html"><span class="material-symbols-outlined">history</span>事件</a>
+    <a href="companionship.html"><span class="material-symbols-outlined">diversity_3</span>陪伴</a>
+    <a href="privacy.html"><span class="material-symbols-outlined">person</span>我的</a>
+  </nav>
+
+  <script src="assets/scripts/edge-client.js?v=20260706-real-video-state-1"></script>
+  <script src="assets/scripts/watch-live.js?v=20260706-real-video-state-1"></script>
+  <script src="assets/scripts/stitch-app-routes.js?v=20260706-route-action-1"></script>
+</body>
+</html>

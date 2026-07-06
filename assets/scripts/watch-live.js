@@ -30,8 +30,9 @@
 
     function cameraMeta(camera) {
         const parts = [];
-        if (camera.status === "online") parts.push("在线");
+        if (camera.status === "online") parts.push("盒子在线");
         if (camera.status === "offline") parts.push("离线");
+        if (!camera.has_stream_config) parts.push("缺接入信息");
         if (camera.enabled === false) parts.push("未启用");
         return parts.join(" · ") || "等待";
     }
@@ -94,14 +95,20 @@
         if (!empty) return;
         if (kind === "empty" || kind === "error") {
             empty.classList.remove("hidden");
-            empty.classList.add("flex");
             setText("watchEmptyText", message || "当前没有可用画面");
             setText("watchStatusBadge", kind === "error" ? "连接失败" : "暂无画面");
             return;
         }
+        if (kind === "loading" || kind === "waiting") {
+            empty.classList.remove("hidden");
+            setText("watchEmptyText", kind === "waiting"
+                ? "盒子已在线，但 App API 还没有收到可显示的视频帧。"
+                : "正在向家庭盒子请求实时画面。");
+            setText("watchStatusBadge", kind === "waiting" ? "等待帧" : "连接中");
+            return;
+        }
         empty.classList.add("hidden");
-        empty.classList.remove("flex");
-        setText("watchStatusBadge", kind === "loading" ? "连接中" : "直播中");
+        setText("watchStatusBadge", "有画面");
     }
 
     function renderCameraList() {
@@ -112,16 +119,16 @@
             list.innerHTML = "";
             return;
         }
-        list.className = state.cameras.length === 1
-            ? "flex gap-2 pb-1"
-            : "flex gap-2 overflow-x-auto pb-1";
+        list.className = "source-list";
         list.innerHTML = state.cameras.map((camera) => {
             const active = Number(camera.id) === Number(state.selectedCameraId);
-            const stretch = state.cameras.length === 1 ? "flex-1 w-full" : "shrink-0";
             return `
-                <button type="button" data-camera-id="${camera.id}" class="${stretch} min-w-[120px] rounded-2xl border px-3 py-3 text-left transition-colors ${active ? "bg-primary text-white border-primary" : "bg-[#fbfbff] text-on-surface border-outline-variant/10"}">
-                    <p class="font-display text-[14px] font-bold">${escapeHtml(cameraLabel(camera))}</p>
-                    <p class="font-sans text-[11px] mt-1 ${active ? "text-white/78" : "text-on-surface-variant"}">${escapeHtml(cameraMeta(camera))}</p>
+                <button type="button" data-camera-id="${camera.id}" class="watch-source-button ${active ? "active" : ""}">
+                    <span>
+                        <strong>${escapeHtml(cameraLabel(camera))}</strong>
+                        <span>${escapeHtml(cameraMeta(camera))}</span>
+                    </span>
+                    <em class="pill ${camera.status === "online" ? "good" : "warn"}">${camera.status === "online" ? "在线" : "待处理"}</em>
                 </button>
             `;
         }).join("");
@@ -142,7 +149,7 @@
         list.innerHTML = state.profiles.map((profile) => {
             const active = profile.id === state.selectedProfile;
             return `
-                <button type="button" data-profile-id="${escapeHtml(profile.id)}" class="shrink-0 rounded-full px-4 h-10 border text-[12px] font-semibold transition-colors ${active ? "bg-primary text-white border-primary" : "bg-[#fbfbff] text-on-surface border-outline-variant/10"}">
+                <button type="button" data-profile-id="${escapeHtml(profile.id)}" class="profile-button ${active ? "active" : ""}">
                     ${escapeHtml(profile.id)}
                 </button>
             `;
@@ -162,8 +169,10 @@
         setText("watchRoomBadge", camera ? cameraLabel(camera) : "未选择");
         setText("watchProfileBadge", state.selectedProfile);
         setText("watchDetectorBadge", state.device?.detector_backend === "yolo" ? "YOLO" : "basic");
-        setText("watchFact", camera ? `正在看 ${cameraLabel(camera)}` : "还没有接入摄像头");
-        setText("watchMeta", camera ? `${cameraMeta(camera)} · ${state.selectedProfile}` : "等待摄像头");
+        setText("watchFact", camera ? `${cameraLabel(camera)}实时画面` : "还没有接入摄像头");
+        setText("watchMeta", camera
+            ? `${cameraMeta(camera)}。如果这里没有画面，说明 App API 暂未收到第一帧。`
+            : "等待摄像头");
         syncNavLinks();
     }
 
@@ -184,6 +193,7 @@
                 profile: state.selectedProfile,
                 onStateChange(nextState) {
                     if (nextState === "loading") applyStageState("loading");
+                    if (nextState === "waiting") applyStageState("waiting");
                     if (nextState === "playing") applyStageState("playing");
                     if (nextState === "error") applyStageState("error", "画面暂时断开，正在重连");
                 },
