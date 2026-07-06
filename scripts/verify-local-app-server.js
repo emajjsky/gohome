@@ -179,6 +179,38 @@ async function main() {
         });
         assert.equal(stableDeviceConfig.config_version, deviceConfig.config_version);
 
+        const localIdOnlySync = await requestJson(baseUrl, "/api/v1/device/sync", {
+            method: "POST",
+            body: JSON.stringify({
+                device_id: "edge-test",
+                config_version: stableDeviceConfig.config_version,
+                cameras: [
+                    {
+                        camera_id: 11,
+                        status: "online",
+                        sync_status: "synced",
+                        enabled: true,
+                        last_error: "",
+                    },
+                ],
+            }),
+            headers: { Authorization: `Bearer ${exchanged.device_token}` },
+        });
+        assert.equal(localIdOnlySync.ok, true);
+        assert.equal(String(localIdOnlySync.updated_cameras[0].id), String(camera.id));
+
+        const camerasAfterLocalIdOnlySync = await requestJson(baseUrl, "/api/app/cameras", {
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(camerasAfterLocalIdOnlySync.length, 1);
+        assert.equal(camerasAfterLocalIdOnlySync.some((item) => String(item.id) === "11"), false);
+
+        const configAfterLocalIdOnlySync = await requestJson(baseUrl, "/api/v1/device/config", {
+            headers: { Authorization: `Bearer ${exchanged.device_token}` },
+        });
+        assert.equal(configAfterLocalIdOnlySync.cameras.length, 1);
+        assert.equal(String(configAfterLocalIdOnlySync.cameras[0].id), String(camera.id));
+
         const deleteProbe = await requestJson(baseUrl, "/api/cameras", {
             method: "POST",
             body: JSON.stringify({

@@ -6793,11 +6793,71 @@ Chrome 验证：
 
 - Pi 原生 YOLO/torch 依赖还没恢复，当前运行态是稳定但降级的 `basic`。
 - 事件页里已有的最新高危事件仍来自之前 YOLO 正常时的历史数据；需要在 `basic` 或恢复 YOLO 后重新触发当前 camera id `8` 的真实事件，验证新事件能进入 App。
-- 已验证 `systemctl restart`，还没做整机 `sudo reboot` 后自启恢复。
+- 已验证 `systemctl restart`；整机 `sudo reboot` 后自启恢复已在后续验证中补齐。
 - Mac 本地 launchd 已验证 `launchctl print gui/501/com.gohome.local-app-server` 为 running；仍需要在机器重启后再验证一次。
 
 下一步：
 
-1. 做树莓派整机 reboot 验证。
-2. 单独处理 Pi 原生 YOLO/torch 安装方案，避免 pip 拉 CUDA 或破坏当前 `.venv-pi`。
-3. 触发一条当前摄像头 `8 / local 6` 的新事件，验证 App 事件页、证据图、上传记录都是当前链路生成。
+1. 单独处理 Pi 原生 YOLO/torch 安装方案，避免 pip 拉 CUDA 或破坏当前 `.venv-pi`。
+2. 触发一条当前摄像头 `8 / local 6` 的新事件，验证 App 事件页、证据图、上传记录都是当前链路生成。
+3. 上云前把本地 JSON DB 换成云端数据库，并给 App API 配 HTTPS 域名。
+
+## 37. 2026-07-06 App 摄像头配置与盒子本地 ID 映射修复
+
+本轮继续处理本地闭环稳定性：修复盒子同步后 App 端多出一个不可播放“影子摄像头”的问题。
+
+问题：
+
+- App 中真正配置的摄像头是 `id=8`，盒子本地应用后生成 `local_camera_id=6`。
+- 盒子重启/同步时会回报本地摄像头编号，旧逻辑把 `camera_id=6` 当成 App 端新摄像头写入。
+- 结果 `/api/app/cameras` 同时出现：
+  - `id=6 / source=edge_reported / setup_required / stream_url_missing`
+  - `id=8 / source=app_server_config / online / synced`
+- 这会误导 App 页面和设备管理，也可能让盒子配置下发里夹杂不可用摄像头。
+
+已完成：
+
+- `local-app-server/server.js`
+  - 新增 App 配置摄像头边界：`appConfigCameras()`。
+  - `cameraConfigVersion()` 只计算 App 配置摄像头，不再受盒子诊断上报影响。
+  - `/api/v1/device/config` 只下发 App 配置摄像头。
+  - `/api/app/cameras` 和 `/api/cameras` 只展示 App 配置摄像头。
+  - `/api/v1/devices/current/sync-state` 同步状态只展示 App 配置摄像头。
+  - `POST /api/v1/device/sync` 写回时，如果上报的 `camera_id` 是盒子本地 ID，会优先匹配已有摄像头的 `local_camera_id`，避免创建重复 App 摄像头。
+  - 未匹配到 App 配置的盒子上报摄像头仍按 `edge_reported` 处理，不参与用户列表和配置下发。
+- `scripts/verify-local-app-server.js`
+  - 新增验证：App 摄像头先同步为 `local_camera_id=11` 后，盒子只按本地 `camera_id=11` 回报，服务端仍更新原 App 摄像头，不创建第二个摄像头。
+- 运行态数据：
+  - 已通过 API 删除历史影子记录 `id=6`。
+
+验证结果：
+
+- `node --check local-app-server/server.js` 通过。
+- `npm test` 通过。
+- `git diff --check` 通过。
+- 本地 App API 已重启并健康：
+  - `GET /health` 返回 `ok=true`。
+- `/api/app/cameras` 当前只返回 1 个摄像头：
+  - `id=8`
+  - `status=online`
+  - `sync_status=synced`
+  - `local_camera_id=6`
+- `/api/v1/device/config` 当前只下发 1 个摄像头：
+  - `camera_id=8`
+  - RTSP 为 `rtsp://192.168.1.11:554/1/2`
+  - `setup_required=false`
+- Pi `/health` 当前正常：
+  - `config_sync_agent.running=true`
+  - `last_error=""`
+  - `last_result.applied.applied=1`
+  - `camera_reports[0].camera_id="8"`
+  - `camera_reports[0].local_camera_id=6`
+- App 代理实时流仍正常：
+  - `/api/v1/video/cameras/8/stream.mjpg?profile=mobile` 返回 `200 multipart/x-mixed-replace`
+  - `X-GoHome-Proxy-Mode=device-token`
+
+下一步：
+
+1. 用 Chrome 再走一遍 `cameras.html?app=1 -> monitor.html?app=1&camera_id=8`，确认 UI 不再出现影子摄像头，实时画面仍显示且无横向溢出。
+2. 触发一条当前摄像头 `8 / local 6` 的新事件，验证事件上传、证据图、事件页详情都来自当前链路。
+3. 单独处理 Pi 原生 YOLO/torch 恢复；恢复前 App 应继续显示 `basic`，不能假显示 YOLO。

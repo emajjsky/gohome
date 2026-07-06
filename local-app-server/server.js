@@ -400,6 +400,38 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function isAppConfiguredCamera(camera = {}) {
+        return String(camera.source || "app_server_config") !== "edge_reported";
+    }
+
+    function appConfigCameras() {
+        return Object.values(store.db.cameras).filter(isAppConfiguredCamera);
+    }
+
+    function sameDeviceScope(camera, deviceId) {
+        const cameraDeviceId = String(camera.device_id || "");
+        const targetDeviceId = String(deviceId || "");
+        return !cameraDeviceId || !targetDeviceId || cameraDeviceId === targetDeviceId;
+    }
+
+    function findAppCameraByLocalReport(report, rawCameraId, deviceId) {
+        const localIds = [
+            report.local_camera_id,
+            report.edge_camera_id,
+            report.local_id,
+            rawCameraId,
+        ]
+            .filter((value) => value !== null && value !== undefined && value !== "")
+            .map((value) => String(value));
+        if (!localIds.length) return null;
+        const localIdSet = new Set(localIds);
+        return appConfigCameras().find((camera) => sameDeviceScope(camera, deviceId) && [
+            camera.local_camera_id,
+            camera.edge_camera_id,
+            camera.local_id,
+        ].some((value) => value !== null && value !== undefined && value !== "" && localIdSet.has(String(value)))) || null;
+    }
+
     function inferredDeviceBaseUrl(req, runtime = {}) {
         const runtimeBase = normalizeBaseUrl(runtime.lan_url || runtime.service_url || runtime.api_base_url);
         if (runtimeBase) return runtimeBase;
@@ -447,7 +479,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function cameraConfigVersion() {
-        const cameras = Object.values(store.db.cameras);
+        const cameras = appConfigCameras();
         const fingerprint = cameras
             .map((camera) => JSON.stringify({
                 id: camera.id,
@@ -491,7 +523,7 @@ function createLocalAppServer(options = {}) {
             device_id: currentEdgeDeviceId(),
             generated_at: nowIso(),
             config_version: cameraConfigVersion(),
-            cameras: Object.values(store.db.cameras).map(deviceCameraConfig),
+            cameras: appConfigCameras().map(deviceCameraConfig),
             rules: {},
         };
     }
@@ -981,7 +1013,13 @@ function createLocalAppServer(options = {}) {
             if (report.deleted === true || ["deleted", "removed"].includes(reportedStatus)) {
                 continue;
             }
-            const existing = store.db.cameras[cameraKey] || {};
+            const existingById = store.db.cameras[cameraKey] || null;
+            const localMatch = (!existingById || !isAppConfiguredCamera(existingById))
+                ? findAppCameraByLocalReport(report, rawCameraId, deviceId)
+                : null;
+            const targetKey = String(localMatch?.id || rawCameraId);
+            const existing = localMatch || existingById || {};
+            const reportLocalCameraId = report.local_camera_id ?? existing.local_camera_id ?? (!isAppConfiguredCamera(existing) ? rawCameraId : null);
             const camera = {
                 ...existing,
                 id: existing.id || rawCameraId,
@@ -992,18 +1030,18 @@ function createLocalAppServer(options = {}) {
                 enabled: "enabled" in existing ? normalizeBool(existing.enabled) : normalizeBool(report.enabled ?? true),
                 status: String(report.status || existing.status || "edge_reported"),
                 sync_status: cameraSyncStatusFromReport(report),
-                source: String(existing.source || "app_server_config"),
+                source: String(existing.source || "edge_reported"),
                 stream_url: existing.stream_url || String(report.stream_url || ""),
                 username: existing.username || report.username || "",
                 password: existing.password || null,
-                local_camera_id: report.local_camera_id ?? existing.local_camera_id ?? null,
+                local_camera_id: reportLocalCameraId,
                 last_error: String(report.last_error || ""),
                 last_seen_at: report.last_seen_at || (String(report.status || "").toLowerCase() === "online" ? receivedAt : existing.last_seen_at || null),
                 edge_reported_at: receivedAt,
                 created_at: existing.created_at || receivedAt,
                 updated_at: existing.updated_at || receivedAt,
             };
-            store.db.cameras[cameraKey] = camera;
+            store.db.cameras[targetKey] = camera;
             updatedCameras.push(publicCamera(camera));
         }
 
@@ -1313,7 +1351,7 @@ function createLocalAppServer(options = {}) {
                     device_id: currentEdgeDeviceId(),
                     server_time: nowIso(),
                     config_version: cameraConfigVersion(),
-                    cameras: Object.values(store.db.cameras).map(publicCamera),
+                    cameras: appConfigCameras().map(publicCamera),
                     rules_version: "local-demo-v1",
                     pending_commands: [],
                 });
@@ -1459,7 +1497,7 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && (pathname === "/api/app/cameras" || pathname === "/api/cameras")) {
                 if (!requireApp(req, res)) return;
-                write(res, 200, Object.values(store.db.cameras).map(publicCamera));
+                write(res, 200, appConfigCameras().map(publicCamera));
                 return;
             }
 
