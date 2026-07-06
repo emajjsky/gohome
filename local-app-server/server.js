@@ -432,6 +432,13 @@ function createLocalAppServer(options = {}) {
         ].some((value) => value !== null && value !== undefined && value !== "" && localIdSet.has(String(value)))) || null;
     }
 
+    function resolveAppCameraForDeviceCameraId(rawCameraId, report = {}, deviceId = "") {
+        if (rawCameraId === null || rawCameraId === undefined || rawCameraId === "") return null;
+        const existingById = store.db.cameras[String(rawCameraId)] || null;
+        if (existingById && isAppConfiguredCamera(existingById)) return existingById;
+        return findAppCameraByLocalReport(report, rawCameraId, deviceId);
+    }
+
     function inferredDeviceBaseUrl(req, runtime = {}) {
         const runtimeBase = normalizeBaseUrl(runtime.lan_url || runtime.service_url || runtime.api_base_url);
         if (runtimeBase) return runtimeBase;
@@ -584,11 +591,28 @@ function createLocalAppServer(options = {}) {
         const rawCameraId = eventPayload.camera_id || eventPayload.payload?.camera_id || "edge-camera";
         const cameraKey = String(rawCameraId);
         const room = String(eventPayload.room || eventPayload.payload?.room || eventPayload.payload?.camera_name || "");
+        const deviceId = String(eventPayload.device_id || eventPayload.payload?.edge_upload?.edge_device_id || currentEdgeDeviceId());
+        const mapped = resolveAppCameraForDeviceCameraId(rawCameraId, {
+            ...eventPayload,
+            local_camera_id: eventPayload.local_camera_id || eventPayload.payload?.local_camera_id,
+        }, deviceId);
+        if (mapped) {
+            const mappedKey = String(mapped.id);
+            store.db.cameras[mappedKey] = {
+                ...mapped,
+                device_id: mapped.device_id || deviceId,
+                status: mapped.status || "online",
+                last_seen_at: nowIso(),
+                edge_reported_at: nowIso(),
+                last_error: "",
+            };
+            return store.db.cameras[mappedKey];
+        }
         const existing = store.db.cameras[cameraKey] || {};
         store.db.cameras[cameraKey] = {
             id: rawCameraId,
             family_id: existing.family_id || store.db.families[0]?.id || 1,
-            device_id: eventPayload.payload?.edge_upload?.edge_device_id || existing.device_id || currentEdgeDeviceId(),
+            device_id: deviceId || existing.device_id || currentEdgeDeviceId(),
             name: existing.name || room || `摄像头 ${rawCameraId}`,
             room: room || existing.room || "",
             enabled: "enabled" in existing ? existing.enabled : true,
@@ -888,7 +912,7 @@ function createLocalAppServer(options = {}) {
     async function handleDeviceEvent(req, res) {
         if (!requireDevice(req, res)) return;
         const payload = await parseJsonBody(req);
-        upsertCamera(payload);
+        const camera = upsertCamera(payload);
         const edgeEventId = payload.payload?.edge_upload?.edge_event_id || payload.edge_event_id || "";
         const mediaFromPayload = payload.media_upload_result?.asset || payload.payload?.media_upload_result?.asset || null;
         const asset = mediaFromPayload?.id
@@ -901,15 +925,19 @@ function createLocalAppServer(options = {}) {
             event_type: String(payload.event_type || "event"),
             summary: String(payload.summary || "回家事件"),
             level: String(payload.level || "warning"),
-            room: String(payload.room || ""),
-            camera_id: payload.camera_id || null,
-            camera_name: String(payload.payload?.camera_name || ""),
+            room: String(payload.room || camera?.room || ""),
+            camera_id: camera?.id || payload.camera_id || null,
+            camera_name: String(payload.payload?.camera_name || camera?.name || ""),
             snapshot_path: String(payload.snapshot_path || asset?.snapshot_path || "").replace(/^\/+/, ""),
             media_asset_id: asset?.id || null,
             occurred_at: String(payload.occurred_at || nowIso()),
             acknowledged: false,
             resolution: "",
-            payload: payload.payload || {},
+            payload: {
+                ...(payload.payload || {}),
+                edge_camera_id: payload.camera_id || null,
+                app_camera_id: camera?.id || payload.camera_id || null,
+            },
             created_at: nowIso(),
             updated_at: nowIso(),
         };

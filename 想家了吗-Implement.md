@@ -6824,9 +6824,12 @@ Chrome 验证：
   - `/api/app/cameras` 和 `/api/cameras` 只展示 App 配置摄像头。
   - `/api/v1/devices/current/sync-state` 同步状态只展示 App 配置摄像头。
   - `POST /api/v1/device/sync` 写回时，如果上报的 `camera_id` 是盒子本地 ID，会优先匹配已有摄像头的 `local_camera_id`，避免创建重复 App 摄像头。
+  - `POST /api/v1/device/events` 入库前也会把盒子本地 `camera_id` 映射成 App 摄像头 ID。
+  - 事件 payload 保留 `edge_camera_id` 和 `app_camera_id`，方便后续排查本地 ID 与云端 ID 的映射关系。
   - 未匹配到 App 配置的盒子上报摄像头仍按 `edge_reported` 处理，不参与用户列表和配置下发。
 - `scripts/verify-local-app-server.js`
   - 新增验证：App 摄像头先同步为 `local_camera_id=11` 后，盒子只按本地 `camera_id=11` 回报，服务端仍更新原 App 摄像头，不创建第二个摄像头。
+  - 新增验证：盒子事件只带本地 `camera_id=11` 时，App 端事件仍落到原 App 摄像头。
 - 运行态数据：
   - 已通过 API 删除历史影子记录 `id=6`。
 
@@ -6855,9 +6858,22 @@ Chrome 验证：
 - App 代理实时流仍正常：
   - `/api/v1/video/cameras/8/stream.mjpg?profile=mobile` 返回 `200 multipart/x-mixed-replace`
   - `X-GoHome-Proxy-Mode=device-token`
+- 事件闭环：
+  - 从 Pi `camera_6` 拿最新真实截图并上传到 App API，生成 asset `29`。
+  - 手动模拟盒子事件时请求体使用本地 `camera_id=6`。
+  - App API 返回事件 `id=122`，已映射为 `camera_id=8`。
+  - 事件 payload 中保留：
+    - `edge_camera_id=6`
+    - `app_camera_id=8`
+  - `/api/app/cameras/8/snapshot/latest?allow_missing=1` 返回 `available=true`，证据图为 `camera_6/20260706_224540_259602.jpg`。
+  - `/api/app/cameras/8/evaluation/latest` 返回最新候选事件 `id=122`。
+- Chrome 插件验证：
+  - Codex Chrome Extension 已安装并启用，native host manifest 正确，Chrome 正在运行。
+  - 但 `chrome.user.openTabs()` 与新建/导航标签页调用会卡住。
+  - 按插件排查流程，下一步需要获得用户允许后打开一个匹配 Profile 1 的新 Chrome 窗口再重试。
 
 下一步：
 
-1. 用 Chrome 再走一遍 `cameras.html?app=1 -> monitor.html?app=1&camera_id=8`，确认 UI 不再出现影子摄像头，实时画面仍显示且无横向溢出。
-2. 触发一条当前摄像头 `8 / local 6` 的新事件，验证事件上传、证据图、事件页详情都来自当前链路。
-3. 单独处理 Pi 原生 YOLO/torch 恢复；恢复前 App 应继续显示 `basic`，不能假显示 YOLO。
+1. 用户允许后，用 Chrome 再走一遍 `cameras.html?app=1 -> monitor.html?app=1&camera_id=8`，确认 UI 不再出现影子摄像头，实时画面仍显示且无横向溢出。
+2. 单独处理 Pi 原生 YOLO/torch 恢复；恢复前 App 应继续显示 `basic`，不能假显示 YOLO。
+3. 进入上云准备：把本地 App API 的 JSON DB/文件存储抽象替换为云端数据库和对象存储。

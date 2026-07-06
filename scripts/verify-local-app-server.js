@@ -269,7 +269,7 @@ async function main() {
             summary: "疑似跌倒",
             level: "critical",
             room: "客厅",
-            camera_id: 1,
+            camera_id: 11,
             snapshot_path: "events/test.jpg",
             occurred_at: "2026-07-05T10:00:00.000Z",
             payload: {
@@ -290,6 +290,8 @@ async function main() {
         });
         assert.equal(created.ok, true);
         assert.equal(created.event.summary, "疑似跌倒");
+        assert.equal(String(created.event.camera_id), String(camera.id));
+        assert.equal(String(created.event.payload.edge_camera_id), "11");
         assert.equal(created.event.media_asset_id, media.asset.id);
 
         const events = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false", {
