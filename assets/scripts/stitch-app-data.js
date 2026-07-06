@@ -242,30 +242,95 @@
     return $(`label[for='${checked.id}']`)?.innerText.trim() || "客厅";
   }
 
+  function setCameraFeedback(message, tone = "neutral") {
+    const node = $("#cameraConfigFeedback");
+    if (!node) return;
+    node.textContent = message || "";
+    node.classList.remove("text-on-surface-variant", "text-[#93000a]", "text-[#2d7d5c]");
+    if (tone === "error") node.classList.add("text-[#93000a]");
+    else if (tone === "success") node.classList.add("text-[#2d7d5c]");
+    else node.classList.add("text-on-surface-variant");
+  }
+
+  function setCameraSubmitBusy(button, busy) {
+    if (!button) return;
+    button.disabled = busy;
+    button.classList.toggle("opacity-70", busy);
+    button.textContent = busy ? "正在提交..." : "提交给家庭盒子同步";
+  }
+
+  function normalizeCameraPath(value) {
+    const path = String(value || "").trim() || "/1/2";
+    return path.startsWith("/") ? path : `/${path}`;
+  }
+
+  function cameraStreamUrlFromInputs() {
+    const hostOrUrl = $("#cameraHostInput")?.value.trim() || "";
+    if (!hostOrUrl) throw new Error("请填写摄像头 IP 或 RTSP 地址。");
+    if (/^rtsp:\/\//i.test(hostOrUrl) || /^(demo|sample|mock):/i.test(hostOrUrl)) {
+      return hostOrUrl;
+    }
+    if (/^https?:\/\//i.test(hostOrUrl)) {
+      throw new Error("摄像头视频流需要填写 RTSP 地址，不是网页管理地址。");
+    }
+    const port = $("#cameraPortInput")?.value.trim() || "554";
+    if (!/^\d+$/.test(port)) throw new Error("端口必须是数字。");
+    const path = normalizeCameraPath($("#cameraPathInput")?.value);
+    return `rtsp://${hostOrUrl}:${port}${path}`;
+  }
+
+  function cameraPayloadFromConnectForm() {
+    const room = checkedRoom();
+    const username = $("#cameraUsernameInput")?.value.trim() || "";
+    const password = $("#cameraPasswordInput")?.value || "";
+    return {
+      family_id: currentFamilyId(),
+      name: $("#cameraNameInput")?.value.trim() || `${room}摄像头`,
+      room,
+      stream_url: cameraStreamUrlFromInputs(),
+      username: username || null,
+      password: password || null,
+      enabled: true,
+      status: "pending_edge_sync",
+      sync_status: "pending_edge_sync",
+      source: "app_server_config",
+    };
+  }
+
   function wireConnect() {
-    const action = $$("button").find((item) => text(item.innerText).includes("生成连接二维码") || text(item.innerText).includes("下一步"));
+    const clearName = $("[data-clear-camera-name]");
+    clearName?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const input = $("#cameraNameInput");
+      if (input) input.value = "";
+      input?.focus();
+    }, true);
+
+    const action = $("#cameraSubmitButton")
+      || $$("button").find((item) => (
+        text(item.innerText).includes("提交给家庭盒子同步")
+        || text(item.innerText).includes("生成连接二维码")
+        || text(item.innerText).includes("下一步")
+      ));
     if (!action) return;
     action.addEventListener("click", async (event) => {
       event.preventDefault();
       event.stopImmediatePropagation();
       if (!(await ensureApi())) return;
-      const nameInput = $("input[type='text']");
-      const room = checkedRoom();
       try {
-        const camera = await GoHomeEdge.createCamera({
-          family_id: currentFamilyId(),
-          name: nameInput?.value.trim() || `${room}摄像头`,
-          room,
-          stream_url: "",
-          enabled: true,
-          status: "pending_edge_setup",
-          sync_status: "pending_edge_sync",
-          source: "app_server_config",
-        });
-        toast("配置已提交给家庭盒子");
-        window.setTimeout(() => go(`cameras.html?camera_id=${camera.id}`), 220);
+        setCameraSubmitBusy(action, true);
+        setCameraFeedback("正在保存配置并等待家庭盒子同步...");
+        const camera = await GoHomeEdge.createCamera(cameraPayloadFromConnectForm());
+        await GoHomeEdge.testCamera(camera.id).catch(() => null);
+        toast("已提交给家庭盒子");
+        setCameraFeedback("已提交。家庭盒子会在 10 秒内拉取配置并回传状态。", "success");
+        window.setTimeout(() => go(`cameras.html?camera_id=${camera.id}`), 420);
       } catch (error) {
+        setCameraFeedback(error.message || "添加失败", "error");
         toast(error.message || "添加失败", "error");
+      } finally {
+        setCameraSubmitBusy(action, false);
       }
     }, true);
   }

@@ -6410,3 +6410,62 @@ python scripts/verify-fall-rule-engine.py
 2. 用真实摄像头配置跑一次本地闭环：App 提交配置 -> 树莓派应用 -> worker 拉流 -> App 看到在线/错误。
 3. 真实事件触发后，验收 `upload_jobs pending -> completed`。
 4. 本地闭环稳定后，把 `local-app-server` 接口语义迁移到云端数据库和公网 HTTPS。
+
+## 32. 2026-07-06 App 摄像头配置页接入 RTSP 配置
+
+本轮继续推进“App 页面 -> App API -> 树莓派盒子”的本地闭环，把 App 摄像头配置页从仅保存名称/房间，补齐为可以保存摄像头接入信息。
+
+已完成：
+
+- `connect.html`
+  - 新增摄像头 IP / RTSP 地址输入。
+  - 新增端口、码流路径、账号、密码输入。
+  - 提交按钮固定为“提交给家庭盒子同步”。
+  - 脚本版本抬到 `20260706-config-flow-1`，避免手机或 Chrome 继续使用旧缓存。
+- `assets/scripts/stitch-app-data.js`
+  - `wireConnect()` 改为读取新增表单字段。
+  - 支持两种输入方式：
+    - 直接填写完整 `rtsp://...`
+    - 填写 IP + 端口 + 路径后自动组装 `rtsp://ip:port/path`
+  - 仍支持 `demo:living_room` 这类演示源，便于无真实摄像头时验证链路。
+  - 提交后调用 `GoHomeEdge.createCamera()` 写入 App API。
+  - 提交后调用 `GoHomeEdge.testCamera(camera.id)`，把状态置为等待家庭盒子同步。
+- `cameras.html`
+  - 脚本版本抬到 `20260706-config-flow-1`。
+
+Chrome 页面级验证：
+
+- 使用 Chrome 打开：
+  - `http://127.0.0.1:8788/connect.html?app=1&edge=http://127.0.0.1:8788&family_id=1`
+- 填写临时摄像头：
+  - 名称：`Chrome验证摄像头-*`
+  - 接入地址：`demo:living_room`
+- 提交后页面进入：
+  - `cameras.html?camera_id=4&app=1`
+- 等待树莓派同步后，摄像头管理页显示：
+  - `在线`
+  - `家庭盒子已接入并回传状态`
+- 删除临时摄像头后，摄像头管理页只剩原有两条配置。
+- Chrome 控制台错误：0 条。
+- 树莓派 `/health` 正常：
+  - `config_sync_agent.enabled = true`
+  - `config_sync_agent.running = true`
+  - `config_sync_agent.configured = true`
+  - `last_error = ""`
+
+本地验证：
+
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `npm test` 通过。
+
+当前状态：
+
+- 页面已经可以把真实 RTSP 信息写入 App API。
+- 目前本地 App API 中原有两条摄像头仍无 `stream_url`，所以盒子继续回报 `pending_local_setup / stream_url_missing`，这是旧数据的预期状态。
+- 临时 Chrome 验证摄像头已删除，没有保留测试数据。
+
+下一步：
+
+1. 用真实摄像头 RTSP 地址走一遍同样路径，确认盒子端从 `configured/synced` 进一步进入真实抓帧与事件链路。
+2. 将摄像头管理页补一个“编辑接入信息”入口，避免用户改 RTSP 时必须删除重建。
+3. 跑真实事件上传验收，确认 `upload_jobs pending -> completed`。

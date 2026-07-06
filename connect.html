@@ -173,8 +173,8 @@
 <h3 class="font-label-md text-label-md text-on-surface">设备名称</h3>
 </div>
 <div class="relative">
-<input class="w-full bg-surface-container-lowest border-b-2 border-outline-variant focus:border-primary text-on-surface font-body-lg text-body-lg py-3 px-1 transition-colors outline-none placeholder:text-outline" placeholder="例如：客厅主干道监控" type="text" value="智能摄像头"/>
-<button class="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface-variant transition-colors p-2 rounded-full">
+<input id="cameraNameInput" class="w-full bg-surface-container-lowest border-b-2 border-outline-variant focus:border-primary text-on-surface font-body-lg text-body-lg py-3 px-1 transition-colors outline-none placeholder:text-outline" placeholder="例如：客厅主干道监控" type="text" value="智能摄像头"/>
+<button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface-variant transition-colors p-2 rounded-full" data-clear-camera-name="1">
 <span class="material-symbols-outlined text-[20px]">cancel</span>
 </button>
 </div>
@@ -218,6 +218,40 @@
                     </button>
 </div>
 </section>
+<!-- Section: RTSP Access -->
+<section class="bg-surface-container-lowest rounded-2xl p-gutter-card shadow-[0_4px_12px_rgba(0,0,0,0.02)] border border-surface-container-low">
+<div class="flex items-center gap-3 mb-stack-md text-primary">
+<span class="material-symbols-outlined icon-filled">settings_input_antenna</span>
+<h3 class="font-label-md text-label-md text-on-surface">摄像头接入信息</h3>
+</div>
+<div class="space-y-4">
+<label class="block">
+<span class="font-body-md text-[13px] leading-5 text-on-surface-variant">摄像头 IP 或 RTSP 地址</span>
+<input id="cameraHostInput" class="mt-1 w-full rounded-xl border-outline-variant bg-surface-container-lowest text-on-surface font-body-md text-body-md focus:border-primary focus:ring-primary" inputmode="url" placeholder="192.168.1.20 或 rtsp://192.168.1.20:554/1/2" type="text"/>
+</label>
+<div class="grid grid-cols-[104px_1fr] gap-3">
+<label class="block">
+<span class="font-body-md text-[13px] leading-5 text-on-surface-variant">端口</span>
+<input id="cameraPortInput" class="mt-1 w-full rounded-xl border-outline-variant bg-surface-container-lowest text-on-surface font-body-md text-body-md focus:border-primary focus:ring-primary" inputmode="numeric" placeholder="554" type="text" value="554"/>
+</label>
+<label class="block">
+<span class="font-body-md text-[13px] leading-5 text-on-surface-variant">码流路径</span>
+<input id="cameraPathInput" class="mt-1 w-full rounded-xl border-outline-variant bg-surface-container-lowest text-on-surface font-body-md text-body-md focus:border-primary focus:ring-primary" placeholder="/1/2" type="text" value="/1/2"/>
+</label>
+</div>
+<div class="grid grid-cols-2 gap-3">
+<label class="block">
+<span class="font-body-md text-[13px] leading-5 text-on-surface-variant">账号</span>
+<input id="cameraUsernameInput" class="mt-1 w-full rounded-xl border-outline-variant bg-surface-container-lowest text-on-surface font-body-md text-body-md focus:border-primary focus:ring-primary" autocomplete="username" placeholder="admin" type="text" value="admin"/>
+</label>
+<label class="block">
+<span class="font-body-md text-[13px] leading-5 text-on-surface-variant">密码</span>
+<input id="cameraPasswordInput" class="mt-1 w-full rounded-xl border-outline-variant bg-surface-container-lowest text-on-surface font-body-md text-body-md focus:border-primary focus:ring-primary" autocomplete="current-password" placeholder="摄像头密码" type="password"/>
+</label>
+</div>
+<p id="cameraConfigFeedback" class="min-h-[20px] font-body-md text-[13px] leading-5 text-on-surface-variant">提交后家庭盒子会在老人家网络内拉流验证，App 只显示同步状态。</p>
+</div>
+</section>
 <!-- Section: Wi-Fi Setup Guide -->
 <section class="bg-surface-container-lowest rounded-2xl p-gutter-card shadow-[0_4px_12px_rgba(0,0,0,0.02)] border border-surface-container-low relative overflow-hidden">
 <!-- Decorative subtle background -->
@@ -254,7 +288,7 @@
 </main>
 <!-- Bottom Action Bar (Transactional Context) -->
 <div class="fixed bottom-0 left-0 w-full bg-surface-container-lowest p-margin-page pb-8 shadow-[0_-8px_24px_rgba(0,0,0,0.06)] z-50">
-<button class="w-full bg-primary text-on-primary font-label-md text-label-md py-4 rounded-full shadow-md active:scale-[0.98] transition-all hover:bg-surface-tint flex items-center justify-center gap-2">
+<button id="cameraSubmitButton" type="button" class="w-full bg-primary text-on-primary font-label-md text-label-md py-4 rounded-full shadow-md active:scale-[0.98] transition-all hover:bg-surface-tint flex items-center justify-center gap-2">
             提交给家庭盒子同步
         </button>
 </div>
@@ -291,7 +325,7 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/edge-client.js?v=20260706-config-flow-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260706-config-flow-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
 </body></html>
