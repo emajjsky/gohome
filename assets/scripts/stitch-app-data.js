@@ -448,7 +448,7 @@
 
   async function renderCameras() {
     if (!(await ensureApi())) return;
-    const grid = $("section.grid");
+    const grid = $("#cameraDeviceGrid") || $("section.grid");
     if (!grid) return;
     const cameras = await GoHomeEdge.cameras();
     grid.innerHTML = cameras.length

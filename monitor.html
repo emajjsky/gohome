@@ -234,39 +234,14 @@
 </a>
 </div>
 <div id="edgeMonitorCameraGrid" class="grid grid-cols-1 md:grid-cols-2 gap-gutter-card">
-<!-- Camera 1: Living Room -->
-<div class="bg-surface-container-lowest rounded-xl overflow-hidden ambient-shadow relative group cursor-pointer">
-<div class="aspect-video w-full bg-surface-variant relative overflow-hidden">
-<div class="bg-cover bg-center w-full h-full absolute inset-0" data-alt="A warm, brightly lit modern living room with soft white walls, a comfortable beige sofa, and a light wood coffee table. Sunlight streams through a sheer curtain. The image is framed as if seen from a security camera mounted in the corner. Calm, domestic, modern aesthetic." style="background-image: url('assets/stitch-images/08-b67c5310d5.jpg')"></div>
-<!-- Overlay gradients for text legibility -->
-<div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20"></div>
-<!-- Live Badge -->
-<div class="absolute top-3 left-3 bg-error text-on-error px-2 py-1 rounded-md flex items-center gap-1">
-<div class="w-2 h-2 rounded-full bg-on-error animate-pulse"></div>
-<span class="font-label-md text-label-md text-xs">LIVE</span>
+<div class="bg-surface-container-lowest rounded-xl ambient-shadow p-5 md:col-span-2">
+<div class="flex items-start gap-4">
+<div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-primary-fixed-variant">linked_camera</span>
 </div>
-<!-- Camera Name -->
-<div class="absolute bottom-3 left-3 text-white">
-<h4 class="font-label-md text-label-md">客厅</h4>
-<p class="font-body-md text-sm opacity-80">检测到活动</p>
-</div>
-</div>
-</div>
-<!-- Camera 2: Bedroom -->
-<div class="bg-surface-container-lowest rounded-xl overflow-hidden ambient-shadow relative group cursor-pointer">
-<div class="aspect-video w-full bg-surface-variant relative overflow-hidden">
-<div class="bg-cover bg-center w-full h-full absolute inset-0" data-alt="A tranquil, softly lit bedroom viewed from a slightly elevated angle. The room features a neatly made bed with pristine white linens, a small wooden nightstand with a subtle lamp, and gentle, warm lighting. The aesthetic is extremely clean, safe, and restful, reflecting modern minimalist domesticity." style="background-image: url('assets/stitch-images/11-f593aca78d.jpg')"></div>
-<!-- Overlay gradients -->
-<div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20"></div>
-<!-- Live Badge -->
-<div class="absolute top-3 left-3 bg-error text-on-error px-2 py-1 rounded-md flex items-center gap-1">
-<div class="w-2 h-2 rounded-full bg-on-error animate-pulse"></div>
-<span class="font-label-md text-label-md text-xs">LIVE</span>
-</div>
-<!-- Camera Name -->
-<div class="absolute bottom-3 left-3 text-white">
-<h4 class="font-label-md text-label-md">卧室</h4>
-<p class="font-body-md text-sm opacity-80">安静</p>
+<div class="min-w-0 flex-1">
+<h4 class="font-headline-md text-headline-md text-on-background">正在读取摄像头</h4>
+<p class="font-body-md text-sm text-on-surface-variant mt-1">App 正在读取家庭盒子同步回来的真实摄像头状态。</p>
 </div>
 </div>
 </div>
@@ -361,7 +336,7 @@
   })();
 </script>
 <script src="assets/scripts/edge-client.js?v=20260706-layout-truth-1"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260706-monitor-sync-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260706-real-camera-grid-1"></script>
 <script src="assets/scripts/monitor-live.js?v=20260706-layout-truth-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260706-route-action-1"></script>
 </body></html>

@@ -176,97 +176,18 @@
 </div>
 </section>
 <!-- Device Grid -->
-<section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-gutter-card">
-<!-- Camera Card 1: Online -->
-<article class="glass-card rounded-xl overflow-hidden flex flex-col transition-transform hover:-translate-y-1 duration-300">
-<div class="relative h-48 w-full bg-surface-container-high">
-<img class="absolute inset-0 w-full h-full object-cover" data-alt="A bright, high-quality photograph of a modern, sleek indoor security camera mounted in a well-lit, contemporary living room. The room has soft, warm lighting, conveying a sense of safety and comfort. Minimalist design, high-end iOS aesthetic." src="assets/stitch-images/24-125d3cfee1.jpg"/>
-<div class="absolute top-3 left-3 bg-surface/90 backdrop-blur-sm px-3 py-1 rounded-full flex items-center gap-1">
-<div class="w-2 h-2 rounded-full bg-tertiary"></div>
-<span class="font-label-md text-label-md text-on-surface">在线</span>
+<section id="cameraDeviceGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-gutter-card">
+<div class="bg-surface-container-lowest rounded-xl border border-surface-container-low p-5 text-on-surface-variant md:col-span-2 lg:col-span-3">
+<div class="flex items-start gap-4">
+<div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-primary-fixed-variant">linked_camera</span>
+</div>
+<div class="min-w-0 flex-1">
+<h3 class="font-headline-md text-headline-md text-on-background">正在读取设备</h3>
+<p class="font-body-md text-[14px] leading-5 mt-1">这里会显示 App 后端数据库里由家庭盒子同步回来的真实摄像头。</p>
 </div>
 </div>
-<div class="p-4 flex flex-col gap-4">
-<div class="flex justify-between items-start">
-<div>
-<h3 class="font-headline-md text-headline-md text-on-background">客厅主视</h3>
-<p class="font-body-md text-body-md text-on-surface-variant">设备运行正常</p>
 </div>
-<button class="p-2 rounded-full hover:bg-surface-container-low text-primary">
-<span class="material-symbols-outlined">settings</span>
-</button>
-</div>
-<div class="flex gap-2 mt-auto">
-<button class="flex-1 py-2 px-3 rounded-lg bg-surface-container-low hover:bg-surface-container-high text-on-surface font-label-md text-label-md flex items-center justify-center gap-1 transition-colors">
-<span class="material-symbols-outlined" style="font-size: 18px;">tune</span>
-                            规则设置
-                        </button>
-<button class="flex-1 py-2 px-3 rounded-lg bg-surface-container-low hover:bg-surface-container-high text-on-surface font-label-md text-label-md flex items-center justify-center gap-1 transition-colors">
-<span class="material-symbols-outlined" style="font-size: 18px;">speed</span>
-                            灵敏度调节
-                        </button>
-</div>
-</div>
-</article>
-<!-- Camera Card 2: Offline -->
-<article class="glass-card rounded-xl overflow-hidden flex flex-col transition-transform hover:-translate-y-1 duration-300 opacity-80">
-<div class="relative h-48 w-full bg-surface-container-high">
-<div class="absolute inset-0 bg-secondary/20 z-10"></div>
-<img class="absolute inset-0 w-full h-full object-cover grayscale" data-alt="A modern outdoor security camera mounted on an exterior wall of a house, slightly obscured by soft shadow. The lighting suggests dusk. Minimalist, modern home architecture in the background. High-end, clean aesthetic." src="assets/stitch-images/01-3efe3aae4e.jpg"/>
-<div class="absolute top-3 left-3 bg-surface/90 backdrop-blur-sm px-3 py-1 rounded-full flex items-center gap-1 z-20">
-<div class="w-2 h-2 rounded-full bg-error"></div>
-<span class="font-label-md text-label-md text-on-surface">离线</span>
-</div>
-</div>
-<div class="p-4 flex flex-col gap-4">
-<div class="flex justify-between items-start">
-<div>
-<h3 class="font-headline-md text-headline-md text-on-background">后院监控</h3>
-<p class="font-body-md text-body-md text-error">设备已离线 2小时</p>
-</div>
-<button class="p-2 rounded-full hover:bg-surface-container-low text-on-surface-variant">
-<span class="material-symbols-outlined">settings</span>
-</button>
-</div>
-<div class="flex gap-2 mt-auto">
-<button class="w-full py-2 px-3 rounded-lg bg-primary-container text-on-primary-container font-label-md text-label-md flex items-center justify-center gap-1 transition-colors hover:opacity-90">
-<span class="material-symbols-outlined" style="font-size: 18px;">refresh</span>
-                            重新连接
-                        </button>
-</div>
-</div>
-</article>
-<!-- Camera Card 3: Online -->
-<article class="glass-card rounded-xl overflow-hidden flex flex-col transition-transform hover:-translate-y-1 duration-300">
-<div class="relative h-48 w-full bg-surface-container-high">
-<img class="absolute inset-0 w-full h-full object-cover" data-alt="A compact, elegant smart camera placed on a wooden shelf next to some indoor plants. Soft, natural daylight illuminates the scene, creating a peaceful and secure domestic environment. Clean, sophisticated style." src="assets/stitch-images/05-39ce55119f.jpg"/>
-<div class="absolute top-3 left-3 bg-surface/90 backdrop-blur-sm px-3 py-1 rounded-full flex items-center gap-1">
-<div class="w-2 h-2 rounded-full bg-tertiary"></div>
-<span class="font-label-md text-label-md text-on-surface">在线</span>
-</div>
-</div>
-<div class="p-4 flex flex-col gap-4">
-<div class="flex justify-between items-start">
-<div>
-<h3 class="font-headline-md text-headline-md text-on-background">玄关走廊</h3>
-<p class="font-body-md text-body-md text-on-surface-variant">有人移动 (5分钟前)</p>
-</div>
-<button class="p-2 rounded-full hover:bg-surface-container-low text-primary">
-<span class="material-symbols-outlined">settings</span>
-</button>
-</div>
-<div class="flex gap-2 mt-auto">
-<button class="flex-1 py-2 px-3 rounded-lg bg-surface-container-low hover:bg-surface-container-high text-on-surface font-label-md text-label-md flex items-center justify-center gap-1 transition-colors">
-<span class="material-symbols-outlined" style="font-size: 18px;">tune</span>
-                            规则设置
-                        </button>
-<button class="flex-1 py-2 px-3 rounded-lg bg-surface-container-low hover:bg-surface-container-high text-on-surface font-label-md text-label-md flex items-center justify-center gap-1 transition-colors">
-<span class="material-symbols-outlined" style="font-size: 18px;">speed</span>
-                            灵敏度调节
-                        </button>
-</div>
-</div>
-</article>
 </section>
 <!-- Add Device FAB (Desktop) -->
 <div class="hidden md:flex justify-end mt-stack-md">
@@ -333,6 +254,6 @@
   })();
 </script>
 <script src="assets/scripts/edge-client.js?v=20260706-config-flow-1"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260706-layout-truth-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260706-real-camera-grid-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260706-route-action-1"></script>
 </body></html>

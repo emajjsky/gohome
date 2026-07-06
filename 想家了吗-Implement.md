@@ -6581,7 +6581,7 @@ Chrome 验证：
   - `GET http://127.0.0.1:8788/api/v1/video/cameras/8/stream.mjpg?profile=mobile`
   - 返回 `200 multipart/x-mixed-replace`
   - 响应头包含 `X-GoHome-Stream-State: proxied`
-  - 响应头包含 `X-GoHome-Proxy-Mode: admin-cookie`
+  - 响应头包含 `X-GoHome-Proxy-Mode: device-token`
   - 已收到 JPEG 帧。
 
 Chrome 验证：
@@ -6627,13 +6627,94 @@ Chrome 验证：
 
 当前限制：
 
-- 树莓派当前运行进程还没有重启到新的 `/api/v1/device/cameras/{id}/stream.mjpg` 代码。
-- 树莓派磁盘上的 `.venv` 存在历史路径污染，直接重启有依赖不可用风险。本轮没有贸然重启。
-- 本地闭环当前通过 App API 兼容代理盒子旧管理端直播接口跑通；上云前需要切换成正式设备 token / 反向通道，不能依赖管理端默认密码。
+- 树莓派旧 `.venv` 仍有历史路径污染，但已新建 Pi 原生 `.venv-pi` 并用它启动当前 edge-agent。
+- `.venv-pi` 当前只安装了本地闭环所需最小依赖：FastAPI、uvicorn、OpenCV headless、numpy 等；YOLO / torch / RTMLib 等完整算法依赖还没在 Pi 原生环境恢复。
+- MJPEG 实时画面、设备同步、App 后端代理已跑通；算法 worker 可能因为 YOLO 依赖缺失而降级或报模型加载错误，需要单独恢复。
+- 当前启动方式是手动 `nohup` 进程，不是持久化 systemd 服务；后续需要把 `.venv-pi` 写入正式启动脚本或 systemd 单元。
 
 下一步：
 
-1. 修复树莓派 `.venv`，让盒子服务可以安全重启。
-2. 重启树莓派 edge-agent，使新的设备 token 视频接口生效。
-3. 把本地 App API 的临时 `admin-cookie` 代理改为正式设备 token 代理。
-4. 在本地闭环稳定后，再迁移 App API / 数据库到云端 HTTPS 服务。
+1. 固化树莓派启动：让 edge-agent 重启后也使用 `.venv-pi` 和正确环境变量。
+2. 恢复或降级 Pi 端算法依赖，确认 worker 不只会出实时画面，也能稳定生成检测摘要和事件。
+3. 验证事件与媒体上传：`upload_jobs pending -> completed`，App 事件页能看到真实证据。
+4. 本地闭环稳定后，再迁移 App API / 数据库到云端 HTTPS 服务。
+
+## 35. 2026-07-06 树莓派重启与真实 UI 再验证
+
+本轮继续完成 section 34 的遗留项：重启树莓派 edge-agent 到新的设备 token 视频接口，并清掉守护页、设备管理页中残留的静态假摄像头卡片。
+
+已完成：
+
+- 树莓派运行状态：
+  - SSH：`gohome@192.168.1.12`
+  - 项目目录：`/home/gohome/gohome/edge-agent`
+  - 旧 `.venv` 确认存在 Mac/Homebrew 路径污染，不能继续作为 Pi 运行环境。
+  - 新建 Pi 原生环境：`/home/gohome/gohome/edge-agent/.venv-pi`
+  - 当前 edge-agent 进程使用 `.venv-pi/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8711`。
+- 树莓派接口：
+  - `GET /health` 正常。
+  - `GET /api/v1/device/cameras/6/stream.mjpg?profile=mobile&fps=2`
+  - 使用 `Authorization: Bearer gohome-local-device-token`
+  - 返回 `200 multipart/x-mixed-replace`，并收到 JPEG 帧。
+- App 后端代理：
+  - `GET http://127.0.0.1:8788/api/v1/video/cameras/8/stream.mjpg?profile=mobile`
+  - 返回 `200 multipart/x-mixed-replace`
+  - 响应头包含：
+    - `X-GoHome-Stream-State: proxied`
+    - `X-GoHome-Device-Base: http://192.168.1.12:8711`
+    - `X-GoHome-Local-Camera-Id: 6`
+    - `X-GoHome-Proxy-Mode: device-token`
+- `monitor.html`
+  - 删除 HTML 初始态里的“客厅 / 卧室”静态假卡片。
+  - 初始态只显示“正在读取摄像头”，脚本接管后才渲染真实摄像头和真实视频流。
+- `cameras.html`
+  - 删除 HTML 初始态里的“客厅主视 / 后院监控 / 玄关走廊”静态假卡片。
+  - 新增 `#cameraDeviceGrid`，脚本只向这个明确容器渲染 App 后端摄像头数据。
+- `assets/scripts/stitch-app-data.js`
+  - 摄像头管理页优先定位 `#cameraDeviceGrid`，避免误选其它 grid。
+
+当前真实数据：
+
+- App camera id：`8`
+- 树莓派 local camera id：`6`
+- 盒子地址：`http://192.168.1.12:8711`
+- 摄像头状态：`online / synced`
+- App 后端摄像头列表当前只有一台真实同步摄像头：`客厅 / 智能摄像头`
+
+Chrome 验证：
+
+- `watch.html?camera_id=8&app=1`
+  - `#watchStageImage.naturalWidth = 640`
+  - `#watchStageImage.naturalHeight = 360`
+  - 视频流 URL 走 `/api/v1/video/cameras/8/stream.mjpg`
+  - 无横向溢出。
+- `monitor.html?camera_id=8&app=1`
+  - `#edgeSnapshotImage.naturalWidth = 640`
+  - `#edgeSnapshotImage.naturalHeight = 360`
+  - 顶部状态显示“实时画面已返回 / App API 已经从家庭盒子拿到实时画面帧。”
+  - 摄像头 grid 只有 1 张真实卡片，`imageCount = 1`。
+  - 无静态假文本：`客厅主视 / 后院监控 / 玄关走廊 / 卧室 / 检测到活动 / 设备已离线 2小时` 均不存在。
+  - 无横向溢出。
+- `cameras.html?app=1`
+  - 摄像头 grid 只有 1 张真实卡片。
+  - `imageCount = 0`，不再展示任何静态摄像头照片。
+  - 显示“在线 / 客厅 / 智能摄像头 / 家庭盒子已接入并回传状态”。
+  - 无横向溢出。
+- 路径验证：
+  - 从 `cameras.html?app=1` 点“守护”，进入 `monitor.html?app=1&camera_id=8`，实时画面自动返回。
+  - 从 `monitor.html?app=1&camera_id=8` 点“设备管理”，回到 `cameras.html?app=1`，仍显示同步后的真实摄像头。
+
+本地验证：
+
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `node --check assets/scripts/monitor-live.js` 通过。
+- `node --check assets/scripts/watch-live.js` 通过。
+- `node --check local-app-server/server.js` 通过。
+- `npm test` 通过。
+- `git diff --check` 通过。
+
+剩余风险：
+
+- 现在的本地闭环已经覆盖“App 页面 -> App 后端 -> 树莓派设备 token 流 -> 真实画面 -> App 页面显示”。
+- 还没完成的是 Pi 原生 YOLO/torch 依赖恢复和持久化启动；这影响算法事件稳定性，不影响当前实时画面闭环。
+- 上云前仍需要把本地 JSON DB 换成云端数据库，并给 App API 配 HTTPS 域名。
