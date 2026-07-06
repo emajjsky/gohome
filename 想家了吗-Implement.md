@@ -6879,3 +6879,47 @@ Chrome 验证：
 1. 用户允许后，用 Chrome 再走一遍 `cameras.html?app=1 -> monitor.html?app=1&camera_id=8`，确认 UI 不再出现影子摄像头，实时画面仍显示且无横向溢出。
 2. 单独处理 Pi 原生 YOLO/torch 恢复；恢复前 App 应继续显示 `basic`，不能假显示 YOLO。
 3. 进入上云准备：把本地 App API 的 JSON DB/文件存储抽象替换为云端数据库和对象存储。
+
+## 38. 2026-07-06 守护页多摄像头实时画面
+
+背景：
+
+- 当前 App API 已有两路摄像头：
+  - App camera `8` -> Pi local camera `6`
+  - App camera `9` -> Pi local camera `7`
+- 旧守护页虽然会渲染多个摄像头卡片，但只有 URL 中选中的一路会显示实时 `<img>`。
+- 用户实际接了两路摄像头，在守护页期望同时看到两路画面。
+
+已完成：
+
+- `assets/scripts/monitor-live.js`
+  - 每个摄像头卡片都渲染实时画面区域。
+  - 为每路摄像头创建独立 managed stream controller。
+  - 选中摄像头仍驱动顶部状态、底部导航和 `camera_id` URL 参数。
+  - 非选中摄像头也显示实时画面状态：连接中、等待第一帧、实时画面已返回、重连中。
+  - 卡片标题改为 `房间 · 摄像头名`，避免两个摄像头同在“客厅”时无法区分。
+  - 重新渲染卡片前会释放旧 stream controller，避免 DOM 替换后继续绑定旧 `<img>`。
+- `monitor.html`
+  - 更新 `monitor-live.js` cache buster 到 `20260706-multi-camera-1`。
+
+验证结果：
+
+- App API 摄像头列表确认有两路：
+  - `id=8 / online / synced / local_camera_id=6`
+  - `id=9 / online / synced / local_camera_id=7`
+- Pi health 确认配置同步结果：
+  - `applied=2`
+  - camera `8` 映射 local `6`
+  - camera `9` 映射 local `7`
+- Pi 侧两路直接流均可用：
+  - `/api/v1/device/cameras/7/stream.mjpg` 返回 `200 multipart/x-mixed-replace`
+- App 代理两路均可用：
+  - `/api/v1/video/cameras/8/stream.mjpg` 返回 `200`
+  - `/api/v1/video/cameras/9/stream.mjpg` 返回 `200`
+- 代码检查：
+  - `node --check assets/scripts/monitor-live.js` 通过。
+  - `npm test` 通过。
+
+限制：
+
+- Chrome 插件仍不稳定：新标签导航/DOM 读取调用会超时，因此这次没有完成可靠的 Chrome 自动截图验证。

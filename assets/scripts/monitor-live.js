@@ -4,6 +4,7 @@
         cameras: [],
         selectedCameraId: null,
         streamController: null,
+        streamControllers: new Map(),
         streamImage: null,
         streamState: "idle",
     };
@@ -11,6 +12,17 @@
     function setText(id, value) {
         const node = $(id);
         if (node) node.textContent = value;
+    }
+
+    function cameraDomId(prefix, camera) {
+        return `${prefix}-${String(camera?.id || "unknown").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    }
+
+    function cameraLabel(camera) {
+        return [camera?.room, camera?.name]
+            .filter(Boolean)
+            .filter((value, itemIndex, values) => values.indexOf(value) === itemIndex)
+            .join(" · ") || "摄像头";
     }
 
     function escapeHtml(value) {
@@ -198,10 +210,12 @@
         const watchHref = pageHref(`watch.html${suffix}`);
         const editHref = pageHref(`connect.html${suffix}`);
         const tone = statusTone(camera.status);
+        const imageId = active ? "edgeSnapshotImage" : cameraDomId("edgeSnapshotImage", camera);
+        const streamLabelId = active ? "edgeStreamLabel" : cameraDomId("edgeStreamLabel", camera);
+        const cameraTitle = cameraLabel(camera);
         const activeAttrs = active
             ? {
                 previewId: "edgeMonitorWatchPreviewLink",
-                imageId: "edgeSnapshotImage",
                 roomId: "edgeCameraRoom",
                 updateId: "edgeUpdateTime",
                 messageId: "edgeMainMessage",
@@ -213,21 +227,20 @@
             : {};
         return `
             <article class="bg-surface-container-lowest rounded-xl overflow-hidden ambient-shadow relative">
-                ${active ? `
-                <a id="${activeAttrs.previewId}" href="${watchHref}" class="block aspect-video w-full bg-[#101820] relative overflow-hidden">
-                    <img id="${activeAttrs.imageId}" class="absolute inset-0 w-full h-full object-cover" alt="${escapeHtml(camera.name || "摄像头")}"/>
+                <a ${activeAttrs.previewId ? `id="${activeAttrs.previewId}"` : ""} href="${watchHref}" class="block aspect-video w-full bg-[#101820] relative overflow-hidden">
+                    <img id="${imageId}" class="absolute inset-0 w-full h-full object-cover" alt="${escapeHtml(cameraTitle)}"/>
                     <div class="absolute inset-0 bg-gradient-to-t from-black/62 via-transparent to-black/22 pointer-events-none"></div>
                     <div class="absolute left-3 top-3 rounded-md bg-error text-on-error px-2 py-1 flex items-center gap-1">
                         <div class="w-2 h-2 rounded-full bg-on-error animate-pulse"></div>
                         <span class="font-label-md text-label-md text-xs">LIVE</span>
                     </div>
-                    <p id="edgeStreamLabel" class="absolute left-3 right-3 bottom-3 text-white font-body-md text-sm">等待画面帧</p>
+                    ${active ? `<div class="absolute right-3 top-3 rounded-md bg-primary text-on-primary px-2 py-1 font-label-md text-label-md text-xs">当前查看</div>` : ""}
+                    <p id="${streamLabelId}" class="absolute left-3 right-3 bottom-3 text-white font-body-md text-sm">等待画面帧</p>
                 </a>
-                ` : ""}
                 <div class="p-4 space-y-3">
                     <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">
-                            <h4 ${activeAttrs.roomId ? `id="${activeAttrs.roomId}"` : ""} class="font-headline-md text-headline-md text-on-background truncate">${escapeHtml(camera.room || camera.name || "摄像头")}</h4>
+                            <h4 ${activeAttrs.roomId ? `id="${activeAttrs.roomId}"` : ""} class="font-headline-md text-headline-md text-on-background truncate">${escapeHtml(cameraTitle)}</h4>
                             <p ${activeAttrs.updateId ? `id="${activeAttrs.updateId}"` : ""} class="font-body-md text-sm text-on-surface-variant">${escapeHtml(statusText(camera))}</p>
                         </div>
                         <span class="app-mini-pill ${tone}">${statusLabel(camera.status)}</span>
@@ -251,6 +264,10 @@
     function renderCameraGrid(camera) {
         const grid = $("edgeMonitorCameraGrid");
         if (!grid) return;
+        state.streamController?.dispose();
+        state.streamController = null;
+        state.streamControllers.forEach((controller) => controller.dispose());
+        state.streamControllers.clear();
         if (!state.cameras.length) {
             grid.innerHTML = emptyCameraGrid();
             return;
@@ -280,6 +297,54 @@
         applyStreamState(camera, "loading");
         state.streamController.setSource(camera.id, { scene: "monitor" });
         image.classList.remove("object-[center_38%]");
+    }
+
+    function updateCardStreamLabel(camera, nextState) {
+        const label = $(cameraDomId("edgeStreamLabel", camera));
+        if (!label) return;
+        if (nextState === "playing") label.textContent = "实时画面已返回";
+        else if (nextState === "waiting") label.textContent = "等待第一帧";
+        else if (nextState === "error") label.textContent = "画面请求失败，正在重试";
+        else if (nextState === "loading") label.textContent = "正在连接画面";
+        else label.textContent = "等待画面帧";
+    }
+
+    function disposeRemovedStreams(activeCameraIds) {
+        for (const [cameraId, controller] of state.streamControllers.entries()) {
+            if (!activeCameraIds.has(Number(cameraId))) {
+                controller.dispose();
+                state.streamControllers.delete(cameraId);
+            }
+        }
+    }
+
+    function attachMonitorStreams(cameras, selected) {
+        const activeIds = new Set(cameras.map((camera) => Number(camera.id)));
+        disposeRemovedStreams(activeIds);
+        cameras.forEach((camera) => {
+            const imageId = Number(camera.id) === Number(selected?.id)
+                ? "edgeSnapshotImage"
+                : cameraDomId("edgeSnapshotImage", camera);
+            const image = $(imageId);
+            if (!image) return;
+            const existing = state.streamControllers.get(Number(camera.id));
+            if (existing) {
+                existing.setSource(camera.id, { scene: "monitor" });
+                return;
+            }
+            const controller = GoHomeEdge.createManagedVideoStream(image, {
+                cameraId: camera.id,
+                scene: "monitor",
+                onStateChange(nextState) {
+                    if (Number(camera.id) === Number(selected?.id)) {
+                        applyStreamState(camera, nextState);
+                    } else {
+                        updateCardStreamLabel(camera, nextState);
+                    }
+                },
+            });
+            state.streamControllers.set(Number(camera.id), controller);
+        });
     }
 
     async function render() {
@@ -313,10 +378,10 @@
                 return;
             }
 
-            await attachMonitorStream(camera);
+            attachMonitorStreams(state.cameras, camera);
             const snapshot = await GoHomeEdge.appLatestSnapshot(camera.id, { allowMissing: true });
             if (snapshot?.available === false) {
-                setText("edgeCameraRoom", camera.room || camera.name || "摄像头");
+                setText("edgeCameraRoom", cameraLabel(camera));
                 if (state.streamState === "playing") {
                     applyStreamState(camera, "playing");
                 } else {
@@ -331,7 +396,7 @@
                 return;
             }
 
-            setText("edgeCameraRoom", camera.room || camera.name || "摄像头");
+            setText("edgeCameraRoom", cameraLabel(camera));
             setText("edgeUpdateTime", `${GoHomeEdge.fmtTime(snapshot.captured_at)} 更新`);
             setText("edgeMainMessage", snapshotMessage(snapshot));
             setText("edgeStatusTitle", statusTitle(snapshot));
