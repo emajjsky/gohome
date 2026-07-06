@@ -1092,6 +1092,9 @@ config_sync_agent = ConfigSyncAgent(
         "worker_running": worker.is_running,
         "lan_url": f"http://{local_ip()}:{settings.port}",
         "service_url": f"http://{local_ip()}:{settings.port}",
+        "detector_backend": settings.detector_backend,
+        "yolo_model": settings.yolo_model if settings.detector_backend == "yolo" else "",
+        "yolo_imgsz": settings.yolo_imgsz if settings.detector_backend == "yolo" else None,
         "worker": worker.runtime_status(),
     },
 )

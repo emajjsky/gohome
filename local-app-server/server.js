@@ -939,6 +939,9 @@ function createLocalAppServer(options = {}) {
         const runtime = payload.runtime || existingDevice.runtime || {};
         const deviceLanUrl = normalizeBaseUrl(runtime.lan_url || payload.lan_url || existingDevice.lan_url || inferredDeviceBaseUrl(req, runtime));
         const deviceServiceUrl = normalizeBaseUrl(runtime.service_url || payload.service_url || existingDevice.service_url || deviceLanUrl);
+        const detectorBackend = String(payload.detector_backend || runtime.detector_backend || existingDevice.detector_backend || "").trim();
+        const yoloModel = String(payload.yolo_model || runtime.yolo_model || existingDevice.yolo_model || "").trim();
+        const yoloImgsz = normalizeNumber(payload.yolo_imgsz ?? runtime.yolo_imgsz ?? existingDevice.yolo_imgsz, null);
 
         if (issuedToken) {
             issuedToken.device_id = deviceId;
@@ -959,6 +962,9 @@ function createLocalAppServer(options = {}) {
             reported_config_version: String(payload.config_version || payload.applied_config_version || ""),
             app_version: String(payload.app_version || existingDevice.app_version || ""),
             model_version: String(payload.model_version || existingDevice.model_version || ""),
+            detector_backend: detectorBackend || existingDevice.detector_backend || "",
+            yolo_model: yoloModel || existingDevice.yolo_model || "",
+            yolo_imgsz: yoloImgsz ?? existingDevice.yolo_imgsz ?? null,
             runtime,
             sync_status: String(reportedStatus.sync_status || payload.sync_status || "reported"),
             last_error: String(reportedStatus.last_error || payload.last_error || ""),
@@ -1442,10 +1448,10 @@ function createLocalAppServer(options = {}) {
                 write(res, 200, {
                     device_id: currentEdgeDeviceId(),
                     name: device.name || "回家盒子",
-                    worker_running: true,
-                    detector_backend: device.detector_backend || "yolo",
-                    yolo_model: device.yolo_model || "yolo11n.pt",
-                    yolo_imgsz: device.yolo_imgsz || 640,
+                    worker_running: Boolean(device.worker_running),
+                    detector_backend: device.detector_backend || "basic",
+                    yolo_model: device.yolo_model || "",
+                    yolo_imgsz: device.yolo_imgsz || null,
                     upload_agent: { configured: true, app_server_base_url: true },
                 });
                 return;

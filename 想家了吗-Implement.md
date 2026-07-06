@@ -6630,13 +6630,13 @@ Chrome 验证：
 - 树莓派旧 `.venv` 仍有历史路径污染，但已新建 Pi 原生 `.venv-pi` 并用它启动当前 edge-agent。
 - `.venv-pi` 当前只安装了本地闭环所需最小依赖：FastAPI、uvicorn、OpenCV headless、numpy 等；YOLO / torch / RTMLib 等完整算法依赖还没在 Pi 原生环境恢复。
 - MJPEG 实时画面、设备同步、App 后端代理已跑通；算法 worker 可能因为 YOLO 依赖缺失而降级或报模型加载错误，需要单独恢复。
-- 当前启动方式是手动 `nohup` 进程，不是持久化 systemd 服务；后续需要把 `.venv-pi` 写入正式启动脚本或 systemd 单元。
+- 当前已切到 systemd 接管，`gohome-edge-agent.service` 使用 `.venv-pi` 启动；完整 Pi 重启后仍需要再做一次实机 reboot 验证。
 
 下一步：
 
-1. 固化树莓派启动：让 edge-agent 重启后也使用 `.venv-pi` 和正确环境变量。
-2. 恢复或降级 Pi 端算法依赖，确认 worker 不只会出实时画面，也能稳定生成检测摘要和事件。
-3. 验证事件与媒体上传：`upload_jobs pending -> completed`，App 事件页能看到真实证据。
+1. 做一次树莓派整机 reboot 验证，确认 `gohome-edge-agent.service` 能随系统自启恢复。
+2. 恢复 Pi 原生 YOLO / torch 依赖；恢复前，Pi 运行态保持 `basic`，避免页面假显示“YOLO 检测中”。
+3. 用真实事件重新验证事件与媒体上传：`upload_jobs pending -> completed`，App 事件页能看到当前 camera id 的真实证据。
 4. 本地闭环稳定后，再迁移 App API / 数据库到云端 HTTPS 服务。
 
 ## 35. 2026-07-06 树莓派重启与真实 UI 再验证
@@ -6718,3 +6718,86 @@ Chrome 验证：
 - 现在的本地闭环已经覆盖“App 页面 -> App 后端 -> 树莓派设备 token 流 -> 真实画面 -> App 页面显示”。
 - 还没完成的是 Pi 原生 YOLO/torch 依赖恢复和持久化启动；这影响算法事件稳定性，不影响当前实时画面闭环。
 - 上云前仍需要把本地 JSON DB 换成云端数据库，并给 App API 配 HTTPS 域名。
+
+## 36. 2026-07-06 树莓派 systemd 接管与算法状态纠偏
+
+本轮在 section 35 的基础上继续做“下一步”：把 Pi 当前可用运行方式固化到 systemd，并纠正 App 端显示的算法状态。
+
+已完成：
+
+- `edge-agent/run.sh`
+  - Python 选择顺序改为：显式 `PYTHON_BIN` -> `.venv-pi/bin/python` -> `.venv/bin/python` -> 系统 `python3`。
+  - `.env.local` 先于 `.env` 读取，确保 Pi 本地运行配置可以覆盖仓库默认值。
+- `edge-agent/scripts/install-systemd-service.sh`
+  - systemd 安装脚本同样优先选择 `.venv-pi`。
+  - 安装时把选中的 `PYTHON_BIN` 传给 `init-box.sh`。
+- `edge-agent/scripts/init-box.sh`
+  - 初始化脚本同样优先选择 `.venv-pi`，避免再次触碰坏的旧 `.venv`。
+- 树莓派运行态：
+  - `.env.local` 从当前可用环境固化。
+  - `gohome-edge-agent.service` 已重装并启用。
+  - 当前 systemd 单元：
+    - `ExecStart=/bin/bash /home/gohome/gohome/edge-agent/run.sh`
+    - `Environment=PYTHON_BIN=/home/gohome/gohome/edge-agent/.venv-pi/bin/python`
+  - `systemctl restart gohome-edge-agent` 后可自动恢复。
+- 算法状态纠偏：
+  - `.venv-pi` 当前没有 `ultralytics / torch / torchvision / rtmlib / onnxruntime`。
+  - 最新截图在 YOLO 模式下曾显示 `model_status=model_error`。
+  - 为避免页面继续假显示“YOLO 检测中”，Pi `.env.local` 已临时切到 `GOHOME_DETECTOR_BACKEND=basic`。
+  - 切换后最新截图显示：
+    - `detector_backend=basic`
+    - `model_status=basic`
+    - `pipeline_version=vision-pipeline-v1`
+- `edge-agent/app/main.py`
+  - 设备同步上报 runtime 时补充 `detector_backend / yolo_model / yolo_imgsz`。
+- `local-app-server/server.js`
+  - `POST /api/v1/device/sync` 保存设备上报的 detector 信息。
+  - `/api/app/device` 不再写死 `worker_running=true / detector_backend=yolo`，改为返回设备同步后的真实状态。
+- Mac 本地 App API：
+  - 发现普通 `nohup node local-app-server/server.js` 在当前桌面工具会话退出后会被清理。
+  - 已创建用户级 LaunchAgent：`~/Library/LaunchAgents/com.gohome.local-app-server.plist`。
+  - 当前本地 App API 由 launchd `KeepAlive` 接管，监听 `http://127.0.0.1:8788`。
+
+验证结果：
+
+- Pi systemd：
+  - `systemctl is-enabled gohome-edge-agent` -> `enabled`
+  - `systemctl is-active gohome-edge-agent` -> `active`
+  - 主进程为 `.venv-pi/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8711`
+- Pi health：
+  - `/health` 正常。
+  - `config_sync_agent.last_error = ""`
+  - App camera id `8` 继续映射到 Pi local camera id `6`。
+- App API：
+  - `/api/app/device` 当前返回：
+    - `worker_running=true`
+    - `detector_backend=basic`
+    - `yolo_model=""`
+    - `yolo_imgsz=null`
+  - 本地服务由 `com.gohome.local-app-server` LaunchAgent 保持运行。
+  - `/api/app/cameras` 当前摄像头 `8` 仍为 `online / synced`。
+- 实时流：
+  - App 代理 `/api/v1/video/cameras/8/stream.mjpg?profile=mobile` 返回 `200 multipart/x-mixed-replace`。
+  - 响应头仍为 `X-GoHome-Proxy-Mode: device-token`。
+- 截图 worker：
+  - Pi 持续生成 `data/snapshots/camera_6/*.jpg`。
+  - 最新截图为 640x360，约每 6 秒刷新。
+- 上传链路：
+  - `edge-agent/scripts/verify-upload-agent.py` 通过。
+  - 覆盖 `/api/v1/device/media-assets/upload` 和 `/api/v1/device/events`。
+- 算法脚本：
+  - `edge-agent/scripts/verify-vision-pipeline.py` 通过。
+  - 注意：该验证覆盖 pipeline 规则和 demo/fallback，不代表 Pi 上 YOLO 已恢复。
+
+当前限制：
+
+- Pi 原生 YOLO/torch 依赖还没恢复，当前运行态是稳定但降级的 `basic`。
+- 事件页里已有的最新高危事件仍来自之前 YOLO 正常时的历史数据；需要在 `basic` 或恢复 YOLO 后重新触发当前 camera id `8` 的真实事件，验证新事件能进入 App。
+- 已验证 `systemctl restart`，还没做整机 `sudo reboot` 后自启恢复。
+- Mac 本地 launchd 已验证 `launchctl print gui/501/com.gohome.local-app-server` 为 running；仍需要在机器重启后再验证一次。
+
+下一步：
+
+1. 做树莓派整机 reboot 验证。
+2. 单独处理 Pi 原生 YOLO/torch 安装方案，避免 pip 拉 CUDA 或破坏当前 `.venv-pi`。
+3. 触发一条当前摄像头 `8 / local 6` 的新事件，验证 App 事件页、证据图、上传记录都是当前链路生成。

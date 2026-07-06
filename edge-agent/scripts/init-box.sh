@@ -3,7 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-$AGENT_ROOT/.venv/bin/python}"
 BOX_USER="${GOHOME_BOX_USER:-${SUDO_USER:-$(id -un)}}"
 BOX_HOSTNAME="${GOHOME_BOX_HOSTNAME:-gohome}"
 ADMIN_MUST_CHANGE_PASSWORD="${GOHOME_ADMIN_MUST_CHANGE_PASSWORD:-0}"
@@ -11,14 +10,26 @@ COMMAND="${1:-init}"
 
 cd "$AGENT_ROOT"
 
-if [[ ! -x "$PYTHON_BIN" ]]; then
-  PYTHON_BIN="$(command -v python3)"
-fi
+select_python_bin() {
+  if [[ -n "${PYTHON_BIN:-}" && -x "$PYTHON_BIN" ]]; then
+    printf '%s\n' "$PYTHON_BIN"
+    return 0
+  fi
 
-if [[ -z "$PYTHON_BIN" ]]; then
-  echo "python3 not found" >&2
+  for candidate in "$AGENT_ROOT/.venv-pi/bin/python" "$AGENT_ROOT/.venv/bin/python" "$(command -v python3 || true)"; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+PYTHON_BIN="$(select_python_bin)" || {
+  echo "python runtime not found" >&2
   exit 1
-fi
+}
 
 case "$COMMAND" in
   init|status|reset-admin)

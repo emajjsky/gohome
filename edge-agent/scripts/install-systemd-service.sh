@@ -4,24 +4,35 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_SH="$AGENT_ROOT/run.sh"
-PYTHON_BIN="${PYTHON_BIN:-$AGENT_ROOT/.venv/bin/python}"
 SERVICE_NAME="${SERVICE_NAME:-gohome-edge-agent}"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 USER_NAME="${SUDO_USER:-$(id -un)}"
+
+select_python_bin() {
+  if [[ -n "${PYTHON_BIN:-}" && -x "$PYTHON_BIN" ]]; then
+    printf '%s\n' "$PYTHON_BIN"
+    return 0
+  fi
+
+  for candidate in "$AGENT_ROOT/.venv-pi/bin/python" "$AGENT_ROOT/.venv/bin/python" "$(command -v python3 || true)"; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
 
 if [[ ! -f "$RUN_SH" ]]; then
   echo "run.sh not found: $RUN_SH" >&2
   exit 1
 fi
 
-if [[ ! -x "$PYTHON_BIN" ]]; then
-  PYTHON_BIN="$(command -v python3)"
-fi
-
-if [[ -z "$PYTHON_BIN" ]]; then
-  echo "python3 not found" >&2
+PYTHON_BIN="$(select_python_bin)" || {
+  echo "python runtime not found" >&2
   exit 1
-fi
+}
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "please run with sudo: sudo bash scripts/install-systemd-service.sh" >&2
@@ -38,7 +49,7 @@ fi
 
 INIT_BOX_SCRIPT="$SCRIPT_DIR/init-box.sh"
 if [[ -f "$INIT_BOX_SCRIPT" ]]; then
-  GOHOME_BOX_USER="$USER_NAME" bash "$INIT_BOX_SCRIPT" init
+  GOHOME_BOX_USER="$USER_NAME" PYTHON_BIN="$PYTHON_BIN" bash "$INIT_BOX_SCRIPT" init
 fi
 
 if getent group netdev >/dev/null 2>&1; then

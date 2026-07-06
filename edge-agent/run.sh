@@ -27,8 +27,8 @@ PY
 )
 }
 
-load_env_file ".env"
 load_env_file ".env.local"
+load_env_file ".env"
 
 require_file() {
   local file_path="$1"
@@ -42,10 +42,26 @@ for demo_asset in quality person stillness fall meal night fire camera; do
   require_file "admin/assets/algorithm-demos/${demo_asset}.webm"
 done
 
-PYTHON_BIN="${PYTHON_BIN:-./.venv/bin/python}"
-if [ ! -x "$PYTHON_BIN" ]; then
-  PYTHON_BIN="python3"
-fi
+select_python_bin() {
+  if [ -n "${PYTHON_BIN:-}" ] && [ -x "$PYTHON_BIN" ]; then
+    printf '%s\n' "$PYTHON_BIN"
+    return 0
+  fi
+
+  for candidate in "./.venv-pi/bin/python" "./.venv/bin/python" "$(command -v python3 || true)"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+PYTHON_BIN="$(select_python_bin)" || {
+  echo "python runtime not found" >&2
+  exit 1
+}
 
 exec "$PYTHON_BIN" -m uvicorn app.main:app \
   --host "${GOHOME_AGENT_HOST:-0.0.0.0}" \
