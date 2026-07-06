@@ -6867,6 +6867,8 @@ Chrome 验证：
     - `app_camera_id=8`
   - `/api/app/cameras/8/snapshot/latest?allow_missing=1` 返回 `available=true`，证据图为 `camera_6/20260706_224540_259602.jpg`。
   - `/api/app/cameras/8/evaluation/latest` 返回最新候选事件 `id=122`。
+  - 验证完成后，已删除人工事件 `122` 和临时 asset `29`，避免演示数据出现假告警。
+  - 当前 `camera 8` 没有保留人工事件，因此 `/api/app/cameras/8/snapshot/latest?allow_missing=1` 恢复为 `available=false`；实时流仍正常。
 - Chrome 插件验证：
   - Codex Chrome Extension 已安装并启用，native host manifest 正确，Chrome 正在运行。
   - 但 `chrome.user.openTabs()` 与新建/导航标签页调用会卡住。
