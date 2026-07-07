@@ -405,6 +405,7 @@ async function main() {
             headers: { Authorization: `Bearer ${APP_TOKEN}` },
         });
         assert.ok(modelProviders.some((provider) => provider.provider_id === "image-wan"));
+        assert.ok(modelProviders.some((provider) => provider.provider_id === "text-default"));
 
         const imageProvider = await requestJson(baseUrl, "/api/v1/model-providers/image-wan", {
             method: "PUT",
@@ -413,6 +414,15 @@ async function main() {
         });
         assert.equal(imageProvider.model, "wan2.7");
         assert.equal(imageProvider.api_key_set, true);
+        assert.equal(imageProvider.secret_mode, "local");
+        assert.equal(imageProvider.api_key, undefined);
+
+        const opsConfig = await requestJson(baseUrl, "/api/v1/ops/service-config", {
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(opsConfig.ok, true);
+        assert.equal(opsConfig.secret_policy.database, "secret_ref_only");
+        assert.ok(opsConfig.model_providers.some((provider) => provider.provider_id === "image-wan" && provider.secret_mode === "local"));
 
         const session = await requestJson(baseUrl, "/api/v1/video/sessions", {
             method: "POST",
@@ -453,6 +463,8 @@ async function main() {
         assert.equal(seedBundle.tables.care_cards[0].card_id, careCard.card_id);
         assert.equal(seedBundle.tables.model_providers.length, 1);
         assert.equal(seedBundle.tables.model_providers[0].provider_id, "image-wan");
+        assert.equal(seedBundle.tables.model_providers[0].api_key_secret_ref, "local:model-provider:image-wan");
+        assert.equal("api_key" in seedBundle.tables.model_providers[0], false);
         assertSeedBundleMatchesSchema(seedBundle);
 
         const restoredDb = normalizeDb(createDbFromCloudRows(seedBundle.tables, createDefaultDb()));
@@ -468,6 +480,7 @@ async function main() {
         assert.equal(restoredDb.care_cards.length, 1);
         assert.equal(restoredDb.care_cards[0].card_id, careCard.card_id);
         assert.equal(restoredDb.model_providers.length, 1);
+        assert.equal(restoredDb.model_providers[0].api_key_secret_ref, "local:model-provider:image-wan");
 
         console.log(JSON.stringify({
             ok: true,

@@ -672,6 +672,8 @@ P1 功能：
 - 生图模型第一版只作为可配置 provider，例如 `wan2.7` 或等价图像生成模型；没有 API key 或生成失败时使用默认卡片样式。
 - 模型调用必须记录 `provider / model / prompt_version / input_hash / output_status`，便于成本控制、复盘和替换。
 - 高危安全事件不依赖大模型生成才能推送；模型只负责增强解释，不负责决定是否报警。
+- 模型 API key 不进入前端、localStorage 或普通业务表；本地开发可存在服务器侧 secret 文件，云端必须接 Secret Manager / KMS，数据库只保存 `secret_ref` 和配置状态。
+- 需要提供运营后台配置页，用于维护 provider、model、用途、启用状态和密钥配置状态，但任何接口都不能回显 API key 明文。
 
 内容推荐要求：
 

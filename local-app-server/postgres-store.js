@@ -143,6 +143,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             purpose: provider.purpose || "care_text",
             enabled: provider.enabled === true,
             configured: provider.configured === true,
+            api_key_secret_ref: provider.api_key_secret_ref || "",
             api_key_set: provider.configured === true || Boolean(provider.api_key_secret_ref),
             created_at: iso(provider.created_at, db.created_at),
             updated_at: iso(provider.updated_at, iso(provider.created_at, db.created_at)),

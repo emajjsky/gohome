@@ -1242,7 +1242,8 @@ factory_new
 
 - P0 的模板版 `CareCard`、偏好接口、模型 provider 配置接口和亲情页展示已经进入本地闭环。
 - P0 的数据库迁移层已经补齐到 PostgreSQL schema、seed bundle 导出和反向还原校验。
-- 下一步先把首页接入今日关怀摘要，再进入 P0.5 文本模型 API。
+- P0.5 前需要一个后台服务配置页，用于维护模型 provider、model、启用状态和密钥配置状态。
+- 下一步先把后台服务配置页和密钥策略跑通，再把首页接入今日关怀摘要，然后进入 P0.5 文本模型 API。
 - `wan2.7` 生图、白名单内容链接和自动内容搜索都必须排在文本模型之后。
 
 ##### T7.1 场景化图文消息输入域
@@ -1371,11 +1372,15 @@ factory_new
   - 读取文本模型和生图模型配置状态，不返回 API key 明文
 - `PUT /api/v1/model-providers/{provider_id}`
   - 配置 provider、模型名、用途、启用状态
+- `GET /api/v1/ops/service-config`
+  - 后台服务配置页读取服务状态、存储类型、模型 provider 和密钥策略
 
 第一版 provider 配置必须支持：
 
 - 文本模型：用于每日关怀摘要、标题、正文、问候建议。
 - 生图模型：用于非证据型卡片配图，可配置 `wan2.7` 或等价模型。
+- 本地 API key：只保存到服务器侧 `data/app-server/secrets.json`，该目录不进 git。
+- 云端 API key：接 Secret Manager / KMS，业务数据库只保存 `api_key_secret_ref`。
 
 明确不在第一版做：
 

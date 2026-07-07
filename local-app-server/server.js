@@ -235,8 +235,141 @@ function createLocalAppServer(options = {}) {
     const appToken = String(options.appToken || DEFAULT_APP_TOKEN);
     const playbackTickets = new Map();
     const boxAdminSessions = new Map();
+    const secretsPath = path.join(dataDir, "secrets.json");
 
     ensureDir(mediaDir);
+
+    const defaultModelProviders = [
+        {
+            provider_id: "text-default",
+            provider: "template",
+            model: "care-template-v1",
+            purpose: "care_text",
+            enabled: true,
+            configured: true,
+        },
+        {
+            provider_id: "image-wan",
+            provider: "wan",
+            model: "wan2.7",
+            purpose: "care_image",
+            enabled: false,
+            configured: false,
+        },
+    ];
+
+    function readSecrets() {
+        const secrets = fs.existsSync(secretsPath)
+            ? safeJsonParse(fs.readFileSync(secretsPath, "utf8"), {})
+            : {};
+        return {
+            version: 1,
+            model_provider_api_keys: {
+                ...(secrets.model_provider_api_keys || {}),
+            },
+        };
+    }
+
+    function writeSecrets(secrets) {
+        ensureDir(path.dirname(secretsPath));
+        fs.writeFileSync(secretsPath, `${JSON.stringify(secrets, null, 2)}\n`, { mode: 0o600 });
+        try {
+            fs.chmodSync(secretsPath, 0o600);
+        } catch (_error) {
+            // Best effort on filesystems that do not support chmod.
+        }
+    }
+
+    function localProviderSecretRef(providerId) {
+        return `local:model-provider:${providerId}`;
+    }
+
+    function providerEnvKeys(provider) {
+        const providerId = String(provider.provider_id || "");
+        const purpose = String(provider.purpose || "");
+        const providerName = String(provider.provider || "");
+        const keys = [];
+        if (providerId === "text-default" || purpose === "care_text") {
+            keys.push("GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY");
+        }
+        if (providerId === "image-wan" || providerName === "wan" || purpose === "care_image") {
+            keys.push("GOHOME_WAN_API_KEY", "DASHSCOPE_API_KEY", "WAN_API_KEY");
+        }
+        return [...new Set(keys)];
+    }
+
+    function hasLocalProviderSecret(providerId) {
+        const record = readSecrets().model_provider_api_keys[String(providerId)] || null;
+        return Boolean(record?.api_key);
+    }
+
+    function setLocalProviderSecret(providerId, apiKey) {
+        const key = String(apiKey || "").trim();
+        if (!key) return "";
+        const secrets = readSecrets();
+        secrets.model_provider_api_keys[String(providerId)] = {
+            api_key: key,
+            sha256: sha256(key),
+            updated_at: nowIso(),
+        };
+        writeSecrets(secrets);
+        return localProviderSecretRef(providerId);
+    }
+
+    function clearLocalProviderSecret(providerId) {
+        const secrets = readSecrets();
+        delete secrets.model_provider_api_keys[String(providerId)];
+        writeSecrets(secrets);
+    }
+
+    function modelProviders() {
+        const byId = new Map(defaultModelProviders.map((provider) => [provider.provider_id, { ...provider }]));
+        for (const provider of store.db.model_providers) {
+            if (!provider?.provider_id) continue;
+            byId.set(provider.provider_id, { ...(byId.get(provider.provider_id) || {}), ...provider });
+        }
+        return [...byId.values()];
+    }
+
+    function providerSecretStatus(provider) {
+        const envKey = providerEnvKeys(provider).find((key) => Boolean(process.env[key])) || "";
+        const localSecret = hasLocalProviderSecret(provider.provider_id);
+        const configuredRef = String(provider.api_key_secret_ref || "").trim();
+        const requiresSecret = Boolean(provider.provider && provider.provider !== "template");
+        const apiKeySet = Boolean(envKey || localSecret || configuredRef || provider.api_key_set);
+        const secretMode = envKey
+            ? "env"
+            : (localSecret ? "local" : (configuredRef ? "secret_ref" : (requiresSecret ? "unset" : "not_required")));
+        return {
+            requires_secret: requiresSecret,
+            api_key_set: apiKeySet,
+            configured: requiresSecret ? apiKeySet : provider.configured !== false,
+            secret_mode: secretMode,
+            api_key_secret_ref: configuredRef || (localSecret ? localProviderSecretRef(provider.provider_id) : ""),
+            env_keys: providerEnvKeys(provider),
+            active_env_key: envKey,
+        };
+    }
+
+    function publicModelProvider(provider) {
+        const secret = providerSecretStatus(provider);
+        return {
+            provider_id: provider.provider_id,
+            provider: provider.provider || "",
+            model: provider.model || "",
+            purpose: provider.purpose || "care_text",
+            enabled: Boolean(provider.enabled),
+            configured: secret.configured,
+            api_key_set: secret.api_key_set,
+            api_key_secret_ref: secret.api_key_secret_ref,
+            requires_secret: secret.requires_secret,
+            secret_mode: secret.secret_mode,
+            env_keys: secret.env_keys,
+            active_env_key: secret.active_env_key,
+            created_at: provider.created_at || null,
+            updated_at: provider.updated_at || null,
+        };
+    }
 
     function write(res, statusCode, payload, headers = {}) {
         const isBuffer = Buffer.isBuffer(payload);
@@ -1973,15 +2106,7 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && pathname === "/api/v1/model-providers") {
                 if (!requireApp(req, res)) return;
-                const providers = store.db.model_providers.length ? store.db.model_providers : [
-                    { provider_id: "text-default", provider: "template", model: "care-template-v1", purpose: "care_text", enabled: true, configured: true },
-                    { provider_id: "image-wan", provider: "wan", model: "wan2.7", purpose: "care_image", enabled: false, configured: false },
-                ];
-                write(res, 200, providers.map((provider) => ({
-                    ...provider,
-                    api_key: undefined,
-                    api_key_set: Boolean(provider.api_key || provider.api_key_set),
-                })));
+                write(res, 200, modelProviders().map(publicModelProvider));
                 return;
             }
 
@@ -1990,22 +2115,57 @@ function createLocalAppServer(options = {}) {
                 if (!requireApp(req, res)) return;
                 const providerId = decodeURIComponent(modelProviderMatch[1]);
                 const payload = await parseJsonBody(req);
-                const existing = store.db.model_providers.find((item) => item.provider_id === providerId) || {};
+                const existingStored = store.db.model_providers.find((item) => item.provider_id === providerId) || {};
+                const existing = modelProviders().find((item) => item.provider_id === providerId) || existingStored;
+                let apiKeySecretRef = String(
+                    "api_key_secret_ref" in payload ? payload.api_key_secret_ref : (existingStored.api_key_secret_ref || existing.api_key_secret_ref || "")
+                ).trim();
+                if ("api_key" in payload && String(payload.api_key || "").trim()) {
+                    apiKeySecretRef = setLocalProviderSecret(providerId, payload.api_key);
+                }
+                const clearApiKey = normalizeBool(payload.clear_api_key);
+                if (clearApiKey) {
+                    clearLocalProviderSecret(providerId);
+                    if (apiKeySecretRef === localProviderSecretRef(providerId)) apiKeySecretRef = "";
+                }
                 const next = {
                     provider_id: providerId,
                     provider: String(payload.provider || existing.provider || ""),
                     model: String(payload.model || existing.model || ""),
                     purpose: String(payload.purpose || existing.purpose || "care_text"),
                     enabled: "enabled" in payload ? normalizeBool(payload.enabled) : Boolean(existing.enabled),
-                    configured: "api_key" in payload ? Boolean(payload.api_key) : Boolean(existing.configured || existing.api_key_set),
-                    api_key_set: "api_key" in payload ? Boolean(payload.api_key) : Boolean(existing.api_key_set),
+                    configured: Boolean(existing.configured),
+                    api_key_set: Boolean(!clearApiKey && (apiKeySecretRef || existingStored.api_key_set)),
+                    api_key_secret_ref: apiKeySecretRef,
+                    created_at: existingStored.created_at || nowIso(),
                     updated_at: nowIso(),
                 };
+                const publicNext = publicModelProvider(next);
+                next.configured = publicNext.configured;
+                next.api_key_set = publicNext.api_key_set && publicNext.secret_mode !== "env";
                 const index = store.db.model_providers.findIndex((item) => item.provider_id === providerId);
                 if (index >= 0) store.db.model_providers[index] = next;
                 else store.db.model_providers.push(next);
                 await store.save();
-                write(res, 200, next);
+                write(res, 200, publicModelProvider(next));
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/v1/ops/service-config") {
+                if (!requireApp(req, res)) return;
+                write(res, 200, {
+                    ok: true,
+                    service: "gohome-local-app-server",
+                    store: store.kind || "json",
+                    app_server_base_url: process.env.GOHOME_APP_SERVER_BASE_URL || `http://localhost:${DEFAULT_PORT}`,
+                    model_providers: modelProviders().map(publicModelProvider),
+                    secret_policy: {
+                        local: "server_secret_file",
+                        cloud: "secret_manager_or_kms",
+                        database: "secret_ref_only",
+                    },
+                    generated_at: nowIso(),
+                });
                 return;
             }
 

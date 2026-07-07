@@ -7193,3 +7193,55 @@ Chrome 验证：
 1. 首页接入今日关怀摘要，让产品首页也能看到“今天家里怎么样”。
 2. 接文本模型 API，生成标题、正文和问候建议，并把请求结果写入 `model_generation_jobs`。
 3. 本地 Postgres 或云 Postgres 跑通后，再进入对象存储和 HTTPS 云部署。
+
+## 43. 2026-07-07 后台服务配置页与模型密钥策略记录
+
+背景：
+
+- 文本模型和 `wan2.7` 生图 provider 接入前，必须先有后台服务配置入口。
+- API key 不能放在前端、localStorage 或普通业务表里；否则上云后会留下明显安全债。
+
+已完成：
+
+- `local-app-server/server.js`
+  - 新增服务器侧本地 secret 文件存储，路径在运行数据目录下的 `secrets.json`。
+  - 本地 secret 文件只保存于 `data/app-server/` 这类运行目录，该目录已在 `.gitignore`。
+  - `GET /api/v1/model-providers` 改为合并默认 provider 和已保存 provider。
+  - `PUT /api/v1/model-providers/{provider_id}` 支持提交 API key，但只写入服务器侧 secret 文件，数据库只保存 `api_key_secret_ref`。
+  - 新增 `GET /api/v1/ops/service-config`，供后台页面读取服务状态、store 类型、provider 列表和密钥策略。
+  - 所有 provider 响应都不回显 API key 明文，只返回 `api_key_set / secret_mode / api_key_secret_ref / env_keys`。
+- `assets/scripts/edge-client.js`
+  - 新增 `v1OpsServiceConfig()`。
+- `ops.html`
+  - 新增后台服务配置页。
+  - 展示服务状态、数据存储类型、模型 provider 可用状态和密钥策略。
+  - 支持维护 provider、model、用途、启用状态、API key 和 secret ref。
+- `assets/scripts/ops-live.js`
+  - 读取 `ops/service-config` 渲染后台页面。
+  - 保存 provider 配置时，API key 只提交一次，不在页面回显。
+- `local-app-server/postgres-store.js`
+  - 反向还原 `model_providers.api_key_secret_ref`。
+- `scripts/verify-local-app-server.js`
+  - 增加后台配置接口验证。
+  - 验证 API key 不进入 seed bundle，只保留 `api_key_secret_ref`。
+
+密钥策略：
+
+- 本地开发：可以用服务器侧 `data/app-server/secrets.json`，也可以用环境变量。
+- 云端部署：必须替换为 Secret Manager / KMS，业务数据库只保存 secret ref。
+- 前端页面：只能看到是否已配置、密钥来源和引用名，不能看到明文 key。
+
+验证结果：
+
+- `node --check local-app-server/server.js` 通过。
+- `node --check local-app-server/postgres-store.js` 通过。
+- `node --check assets/scripts/edge-client.js` 通过。
+- `node --check assets/scripts/ops-live.js` 通过。
+- `node --check scripts/verify-local-app-server.js` 通过。
+- `npm test` 通过。
+
+下一步：
+
+1. 重启本地 App API 后，用浏览器验证 `ops.html?app=1`。
+2. 首页接入今日关怀摘要。
+3. 接文本模型 API，并把调用结果写入 `model_generation_jobs`。
