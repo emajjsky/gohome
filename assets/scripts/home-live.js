@@ -6,6 +6,7 @@
         "edgeHomeSnapshotSection",
         "edgeHomeMemorySection",
     ];
+    let homeCareImageRenderSeq = 0;
 
     function setText(id, value) {
         const node = $(id);
@@ -43,6 +44,64 @@
             textNode.textContent = ` ${label}`;
         } else {
             node.append(document.createTextNode(` ${label}`));
+        }
+    }
+
+    function setHomeCareImageFallback(message, subtext, icon = "volunteer_activism") {
+        const image = $("edgeHomeCareImage");
+        const fallback = $("edgeHomeCareImageFallback");
+        if (image) {
+            image.removeAttribute("src");
+            image.classList.add("hidden");
+            image.classList.remove("opacity-0");
+        }
+        if (fallback) {
+            fallback.classList.remove("hidden");
+            const iconNode = fallback.querySelector(".material-symbols-outlined");
+            const messageNode = fallback.querySelector(".font-label-md");
+            const subtextNode = fallback.querySelector(".font-body-md");
+            if (iconNode) iconNode.textContent = icon;
+            if (messageNode) messageNode.textContent = message;
+            if (subtextNode) subtextNode.textContent = subtext;
+        }
+    }
+
+    async function renderHomeCareImage(card) {
+        const image = $("edgeHomeCareImage");
+        const fallback = $("edgeHomeCareImageFallback");
+        if (!image || !fallback) return;
+        const seq = homeCareImageRenderSeq + 1;
+        homeCareImageRenderSeq = seq;
+        const imageUrl = String(card?.image_url || "").trim();
+        if (!imageUrl) {
+            setHomeCareImageFallback(
+                card?.image_mode === "failed_provider" ? "今日关怀已生成" : "今日关怀正在生成",
+                card?.image_mode === "failed_provider" ? "图片稍后再试" : "稍后显示完整卡片",
+                card?.image_mode === "failed_provider" ? "favorite" : "volunteer_activism"
+            );
+            return;
+        }
+        setHomeCareImageFallback("正在打开今日关怀", "完整卡片马上出现", "hourglass_top");
+        try {
+            const resolvedUrl = await window.GoHomeEdge.v1VideoMediaPlaybackUrl(imageUrl);
+            if (homeCareImageRenderSeq !== seq) return;
+            image.onload = () => {
+                if (homeCareImageRenderSeq !== seq) return;
+                fallback.classList.add("hidden");
+                image.classList.remove("opacity-0");
+                image.classList.remove("hidden");
+            };
+            image.onerror = () => {
+                if (homeCareImageRenderSeq !== seq) return;
+                image.classList.remove("opacity-0");
+                setHomeCareImageFallback("今日关怀已生成", "图片暂时无法打开", "favorite");
+            };
+            image.classList.remove("hidden");
+            image.classList.add("opacity-0");
+            image.src = resolvedUrl;
+        } catch (_error) {
+            if (homeCareImageRenderSeq !== seq) return;
+            setHomeCareImageFallback("今日关怀已生成", "图片暂时无法打开", "favorite");
         }
     }
 
@@ -153,6 +212,9 @@
         setText("edgeHomeCareMeta", `${family?.name || "当前家庭"} · ${card.card_date || ""}`);
         setText("edgeHomeCareTitle", card.title || "今天家里怎么样");
         setText("edgeHomeCareBody", card.body || "今日关怀卡片已经生成。");
+        const link = $("edgeHomeCareCardLink");
+        if (link) link.href = window.GoHomeEdge?.pageHref?.("companionship.html") || "companionship.html";
+        renderHomeCareImage(card);
         const facts = $("edgeHomeCareFacts");
         if (facts) {
             facts.innerHTML = "";

@@ -244,14 +244,33 @@
         }
         if (actions) {
             actions.innerHTML = "";
-            (Array.isArray(card.actions) ? card.actions : []).slice(0, 3).forEach((action) => {
+            (Array.isArray(card.actions) ? card.actions : []).slice(0, 3).forEach((action, index) => {
                 const config = careActionConfig(action);
                 const anchor = document.createElement("a");
-                anchor.className = config.icon === "call"
-                    ? "bg-primary text-on-primary py-3 rounded-full font-label-md text-label-md flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
-                    : "bg-surface-container-high text-on-surface py-3 rounded-full font-label-md text-label-md flex items-center justify-center gap-2 hover:bg-surface-variant transition-colors";
+                const primary = index === 0 || config.icon === "call";
+                anchor.className = primary
+                    ? "min-h-[64px] rounded-xl bg-primary text-on-primary px-3.5 py-3 font-label-md text-label-md flex items-start gap-3 hover:opacity-90 transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+                    : "min-h-[64px] rounded-xl bg-surface-container-high text-on-surface px-3.5 py-3 font-label-md text-label-md flex items-start gap-3 hover:bg-surface-variant transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2";
                 anchor.href = config.href === "#" ? "#" : (window.GoHomeEdge?.pageHref?.(config.href) || config.href);
-                anchor.innerHTML = `<span class="material-symbols-outlined text-[18px]">${config.icon}</span>${config.label}`;
+                const icon = document.createElement("span");
+                icon.className = primary
+                    ? "material-symbols-outlined w-9 h-9 rounded-lg bg-white/20 text-on-primary flex items-center justify-center shrink-0 text-[20px] mt-0.5"
+                    : "material-symbols-outlined w-9 h-9 rounded-lg bg-surface-container-low text-primary flex items-center justify-center shrink-0 text-[20px] mt-0.5";
+                icon.setAttribute("aria-hidden", "true");
+                icon.textContent = config.icon;
+                const textWrap = document.createElement("span");
+                textWrap.className = "min-w-0 flex-1 flex items-start justify-between gap-3";
+                const label = document.createElement("span");
+                label.className = "leading-relaxed break-words text-left";
+                label.textContent = config.label;
+                const arrow = document.createElement("span");
+                arrow.className = primary
+                    ? "material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-on-primary/80"
+                    : "material-symbols-outlined text-[18px] shrink-0 mt-0.5 text-outline";
+                arrow.setAttribute("aria-hidden", "true");
+                arrow.textContent = "arrow_forward";
+                textWrap.append(label, arrow);
+                anchor.append(icon, textWrap);
                 if (config.href === "#") {
                     anchor.addEventListener("click", (event) => {
                         event.preventDefault();
