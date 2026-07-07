@@ -211,32 +211,39 @@
             gap: 12px;
         }
 
-        .ops-provider {
+        .ops-capability {
             border: 1px solid var(--ops-line);
             border-radius: 8px;
             background: #fffaf4;
             padding: 14px;
         }
 
-        .ops-provider-top {
+        .ops-capability-head {
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
             gap: 12px;
             align-items: start;
         }
 
-        .ops-provider-id {
+        .ops-capability-id {
             color: var(--ops-muted);
             font-size: 12px;
             font-weight: 800;
             letter-spacing: 0.02em;
         }
 
-        .ops-provider-title {
+        .ops-capability h3 {
             margin-top: 4px;
             font-size: 18px;
             font-weight: 800;
             overflow-wrap: anywhere;
+        }
+
+        .ops-capability-desc {
+            margin-top: 8px;
+            color: var(--ops-muted);
+            font-size: 13px;
+            line-height: 1.55;
         }
 
         .ops-badges {
@@ -274,76 +281,80 @@
             color: var(--ops-danger);
         }
 
-        .ops-form {
+        .ops-field-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 12px;
             margin-top: 14px;
         }
 
-        .ops-field {
+        .ops-read-field {
+            min-height: 72px;
             display: grid;
+            align-content: center;
             gap: 6px;
+            border-radius: 8px;
+            background: #fffdf9;
+            border: 1px solid var(--ops-line);
+            padding: 12px;
         }
 
-        .ops-field.full {
-            grid-column: 1 / -1;
-        }
-
-        .ops-field label {
+        .ops-read-field span,
+        .ops-prompt-block span,
+        .ops-env-block > span {
             color: var(--ops-muted);
             font-size: 12px;
             font-weight: 800;
         }
 
-        .ops-input,
-        .ops-select {
-            width: 100%;
-            min-height: 42px;
-            border: 1px solid var(--ops-line);
-            border-radius: 8px;
-            background: #fffdf9;
-            color: var(--ops-text);
-            padding: 0 12px;
+        .ops-read-field strong {
             font-size: 14px;
+            overflow-wrap: anywhere;
         }
 
-        .ops-input:focus,
-        .ops-select:focus {
-            outline: 3px solid rgba(39, 95, 143, 0.14);
-            border-color: var(--ops-primary);
-        }
-
-        .ops-toggle-line {
-            min-height: 42px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            padding: 0 12px;
+        .ops-prompt-block,
+        .ops-env-block {
+            margin-top: 12px;
             border: 1px solid var(--ops-line);
             border-radius: 8px;
             background: #fffdf9;
+            padding: 12px;
         }
 
-        .ops-toggle-line input {
-            width: 20px;
-            height: 20px;
-            accent-color: var(--ops-primary);
-        }
-
-        .ops-form-actions {
-            grid-column: 1 / -1;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            padding-top: 2px;
-        }
-
-        .ops-feedback {
-            color: var(--ops-muted);
+        .ops-prompt-block pre {
+            margin: 8px 0 0;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            color: var(--ops-text);
+            font-family: inherit;
             font-size: 13px;
+            line-height: 1.65;
+        }
+
+        .ops-env-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        .ops-env-row em {
+            width: 72px;
+            font-style: normal;
+            color: var(--ops-muted);
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .ops-env-row code {
+            max-width: 100%;
+            border-radius: 6px;
+            background: var(--ops-panel-soft);
+            padding: 5px 7px;
+            font-size: 12px;
+            color: var(--ops-text);
+            overflow-wrap: anywhere;
         }
 
         .ops-empty {
@@ -362,8 +373,8 @@
 
             .ops-header,
             .ops-layout,
-            .ops-form,
-            .ops-provider-top {
+            .ops-field-grid,
+            .ops-capability-head {
                 grid-template-columns: minmax(0, 1fr);
             }
 
@@ -372,8 +383,7 @@
             }
 
             .ops-badges,
-            .ops-header-actions,
-            .ops-form-actions {
+            .ops-header-actions {
                 justify-content: stretch;
             }
 
@@ -389,10 +399,10 @@
             <div>
                 <p class="ops-kicker">GOHOME OPS</p>
                 <h1>服务后台</h1>
-                <p class="ops-subtitle">模型 provider、密钥状态和亲情关怀生成服务的运维配置入口。</p>
+                <p class="ops-subtitle">平台内部模型能力状态页。家属用户不配置模型、Base URL、API Key 或 Prompt。</p>
             </div>
             <div class="ops-header-actions">
-                <a class="ops-button" href="app-shell.html?app=1">
+                <a class="ops-button" href="index.html?app=1">
                     <span class="material-symbols-outlined">arrow_back</span>
                     回到 App
                 </a>
@@ -414,8 +424,8 @@
                     <strong id="opsStoreKind">-</strong>
                 </div>
                 <div class="ops-stat">
-                    <span>模型配置</span>
-                    <strong id="opsProviderSummary">-</strong>
+                    <span>模型能力</span>
+                    <strong id="opsCapabilitySummary">-</strong>
                 </div>
                 <div class="ops-policy">
                     <strong>密钥策略</strong>
@@ -427,19 +437,19 @@
                 <section class="ops-panel ops-section">
                     <div class="ops-section-head">
                         <div>
-                            <h2>模型与生成服务</h2>
-                            <p>文本模型先用于每日关怀文案，生图 provider 只服务非证据型卡片。</p>
+                            <h2>平台模型能力</h2>
+                            <p>当前只需要两类能力：多模态语言模型生成每日关怀内容，生图模型生成 4:7 温馨漫画图文卡片。</p>
                         </div>
                     </div>
-                    <div id="opsProviderList" class="ops-provider-list">
-                        <div class="ops-empty">正在读取 provider 配置</div>
+                    <div id="opsCapabilityList" class="ops-provider-list">
+                        <div class="ops-empty">正在读取模型能力状态</div>
                     </div>
                 </section>
             </main>
         </div>
     </div>
 
-    <script src="assets/scripts/edge-client.js?v=20260707-ops-1"></script>
-    <script src="assets/scripts/ops-live.js?v=20260707-ops-1"></script>
+    <script src="assets/scripts/edge-client.js?v=20260707-ops-2"></script>
+    <script src="assets/scripts/ops-live.js?v=20260707-ops-2"></script>
 </body>
 </html>

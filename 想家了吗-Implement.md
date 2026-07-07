@@ -7062,7 +7062,7 @@ Chrome 验证：
   - 将“每日亲情关怀卡片”写入子女端 App 的 P0 能力。
   - 新增亲情关怀数据流：设备状态、生活节律、事件摘要、日历、天气、联系记录、老人兴趣偏好 -> care-service -> model-service / image-service / content-service -> message-service -> App 卡片。
   - 明确模型 API 只生成候选文案、问候建议和非证据型配图，不决定安全告警。
-  - 明确生图模型可配置 `wan2.7` 或等价 provider，但只用于非证据卡片。
+  - 明确生图模型由平台侧接入 `wan2.7` 或等价能力，但只用于非证据卡片。
   - 明确公众号文章、短视频、自媒体内容推荐必须基于授权、白名单或合规来源，不做未经授权抓取和全文搬运。
   - 新增 `CarePreference / CareCard / ContentSource / ContentRecommendation / ModelGenerationJob` 对象定义。
 - `想家了吗-Plan.md`
@@ -7070,7 +7070,7 @@ Chrome 验证：
   - 将执行顺序拆成五批：
     1. P0：每日关怀卡片、问候建议、联系入口、规则模板兜底。
     2. P0.5：文本模型 API 生成更自然的标题、正文和问候建议，失败时回退模板。
-    3. P1：可配置生图 provider，如 `wan2.7`，用于非证据型卡片配图。
+    3. P1：平台侧生图模型能力，如 `wan2.7`，用于非证据型卡片配图。
     4. P1.5：用户手动订阅或白名单来源的内容推荐链接。
     5. P2：自动搜索自媒体视频、公众号文章和跨平台内容召回。
   - 补充最小接口范围：
@@ -7078,8 +7078,8 @@ Chrome 验证：
     - `POST /api/v1/internal/care-cards/generate`
     - `GET /api/v1/families/{family_id}/care-preferences`
     - `PUT /api/v1/families/{family_id}/care-preferences`
-    - `GET /api/v1/model-providers`
-    - `PUT /api/v1/model-providers/{provider_id}`
+    - `GET /api/v1/model-providers`，平台内部只读兼容接口
+    - `PUT /api/v1/model-providers/{provider_id}`，不开放给用户配置，后续由平台 env / Secret Manager 管理
 
 当前决策：
 
@@ -7092,17 +7092,17 @@ Chrome 验证：
 已完成 P0 本地实现：
 
 - `local-app-server/server.js`
-  - 本地 JSON DB 新增 `care_preferences / care_cards / model_providers / model_generation_jobs / content_sources / content_recommendations` 运行结构。
+  - 本地 JSON DB 新增 `care_preferences / care_cards / model_providers / model_generation_jobs / content_sources / content_recommendations` 运行结构，其中 `model_providers` 仅作平台模型能力元数据和历史兼容预留。
   - 新增 `GET /api/v1/app/care-cards/today`。
   - 新增 `POST /api/v1/internal/care-cards/generate`。
   - 新增 `GET /api/v1/families/{family_id}/care-preferences`。
   - 新增 `PUT /api/v1/families/{family_id}/care-preferences`。
-  - 新增 `GET /api/v1/model-providers`。
-  - 新增 `PUT /api/v1/model-providers/{provider_id}`。
+  - 新增平台内部只读兼容接口 `GET /api/v1/model-providers`。
+  - `PUT /api/v1/model-providers/{provider_id}` 不开放给用户配置，模型底层配置由平台 env / Secret Manager 管理。
   - `CareCard` 第一版使用模板规则生成，不调用模型 API。
   - 事件依据只统计最近 24 小时的未处理事件，避免历史事件堆积误导每日关怀。
 - `assets/scripts/edge-client.js`
-  - 新增 `v1CareCardToday / v1GenerateCareCard / v1CarePreferences / v1UpdateCarePreferences / v1ModelProviders / v1UpdateModelProvider`。
+  - 新增 `v1CareCardToday / v1GenerateCareCard / v1CarePreferences / v1UpdateCarePreferences`，模型底层配置不进入普通前端 SDK。
 - `companionship.html`
   - 新增“今日关怀”真实数据卡片区域。
   - 新增“亲情消息”真实消息列表容器。
@@ -7111,7 +7111,7 @@ Chrome 验证：
   - 优先读取 `CareCard` 并渲染今日关怀卡片。
   - 保留原 `MessageCandidate` 消息列表能力。
 - `scripts/verify-local-app-server.js`
-  - 增加亲情关怀偏好、今日关怀卡片、强制生成卡片、模型 provider 配置验证。
+  - 增加亲情关怀偏好、今日关怀卡片、强制生成卡片、平台模型能力只读状态验证。
 
 原因：
 
@@ -7196,52 +7196,65 @@ Chrome 验证：
 
 ## 43. 2026-07-07 后台服务配置页与模型密钥策略记录
 
+状态：本节记录的是已废弃的中间方案。第 44 节已经纠偏为“模型底层配置由平台方通过服务器环境变量或云端 Secret Manager / KMS 管理，普通用户和用户端 App 不配置模型 API”。
+
+废弃原因：
+
+- 页面维护 provider、model、API key 或 secret ref 会把平台内部能力误导成普通用户配置。
+- 即使不回显明文 key，前端提交 key 的产品路径也不适合作为 App 用户流程。
+- 本地阶段统一改为服务器环境变量；云端阶段统一接 Secret Manager / KMS。
+
+保留结论：
+
+- API key 不能放在前端、localStorage 或普通业务表里。
+- 页面只能做平台内部只读状态检查。
+- 真正生效方案见第 44 节。
+
+## 44. 2026-07-07 模型配置产品边界纠偏记录
+
 背景：
 
-- 文本模型和 `wan2.7` 生图 provider 接入前，必须先有后台服务配置入口。
-- API key 不能放在前端、localStorage 或普通业务表里；否则上云后会留下明显安全债。
+- 用户指出模型 API 底层配置是 App / 平台提供方的内部配置，不应该让普通家属用户配置。
+- 上一版后台页偏工程化，容易误导为用户可填写 provider、key、Base URL 和 Prompt。
 
-已完成：
+纠偏决策：
+
+- 用户端 App 不展示模型配置入口。
+- 家属用户只配置老人资料、兴趣、提醒频率、内容偏好和联系人，不配置模型底层参数。
+- 平台方内部只需要两类模型能力：
+  - 多模态语言模型：根据日历、热点信息、天气预报、设备状态、摄像头状态、事件和老人资料生成每日关怀卡片内容。
+  - 生图模型：根据卡片内容生成 4:7 温馨可爱漫画图文卡片，且只用于非证据型关怀卡片。
+- `base_url / api_key / model / prompt` 由平台方在服务器环境变量或云端 Secret Manager / KMS 配置。
+- 运营后台只做内部只读状态检查，不提供给普通用户填写 key、Base URL、模型名或 Prompt。
+
+已调整：
 
 - `local-app-server/server.js`
-  - 新增服务器侧本地 secret 文件存储，路径在运行数据目录下的 `secrets.json`。
-  - 本地 secret 文件只保存于 `data/app-server/` 这类运行目录，该目录已在 `.gitignore`。
-  - `GET /api/v1/model-providers` 改为合并默认 provider 和已保存 provider。
-  - `PUT /api/v1/model-providers/{provider_id}` 支持提交 API key，但只写入服务器侧 secret 文件，数据库只保存 `api_key_secret_ref`。
-  - 新增 `GET /api/v1/ops/service-config`，供后台页面读取服务状态、store 类型、provider 列表和密钥策略。
-  - 所有 provider 响应都不回显 API key 明文，只返回 `api_key_set / secret_mode / api_key_secret_ref / env_keys`。
-- `assets/scripts/edge-client.js`
-  - 新增 `v1OpsServiceConfig()`。
+  - 移除页面提交 API key 写入本地 secret 文件的产品路径。
+  - 新增平台模型能力读取逻辑：
+    - `multimodal-language`
+    - `care-card-image`
+  - 本地环境变量支持：
+    - 多模态语言模型：`GOHOME_MULTIMODAL_BASE_URL / GOHOME_MULTIMODAL_API_KEY / GOHOME_MULTIMODAL_MODEL / GOHOME_CARE_CARD_PROMPT`
+    - 兼容文本模型变量：`GOHOME_TEXT_MODEL_BASE_URL / GOHOME_TEXT_MODEL_API_KEY / GOHOME_TEXT_MODEL`
+    - 兼容 OpenAI 风格变量：`OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL`
+    - 生图模型：`GOHOME_IMAGE_BASE_URL / GOHOME_IMAGE_API_KEY / GOHOME_IMAGE_MODEL / GOHOME_CARE_IMAGE_PROMPT`
+    - 兼容 wan / DashScope 变量：`GOHOME_WAN_BASE_URL / GOHOME_WAN_API_KEY / GOHOME_WAN_MODEL / DASHSCOPE_BASE_URL / DASHSCOPE_API_KEY`
+  - `GET /api/v1/ops/service-config` 返回两类能力状态、默认 prompt、环境变量指引和密钥策略。
+  - `PUT /api/v1/model-providers/{provider_id}` 不再允许页面写入底层配置。
 - `ops.html`
-  - 新增后台服务配置页。
-  - 展示服务状态、数据存储类型、模型 provider 可用状态和密钥策略。
-  - 支持维护 provider、model、用途、启用状态、API key 和 secret ref。
+  - 改为平台内部只读状态页。
+  - 页面不再有 API key 输入框、Base URL 输入框、Prompt 编辑框或保存按钮。
 - `assets/scripts/ops-live.js`
-  - 读取 `ops/service-config` 渲染后台页面。
-  - 保存 provider 配置时，API key 只提交一次，不在页面回显。
-- `local-app-server/postgres-store.js`
-  - 反向还原 `model_providers.api_key_secret_ref`。
+  - 改为只读渲染两类模型能力。
+- `assets/scripts/edge-client.js`
+  - 移除前端写模型 provider 的 SDK 方法。
 - `scripts/verify-local-app-server.js`
-  - 增加后台配置接口验证。
-  - 验证 API key 不进入 seed bundle，只保留 `api_key_secret_ref`。
+  - 验证普通 App token 不能写模型底层配置。
+  - 验证后台只读接口返回两类模型能力。
 
-密钥策略：
+验证要求：
 
-- 本地开发：可以用服务器侧 `data/app-server/secrets.json`，也可以用环境变量。
-- 云端部署：必须替换为 Secret Manager / KMS，业务数据库只保存 secret ref。
-- 前端页面：只能看到是否已配置、密钥来源和引用名，不能看到明文 key。
-
-验证结果：
-
-- `node --check local-app-server/server.js` 通过。
-- `node --check local-app-server/postgres-store.js` 通过。
-- `node --check assets/scripts/edge-client.js` 通过。
-- `node --check assets/scripts/ops-live.js` 通过。
-- `node --check scripts/verify-local-app-server.js` 通过。
-- `npm test` 通过。
-
-下一步：
-
-1. 重启本地 App API 后，用浏览器验证 `ops.html?app=1`。
-2. 首页接入今日关怀摘要。
-3. 接文本模型 API，并把调用结果写入 `model_generation_jobs`。
+- 普通用户路径不能出现模型底层配置。
+- 平台内部后台只能看到是否已配置和 env 指引，不回显明文 key。
+- 后续接文本模型 API 时，只读取平台侧配置，不从用户表单读取 key。

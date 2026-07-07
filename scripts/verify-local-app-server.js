@@ -401,28 +401,46 @@ async function main() {
         assert.equal(generatedCareCard.ok, true);
         assert.equal(generatedCareCard.card.card_id, careCard.card_id);
 
-        const modelProviders = await requestJson(baseUrl, "/api/v1/model-providers", {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
-        });
-        assert.ok(modelProviders.some((provider) => provider.provider_id === "image-wan"));
-        assert.ok(modelProviders.some((provider) => provider.provider_id === "text-default"));
-
-        const imageProvider = await requestJson(baseUrl, "/api/v1/model-providers/image-wan", {
-            method: "PUT",
-            body: JSON.stringify({ provider: "wan", model: "wan2.7", purpose: "care_image", enabled: true, api_key: "secret" }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
-        });
-        assert.equal(imageProvider.model, "wan2.7");
-        assert.equal(imageProvider.api_key_set, true);
-        assert.equal(imageProvider.secret_mode, "local");
-        assert.equal(imageProvider.api_key, undefined);
-
         const opsConfig = await requestJson(baseUrl, "/api/v1/ops/service-config", {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: {},
         });
         assert.equal(opsConfig.ok, true);
-        assert.equal(opsConfig.secret_policy.database, "secret_ref_only");
-        assert.ok(opsConfig.model_providers.some((provider) => provider.provider_id === "image-wan" && provider.secret_mode === "local"));
+        assert.equal(opsConfig.secret_policy.user_configurable, false);
+        assert.equal(opsConfig.secret_policy.database, "no_plain_secret");
+        assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "multimodal-language"));
+        assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "care-card-image" && capability.aspect_ratio === "4:7"));
+
+        const appTokenCannotWriteModelConfig = await fetch(`${baseUrl}/api/v1/model-providers/care-card-image`, {
+            method: "PUT",
+            body: JSON.stringify({ model: "wan2.7", api_key: "secret" }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}`, "Content-Type": "application/json" },
+        });
+        assert.equal(appTokenCannotWriteModelConfig.status, 405);
+
+        const opsTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-app-server-ops-"));
+        const opsApp = createLocalAppServer({
+            rootDir: path.resolve(__dirname, ".."),
+            dataDir: opsTempDir,
+            deviceToken: DEVICE_TOKEN,
+            appToken: APP_TOKEN,
+            opsToken: "verify-ops-token",
+        });
+        const opsBaseUrl = await listen(opsApp.server);
+        try {
+            const blockedOpsPage = await fetch(`${opsBaseUrl}/ops.html`);
+            assert.equal(blockedOpsPage.status, 403);
+            const blockedOpsConfig = await fetch(`${opsBaseUrl}/api/v1/ops/service-config`, {
+                headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            });
+            assert.equal(blockedOpsConfig.status, 403);
+            const allowedOpsPage = await fetch(`${opsBaseUrl}/ops.html?ops_token=verify-ops-token`);
+            assert.equal(allowedOpsPage.status, 200);
+            assert.match(allowedOpsPage.headers.get("content-type") || "", /text\/html/);
+            const allowedOpsConfig = await requestJson(opsBaseUrl, "/api/v1/ops/service-config?ops_token=verify-ops-token");
+            assert.equal(allowedOpsConfig.secret_policy.user_configurable, false);
+        } finally {
+            opsApp.server.close();
+        }
 
         const session = await requestJson(baseUrl, "/api/v1/video/sessions", {
             method: "POST",
@@ -461,10 +479,7 @@ async function main() {
         assert.equal(seedBundle.tables.care_preferences[0].image_model, "wan2.7");
         assert.equal(seedBundle.tables.care_cards.length, 1);
         assert.equal(seedBundle.tables.care_cards[0].card_id, careCard.card_id);
-        assert.equal(seedBundle.tables.model_providers.length, 1);
-        assert.equal(seedBundle.tables.model_providers[0].provider_id, "image-wan");
-        assert.equal(seedBundle.tables.model_providers[0].api_key_secret_ref, "local:model-provider:image-wan");
-        assert.equal("api_key" in seedBundle.tables.model_providers[0], false);
+        assert.equal(seedBundle.tables.model_providers.length, 0);
         assertSeedBundleMatchesSchema(seedBundle);
 
         const restoredDb = normalizeDb(createDbFromCloudRows(seedBundle.tables, createDefaultDb()));
@@ -479,8 +494,7 @@ async function main() {
         assert.equal(restoredDb.care_preferences[String(family.id)].image_model, "wan2.7");
         assert.equal(restoredDb.care_cards.length, 1);
         assert.equal(restoredDb.care_cards[0].card_id, careCard.card_id);
-        assert.equal(restoredDb.model_providers.length, 1);
-        assert.equal(restoredDb.model_providers[0].api_key_secret_ref, "local:model-provider:image-wan");
+        assert.equal(restoredDb.model_providers.length, 0);
 
         console.log(JSON.stringify({
             ok: true,

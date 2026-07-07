@@ -12,6 +12,7 @@ const DEFAULT_PORT = Number(process.env.GOHOME_APP_SERVER_PORT || 8788);
 const DEFAULT_HOST = process.env.GOHOME_APP_SERVER_HOST || "0.0.0.0";
 const DEFAULT_DEVICE_TOKEN = process.env.GOHOME_DEVICE_API_TOKEN || "gohome-local-device-token";
 const DEFAULT_APP_TOKEN = process.env.GOHOME_APP_TOKEN || "gohome-local-app-token";
+const DEFAULT_OPS_TOKEN = process.env.GOHOME_OPS_TOKEN || "";
 const DEFAULT_BOX_ADMIN_USERNAME = process.env.GOHOME_BOX_ADMIN_USERNAME || "admin";
 const DEFAULT_BOX_ADMIN_PASSWORD = process.env.GOHOME_BOX_ADMIN_PASSWORD || "123456";
 const DEFAULT_STORE_KIND = process.env.GOHOME_APP_STORE || (process.env.GOHOME_DATABASE_URL || process.env.DATABASE_URL ? "postgres" : "json");
@@ -233,142 +234,87 @@ function createLocalAppServer(options = {}) {
     const store = options.store || new JsonStore(path.join(dataDir, "db.json"));
     const deviceToken = String(options.deviceToken || DEFAULT_DEVICE_TOKEN);
     const appToken = String(options.appToken || DEFAULT_APP_TOKEN);
+    const opsToken = String(options.opsToken || DEFAULT_OPS_TOKEN);
     const playbackTickets = new Map();
     const boxAdminSessions = new Map();
-    const secretsPath = path.join(dataDir, "secrets.json");
 
     ensureDir(mediaDir);
 
-    const defaultModelProviders = [
-        {
-            provider_id: "text-default",
-            provider: "template",
-            model: "care-template-v1",
-            purpose: "care_text",
-            enabled: true,
-            configured: true,
-        },
-        {
-            provider_id: "image-wan",
-            provider: "wan",
-            model: "wan2.7",
-            purpose: "care_image",
-            enabled: false,
-            configured: false,
-        },
-    ];
+    const defaultCareTextPrompt = [
+        "你是回家 App 的亲情关怀卡片生成助手。",
+        "请基于老人资料、日历、天气、热点信息、设备状态、摄像头状态和最近事件生成一张每日关怀卡片。",
+        "输出必须温暖、克制、可解释，不替代安全告警，不编造没有事实依据的老人行为。",
+        "返回 JSON：title、body、facts、suggested_actions、tone、image_brief。",
+    ].join("\n");
 
-    function readSecrets() {
-        const secrets = fs.existsSync(secretsPath)
-            ? safeJsonParse(fs.readFileSync(secretsPath, "utf8"), {})
-            : {};
-        return {
-            version: 1,
-            model_provider_api_keys: {
-                ...(secrets.model_provider_api_keys || {}),
+    const defaultCareImagePrompt = [
+        "生成一张 4:7 竖版温馨可爱漫画图文卡片。",
+        "画面用于家属端每日亲情关怀，不是告警证据。",
+        "风格：柔和、清爽、适合中文移动端展示。",
+        "画面需要包含卡片标题和一两句简短中文关怀文字，文字必须清晰可读。",
+        "不要出现监控感、恐慌感、医疗诊断感或真实老人肖像。",
+    ].join("\n");
+
+    function envFirst(keys, fallback = "") {
+        for (const key of keys) {
+            const value = String(process.env[key] || "").trim();
+            if (value) return value;
+        }
+        return fallback;
+    }
+
+    function modelCapabilities() {
+        const multimodalApiKey = envFirst(["GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"]);
+        const multimodalBaseUrl = envFirst(["GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"]);
+        const multimodalModel = envFirst(["GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"]);
+        const imageApiKey = envFirst(["GOHOME_IMAGE_API_KEY", "GOHOME_WAN_API_KEY", "DASHSCOPE_API_KEY", "WAN_API_KEY"]);
+        const imageBaseUrl = envFirst(["GOHOME_IMAGE_BASE_URL", "GOHOME_WAN_BASE_URL", "DASHSCOPE_BASE_URL", "WAN_BASE_URL"]);
+        const imageModel = envFirst(["GOHOME_IMAGE_MODEL", "GOHOME_WAN_MODEL", "WAN_MODEL"], "wan2.7");
+        return [
+            {
+                capability_id: "multimodal-language",
+                name: "多模态语言模型",
+                type: "multimodal_language",
+                scope: "care_card_generation",
+                configured: Boolean(multimodalBaseUrl && multimodalApiKey && multimodalModel),
+                enabled: Boolean(multimodalBaseUrl && multimodalApiKey && multimodalModel),
+                base_url_set: Boolean(multimodalBaseUrl),
+                api_key_set: Boolean(multimodalApiKey),
+                model: multimodalModel,
+                purpose_label: "每日关怀内容生成",
+                prompt: envFirst(["GOHOME_CARE_CARD_PROMPT"], defaultCareTextPrompt),
+                prompt_source: process.env.GOHOME_CARE_CARD_PROMPT ? "env" : "default",
+                env_keys: {
+                    base_url: ["GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"],
+                    api_key: ["GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"],
+                    model: ["GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"],
+                    prompt: ["GOHOME_CARE_CARD_PROMPT"],
+                },
+                output_contract: "CareCard JSON: title/body/facts/actions/tone/image_brief",
             },
-        };
-    }
-
-    function writeSecrets(secrets) {
-        ensureDir(path.dirname(secretsPath));
-        fs.writeFileSync(secretsPath, `${JSON.stringify(secrets, null, 2)}\n`, { mode: 0o600 });
-        try {
-            fs.chmodSync(secretsPath, 0o600);
-        } catch (_error) {
-            // Best effort on filesystems that do not support chmod.
-        }
-    }
-
-    function localProviderSecretRef(providerId) {
-        return `local:model-provider:${providerId}`;
-    }
-
-    function providerEnvKeys(provider) {
-        const providerId = String(provider.provider_id || "");
-        const purpose = String(provider.purpose || "");
-        const providerName = String(provider.provider || "");
-        const keys = [];
-        if (providerId === "text-default" || purpose === "care_text") {
-            keys.push("GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY");
-        }
-        if (providerId === "image-wan" || providerName === "wan" || purpose === "care_image") {
-            keys.push("GOHOME_WAN_API_KEY", "DASHSCOPE_API_KEY", "WAN_API_KEY");
-        }
-        return [...new Set(keys)];
-    }
-
-    function hasLocalProviderSecret(providerId) {
-        const record = readSecrets().model_provider_api_keys[String(providerId)] || null;
-        return Boolean(record?.api_key);
-    }
-
-    function setLocalProviderSecret(providerId, apiKey) {
-        const key = String(apiKey || "").trim();
-        if (!key) return "";
-        const secrets = readSecrets();
-        secrets.model_provider_api_keys[String(providerId)] = {
-            api_key: key,
-            sha256: sha256(key),
-            updated_at: nowIso(),
-        };
-        writeSecrets(secrets);
-        return localProviderSecretRef(providerId);
-    }
-
-    function clearLocalProviderSecret(providerId) {
-        const secrets = readSecrets();
-        delete secrets.model_provider_api_keys[String(providerId)];
-        writeSecrets(secrets);
-    }
-
-    function modelProviders() {
-        const byId = new Map(defaultModelProviders.map((provider) => [provider.provider_id, { ...provider }]));
-        for (const provider of store.db.model_providers) {
-            if (!provider?.provider_id) continue;
-            byId.set(provider.provider_id, { ...(byId.get(provider.provider_id) || {}), ...provider });
-        }
-        return [...byId.values()];
-    }
-
-    function providerSecretStatus(provider) {
-        const envKey = providerEnvKeys(provider).find((key) => Boolean(process.env[key])) || "";
-        const localSecret = hasLocalProviderSecret(provider.provider_id);
-        const configuredRef = String(provider.api_key_secret_ref || "").trim();
-        const requiresSecret = Boolean(provider.provider && provider.provider !== "template");
-        const apiKeySet = Boolean(envKey || localSecret || configuredRef || provider.api_key_set);
-        const secretMode = envKey
-            ? "env"
-            : (localSecret ? "local" : (configuredRef ? "secret_ref" : (requiresSecret ? "unset" : "not_required")));
-        return {
-            requires_secret: requiresSecret,
-            api_key_set: apiKeySet,
-            configured: requiresSecret ? apiKeySet : provider.configured !== false,
-            secret_mode: secretMode,
-            api_key_secret_ref: configuredRef || (localSecret ? localProviderSecretRef(provider.provider_id) : ""),
-            env_keys: providerEnvKeys(provider),
-            active_env_key: envKey,
-        };
-    }
-
-    function publicModelProvider(provider) {
-        const secret = providerSecretStatus(provider);
-        return {
-            provider_id: provider.provider_id,
-            provider: provider.provider || "",
-            model: provider.model || "",
-            purpose: provider.purpose || "care_text",
-            enabled: Boolean(provider.enabled),
-            configured: secret.configured,
-            api_key_set: secret.api_key_set,
-            api_key_secret_ref: secret.api_key_secret_ref,
-            requires_secret: secret.requires_secret,
-            secret_mode: secret.secret_mode,
-            env_keys: secret.env_keys,
-            active_env_key: secret.active_env_key,
-            created_at: provider.created_at || null,
-            updated_at: provider.updated_at || null,
-        };
+            {
+                capability_id: "care-card-image",
+                name: "生图模型",
+                type: "image_generation",
+                scope: "care_card_image_4x7",
+                configured: Boolean(imageBaseUrl && imageApiKey && imageModel),
+                enabled: Boolean(imageBaseUrl && imageApiKey && imageModel),
+                base_url_set: Boolean(imageBaseUrl),
+                api_key_set: Boolean(imageApiKey),
+                model: imageModel,
+                purpose_label: "4:7 图文卡片生成",
+                aspect_ratio: "4:7",
+                prompt: envFirst(["GOHOME_CARE_IMAGE_PROMPT"], defaultCareImagePrompt),
+                prompt_source: process.env.GOHOME_CARE_IMAGE_PROMPT ? "env" : "default",
+                env_keys: {
+                    base_url: ["GOHOME_IMAGE_BASE_URL", "GOHOME_WAN_BASE_URL", "DASHSCOPE_BASE_URL", "WAN_BASE_URL"],
+                    api_key: ["GOHOME_IMAGE_API_KEY", "GOHOME_WAN_API_KEY", "DASHSCOPE_API_KEY", "WAN_API_KEY"],
+                    model: ["GOHOME_IMAGE_MODEL", "GOHOME_WAN_MODEL", "WAN_MODEL"],
+                    prompt: ["GOHOME_CARE_IMAGE_PROMPT"],
+                },
+                output_contract: "4:7 non-evidence illustrated care card image with readable Chinese text",
+            },
+        ];
     }
 
     function write(res, statusCode, payload, headers = {}) {
@@ -394,6 +340,11 @@ function createLocalAppServer(options = {}) {
         const header = String(req.headers.authorization || "");
         const match = header.match(/^Bearer\s+(.+)$/i);
         return match ? match[1].trim() : "";
+    }
+
+    function isLocalRequest(req) {
+        const address = normalizeRemoteAddress(req.socket?.remoteAddress || "");
+        return address === "127.0.0.1" || address === "localhost";
     }
 
     function requireDevice(req, res) {
@@ -422,6 +373,15 @@ function createLocalAppServer(options = {}) {
             return false;
         }
         return true;
+    }
+
+    function requireOps(req, res) {
+        const url = new URL(req.url, "http://local");
+        const token = tokenFrom(req) || url.searchParams.get("ops_token") || "";
+        if (opsToken && token === opsToken) return true;
+        if (!opsToken && isLocalRequest(req)) return true;
+        writeError(res, 403, "后台配置仅限平台运维访问。");
+        return false;
     }
 
     function publicUser(user) {
@@ -1432,6 +1392,7 @@ function createLocalAppServer(options = {}) {
 
     function serveStatic(req, res, url) {
         const pathname = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+        if (pathname === "/ops.html" && !requireOps(req, res)) return;
         const filePath = path.resolve(rootDir, `.${pathname}`);
         if (!filePath.startsWith(rootDir) || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
             writeError(res, 404, "not found");
@@ -2105,65 +2066,44 @@ function createLocalAppServer(options = {}) {
             }
 
             if (req.method === "GET" && pathname === "/api/v1/model-providers") {
-                if (!requireApp(req, res)) return;
-                write(res, 200, modelProviders().map(publicModelProvider));
+                if (!requireOps(req, res)) return;
+                write(res, 200, modelCapabilities().map((capability) => ({
+                    provider_id: capability.capability_id,
+                    provider: capability.type,
+                    model: capability.model,
+                    purpose: capability.scope,
+                    enabled: capability.enabled,
+                    configured: capability.configured,
+                    api_key_set: capability.api_key_set,
+                    base_url_set: capability.base_url_set,
+                    secret_mode: capability.api_key_set ? "env" : "unset",
+                })));
                 return;
             }
 
             const modelProviderMatch = pathname.match(/^\/api\/v1\/model-providers\/([^/]+)$/);
             if (modelProviderMatch && req.method === "PUT") {
-                if (!requireApp(req, res)) return;
-                const providerId = decodeURIComponent(modelProviderMatch[1]);
-                const payload = await parseJsonBody(req);
-                const existingStored = store.db.model_providers.find((item) => item.provider_id === providerId) || {};
-                const existing = modelProviders().find((item) => item.provider_id === providerId) || existingStored;
-                let apiKeySecretRef = String(
-                    "api_key_secret_ref" in payload ? payload.api_key_secret_ref : (existingStored.api_key_secret_ref || existing.api_key_secret_ref || "")
-                ).trim();
-                if ("api_key" in payload && String(payload.api_key || "").trim()) {
-                    apiKeySecretRef = setLocalProviderSecret(providerId, payload.api_key);
-                }
-                const clearApiKey = normalizeBool(payload.clear_api_key);
-                if (clearApiKey) {
-                    clearLocalProviderSecret(providerId);
-                    if (apiKeySecretRef === localProviderSecretRef(providerId)) apiKeySecretRef = "";
-                }
-                const next = {
-                    provider_id: providerId,
-                    provider: String(payload.provider || existing.provider || ""),
-                    model: String(payload.model || existing.model || ""),
-                    purpose: String(payload.purpose || existing.purpose || "care_text"),
-                    enabled: "enabled" in payload ? normalizeBool(payload.enabled) : Boolean(existing.enabled),
-                    configured: Boolean(existing.configured),
-                    api_key_set: Boolean(!clearApiKey && (apiKeySecretRef || existingStored.api_key_set)),
-                    api_key_secret_ref: apiKeySecretRef,
-                    created_at: existingStored.created_at || nowIso(),
-                    updated_at: nowIso(),
-                };
-                const publicNext = publicModelProvider(next);
-                next.configured = publicNext.configured;
-                next.api_key_set = publicNext.api_key_set && publicNext.secret_mode !== "env";
-                const index = store.db.model_providers.findIndex((item) => item.provider_id === providerId);
-                if (index >= 0) store.db.model_providers[index] = next;
-                else store.db.model_providers.push(next);
-                await store.save();
-                write(res, 200, publicModelProvider(next));
+                if (!requireOps(req, res)) return;
+                writeError(res, 405, "模型底层配置由平台方通过服务器环境变量或云端 Secret Manager 管理。");
                 return;
             }
 
             if (req.method === "GET" && pathname === "/api/v1/ops/service-config") {
-                if (!requireApp(req, res)) return;
+                if (!requireOps(req, res)) return;
+                const capabilities = modelCapabilities();
                 write(res, 200, {
                     ok: true,
                     service: "gohome-local-app-server",
                     store: store.kind || "json",
                     app_server_base_url: process.env.GOHOME_APP_SERVER_BASE_URL || `http://localhost:${DEFAULT_PORT}`,
-                    model_providers: modelProviders().map(publicModelProvider),
+                    model_capabilities: capabilities,
                     secret_policy: {
-                        local: "server_secret_file",
+                        local: "server_env",
                         cloud: "secret_manager_or_kms",
-                        database: "secret_ref_only",
+                        database: "no_plain_secret",
+                        user_configurable: false,
                     },
+                    user_visible: false,
                     generated_at: nowIso(),
                 });
                 return;

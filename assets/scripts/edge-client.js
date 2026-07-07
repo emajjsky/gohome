@@ -773,12 +773,6 @@
                 method: "PUT",
                 body: JSON.stringify(payload),
             }),
-        v1ModelProviders: () => request("/api/v1/model-providers"),
-        v1UpdateModelProvider: (providerId, payload = {}) =>
-            request(`/api/v1/model-providers/${encodeURIComponent(providerId)}`, {
-                method: "PUT",
-                body: JSON.stringify(payload),
-            }),
         v1OpsServiceConfig: () => request("/api/v1/ops/service-config"),
         v1GenerateMessages: (payload = {}) => request("/api/v1/internal/messages/generate", {
             method: "POST",

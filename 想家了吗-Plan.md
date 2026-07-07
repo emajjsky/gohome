@@ -1240,10 +1240,11 @@ factory_new
 
 当前执行状态：
 
-- P0 的模板版 `CareCard`、偏好接口、模型 provider 配置接口和亲情页展示已经进入本地闭环。
+- P0 的模板版 `CareCard`、偏好接口、平台模型能力只读状态接口和亲情页展示已经进入本地闭环。
 - P0 的数据库迁移层已经补齐到 PostgreSQL schema、seed bundle 导出和反向还原校验。
-- P0.5 前需要一个后台服务配置页，用于维护模型 provider、model、启用状态和密钥配置状态。
-- 下一步先把后台服务配置页和密钥策略跑通，再把首页接入今日关怀摘要，然后进入 P0.5 文本模型 API。
+- 模型底层能力不是用户配置项，平台方通过服务器环境变量或云端 Secret Manager / KMS 配置。
+- 当前后台页只做平台内部只读状态检查，不给普通用户填写 key、Base URL、模型名或 Prompt。
+- 下一步先把首页接入今日关怀摘要，再进入 P0.5 文本模型 API。
 - `wan2.7` 生图、白名单内容链接和自动内容搜索都必须排在文本模型之后。
 
 ##### T7.1 场景化图文消息输入域
@@ -1366,21 +1367,22 @@ factory_new
 - `actions`
 - `status`
 
-模型配置第一版接口：
+模型能力第一版接口：
 
 - `GET /api/v1/model-providers`
-  - 读取文本模型和生图模型配置状态，不返回 API key 明文
+  - 平台内部只读兼容接口，读取模型能力配置状态，不返回 API key 明文
 - `PUT /api/v1/model-providers/{provider_id}`
-  - 配置 provider、模型名、用途、启用状态
+  - 不开放给用户配置；模型底层配置由平台方通过服务器环境变量或云端 Secret Manager 管理
 - `GET /api/v1/ops/service-config`
-  - 后台服务配置页读取服务状态、存储类型、模型 provider 和密钥策略
+  - 平台内部后台页读取服务状态、存储类型、两类模型能力和密钥策略
 
-第一版 provider 配置必须支持：
+第一版平台模型能力必须支持：
 
-- 文本模型：用于每日关怀摘要、标题、正文、问候建议。
-- 生图模型：用于非证据型卡片配图，可配置 `wan2.7` 或等价模型。
-- 本地 API key：只保存到服务器侧 `data/app-server/secrets.json`，该目录不进 git。
-- 云端 API key：接 Secret Manager / KMS，业务数据库只保存 `api_key_secret_ref`。
+- 多模态语言模型：用于日历、热点、天气、事件、设备状态和老人资料生成每日关怀卡片。
+- 生图模型：用于非证据型 4:7 温馨可爱漫画图文卡片，可配置 `wan2.7` 或等价模型。
+- 本地开发：通过服务器环境变量配置 `base_url / api_key / model / prompt`。
+- 云端部署：接 Secret Manager / KMS，业务数据库不保存明文 API key。
+- 家属用户：只能配置老人资料、兴趣、提醒偏好和内容来源偏好，不能配置模型底层参数。
 
 明确不在第一版做：
 
@@ -1533,7 +1535,7 @@ factory_new
 5. 亲情关怀、模型和内容推荐预留：
    - `care_preferences`
    - `care_cards`
-   - `model_providers`
+   - `model_providers`，仅作为平台模型能力元数据和历史兼容预留，不存普通用户配置或明文密钥
    - `model_generation_jobs`
    - `content_sources`
    - `content_recommendations`
@@ -1833,7 +1835,7 @@ P1 用户端：
 - 检测结果表。
 - 检测框可视化。
 - 姿态、跌倒、图像质量、区域停留、夜间活动等算法后台可见。
-- 模型配置下发。
+- 模型版本和能力下发。
 - CPU / GPU / NPU 性能评估。
 - ONNX 导出。
 - 量化方案。
