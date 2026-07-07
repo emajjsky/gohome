@@ -774,6 +774,97 @@ function createLocalAppServer(options = {}) {
         }).format(date);
     }
 
+    function defaultCareSchedule() {
+        return {
+            enabled: true,
+            delivery_time: "08:30",
+            timezone: "Asia/Shanghai",
+            channels: ["app_push"],
+            content_types: {
+                home_status: true,
+                elder_interest_topics: true,
+                health_tips: true,
+                weather: true,
+                holidays: true,
+                anniversaries: true,
+                visit_reminder: true,
+            },
+            interest_topics: ["养生", "天气", "戏曲", "家常"],
+            message_focus: "用轻松自然的语气提醒今天家里状态，顺带给一个适合打电话时聊的话题。",
+            visit_reminder: {
+                enabled: true,
+                threshold_days: 14,
+                location_tracking_enabled: false,
+                last_visit_at: "",
+            },
+            anniversaries: [],
+            updated_at: nowIso(),
+        };
+    }
+
+    function normalizeTimeOfDay(value, fallback = "08:30") {
+        const raw = String(value || "").trim();
+        const match = raw.match(/^(\d{2}):(\d{2})$/);
+        if (!match) return fallback;
+        const hours = Number(match[1]);
+        const minutes = Number(match[2]);
+        return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59 ? raw : fallback;
+    }
+
+    function normalizeStringList(value, fallback = [], limit = 20) {
+        const source = Array.isArray(value) ? value : fallback;
+        return [...new Set(source.map((item) => String(item || "").trim()).filter(Boolean))].slice(0, limit);
+    }
+
+    function normalizeCareSchedule(value = {}) {
+        const defaults = defaultCareSchedule();
+        const input = value && typeof value === "object" ? value : {};
+        const contentTypes = input.content_types && typeof input.content_types === "object" ? input.content_types : {};
+        const visitReminder = input.visit_reminder && typeof input.visit_reminder === "object" ? input.visit_reminder : {};
+        return {
+            enabled: "enabled" in input ? normalizeBool(input.enabled) : defaults.enabled,
+            delivery_time: normalizeTimeOfDay(input.delivery_time, defaults.delivery_time),
+            timezone: String(input.timezone || defaults.timezone),
+            channels: normalizeStringList(input.channels, defaults.channels, 6),
+            content_types: {
+                home_status: "home_status" in contentTypes ? normalizeBool(contentTypes.home_status) : defaults.content_types.home_status,
+                elder_interest_topics: "elder_interest_topics" in contentTypes ? normalizeBool(contentTypes.elder_interest_topics) : defaults.content_types.elder_interest_topics,
+                health_tips: "health_tips" in contentTypes ? normalizeBool(contentTypes.health_tips) : defaults.content_types.health_tips,
+                weather: "weather" in contentTypes ? normalizeBool(contentTypes.weather) : defaults.content_types.weather,
+                holidays: "holidays" in contentTypes ? normalizeBool(contentTypes.holidays) : defaults.content_types.holidays,
+                anniversaries: "anniversaries" in contentTypes ? normalizeBool(contentTypes.anniversaries) : defaults.content_types.anniversaries,
+                visit_reminder: "visit_reminder" in contentTypes ? normalizeBool(contentTypes.visit_reminder) : defaults.content_types.visit_reminder,
+            },
+            interest_topics: normalizeStringList(input.interest_topics, defaults.interest_topics, 20),
+            message_focus: String(input.message_focus || defaults.message_focus).trim().slice(0, 400),
+            visit_reminder: {
+                enabled: "enabled" in visitReminder ? normalizeBool(visitReminder.enabled) : defaults.visit_reminder.enabled,
+                threshold_days: Math.min(90, Math.max(1, normalizeNumber(visitReminder.threshold_days, defaults.visit_reminder.threshold_days))),
+                location_tracking_enabled: normalizeBool(visitReminder.location_tracking_enabled),
+                last_visit_at: /^\d{4}-\d{2}-\d{2}$/.test(String(visitReminder.last_visit_at || ""))
+                    ? String(visitReminder.last_visit_at)
+                    : "",
+            },
+            anniversaries: (Array.isArray(input.anniversaries) ? input.anniversaries : [])
+                .map((item) => ({
+                    label: String(item?.label || "").trim(),
+                    date: String(item?.date || "").trim(),
+                    repeat: String(item?.repeat || "yearly").trim() || "yearly",
+                }))
+                .filter((item) => item.label && /^\d{4}-\d{2}-\d{2}$/.test(item.date))
+                .slice(0, 20),
+            updated_at: nowIso(),
+        };
+    }
+
+    function normalizeCareMetadata(metadata = {}) {
+        const source = metadata && typeof metadata === "object" ? metadata : {};
+        return {
+            ...source,
+            care_card_schedule: normalizeCareSchedule(source.care_card_schedule),
+        };
+    }
+
     function defaultCarePreferences(familyId) {
         return {
             family_id: Number(familyId),
@@ -787,13 +878,16 @@ function createLocalAppServer(options = {}) {
             image_model: "",
             content_recommendations_enabled: false,
             content_sources_enabled: false,
+            metadata: normalizeCareMetadata(),
             updated_at: nowIso(),
         };
     }
 
     function carePreferences(familyId) {
         const key = String(familyId || store.db.families[0]?.id || 1);
-        return store.db.care_preferences[key] || defaultCarePreferences(key);
+        const preferences = store.db.care_preferences[key] || defaultCarePreferences(key);
+        preferences.metadata = normalizeCareMetadata(preferences.metadata || {});
+        return preferences;
     }
 
     function publicCarePreferences(preferences) {
@@ -803,6 +897,7 @@ function createLocalAppServer(options = {}) {
             content_recommendations_enabled: Boolean(preferences.content_recommendations_enabled),
             image_generation_enabled: Boolean(preferences.image_generation_enabled),
             text_model_enabled: Boolean(preferences.text_model_enabled),
+            metadata: normalizeCareMetadata(preferences.metadata || {}),
         };
     }
 
@@ -898,6 +993,7 @@ function createLocalAppServer(options = {}) {
                 interests: Array.isArray(preferences.interests) ? preferences.interests.slice(0, 12) : [],
                 content_recommendations_enabled: Boolean(preferences.content_recommendations_enabled),
                 image_generation_enabled: Boolean(preferences.image_generation_enabled),
+                care_card_schedule: preferences.metadata?.care_card_schedule || defaultCareSchedule(),
             },
             facts: Array.isArray(parts.facts) ? parts.facts : [],
             device: {
@@ -1065,7 +1161,14 @@ function createLocalAppServer(options = {}) {
         }
     }
 
-    function careCardFacts(familyId) {
+    function daysSinceDateString(value) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return null;
+        const timestamp = Date.parse(`${value}T00:00:00+08:00`);
+        if (!Number.isFinite(timestamp)) return null;
+        return Math.max(0, Math.floor((Date.now() - timestamp) / (24 * 60 * 60 * 1000)));
+    }
+
+    function careCardFacts(familyId, preferences = carePreferences(familyId)) {
         const cameras = appConfigCameras();
         const onlineCameras = cameras.filter((camera) => String(camera.status || "").toLowerCase() === "online");
         const recentCutoff = Date.now() - 24 * 60 * 60 * 1000;
@@ -1079,6 +1182,7 @@ function createLocalAppServer(options = {}) {
         const family = selectedFamily(familyId) || store.db.families[0] || {};
         const profile = store.db.elder_profiles[elderProfileKey(family.id || familyId, "elder_primary")]
             || defaultElderProfile(family.id || familyId, "elder_primary");
+        const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
         const facts = [];
         if (device.last_seen_at) {
             facts.push("家庭盒子在线，今天仍在同步状态。");
@@ -1097,6 +1201,23 @@ function createLocalAppServer(options = {}) {
         } else {
             facts.push("最近 24 小时没有未处理的高优先级告警。");
         }
+        if (schedule.content_types?.visit_reminder && schedule.visit_reminder?.enabled) {
+            const daysSinceVisit = daysSinceDateString(schedule.visit_reminder.last_visit_at);
+            if (daysSinceVisit !== null) {
+                facts.push(`距离上次回家已经 ${daysSinceVisit} 天，提醒阈值是 ${schedule.visit_reminder.threshold_days} 天。`);
+            } else {
+                facts.push(`已开启回家间隔提醒，阈值是 ${schedule.visit_reminder.threshold_days} 天。`);
+            }
+        }
+        if (schedule.content_types?.elder_interest_topics && schedule.interest_topics?.length) {
+            facts.push(`老人关心的话题包括：${schedule.interest_topics.slice(0, 6).join("、")}。`);
+        }
+        if (schedule.content_types?.anniversaries && schedule.anniversaries?.length) {
+            facts.push(`已配置 ${schedule.anniversaries.length} 个纪念日提醒。`);
+        }
+        if (schedule.message_focus) {
+            facts.push(`本次关怀重点：${schedule.message_focus}`);
+        }
         facts.push(`${profile.display_name || "家人"} 所在城市按 ${profile.city || "杭州"} 生成天气问候。`);
         return { facts, cameras, onlineCameras, openEvents, criticalEvents, device, profile };
     }
@@ -1109,7 +1230,7 @@ function createLocalAppServer(options = {}) {
         ));
         if (existing && !options.force) return existing;
         const preferences = carePreferences(targetFamilyId);
-        const factParts = careCardFacts(targetFamilyId);
+        const factParts = careCardFacts(targetFamilyId, preferences);
         const { facts, onlineCameras, openEvents, criticalEvents, profile } = factParts;
         const displayName = profile.display_name || "家人";
         const title = criticalEvents.length
@@ -2408,6 +2529,9 @@ function createLocalAppServer(options = {}) {
                 }
                 const payload = await parseJsonBody(req);
                 const existing = carePreferences(familyId);
+                const nextMetadata = payload.metadata && typeof payload.metadata === "object"
+                    ? normalizeCareMetadata({ ...(existing.metadata || {}), ...payload.metadata })
+                    : normalizeCareMetadata(existing.metadata || {});
                 store.db.care_preferences[String(familyId)] = publicCarePreferences({
                     ...existing,
                     frequency: String(payload.frequency || existing.frequency || "daily"),
@@ -2419,6 +2543,7 @@ function createLocalAppServer(options = {}) {
                     image_model: String(payload.image_model || existing.image_model || ""),
                     content_recommendations_enabled: "content_recommendations_enabled" in payload ? normalizeBool(payload.content_recommendations_enabled) : existing.content_recommendations_enabled,
                     content_sources_enabled: "content_sources_enabled" in payload ? normalizeBool(payload.content_sources_enabled) : existing.content_sources_enabled,
+                    metadata: nextMetadata,
                     updated_at: nowIso(),
                 });
                 await store.save();

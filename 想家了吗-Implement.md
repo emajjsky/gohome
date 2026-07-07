@@ -7352,3 +7352,37 @@ Chrome 验证：
 - 已接通：多模态语言模型生成每日关怀文案。
 - 暂未接通：DashScope `wan2.7-image` 生图真实调用。
 - 生图下一步应做成任务式调用，避免打开 App 页面就立刻产生图片生成成本。
+
+## 47. 2026-07-07 “我的-关怀推送”配置闭环
+
+背景：
+
+- 用户明确要求关怀卡片推送是核心功能之一，不是普通通知设置。
+- 配置应放在“我的”里，普通家属用户只配置关怀偏好，不配置模型 API、Base URL、Key 或 Prompt。
+- 第一版要先本地跑通配置保存和卡片生成上下文；真正到点推送等云端 scheduler、notification-service 和 APNs 接入后执行。
+
+已完成：
+
+- `privacy.html`
+  - 在“我的”页新增“关怀推送”入口，进入 `care_schedule.html`。
+- `care_schedule.html`
+  - 新增关怀推送设置页。
+  - 支持设置每日推送时间、开启状态、卡片内容类型、关怀重点、老人兴趣、上次回家日期、回家提醒阈值、定位开关占位和纪念日。
+  - 支持“立即生成”，用于本地验证保存后的配置是否进入今日关怀卡片。
+- `assets/scripts/care-schedule-live.js`
+  - 读取 / 保存 `metadata.care_card_schedule`。
+  - 立即生成前先保存当前配置，再调用 `/api/v1/internal/care-cards/generate`。
+- `local-app-server/server.js`
+  - `CarePreference.metadata.care_card_schedule` 增加标准化。
+  - 每日卡片生成上下文包含关怀推送配置。
+  - facts 会纳入回家间隔、老人兴趣、纪念日数量和用户填写的关怀重点。
+- `scripts/export-local-app-db.js` / `local-app-server/postgres-store.js`
+  - 导出和恢复 `care_preferences.metadata`，避免上云 seed 丢失关怀推送配置。
+- `scripts/verify-local-app-server.js`
+  - 增加关怀推送配置保存、模型上下文、seed 导出和恢复断言。
+
+当前边界：
+
+- 已完成：用户端配置、后端持久化、模型上下文和立即生成闭环。
+- 暂未完成：云端定时任务、真实 APNs 定时推送、定位距离自动更新、DashScope 生图任务。
+- 下一步应优先做云端化前的数据和任务边界：把本地 PostgreSQL 跑通后，再把 `care_card_schedule` 接到云端 scheduler。

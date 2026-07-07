@@ -133,7 +133,7 @@ function buildCloudSeedBundle(db, options = {}) {
         city: String(profile.city || ""),
         health_notes: String(profile.health_notes || ""),
         care_preferences: profile.care_preferences || {},
-        metadata: {},
+        metadata: profile.metadata && typeof profile.metadata === "object" ? profile.metadata : {},
         created_at: iso(profile.created_at, exportedAt),
         updated_at: iso(profile.updated_at, iso(profile.created_at, exportedAt)),
     }));
@@ -247,7 +247,7 @@ function buildCloudSeedBundle(db, options = {}) {
         image_model: String(preferences.image_model || ""),
         content_recommendations_enabled: bool(preferences.content_recommendations_enabled),
         content_sources_enabled: bool(preferences.content_sources_enabled),
-        metadata: {},
+        metadata: preferences.metadata && typeof preferences.metadata === "object" ? preferences.metadata : {},
         created_at: iso(preferences.created_at, iso(preferences.updated_at, exportedAt)),
         updated_at: iso(preferences.updated_at, exportedAt),
     }));

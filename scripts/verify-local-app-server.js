@@ -383,11 +383,48 @@ async function main() {
                 image_provider: "wan",
                 image_model: "wan2.7",
                 content_recommendations_enabled: false,
+                metadata: {
+                    care_card_schedule: {
+                        enabled: true,
+                        delivery_time: "07:45",
+                        timezone: "Asia/Shanghai",
+                        channels: ["app_push"],
+                        content_types: {
+                            home_status: true,
+                            elder_interest_topics: true,
+                            health_tips: true,
+                            weather: true,
+                            holidays: true,
+                            anniversaries: true,
+                            visit_reminder: true,
+                        },
+                        interest_topics: ["养生", "越剧", "杭州本地"],
+                        message_focus: "先说明家里是否平稳，再给女儿一个适合打电话时聊的轻松话题。",
+                        visit_reminder: {
+                            enabled: true,
+                            threshold_days: 10,
+                            location_tracking_enabled: true,
+                            last_visit_at: "2026-06-20",
+                        },
+                        anniversaries: [
+                            { label: "妈妈生日", date: "2026-09-01", repeat: "yearly" },
+                        ],
+                    },
+                },
             }),
             headers: { Authorization: `Bearer ${APP_TOKEN}` },
         });
         assert.equal(updatedCarePreferences.image_generation_enabled, true);
         assert.equal(updatedCarePreferences.image_model, "wan2.7");
+        const savedSchedule = updatedCarePreferences.metadata.care_card_schedule;
+        assert.equal(savedSchedule.delivery_time, "07:45");
+        assert.equal(savedSchedule.content_types.health_tips, true);
+        assert.deepEqual(savedSchedule.interest_topics, ["养生", "越剧", "杭州本地"]);
+        assert.equal(savedSchedule.message_focus, "先说明家里是否平稳，再给女儿一个适合打电话时聊的轻松话题。");
+        assert.equal(savedSchedule.visit_reminder.threshold_days, 10);
+        assert.equal(savedSchedule.visit_reminder.location_tracking_enabled, true);
+        assert.equal(savedSchedule.visit_reminder.last_visit_at, "2026-06-20");
+        assert.equal(savedSchedule.anniversaries[0].label, "妈妈生日");
 
         const careCard = await requestJson(baseUrl, `/api/v1/app/care-cards/today?family_id=${family.id}`, {
             headers: { Authorization: `Bearer ${APP_TOKEN}` },
@@ -443,6 +480,9 @@ async function main() {
             });
             const payload = JSON.parse(body);
             assert.equal(payload.model, "mock-care-model");
+            assert.match(payload.messages[1].content, /care_card_schedule/);
+            assert.match(payload.messages[1].content, /先说明家里是否平稳/);
+            assert.match(payload.messages[1].content, /妈妈生日/);
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({
                 id: "mock-chatcmpl",
@@ -547,6 +587,9 @@ async function main() {
         assert.equal(seedBundle.tables.media_assets.length, 1);
         assert.equal(seedBundle.tables.care_preferences.length, 1);
         assert.equal(seedBundle.tables.care_preferences[0].image_model, "wan2.7");
+        assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.delivery_time, "07:45");
+        assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.visit_reminder.threshold_days, 10);
+        assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.anniversaries[0].label, "妈妈生日");
         assert.equal(seedBundle.tables.care_cards.length, 1);
         assert.equal(seedBundle.tables.care_cards[0].card_id, careCard.card_id);
         assert.equal(seedBundle.tables.model_providers.length, 0);
@@ -562,6 +605,8 @@ async function main() {
         assert.equal(restoredDb.assets.length, 1);
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);
         assert.equal(restoredDb.care_preferences[String(family.id)].image_model, "wan2.7");
+        assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.delivery_time, "07:45");
+        assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.message_focus, "先说明家里是否平稳，再给女儿一个适合打电话时聊的轻松话题。");
         assert.equal(restoredDb.care_cards.length, 1);
         assert.equal(restoredDb.care_cards[0].card_id, careCard.card_id);
         assert.equal(restoredDb.model_providers.length, 0);

@@ -98,6 +98,7 @@
       ["视频", "watch.html"]
     ],
     "privacy.html": [
+      ["关怀推送", "care_schedule.html"],
       ["家庭成员", "family_members.html"],
       ["通知设置", "notifications.html"],
       ["规则设置", "rules.html"],
@@ -123,6 +124,7 @@
     ["添加摄像头", "connect.html"],
     ["家庭成员", "family_members.html"],
     ["通知设置", "notifications.html"],
+    ["关怀推送", "care_schedule.html"],
     ["隐私与数据", "privacy_data.html"],
     ["规则设置", "rules.html"],
     ["事件列表", "events.html"],

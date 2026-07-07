@@ -1187,13 +1187,14 @@ factory_new
 3. 区分 `alert / explain / accompany / gohome / daily / content` 六类消息。
 4. App 首页或亲情页展示“今日安心 / 今日关怀 / 建议联系”卡片。
 5. 提供联系入口：打电话、发问候、记录已联系。
-6. 提供偏好设置：频率、老人兴趣、生图开关、内容推荐开关。
+6. 在“我的”里提供“关怀推送”设置：每天几点推送、是否开启、推送内容类型、关怀重点、老人兴趣、上次回家日期、回家间隔阈值、节日和纪念日。
 
 第一批完成信号：
 
 - App 不只看到硬事件，也能看到“今天家里平稳”“建议打个电话”“天气降温，提醒添衣”这类可解释卡片。
 - 不配置模型 API 时，模板规则仍能生成基础卡片。
 - 卡片能说明来源，不凭空编造老人状态。
+- `CarePreference.metadata.care_card_schedule` 能保存定时、内容类型、关怀重点、回家间隔和纪念日，并进入每日卡片生成上下文。
 
 第二批 P0.5：文本模型 API：
 
@@ -1337,7 +1338,9 @@ factory_new
 - `GET /api/v1/families/{family_id}/care-preferences`
   - 读取亲情关怀偏好
 - `PUT /api/v1/families/{family_id}/care-preferences`
-  - 更新卡片频率、兴趣标签、生图开关、内容推荐开关
+  - 更新卡片频率、兴趣标签、生图开关、内容推荐开关和 `metadata.care_card_schedule`
+
+第一版本地闭环只负责保存关怀推送配置、立即生成今日卡片和验证模型上下文。真正“每天到点自动推送”放到云端阶段，由 scheduler / notification-service / APNs 统一执行，避免依赖本地电脑或局域网服务常驻。
 
 消息对象最小字段：
 

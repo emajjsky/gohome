@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
+<title>关怀推送 - 回家</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<style>
+    :root {
+        --bg: #fbf9f8;
+        --panel: #ffffff;
+        --soft: #efeded;
+        --text: #1b1c1c;
+        --muted: #606773;
+        --line: #d8dde6;
+        --primary: #005da7;
+        --primary-soft: #d4e3ff;
+        --accent: #386800;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        min-height: 100dvh;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+    }
+    .material-symbols-outlined { font-variation-settings: "FILL" 0, "wght" 420, "GRAD" 0, "opsz" 24; }
+    .page {
+        width: min(100%, 760px);
+        margin: 0 auto;
+        padding: max(18px, env(safe-area-inset-top)) 20px calc(28px + env(safe-area-inset-bottom));
+    }
+    .topbar {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) 42px;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 18px;
+    }
+    .icon-button {
+        width: 40px;
+        height: 40px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 0;
+        border-radius: 999px;
+        background: var(--soft);
+        color: var(--text);
+        text-decoration: none;
+    }
+    .title {
+        min-width: 0;
+        text-align: center;
+    }
+    .title h1 {
+        margin: 0;
+        font-family: "Hanken Grotesk", Inter, sans-serif;
+        font-size: 24px;
+        line-height: 1.15;
+    }
+    .title p {
+        margin: 5px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+    }
+    .hero {
+        border-radius: 16px;
+        background: #eaf2fb;
+        border: 1px solid #cbdcec;
+        padding: 18px;
+        margin-bottom: 16px;
+    }
+    .hero-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+    }
+    .hero h2 {
+        margin: 0;
+        font-family: "Hanken Grotesk", Inter, sans-serif;
+        font-size: 22px;
+    }
+    .hero p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        line-height: 1.55;
+        font-size: 14px;
+    }
+    .status-pill {
+        flex: 0 0 auto;
+        border-radius: 999px;
+        background: var(--primary);
+        color: #fff;
+        padding: 7px 11px;
+        font-size: 12px;
+        font-weight: 700;
+    }
+    .section {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+        padding: 16px;
+        margin-top: 12px;
+    }
+    .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+    }
+    .section-head h3 {
+        margin: 0;
+        font-family: "Hanken Grotesk", Inter, sans-serif;
+        font-size: 18px;
+    }
+    .section-head p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+    }
+    .switch-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+    }
+    .toggle {
+        width: 48px;
+        height: 28px;
+        flex: 0 0 auto;
+        accent-color: var(--primary);
+    }
+    .care-input {
+        width: 100%;
+        min-height: 44px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+        padding: 0 12px;
+        font-size: 15px;
+    }
+    .care-textarea {
+        min-height: 96px;
+        padding: 12px;
+        resize: vertical;
+        line-height: 1.5;
+    }
+    .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .chip input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+    }
+    .chip span {
+        min-height: 38px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #fff;
+        padding: 0 13px;
+        font-size: 14px;
+        font-weight: 700;
+    }
+    .chip input:checked + span {
+        border-color: var(--primary);
+        background: var(--primary-soft);
+        color: #00345f;
+    }
+    .field-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+    }
+    .field span {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+    }
+    .actions {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 12px;
+        margin-top: 16px;
+    }
+    .button {
+        min-height: 48px;
+        border: 0;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-weight: 800;
+        text-decoration: none;
+    }
+    .button.primary {
+        background: var(--primary);
+        color: #fff;
+    }
+    .button.secondary {
+        background: var(--soft);
+        color: var(--text);
+    }
+    .feedback {
+        min-height: 20px;
+        margin: 12px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+    }
+    @media (max-width: 520px) {
+        .field-grid,
+        .actions,
+        .anniversary-row {
+            grid-template-columns: minmax(0, 1fr);
+        }
+        .hero-row,
+        .section-head,
+        .switch-line {
+            align-items: flex-start;
+        }
+    }
+</style>
+</head>
+<body>
+<main class="page">
+    <header class="topbar">
+        <a class="icon-button" href="privacy.html?app=1" aria-label="返回">
+            <span class="material-symbols-outlined">arrow_back</span>
+        </a>
+        <div class="title">
+            <h1>关怀推送</h1>
+            <p id="familyName">当前家庭</p>
+        </div>
+        <a class="icon-button" href="companionship.html?app=1" aria-label="今日关怀">
+            <span class="material-symbols-outlined">favorite</span>
+        </a>
+    </header>
+
+    <section class="hero">
+        <div class="hero-row">
+            <div>
+                <h2 id="scheduleSummary">08:30 · 7 类内容</h2>
+                <p>每日卡片会合并家里状态、问候话题、节日纪念日和回家间隔。</p>
+            </div>
+            <span id="scheduleStatus" class="status-pill">已开启</span>
+        </div>
+    </section>
+
+    <form id="careScheduleForm">
+        <section class="section">
+            <div class="switch-line">
+                <div>
+                    <h3>每日推送</h3>
+                    <p class="feedback">每天按设置生成一张关怀卡片。</p>
+                </div>
+                <input id="scheduleEnabled" class="toggle" type="checkbox" checked>
+            </div>
+            <div class="field-grid mt-4">
+                <label class="field">
+                    <span>推送时间</span>
+                    <input id="deliveryTime" class="care-input" type="time" value="08:30">
+                </label>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <div>
+                    <h3>卡片内容</h3>
+                    <p>选择每天想看到的问候素材。</p>
+                </div>
+            </div>
+            <div class="chips">
+                <label class="chip"><input name="contentType" value="home_status" type="checkbox"><span>家里状态</span></label>
+                <label class="chip"><input name="contentType" value="elder_interest_topics" type="checkbox"><span>热点话题</span></label>
+                <label class="chip"><input name="contentType" value="health_tips" type="checkbox"><span>养生技巧</span></label>
+                <label class="chip"><input name="contentType" value="weather" type="checkbox"><span>天气问候</span></label>
+                <label class="chip"><input name="contentType" value="visit_reminder" type="checkbox"><span>多久没回家</span></label>
+                <label class="chip"><input name="contentType" value="holidays" type="checkbox"><span>节日</span></label>
+                <label class="chip"><input name="contentType" value="anniversaries" type="checkbox"><span>纪念日</span></label>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <div>
+                    <h3>关怀重点</h3>
+                    <p>用来决定卡片的语气和重点。</p>
+                </div>
+            </div>
+            <label class="field">
+                <span>希望每天提醒什么</span>
+                <textarea id="messageFocus" class="care-input care-textarea" maxlength="400" placeholder="例如：先说家里是否平稳，再给一个适合打电话时聊的话题，语气轻松一点。"></textarea>
+            </label>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <div>
+                    <h3>老人关心的话题</h3>
+                    <p>用于热点、文章和问候建议的召回。</p>
+                </div>
+            </div>
+            <div class="chips">
+                <label class="chip"><input name="interestTopic" value="养生" type="checkbox"><span>养生</span></label>
+                <label class="chip"><input name="interestTopic" value="天气" type="checkbox"><span>天气</span></label>
+                <label class="chip"><input name="interestTopic" value="戏曲" type="checkbox"><span>戏曲</span></label>
+                <label class="chip"><input name="interestTopic" value="家常" type="checkbox"><span>家常</span></label>
+                <label class="chip"><input name="interestTopic" value="杭州本地" type="checkbox"><span>杭州本地</span></label>
+                <label class="chip"><input name="interestTopic" value="慢病管理" type="checkbox"><span>慢病管理</span></label>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <div>
+                    <h3>回家提醒</h3>
+                    <p>按上次回家日期和阈值生成提醒。</p>
+                </div>
+                <input id="locationTracking" class="toggle" type="checkbox">
+            </div>
+            <div class="field-grid">
+                <label class="field">
+                    <span>上次回家日期</span>
+                    <input id="lastVisitAt" class="care-input" type="date">
+                </label>
+                <label class="field">
+                    <span>提醒阈值</span>
+                    <input id="visitThreshold" class="care-input" type="number" min="1" max="90" value="14">
+                </label>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <div>
+                    <h3>纪念日</h3>
+                    <p>生日、结婚纪念日、复诊日等。</p>
+                </div>
+                <button id="addAnniversary" class="icon-button" type="button" aria-label="添加纪念日">
+                    <span class="material-symbols-outlined">add</span>
+                </button>
+            </div>
+            <div id="anniversaryList" class="grid gap-2"></div>
+        </section>
+
+        <div class="actions">
+            <button id="generateCareNow" class="button secondary" type="button">
+                <span class="material-symbols-outlined">auto_awesome</span>
+                立即生成
+            </button>
+            <button class="button primary" type="submit">
+                <span class="material-symbols-outlined">save</span>
+                保存
+            </button>
+        </div>
+        <p id="careScheduleFeedback" class="feedback"></p>
+    </form>
+</main>
+<script src="assets/scripts/edge-client.js?v=20260707-care-schedule-1"></script>
+<script src="assets/scripts/care-schedule-live.js?v=20260707-care-schedule-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+</body>
+</html>

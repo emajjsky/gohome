@@ -130,6 +130,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             image_model: preferences.image_model || "",
             content_recommendations_enabled: preferences.content_recommendations_enabled === true,
             content_sources_enabled: preferences.content_sources_enabled === true,
+            metadata: preferences.metadata || {},
             created_at: iso(preferences.created_at, db.created_at),
             updated_at: iso(preferences.updated_at, iso(preferences.created_at, db.created_at)),
         };
