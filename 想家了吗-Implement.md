@@ -7258,3 +7258,44 @@ Chrome 验证：
 - 普通用户路径不能出现模型底层配置。
 - 平台内部后台只能看到是否已配置和 env 指引，不回显明文 key。
 - 后续接文本模型 API 时，只读取平台侧配置，不从用户表单读取 key。
+
+## 45. 2026-07-07 本地平台模型 env 配置记录
+
+背景：
+
+- 平台方先在本地配置两类模型能力，用户自行填写 API key。
+- API key 继续只放服务器本地 env，不进入前端、不进入普通业务数据库、不提交到 git。
+
+已完成：
+
+- 新增根目录 `.env.example`，作为可提交的模板。
+- 新增根目录 `.env`，已被 `.gitignore` 忽略，用于本机填写真实 key。
+- `local-app-server/server.js`
+  - 在读取默认端口、模型配置等常量前加载 `.env` 和 `.env.local`。
+  - 系统真实环境变量优先；`.env.local` 可覆盖 `.env` 中的本地配置。
+  - `GET /api/v1/ops/service-config` 返回 `env_files`，便于确认服务是否吃到 env 文件。
+- `scripts/verify-local-app-server.js`
+  - 验证模型能力状态接口不返回 `base_url` 明文。
+  - 验证模型能力状态接口不返回 API key 或脱敏 key 片段。
+
+当前本地模型配置：
+
+- 多模态语言模型：
+  - `GOHOME_MULTIMODAL_BASE_URL=https://api.siliconflow.cn/v1/chat/completions`
+  - `GOHOME_MULTIMODAL_MODEL=Qwen/Qwen3.5-27B`
+  - `GOHOME_MULTIMODAL_API_KEY=` 由平台方本机填写
+- 生图模型：
+  - `GOHOME_IMAGE_BASE_URL=https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation`
+  - `GOHOME_IMAGE_MODEL=wan2.7-image`
+  - `GOHOME_IMAGE_API_KEY=` 由平台方本机填写
+
+使用方式：
+
+1. 在根目录 `.env` 填入 `GOHOME_MULTIMODAL_API_KEY` 和 `GOHOME_IMAGE_API_KEY`。
+2. 重启 `com.gohome.local-app-server`。
+3. 打开 `ops.html?app=1` 或读取 `/api/v1/ops/service-config`，确认两类模型能力从“待配置”变为“已配置”。
+
+注意：
+
+- 不要把真实 key 写进 `.env.example`、文档或前端代码。
+- 云端部署时不复制本地 `.env`，改接云厂商 Secret Manager / KMS。

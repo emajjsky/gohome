@@ -8,6 +8,49 @@ const https = require("https");
 const path = require("path");
 const { URL } = require("url");
 
+function parseEnvValue(raw) {
+    let value = String(raw || "").trim();
+    if (!value) return "";
+    if (value.length >= 2 && value[0] === value[value.length - 1] && ["\"", "'"].includes(value[0])) {
+        const inner = value.slice(1, -1);
+        return value[0] === "\"" ? inner.replace(/\\n/g, "\n").replace(/\\"/g, "\"").replace(/\\\\/g, "\\") : inner;
+    }
+    const commentIndex = value.indexOf(" #");
+    if (commentIndex >= 0) value = value.slice(0, commentIndex).trim();
+    return value;
+}
+
+function loadEnvFile(filePath, protectedKeys) {
+    if (!fs.existsSync(filePath)) return false;
+    const loadedKeys = new Set();
+    for (const rawLine of fs.readFileSync(filePath, "utf8").split(/\r?\n/)) {
+        let line = rawLine.trim();
+        if (!line || line.startsWith("#")) continue;
+        if (line.startsWith("export ")) line = line.slice(7).trim();
+        const equalsIndex = line.indexOf("=");
+        if (equalsIndex <= 0) continue;
+        const key = line.slice(0, equalsIndex).trim();
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+        if (protectedKeys.has(key)) continue;
+        process.env[key] = parseEnvValue(line.slice(equalsIndex + 1));
+        loadedKeys.add(key);
+    }
+    for (const key of loadedKeys) protectedKeys.delete(key);
+    return true;
+}
+
+function loadLocalEnv(rootDir = path.resolve(__dirname, "..")) {
+    const protectedKeys = new Set(Object.keys(process.env));
+    const loaded = [];
+    for (const name of [".env", ".env.local"]) {
+        const filePath = path.join(rootDir, name);
+        if (loadEnvFile(filePath, protectedKeys)) loaded.push(filePath);
+    }
+    return loaded;
+}
+
+const LOADED_ENV_FILES = loadLocalEnv();
+
 const DEFAULT_PORT = Number(process.env.GOHOME_APP_SERVER_PORT || 8788);
 const DEFAULT_HOST = process.env.GOHOME_APP_SERVER_HOST || "0.0.0.0";
 const DEFAULT_DEVICE_TOKEN = process.env.GOHOME_DEVICE_API_TOKEN || "gohome-local-device-token";
@@ -2096,6 +2139,7 @@ function createLocalAppServer(options = {}) {
                     service: "gohome-local-app-server",
                     store: store.kind || "json",
                     app_server_base_url: process.env.GOHOME_APP_SERVER_BASE_URL || `http://localhost:${DEFAULT_PORT}`,
+                    env_files: LOADED_ENV_FILES,
                     model_capabilities: capabilities,
                     secret_policy: {
                         local: "server_env",

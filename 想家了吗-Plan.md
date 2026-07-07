@@ -1243,6 +1243,7 @@ factory_new
 - P0 的模板版 `CareCard`、偏好接口、平台模型能力只读状态接口和亲情页展示已经进入本地闭环。
 - P0 的数据库迁移层已经补齐到 PostgreSQL schema、seed bundle 导出和反向还原校验。
 - 模型底层能力不是用户配置项，平台方通过服务器环境变量或云端 Secret Manager / KMS 配置。
+- 当前本地 `local-app-server` 已从根目录 `.env / .env.local` 读取平台模型配置；真实 key 只填本机 `.env`，不提交 git。
 - 当前后台页只做平台内部只读状态检查，不给普通用户填写 key、Base URL、模型名或 Prompt。
 - 下一步先把首页接入今日关怀摘要，再进入 P0.5 文本模型 API。
 - `wan2.7` 生图、白名单内容链接和自动内容搜索都必须排在文本模型之后。

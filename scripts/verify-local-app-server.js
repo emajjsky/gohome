@@ -407,8 +407,13 @@ async function main() {
         assert.equal(opsConfig.ok, true);
         assert.equal(opsConfig.secret_policy.user_configurable, false);
         assert.equal(opsConfig.secret_policy.database, "no_plain_secret");
+        assert.ok(Array.isArray(opsConfig.env_files));
         assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "multimodal-language"));
         assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "care-card-image" && capability.aspect_ratio === "4:7"));
+        for (const capability of opsConfig.model_capabilities) {
+            assert.equal("base_url" in capability, false);
+            assert.equal("api_key_preview" in capability, false);
+        }
 
         const appTokenCannotWriteModelConfig = await fetch(`${baseUrl}/api/v1/model-providers/care-card-image`, {
             method: "PUT",
