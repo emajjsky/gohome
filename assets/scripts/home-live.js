@@ -12,8 +12,21 @@
         if (node) node.textContent = value;
     }
 
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
     function toggleMessageSection(show) {
         $("edgeHomeMessageSection")?.classList.toggle("hidden", !show);
+    }
+
+    function toggleCareSection(show) {
+        $("edgeHomeCareSection")?.classList.toggle("hidden", !show);
     }
 
     function setAction(id, href, label, icon) {
@@ -103,6 +116,58 @@
             return null;
         }
         return messages[0] || null;
+    }
+
+    async function loadCareCard(familyId) {
+        if (!window.GoHomeEdge?.v1CareCardToday) return null;
+        try {
+            return await window.GoHomeEdge.v1CareCardToday(familyId);
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    function isCareCritical(card) {
+        const text = [
+            card?.title,
+            card?.body,
+            ...(Array.isArray(card?.facts) ? card.facts : []),
+        ].map(String).join(" ");
+        return /重要|异常|高优先级|告警|跌倒|离线|待确认/.test(text);
+    }
+
+    function renderCareCardSummary(card, family) {
+        if (!card) {
+            toggleCareSection(false);
+            return;
+        }
+        toggleCareSection(true);
+        const critical = isCareCritical(card);
+        const status = $("edgeHomeCareStatus");
+        if (status) {
+            status.textContent = critical ? "需关注" : "平稳";
+            status.className = critical
+                ? "font-label-md text-label-md text-[#93000a] bg-error-container px-3 py-1 rounded-full"
+                : "font-label-md text-label-md text-tertiary-container bg-tertiary-fixed/40 px-3 py-1 rounded-full";
+        }
+        setText("edgeHomeCareMeta", `${family?.name || "当前家庭"} · ${card.card_date || ""}`);
+        setText("edgeHomeCareTitle", card.title || "今天家里怎么样");
+        setText("edgeHomeCareBody", card.body || "今日关怀卡片已经生成。");
+        const facts = $("edgeHomeCareFacts");
+        if (facts) {
+            facts.innerHTML = "";
+            (Array.isArray(card.facts) ? card.facts : []).slice(0, 3).forEach((fact) => {
+                const item = document.createElement("div");
+                item.className = "rounded-lg bg-surface-container-low px-3 py-2 flex items-start gap-2";
+                item.innerHTML = `
+                    <span class="material-symbols-outlined text-primary text-[17px] mt-0.5">check_circle</span>
+                    <p class="font-body-md text-body-md text-on-surface-variant text-sm leading-relaxed">${escapeHtml(fact)}</p>
+                `;
+                facts.append(item);
+            });
+        }
+        setAction("edgeHomeCarePrimaryAction", "companionship.html", "看完整卡片", "volunteer_activism");
+        setAction("edgeHomeCareSecondaryAction", critical ? "events.html" : "care_schedule.html", critical ? "查看提醒" : "关怀设置", critical ? "history" : "schedule");
     }
 
     function syncCameraEntryLinks(camera) {
@@ -234,6 +299,7 @@
 
     function fallbackGuestHome() {
         toggleMessageSection(false);
+        toggleCareSection(false);
         toggleSetupMode(true);
         setSetupStates("未登录", "未开始", "未绑定", "先登录");
         setText("edgeHomeDevice", "先接身份");
@@ -246,6 +312,7 @@
 
     function renderNoFamilyHome(user) {
         toggleMessageSection(false);
+        toggleCareSection(false);
         toggleSetupMode(true);
         setSetupStates("已登录", "未创建", "待绑定", "下一步");
         setText("edgeHomeDevice", user.display_name || user.email || "已登录");
@@ -295,6 +362,7 @@
                 return;
             }
 
+            renderCareCardSummary(await loadCareCard(primaryFamily.id), primaryFamily);
             const bindings = await GoHomeEdge.deviceBindings(primaryFamily.id);
             const currentBinding = bindings.find((item) => item.device_id === device.device_id);
             if (!currentBinding) {

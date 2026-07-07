@@ -227,6 +227,39 @@
 </div>
 </div>
 </section>
+<!-- Daily Care Summary -->
+<section id="edgeHomeCareSection" class="mt-stack-lg">
+<div class="flex items-center justify-between mb-stack-md">
+<div>
+<p class="font-label-md text-label-md text-primary">今日关怀</p>
+<h3 class="font-headline-md text-headline-md text-on-surface">今天家里怎么样</h3>
+</div>
+<span id="edgeHomeCareStatus" class="font-label-md text-label-md text-tertiary-container bg-tertiary-fixed/40 px-3 py-1 rounded-full">同步中</span>
+</div>
+<article class="bg-surface-container-lowest rounded-[20px] p-5 soft-shadow border border-surface-variant flex flex-col gap-4">
+<div class="flex items-start justify-between gap-4">
+<div class="min-w-0">
+<p id="edgeHomeCareMeta" class="font-label-md text-label-md text-on-surface-variant mb-1">正在读取家庭状态</p>
+<h4 id="edgeHomeCareTitle" class="font-headline-md text-headline-md text-on-surface">正在生成今日关怀</h4>
+<p id="edgeHomeCareBody" class="font-body-md text-body-md text-on-surface-variant mt-2 leading-relaxed">稍后会把家里状态、提醒和适合联系的话题汇总在这里。</p>
+</div>
+<div class="w-12 h-12 rounded-xl bg-primary-container text-on-primary-container flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;">favorite</span>
+</div>
+</div>
+<div id="edgeHomeCareFacts" class="grid grid-cols-1 gap-2"></div>
+<div class="grid grid-cols-2 gap-3">
+<a id="edgeHomeCarePrimaryAction" class="min-h-11 rounded-full bg-primary text-on-primary font-label-md text-label-md flex items-center justify-center gap-2" href="companionship.html">
+<span class="material-symbols-outlined text-[18px]">volunteer_activism</span>
+看完整卡片
+</a>
+<a id="edgeHomeCareSecondaryAction" class="min-h-11 rounded-full bg-surface-container text-on-surface font-label-md text-label-md flex items-center justify-center gap-2" href="events.html">
+<span class="material-symbols-outlined text-[18px]">chat_bubble</span>
+消息
+</a>
+</div>
+</article>
+</section>
 <!-- Home Status Summary -->
 <section class="mt-stack-lg">
 <h3 class="font-headline-md text-headline-md text-on-surface mb-stack-md">家庭状态</h3>
@@ -334,6 +367,7 @@
   })();
 </script>
 <script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
+<script src="assets/scripts/home-live.js?v=20260707-home-care-1"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
 </body></html>
