@@ -758,6 +758,27 @@
             const suffix = query.toString() ? `?${query.toString()}` : "";
             return request(`/api/v1/families/${encodeURIComponent(familyId)}/weather-signals${suffix}`);
         },
+        v1CareCardToday: (familyId = "") => {
+            const suffix = familyId ? `?family_id=${encodeURIComponent(familyId)}` : "";
+            return request(`/api/v1/app/care-cards/today${suffix}`);
+        },
+        v1GenerateCareCard: (payload = {}) => request("/api/v1/internal/care-cards/generate", {
+            method: "POST",
+            body: JSON.stringify(payload),
+        }),
+        v1CarePreferences: (familyId) =>
+            request(`/api/v1/families/${encodeURIComponent(familyId)}/care-preferences`),
+        v1UpdateCarePreferences: (familyId, payload = {}) =>
+            request(`/api/v1/families/${encodeURIComponent(familyId)}/care-preferences`, {
+                method: "PUT",
+                body: JSON.stringify(payload),
+            }),
+        v1ModelProviders: () => request("/api/v1/model-providers"),
+        v1UpdateModelProvider: (providerId, payload = {}) =>
+            request(`/api/v1/model-providers/${encodeURIComponent(providerId)}`, {
+                method: "PUT",
+                body: JSON.stringify(payload),
+            }),
         v1GenerateMessages: (payload = {}) => request("/api/v1/internal/messages/generate", {
             method: "POST",
             body: JSON.stringify(payload),

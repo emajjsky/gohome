@@ -5,6 +5,8 @@
   "main": "index.js",
   "scripts": {
     "app-server": "node local-app-server/server.js",
+    "db:export": "node scripts/export-local-app-db.js",
+    "db:migrate": "node scripts/apply-postgres-migrations.js",
     "verify:app-server": "node scripts/verify-local-app-server.js",
     "test": "npm run verify:app-server"
   },
@@ -13,6 +15,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "pg": "^8.22.0",
     "tailwindcss": "^3.4.17"
   }
 }

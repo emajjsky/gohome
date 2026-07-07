@@ -14,6 +14,7 @@ const DEFAULT_DEVICE_TOKEN = process.env.GOHOME_DEVICE_API_TOKEN || "gohome-loca
 const DEFAULT_APP_TOKEN = process.env.GOHOME_APP_TOKEN || "gohome-local-app-token";
 const DEFAULT_BOX_ADMIN_USERNAME = process.env.GOHOME_BOX_ADMIN_USERNAME || "admin";
 const DEFAULT_BOX_ADMIN_PASSWORD = process.env.GOHOME_BOX_ADMIN_PASSWORD || "123456";
+const DEFAULT_STORE_KIND = process.env.GOHOME_APP_STORE || (process.env.GOHOME_DATABASE_URL || process.env.DATABASE_URL ? "postgres" : "json");
 
 function nowIso() {
     return new Date().toISOString();
@@ -58,6 +59,11 @@ function parseJsonBody(req) {
 
 function stableId(prefix = "") {
     return `${prefix}${Date.now().toString(36)}${crypto.randomBytes(4).toString("hex")}`;
+}
+
+function sha256(value) {
+    if (!value) return "";
+    return crypto.createHash("sha256").update(String(value)).digest("hex");
 }
 
 function normalizeNumber(value, fallback = null) {
@@ -115,6 +121,9 @@ function createDefaultDb() {
             camera: 1,
             heartbeat: 1,
             calendar_event: 1,
+            care_card: 1,
+            model_generation_job: 1,
+            content_recommendation: 1,
         },
         users: [
             {
@@ -143,50 +152,24 @@ function createDefaultDb() {
         events: [],
         heartbeats: [],
         calendar_events: [],
+        care_preferences: {},
+        care_cards: [],
+        model_providers: [],
+        model_generation_jobs: [],
+        content_sources: [],
+        content_recommendations: [],
     };
 }
 
 class JsonStore {
     constructor(filePath) {
+        this.kind = "json";
         this.filePath = filePath;
         ensureDir(path.dirname(filePath));
-        this.db = this.normalize(fs.existsSync(filePath)
+        this.db = normalizeDb(fs.existsSync(filePath)
             ? { ...createDefaultDb(), ...safeJsonParse(fs.readFileSync(filePath, "utf8"), {}) }
             : createDefaultDb());
         this.save();
-    }
-
-    normalize(db) {
-        const defaults = createDefaultDb();
-        db.next_ids = { ...defaults.next_ids, ...(db.next_ids || {}) };
-        db.users = Array.isArray(db.users) ? db.users : defaults.users;
-        db.families = Array.isArray(db.families) ? db.families : defaults.families;
-        db.elder_profiles = db.elder_profiles && typeof db.elder_profiles === "object" ? db.elder_profiles : {};
-        db.device_bindings = Array.isArray(db.device_bindings) ? db.device_bindings : [];
-        db.binding_codes = Array.isArray(db.binding_codes) ? db.binding_codes : [];
-        db.device_tokens = Array.isArray(db.device_tokens) ? db.device_tokens : [];
-        db.devices = db.devices && typeof db.devices === "object" ? db.devices : {};
-        db.cameras = db.cameras && typeof db.cameras === "object" ? db.cameras : {};
-        db.assets = Array.isArray(db.assets) ? db.assets : [];
-        db.events = Array.isArray(db.events) ? db.events : [];
-        db.heartbeats = Array.isArray(db.heartbeats) ? db.heartbeats : [];
-        db.calendar_events = Array.isArray(db.calendar_events) ? db.calendar_events : [];
-        const idSources = {
-            user: db.users,
-            family: db.families,
-            binding: db.device_bindings,
-            binding_code: db.binding_codes,
-            device_token: db.device_tokens,
-            asset: db.assets,
-            event: db.events,
-            camera: Object.values(db.cameras),
-            heartbeat: db.heartbeats,
-            calendar_event: db.calendar_events,
-        };
-        for (const [type, items] of Object.entries(idSources)) {
-            db.next_ids[type] = Math.max(Number(db.next_ids[type] || 1), maxExistingId(items) + 1);
-        }
-        return db;
     }
 
     save() {
@@ -201,11 +184,53 @@ class JsonStore {
     }
 }
 
+function normalizeDb(db) {
+    const defaults = createDefaultDb();
+    db.next_ids = { ...defaults.next_ids, ...(db.next_ids || {}) };
+    db.users = Array.isArray(db.users) ? db.users : defaults.users;
+    db.families = Array.isArray(db.families) ? db.families : defaults.families;
+    db.elder_profiles = db.elder_profiles && typeof db.elder_profiles === "object" ? db.elder_profiles : {};
+    db.device_bindings = Array.isArray(db.device_bindings) ? db.device_bindings : [];
+    db.binding_codes = Array.isArray(db.binding_codes) ? db.binding_codes : [];
+    db.device_tokens = Array.isArray(db.device_tokens) ? db.device_tokens : [];
+    db.devices = db.devices && typeof db.devices === "object" ? db.devices : {};
+    db.cameras = db.cameras && typeof db.cameras === "object" ? db.cameras : {};
+    db.assets = Array.isArray(db.assets) ? db.assets : [];
+    db.events = Array.isArray(db.events) ? db.events : [];
+    db.heartbeats = Array.isArray(db.heartbeats) ? db.heartbeats : [];
+    db.calendar_events = Array.isArray(db.calendar_events) ? db.calendar_events : [];
+    db.care_preferences = db.care_preferences && typeof db.care_preferences === "object" ? db.care_preferences : {};
+    db.care_cards = Array.isArray(db.care_cards) ? db.care_cards : [];
+    db.model_providers = Array.isArray(db.model_providers) ? db.model_providers : [];
+    db.model_generation_jobs = Array.isArray(db.model_generation_jobs) ? db.model_generation_jobs : [];
+    db.content_sources = Array.isArray(db.content_sources) ? db.content_sources : [];
+    db.content_recommendations = Array.isArray(db.content_recommendations) ? db.content_recommendations : [];
+    const idSources = {
+        user: db.users,
+        family: db.families,
+        binding: db.device_bindings,
+        binding_code: db.binding_codes,
+        device_token: db.device_tokens,
+        asset: db.assets,
+        event: db.events,
+        camera: Object.values(db.cameras),
+        heartbeat: db.heartbeats,
+        calendar_event: db.calendar_events,
+        care_card: db.care_cards,
+        model_generation_job: db.model_generation_jobs,
+        content_recommendation: db.content_recommendations,
+    };
+    for (const [type, items] of Object.entries(idSources)) {
+        db.next_ids[type] = Math.max(Number(db.next_ids[type] || 1), maxExistingId(items) + 1);
+    }
+    return db;
+}
+
 function createLocalAppServer(options = {}) {
     const rootDir = path.resolve(options.rootDir || process.cwd());
     const dataDir = path.resolve(options.dataDir || process.env.GOHOME_APP_SERVER_DATA_DIR || path.join(rootDir, "data", "app-server"));
     const mediaDir = path.join(dataDir, "media");
-    const store = new JsonStore(path.join(dataDir, "db.json"));
+    const store = options.store || new JsonStore(path.join(dataDir, "db.json"));
     const deviceToken = String(options.deviceToken || DEFAULT_DEVICE_TOKEN);
     const appToken = String(options.appToken || DEFAULT_APP_TOKEN);
     const playbackTickets = new Map();
@@ -240,7 +265,10 @@ function createLocalAppServer(options = {}) {
 
     function requireDevice(req, res) {
         const token = tokenFrom(req);
-        const issued = store.db.device_tokens.find((item) => item.token === token && item.status === "active");
+        const tokenHash = sha256(token);
+        const issued = store.db.device_tokens.find((item) => item.status === "active" && (
+            item.token === token || (item.token_hash && item.token_hash === tokenHash)
+        ));
         if (token !== deviceToken && !issued) {
             writeError(res, 401, "device token invalid");
             return false;
@@ -558,6 +586,162 @@ function createLocalAppServer(options = {}) {
             media_asset_id: asset?.id || null,
             payload: event.payload || {},
         };
+    }
+
+    function dateKeyShanghai(date = new Date()) {
+        return new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Asia/Shanghai",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).format(date);
+    }
+
+    function defaultCarePreferences(familyId) {
+        return {
+            family_id: Number(familyId),
+            elder_id: "elder_primary",
+            frequency: "daily",
+            quiet_hours: { start: "21:30", end: "08:00" },
+            interests: ["天气", "养生", "家常", "戏曲"],
+            text_model_enabled: false,
+            image_generation_enabled: false,
+            image_provider: "",
+            image_model: "",
+            content_recommendations_enabled: false,
+            content_sources_enabled: false,
+            updated_at: nowIso(),
+        };
+    }
+
+    function carePreferences(familyId) {
+        const key = String(familyId || store.db.families[0]?.id || 1);
+        return store.db.care_preferences[key] || defaultCarePreferences(key);
+    }
+
+    function publicCarePreferences(preferences) {
+        return {
+            ...preferences,
+            content_sources_enabled: Boolean(preferences.content_sources_enabled),
+            content_recommendations_enabled: Boolean(preferences.content_recommendations_enabled),
+            image_generation_enabled: Boolean(preferences.image_generation_enabled),
+            text_model_enabled: Boolean(preferences.text_model_enabled),
+        };
+    }
+
+    function publicCareCard(card) {
+        return {
+            id: card.id,
+            card_id: card.card_id,
+            family_id: card.family_id,
+            elder_id: card.elder_id,
+            card_date: card.card_date,
+            card_type: card.card_type,
+            title: card.title,
+            body: card.body,
+            facts: Array.isArray(card.facts) ? card.facts : [],
+            source_message_ids: Array.isArray(card.source_message_ids) ? card.source_message_ids : [],
+            image_mode: card.image_mode || "none",
+            image_url: card.image_url || "",
+            actions: Array.isArray(card.actions) ? card.actions : [],
+            status: card.status || "open",
+            generated_by: card.generated_by || "care-template-v1",
+            source_summary: Array.isArray(card.source_summary) ? card.source_summary : [],
+            content_recommendations: Array.isArray(card.content_recommendations) ? card.content_recommendations : [],
+            created_at: card.created_at,
+            updated_at: card.updated_at,
+        };
+    }
+
+    function careCardFacts(familyId) {
+        const cameras = appConfigCameras();
+        const onlineCameras = cameras.filter((camera) => String(camera.status || "").toLowerCase() === "online");
+        const recentCutoff = Date.now() - 24 * 60 * 60 * 1000;
+        const recentEvents = store.db.events.filter((event) => {
+            const timestamp = Date.parse(event.occurred_at || event.created_at || "");
+            return Number.isFinite(timestamp) && timestamp >= recentCutoff;
+        });
+        const openEvents = recentEvents.filter((event) => !event.acknowledged);
+        const criticalEvents = openEvents.filter((event) => event.level === "critical");
+        const device = Object.values(store.db.devices)[0] || {};
+        const family = selectedFamily(familyId) || store.db.families[0] || {};
+        const profile = store.db.elder_profiles[elderProfileKey(family.id || familyId, "elder_primary")]
+            || defaultElderProfile(family.id || familyId, "elder_primary");
+        const facts = [];
+        if (device.last_seen_at) {
+            facts.push("家庭盒子在线，今天仍在同步状态。");
+        } else {
+            facts.push("家庭盒子还没有新的在线时间，建议先确认网络。");
+        }
+        if (cameras.length) {
+            facts.push(`${onlineCameras.length}/${cameras.length} 路摄像头在线同步。`);
+        } else {
+            facts.push("还没有配置摄像头，亲情关怀只能使用家庭资料和日程。");
+        }
+        if (criticalEvents.length) {
+            facts.push(`最近 24 小时有 ${criticalEvents.length} 条高优先级事件等待处理。`);
+        } else if (openEvents.length) {
+            facts.push(`最近 24 小时有 ${openEvents.length} 条普通提醒等待查看。`);
+        } else {
+            facts.push("最近 24 小时没有未处理的高优先级告警。");
+        }
+        facts.push(`${profile.display_name || "家人"} 所在城市按 ${profile.city || "杭州"} 生成天气问候。`);
+        return { facts, cameras, onlineCameras, openEvents, criticalEvents, device, profile };
+    }
+
+    function generateCareCard(familyId, options = {}) {
+        const targetFamilyId = Number(familyId || store.db.families[0]?.id || 1);
+        const cardDate = dateKeyShanghai();
+        const existing = store.db.care_cards.find((card) => (
+            Number(card.family_id) === targetFamilyId && card.card_date === cardDate && card.card_type === "daily"
+        ));
+        if (existing && !options.force && existing.generated_by === "care-template-v2") return existing;
+        const preferences = carePreferences(targetFamilyId);
+        const { facts, onlineCameras, openEvents, criticalEvents, profile } = careCardFacts(targetFamilyId);
+        const displayName = profile.display_name || "家人";
+        const title = criticalEvents.length
+            ? "今天有重要提醒需要先看"
+            : "今天家里整体平稳";
+        const body = criticalEvents.length
+            ? `${displayName} 家里有高优先级事件等待确认，建议先查看证据，再联系家里。`
+            : `${displayName} 家里设备仍在同步，当前没有未处理的高优先级告警。可以找个轻松的时间打个电话，问问今天过得怎么样。`;
+        const sourceSummary = [
+            "设备在线状态",
+            "摄像头同步状态",
+            "未处理事件",
+            "老人资料",
+        ];
+        const card = {
+            id: existing?.id || store.nextId("care_card"),
+            card_id: existing?.card_id || `care-${targetFamilyId}-${cardDate}`,
+            family_id: targetFamilyId,
+            elder_id: preferences.elder_id || "elder_primary",
+            card_date: cardDate,
+            card_type: "daily",
+            title,
+            body,
+            facts,
+            source_message_ids: [],
+            image_mode: preferences.image_generation_enabled ? "pending_provider" : "none",
+            image_url: "",
+            actions: [
+                { key: "call", label: "打电话问候" },
+                { key: "open_watch", label: onlineCameras.length ? "看看家里" : "查看设备" },
+                { key: "open_events", label: openEvents.length ? "查看提醒" : "查看今日状态" },
+            ],
+            status: "open",
+            generated_by: "care-template-v2",
+            source_summary: sourceSummary,
+            content_recommendations: [],
+            created_at: existing?.created_at || nowIso(),
+            updated_at: nowIso(),
+        };
+        if (existing) {
+            Object.assign(existing, card);
+            return existing;
+        }
+        store.db.care_cards.push(card);
+        return card;
     }
 
     function currentEdgeDeviceId() {
@@ -905,7 +1089,7 @@ function createLocalAppServer(options = {}) {
             url: `/api/v1/video/media/snapshots/${encodeURIComponent(snapshotPath)}`,
         };
         store.db.assets.push(asset);
-        store.save();
+        await store.save();
         write(res, 200, { ok: true, asset });
     }
 
@@ -947,7 +1131,7 @@ function createLocalAppServer(options = {}) {
             return;
         }
         store.db.events.push(event);
-        store.save();
+        await store.save();
         write(res, 200, { ok: true, event: publicEvent(event), media_asset: asset || null });
     }
 
@@ -973,7 +1157,7 @@ function createLocalAppServer(options = {}) {
             payload,
             created_at: nowIso(),
         });
-        store.save();
+        await store.save();
         write(res, 200, { ok: true, server_time: nowIso(), config: {} });
     }
 
@@ -1073,7 +1257,7 @@ function createLocalAppServer(options = {}) {
             updatedCameras.push(publicCamera(camera));
         }
 
-        store.save();
+        await store.save();
         write(res, 200, {
             ok: true,
             device_id: deviceId,
@@ -1153,6 +1337,7 @@ function createLocalAppServer(options = {}) {
                 write(res, 200, {
                     ok: true,
                     service: "gohome-local-app-server",
+                    store: store.kind || "json",
                     app_server_base_url: `http://localhost:${DEFAULT_PORT}`,
                     events: store.db.events.length,
                     assets: store.db.assets.length,
@@ -1191,7 +1376,7 @@ function createLocalAppServer(options = {}) {
                         created_at: nowIso(),
                     };
                     store.db.users.push(user);
-                    store.save();
+                    await store.save();
                 }
                 write(res, 200, { token: appToken, user: publicUser(user) });
                 return;
@@ -1224,7 +1409,7 @@ function createLocalAppServer(options = {}) {
                         updated_at: nowIso(),
                     };
                     store.db.families.push(family);
-                    store.save();
+                    await store.save();
                 }
                 write(res, 200, publicFamily(family));
                 return;
@@ -1275,7 +1460,7 @@ function createLocalAppServer(options = {}) {
                     last_seen_at: store.db.devices[deviceId]?.last_seen_at || null,
                     updated_at: nowIso(),
                 };
-                store.save();
+                await store.save();
                 write(res, 200, publicBinding(binding));
                 return;
             }
@@ -1309,7 +1494,7 @@ function createLocalAppServer(options = {}) {
                     family_id: familyId,
                     updated_at: nowIso(),
                 };
-                store.save();
+                await store.save();
                 write(res, 200, store.db.elder_profiles[key]);
                 return;
             }
@@ -1340,7 +1525,7 @@ function createLocalAppServer(options = {}) {
                     updated_at: nowIso(),
                 };
                 store.db.calendar_events.push(event);
-                store.save();
+                await store.save();
                 write(res, 200, event);
                 return;
             }
@@ -1417,7 +1602,7 @@ function createLocalAppServer(options = {}) {
                     .filter((item) => Number(item.family_id) === Number(familyId) && item.status === "active")
                     .forEach((item) => { item.status = "revoked"; });
                 store.db.binding_codes.push(code);
-                store.save();
+                await store.save();
                 write(res, 200, publicBindingCode(code));
                 return;
             }
@@ -1436,6 +1621,7 @@ function createLocalAppServer(options = {}) {
                     family_id: code.family_id,
                     device_id: deviceId,
                     token,
+                    token_hash: sha256(token),
                     status: "active",
                     note: String(payload.note || code.note || ""),
                     created_at: nowIso(),
@@ -1470,7 +1656,7 @@ function createLocalAppServer(options = {}) {
                     status: "active",
                     updated_at: nowIso(),
                 };
-                store.save();
+                await store.save();
                 write(res, 200, {
                     ok: true,
                     device_token: token,
@@ -1503,7 +1689,7 @@ function createLocalAppServer(options = {}) {
                     last_seen_at: nowIso(),
                 };
                 if (token) token.last_heartbeat_at = nowIso();
-                store.save();
+                await store.save();
                 write(res, 200, { ok: true, device: store.db.devices[deviceId], auth: publicDeviceAuthStatus() });
                 return;
             }
@@ -1534,7 +1720,7 @@ function createLocalAppServer(options = {}) {
                 const payload = await parseJsonBody(req);
                 const camera = normalizeCameraPayload(payload);
                 store.db.cameras[String(camera.id)] = camera;
-                store.save();
+                await store.save();
                 write(res, 200, publicCamera(camera));
                 return;
             }
@@ -1568,7 +1754,7 @@ function createLocalAppServer(options = {}) {
                 const patch = await parseJsonBody(req);
                 const camera = normalizeCameraPayload({ ...existing, ...patch, id: existing.id }, existing);
                 store.db.cameras[cameraId] = camera;
-                store.save();
+                await store.save();
                 write(res, 200, publicCamera(camera));
                 return;
             }
@@ -1581,7 +1767,7 @@ function createLocalAppServer(options = {}) {
                     return;
                 }
                 delete store.db.cameras[cameraId];
-                store.save();
+                await store.save();
                 write(res, 200, { ok: true, deleted: Number(cameraId) || cameraId });
                 return;
             }
@@ -1598,7 +1784,7 @@ function createLocalAppServer(options = {}) {
                 camera.sync_status = "pending_edge_sync";
                 camera.last_error = "";
                 camera.updated_at = nowIso();
-                store.save();
+                await store.save();
                 write(res, 200, {
                     ok: true,
                     camera: publicCamera(camera),
@@ -1715,7 +1901,7 @@ function createLocalAppServer(options = {}) {
                 if ("acknowledged" in patch) event.acknowledged = normalizeBool(patch.acknowledged);
                 if ("resolution" in patch) event.resolution = String(patch.resolution || "");
                 event.updated_at = nowIso();
-                store.save();
+                await store.save();
                 write(res, 200, publicEvent(event));
                 return;
             }
@@ -1729,6 +1915,97 @@ function createLocalAppServer(options = {}) {
                 const open = store.db.events.filter((event) => !event.acknowledged).length;
                 const critical = store.db.events.filter((event) => !event.acknowledged && event.level === "critical").length;
                 write(res, 200, { events: store.db.events.length, open_events: open, critical_events: critical });
+                return;
+            }
+
+            const carePreferenceMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/care-preferences$/);
+            if (carePreferenceMatch && req.method === "GET") {
+                if (!requireApp(req, res)) return;
+                write(res, 200, publicCarePreferences(carePreferences(carePreferenceMatch[1])));
+                return;
+            }
+
+            if (carePreferenceMatch && req.method === "PUT") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(carePreferenceMatch[1]);
+                if (!selectedFamily(familyId)) {
+                    writeError(res, 404, "family not found");
+                    return;
+                }
+                const payload = await parseJsonBody(req);
+                const existing = carePreferences(familyId);
+                store.db.care_preferences[String(familyId)] = publicCarePreferences({
+                    ...existing,
+                    frequency: String(payload.frequency || existing.frequency || "daily"),
+                    quiet_hours: payload.quiet_hours && typeof payload.quiet_hours === "object" ? payload.quiet_hours : existing.quiet_hours,
+                    interests: Array.isArray(payload.interests) ? payload.interests.map(String).filter(Boolean).slice(0, 20) : existing.interests,
+                    text_model_enabled: "text_model_enabled" in payload ? normalizeBool(payload.text_model_enabled) : existing.text_model_enabled,
+                    image_generation_enabled: "image_generation_enabled" in payload ? normalizeBool(payload.image_generation_enabled) : existing.image_generation_enabled,
+                    image_provider: String(payload.image_provider || existing.image_provider || ""),
+                    image_model: String(payload.image_model || existing.image_model || ""),
+                    content_recommendations_enabled: "content_recommendations_enabled" in payload ? normalizeBool(payload.content_recommendations_enabled) : existing.content_recommendations_enabled,
+                    content_sources_enabled: "content_sources_enabled" in payload ? normalizeBool(payload.content_sources_enabled) : existing.content_sources_enabled,
+                    updated_at: nowIso(),
+                });
+                await store.save();
+                write(res, 200, store.db.care_preferences[String(familyId)]);
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/v1/app/care-cards/today") {
+                if (!requireApp(req, res)) return;
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), store.db.families[0]?.id || 1);
+                const card = generateCareCard(familyId);
+                await store.save();
+                write(res, 200, publicCareCard(card));
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/internal/care-cards/generate") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req);
+                const familyId = normalizeNumber(payload.family_id, store.db.families[0]?.id || 1);
+                const card = generateCareCard(familyId, { force: normalizeBool(payload.force) });
+                await store.save();
+                write(res, 200, { ok: true, card: publicCareCard(card) });
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/v1/model-providers") {
+                if (!requireApp(req, res)) return;
+                const providers = store.db.model_providers.length ? store.db.model_providers : [
+                    { provider_id: "text-default", provider: "template", model: "care-template-v1", purpose: "care_text", enabled: true, configured: true },
+                    { provider_id: "image-wan", provider: "wan", model: "wan2.7", purpose: "care_image", enabled: false, configured: false },
+                ];
+                write(res, 200, providers.map((provider) => ({
+                    ...provider,
+                    api_key: undefined,
+                    api_key_set: Boolean(provider.api_key || provider.api_key_set),
+                })));
+                return;
+            }
+
+            const modelProviderMatch = pathname.match(/^\/api\/v1\/model-providers\/([^/]+)$/);
+            if (modelProviderMatch && req.method === "PUT") {
+                if (!requireApp(req, res)) return;
+                const providerId = decodeURIComponent(modelProviderMatch[1]);
+                const payload = await parseJsonBody(req);
+                const existing = store.db.model_providers.find((item) => item.provider_id === providerId) || {};
+                const next = {
+                    provider_id: providerId,
+                    provider: String(payload.provider || existing.provider || ""),
+                    model: String(payload.model || existing.model || ""),
+                    purpose: String(payload.purpose || existing.purpose || "care_text"),
+                    enabled: "enabled" in payload ? normalizeBool(payload.enabled) : Boolean(existing.enabled),
+                    configured: "api_key" in payload ? Boolean(payload.api_key) : Boolean(existing.configured || existing.api_key_set),
+                    api_key_set: "api_key" in payload ? Boolean(payload.api_key) : Boolean(existing.api_key_set),
+                    updated_at: nowIso(),
+                };
+                const index = store.db.model_providers.findIndex((item) => item.provider_id === providerId);
+                if (index >= 0) store.db.model_providers[index] = next;
+                else store.db.model_providers.push(next);
+                await store.save();
+                write(res, 200, next);
                 return;
             }
 
@@ -1760,14 +2037,63 @@ function createLocalAppServer(options = {}) {
     return { server, store, dataDir, appToken, deviceToken };
 }
 
-if (require.main === module) {
-    const app = createLocalAppServer({ rootDir: path.resolve(__dirname, "..") });
-    app.server.listen(DEFAULT_PORT, DEFAULT_HOST, () => {
-        console.log(`GoHome local App server listening on http://${DEFAULT_HOST}:${DEFAULT_PORT}`);
-        console.log(`App token: ${app.appToken}`);
-        console.log(`Device token: ${app.deviceToken}`);
-        console.log(`Data dir: ${app.dataDir}`);
-    });
+function appServerStoreKind(options = {}) {
+    return String(options.storeKind || DEFAULT_STORE_KIND || "json").trim().toLowerCase();
 }
 
-module.exports = { createLocalAppServer };
+function shouldUsePostgresStore(options = {}) {
+    const storeKind = appServerStoreKind(options);
+    return storeKind === "postgres" || storeKind === "pg";
+}
+
+function localJsonDbPath(rootDir, dataDir) {
+    return path.join(dataDir || path.join(rootDir, "data", "app-server"), "db.json");
+}
+
+function initialDbFromJsonFallback(filePath) {
+    return normalizeDb(fs.existsSync(filePath)
+        ? { ...createDefaultDb(), ...safeJsonParse(fs.readFileSync(filePath, "utf8"), {}) }
+        : createDefaultDb());
+}
+
+async function createLocalAppServerAsync(options = {}) {
+    if (!shouldUsePostgresStore(options)) {
+        return createLocalAppServer(options);
+    }
+    const rootDir = path.resolve(options.rootDir || process.cwd());
+    const dataDir = path.resolve(options.dataDir || process.env.GOHOME_APP_SERVER_DATA_DIR || path.join(rootDir, "data", "app-server"));
+    const databaseUrl = String(options.databaseUrl || process.env.GOHOME_DATABASE_URL || process.env.DATABASE_URL || "").trim();
+    if (!databaseUrl) {
+        throw new Error("GOHOME_DATABASE_URL is required when GOHOME_APP_STORE=postgres");
+    }
+    const ssl = process.env.GOHOME_DATABASE_SSL === "1" || process.env.GOHOME_DATABASE_SSL === "true"
+        ? { rejectUnauthorized: false }
+        : null;
+    const { createPostgresStore } = require("./postgres-store");
+    const store = await createPostgresStore({
+        databaseUrl,
+        ssl,
+        initialDb: initialDbFromJsonFallback(localJsonDbPath(rootDir, dataDir)),
+        normalizeDb,
+    });
+    return createLocalAppServer({ ...options, rootDir, dataDir, store });
+}
+
+if (require.main === module) {
+    createLocalAppServerAsync({ rootDir: path.resolve(__dirname, "..") })
+        .then((app) => {
+            app.server.listen(DEFAULT_PORT, DEFAULT_HOST, () => {
+                console.log(`GoHome local App server listening on http://${DEFAULT_HOST}:${DEFAULT_PORT}`);
+                console.log(`Store: ${app.store.kind || "json"}`);
+                console.log(`App token: ${app.appToken}`);
+                console.log(`Device token: ${app.deviceToken}`);
+                console.log(`Data dir: ${app.dataDir}`);
+            });
+        })
+        .catch((error) => {
+            console.error(error.message || error);
+            process.exit(1);
+        });
+}
+
+module.exports = { createLocalAppServer, createLocalAppServerAsync, createDefaultDb, normalizeDb };

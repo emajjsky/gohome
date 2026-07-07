@@ -1,6 +1,6 @@
 # 回家 Plan
 
-更新时间：2026-07-03
+更新时间：2026-07-07
 
 ## 1. 文档定位
 
@@ -105,7 +105,10 @@ GOHOME_AGENT_PORT=8711 GOHOME_DETECTOR_BACKEND=yolo ./run.sh
 - 本机 `edge-agent`
 - FastAPI API
 - SQLite 本地数据
+- 本地 App API 替身 `local-app-server`，用于模拟云端用户、家庭、设备、摄像头、事件、媒体和实时流接口
+- 本地 App API JSON 数据导出到云端表结构的迁移快照脚本
 - 局域网 RTSP 摄像头 `192.168.1.11:554`
+- 树莓派已同步两路 App 配置摄像头并可通过 App API 代理实时画面
 - 摄像头测试和抓帧
 - 后台定时抽帧
 - 黑屏 / 画面变化检测
@@ -120,10 +123,11 @@ GOHOME_AGENT_PORT=8711 GOHOME_DETECTOR_BACKEND=yolo ./run.sh
 
 - 开发对照设备：当前 M4 / 24GB Mac。
 - 当前主验证设备：树莓派盒子。
-- 主摄像头：局域网 RTSP 摄像头，不再以 `local:0` 为主线路。
+- 主摄像头：局域网 RTSP 摄像头，不再以 `local:0` 为主线路；当前本地闭环已有两路摄像头。
 - 当前服务端口：`8711`。
 - `8711` 是 edge-agent 的开发/内部监听端口；产品化访问不让用户看到端口，使用 nginx/Caddy 在 `80` 端口反向代理到 `127.0.0.1:8711`，对外呈现 `http://gohome.local/admin`。树莓派可用 `sudo bash scripts/install-admin-proxy.sh` 安装该代理。
-- 当前阶段目标：树莓派盒子先跑通本地视觉闭环，再进入最小服务器和正式 App 调整。
+- 当前 App API 端口：本地 `8788`，由 `local-app-server` 模拟云端 API；这不是正式云服务。
+- 当前阶段目标：树莓派盒子本地视觉闭环已经进入稳定验证，下一步把本地 App API 的 JSON 存储迁移到正式云端数据库结构，再部署 HTTPS 云服务。
 
 ## 4. 总体路线
 
@@ -145,14 +149,14 @@ GOHOME_AGENT_PORT=8711 GOHOME_DETECTOR_BACKEND=yolo ./run.sh
 
 | 工作线 | 当前状态 | 下一阶段交付物 | 商业化目标 |
 | --- | --- | --- | --- |
-| 产品与交互 | 已有静态 Web 原型 | 用户端 H5 流程、安装调试流程、告警处理流程 | 正式 App / H5 / 安装向导 |
-| 前端工程 | 静态 HTML + JS 局部接 API | 首页、连接页、规则页接入真实数据 | 用户端、管理端、运营后台分离 |
-| 云端后端 | 暂无 | API v1 草案、用户/设备/事件最小服务 | 多家庭、多设备、多端同步 |
+| 产品与交互 | 已有静态 Web 原型；亲情关怀主线需要增强 | 用户端 H5 流程、安装调试流程、告警处理流程、每日关怀卡片 | 正式 App / H5 / 安装向导 |
+| 前端工程 | 静态 HTML + JS 局部接 API | 首页、连接页、规则页、亲情关怀页接入真实数据 | 用户端、管理端、运营后台分离 |
+| 云端后端 | 本地 App API 替身已跑通；PostgreSQL schema 和第一版可选 store 适配已起步；正式云端未完成 | API v1 数据库适配完善、亲情关怀消息、设备通道、对象存储、HTTPS 部署 | 多家庭、多设备、多端同步 |
 | 边缘端 | `edge-agent` 本机服务 | 设备身份、配置、日志、断网缓存、RTSP 稳定性 | 可部署边缘运行时 |
 | 视觉算法 | basic + YOLO 人形 | 检测框、模型版本、DetectionResult、规则链路 | 可灰度、可解释、可评估的算法系统 |
 | 通知链路 | 测试接口 | Bark / 飞书真实通知 | APNs、短信、电话、升级通知 |
 | 硬件端 | Mac 已完成开发基线，树莓派已到位 | 树莓派部署、自启、720p 拉流、散热、24 小时稳定性、安装模式 | 低功耗边缘盒 |
-| 数据治理 | SQLite 简表 | 商业对象模型、事件状态机、媒体留存策略 | 可审计、可迁移、可运营的数据平台 |
+| 数据治理 | edge-agent SQLite + App API JSON；已新增 PostgreSQL 初始 schema、导出快照和可选 PostgresStore | 细粒度表级写入、对象存储、事件状态机、媒体留存策略 | 可审计、可迁移、可运营的数据平台 |
 | 运营后台 | 管理台雏形 | 设备诊断、告警质量、日志查看 | 售后、运营、模型灰度和工单 |
 
 ### 4.2 关键依赖
@@ -1172,18 +1176,74 @@ factory_new
 
 - 能回答“设备为什么离线”“为什么没出事件”“为什么推送没送达”。
 
-#### T7 回家消息与陪伴消息
+#### T7 亲情关怀、回家消息与陪伴消息
 
-在事件、媒体和推送链路稳定后，再补消息生成能力：
+亲情关怀是当前产品主线，不再作为纯后置增强；但必须分批做，不能一开始就引入不可控的全网内容推荐。
 
-1. 定义 `MessageCandidate` 对象。
-2. 基于事件趋势、节奏基线、回忆触发和家庭规则生成消息候选。
-3. 区分 `alert / explain / accompany / gohome` 四类消息。
-4. 把消息候选接入 `notification-service` 和 App 消息卡片。
+第一批 P0：每日关怀主链，本地闭环阶段就要做：
 
-完成信号：
+1. 定义 `MessageCandidate / CareCard / CarePreference` 对象。
+2. 基于设备在线、摄像头同步、今日事件、生活节律、天气、日历和家庭资料生成每日关怀卡片。
+3. 区分 `alert / explain / accompany / gohome / daily / content` 六类消息。
+4. App 首页或亲情页展示“今日安心 / 今日关怀 / 建议联系”卡片。
+5. 提供联系入口：打电话、发问候、记录已联系。
+6. 提供偏好设置：频率、老人兴趣、生图开关、内容推荐开关。
 
-- App 不只看到硬事件，也能看到“建议回家”“建议联系”“今天适合打电话”这类可解释消息。
+第一批完成信号：
+
+- App 不只看到硬事件，也能看到“今天家里平稳”“建议打个电话”“天气降温，提醒添衣”这类可解释卡片。
+- 不配置模型 API 时，模板规则仍能生成基础卡片。
+- 卡片能说明来源，不凭空编造老人状态。
+
+第二批 P0.5：文本模型 API：
+
+1. 新增 `model-service` provider 配置。
+2. 对每日关怀上下文调用文本模型生成更自然的标题、正文和问候建议。
+3. 记录 `provider / model / prompt_version / input_hash / output_status`。
+4. 模型失败、超时或未配置时回退模板文案。
+
+第二批完成信号：
+
+- 同一张关怀卡片既有结构化事实，也有更自然的表达。
+- 模型调用失败不影响安全事件和基础关怀卡片。
+
+第三批 P1：生图卡片：
+
+1. 新增 `image-service` provider 配置。
+2. 支持配置 `wan2.7` 或等价生图模型。
+3. 只为 `daily / accompany / gohome / festival` 生成非证据型配图。
+4. 生成失败时回退默认卡片视觉，不影响消息展示。
+
+第三批完成信号：
+
+- 可生成温暖的问候卡片图，但告警证据仍只来自真实媒体资产。
+
+第四批 P1.5：合规内容链接推荐：
+
+1. 先支持用户手动订阅或人工白名单来源。
+2. 保存 `ContentSource / ContentRecommendation`。
+3. 只展示标题、来源、链接、摘要和推荐理由。
+4. 加入频率控制和一键关闭。
+
+第四批完成信号：
+
+- App 可以推荐少量老人感兴趣的合规内容链接，但不抓取全文、不搬运视频。
+
+第五批 P2：自动搜索自媒体视频、公众号文章和跨平台内容：
+
+1. 接入合规公开 API、RSS、用户授权来源或内容合作来源。
+2. 做内容安全、去重、兴趣匹配和推荐理由生成。
+3. 明确版权和平台规则。
+4. 评估是否推给家属、老人端或仅作为 App 内卡片。
+
+第五批不进入当前本地闭环优先级。
+
+当前执行状态：
+
+- P0 的模板版 `CareCard`、偏好接口、模型 provider 配置接口和亲情页展示已经进入本地闭环。
+- P0 的数据库迁移层已经补齐到 PostgreSQL schema、seed bundle 导出和反向还原校验。
+- 下一步先把首页接入今日关怀摘要，再进入 P0.5 文本模型 API。
+- `wan2.7` 生图、白名单内容链接和自动内容搜索都必须排在文本模型之后。
 
 ##### T7.1 场景化图文消息输入域
 
@@ -1256,7 +1316,7 @@ factory_new
 
 ### 7.2.7 回家消息接口最小范围
 
-回家消息和陪伴消息第一版不单独起复杂新系统，先落成最小接口：
+回家消息、陪伴消息和每日关怀第一版不单独起复杂新系统，先落成最小接口：
 
 - `POST /api/v1/internal/messages/generate`
   - 内部根据事件、节奏和规则生成消息候选
@@ -1266,18 +1326,63 @@ factory_new
   - 家属端读取消息详情
 - `PATCH /api/v1/app/messages/{message_id}`
   - 标记已读、忽略、已处理
+- `GET /api/v1/app/care-cards/today`
+  - 家属端读取今日亲情关怀卡片
+- `POST /api/v1/internal/care-cards/generate`
+  - 内部根据设备状态、事件、天气、日历、联系记录和偏好生成今日卡片
+- `GET /api/v1/families/{family_id}/care-preferences`
+  - 读取亲情关怀偏好
+- `PUT /api/v1/families/{family_id}/care-preferences`
+  - 更新卡片频率、兴趣标签、生图开关、内容推荐开关
 
 消息对象最小字段：
 
 - `message_id`
+- `family_id`
+- `elder_id`
 - `message_type`
 - `priority`
 - `title`
 - `body`
 - `source_event_ids`
 - `source_media_ids`
+- `source_summary`
+- `render_payload`
 - `created_at`
 - `status`
+
+亲情关怀卡片最小字段：
+
+- `card_id`
+- `card_date`
+- `card_type`
+- `title`
+- `body`
+- `facts`
+- `source_message_ids`
+- `image_mode`
+- `image_url`
+- `actions`
+- `status`
+
+模型配置第一版接口：
+
+- `GET /api/v1/model-providers`
+  - 读取文本模型和生图模型配置状态，不返回 API key 明文
+- `PUT /api/v1/model-providers/{provider_id}`
+  - 配置 provider、模型名、用途、启用状态
+
+第一版 provider 配置必须支持：
+
+- 文本模型：用于每日关怀摘要、标题、正文、问候建议。
+- 生图模型：用于非证据型卡片配图，可配置 `wan2.7` 或等价模型。
+
+明确不在第一版做：
+
+- 自动搜索全网视频。
+- 未授权抓取公众号文章。
+- 保存外部平台全文或视频文件。
+- 给老人端直接推送未经家属确认的内容。
 
 ### 7.2.7.1 场景化图文消息第二批输入域接口
 
@@ -1292,12 +1397,18 @@ factory_new
 - `POST /api/v1/families/{family_id}/contact-records`
 - `GET /api/v1/families/{family_id}/visit-records`
 - `POST /api/v1/families/{family_id}/visit-records`
+- `GET /api/v1/families/{family_id}/content-sources`
+- `POST /api/v1/families/{family_id}/content-sources`
+- `GET /api/v1/families/{family_id}/content-recommendations`
+- `POST /api/v1/internal/content-recommendations/generate`
+- `GET /api/v1/model-generation-jobs/{generation_id}`
 
 约束：
 
 - 这批接口服务于 `MessageCandidate` 生成，不另起新的顶层消息对象。
 - 用户端正式读取消息仍统一通过 `/api/v1/app/messages`。
 - 场景化图文卡片属于 `MessageCandidate` 的渲染结果，不再单独开 `/api/v1/.../reminder-cards` 主接口。
+- 内容推荐接口第一版只处理白名单或用户订阅来源，自动搜索全网内容放到 P2。
 
 ### 7.2.8 日志与消息对象 schema 草案
 
@@ -1392,93 +1503,43 @@ factory_new
 
 第一批云端不追求复杂分库，先以最小可迁移表结构为目标。
 
-建议优先建表：
+当前 `local-app-server/migrations/001_initial_schema.sql` 已按本地闭环和上云迁移需要落了第一版表结构：
 
-1. `devices`
-   - `id`
-   - `family_id`
-   - `device_name`
-   - `hardware_model`
-   - `software_version`
-   - `status`
-   - `device_secret_hash`
-   - `lan_ip`
-   - `camera_count`
-   - `last_heartbeat_at`
-   - `created_at`
-   - `updated_at`
-2. `events`
-   - `id`
-   - `device_id`
-   - `camera_id`
-   - `event_type`
-   - `room`
-   - `severity`
-   - `status`
-   - `reason`
-   - `snapshot_media_id`
-   - `occurred_at`
-   - `created_at`
-3. `media_assets`
-   - `id`
-   - `device_id`
-   - `camera_id`
-   - `media_type`
-   - `content_type`
-   - `file_name`
-   - `storage_key`
-   - `created_at`
-4. `message_candidates`
-   - `id`
-   - `family_id`
-   - `device_id`
-   - `message_type`
-   - `priority`
-   - `title`
-   - `body`
-   - `generated_by`
-   - `status`
-   - `created_at`
-5. `message_candidate_sources`
-   - `id`
-   - `message_id`
-   - `source_type`
-   - `source_id`
-6. `notifications`
-   - `id`
-   - `family_id`
-   - `device_id`
-   - `message_id`
-   - `channel`
-   - `title`
-   - `body`
-   - `status`
-   - `created_at`
-7. `notification_receipts`
-   - `id`
-   - `notification_id`
-   - `channel`
-   - `receipt_type`
-   - `provider_message_id`
-   - `detail_json`
-   - `occurred_at`
-8. `device_logs`
-   - `id`
-   - `device_id`
-   - `log_type`
-   - `level`
-   - `message`
-   - `context_json`
-   - `occurred_at`
-9. `audit_logs`
-   - `id`
-   - `actor_type`
-   - `actor_id`
-   - `action`
-   - `target_type`
-   - `target_id`
-   - `context_json`
-   - `occurred_at`
+1. 账号和家庭：
+   - `users`
+   - `families`
+   - `family_members`
+   - `elder_profiles`
+2. 设备绑定与设备鉴权：
+   - `devices`
+   - `device_bindings`
+   - `binding_codes`
+   - `device_tokens`
+3. 摄像头与看护规则：
+   - `cameras`
+   - `camera_secrets`
+   - `care_rules`
+4. 事件、媒体和设备同步：
+   - `media_assets`
+   - `events`
+   - `device_heartbeats`
+   - `calendar_events`
+   - `device_config_versions`
+5. 亲情关怀、模型和内容推荐预留：
+   - `care_preferences`
+   - `care_cards`
+   - `model_providers`
+   - `model_generation_jobs`
+   - `content_sources`
+   - `content_recommendations`
+6. 审计：
+   - `audit_logs`
+
+暂缓进入第一版 schema 的表：
+
+- `message_candidates / message_candidate_sources`：等 CareCard、本地消息列表和文本模型输出稳定后再拆独立消息候选表。
+- `notifications / notification_receipts`：等 APNs、短信或电话通道进入真实联调后再落。
+- `device_logs`：短期仍走边缘端日志和健康摘要，运营后台成型时再独立建表。
 
 最小索引要求：
 

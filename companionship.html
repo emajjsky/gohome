@@ -191,6 +191,29 @@
 <div class="absolute -right-10 -bottom-10 w-32 h-32 bg-tertiary-fixed opacity-20 rounded-full blur-2xl"></div>
 </div>
 </section>
+<!-- Daily Care Card -->
+<section id="companionshipCareSection" class="flex flex-col gap-stack-md">
+<div class="flex items-center justify-between gap-3">
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">今日关怀</h3>
+<p id="companionshipCareMeta" class="font-body-md text-body-md text-on-surface-variant text-sm mt-1">正在读取家庭状态</p>
+</div>
+<span id="companionshipCareStatus" class="font-label-md text-label-md text-primary bg-primary-fixed px-3 py-1 rounded-full">同步中</span>
+</div>
+<article class="bg-surface-container-lowest rounded-xl p-gutter-card flex flex-col gap-4 shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-highest">
+<div class="flex items-start justify-between gap-4">
+<div class="min-w-0">
+<p id="companionshipCareTitle" class="font-headline-md text-headline-md text-on-surface">今天家里怎么样</p>
+<p id="companionshipCareBody" class="font-body-md text-body-md text-on-surface-variant text-sm leading-relaxed mt-2">正在根据设备、摄像头和提醒状态生成今日关怀卡片。</p>
+</div>
+<div class="w-12 h-12 rounded-lg bg-primary-container flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-on-primary-container text-2xl" data-icon="favorite">favorite</span>
+</div>
+</div>
+<div id="companionshipCareFacts" class="grid grid-cols-1 gap-2"></div>
+<div id="companionshipCareActions" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+</article>
+</section>
 <!-- Interaction Suggestions -->
 <section class="flex flex-col gap-stack-md">
 <h3 class="font-headline-md text-headline-md text-on-surface">互动建议</h3>
@@ -218,6 +241,18 @@
 <span class="material-symbols-outlined text-outline" data-icon="chevron_right">chevron_right</span>
 </div>
 </div>
+</section>
+<!-- Live Messages -->
+<section id="companionshipMessageSection" class="hidden flex flex-col gap-stack-md">
+<div class="flex items-center justify-between gap-3">
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">亲情消息</h3>
+<p id="companionshipMessageMeta" class="font-body-md text-body-md text-on-surface-variant text-sm mt-1">当前家庭 · 当前展示打开中的消息</p>
+</div>
+<span id="companionshipMessageCount" class="font-label-md text-label-md text-primary bg-primary-fixed px-3 py-1 rounded-full">0 条</span>
+</div>
+<p id="companionshipMessageFeedback" class="hidden font-body-md text-body-md text-primary text-sm"></p>
+<div id="companionshipMessageList" class="grid grid-cols-1 gap-gutter-card"></div>
 </section>
 <!-- Quick Actions (Bottom fixed above nav) -->
 <section class="mt-auto pt-stack-lg flex gap-4">
@@ -301,4 +336,5 @@
 <script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/companionship-live.js?v=20260707-care-card-1"></script>
 </body></html>

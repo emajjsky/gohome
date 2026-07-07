@@ -5,7 +5,9 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { createLocalAppServer } = require("../local-app-server/server");
+const { createDefaultDb, createLocalAppServer, normalizeDb } = require("../local-app-server/server");
+const { createDbFromCloudRows, TABLE_ORDER } = require("../local-app-server/postgres-store");
+const { buildCloudSeedBundle } = require("./export-local-app-db");
 
 const DEVICE_TOKEN = "verify-device-token";
 const APP_TOKEN = "verify-app-token";
@@ -35,6 +37,32 @@ async function requestJson(baseUrl, pathName, options = {}) {
         throw new Error(`${options.method || "GET"} ${pathName} failed: ${response.status} ${text}`);
     }
     return payload;
+}
+
+function schemaColumns(sql, tableName) {
+    const escapedTable = tableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = sql.match(new RegExp(`create table if not exists ${escapedTable}\\s*\\((.*?)\\);`, "is"));
+    if (!match) return null;
+    const columns = new Set();
+    for (const rawLine of match[1].split("\n")) {
+        const line = rawLine.trim().replace(/,$/, "");
+        if (!line || /^(primary|unique|foreign|constraint|check)\b/i.test(line)) continue;
+        columns.add(line.split(/\s+/)[0].replace(/"/g, ""));
+    }
+    return columns;
+}
+
+function assertSeedBundleMatchesSchema(seedBundle) {
+    const schemaSql = fs.readFileSync(path.resolve(__dirname, "../local-app-server/migrations/001_initial_schema.sql"), "utf8");
+    for (const tableName of TABLE_ORDER) {
+        const columns = schemaColumns(schemaSql, tableName);
+        assert.ok(columns, `missing schema table: ${tableName}`);
+        for (const row of seedBundle.tables[tableName] || []) {
+            for (const column of Object.keys(row)) {
+                assert.ok(columns.has(column), `missing schema column: ${tableName}.${column}`);
+            }
+        }
+    }
 }
 
 async function main() {
@@ -336,6 +364,56 @@ async function main() {
         assert.equal(patched.acknowledged, true);
         assert.equal(patched.resolution, "handled");
 
+        const carePreferences = await requestJson(baseUrl, `/api/v1/families/${family.id}/care-preferences`, {
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(carePreferences.family_id, family.id);
+        assert.equal(carePreferences.frequency, "daily");
+        assert.equal(carePreferences.image_generation_enabled, false);
+
+        const updatedCarePreferences = await requestJson(baseUrl, `/api/v1/families/${family.id}/care-preferences`, {
+            method: "PUT",
+            body: JSON.stringify({
+                interests: ["天气", "越剧"],
+                image_generation_enabled: true,
+                image_provider: "wan",
+                image_model: "wan2.7",
+                content_recommendations_enabled: false,
+            }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(updatedCarePreferences.image_generation_enabled, true);
+        assert.equal(updatedCarePreferences.image_model, "wan2.7");
+
+        const careCard = await requestJson(baseUrl, `/api/v1/app/care-cards/today?family_id=${family.id}`, {
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(careCard.card_type, "daily");
+        assert.ok(careCard.facts.length >= 3);
+        assert.equal(careCard.image_mode, "pending_provider");
+        assert.ok(careCard.actions.some((action) => action.key === "call"));
+
+        const generatedCareCard = await requestJson(baseUrl, "/api/v1/internal/care-cards/generate", {
+            method: "POST",
+            body: JSON.stringify({ family_id: family.id, force: true }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(generatedCareCard.ok, true);
+        assert.equal(generatedCareCard.card.card_id, careCard.card_id);
+
+        const modelProviders = await requestJson(baseUrl, "/api/v1/model-providers", {
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.ok(modelProviders.some((provider) => provider.provider_id === "image-wan"));
+
+        const imageProvider = await requestJson(baseUrl, "/api/v1/model-providers/image-wan", {
+            method: "PUT",
+            body: JSON.stringify({ provider: "wan", model: "wan2.7", purpose: "care_image", enabled: true, api_key: "secret" }),
+            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        });
+        assert.equal(imageProvider.model, "wan2.7");
+        assert.equal(imageProvider.api_key_set, true);
+
         const session = await requestJson(baseUrl, "/api/v1/video/sessions", {
             method: "POST",
             body: JSON.stringify({ resource_type: "snapshot", snapshot_path: "events/test.jpg" }),
@@ -356,6 +434,40 @@ async function main() {
         assert.equal(streamResponse.status, 200);
         assert.match(streamResponse.headers.get("content-type") || "", /multipart\/x-mixed-replace/);
         streamResponse.body.cancel();
+
+        const seedBundle = buildCloudSeedBundle(app.store.db, { source: "verify-local-app-server" });
+        assert.equal(seedBundle.schema_version, "001_initial_schema");
+        assert.equal(seedBundle.tables.users.length, 2);
+        assert.equal(seedBundle.tables.families.length, 2);
+        assert.equal(seedBundle.tables.family_members.length, 2);
+        assert.equal(seedBundle.tables.device_tokens.length, 1);
+        assert.equal(seedBundle.tables.device_tokens[0].token_hash.length, 64);
+        assert.equal(seedBundle.tables.cameras.length, 1);
+        assert.equal(seedBundle.tables.camera_secrets.length, 1);
+        assert.equal(seedBundle.tables.events.length, 1);
+        assert.equal(seedBundle.tables.events[0].camera_id, String(camera.id));
+        assert.equal(seedBundle.tables.media_assets.length, 1);
+        assert.equal(seedBundle.tables.care_preferences.length, 1);
+        assert.equal(seedBundle.tables.care_preferences[0].image_model, "wan2.7");
+        assert.equal(seedBundle.tables.care_cards.length, 1);
+        assert.equal(seedBundle.tables.care_cards[0].card_id, careCard.card_id);
+        assert.equal(seedBundle.tables.model_providers.length, 1);
+        assert.equal(seedBundle.tables.model_providers[0].provider_id, "image-wan");
+        assertSeedBundleMatchesSchema(seedBundle);
+
+        const restoredDb = normalizeDb(createDbFromCloudRows(seedBundle.tables, createDefaultDb()));
+        assert.equal(restoredDb.users.length, 2);
+        assert.equal(restoredDb.families.length, 2);
+        assert.equal(Object.values(restoredDb.cameras).length, 1);
+        assert.equal(restoredDb.events.length, 1);
+        assert.equal(restoredDb.events[0].summary, "疑似跌倒");
+        assert.equal(String(restoredDb.events[0].camera_id), String(camera.id));
+        assert.equal(restoredDb.assets.length, 1);
+        assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);
+        assert.equal(restoredDb.care_preferences[String(family.id)].image_model, "wan2.7");
+        assert.equal(restoredDb.care_cards.length, 1);
+        assert.equal(restoredDb.care_cards[0].card_id, careCard.card_id);
+        assert.equal(restoredDb.model_providers.length, 1);
 
         console.log(JSON.stringify({
             ok: true,

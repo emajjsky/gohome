@@ -1,6 +1,6 @@
 # 回家 Implement
 
-更新时间：2026-07-03
+更新时间：2026-07-07
 
 ## 1. 文档目的
 
@@ -6923,3 +6923,273 @@ Chrome 验证：
 限制：
 
 - Chrome 插件仍不稳定：新标签导航/DOM 读取调用会超时，因此这次没有完成可靠的 Chrome 自动截图验证。
+
+## 39. 2026-07-06 App 后端数据库迁移起步
+
+背景：
+
+- 当前 `local-app-server` 已经能支撑本地闭环，但持久化仍是 `data/app-server/db.json`。
+- 这套 JSON 数据适合本地验证，不适合上云、多人权限、审计、备份和长期运营。
+- 为了不破坏已经跑通的 App 页面和树莓派链路，本轮先固定云端数据库目标结构和迁移快照，不直接重写所有接口。
+
+已完成：
+
+- `local-app-server/migrations/001_initial_schema.sql`
+  - 新增 PostgreSQL 14+ 初始 schema。
+  - 覆盖用户、家庭、家庭成员、老人档案、设备、设备绑定、绑定码、设备 token、摄像头、摄像头密钥、规则、媒体资产、事件、心跳、日程、设备配置版本和审计日志。
+  - 设备 token 在云端目标结构中按 `token_hash` 保存，不再要求明文 token 入库。
+  - 摄像头 RTSP 和账号密码从 `cameras` 主表拆到 `camera_secrets`，后续需要接真正的密钥管理或加密存储。
+- `scripts/export-local-app-db.js`
+  - 新增本地 JSON 数据导出脚本。
+  - 默认读取 `data/app-server/db.json`，输出 `data/app-server/cloud-seed.json`。
+  - 可用 `--input`、`--out` 和 `--stdout` 指定输入输出。
+  - 导出格式按 PostgreSQL schema 的表结构组织，作为后续导入云数据库的 seed bundle。
+- `package.json`
+  - 新增 `npm run db:export`。
+- `scripts/apply-postgres-migrations.js`
+  - 新增 PostgreSQL 迁移执行脚本。
+  - 使用 `GOHOME_DATABASE_URL` 或 `--database-url` 连接数据库。
+  - 使用 `schema_migrations` 记录已执行迁移和 checksum，避免重复执行或静默覆盖。
+- `package.json`
+  - 新增 `npm run db:migrate`。
+- `scripts/verify-local-app-server.js`
+  - 测试里加入 seed bundle 校验，确认本地闭环数据能映射到云端表结构。
+
+当前真实导出结果：
+
+- 使用当前 `data/app-server/db.json` 导出到 `/tmp/gohome-cloud-seed.json` 成功。
+- 当前本地数据映射结果：
+  - `users=2`
+  - `families=1`
+  - `devices=2`
+  - `cameras=2`
+  - `camera_secrets=2`
+  - `media_assets=28`
+  - `events=121`
+
+验证结果：
+
+- `node --check scripts/export-local-app-db.js` 通过。
+- `node --check scripts/apply-postgres-migrations.js` 通过。
+- `node --check scripts/verify-local-app-server.js` 通过。
+- `npm test` 通过。
+
+当前限制：
+
+- App API 运行时仍然使用 JSON 文件，不是正式数据库。
+- 还没有真正连接 PostgreSQL，也没有云端对象存储。
+- 还没有把媒体文件从本地文件系统迁移到对象存储。
+- 还没有正式用户权限、家庭成员权限、审计日志写入和 APNs 推送。
+
+下一步：
+
+1. 准备一个本地或云端 PostgreSQL 实例，执行 `GOHOME_DATABASE_URL=... npm run db:migrate` 建表。
+2. 给 `local-app-server` 增加数据库适配层，先让读写仍保持现有 API 不变。
+3. 把媒体存储抽象出来，下一步从本地 `media/` 切到对象存储。
+4. 数据库版本地跑通后，再部署到 HTTPS 云服务，让 App 和树莓派都指向云端地址。
+
+## 40. 2026-07-06 App API 第一版 PostgreSQL Store
+
+背景：
+
+- section 39 已经有 PostgreSQL schema 和 JSON 导出快照，但运行时仍只能用 JSON。
+- 本轮目标是先让 `local-app-server` 具备可选 PostgreSQL store，保持现有 App 页面、树莓派接口和测试路径不变。
+
+已完成：
+
+- `package.json` / `package-lock.json`
+  - 新增 `pg` 依赖。
+- `local-app-server/postgres-store.js`
+  - 新增 `PostgresStore`。
+  - 支持从 PostgreSQL 表读取数据并还原为当前 `local-app-server` 使用的内存结构。
+  - 支持把当前内存结构按 `001_initial_schema.sql` 的表结构写回 PostgreSQL。
+  - 当前写回方式是第一版粗粒度 mirror：单服务场景可用，不是最终多租户高并发写入模型。
+- `local-app-server/server.js`
+  - 新增 `createLocalAppServerAsync`。
+  - 默认仍使用 JSON store，现有本地运行方式不变。
+  - 配置 `GOHOME_APP_STORE=postgres` 或 `GOHOME_DATABASE_URL` 后可走 PostgreSQL store。
+  - `/health` 新增 `store` 字段，用于自检当前是 `json` 还是 `postgres`。
+  - 设备 token 生成时补充 `token_hash`，设备鉴权支持明文 token 和 hash token 两种匹配。
+  - 写入路径改为 `await store.save()`，兼容异步数据库写入。
+- `scripts/apply-postgres-migrations.js`
+  - 从外部 `psql` 依赖改为纯 Node + `pg` 执行迁移。
+  - 部署环境不再必须安装 PostgreSQL 客户端。
+- `scripts/verify-local-app-server.js`
+  - 增加云端 seed bundle -> 内存结构的反向还原校验。
+  - 增加 seed bundle 字段和 PostgreSQL schema 字段的一致性校验。
+
+验证结果：
+
+- `node --check local-app-server/server.js` 通过。
+- `node --check local-app-server/postgres-store.js` 通过。
+- `node --check scripts/apply-postgres-migrations.js` 通过。
+- `node --check scripts/export-local-app-db.js` 通过。
+- `node --check scripts/verify-local-app-server.js` 通过。
+- `npm run db:migrate -- --dry-run` 通过。
+- `npm test` 通过。
+- `createLocalAppServerAsync({ storeKind: "json" })` 可启动并返回 `/health.store=json`。
+- 本地 launchd 托管的 App API 已重启，`GET /health` 返回 `store=json`。
+- 重启后 `/api/app/cameras` 仍返回两路摄像头：
+  - `id=8 / online / synced / local_camera_id=6`
+  - `id=9 / online / synced / local_camera_id=7`
+- 重启后 `/api/app/device` 仍返回 `worker_running=true / detector_backend=basic`。
+
+当前限制：
+
+- 还没有连接真实 PostgreSQL 实例做实库写入测试。
+- `PostgresStore` 当前是粗粒度整库 mirror，适合本地闭环和云端试点前验证，不是最终生产级表级 repository。
+- 媒体仍在本地文件系统，还没有对象存储。
+- 正式用户权限、审计日志写入、APNs 推送仍未完成。
+
+下一步：
+
+1. 启一个本地 PostgreSQL 或直接准备云端 PostgreSQL，执行 `GOHOME_DATABASE_URL=... npm run db:migrate`。
+2. 用 `GOHOME_APP_STORE=postgres GOHOME_DATABASE_URL=... npm run app-server` 跑一遍同样的 App/树莓派闭环。
+3. 若 Postgres 闭环通过，再把媒体存储抽象成 local/object 两种后端。
+4. 然后进入 HTTPS 云部署和 Pi `GOHOME_APP_SERVER_BASE_URL` 切云端。
+
+## 41. 2026-07-07 亲情关怀主线与模型内容策略
+
+背景：
+
+- 当前硬件、摄像头、App API 和本地闭环进展较快，但产品体验仍偏“安全监控”。
+- 用户明确指出亲情关怀部分不够，和“回家”的产品初衷有距离。
+- 本轮先更新 PRD 和 Plan，明确亲情关怀是产品主线，不是硬件跑通后的装饰功能。
+
+已完成文档调整：
+
+- `想家了吗-PRD.md`
+  - 将“每日亲情关怀卡片”写入子女端 App 的 P0 能力。
+  - 新增亲情关怀数据流：设备状态、生活节律、事件摘要、日历、天气、联系记录、老人兴趣偏好 -> care-service -> model-service / image-service / content-service -> message-service -> App 卡片。
+  - 明确模型 API 只生成候选文案、问候建议和非证据型配图，不决定安全告警。
+  - 明确生图模型可配置 `wan2.7` 或等价 provider，但只用于非证据卡片。
+  - 明确公众号文章、短视频、自媒体内容推荐必须基于授权、白名单或合规来源，不做未经授权抓取和全文搬运。
+  - 新增 `CarePreference / CareCard / ContentSource / ContentRecommendation / ModelGenerationJob` 对象定义。
+- `想家了吗-Plan.md`
+  - 将 `T7 回家消息与陪伴消息` 升级为 `T7 亲情关怀、回家消息与陪伴消息`。
+  - 将执行顺序拆成五批：
+    1. P0：每日关怀卡片、问候建议、联系入口、规则模板兜底。
+    2. P0.5：文本模型 API 生成更自然的标题、正文和问候建议，失败时回退模板。
+    3. P1：可配置生图 provider，如 `wan2.7`，用于非证据型卡片配图。
+    4. P1.5：用户手动订阅或白名单来源的内容推荐链接。
+    5. P2：自动搜索自媒体视频、公众号文章和跨平台内容召回。
+  - 补充最小接口范围：
+    - `GET /api/v1/app/care-cards/today`
+    - `POST /api/v1/internal/care-cards/generate`
+    - `GET /api/v1/families/{family_id}/care-preferences`
+    - `PUT /api/v1/families/{family_id}/care-preferences`
+    - `GET /api/v1/model-providers`
+    - `PUT /api/v1/model-providers/{provider_id}`
+
+当前决策：
+
+- 先做 P0 本地闭环，不等上云。
+- 亲情关怀第一版不依赖模型 API，先用结构化事实和模板生成可用卡片。
+- 文本模型 API 第二步接入，用于润色和个性化表达。
+- 生图第三步接入，且只用于非证据型卡片。
+- 外部视频和公众号文章推荐后置，不进入当前优先开发项。
+
+已完成 P0 本地实现：
+
+- `local-app-server/server.js`
+  - 本地 JSON DB 新增 `care_preferences / care_cards / model_providers / model_generation_jobs / content_sources / content_recommendations` 运行结构。
+  - 新增 `GET /api/v1/app/care-cards/today`。
+  - 新增 `POST /api/v1/internal/care-cards/generate`。
+  - 新增 `GET /api/v1/families/{family_id}/care-preferences`。
+  - 新增 `PUT /api/v1/families/{family_id}/care-preferences`。
+  - 新增 `GET /api/v1/model-providers`。
+  - 新增 `PUT /api/v1/model-providers/{provider_id}`。
+  - `CareCard` 第一版使用模板规则生成，不调用模型 API。
+  - 事件依据只统计最近 24 小时的未处理事件，避免历史事件堆积误导每日关怀。
+- `assets/scripts/edge-client.js`
+  - 新增 `v1CareCardToday / v1GenerateCareCard / v1CarePreferences / v1UpdateCarePreferences / v1ModelProviders / v1UpdateModelProvider`。
+- `companionship.html`
+  - 新增“今日关怀”真实数据卡片区域。
+  - 新增“亲情消息”真实消息列表容器。
+  - 接入 `assets/scripts/companionship-live.js`。
+- `assets/scripts/companionship-live.js`
+  - 优先读取 `CareCard` 并渲染今日关怀卡片。
+  - 保留原 `MessageCandidate` 消息列表能力。
+- `scripts/verify-local-app-server.js`
+  - 增加亲情关怀偏好、今日关怀卡片、强制生成卡片、模型 provider 配置验证。
+
+原因：
+
+- 当前产品最缺的是“每天能看到家里怎么样”的温度，不是更多外部内容。
+- 模型 API 和生图会增加成本、失败率和审核需求，所以必须有模板兜底。
+- 自媒体内容、公众号文章和视频推荐涉及来源授权、平台规则、内容安全和推送噪音，过早接入会偏离本地闭环。
+
+下一步实现建议：
+
+1. 首页同步接入今日关怀卡片摘要，不只在陪伴页显示。
+2. 接文本模型 provider，先只做文案生成，不接生图。
+3. 把 CareCard 文案生成结果写入 `model_generation_jobs`，保留模板回退。
+4. 生图和内容推荐等本地卡片主链稳定后再做。
+
+当前限制：
+
+- 当前只实现模板生成，未接真实模型 API。
+- 生图 provider 只有配置占位，未调用 `wan2.7`。
+- 内容推荐只完成文档和数据结构预留，未接外部内容来源。
+- 当前运行态最近 24 小时还有高优先级事件，关怀卡会优先提示“先看重要提醒”，符合安全优先规则。
+
+验证结果：
+
+- `node --check local-app-server/server.js` 通过。
+- `node --check assets/scripts/edge-client.js` 通过。
+- `node --check assets/scripts/companionship-live.js` 通过。
+- `node --check scripts/verify-local-app-server.js` 通过。
+- `npm test` 通过。
+- 本地 App API 已重启。
+- `GET /api/v1/app/care-cards/today?family_id=1` 返回 `care-1-2026-07-07`。
+- `GET /api/v1/model-providers` 返回模板文本 provider 和禁用态 `wan2.7` 生图 provider。
+
+## 42. 2026-07-07 亲情关怀 PostgreSQL schema 与迁移映射补齐记录
+
+背景：
+
+- 上一轮已经把每日关怀卡片接入 JSON 本地闭环，但上云前还缺 PostgreSQL 表、导出映射和反向还原校验。
+- 如果不补这层，本地页面能显示关怀卡片，但切到云数据库时 `CareCard / CarePreference / ModelProvider / ContentRecommendation` 会丢。
+
+已完成：
+
+- `local-app-server/migrations/001_initial_schema.sql`
+  - 新增 `care_preferences`。
+  - 新增 `care_cards`。
+  - 新增 `model_providers`。
+  - 新增 `model_generation_jobs`。
+  - 新增 `content_sources`。
+  - 新增 `content_recommendations`。
+- `scripts/export-local-app-db.js`
+  - 将 JSON store 中的亲情关怀偏好、每日关怀卡片、模型 provider、模型生成任务、内容来源和内容推荐导出为云端 seed bundle。
+  - 保留 `wan2.7` 这类生图 provider 配置状态，但不导出 API key 明文。
+- `local-app-server/postgres-store.js`
+  - 将新表加入 `TABLE_ORDER / DELETE_ORDER`。
+  - 支持从 PostgreSQL 表反向还原到当前本地 App API 使用的 JSON 内存结构。
+- `scripts/verify-local-app-server.js`
+  - 增加 `care_preferences / care_cards / model_providers` 的导出和反向还原断言。
+  - 继续校验 seed bundle 字段必须存在于 PostgreSQL schema。
+- `想家了吗-Plan.md`
+  - 更新第一批数据库表结构草案，明确当前 `001_initial_schema.sql` 已覆盖的表。
+  - 将 `message_candidates / notifications / device_logs` 标记为后续拆分，不抢在 CareCard 主链之前。
+
+验证结果：
+
+- `node --check local-app-server/postgres-store.js` 通过。
+- `node --check scripts/export-local-app-db.js` 通过。
+- `node --check scripts/verify-local-app-server.js` 通过。
+- `npm run db:migrate -- --dry-run` 通过。
+- `npm test` 通过。
+
+当前仍未完成：
+
+- 还没有连接真实 PostgreSQL 实例做写入测试。
+- 文本模型 API 尚未真正接入，`model_generation_jobs` 现在是数据结构预留。
+- `wan2.7` 生图 provider 尚未调用，只保留配置位。
+- 内容推荐仍只做来源和推荐对象预留，不接自动搜索。
+
+下一步：
+
+1. 首页接入今日关怀摘要，让产品首页也能看到“今天家里怎么样”。
+2. 接文本模型 API，生成标题、正文和问候建议，并把请求结果写入 `model_generation_jobs`。
+3. 本地 Postgres 或云 Postgres 跑通后，再进入对象存储和 HTTPS 云部署。

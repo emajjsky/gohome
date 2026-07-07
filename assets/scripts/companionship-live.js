@@ -9,6 +9,17 @@
         $("companionshipMessageSection")?.classList.toggle("hidden", !show);
     }
 
+    function setCareStatus(label, tone = "info") {
+        const node = $("companionshipCareStatus");
+        if (!node) return;
+        node.textContent = label;
+        node.className = `font-label-md text-label-md px-3 py-1 rounded-full ${
+            tone === "good" ? "text-tertiary-container bg-tertiary-fixed"
+                : tone === "warn" ? "text-on-error-container bg-error-container"
+                    : "text-primary bg-primary-fixed"
+        }`;
+    }
+
     function setFeedback(message = "") {
         const node = $("companionshipMessageFeedback");
         if (!node) return;
@@ -129,6 +140,64 @@
         });
         messages = Array.isArray(generated?.messages) ? generated.messages : [];
         return messages.slice(0, 3);
+    }
+
+    async function loadCareCard(familyId) {
+        if (!window.GoHomeEdge?.v1CareCardToday) return null;
+        return window.GoHomeEdge.v1CareCardToday(familyId);
+    }
+
+    function careActionConfig(action) {
+        const key = String(action?.key || "").trim();
+        if (key === "call") return { href: "#", label: action.label || "打电话问候", icon: "call" };
+        if (key === "open_watch") return { href: "watch.html", label: action.label || "看看家里", icon: "nest_cam_indoor" };
+        if (key === "open_events") return { href: "events.html", label: action.label || "查看提醒", icon: "history" };
+        return { href: "index.html", label: action?.label || "回首页", icon: "home" };
+    }
+
+    function renderCareCard(card, family) {
+        if (!card) return;
+        const title = $("companionshipCareTitle");
+        const body = $("companionshipCareBody");
+        const meta = $("companionshipCareMeta");
+        const facts = $("companionshipCareFacts");
+        const actions = $("companionshipCareActions");
+        if (title) title.textContent = card.title || "今天家里怎么样";
+        if (body) body.textContent = card.body || "今日关怀卡片已经生成。";
+        if (meta) meta.textContent = `${family?.name || "当前家庭"} · ${card.card_date || ""} · ${card.generated_by || "care-template-v1"}`;
+        const critical = (card.facts || []).some((item) => /高优先级|重要提醒|告警/.test(String(item)));
+        setCareStatus(critical ? "需关注" : "平稳", critical ? "warn" : "good");
+        if (facts) {
+            facts.innerHTML = "";
+            (Array.isArray(card.facts) ? card.facts : []).slice(0, 5).forEach((fact) => {
+                const item = document.createElement("div");
+                item.className = "rounded-lg bg-white/70 border border-white/60 px-3.5 py-3 flex items-start gap-2";
+                item.innerHTML = `
+                    <span class="material-symbols-outlined text-primary text-[18px] mt-0.5">check_circle</span>
+                    <p class="font-body-md text-body-md text-on-surface-variant text-sm leading-relaxed">${fact}</p>
+                `;
+                facts.append(item);
+            });
+        }
+        if (actions) {
+            actions.innerHTML = "";
+            (Array.isArray(card.actions) ? card.actions : []).slice(0, 3).forEach((action) => {
+                const config = careActionConfig(action);
+                const anchor = document.createElement("a");
+                anchor.className = config.icon === "call"
+                    ? "bg-primary text-on-primary py-3 rounded-full font-label-md text-label-md flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
+                    : "bg-surface-container-high text-on-surface py-3 rounded-full font-label-md text-label-md flex items-center justify-center gap-2 hover:bg-surface-variant transition-colors";
+                anchor.href = config.href === "#" ? "#" : (window.GoHomeEdge?.pageHref?.(config.href) || config.href);
+                anchor.innerHTML = `<span class="material-symbols-outlined text-[18px]">${config.icon}</span>${config.label}`;
+                if (config.href === "#") {
+                    anchor.addEventListener("click", (event) => {
+                        event.preventDefault();
+                        setFeedback("可以现在给家里打个电话，联系后再回来记录。");
+                    });
+                }
+                actions.append(anchor);
+            });
+        }
     }
 
     function bindMessageCardActions(article, message) {
@@ -257,6 +326,8 @@
         try {
             const family = await resolvePrimaryFamily();
             if (!family) return;
+            const careCard = await loadCareCard(family.id);
+            renderCareCard(careCard, family);
             const messages = await loadMessages(family.id);
             if (!messages.length) return;
             renderMessageList(messages, family);
