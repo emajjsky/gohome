@@ -7299,3 +7299,56 @@ Chrome 验证：
 
 - 不要把真实 key 写进 `.env.example`、文档或前端代码。
 - 云端部署时不复制本地 `.env`，改接云厂商 Secret Manager / KMS。
+
+## 46. 2026-07-07 多模态语言模型关怀卡片接入记录
+
+背景：
+
+- 本地 `.env` 已配置硅基流动多模态语言模型 `Qwen/Qwen3.5-27B`。
+- 下一步需要让“今日关怀”从模板兜底升级为模型生成，但不能让模型失败影响 App 基础可用性。
+
+已完成：
+
+- `local-app-server/server.js`
+  - `generateCareCard` 改为异步生成。
+  - 生成今日关怀卡片时，优先调用平台侧多模态语言模型。
+  - 模型成功时使用模型返回的 `title / body / facts / suggested_actions / image_brief`。
+  - 模型失败、超时或返回格式不合格时，自动回退 `care-template-v2`。
+  - 每次模型调用写入 `model_generation_jobs`：
+    - `purpose=care_card_generation`
+    - `model=Qwen/Qwen3.5-27B`
+    - `prompt_version=care-card:default`
+    - `input_hash`
+    - `output_status=succeeded/failed`
+    - `request_payload / response_payload`
+  - job 不保存 API key。
+  - 模型请求默认超时提高到 60 秒，可用 `GOHOME_MODEL_REQUEST_TIMEOUT_MS` 调整。
+  - 对 Qwen 推理型返回做了适配：
+    - 请求加 `response_format={type:"json_object"}`
+    - 请求加 `enable_thinking=false`
+    - 请求加 `thinking_budget=128`
+    - 输出 token 提高到 1600
+- `.env.example`
+  - 新增 `GOHOME_CARE_MODEL_CALLS=1` 作为外部模型调用开关。
+  - 新增 `GOHOME_MODEL_REQUEST_TIMEOUT_MS=60000`。
+- `scripts/verify-local-app-server.js`
+  - 测试默认关闭真实模型调用，避免本地回归消耗真实 API。
+  - 增加本地 mock Chat Completions 服务，验证模型成功路径能生成 `model:mock-care-model` 卡片并写入成功 job。
+
+真实验证：
+
+- `/api/v1/ops/service-config` 显示：
+  - `multimodal-language.configured=true`
+  - `care-card-image.configured=true`
+- 第一次真实调用在 20 秒超时后回退模板。
+- 提高超时后，模型返回 `reasoning_content`，`message.content` 为空，导致 JSON 校验失败。
+- 关闭 thinking 后真实调用成功：
+  - `generated_by=model:Qwen/Qwen3.5-27B`
+  - `model_generation_jobs.output_status=succeeded`
+  - App 今日关怀接口能读到模型生成卡片。
+
+当前边界：
+
+- 已接通：多模态语言模型生成每日关怀文案。
+- 暂未接通：DashScope `wan2.7-image` 生图真实调用。
+- 生图下一步应做成任务式调用，避免打开 App 页面就立刻产生图片生成成本。

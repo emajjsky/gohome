@@ -306,27 +306,68 @@ function createLocalAppServer(options = {}) {
         return fallback;
     }
 
+    function normalizeModelEndpoint(value, defaultPath = "") {
+        const raw = String(value || "").trim().replace(/\/+$/, "");
+        if (!raw) return "";
+        if (!defaultPath || raw.endsWith(defaultPath)) return raw;
+        if (/\/v\d+$/i.test(raw)) return `${raw}${defaultPath}`;
+        return raw;
+    }
+
+    function multimodalRuntimeConfig() {
+        return {
+            capability_id: "multimodal-language",
+            api_key: envFirst(["GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"]),
+            base_url: normalizeModelEndpoint(
+                envFirst(["GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"]),
+                "/chat/completions"
+            ),
+            model: envFirst(["GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"]),
+            prompt: envFirst(["GOHOME_CARE_CARD_PROMPT"], defaultCareTextPrompt),
+            prompt_source: process.env.GOHOME_CARE_CARD_PROMPT ? "env" : "default",
+        };
+    }
+
+    function imageRuntimeConfig() {
+        return {
+            capability_id: "care-card-image",
+            api_key: envFirst(["GOHOME_IMAGE_API_KEY", "GOHOME_WAN_API_KEY", "DASHSCOPE_API_KEY", "WAN_API_KEY"]),
+            base_url: normalizeModelEndpoint(
+                envFirst(["GOHOME_IMAGE_BASE_URL", "GOHOME_WAN_BASE_URL", "DASHSCOPE_BASE_URL", "WAN_BASE_URL"])
+            ),
+            model: envFirst(["GOHOME_IMAGE_MODEL", "GOHOME_WAN_MODEL", "WAN_MODEL"], "wan2.7"),
+            prompt: envFirst(["GOHOME_CARE_IMAGE_PROMPT"], defaultCareImagePrompt),
+            prompt_source: process.env.GOHOME_CARE_IMAGE_PROMPT ? "env" : "default",
+        };
+    }
+
+    function modelCallsEnabled() {
+        const value = String(process.env.GOHOME_CARE_MODEL_CALLS || "1").trim().toLowerCase();
+        return !["0", "false", "off", "disabled"].includes(value);
+    }
+
+    function modelRequestTimeoutMs() {
+        const value = Number(process.env.GOHOME_MODEL_REQUEST_TIMEOUT_MS || 60000);
+        return Number.isFinite(value) && value >= 5000 ? value : 60000;
+    }
+
     function modelCapabilities() {
-        const multimodalApiKey = envFirst(["GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"]);
-        const multimodalBaseUrl = envFirst(["GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"]);
-        const multimodalModel = envFirst(["GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"]);
-        const imageApiKey = envFirst(["GOHOME_IMAGE_API_KEY", "GOHOME_WAN_API_KEY", "DASHSCOPE_API_KEY", "WAN_API_KEY"]);
-        const imageBaseUrl = envFirst(["GOHOME_IMAGE_BASE_URL", "GOHOME_WAN_BASE_URL", "DASHSCOPE_BASE_URL", "WAN_BASE_URL"]);
-        const imageModel = envFirst(["GOHOME_IMAGE_MODEL", "GOHOME_WAN_MODEL", "WAN_MODEL"], "wan2.7");
+        const multimodal = multimodalRuntimeConfig();
+        const image = imageRuntimeConfig();
         return [
             {
                 capability_id: "multimodal-language",
                 name: "多模态语言模型",
                 type: "multimodal_language",
                 scope: "care_card_generation",
-                configured: Boolean(multimodalBaseUrl && multimodalApiKey && multimodalModel),
-                enabled: Boolean(multimodalBaseUrl && multimodalApiKey && multimodalModel),
-                base_url_set: Boolean(multimodalBaseUrl),
-                api_key_set: Boolean(multimodalApiKey),
-                model: multimodalModel,
+                configured: Boolean(multimodal.base_url && multimodal.api_key && multimodal.model),
+                enabled: Boolean(multimodal.base_url && multimodal.api_key && multimodal.model),
+                base_url_set: Boolean(multimodal.base_url),
+                api_key_set: Boolean(multimodal.api_key),
+                model: multimodal.model,
                 purpose_label: "每日关怀内容生成",
-                prompt: envFirst(["GOHOME_CARE_CARD_PROMPT"], defaultCareTextPrompt),
-                prompt_source: process.env.GOHOME_CARE_CARD_PROMPT ? "env" : "default",
+                prompt: multimodal.prompt,
+                prompt_source: multimodal.prompt_source,
                 env_keys: {
                     base_url: ["GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"],
                     api_key: ["GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"],
@@ -340,15 +381,15 @@ function createLocalAppServer(options = {}) {
                 name: "生图模型",
                 type: "image_generation",
                 scope: "care_card_image_4x7",
-                configured: Boolean(imageBaseUrl && imageApiKey && imageModel),
-                enabled: Boolean(imageBaseUrl && imageApiKey && imageModel),
-                base_url_set: Boolean(imageBaseUrl),
-                api_key_set: Boolean(imageApiKey),
-                model: imageModel,
+                configured: Boolean(image.base_url && image.api_key && image.model),
+                enabled: Boolean(image.base_url && image.api_key && image.model),
+                base_url_set: Boolean(image.base_url),
+                api_key_set: Boolean(image.api_key),
+                model: image.model,
                 purpose_label: "4:7 图文卡片生成",
                 aspect_ratio: "4:7",
-                prompt: envFirst(["GOHOME_CARE_IMAGE_PROMPT"], defaultCareImagePrompt),
-                prompt_source: process.env.GOHOME_CARE_IMAGE_PROMPT ? "env" : "default",
+                prompt: image.prompt,
+                prompt_source: image.prompt_source,
                 env_keys: {
                     base_url: ["GOHOME_IMAGE_BASE_URL", "GOHOME_WAN_BASE_URL", "DASHSCOPE_BASE_URL", "WAN_BASE_URL"],
                     api_key: ["GOHOME_IMAGE_API_KEY", "GOHOME_WAN_API_KEY", "DASHSCOPE_API_KEY", "WAN_API_KEY"],
@@ -789,6 +830,241 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function modelJob(payload) {
+        const timestamp = nowIso();
+        return {
+            id: String(store.nextId("model_generation_job")),
+            family_id: String(payload.family_id || ""),
+            provider_id: "",
+            purpose: String(payload.purpose || "care_text"),
+            model: String(payload.model || ""),
+            prompt_version: String(payload.prompt_version || ""),
+            input_hash: String(payload.input_hash || ""),
+            output_status: String(payload.output_status || "pending"),
+            request_payload: payload.request_payload && typeof payload.request_payload === "object" ? payload.request_payload : {},
+            response_payload: payload.response_payload && typeof payload.response_payload === "object" ? payload.response_payload : {},
+            error_message: String(payload.error_message || ""),
+            metadata: payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {},
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+    }
+
+    function updateModelJob(job, patch) {
+        Object.assign(job, patch, { updated_at: nowIso() });
+        return job;
+    }
+
+    function recentCalendarEvents(familyId, elderId = "elder_primary") {
+        const now = Date.now();
+        const horizon = now + 14 * 24 * 60 * 60 * 1000;
+        return store.db.calendar_events
+            .filter((event) => Number(event.family_id) === Number(familyId) && (!elderId || event.elder_id === elderId))
+            .filter((event) => {
+                const timestamp = Date.parse(event.starts_at || "");
+                return Number.isFinite(timestamp) && timestamp >= now - 24 * 60 * 60 * 1000 && timestamp <= horizon;
+            })
+            .slice(0, 8)
+            .map((event) => ({
+                title: event.title,
+                starts_at: event.starts_at,
+                note: event.note || "",
+            }));
+    }
+
+    function careCardModelContext(familyId, parts) {
+        const family = selectedFamily(familyId) || store.db.families[0] || {};
+        const preferences = parts.preferences || carePreferences(familyId);
+        const profile = parts.profile || defaultElderProfile(familyId, preferences.elder_id || "elder_primary");
+        const cameras = Array.isArray(parts.cameras) ? parts.cameras : appConfigCameras();
+        const device = parts.device || Object.values(store.db.devices)[0] || {};
+        return {
+            generated_at: nowIso(),
+            card_date: dateKeyShanghai(),
+            locale: "zh-CN",
+            family: {
+                id: family.id || familyId,
+                name: family.name || "默认家庭",
+            },
+            elder: {
+                id: profile.elder_id || profile.id || "elder_primary",
+                display_name: profile.display_name || "家人",
+                relationship: profile.relationship || "",
+                city: profile.city || "杭州",
+                health_notes: profile.health_notes || "",
+            },
+            preferences: {
+                frequency: preferences.frequency || "daily",
+                interests: Array.isArray(preferences.interests) ? preferences.interests.slice(0, 12) : [],
+                content_recommendations_enabled: Boolean(preferences.content_recommendations_enabled),
+                image_generation_enabled: Boolean(preferences.image_generation_enabled),
+            },
+            facts: Array.isArray(parts.facts) ? parts.facts : [],
+            device: {
+                device_id: device.device_id || device.id || currentEdgeDeviceId(),
+                name: device.name || "回家盒子",
+                status: device.status || "",
+                last_seen_at: device.last_seen_at || null,
+            },
+            cameras: cameras.slice(0, 8).map((camera) => ({
+                id: camera.id,
+                name: camera.name || "",
+                room: camera.room || "",
+                status: camera.status || "",
+                last_seen_at: camera.last_seen_at || camera.updated_at || null,
+            })),
+            recent_events: (Array.isArray(parts.openEvents) ? parts.openEvents : []).slice(0, 8).map((event) => ({
+                id: event.id,
+                level: event.level,
+                type: event.event_type,
+                summary: event.summary,
+                room: event.room || "",
+                occurred_at: event.occurred_at || event.created_at,
+                acknowledged: Boolean(event.acknowledged),
+            })),
+            critical_event_count: Array.isArray(parts.criticalEvents) ? parts.criticalEvents.length : 0,
+            calendar_events: recentCalendarEvents(familyId, profile.elder_id || profile.id || "elder_primary"),
+            weather: {
+                city: profile.city || "杭州",
+                condition: "多云",
+                temperature_c: 24,
+                advice: "环境舒适，适合午休。下午注意通风。",
+            },
+        };
+    }
+
+    function extractJsonObject(text) {
+        const raw = String(text || "").trim();
+        if (!raw) return null;
+        try {
+            return JSON.parse(raw);
+        } catch (_error) {
+            // Continue with fenced or embedded JSON extraction.
+        }
+        const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        if (fenced) {
+            try {
+                return JSON.parse(fenced[1].trim());
+            } catch (_error) {
+                // Continue with brace extraction.
+            }
+        }
+        const start = raw.indexOf("{");
+        const end = raw.lastIndexOf("}");
+        if (start >= 0 && end > start) {
+            try {
+                return JSON.parse(raw.slice(start, end + 1));
+            } catch (_error) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    function sanitizeModelCareCard(parsed) {
+        if (!parsed || typeof parsed !== "object") return null;
+        const title = String(parsed.title || "").trim().slice(0, 40);
+        const body = String(parsed.body || "").trim().slice(0, 280);
+        if (!title || !body) return null;
+        const facts = Array.isArray(parsed.facts)
+            ? parsed.facts.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 5)
+            : [];
+        const suggestedActions = Array.isArray(parsed.suggested_actions)
+            ? parsed.suggested_actions.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 3)
+            : [];
+        return {
+            title,
+            body,
+            facts,
+            suggested_actions: suggestedActions,
+            tone: String(parsed.tone || "warm").trim().slice(0, 32),
+            image_brief: String(parsed.image_brief || "").trim().slice(0, 180),
+        };
+    }
+
+    async function callMultimodalCareModel(context) {
+        const runtime = multimodalRuntimeConfig();
+        if (!modelCallsEnabled()) throw new Error("model calls disabled");
+        if (!runtime.base_url || !runtime.api_key || !runtime.model) throw new Error("multimodal model is not configured");
+        const requestPayload = {
+            model: runtime.model,
+            messages: [
+                { role: "system", content: runtime.prompt },
+                {
+                    role: "user",
+                    content: [
+                        "请根据以下结构化上下文生成今日关怀卡片。",
+                        "必须只输出 JSON，不要输出解释文字。",
+                        JSON.stringify(context),
+                    ].join("\n\n"),
+                },
+            ],
+            temperature: 0.6,
+            max_tokens: 1600,
+            response_format: { type: "json_object" },
+            enable_thinking: false,
+            thinking_budget: 128,
+        };
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), modelRequestTimeoutMs());
+        try {
+            const response = await fetch(runtime.base_url, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${runtime.api_key}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(requestPayload),
+                signal: controller.signal,
+            });
+            const responseText = await response.text();
+            let responsePayload = safeJsonParse(responseText, null);
+            if (!response.ok) {
+                const detail = responsePayload?.error?.message || responsePayload?.message || responseText.slice(0, 200);
+                throw new Error(`model request failed: ${response.status} ${detail}`);
+            }
+            if (!responsePayload || typeof responsePayload !== "object") {
+                responsePayload = { raw_text: responseText };
+            }
+            const content = responsePayload.choices?.[0]?.message?.content
+                || responsePayload.output_text
+                || responsePayload.text
+                || "";
+            const parsed = extractJsonObject(content);
+            const card = sanitizeModelCareCard(parsed);
+            if (!card) {
+                const error = new Error("model response is not valid CareCard JSON");
+                error.response_payload = {
+                    id: responsePayload.id || "",
+                    model: responsePayload.model || runtime.model,
+                    usage: responsePayload.usage || {},
+                    content_preview: String(content || responseText || "").slice(0, 1200),
+                };
+                throw error;
+            }
+            return {
+                card,
+                request_payload: {
+                    model: requestPayload.model,
+                    messages: requestPayload.messages,
+                    temperature: requestPayload.temperature,
+                    max_tokens: requestPayload.max_tokens,
+                    response_format: requestPayload.response_format,
+                    enable_thinking: requestPayload.enable_thinking,
+                    thinking_budget: requestPayload.thinking_budget,
+                },
+                response_payload: {
+                    id: responsePayload.id || "",
+                    model: responsePayload.model || runtime.model,
+                    usage: responsePayload.usage || {},
+                    parsed: card,
+                },
+            };
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
     function careCardFacts(familyId) {
         const cameras = appConfigCameras();
         const onlineCameras = cameras.filter((camera) => String(camera.status || "").toLowerCase() === "online");
@@ -825,15 +1101,16 @@ function createLocalAppServer(options = {}) {
         return { facts, cameras, onlineCameras, openEvents, criticalEvents, device, profile };
     }
 
-    function generateCareCard(familyId, options = {}) {
+    async function generateCareCard(familyId, options = {}) {
         const targetFamilyId = Number(familyId || store.db.families[0]?.id || 1);
         const cardDate = dateKeyShanghai();
         const existing = store.db.care_cards.find((card) => (
             Number(card.family_id) === targetFamilyId && card.card_date === cardDate && card.card_type === "daily"
         ));
-        if (existing && !options.force && existing.generated_by === "care-template-v2") return existing;
+        if (existing && !options.force) return existing;
         const preferences = carePreferences(targetFamilyId);
-        const { facts, onlineCameras, openEvents, criticalEvents, profile } = careCardFacts(targetFamilyId);
+        const factParts = careCardFacts(targetFamilyId);
+        const { facts, onlineCameras, openEvents, criticalEvents, profile } = factParts;
         const displayName = profile.display_name || "家人";
         const title = criticalEvents.length
             ? "今天有重要提醒需要先看"
@@ -872,6 +1149,66 @@ function createLocalAppServer(options = {}) {
             created_at: existing?.created_at || nowIso(),
             updated_at: nowIso(),
         };
+        const runtime = multimodalRuntimeConfig();
+        const canUseModel = modelCallsEnabled() && runtime.base_url && runtime.api_key && runtime.model;
+        if (canUseModel) {
+            const context = careCardModelContext(targetFamilyId, { ...factParts, preferences });
+            const inputHash = sha256(JSON.stringify(context));
+            const job = modelJob({
+                family_id: targetFamilyId,
+                purpose: "care_card_generation",
+                model: runtime.model,
+                prompt_version: `care-card:${runtime.prompt_source}`,
+                input_hash: inputHash,
+                output_status: "pending",
+                request_payload: {
+                    capability_id: runtime.capability_id,
+                    context,
+                },
+                metadata: {
+                    capability_id: runtime.capability_id,
+                    provider: "multimodal-language",
+                },
+            });
+            store.db.model_generation_jobs.push(job);
+            try {
+                const modelResult = await callMultimodalCareModel(context);
+                updateModelJob(job, {
+                    output_status: "succeeded",
+                    request_payload: modelResult.request_payload,
+                    response_payload: modelResult.response_payload,
+                });
+                const generated = modelResult.card;
+                card.title = generated.title;
+                card.body = generated.body;
+                card.facts = generated.facts.length ? generated.facts : facts;
+                card.actions = [
+                    { key: "call", label: generated.suggested_actions[0] || "打电话问候" },
+                    { key: "open_watch", label: generated.suggested_actions[1] || (onlineCameras.length ? "看看家里" : "查看设备") },
+                    { key: "open_events", label: generated.suggested_actions[2] || (openEvents.length ? "查看提醒" : "查看今日状态") },
+                ];
+                card.generated_by = `model:${runtime.model}`;
+                card.source_summary = [
+                    ...sourceSummary,
+                    "多模态语言模型",
+                ];
+                card.content_recommendations = generated.image_brief
+                    ? [{ type: "image_brief", title: "关怀卡片配图建议", summary: generated.image_brief }]
+                    : [];
+            } catch (error) {
+                updateModelJob(job, {
+                    output_status: "failed",
+                    error_message: error.message || "model request failed",
+                    response_payload: error.response_payload || {
+                        fallback: "care-template-v2",
+                    },
+                });
+                card.source_summary = [
+                    ...sourceSummary,
+                    "模型生成失败，已使用模板兜底",
+                ];
+            }
+        }
         if (existing) {
             Object.assign(existing, card);
             return existing;
@@ -2092,7 +2429,7 @@ function createLocalAppServer(options = {}) {
             if (req.method === "GET" && pathname === "/api/v1/app/care-cards/today") {
                 if (!requireApp(req, res)) return;
                 const familyId = normalizeNumber(url.searchParams.get("family_id"), store.db.families[0]?.id || 1);
-                const card = generateCareCard(familyId);
+                const card = await generateCareCard(familyId);
                 await store.save();
                 write(res, 200, publicCareCard(card));
                 return;
@@ -2102,7 +2439,7 @@ function createLocalAppServer(options = {}) {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
                 const familyId = normalizeNumber(payload.family_id, store.db.families[0]?.id || 1);
-                const card = generateCareCard(familyId, { force: normalizeBool(payload.force) });
+                const card = await generateCareCard(familyId, { force: normalizeBool(payload.force) });
                 await store.save();
                 write(res, 200, { ok: true, card: publicCareCard(card) });
                 return;

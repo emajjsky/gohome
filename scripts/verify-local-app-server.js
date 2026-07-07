@@ -3,8 +3,12 @@
 
 const assert = require("assert");
 const fs = require("fs");
+const http = require("http");
 const os = require("os");
 const path = require("path");
+
+process.env.GOHOME_CARE_MODEL_CALLS = "0";
+
 const { createDefaultDb, createLocalAppServer, normalizeDb } = require("../local-app-server/server");
 const { createDbFromCloudRows, TABLE_ORDER } = require("../local-app-server/postgres-store");
 const { buildCloudSeedBundle } = require("./export-local-app-db");
@@ -421,6 +425,67 @@ async function main() {
             headers: { Authorization: `Bearer ${APP_TOKEN}`, "Content-Type": "application/json" },
         });
         assert.equal(appTokenCannotWriteModelConfig.status, 405);
+
+        const originalModelEnv = {
+            GOHOME_CARE_MODEL_CALLS: process.env.GOHOME_CARE_MODEL_CALLS,
+            GOHOME_MULTIMODAL_BASE_URL: process.env.GOHOME_MULTIMODAL_BASE_URL,
+            GOHOME_MULTIMODAL_API_KEY: process.env.GOHOME_MULTIMODAL_API_KEY,
+            GOHOME_MULTIMODAL_MODEL: process.env.GOHOME_MULTIMODAL_MODEL,
+        };
+        const mockModelServer = http.createServer(async (req, res) => {
+            assert.equal(req.method, "POST");
+            assert.equal(req.url, "/v1/chat/completions");
+            assert.equal(req.headers.authorization, "Bearer mock-model-key");
+            const body = await new Promise((resolve) => {
+                const chunks = [];
+                req.on("data", (chunk) => chunks.push(chunk));
+                req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+            });
+            const payload = JSON.parse(body);
+            assert.equal(payload.model, "mock-care-model");
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+                id: "mock-chatcmpl",
+                model: "mock-care-model",
+                choices: [{
+                    message: {
+                        content: JSON.stringify({
+                            title: "模型生成的今日关怀",
+                            body: "家里状态整体平稳，适合用轻松的语气问候一下今天的天气和午休。",
+                            facts: ["模型基于设备、摄像头和事件摘要生成。"],
+                            suggested_actions: ["打电话问候", "看看实时状态", "查看今日提醒"],
+                            tone: "warm",
+                            image_brief: "温馨家庭关怀卡片",
+                        }),
+                    },
+                }],
+                usage: { total_tokens: 120 },
+            }));
+        });
+        const mockModelBaseUrl = await listen(mockModelServer);
+        try {
+            process.env.GOHOME_CARE_MODEL_CALLS = "1";
+            process.env.GOHOME_MULTIMODAL_BASE_URL = `${mockModelBaseUrl}/v1/chat/completions`;
+            process.env.GOHOME_MULTIMODAL_API_KEY = "mock-model-key";
+            process.env.GOHOME_MULTIMODAL_MODEL = "mock-care-model";
+            const modelCareCard = await requestJson(baseUrl, "/api/v1/internal/care-cards/generate", {
+                method: "POST",
+                body: JSON.stringify({ family_id: family.id, force: true }),
+                headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            });
+            assert.equal(modelCareCard.ok, true);
+            assert.equal(modelCareCard.card.title, "模型生成的今日关怀");
+            assert.equal(modelCareCard.card.generated_by, "model:mock-care-model");
+            assert.ok(app.store.db.model_generation_jobs.some((job) => (
+                job.model === "mock-care-model" && job.output_status === "succeeded"
+            )));
+        } finally {
+            for (const [key, value] of Object.entries(originalModelEnv)) {
+                if (value === undefined) delete process.env[key];
+                else process.env[key] = value;
+            }
+            mockModelServer.close();
+        }
 
         const opsTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-app-server-ops-"));
         const opsApp = createLocalAppServer({
