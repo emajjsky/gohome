@@ -8,6 +8,7 @@ const os = require("os");
 const path = require("path");
 
 process.env.GOHOME_CARE_MODEL_CALLS = "0";
+process.env.GOHOME_CARE_IMAGE_CALLS = "0";
 
 const { createDefaultDb, createLocalAppServer, normalizeDb } = require("../local-app-server/server");
 const { createDbFromCloudRows, TABLE_ORDER } = require("../local-app-server/postgres-store");
@@ -381,7 +382,7 @@ async function main() {
                 interests: ["天气", "越剧"],
                 image_generation_enabled: true,
                 image_provider: "wan",
-                image_model: "wan2.7",
+                image_model: "wan2.7-image",
                 content_recommendations_enabled: false,
                 metadata: {
                     care_card_schedule: {
@@ -415,7 +416,7 @@ async function main() {
             headers: { Authorization: `Bearer ${APP_TOKEN}` },
         });
         assert.equal(updatedCarePreferences.image_generation_enabled, true);
-        assert.equal(updatedCarePreferences.image_model, "wan2.7");
+        assert.equal(updatedCarePreferences.image_model, "wan2.7-image");
         const savedSchedule = updatedCarePreferences.metadata.care_card_schedule;
         assert.equal(savedSchedule.delivery_time, "07:45");
         assert.equal(savedSchedule.content_types.health_tips, true);
@@ -465,6 +466,7 @@ async function main() {
 
         const originalModelEnv = {
             GOHOME_CARE_MODEL_CALLS: process.env.GOHOME_CARE_MODEL_CALLS,
+            GOHOME_CARE_IMAGE_CALLS: process.env.GOHOME_CARE_IMAGE_CALLS,
             GOHOME_MULTIMODAL_BASE_URL: process.env.GOHOME_MULTIMODAL_BASE_URL,
             GOHOME_MULTIMODAL_API_KEY: process.env.GOHOME_MULTIMODAL_API_KEY,
             GOHOME_MULTIMODAL_MODEL: process.env.GOHOME_MULTIMODAL_MODEL,
@@ -505,6 +507,7 @@ async function main() {
         const mockModelBaseUrl = await listen(mockModelServer);
         try {
             process.env.GOHOME_CARE_MODEL_CALLS = "1";
+            process.env.GOHOME_CARE_IMAGE_CALLS = "0";
             process.env.GOHOME_MULTIMODAL_BASE_URL = `${mockModelBaseUrl}/v1/chat/completions`;
             process.env.GOHOME_MULTIMODAL_API_KEY = "mock-model-key";
             process.env.GOHOME_MULTIMODAL_MODEL = "mock-care-model";
@@ -525,6 +528,99 @@ async function main() {
                 else process.env[key] = value;
             }
             mockModelServer.close();
+        }
+
+        const originalImageEnv = {
+            GOHOME_CARE_MODEL_CALLS: process.env.GOHOME_CARE_MODEL_CALLS,
+            GOHOME_CARE_IMAGE_CALLS: process.env.GOHOME_CARE_IMAGE_CALLS,
+            GOHOME_IMAGE_BASE_URL: process.env.GOHOME_IMAGE_BASE_URL,
+            GOHOME_IMAGE_API_KEY: process.env.GOHOME_IMAGE_API_KEY,
+            GOHOME_IMAGE_MODEL: process.env.GOHOME_IMAGE_MODEL,
+            GOHOME_IMAGE_REQUEST_MODE: process.env.GOHOME_IMAGE_REQUEST_MODE,
+            GOHOME_CARE_IMAGE_POLL_INTERVAL_MS: process.env.GOHOME_CARE_IMAGE_POLL_INTERVAL_MS,
+            GOHOME_CARE_IMAGE_MAX_POLLS: process.env.GOHOME_CARE_IMAGE_MAX_POLLS,
+        };
+        const mockImageBytes = Buffer.from("mock-png-content");
+        const mockImageServer = http.createServer(async (req, res) => {
+            if (req.method === "POST" && req.url === "/api/v1/services/aigc/multimodal-generation/generation") {
+                assert.equal(req.headers.authorization, "Bearer mock-image-key");
+                assert.equal(req.headers["x-dashscope-sse"], undefined);
+                const body = await new Promise((resolve) => {
+                    const chunks = [];
+                    req.on("data", (chunk) => chunks.push(chunk));
+                    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+                });
+                const payload = JSON.parse(body);
+                assert.equal(payload.model, "mock-wan-image");
+                assert.equal(payload.parameters.size, "1024*1792");
+                assert.equal(payload.parameters.n, 1);
+                assert.equal(payload.parameters.thinking_mode, true);
+                assert.equal(payload.parameters.stream, undefined);
+                assert.equal(payload.parameters.enable_interleave, undefined);
+                assert.match(payload.input.messages[0].content[0].text, /4:7/);
+                assert.match(payload.input.messages[0].content[0].text, /卡片标题/);
+                res.writeHead(200, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({
+                    output: {
+                        results: [
+                            { url: `${mockImageBaseUrl}/images/card.png` },
+                        ],
+                    },
+                    usage: { image_count: 1 },
+                    request_id: "mock-image-request",
+                }));
+                return;
+            }
+            if (req.method === "GET" && req.url === "/images/card.png") {
+                res.writeHead(200, { "Content-Type": "image/png" });
+                res.end(mockImageBytes);
+                return;
+            }
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ detail: "not found" }));
+        });
+        const mockImageBaseUrl = await listen(mockImageServer);
+        try {
+            process.env.GOHOME_CARE_MODEL_CALLS = "0";
+            process.env.GOHOME_CARE_IMAGE_CALLS = "1";
+            process.env.GOHOME_IMAGE_BASE_URL = `${mockImageBaseUrl}/api/v1/services/aigc/multimodal-generation/generation`;
+            process.env.GOHOME_IMAGE_API_KEY = "mock-image-key";
+            process.env.GOHOME_IMAGE_MODEL = "mock-wan-image";
+            delete process.env.GOHOME_IMAGE_REQUEST_MODE;
+            process.env.GOHOME_CARE_IMAGE_POLL_INTERVAL_MS = "1";
+            process.env.GOHOME_CARE_IMAGE_MAX_POLLS = "3";
+            const imageCareCard = await requestJson(baseUrl, "/api/v1/internal/care-cards/generate", {
+                method: "POST",
+                body: JSON.stringify({ family_id: family.id, force: true }),
+                headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            });
+            assert.equal(imageCareCard.ok, true);
+            assert.equal(imageCareCard.card.image_mode, "generated");
+            assert.match(imageCareCard.card.image_url, /^care-cards\//);
+            const imageJob = [...app.store.db.model_generation_jobs].reverse().find((job) => job.purpose === "care_card_image_generation");
+            assert.ok(imageJob);
+            assert.equal(imageJob.model, "mock-wan-image");
+            assert.equal(imageJob.output_status, "succeeded");
+            assert.equal(imageJob.response_payload.request_mode, "sync");
+            const careImageAsset = [...app.store.db.assets].reverse().find((asset) => asset.snapshot_path === imageCareCard.card.image_url);
+            assert.ok(careImageAsset);
+            assert.equal(careImageAsset.content_type, "image/png");
+            assert.equal(careImageAsset.size, mockImageBytes.length);
+            const imageSession = await requestJson(baseUrl, "/api/v1/video/sessions", {
+                method: "POST",
+                body: JSON.stringify({ resource_type: "snapshot", snapshot_path: imageCareCard.card.image_url }),
+                headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            });
+            const careImageResponse = await fetch(`${baseUrl}/api/v1/video/media/snapshots/${encodeURIComponent(imageCareCard.card.image_url)}?playback_ticket=${imageSession.ticket}`);
+            assert.equal(careImageResponse.status, 200);
+            assert.equal(careImageResponse.headers.get("content-type"), "image/png");
+            assert.equal(await careImageResponse.text(), "mock-png-content");
+        } finally {
+            for (const [key, value] of Object.entries(originalImageEnv)) {
+                if (value === undefined) delete process.env[key];
+                else process.env[key] = value;
+            }
+            mockImageServer.close();
         }
 
         const opsTempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-app-server-ops-"));
@@ -584,9 +680,9 @@ async function main() {
         assert.equal(seedBundle.tables.camera_secrets.length, 1);
         assert.equal(seedBundle.tables.events.length, 1);
         assert.equal(seedBundle.tables.events[0].camera_id, String(camera.id));
-        assert.equal(seedBundle.tables.media_assets.length, 1);
+        assert.equal(seedBundle.tables.media_assets.length, 2);
         assert.equal(seedBundle.tables.care_preferences.length, 1);
-        assert.equal(seedBundle.tables.care_preferences[0].image_model, "wan2.7");
+        assert.equal(seedBundle.tables.care_preferences[0].image_model, "wan2.7-image");
         assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.delivery_time, "07:45");
         assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.visit_reminder.threshold_days, 10);
         assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.anniversaries[0].label, "妈妈生日");
@@ -602,9 +698,9 @@ async function main() {
         assert.equal(restoredDb.events.length, 1);
         assert.equal(restoredDb.events[0].summary, "疑似跌倒");
         assert.equal(String(restoredDb.events[0].camera_id), String(camera.id));
-        assert.equal(restoredDb.assets.length, 1);
+        assert.equal(restoredDb.assets.length, 2);
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);
-        assert.equal(restoredDb.care_preferences[String(family.id)].image_model, "wan2.7");
+        assert.equal(restoredDb.care_preferences[String(family.id)].image_model, "wan2.7-image");
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.delivery_time, "07:45");
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.message_focus, "先说明家里是否平稳，再给女儿一个适合打电话时聊的轻松话题。");
         assert.equal(restoredDb.care_cards.length, 1);

@@ -200,18 +200,30 @@
 </div>
 <span id="companionshipCareStatus" class="font-label-md text-label-md text-primary bg-primary-fixed px-3 py-1 rounded-full">同步中</span>
 </div>
-<article class="bg-surface-container-lowest rounded-xl p-gutter-card flex flex-col gap-4 shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-highest">
+<article class="bg-surface-container-lowest rounded-xl p-gutter-card shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-highest">
+<div class="grid grid-cols-1 md:grid-cols-[minmax(160px,220px)_1fr] gap-4 items-start">
+<div id="companionshipCareImageFrame" class="relative w-full max-w-[280px] md:max-w-none mx-auto md:mx-0 aspect-[4/7] overflow-hidden rounded-xl bg-[#fff7e8] border border-[#f2d6ad]">
+<img id="companionshipCareImage" alt="今日关怀图文卡" class="hidden w-full h-full object-cover transition-opacity duration-200" loading="eager"/>
+<div id="companionshipCareImageFallback" class="absolute inset-0 flex flex-col items-center justify-center text-center px-5">
+<span class="material-symbols-outlined text-[#9b6b23] text-4xl mb-3" data-icon="volunteer_activism">volunteer_activism</span>
+<p class="font-label-md text-label-md text-[#6f4d1d] leading-relaxed">今日关怀正在生成</p>
+<p class="font-body-md text-body-md text-[#7c633f] text-xs leading-relaxed mt-2">温暖卡片稍后出现</p>
+</div>
+</div>
+<div class="min-w-0 flex flex-col gap-4">
 <div class="flex items-start justify-between gap-4">
 <div class="min-w-0">
 <p id="companionshipCareTitle" class="font-headline-md text-headline-md text-on-surface">今天家里怎么样</p>
 <p id="companionshipCareBody" class="font-body-md text-body-md text-on-surface-variant text-sm leading-relaxed mt-2">正在根据设备、摄像头和提醒状态生成今日关怀卡片。</p>
 </div>
-<div class="w-12 h-12 rounded-lg bg-primary-container flex items-center justify-center shrink-0">
+<div class="w-11 h-11 rounded-lg bg-primary-container flex items-center justify-center shrink-0">
 <span class="material-symbols-outlined text-on-primary-container text-2xl" data-icon="favorite">favorite</span>
 </div>
 </div>
 <div id="companionshipCareFacts" class="grid grid-cols-1 gap-2"></div>
 <div id="companionshipCareActions" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+</div>
+</div>
 </article>
 </section>
 <!-- Interaction Suggestions -->
@@ -336,5 +348,5 @@
 <script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
-<script src="assets/scripts/companionship-live.js?v=20260707-care-card-1"></script>
+<script src="assets/scripts/companionship-live.js?v=20260707-care-card-image-1"></script>
 </body></html>

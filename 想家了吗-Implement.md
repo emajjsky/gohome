@@ -7384,5 +7384,65 @@ Chrome 验证：
 当前边界：
 
 - 已完成：用户端配置、后端持久化、模型上下文和立即生成闭环。
-- 暂未完成：云端定时任务、真实 APNs 定时推送、定位距离自动更新、DashScope 生图任务。
+- 已完成：DashScope `wan2.7-image` 生图任务已接入本地闭环，完整记录见下一节。
+- 暂未完成：云端定时任务、真实 APNs 定时推送、定位距离自动更新。
 - 下一步应优先做云端化前的数据和任务边界：把本地 PostgreSQL 跑通后，再把 `care_card_schedule` 接到云端 scheduler。
+
+## 48. 2026-07-07 每日关怀 4:7 生图卡片接入记录
+
+背景：
+
+- 用户确认每日关怀应是“图片展示”的图文卡片，不只是文字摘要。
+- 模型 API 由 App 提供方配置，普通家属用户不配置 Base URL、Key、模型名或 Prompt。
+- 生图只能用于非证据型关怀表达，不能替代告警证据、真实截图或老人真实影像。
+
+已完成：
+
+- `local-app-server/server.js`
+  - 新增 DashScope 生图调用链路。
+  - 根据模型/接口自动区分：
+    - `wan2.7-image`：同步 JSON 文生图结构，不使用 `X-DashScope-Sse`。
+    - `wan2.6-image` 图文混排：保留 `enable_interleave + stream` 兼容路径。
+    - 其他异步任务端点：保留 `X-DashScope-Async` + task 轮询路径。
+  - 生图 prompt 使用卡片标题、正文、事实摘要、老人兴趣和模型返回的 `image_brief`。
+  - 默认生成 4:7 `1024*1792` 图片。
+  - 供应商返回的临时图片 URL 会立即下载到 `data/app-server/media/care-cards/...`。
+  - `CareCard.image_url` 只保存本地 `snapshot_path`，不保存供应商临时 URL。
+  - 生图任务写入 `model_generation_jobs`，`purpose=care_card_image_generation`，不保存 API key。
+  - 已生成但缺图的旧 `CareCard` 会自动补图；失败时标记 `failed_provider` 并保留文字卡。
+- `companionship.html` / `assets/scripts/companionship-live.js`
+  - 完整“今日关怀”卡改为图文结构。
+  - 增加固定 4:7 图片容器。
+  - 图片加载时使用透明态而不是 `display:none + lazy`，避免浏览器不触发加载。
+  - 图片失败时显示产品化占位，不暴露模型或接口错误。
+  - 修正 facts 渲染，避免把模型文本直接拼进 `innerHTML`。
+- `scripts/verify-local-app-server.js`
+  - 默认关闭真实模型和真实生图调用，避免 `npm test` 消耗真实 API。
+  - 增加 mock DashScope 同步生图服务，验证：
+    - 请求参数为 4:7。
+    - 返回图能下载落本地 media asset。
+    - `CareCard.image_mode=generated`。
+    - 通过 `/api/v1/video/media/snapshots/...` 可读取图片。
+    - seed bundle 导出和 PostgreSQL 反向还原包含新增媒体资产。
+- `.env.example`
+  - 新增 `GOHOME_CARE_IMAGE_CALLS`、`GOHOME_CARE_IMAGE_SIZE`、`GOHOME_IMAGE_REQUEST_MODE`。
+  - 默认生图尺寸为 `1024*1792`。
+
+真实验证：
+
+- 使用本地 `.env` 中的真实 `Qwen/Qwen3.5-27B` 和 DashScope `wan2.7-image` 配置强制生成今日关怀。
+- 结果：
+  - `generated_by=model:Qwen/Qwen3.5-27B`
+  - `image_mode=generated`
+  - `image_url=care-cards/2026-07-07/30-care-1-2026-07-07.png`
+  - 图片媒体接口返回 `200 image/png`，文件大小约 2.8MB。
+  - 图片本身为有效 PNG，尺寸 `1024 x 1792`。
+- 内置浏览器验证：
+  - 桌面宽度：图片加载完成，容器比例 `0.5714`，无横向溢出。
+  - 手机宽度 `390x844`：图片加载完成，容器比例 `0.5714`，无横向溢出。
+
+当前边界：
+
+- 已完成：本地 API、模型调用、媒体落库、陪伴页完整卡展示和回归测试。
+- 首页目前仍展示今日关怀摘要，不展示大图；完整图文卡在 `companionship.html`。
+- 暂未完成：云端 scheduler 定时生成、真实 APNs 推送、定位距离自动更新、白名单内容推荐。

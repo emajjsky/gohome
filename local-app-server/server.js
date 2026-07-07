@@ -335,7 +335,7 @@ function createLocalAppServer(options = {}) {
             base_url: normalizeModelEndpoint(
                 envFirst(["GOHOME_IMAGE_BASE_URL", "GOHOME_WAN_BASE_URL", "DASHSCOPE_BASE_URL", "WAN_BASE_URL"])
             ),
-            model: envFirst(["GOHOME_IMAGE_MODEL", "GOHOME_WAN_MODEL", "WAN_MODEL"], "wan2.7"),
+            model: envFirst(["GOHOME_IMAGE_MODEL", "GOHOME_WAN_MODEL", "WAN_MODEL"], "wan2.7-image"),
             prompt: envFirst(["GOHOME_CARE_IMAGE_PROMPT"], defaultCareImagePrompt),
             prompt_source: process.env.GOHOME_CARE_IMAGE_PROMPT ? "env" : "default",
         };
@@ -346,9 +346,37 @@ function createLocalAppServer(options = {}) {
         return !["0", "false", "off", "disabled"].includes(value);
     }
 
+    function careImageCallsEnabled() {
+        const value = String(process.env.GOHOME_CARE_IMAGE_CALLS || process.env.GOHOME_CARE_MODEL_CALLS || "1").trim().toLowerCase();
+        return !["0", "false", "off", "disabled"].includes(value);
+    }
+
+    function imageRuntimeConfigured(runtime = imageRuntimeConfig()) {
+        return Boolean(runtime.base_url && runtime.api_key && runtime.model);
+    }
+
+    function careImageRequested(preferences = {}) {
+        return Boolean(preferences.image_generation_enabled || imageRuntimeConfigured());
+    }
+
     function modelRequestTimeoutMs() {
         const value = Number(process.env.GOHOME_MODEL_REQUEST_TIMEOUT_MS || 60000);
         return Number.isFinite(value) && value >= 5000 ? value : 60000;
+    }
+
+    function careImageSize() {
+        const value = String(process.env.GOHOME_CARE_IMAGE_SIZE || "1024*1792").trim();
+        return /^\d{3,4}\*\d{3,4}$/.test(value) ? value : "1024*1792";
+    }
+
+    function careImagePollIntervalMs() {
+        const value = Number(process.env.GOHOME_CARE_IMAGE_POLL_INTERVAL_MS || 2000);
+        return Number.isFinite(value) && value >= 500 ? value : 2000;
+    }
+
+    function careImageMaxPolls() {
+        const value = Number(process.env.GOHOME_CARE_IMAGE_MAX_POLLS || 30);
+        return Number.isFinite(value) && value >= 1 ? value : 30;
     }
 
     function modelCapabilities() {
@@ -1161,6 +1189,450 @@ function createLocalAppServer(options = {}) {
         }
     }
 
+    function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function compactPromptText(value, limit = 90) {
+        const text = String(value || "").replace(/\s+/g, " ").trim();
+        if (text.length <= limit) return text;
+        return `${text.slice(0, Math.max(0, limit - 3))}...`;
+    }
+
+    function careImageBrief(card) {
+        const recommendation = (Array.isArray(card.content_recommendations) ? card.content_recommendations : [])
+            .find((item) => item?.type === "image_brief" || item?.summary);
+        return String(recommendation?.summary || recommendation?.title || "").trim();
+    }
+
+    function buildCareImagePrompt(card, context, runtime = imageRuntimeConfig()) {
+        const facts = (Array.isArray(card.facts) ? card.facts : []).slice(0, 4).map((item) => String(item || "").trim()).filter(Boolean);
+        const schedule = context?.preferences?.care_card_schedule || {};
+        const topicText = Array.isArray(schedule.interest_topics) && schedule.interest_topics.length
+            ? schedule.interest_topics.slice(0, 5).join("、")
+            : "天气、养生、家常";
+        return [
+            runtime.prompt,
+            "",
+            `卡片标题：${compactPromptText(card.title, 28)}`,
+            `卡片短句：${compactPromptText(card.body, 64)}`,
+            facts.length ? `事实依据摘要：${facts.join("；")}` : "",
+            `老人兴趣话题：${topicText}`,
+            careImageBrief(card) ? `视觉建议：${compactPromptText(careImageBrief(card), 90)}` : "",
+            "生成要求：竖版 4:7，温馨可爱漫画风，画面像一张可直接发给家人的中文关怀图文卡。",
+            "中文字只保留标题和短句，必须清晰、端正、无错别字。",
+            "不要画真实监控画面、真实老人肖像、跌倒火灾等危险证据画面，也不要制造恐慌。",
+        ].filter(Boolean).join("\n");
+    }
+
+    function buildCareImageRequestPayload(card, context, runtime = imageRuntimeConfig()) {
+        const payload = {
+            model: runtime.model,
+            input: {
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { text: buildCareImagePrompt(card, context, runtime) },
+                        ],
+                    },
+                ],
+            },
+            parameters: {
+                size: careImageSize(),
+                watermark: false,
+            },
+        };
+        if (/^wan2\.6-image$/i.test(String(runtime.model || ""))) {
+            payload.parameters.enable_interleave = true;
+            payload.parameters.max_images = 1;
+        } else {
+            payload.parameters.n = 1;
+            payload.parameters.thinking_mode = true;
+        }
+        return payload;
+    }
+
+    function imageRequestMode(runtime = imageRuntimeConfig()) {
+        const explicit = String(process.env.GOHOME_IMAGE_REQUEST_MODE || "").trim().toLowerCase();
+        if (["sync", "async"].includes(explicit)) return explicit;
+        return /\/multimodal-generation\/generation$/i.test(String(runtime.base_url || "")) ? "sync" : "async";
+    }
+
+    function syncCareImageRequestPayload(requestPayload) {
+        if (!requestPayload?.parameters?.enable_interleave) return requestPayload;
+        return {
+            ...requestPayload,
+            parameters: {
+                ...(requestPayload.parameters || {}),
+                stream: true,
+            },
+        };
+    }
+
+    async function fetchJsonWithTimeout(url, options = {}) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), modelRequestTimeoutMs());
+        try {
+            const response = await fetch(url, {
+                ...options,
+                signal: controller.signal,
+            });
+            const responseText = await response.text();
+            const payload = safeJsonParse(responseText, { raw_text: responseText.slice(0, 1200) });
+            if (!response.ok) {
+                const detail = payload?.message || payload?.error?.message || payload?.code || responseText.slice(0, 200);
+                const error = new Error(`image model request failed: ${response.status} ${detail}`);
+                error.response_payload = payload;
+                throw error;
+            }
+            return payload;
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    function parseDashScopePayloadText(responseText) {
+        const direct = safeJsonParse(responseText, null);
+        if (direct && typeof direct === "object") return direct;
+        const streamEvents = [];
+        for (const rawLine of String(responseText || "").split(/\r?\n/)) {
+            const line = rawLine.trim();
+            if (!line.startsWith("data:")) continue;
+            const data = line.slice(5).trim();
+            if (!data || data === "[DONE]") continue;
+            const parsed = safeJsonParse(data, null);
+            if (parsed && typeof parsed === "object") streamEvents.push(parsed);
+        }
+        if (streamEvents.length) {
+            const last = streamEvents[streamEvents.length - 1] || {};
+            return {
+                stream_events: streamEvents,
+                output: last.output || {},
+                usage: last.usage || {},
+                request_id: last.request_id || "",
+            };
+        }
+        return { raw_text: String(responseText || "").slice(0, 1200) };
+    }
+
+    async function fetchDashScopeSyncPayload(url, requestPayload, runtime) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), modelRequestTimeoutMs());
+        const headers = {
+            Authorization: `Bearer ${runtime.api_key}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+        };
+        if (requestPayload?.parameters?.enable_interleave && requestPayload?.parameters?.stream) {
+            headers["X-DashScope-Sse"] = "enable";
+            headers.Accept = "text/event-stream,application/json";
+        }
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(requestPayload),
+                signal: controller.signal,
+            });
+            const responseText = await response.text();
+            const payload = parseDashScopePayloadText(responseText);
+            if (!response.ok) {
+                const detail = payload?.message || payload?.error?.message || payload?.code || responseText.slice(0, 200);
+                const error = new Error(`image model request failed: ${response.status} ${detail}`);
+                error.response_payload = payload;
+                throw error;
+            }
+            return payload;
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    function dashScopeTaskUrl(baseUrl, taskId) {
+        const parsed = new URL(baseUrl);
+        let prefix = "/api/v1";
+        const index = parsed.pathname.indexOf("/api/v1/");
+        if (index >= 0) {
+            prefix = parsed.pathname.slice(0, index + "/api/v1".length);
+        } else if (parsed.pathname.endsWith("/api/v1")) {
+            prefix = parsed.pathname;
+        }
+        return `${parsed.origin}${prefix}/tasks/${encodeURIComponent(taskId)}`;
+    }
+
+    function imageTaskId(payload) {
+        return String(payload?.output?.task_id || payload?.task_id || payload?.task?.id || "").trim();
+    }
+
+    function imageTaskStatus(payload) {
+        return String(payload?.output?.task_status || payload?.task_status || payload?.status || payload?.output?.status || "").trim().toUpperCase();
+    }
+
+    function dashScopePayloadError(payload) {
+        if (!payload || typeof payload !== "object") return "";
+        if (payload.code && payload.message) return `${payload.code}: ${payload.message}`;
+        const events = Array.isArray(payload.stream_events) ? payload.stream_events : [];
+        const eventError = events.find((event) => event?.code && event?.message);
+        return eventError ? `${eventError.code}: ${eventError.message}` : "";
+    }
+
+    function collectImageUrls(value, urls = []) {
+        if (value === null || value === undefined) return urls;
+        if (typeof value === "string") {
+            const text = value.trim();
+            if (/^data:image\//i.test(text) || /^https?:\/\//i.test(text)) urls.push(text);
+            return urls;
+        }
+        if (Array.isArray(value)) {
+            value.forEach((item) => collectImageUrls(item, urls));
+            return urls;
+        }
+        if (typeof value === "object") {
+            ["image", "image_url", "url"].forEach((key) => {
+                if (typeof value[key] === "string") collectImageUrls(value[key], urls);
+            });
+            Object.entries(value).forEach(([key, item]) => {
+                if (!["image", "image_url", "url"].includes(key)) collectImageUrls(item, urls);
+            });
+        }
+        return urls;
+    }
+
+    function extractImageUrl(payload) {
+        const urls = collectImageUrls(payload);
+        return urls.find((url) => /^data:image\//i.test(url) || /\.(png|jpe?g|webp)(?:[?#].*)?$/i.test(new URL(url).pathname)) || urls[0] || "";
+    }
+
+    async function downloadGeneratedImage(imageUrl) {
+        const dataMatch = String(imageUrl || "").match(/^data:(image\/[a-z0-9.+-]+)?(;base64)?,([\s\S]+)$/i);
+        if (dataMatch) {
+            const contentType = dataMatch[1] || "image/png";
+            const buffer = dataMatch[2]
+                ? Buffer.from(dataMatch[3], "base64")
+                : Buffer.from(decodeURIComponent(dataMatch[3]), "utf8");
+            return { buffer, content_type: contentType };
+        }
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), modelRequestTimeoutMs());
+        try {
+            const response = await fetch(imageUrl, {
+                headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,image/*,*/*" },
+                signal: controller.signal,
+            });
+            if (!response.ok) throw new Error(`image download failed: ${response.status}`);
+            const contentType = String(response.headers.get("content-type") || "image/png").split(";")[0].trim() || "image/png";
+            const buffer = Buffer.from(await response.arrayBuffer());
+            if (!buffer.length) throw new Error("image download returned empty content");
+            return { buffer, content_type: contentType };
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    function imageExtension(contentType, sourceUrl = "") {
+        const type = String(contentType || "").toLowerCase();
+        if (type.includes("jpeg") || type.includes("jpg")) return ".jpg";
+        if (type.includes("webp")) return ".webp";
+        if (type.includes("png")) return ".png";
+        try {
+            const ext = path.extname(new URL(sourceUrl).pathname).toLowerCase();
+            if ([".jpg", ".jpeg", ".png", ".webp"].includes(ext)) return ext === ".jpeg" ? ".jpg" : ext;
+        } catch (_error) {
+            // Fall back to PNG below.
+        }
+        return ".png";
+    }
+
+    function storeCareCardImageAsset(card, familyId, imageBuffer, contentType, sourceUrl = "") {
+        const assetId = store.nextId("asset");
+        const extension = imageExtension(contentType, sourceUrl);
+        const safeCardId = String(card.card_id || `care-${familyId}-${dateKeyShanghai()}`).replace(/[^\w.-]+/g, "_").slice(0, 90);
+        const fileName = `${assetId}-${safeCardId}${extension}`;
+        const relativePath = `care-cards/${dateKeyShanghai()}/${fileName}`;
+        const target = path.join(mediaDir, ...relativePath.split("/"));
+        ensureDir(path.dirname(target));
+        fs.writeFileSync(target, imageBuffer);
+        const timestamp = nowIso();
+        const asset = {
+            id: assetId,
+            family_id: Number(familyId),
+            device_id: "",
+            camera_id: null,
+            file_name: fileName,
+            content_type: contentType || "image/png",
+            snapshot_path: relativePath,
+            relative_path: relativePath,
+            storage_provider: "local",
+            storage_key: relativePath,
+            edge_event_id: "",
+            size: imageBuffer.length,
+            metadata: {
+                purpose: "care_card_image",
+                card_id: card.card_id || "",
+            },
+            created_at: timestamp,
+            updated_at: timestamp,
+            url: `/api/v1/video/media/snapshots/${encodeURIComponent(relativePath)}`,
+        };
+        store.db.assets.push(asset);
+        return asset;
+    }
+
+    async function callCareImageModel(card, context) {
+        const runtime = imageRuntimeConfig();
+        if (!careImageCallsEnabled()) throw new Error("image model calls disabled");
+        if (!imageRuntimeConfigured(runtime)) throw new Error("image model is not configured");
+        let requestPayload = buildCareImageRequestPayload(card, context, runtime);
+        const mode = imageRequestMode(runtime);
+        const createPayload = mode === "sync"
+            ? await fetchDashScopeSyncPayload(runtime.base_url, syncCareImageRequestPayload(requestPayload), runtime)
+            : await fetchJsonWithTimeout(runtime.base_url, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${runtime.api_key}`,
+                    "Content-Type": "application/json",
+                    "X-DashScope-Async": "enable",
+                },
+                body: JSON.stringify(requestPayload),
+            });
+        if (mode === "sync") requestPayload = syncCareImageRequestPayload(requestPayload);
+        let finalPayload = createPayload;
+        let taskId = imageTaskId(createPayload);
+        let taskStatus = imageTaskStatus(createPayload);
+        const payloadError = dashScopePayloadError(createPayload);
+        if (payloadError) {
+            const error = new Error(payloadError);
+            error.response_payload = createPayload;
+            throw error;
+        }
+        let imageUrl = extractImageUrl(createPayload);
+        if (mode === "async" && !imageUrl && taskId) {
+            const taskUrl = dashScopeTaskUrl(runtime.base_url, taskId);
+            for (let index = 0; index < careImageMaxPolls(); index += 1) {
+                await sleep(careImagePollIntervalMs());
+                finalPayload = await fetchJsonWithTimeout(taskUrl, {
+                    method: "GET",
+                    headers: {
+                        Authorization: `Bearer ${runtime.api_key}`,
+                        Accept: "application/json",
+                    },
+                });
+                taskStatus = imageTaskStatus(finalPayload);
+                imageUrl = extractImageUrl(finalPayload);
+                if (imageUrl) break;
+                if (["FAILED", "CANCELED", "UNKNOWN"].includes(taskStatus)) {
+                    const error = new Error(`image task ${taskStatus.toLowerCase()}`);
+                    error.response_payload = finalPayload;
+                    throw error;
+                }
+            }
+        }
+        if (!imageUrl) {
+            const error = new Error(taskId ? "image task finished without image url" : "image model response did not include image url");
+            error.response_payload = finalPayload;
+            throw error;
+        }
+        const downloaded = await downloadGeneratedImage(imageUrl);
+        return {
+            image_url: imageUrl,
+            image_buffer: downloaded.buffer,
+            content_type: downloaded.content_type,
+            request_payload: {
+                model: requestPayload.model,
+                input: requestPayload.input,
+                parameters: requestPayload.parameters,
+            },
+            response_payload: {
+                task_id: taskId,
+                task_status: taskStatus || imageTaskStatus(finalPayload) || "SUCCEEDED",
+                request_mode: mode,
+                request_id: finalPayload?.request_id || finalPayload?.output?.task_id || "",
+                image_url_set: true,
+                content_type: downloaded.content_type,
+                size_bytes: downloaded.buffer.length,
+                usage: finalPayload?.usage || {},
+            },
+        };
+    }
+
+    async function ensureCareCardImage(card, familyId, parts = {}) {
+        const preferences = parts.preferences || carePreferences(familyId);
+        if (!careImageRequested(preferences)) {
+            if (!card.image_url) card.image_mode = "none";
+            return false;
+        }
+        if (card.image_url && card.image_mode === "generated") return true;
+        if (card.image_mode === "failed_provider" && !parts.forceImage) return false;
+        const runtime = imageRuntimeConfig();
+        if (!careImageCallsEnabled() || !imageRuntimeConfigured(runtime)) {
+            if (!card.image_url) card.image_mode = "pending_provider";
+            return false;
+        }
+        card.image_mode = "pending_provider";
+        const context = careCardModelContext(familyId, { ...parts, preferences });
+        const inputHash = sha256(JSON.stringify({
+            card: {
+                title: card.title,
+                body: card.body,
+                facts: card.facts,
+                card_date: card.card_date,
+            },
+            context,
+            image_size: careImageSize(),
+            prompt_source: runtime.prompt_source,
+        }));
+        const job = modelJob({
+            family_id: familyId,
+            purpose: "care_card_image_generation",
+            model: runtime.model,
+            prompt_version: `care-image:${runtime.prompt_source}`,
+            input_hash: inputHash,
+            output_status: "pending",
+            request_payload: {
+                capability_id: runtime.capability_id,
+                card_id: card.card_id,
+            },
+            metadata: {
+                capability_id: runtime.capability_id,
+                provider: "dashscope-wan",
+                aspect_ratio: "4:7",
+            },
+        });
+        store.db.model_generation_jobs.push(job);
+        try {
+            const imageResult = await callCareImageModel(card, context);
+            const asset = storeCareCardImageAsset(card, familyId, imageResult.image_buffer, imageResult.content_type, imageResult.image_url);
+            card.image_mode = "generated";
+            card.image_url = asset.snapshot_path;
+            card.updated_at = nowIso();
+            card.source_summary = [...new Set([...(Array.isArray(card.source_summary) ? card.source_summary : []), "生图模型"])];
+            updateModelJob(job, {
+                output_status: "succeeded",
+                request_payload: {
+                    capability_id: runtime.capability_id,
+                    ...imageResult.request_payload,
+                },
+                response_payload: {
+                    ...imageResult.response_payload,
+                    media_asset_id: asset.id,
+                    snapshot_path: asset.snapshot_path,
+                },
+            });
+            return true;
+        } catch (error) {
+            if (!card.image_url) card.image_mode = "failed_provider";
+            card.updated_at = nowIso();
+            card.source_summary = [...new Set([...(Array.isArray(card.source_summary) ? card.source_summary : []), "生图失败，已保留文字卡片"])];
+            updateModelJob(job, {
+                output_status: "failed",
+                error_message: error.message || "image model request failed",
+                response_payload: error.response_payload || { fallback: "text_card" },
+            });
+            return false;
+        }
+    }
+
     function daysSinceDateString(value) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return null;
         const timestamp = Date.parse(`${value}T00:00:00+08:00`);
@@ -1225,11 +1697,17 @@ function createLocalAppServer(options = {}) {
     async function generateCareCard(familyId, options = {}) {
         const targetFamilyId = Number(familyId || store.db.families[0]?.id || 1);
         const cardDate = dateKeyShanghai();
+        const preferences = carePreferences(targetFamilyId);
         const existing = store.db.care_cards.find((card) => (
             Number(card.family_id) === targetFamilyId && card.card_date === cardDate && card.card_type === "daily"
         ));
-        if (existing && !options.force) return existing;
-        const preferences = carePreferences(targetFamilyId);
+        if (existing && !options.force) {
+            if (careImageRequested(preferences) && !existing.image_url && existing.image_mode !== "failed_provider") {
+                const existingParts = careCardFacts(targetFamilyId, preferences);
+                await ensureCareCardImage(existing, targetFamilyId, { ...existingParts, preferences });
+            }
+            return existing;
+        }
         const factParts = careCardFacts(targetFamilyId, preferences);
         const { facts, onlineCameras, openEvents, criticalEvents, profile } = factParts;
         const displayName = profile.display_name || "家人";
@@ -1256,7 +1734,7 @@ function createLocalAppServer(options = {}) {
             body,
             facts,
             source_message_ids: [],
-            image_mode: preferences.image_generation_enabled ? "pending_provider" : "none",
+            image_mode: careImageRequested(preferences) ? "pending_provider" : "none",
             image_url: "",
             actions: [
                 { key: "call", label: "打电话问候" },
@@ -1330,6 +1808,7 @@ function createLocalAppServer(options = {}) {
                 ];
             }
         }
+        await ensureCareCardImage(card, targetFamilyId, { ...factParts, preferences, forceImage: options.force });
         if (existing) {
             Object.assign(existing, card);
             return existing;

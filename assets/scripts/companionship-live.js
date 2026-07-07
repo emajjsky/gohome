@@ -4,6 +4,7 @@
     let currentFamilyLabel = "当前家庭";
     let lastActionFeedback = "";
     let feedbackTimer = null;
+    let careImageRenderSeq = 0;
 
     function toggleMessageSection(show) {
         $("companionshipMessageSection")?.classList.toggle("hidden", !show);
@@ -100,6 +101,64 @@
         return text || fallback;
     }
 
+    function setCareImageFallback(message, subtext, icon = "volunteer_activism") {
+        const image = $("companionshipCareImage");
+        const fallback = $("companionshipCareImageFallback");
+        if (image) {
+            image.removeAttribute("src");
+            image.classList.add("hidden");
+            image.classList.remove("opacity-0");
+        }
+        if (fallback) {
+            fallback.classList.remove("hidden");
+            const iconNode = fallback.querySelector(".material-symbols-outlined");
+            const messageNode = fallback.querySelector(".font-label-md");
+            const subtextNode = fallback.querySelector(".font-body-md");
+            if (iconNode) iconNode.textContent = icon;
+            if (messageNode) messageNode.textContent = message;
+            if (subtextNode) subtextNode.textContent = subtext;
+        }
+    }
+
+    async function renderCareCardImage(card) {
+        const image = $("companionshipCareImage");
+        const fallback = $("companionshipCareImageFallback");
+        if (!image || !fallback) return;
+        const seq = careImageRenderSeq + 1;
+        careImageRenderSeq = seq;
+        const imageUrl = String(card?.image_url || "").trim();
+        if (!imageUrl) {
+            if (card?.image_mode === "failed_provider") {
+                setCareImageFallback("今日关怀已生成", "图片稍后再试", "favorite");
+            } else {
+                setCareImageFallback("今日关怀正在生成", "温暖卡片稍后出现", "volunteer_activism");
+            }
+            return;
+        }
+        setCareImageFallback("正在打开今日关怀", "温暖卡片马上出现", "hourglass_top");
+        try {
+            const resolvedUrl = await window.GoHomeEdge.v1VideoMediaPlaybackUrl(imageUrl);
+            if (careImageRenderSeq !== seq) return;
+            image.onload = () => {
+                if (careImageRenderSeq !== seq) return;
+                fallback.classList.add("hidden");
+                image.classList.remove("opacity-0");
+                image.classList.remove("hidden");
+            };
+            image.onerror = () => {
+                if (careImageRenderSeq !== seq) return;
+                image.classList.remove("opacity-0");
+                setCareImageFallback("今日关怀已生成", "图片暂时无法打开", "favorite");
+            };
+            image.classList.remove("hidden");
+            image.classList.add("opacity-0");
+            image.src = resolvedUrl;
+        } catch (_error) {
+            if (careImageRenderSeq !== seq) return;
+            setCareImageFallback("今日关怀已生成", "图片暂时无法打开", "favorite");
+        }
+    }
+
     function setActionLink(anchor, config) {
         if (!anchor || !config) return;
         anchor.href = window.GoHomeEdge?.pageHref?.(config.href) || config.href;
@@ -167,15 +226,19 @@
         if (meta) meta.textContent = `${family?.name || "当前家庭"} · ${card.card_date || ""} · ${card.generated_by || "care-template-v1"}`;
         const critical = (card.facts || []).some((item) => /高优先级|重要提醒|告警/.test(String(item)));
         setCareStatus(critical ? "需关注" : "平稳", critical ? "warn" : "good");
+        renderCareCardImage(card);
         if (facts) {
             facts.innerHTML = "";
             (Array.isArray(card.facts) ? card.facts : []).slice(0, 5).forEach((fact) => {
                 const item = document.createElement("div");
                 item.className = "rounded-lg bg-white/70 border border-white/60 px-3.5 py-3 flex items-start gap-2";
-                item.innerHTML = `
-                    <span class="material-symbols-outlined text-primary text-[18px] mt-0.5">check_circle</span>
-                    <p class="font-body-md text-body-md text-on-surface-variant text-sm leading-relaxed">${fact}</p>
-                `;
+                const icon = document.createElement("span");
+                icon.className = "material-symbols-outlined text-primary text-[18px] mt-0.5";
+                icon.textContent = "check_circle";
+                const text = document.createElement("p");
+                text.className = "font-body-md text-body-md text-on-surface-variant text-sm leading-relaxed";
+                text.textContent = String(fact || "");
+                item.append(icon, text);
                 facts.append(item);
             });
         }

@@ -1211,7 +1211,7 @@ factory_new
 第三批 P1：生图卡片：
 
 1. 新增 `image-service` provider 配置。
-2. 支持配置 `wan2.7` 或等价生图模型。
+2. 支持平台侧配置 `wan2.7-image` 或等价生图模型。
 3. 只为 `daily / accompany / gohome / festival` 生成非证据型配图。
 4. 生成失败时回退默认卡片视觉，不影响消息展示。
 
@@ -1246,9 +1246,13 @@ factory_new
 - 模型底层能力不是用户配置项，平台方通过服务器环境变量或云端 Secret Manager / KMS 配置。
 - 当前本地 `local-app-server` 已从根目录 `.env / .env.local` 读取平台模型配置；真实 key 只填本机 `.env`，不提交 git。
 - P0.5 的多模态语言模型关怀卡片生成已经接入本地闭环，成功时写入 `model_generation_jobs`，失败时回退模板。
+- P1 的 DashScope `wan2.7-image` 4:7 生图卡片已经接入本地闭环：
+  - 生图使用平台侧 env，不暴露给普通用户配置。
+  - 生成图会下载成本地 `media_asset`，`CareCard.image_url` 只保存本地媒体路径，不保存供应商临时 URL。
+  - 陪伴页完整今日关怀卡优先展示 4:7 图片，图片失败时保留文字卡兜底。
 - 当前后台页只做平台内部只读状态检查，不给普通用户填写 key、Base URL、模型名或 Prompt。
-- 下一步先把首页接入今日关怀摘要，再接生图任务队列和 4:7 卡片图生成。
-- `wan2.7` 生图、白名单内容链接和自动内容搜索都必须排在文本模型之后。
+- 下一步先做云端化前的数据和任务边界：本地 PostgreSQL 跑通后，把 `care_card_schedule` 接到云端 scheduler / push 任务。
+- 白名单内容链接和自动内容搜索仍排在文本模型与生图主链之后。
 
 ##### T7.1 场景化图文消息输入域
 
