@@ -1,6 +1,6 @@
 # 回家 Implement
 
-更新时间：2026-07-07
+更新时间：2026-07-09
 
 ## 1. 文档目的
 
@@ -7223,7 +7223,7 @@ Chrome 验证：
 - 家属用户只配置老人资料、兴趣、提醒频率、内容偏好和联系人，不配置模型底层参数。
 - 平台方内部只需要两类模型能力：
   - 多模态语言模型：根据日历、热点信息、天气预报、设备状态、摄像头状态、事件和老人资料生成每日关怀卡片内容。
-  - 生图模型：根据卡片内容生成 4:7 温馨可爱漫画图文卡片，且只用于非证据型关怀卡片。
+  - 生图模型：根据卡片内容生成 1:1 温馨可爱漫画图文卡片，且只用于非证据型关怀卡片。
 - `base_url / api_key / model / prompt` 由平台方在服务器环境变量或云端 Secret Manager / KMS 配置。
 - 运营后台只做内部只读状态检查，不提供给普通用户填写 key、Base URL、模型名或 Prompt。
 
@@ -7388,7 +7388,7 @@ Chrome 验证：
 - 暂未完成：云端定时任务、真实 APNs 定时推送、定位距离自动更新。
 - 下一步应优先做云端化前的数据和任务边界：把本地 PostgreSQL 跑通后，再把 `care_card_schedule` 接到云端 scheduler。
 
-## 48. 2026-07-07 每日关怀 4:7 生图卡片接入记录
+## 48. 2026-07-07 每日关怀 1:1 生图卡片接入记录
 
 背景：
 
@@ -7405,28 +7405,28 @@ Chrome 验证：
     - `wan2.6-image` 图文混排：保留 `enable_interleave + stream` 兼容路径。
     - 其他异步任务端点：保留 `X-DashScope-Async` + task 轮询路径。
   - 生图 prompt 使用卡片标题、正文、事实摘要、老人兴趣和模型返回的 `image_brief`。
-  - 默认生成 4:7 `1024*1792` 图片。
+  - 默认生成 1:1 `1024*1024` 图片。
   - 供应商返回的临时图片 URL 会立即下载到 `data/app-server/media/care-cards/...`。
   - `CareCard.image_url` 只保存本地 `snapshot_path`，不保存供应商临时 URL。
   - 生图任务写入 `model_generation_jobs`，`purpose=care_card_image_generation`，不保存 API key。
   - 已生成但缺图的旧 `CareCard` 会自动补图；失败时标记 `failed_provider` 并保留文字卡。
 - `companionship.html` / `assets/scripts/companionship-live.js`
   - 完整“今日关怀”卡改为图文结构。
-  - 增加固定 4:7 图片容器。
+  - 增加固定 1:1 图片容器。
   - 图片加载时使用透明态而不是 `display:none + lazy`，避免浏览器不触发加载。
   - 图片失败时显示产品化占位，不暴露模型或接口错误。
   - 修正 facts 渲染，避免把模型文本直接拼进 `innerHTML`。
 - `scripts/verify-local-app-server.js`
   - 默认关闭真实模型和真实生图调用，避免 `npm test` 消耗真实 API。
   - 增加 mock DashScope 同步生图服务，验证：
-    - 请求参数为 4:7。
+    - 请求参数为 1:1。
     - 返回图能下载落本地 media asset。
     - `CareCard.image_mode=generated`。
     - 通过 `/api/v1/video/media/snapshots/...` 可读取图片。
     - seed bundle 导出和 PostgreSQL 反向还原包含新增媒体资产。
 - `.env.example`
   - 新增 `GOHOME_CARE_IMAGE_CALLS`、`GOHOME_CARE_IMAGE_SIZE`、`GOHOME_IMAGE_REQUEST_MODE`。
-  - 默认生图尺寸为 `1024*1792`。
+  - 默认生图尺寸为 `1024*1024`。
 
 真实验证：
 
@@ -7436,13 +7436,1781 @@ Chrome 验证：
   - `image_mode=generated`
   - `image_url=care-cards/2026-07-07/30-care-1-2026-07-07.png`
   - 图片媒体接口返回 `200 image/png`，文件大小约 2.8MB。
-  - 图片本身为有效 PNG，尺寸 `1024 x 1792`。
+  - 图片本身为有效 PNG，当前旧图尺寸为 `1024 x 1792`；新默认生成尺寸已切到 `1024 x 1024`。
 - 内置浏览器验证：
-  - 桌面宽度：图片加载完成，容器比例 `0.5714`，无横向溢出。
-  - 手机宽度 `390x844`：图片加载完成，容器比例 `0.5714`，无横向溢出。
+  - 桌面宽度：图片加载完成，容器比例 `1.0`，无横向溢出。
+  - 手机宽度 `390x844`：图片加载完成，容器比例 `1.0`，无横向溢出。
 
 当前边界：
 
 - 已完成：本地 API、模型调用、媒体落库、陪伴页完整卡展示和回归测试。
-- 首页目前仍展示今日关怀摘要，不展示大图；完整图文卡在 `companionship.html`。
+- 首页和陪伴页都展示 1:1 今日关怀图文卡；点开陪伴页查看完整正文、事实和动作。
 - 暂未完成：云端 scheduler 定时生成、真实 APNs 推送、定位距离自动更新、白名单内容推荐。
+
+## 49. 2026-07-07 用户端页面信息架构纠偏
+
+背景：
+
+- 用户反馈首页、守护、规则、事件和陪伴的页面语义混乱：示例式“今日居家提醒”不属于真实产品能力，“调整睡眠模式”偏离需求；守护页把“检测说明”误写成“规则设置”；事件页仍叫“消息中心”；陪伴页把安全事件显示成“亲情消息”。
+- 本轮按产品边界重新拆分：关怀归亲情关怀，安全告警归事件，规则开关归我的，检测说明只解释本轮视觉结果。
+
+已完成：
+
+- `index.html` / `assets/scripts/home-live.js`
+  - 删除首页独立“今日居家提醒”和“调整睡眠模式”。
+  - 首页首屏改为“今日关怀”1:1 图文卡预览。
+  - “家庭状态”改为盒子状态和摄像头数量，不再伪造温湿度。
+  - 常用入口改为 2x2 图片式入口：守护画面、事件记录、设备管理、关怀推送。
+- `monitor.html`
+  - 守护页快捷入口中的“规则设置”改为“检测说明”，跳转 `detection.html`。
+  - 规则开关不再作为守护快捷入口出现。
+- `detection.html` / `assets/scripts/detection-live.js`
+  - 页面标题改为“检测说明”。
+  - 文案明确这是检测事实和提醒依据，不是规则配置页。
+  - 顶部返回改回守护页，不再默认回实时观看。
+- `events.html` / `assets/scripts/events-live.js`
+  - 页面从“消息中心”收敛为“事件记录”。
+  - 移除天气、服药、相册等静态生活提醒示例。
+  - 接入真实事件列表 DOM，显示摄像头、时间、状态和处理入口。
+- `companionship.html` / `assets/scripts/companionship-live.js`
+  - 陪伴页首屏改为每日关怀卡片。
+  - 删除静态“互动建议”模块。
+  - “亲情消息”改为“关怀提醒”，并过滤掉 `alert` 或带事件来源的安全消息，避免安全事件和亲情关怀混线。
+  - 关怀图容器改为 1:1，旧 4:7 图片用 `object-contain` 保留完整内容；新生成图片默认 1:1。
+- `assets/scripts/stitch-app-routes.js`
+  - 底栏第三项统一为“事件”，保留“消息”作为旧文本兼容路由。
+  - 新增“检测说明”“事件记录”“关怀推送”等入口路由。
+
+验证：
+
+- `node --check` 覆盖本轮修改的前端脚本。
+- `git diff --check` 通过。
+- `npm test` 通过。
+- 内置浏览器手机视口 `390x844` 验证：
+  - 首页、守护、检测说明、事件、陪伴均无横向溢出。
+  - 首页和陪伴页关怀图容器比例均为 `1.0`。
+  - 可见页面不再出现“今日居家提醒”“调整睡眠模式”“消息中心”“亲情消息”。
+  - 守护页不再显示“规则设置”快捷入口，改为“检测说明”。
+
+当前边界：
+
+- 当前已经生成的旧关怀图片仍是 4:7 资源，页面会完整显示在 1:1 容器内。
+- 重新生成后，默认请求尺寸为 `1024*1024`。
+- 联系节奏里的“3 天 / 45 分钟”仍是前端占位，后续需要接真实联系记录、定位和回家记录。
+
+## 50. 2026-07-07 用户端信息架构与安全区二次收口
+
+背景：
+
+- 用户再次确认页面不能为了有功能强塞入口和跳转，必须符合家属端浏览和操作逻辑。
+- 用户要求按审美重新调整前端页面，并明确处理 iPhone 刘海区和底部安全区。
+- 本轮基于 `design-taste-frontend` 做移动端产品重审，按“信任优先、家庭关怀、轻 iOS 原生感”收口。
+
+已完成：
+
+- `assets/styles/stitch-app-adapt.css`
+  - 增加本地 Material Symbols 字体，避免断网或 Google Font 未加载时图标显示成英文文本。
+  - 统一主 Tab 页顶部安全区、二级页顶部安全区、底部导航安全区和桌面手机壳宽度。
+  - 固定底部导航实色背景，减少滚动内容透出。
+- `index.html` / `assets/scripts/home-live.js`
+  - 首页保留“今日关怀”完整 1:1 图文卡片作为首屏主内容。
+  - 新增“关怀卡片”历史流，后续每天生成后向下沉淀，符合刷信息流的浏览逻辑。
+  - 删除首页 2x2 强入口，不再把守护、事件、设备管理、关怀推送都塞在首屏。
+  - 隐藏用户端不需要看的模型来源，不再暴露 `model:Qwen...`。
+- `monitor.html` / `assets/scripts/monitor-live.js`
+  - 守护页只保留状态和实时画面，不再放设备管理、规则设置、检测说明等重复模块。
+  - 摄像头卡片只保留“看画面”，配置入口收敛到顶部“设备”。
+  - 用户端文案不再暴露 `App API / YOLO / edge-agent` 等工程词。
+- `events.html` / `event_detail.html`
+  - 事件页只保留安全事件时间线。
+  - 事件详情承接“提醒依据”，解释规则和检测事实，不再把检测说明做成独立主流程。
+- `privacy.html` / `cameras.html` / `rules.html`
+  - “我的”承担家庭成员、关怀推送、设备管理、通知、规则、隐私。
+  - 设备管理页底部导航 active 归到“我的”，不再归到“守护”。
+  - 家庭成员文案从“共享位置”改为“共享守护”，避免提前承诺定位能力。
+  - 规则页只展示当前真实支持能力，并用“视觉模型 / 家庭盒子服务”替代底层工程名。
+- `care_schedule.html`
+  - 关怀设置保持每日推送、内容类型、关怀重点、老人兴趣、回家提醒和纪念日。
+  - 纪念日继续按每年同月同日进入关怀卡片上下文。
+- `watch.html` / `assets/scripts/watch-live.js`
+  - 实时查看页主动作从“看检测”改为“回守护”，检测依据不再作为主流程入口。
+  - 文案不再暴露 `App API / YOLO`。
+- `assets/scripts/stitch-app-routes.js`
+  - 保留统一路由兜底，避免页面旧路由脚本抢跳。
+
+验证：
+
+- 使用本机 Chrome headless 以 `390 x 844` 移动视口验证：
+  - 首页、守护、事件、事件详情、实时查看、陪伴、我的、关怀设置、规则、设备管理均 `scrollWidth = clientWidth = 390`。
+  - Material Symbols 没有退化成 `home / security / history` 等英文文本。
+  - 主 Tab 页滚到底后，最后一个可操作按钮没有被底部导航遮挡。
+  - 首页和陪伴页没有再请求旧的 `/api/v1/internal/messages/generate`，404 已清除。
+- `node --check` 已覆盖本轮修改的前端脚本。
+
+当前边界：
+
+- 当前仍是本地 App API 替身，正式上云后需要把同一套接口迁移到云端服务。
+- 首页历史卡片当前只有今日一张，后续随着定时生成自然沉淀多张。
+- 定位距离、联系记录、节假日内容推荐和 APNs 定时推送仍未完成，不能在演示中说成正式能力。
+
+## 51. 2026-07-07 关怀推送页重排记录
+
+背景：
+
+- 用户指出 `care_schedule.html` 仍像后台表单，视觉堆叠、模块重复，不符合家属端 App 设置页的浏览逻辑。
+- 本轮继续按 `design-taste-frontend` 做移动端重排，但只作用于关怀推送页，不改变已有后端字段契约。
+- 产品边界继续保持：普通家属只配置每日推送、卡片内容、关怀重点、兴趣、回家提醒和纪念日；模型 API、Base URL、Key、Prompt 仍由平台侧配置，不暴露给用户。
+
+已完成：
+
+- `care_schedule.html`
+  - 顶部改为轻 iOS 设置页结构：返回、标题、今日关怀入口。
+  - 首屏新增“每日关怀卡片”概览，明确推送时间、开启状态、内容数量和首页展示关系。
+  - “每日推送”和“推送时间”合并为行式设置，减少后台表单感。
+  - “卡片内容”改为多行可扫读选项，并把文案收敛到家里状态、问候话题、养生小贴士、天气问候、回家间隔、节日问候和纪念日。
+  - “老人关心的话题”保留两列轻量选项，用于问候话题和后续合规内容推荐。
+  - “回家提醒”去掉旧的定位开关占位，只展示上次回家日期和超过多少天提醒，避免提前承诺定位距离。
+  - “纪念日”改成名称一行、日期和删除一行，保证 `1956-11-06` 这类日期在 390 宽度下完整显示。
+  - 页面顶部、左右和底部使用 `env(safe-area-inset-*)`，底部保存动作避开 Home Indicator。
+  - 去掉本页不再需要的 Tailwind CDN 和 Google 字体外链，改用本地 Material Symbols 和本地中文字体，避免 console 噪音。
+- `assets/scripts/care-schedule-live.js`
+  - 顶部概览从表单实时同步推送时间、开启状态和内容数量。
+  - 保存时不再把旧的 `location_tracking_enabled` 占位开关写成开启。
+
+验证：
+
+- `node --check assets/scripts/care-schedule-live.js` 通过。
+- `git diff --check -- care_schedule.html assets/scripts/care-schedule-live.js` 通过。
+- 使用本机 Google Chrome headless 以 `390 x 844` 移动视口验证：
+  - 首屏和底部视口均为 `scrollWidth = clientWidth = 390`。
+  - 所有输入、按钮和链接都在视口内。
+  - 底部固定动作区距离视口底部约 `50px`，不会压到 Home Indicator。
+  - 纪念日日期输入宽度约 `273px`，`1956-11-06` 可完整显示。
+  - Material Symbols 使用本地字体，没有退化为英文图标文本。
+  - console 无 warning、error 和 404。
+  - 页面可见文案不包含 `API / Base URL / Prompt / YOLO / edge-agent` 等工程词，也不包含旧错文案。
+
+当前边界：
+
+- 本页仍是“配置保存和立即生成”闭环；真正每天到点推送仍要等云端 scheduler、notification-service 和 APNs。
+- 回家提醒当前基于手动日期和天数，联系记录、到家记录和定位授权仍未接入。
+
+## 52. 2026-07-07 全局 App 页面视觉与安全区统一
+
+背景：
+
+- 用户认可 `care_schedule.html` 的重排方向，要求其他全部用户端页面按同一审美统一，并明确 iOS 刘海区必须预留。
+- 本轮定位为视觉和布局统一，不改变后端接口、数据库字段、DOM id、页面业务归类和路由契约。
+
+已完成：
+
+- `assets/styles/stitch-app-adapt.css`
+  - 统一 Stitch 页面主色、卡片、按钮、输入框、底部导航和本地字体。
+  - 对普通根页面直接增加顶部 `env(safe-area-inset-top)` 处理，不再依赖运行时脚本补页面 class。
+  - 底部导航收敛宽度、标签单行省略，避免 390 宽度下挤出屏幕。
+  - 首页和陪伴页的今日关怀图统一为 1:1 视觉容器，并去掉旧暖黄色占位的突兀感。
+  - 补齐 `primary-fixed` 等 Tailwind 辅助 token 覆盖，避免局部旧蓝色残留。
+- `assets/styles/app.css`
+  - 统一纪念模式、检测说明、平行世界等页面的绿灰视觉体系。
+  - 修正 `app-phone-shell` 与 `app-topbar` 的安全区分工，避免 iOS 上顶部安全区重复叠加。
+  - 修复平行世界聊天输入行和底部导航的窄屏溢出风险。
+  - 补齐 Tailwind 工具类颜色映射，避免局部文字和底部导航继续露旧色。
+- 全部根 HTML 页面
+  - 移除 Google Fonts 外链，改用本地 Material Symbols 和本地中文字体。
+  - 刷新共享 CSS 版本号，减少浏览器旧缓存影响。
+  - 补空 favicon，清除 `/favicon.ico` 404 噪音。
+- `cameras.html`
+  - 摄像头管理页底部导航 active 从“我的”改回“守护”，符合设备和摄像头属于守护路径的产品归类。
+
+验证：
+
+- 使用本机 Chrome headless 以 `390 x 844` 移动视口覆盖 27 个根页面：
+  - `welcome / onboarding / login / parent_profile / family / device_binding / camera_intro / connect`
+  - `index / monitor / watch / events / event_detail / companionship / privacy / care_schedule / cameras / rules / family_members / notifications / privacy_data`
+  - `detection / memorial_home / digital_human / memory_gallery / voice_archive / ops`
+- 审计结果：`problemCount = 0`。
+  - 无横向溢出。
+  - 无控件越界。
+  - 无 404。
+  - `digital_human.html` 聊天输入和底部导航不再挤出视口。
+  - 首页、守护、陪伴、我的、设备管理、平行世界和关怀推送已抽样截图检查。
+- `npm test` 通过。
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `node --check assets/scripts/stitch-app-routes.js` 通过。
+
+当前边界：
+
+- 本轮只做用户端页面视觉统一和安全区修复，没有改变云端化、APNs、定位距离、节假日内容推荐等未完成能力。
+- `ops.html` 仍是平台侧服务后台页面，只做轻量视觉统一，不作为普通家属端入口。
+
+## 53. 2026-07-08 产品路径和真实状态修复
+
+背景：
+
+- 用户指出 App 已经能看到盒子和摄像头，但登录后首页仍显示未配置；事件、陪伴、规则、我的页面存在旧事件、错误跳转、管理员身份、重复设置入口和 iOS 安全区问题。
+- 本轮按产品路径修复：本地闭环阶段优先相信家庭盒子和摄像头真实运行状态，账号绑定只作为云端关联，不再阻断首页进入已连接状态。
+
+已完成：
+
+- `assets/scripts/home-live.js`
+  - 首页改为先读取家庭盒子、摄像头和事件状态，只要有启用摄像头或盒子在线，就展示已连接状态，不再因为缺少设备绑定显示“待绑定 / 待接入”。
+  - 首页关怀卡片改为横向滑动卡片流，并新增位置与回家模块；没有真实定位时显示“距离待授权”，不伪造距离。
+  - 首页过滤已恢复在线摄像头对应的旧离线事件，消息卡也只承接当前启用摄像头的事件。
+  - 修复“无高优先级告警”被误判成“需关注”的问题。
+- `assets/scripts/events-live.js` / `assets/scripts/event-detail-live.js`
+  - 事件列表和详情过滤已恢复在线的旧离线事件。
+  - 将 `edge-agent`、拉流失败、无帧返回等工程文案转成家属可理解的事件说明。
+- `companionship.html` / `assets/scripts/companionship-live.js`
+  - 陪伴页删除重复的关怀推送设置入口，只保留今日关怀内容和联系动作。
+  - 联系动作改为“发消息 / 打电话”；打电话读取老人资料中的手机号或家里电话，缺失时提示补充。
+  - 修复 actions/source 为对象时显示 `[object Object]` 的问题，移除普通关怀提醒强跳事件页或实时画面的逻辑。
+- `parent_profile.html` / `assets/scripts/stitch-app-data.js` / `local-app-server/server.js`
+  - 老人资料增加手机号、家里电话和城市字段，并写入本地 App API。
+  - 本地服务记录最近登录 / 注册用户，`/api/users/me` 不再固定返回默认管理员。
+  - “我的”页展示家属账号和家庭关系，并用盒子运行状态或在线摄像头判断“家庭盒子已连接”。
+- `rules.html` / `assets/scripts/rules-live.js`
+  - 规则页开关改为移动端 toggle，整行可点。
+  - 保存反馈改为“已同步到家庭盒子 / 等待家庭盒子下一轮检测读取”。
+- `assets/styles/stitch-app-adapt.css` / `assets/styles/app.css`
+  - App 模式强制预留顶部安全区，浏览器预览中 `env(safe-area-inset-top)` 为 0 时也保留 iOS 刘海区空间。
+- `local-app-server/server.js`
+  - 关怀卡片生成只统计当前启用摄像头的近 24 小时事件，并忽略已恢复在线的旧离线事件。
+  - 本地 DB 今日关怀卡片已重新生成，首页和事件页状态保持一致。
+
+验证：
+
+- `npm test` 通过。
+- `git diff --check` 通过。
+- `node --check` 覆盖本轮修改的前端脚本和 `local-app-server/server.js`。
+- 使用 Chrome / Playwright 以 `390 x 844` iPhone 视口验证：
+  - 首页不再显示“待绑定 / 未配置 / 待接入”，显示 2 路摄像头在线和横向关怀卡片流。
+  - 事件页没有旧离线事件和工程错误，显示当前平稳。
+  - 陪伴页不显示 `[object Object]`，不再出现普通关怀跳事件或实时画面的动作。
+  - 我的页不显示 `回家管理员 / admin@gohome.local`，徽章显示“家庭盒子已连接”。
+  - 规则页 toggle 宽高为 `52 x 30`，点击整行可改变并保存。
+  - 首页、事件、陪伴、我的、规则均无横向溢出，首个内容块距离顶部约 `52-72px`，避开刘海区。
+
+当前边界：
+
+- “发消息”当前在 Web 阶段尝试打开 `weixin://`，正式 iOS App 阶段需要接系统分享或微信能力。
+- 电话能力依赖老人资料已填写手机号或家里电话。
+- 定位距离仍未接入 iOS 授权和定位服务，当前只展示“距离待授权”。
+
+## 54. 2026-07-08 主路径前端产品化重排
+
+背景：
+
+- 用户指出首页、守护、事件、陪伴、我的和设备管理仍有旧原型痕迹：卡片边界重、模块像强塞入口、陪伴与守护互跳、设置入口重复、刘海区和布局观感需要继续统一。
+- 本轮目标不是新增后端能力，而是把已经跑通的盒子、摄像头、事件和关怀卡片按产品浏览逻辑重新归类。
+
+已完成：
+
+- `index.html` / `assets/styles/stitch-app-adapt.css`
+  - 刷新资源版本，继续保留首页“今日推送”横向信息流、完整关怀卡片预览、位置与回家模块和家庭状态。
+  - 首页不再使用 2x2 强入口填充首屏。
+- `monitor.html` / `assets/scripts/monitor-live.js`
+  - 守护页重排为“实时状态 + 摄像头画面”，只展示盒子同步状态、检测状态、摄像头画面和看画面动作。
+  - 动态摄像头卡片改为统一卡片样式，多路摄像头均保留实时画面；普通在线状态不再显示“看事件”之类跨模块动作。
+- `events.html` / `assets/scripts/events-live.js`
+  - 事件页重排为安全事件时间线，只承接盒子、摄像头和规则生成的真实事件。
+  - 事件卡片只保留时间、房间、事件摘要、处理状态和事件详情入口。
+- `companionship.html` / `assets/scripts/companionship-live.js`
+  - 陪伴页重排为完整今日关怀卡片、关怀依据和联系动作。
+  - 清理普通关怀提醒跳事件或实时画面的兜底逻辑；发消息只尝试微信跳转，打电话继续读取老人资料手机号或家里电话。
+  - 待办提醒详情不再暴露提醒 ID、状态、来源对象等工程化字段。
+- `privacy.html`
+  - “我的”改为家庭设置中心：家庭成员、关怀推送、设备管理、守护规则、通知设置、隐私与数据。
+  - 资料卡保留家属账号身份和家庭盒子连接状态，不再显示管理员身份。
+- `cameras.html` / `assets/scripts/stitch-app-data.js`
+  - 设备管理页重排为“摄像头与盒子”，明确 App 只提交配置和查看状态，摄像头接入由家庭盒子完成。
+  - 摄像头列表动态卡片更新为更紧凑的配置、启停、删除、同步操作。
+- `rules.html` / `assets/scripts/rules-live.js`
+  - 规则页资源版本刷新。
+  - “守护服务未运行”改为“等待盒子同步”，避免把工程运行状态直接暴露给家属。
+- `assets/scripts/stitch-app-routes.js`
+  - 删除陪伴页“视频看看 / 视频”兜底跳实时画面的旧规则，避免无意义跨模块跳转。
+
+验证：
+
+- `node --check` 覆盖：
+  - `assets/scripts/monitor-live.js`
+  - `assets/scripts/events-live.js`
+  - `assets/scripts/companionship-live.js`
+  - `assets/scripts/stitch-app-data.js`
+  - `assets/scripts/stitch-app-routes.js`
+  - `assets/scripts/rules-live.js`
+- `git diff --check` 覆盖本轮修改文件。
+- 本地服务 `http://127.0.0.1:8788/index.html?app=1` 返回 200，服务仍监听 `8788`。
+- 使用 Chrome 验证：
+  - 首页：`bodyWidth = 430`，今日推送 6 张，关怀图片可见。
+  - 守护页：识别 2 路摄像头，等待后两路实时画面均返回 `640 x 360` MJPEG 帧。
+  - 事件页：无旧离线事件时展示“今天暂时没有告警”。
+  - 陪伴页：完整关怀图片可见，页面不再出现普通关怀跳事件或实时画面的入口。
+  - 我的页：设置入口 6 个，不显示管理员账号。
+  - 设备管理页：展示 2 路在线摄像头。
+  - 主路径页面无横向溢出；首页横向推送流的卡片超出属于容器内横向滑动内容。
+
+当前边界：
+
+- Tailwind CDN warning 仍存在，这是当前静态原型遗留的构建方式问题，不影响本地演示，但正式上云前应改为本地构建产物。
+- 首页热点、节假日、天气和定位仍只使用现有上下文，不伪造真实天气接口和真实定位距离。
+- 真实定时推送、APNs、微信正式跳转、iOS 定位授权仍未完成，后续进入云端和 iOS 阶段处理。
+
+## 55. 2026-07-08 二级页面产品边界收敛
+
+背景：
+
+- 主 Tab 页面重排后，仍有若干二级页保留旧原型文案和布局：通知页写了微信服务号、短信、自动电话和免打扰突破；家庭成员页写了管理员和虚假活跃时间；隐私页写了云端录像、健康报告分析等未完成能力；实时查看页还显示 `mobile / monitor / detail` 英文档位。
+- 本轮继续按“当前真实做到哪里就写到哪里”的原则收敛二级页面。
+
+已完成：
+
+- `watch.html` / `assets/scripts/watch-live.js`
+  - 实时查看页补齐 iOS 刘海预留。
+  - 视频档位从 `mobile / monitor / detail` 改为“流畅 / 守护 / 清晰”。
+  - 错误文案从“本机服务”收敛为“家庭服务”。
+  - 浏览器验证当前可返回实时画面。
+- `event_detail.html` / `assets/scripts/event-detail-live.js`
+  - 事件详情页资源版本刷新。
+  - 页面副标题从“本机规则事件”改为“守护事件”。
+  - 事件说明中的“本机守护服务”改为“家庭盒子”。
+  - 房间兜底从“本机测试”改为“家庭摄像头”。
+- `family_members.html`
+  - 家庭成员页改成设置子页，不再显示底部 Tab。
+  - 删除“管理员”“3 小时前活跃”等不真实状态。
+  - 页面只展示家属账号、被守护人和待邀请家人，邀请链接标注为正式账号体系后启用。
+- `notifications.html`
+  - 通知页改为真实边界说明：安全事件提醒、每日关怀卡片、站内消息为当前本地演示可验证能力。
+  - iOS 推送、电话、短信作为正式渠道状态展示，不再伪装成已接通。
+  - 删除“微信服务号”“电话自动拨打”“突破免打扰模式”等当前没有实现的能力。
+- `privacy_data.html`
+  - 隐私页改为“只上传必要结果”。
+  - 明确当前云端只承接事件、截图、规则和账号配置；长期录像和定位距离未启用。
+  - 删除“云端录像保存 7 天”“健康数据报告分析”等未完成能力。
+- `assets/styles/stitch-app-adapt.css`
+  - 新增二级页通用列表、状态标签、开关和说明面板样式，减少页面各自拼 Tailwind 的不一致感。
+
+验证：
+
+- `node --check` 覆盖：
+  - `assets/scripts/watch-live.js`
+  - `assets/scripts/event-detail-live.js`
+  - `assets/scripts/stitch-app-data.js`
+  - `assets/scripts/stitch-app-routes.js`
+- `git diff --check` 覆盖本轮修改文件。
+- 使用 Chrome 验证：
+  - `watch.html` 无横向溢出，实时画面可见，档位显示“流畅 / 守护 / 清晰”。
+  - `event_detail.html` 无横向溢出，可展示事件详情和处理按钮。
+  - `family_members.html` 无横向溢出，只保留返回，不显示底部 Tab。
+  - `notifications.html` 无横向溢出，不再出现微信服务号、自动电话、免打扰突破等误导能力。
+  - `privacy_data.html` 无横向溢出，不再出现云端录像保存和健康报告分析。
+
+当前边界：
+
+- 通知设置当前仍是产品策略页，未接正式保存接口；正式推送要等云端 notification-service 和 iOS APNs。
+- 家庭成员邀请仍待正式账号体系和云端权限模型。
+- 隐私数据导出、账号注销仍待云端数据库和账号系统完成。
+
+## 56. 2026-07-08 入口与配置流程页收敛
+
+背景：
+
+- 主路径页面已经按首页、守护、事件、陪伴、我的重新归类，但登录、老人资料、家庭空间、盒子关联、摄像头配置引导和添加摄像头页仍有旧 Stitch 原型痕迹。
+- 这些页面属于首次配置和设备维护路径，不能出现无动作按钮、错误硬件文案或和当前产品路径不一致的说法。
+
+已完成：
+
+- `login.html` / `assets/scripts/stitch-app-data.js`
+  - 关闭按钮补上返回首页动作。
+  - “获取验证码”在本地演示阶段会填入演示验证码，避免静态按钮无反馈。
+  - 隐藏未接通的第三方登录视觉入口，避免微信/Apple 登录被误认为已实现。
+- `parent_profile.html`
+  - 页面主文案从“称呼 TA”改为“补全被守护人资料”。
+  - 明确手机号、家里电话和城市用于关怀卡片、电话联系和回家提醒。
+  - 返回按钮补上明确返回路径。
+- `family.html`
+  - “创建数字陪伴空间”改为“设置家庭空间”，明确家庭盒子、摄像头和关怀卡片归属到同一家庭。
+  - 主按钮改为“继续配置家庭盒子”，和后续盒子关联路径一致。
+- `device_binding.html`
+  - 页面从“绑定守护伴侣”收敛为“连接家庭盒子”。
+  - 两个入口改为“扫描盒子二维码”和“输入盒子序列号”，用于关联已完成本地 Wi-Fi 配网的家庭盒子。
+  - 路由表同步新增新文案匹配，避免点击后无响应。
+- `camera_intro.html`
+  - 顶部从“添加设备”改为“摄像头配置”。
+  - 第三步从“扫码配对”改为“App 内保存”，符合 App 提交 RTSP / 房间配置、盒子本地接入摄像头的路径。
+  - “开始配置”改成真实链接，直接进入 `connect.html`。
+  - 隐私文案改为“家庭盒子本地分析，云端只保存必要事件、截图和配置”，不再暗示连续视频上传。
+- `connect.html`
+  - 去掉无动作的“自定义”按钮，改为非点击说明。
+  - “家庭盒子 · 本地接入”从假按钮改为静态状态块。
+  - 清空名称按钮补充中文无障碍说明。
+  - 顶部摄像头说明区收紧，减少首屏白板感。
+- `assets/styles/stitch-app-adapt.css`
+  - 新增登录、资料、家庭、盒子、摄像头引导和添加摄像头页的统一移动端样式。
+  - 这些流程页统一预留 iOS 刘海区，顶部返回按钮改为轻量圆形控件，页面背景、卡片、输入框和底部动作条风格与主 App 保持一致。
+  - 隐藏老人资料页旧装饰图，移除没有产品意义的装饰块。
+
+验证：
+
+- `npm test` 通过。
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `node --check assets/scripts/stitch-app-routes.js` 通过。
+- `git diff --check` 通过。
+- 使用本机 Chrome + Playwright 以 `390 x 844` 手机视口验证：
+  - `login.html`、`parent_profile.html`、`family.html`、`device_binding.html`、`camera_intro.html`、`connect.html` 均为 `clientWidth = scrollWidth = 390`。
+  - 上述页面均无脚本错误。
+  - 顶部安全区约 `110px`，首屏内容避开刘海区域。
+  - 关闭、返回、验证码、开始配置、盒子二维码、序列号和提交摄像头配置路径均有真实动作或统一路由接管。
+
+当前边界：
+
+- 本地演示登录仍是验证码替身，不是正式短信验证码。
+- 盒子二维码和序列号当前生成本地绑定码用于闭环演示，正式生产需要云端设备注册、二维码签名和设备归属校验。
+- 摄像头自定义房间暂未做输入 UI，当前只保留客厅、餐厅、玄关、卧室四个常用位置。
+
+## 57. 2026-07-08 本地闭环自检与用户态事件过滤
+
+背景：
+
+- 当前 App 已经能通过本地 App API 看到家庭、老人资料、盒子、两路摄像头、今日关怀卡片和页面状态。
+- 旧的 `camera_offline` 原始事件在摄像头恢复在线后仍会留在原始事件表里，如果直接暴露给首页、事件页和摘要，会造成“摄像头在线但仍显示高危离线”的产品矛盾。
+- 本轮目标是让后端承担用户态过滤，前端不用各自猜哪些事件应该隐藏；同时新增一个可重复运行的本地闭环自检命令。
+
+已完成：
+
+- `local-app-server/server.js`
+  - 新增用户态事件过滤逻辑：已恢复在线摄像头对应的旧 `camera_offline` 事件不再出现在 App 用户事件列表。
+  - `/api/app/events`、`/api/events`、`/api/v1/events` 默认返回用户可见事件。
+  - `/api/app/summary/today`、`/api/summary/today`、`/api/v1/summary/today` 的事件数量、未处理数量和高危数量只统计用户可见事件。
+  - `/api/v1/app/messages` 也使用同一套用户态事件过滤，避免消息卡片重新出现旧离线提醒。
+  - 原始事件不删除，仍保留在数据库和导出链路里，用于审计、排障和云端迁移。
+  - 新增设备绑定自愈：当已有 App 摄像头配置明确了 `family_id + device_id`，但历史数据缺少 `device_bindings` 时，自动补一条正式绑定记录；如果已有设备 token 或绑定码生成的正式绑定，则以正式绑定为准，不再从摄像头归属重复补默认家庭绑定。
+  - 新增老人资料持久化兜底：读取默认老人资料时会为家庭落一条 `elder_primary`，避免页面能显示默认资料但导出云端 seed 时 `elder_profiles=0`。
+- `scripts/verify-local-closed-loop.js`
+  - 新增只读本地闭环自检脚本。
+  - 覆盖服务健康、登录、家庭、老人资料、关怀推送配置、今日关怀图片、盒子可见性、设备同步、摄像头在线、用户态事件摘要、模型配置和主页面可访问性。
+  - 不创建家庭、不新增摄像头、不强制调用模型生成，适合日常自检。
+- `package.json`
+  - 新增 `npm run verify:local-loop`。
+- `scripts/verify-local-app-server.js`
+  - 增加“摄像头恢复在线后，旧离线事件在用户接口隐藏，但原始事件仍进入 seed bundle 和恢复数据库”的回归断言。
+- 树莓派盒子
+  - 已通过 SSH 更新 `/home/gohome/gohome/edge-agent/app/config_sync_agent.py`，更新前已在盒子侧备份原文件。
+  - 已重启 `gohome-edge-agent` systemd 服务。
+  - 盒子当前 `health` 显示 `worker_running=true`，配置同步线程运行中，且 `rules-ac0b74eb5153` 已应用并回传。
+
+当前自检结果：
+
+```bash
+npm run verify:local-loop
+```
+
+结果为 `23 passed, 1 warnings, 0 failed`。
+
+当前 warning：
+
+1. 老人手机号和家里电话为空，所以“打电话”动作不能直接拨号。
+
+验证：
+
+- `node --check scripts/verify-local-app-server.js` 通过。
+- `node --check scripts/verify-local-closed-loop.js` 通过。
+- `node --check local-app-server/server.js` 通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过，当前只剩老人电话未填写 warning。
+- `git diff --check` 通过。
+
+下一步：
+
+1. 补老人手机号 / 家里电话保存和演示数据，验证“打电话”动作能直接拨号。
+2. 上云前把 `local-app-server` 当前 JSON store 跑通到 PostgreSQL store，并保持 `npm test` 与 `npm run verify:local-loop` 双通过。
+3. 再做 HTTPS 云服务部署和树莓派 `GOHOME_APP_SERVER_BASE_URL` 切云端。
+
+## 58. 2026-07-08 PostgreSQL 上云前验收脚本与老人联系字段补齐
+
+背景：
+
+- 当前老人资料接口已经支持手机号和家里电话，陪伴页“打电话”动作也读取这些字段。
+- 但上云迁移层原本没有把 `phone / mobile_phone / home_phone` 写入 PostgreSQL schema、seed bundle 和反向恢复，切到云数据库后会丢失拨号所需字段。
+- 本机当前没有可用的 `psql / postgres / initdb / docker`，无法直接启动真实 PostgreSQL；因此先补一条拿到数据库连接串即可运行的验收命令。
+
+已完成：
+
+- `local-app-server/migrations/001_initial_schema.sql`
+  - `elder_profiles` 增加 `phone`、`mobile_phone`、`home_phone`。
+- `scripts/export-local-app-db.js`
+  - seed bundle 导出老人手机号、手机号码和家里电话。
+  - 即使历史 JSON 还没有显式保存老人资料，也会为每个家庭导出一条默认 `elder_primary`。
+- `local-app-server/postgres-store.js`
+  - PostgreSQL 表反向恢复到本地内存结构时保留老人联系电话。
+- `scripts/verify-local-app-server.js`
+  - 增加老人联系字段导出和恢复断言。
+- `scripts/verify-postgres-loop.js`
+  - 新增真实 PostgreSQL 闭环验证脚本。
+  - 有 `GOHOME_DATABASE_URL` 时会运行迁移、启动 PostgresStore 版本的本地 App API、验证健康检查、用户、家庭、摄像头、摘要和模型能力接口。
+  - 默认要求空数据库，避免误覆盖已有云库数据；非空库只允许显式传 `--allow-non-empty`。
+- `package.json`
+  - 新增 `npm run verify:postgres-loop`。
+
+验证：
+
+- `node --check scripts/verify-postgres-loop.js` 通过。
+- `node --check scripts/export-local-app-db.js` 通过。
+- `node --check local-app-server/postgres-store.js` 通过。
+- `npm run db:migrate -- --dry-run` 通过。
+- `npm run db:export -- --out /tmp/gohome-cloud-seed.json` 通过，当前导出 `elder_profiles=1`。
+- `npm test` 通过。
+- `npm run verify:postgres-loop -- --help` 可显示使用说明。
+- 当前无 PostgreSQL 连接串时，`npm run verify:postgres-loop` 会明确报错 `GOHOME_DATABASE_URL or --database-url is required for Postgres loop verification`，不会假装通过。
+
+下一步：
+
+1. 准备一个空 PostgreSQL 数据库，执行：
+
+```bash
+GOHOME_DATABASE_URL='postgres://...' npm run verify:postgres-loop
+```
+
+2. 通过后，再用同一个连接串临时启动 PostgresStore 版 App API：
+
+```bash
+GOHOME_APP_STORE=postgres GOHOME_DATABASE_URL='postgres://...' npm run app-server
+```
+
+3. App API 的 Postgres 版本验证稳定后，再部署 HTTPS 云服务，并把树莓派盒子的 `GOHOME_APP_SERVER_BASE_URL` 从本地 `8788` 切到云端地址。
+
+## 59. 2026-07-08 注册登录数据边界与家庭隔离收口
+
+背景：
+
+- 用户指出当前“随便输一个账号都能登录，还能读取原来的数据”，这会让本地闭环看起来通了，但产品语义是错的。
+- 正确产品路径必须是：账号登录后只能读取自己加入的家庭；新账号不能直接看到旧家庭、旧设备、旧摄像头和旧事件。
+- 本地固定 `GOHOME_APP_TOKEN` 仍需保留给自检脚本和当前盒子联调兼容，但浏览器 App 不能再自动拿这个演示 token 当作登录态。
+
+已完成：
+
+- `local-app-server/server.js`
+  - 新增 App 会话 token：登录 / 注册返回 `app_...` 会话 token。
+  - 新增 `family_members` 数据归属：家庭、设备绑定、摄像头、事件、关怀卡片等 App 侧读取均按当前用户可访问家庭过滤。
+  - 未知账号登录返回 `401`，已存在账号重复注册返回 `409`。
+  - 新注册账号默认没有家庭，必须创建家庭或加入家庭后才能看到设备和摄像头。
+  - 旧 JSON 数据兼容迁移：如果旧库只有默认家庭和当前家属账号，但缺少 `family_members`，会把默认家庭补给当前家属账号，避免已接通的盒子和摄像头在本地升级后消失。
+  - 摄像头截图、评估结果、实时流和媒体文件读取增加家庭权限校验，避免知道 camera id / media path 后跨家庭读取。
+- `assets/scripts/edge-client.js`
+  - 浏览器不再从 `/health` 自动写入本地演示 token。
+  - 如果浏览器里残留旧的本地演示 token，连接服务时会清掉，避免未登录状态读取旧家庭。
+- `assets/scripts/stitch-app-data.js`
+  - 登录页手机号表单改为调用 `login`，不再静默调用 `register`。
+  - 登录成功后，有家庭则进入首页；无家庭才进入老人资料 / 建家流程。
+- `assets/scripts/stitch-app-routes.js`
+  - 删除登录表单 `submit -> parent_profile.html` 的旧路由劫持，登录跳转由真实登录结果决定。
+- `scripts/export-local-app-db.js`
+  - seed bundle 导出真实 `family_members`，不再把所有家庭都挂到第一个用户。
+- `local-app-server/postgres-store.js`
+  - PostgreSQL 反向恢复时保留 `family_members`，避免切库后账号家庭关系丢失。
+- `scripts/verify-local-app-server.js`
+  - 增加未知账号登录失败、重复注册失败、新账号无默认家庭、跨家庭访问拒绝等回归断言。
+  - 后续 App 侧接口测试全部使用真实登录会话 token，而不是固定演示 token。
+
+验证：
+
+- `node --check local-app-server/server.js` 通过。
+- `node --check scripts/verify-local-app-server.js` 通过。
+- `node --check scripts/export-local-app-db.js` 通过。
+- `node --check local-app-server/postgres-store.js` 通过。
+- `npm test` 通过。
+- 重启 `com.gohome.local-app-server` 后，`npm run verify:local-loop` 通过：
+  - `23 passed, 1 warnings, 0 failed`
+  - 当前唯一 warning 仍是老人手机号 / 家里电话为空。
+- 浏览器真实验证：
+  - 未登录打开 `http://127.0.0.1:8788/index.html?app=1` 不再读取默认家庭、盒子和摄像头。
+  - 使用已有手机号账号 `13818462550` 登录后，首页显示默认家庭、家庭盒子已同步、2 路摄像头和今日关怀卡片。
+
+当前边界：
+
+- 本地手机号登录仍是验证码替身，不是真实短信 OTP。
+- 还没有做正式“首次注册 / 邀请加入家庭”完整产品流；当前注册接口已具备隔离语义，但登录页主流程仍偏演示。
+- 老人手机号和家里电话仍为空，导致“打电话”动作不能直接拨号。
+- 云端 Postgres 真实连接串尚未提供，`verify:postgres-loop` 还没有对真实云库跑过。
+
+下一步：
+
+1. 补老人手机号 / 家里电话配置和演示数据，消除本地闭环唯一 warning，并让打电话动作可验证。
+2. 收口首次注册 / 已有账号登录 / 无家庭建家 / 加入家庭的 App 产品流，避免注册和登录混在一起。
+3. 用空 PostgreSQL 数据库跑 `GOHOME_DATABASE_URL='postgres://...' npm run verify:postgres-loop`。
+4. Postgres 版 App API 验证稳定后，再部署 HTTPS 云服务并把树莓派盒子切到云端地址。
+
+## 60. 2026-07-08 老人联系电话配置入口收口
+
+背景：
+
+- 本地闭环唯一 warning 是老人手机号 / 家里电话为空，导致“打电话”动作不能直接拨号。
+- 不能为了消除 warning 写入假号码；必须让用户在 App 里补充真实联系电话。
+- 资料页此前只适合首次添加，已有家庭从“我的”进入时没有清晰入口，也没有预填已有老人资料。
+
+已完成：
+
+- `assets/scripts/stitch-app-data.js`
+  - `parent_profile.html` 现在会读取当前家庭的 `elder_primary` 资料。
+  - 已有资料时自动预填称呼、关系、城市、老人手机号和家里电话。
+  - 已有资料时页面文案切换为“家人资料 / 编辑被守护人资料 / 保存资料”。
+  - 保存后按 `next` 参数回跳；从“我的”进入时保存后返回“我的”，首次流程仍可继续到家庭 / 设备绑定。
+  - 未登录直接打开资料页会回到登录页，不再静默失败。
+- `privacy.html`
+  - “我的”设置列表新增“家人资料”入口，说明为“称呼、城市、手机号和家里电话”。
+- `assets/scripts/companionship-live.js`
+  - 陪伴页读取老人联系电话。
+  - 有电话时按钮使用 `tel:` 直接拨号。
+  - 无电话时按钮文案改为“补电话”，点击进入家人资料页，不再伪装成可拨号。
+- `assets/scripts/stitch-app-routes.js`
+  - 增加“家人资料”路由识别。
+
+验证：
+
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `node --check assets/scripts/companionship-live.js` 通过。
+- `node --check assets/scripts/stitch-app-routes.js` 通过。
+- `npm test` 通过。
+- `git diff --check` 通过。
+- 重启 `com.gohome.local-app-server` 后，`npm run verify:local-loop` 通过：
+  - `23 passed, 1 warnings, 0 failed`
+  - warning 仍是老人手机号 / 家里电话为空，这是因为还没有真实号码，不是配置链路缺失。
+- 浏览器真实验证：
+  - `privacy.html?app=1` 显示“家人资料”入口。
+  - `parent_profile.html?app=1&next=privacy.html` 预填 `张阿姨 / 杭州`，手机号和家里电话为空，保存按钮可用。
+  - `companionship.html?app=1` 无电话时显示“补电话 / 先补充电话”，且没有 `tel:` 链接。
+
+当前边界：
+
+- 还没有用户提供真实老人手机号或家里电话，所以本地闭环 warning 保留。
+- 保存真实号码后，应重新跑 `npm run verify:local-loop`，预期 warning 消失。
+
+下一步：
+
+1. 用户在“我的 -> 家人资料”填写真实老人手机号或家里电话。
+2. 重新跑 `npm run verify:local-loop`，确认 `elder contact` 变为通过。
+3. 然后继续收口首次注册 / 已有账号登录 / 无家庭建家 / 加入家庭的产品流。
+
+## 61. 2026-07-08 登录 / 注册入口与播放凭证用户绑定收口
+
+背景：
+
+- 登录页虽然已接后端真实 `login`，但视觉和交互仍是旧的“一键登录”原型，容易让人误以为随便输入即可进入。
+- 旧登录页还保留微信 / Apple 等未实现入口，点击路由曾会直接跳资料页，不符合产品路径。
+- 新增手机号账号回归测试后发现一个真实后端问题：媒体播放 ticket 只校验票据存在，没有把签发用户带到后续媒体请求，跨账号状态下可能误 403 或误授权。
+
+已完成：
+
+- `login.html`
+  - 改为明确的“已有账号 / 首次创建”分段入口。
+  - 移除不可用的“一键登录”、微信登录和 Apple 登录视觉入口。
+  - 本地阶段验证码按钮改为“演示验证码”，点击仍只填入 `000000`，不伪装成真实短信。
+- `assets/scripts/stitch-app-data.js`
+  - 登录模式调用 `GoHomeEdge.login`。
+  - 首次创建模式调用 `GoHomeEdge.register`。
+  - 前端不再用默认手机号兜底；手机号必须是 11 位。
+  - 新账号创建后进入老人资料 / 建家流程，不读取旧家庭。
+- `assets/scripts/stitch-app-routes.js`
+  - 登录页只保留协议跳转；删除未实现第三方登录和旧“一键登录”直跳资料页映射。
+- `local-app-server/server.js`
+  - 手机号账号本地验证码收紧为 `000000` 或账号保存的验证码，不再“手机号存在 + 任意 4 位以上验证码”即可登录。
+  - 播放 ticket 绑定签发用户，后续媒体 / 视频请求用 ticket 也能按正确用户做家庭权限校验。
+- `scripts/verify-local-app-server.js`
+  - 增加手机号注册、重复注册、错误验证码失败、正确验证码登录、新手机号账号无家庭的回归断言。
+  - seed bundle 和 Postgres 反向恢复校验同步覆盖无家庭手机号账号。
+
+验证：
+
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `node --check assets/scripts/stitch-app-routes.js` 通过。
+- `node --check local-app-server/server.js` 通过。
+- `node --check scripts/verify-local-app-server.js` 通过。
+- `npm test` 通过。
+- 重启 `com.gohome.local-app-server` 后，`npm run verify:local-loop` 通过：
+  - `23 passed, 1 warnings, 0 failed`
+  - warning 仍是老人手机号 / 家里电话为空。
+- 浏览器验证 `http://127.0.0.1:8788/login.html?app=1`：
+  - 默认显示“已有账号”，提交按钮为“登录”。
+  - 切换“首次创建”后提交按钮变为“创建账号”。
+  - 页面不再显示“一键登录 / 微信登录 / Apple 登录”。
+
+当前边界：
+
+- 本地验证码仍是演示替身 `000000`，不是正式短信 OTP。
+- 新账号创建后的“创建家庭 / 加入家庭 / 邀请码加入”还需要继续产品化；当前先进入老人资料并由现有流程创建家庭。
+- 真实拨号仍依赖用户填写老人手机号或家里电话。
+
+下一步：
+
+1. 继续收口首次注册后的建家 / 加入家庭路径，避免新账号流程过于隐式。
+2. 用户补充真实老人手机号或家里电话后，重新跑 `npm run verify:local-loop` 消除唯一 warning。
+3. 准备真实 PostgreSQL 连接串，跑 `npm run verify:postgres-loop` 后再进入 HTTPS 云部署。
+
+## 62. 2026-07-08 App 稳定性加固：移除 Tailwind CDN 运行时依赖
+
+背景：
+
+- 浏览器稳定性烟测发现主路径页面虽无白屏、无横向溢出、无前端错误覆盖层，但每页都会出现 `cdn.tailwindcss.com should not be used in production` 警告。
+- 当前产品后续要进入云端和 iOS App/WebView，页面基础样式不能依赖运行时 CDN 和 `tailwind.config` 全局变量，否则离线、网络抖动或 CDN 超时会导致样式不可控。
+
+已完成：
+
+- `tailwind.config.js`
+  - 更新为当前 H5/App 原型实际使用的绿色主题、颜色、字号、间距和字体 token。
+- `assets/styles/tailwind.css`
+  - 通过本地 Tailwind CLI 重新生成，包含当前 HTML 和前端脚本里使用的 utility classes。
+- `package.json`
+  - 新增 `npm run build:css`，后续改页面样式后可稳定重新生成本地 CSS。
+- 所有根目录 HTML
+  - 将 `https://cdn.tailwindcss.com?plugins=forms,container-queries` 替换为 `assets/styles/tailwind.css?v=20260708-local-1`。
+  - 移除旧的 `<script id="tailwind-config">tailwind.config = ...</script>`，避免本地模式下引用不存在的 `tailwind` 全局变量。
+- `scripts/verify-local-app-server.js`
+  - 新增静态断言：HTML 不允许再包含 `cdn.tailwindcss.com` 或 `tailwind.config`。
+
+验证：
+
+- `npm run build:css` 通过。
+- `node --check tailwind.config.js` 通过。
+- `node --check scripts/verify-local-app-server.js` 通过。
+- `rg -n "cdn\\.tailwindcss\\.com|tailwind\\.config" --glob "*.html"` 无结果。
+- `git diff --check` 通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过：
+  - `23 passed, 1 warnings, 0 failed`
+  - warning 仍是老人手机号 / 家里电话为空。
+- 浏览器插件首次烟测通过：
+  - `login / index / monitor / events / companionship / privacy / cameras / rules / care_schedule / parent_profile` 页面均非空。
+  - 无错误覆盖层、无 relevant console error、无横向溢出。
+- Browser 插件在 CSS 切换后的复测阶段连接超时；改用 Chrome headless 抽测 `index / monitor / companionship / privacy / login`：
+  - 页面均生成截图。
+  - DOM 非空。
+  - 均引用本地 Tailwind CSS。
+  - 未发现错误覆盖层。
+
+当前边界：
+
+- Chrome headless 在当前机器上需要外部超时杀进程，但截图和 DOM 已生成；这是验证工具调用方式问题，不是页面未渲染。
+- 本地 CSS 已覆盖当前 HTML/JS 中的类；以后新增 Tailwind class 后必须执行 `npm run build:css`，否则新类不会进入静态 CSS。
+- 联系老人拨号的唯一 warning 仍需要用户填写真实手机号或家里电话。
+
+下一步：
+
+1. 继续做页面和交互层面的稳定性烟测，重点是注册后建家、加入家庭、摄像头配置和规则保存。
+2. 填写真实老人联系电话后复跑 `npm run verify:local-loop`。
+3. 在上云前，把 `npm run build:css && npm test && npm run verify:local-loop` 作为固定本地发布前检查。
+
+## 63. 2026-07-08 首次注册后的创建 / 加入家庭路径收口
+
+背景：
+
+- 上一轮已经把登录页改成“已有账号 / 首次创建”，但新账号后的家庭路径仍不够产品化。
+- 旧逻辑中 `parent_profile.html` 会在无家庭时通过 `ensureFamily()` 隐式创建“我的家”，这会让账号、家庭、老人资料和盒子绑定的顺序不清晰。
+- PRD 当前要求：App 登录或创建账号后，必须显式创建家庭空间或加入家庭空间，再填写老人资料、绑定盒子和配置摄像头。
+
+已完成：
+
+- `local-app-server/server.js`
+  - `publicFamily` 返回本地邀请码 `join_code`，格式为 `GH-{familyId}-{校验码}`。
+  - 新增 `POST /api/families/join` / `POST /api/v1/households/join`，当前账号可通过邀请码加入已有家庭。
+  - `family_members` 成员数会同步回家庭 `member_count`，避免加入家庭后人数不准。
+- `assets/scripts/edge-client.js`
+  - 新增 `GoHomeEdge.joinFamily({ code })`。
+- `login.html` + `assets/scripts/stitch-app-data.js`
+  - 首次创建账号后进入 `family.html?mode=setup`，不再直接进入老人资料页。
+  - 已有账号登录后，如果没有家庭，也进入 `family.html?mode=setup`。
+- `family.html`
+  - 页面明确分为“创建家庭并填写资料”和“加入已有家庭”。
+  - 加入家庭需要输入家人给的邀请码。
+  - 已有家庭时展示家庭邀请码，并给出“填写资料 / 绑定盒子”下一步。
+- `assets/scripts/stitch-app-data.js`
+  - 家庭创建成功后进入 `parent_profile.html?family_id=...&next=device_binding.html?family_id=...`。
+  - 加入家庭成功后进入首页，直接读取该家庭数据。
+  - `parent_profile.html` 如果当前账号没有家庭，会回到家庭设置页，不再隐式创建家庭。
+  - “创建家庭”和“保存资料”按钮增加 `data-action`，避免全局文字路由抢在真实提交逻辑前跳转。
+- `scripts/verify-local-app-server.js`
+  - 增加邀请码格式、错误邀请码失败、正确邀请码加入家庭、新账号加入后能看到家庭、seed bundle 保留 3 条 `family_members` 的回归断言。
+
+验证：
+
+- `node --check local-app-server/server.js` 通过。
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `node --check assets/scripts/edge-client.js` 通过。
+- `node --check scripts/verify-local-app-server.js` 通过。
+- `npm run build:css` 通过。
+- `npm test` 通过。
+- 重启 `com.gohome.local-app-server` 后，`npm run verify:local-loop` 通过：
+  - `23 passed, 1 warnings, 0 failed`
+  - warning 仍是老人手机号 / 家里电话为空。
+- 静态检查：
+  - `family.html?app=1` 已包含“创建家庭并填写资料”“加入已有家庭”和 `familyJoinCode` 输入。
+  - `git diff --check` 通过。
+
+当前边界：
+
+- 当前邀请码是本地闭环可验证的简化码，不是正式云端邀请链接、二维码签名或过期机制。
+- 正式家庭邀请仍需云端邀请表、过期时间、角色权限、撤销和审计。
+- 加入家庭后当前先进入首页；是否要求补自己的关系/昵称，留到家庭成员正式权限模型处理。
+
+下一步：
+
+1. 继续验证新注册用户真实浏览路径：注册 -> 创建家庭 -> 填老人资料 -> 绑定盒子 -> 摄像头配置。
+2. 用户补真实老人手机号或家里电话，消除唯一闭环 warning。
+3. 再进入 PostgreSQL 真实连接串验证和 HTTPS 云部署。
+
+## 64. 2026-07-08 守护规则、亲情关怀规则和关键交互修复
+
+背景：
+
+- 用户反馈守护规则里人形、无人和跌倒无法勾选，且 App 规则页没有和盒子视觉算法字段对齐。
+- 老人资料页“身份称呼”选中态不明显。
+- 陪伴页“发消息”会被全局文字路由误跳到事件页，不符合产品逻辑。
+- 关怀推送页只有“7 类内容 + 每天一次”，没有体现每日汇总卡和分类触发规则的关系。
+- 首页和关怀图文卡片需要继续贴合温暖、场景化、电商生活方式卡片风格。
+
+已完成：
+
+- `rules.html` + `assets/scripts/rules-live.js`
+  - 规则页不再用 `detector_backend === "yolo"` 强行禁用人形、无人和跌倒开关。
+  - 保存规则时不再因为前端判断而把 `person_detection_enabled`、`fall_detection_enabled` 强制置 false。
+  - 新增 `activity_detection_enabled` 和 `fire_detection_enabled` 两个盒子规则开关，对应盒子 rule_engine 已有字段。
+  - 页面文案改为“盒子视觉算法”，显示基础视觉、YOLO、RTMPose 或演示视觉管线的状态，不再把底层后端名暴露成用户理解成本。
+- `local-app-server/server.js`
+  - `/api/device` 返回 `vision_capabilities`，包含质量、运动、人形、无人、跌倒候选、活动候选和明火候选能力摘要。
+  - `defaultCareSchedule()` 和 `normalizeCareSchedule()` 增加 `delivery_rules`，用于保存每日汇总、异常即时、节日提前、纪念日提前和回家间隔阈值。
+  - 关怀文本和生图默认提示词更新为温暖、场景化、生活方式卡片方向，强调 1:1 方形、标题和短句清晰、主题和推送信息相关。
+- `parent_profile.html` + `assets/scripts/stitch-app-data.js` + `assets/styles/stitch-app-adapt.css`
+  - 称呼卡片点击后同步输入框、`aria-pressed` 和唯一选中态。
+  - 选中卡片增加深色边框、内描边和勾选标记，避免看不出当前选择。
+- `companionship.html` + `assets/scripts/companionship-live.js`
+  - “发消息”改为 `button[data-action="contact-wechat"]`，不再使用空 `href`。
+  - 点击后不再跳事件页，也不伪装成已接入微信；本地 Web 显示“iOS App 内会接入微信跳转”。
+  - “打电话”继续读取老人手机号或家里电话，已填写时使用 `tel:`。
+- `care_schedule.html` + `assets/scripts/care-schedule-live.js`
+  - 新增“推送规则”区域：每日汇总、家里异常、节日问候、纪念日和回家间隔。
+  - 页面明确“一张每日汇总卡负责日常关怀，异常和特殊日期按规则触发提醒”。
+  - 保存时写入 `delivery_rules`：
+    - `daily_digest`
+    - `home_status.daily_digest_plus_exception`
+    - `holidays.holiday_window`
+    - `anniversaries.annual_window`
+    - `visit_reminder.threshold`
+  - 纪念日继续按每年同月同日提醒，不回到出生年份。
+- `assets/scripts/home-live.js`
+  - 首页信息流文案收敛为家属可读的关怀信息，不再使用后台口吻。
+  - 天气、热点、定位等未接入数据继续明确边界，不伪造实时天气和距离。
+
+验证：
+
+- `node --check assets/scripts/rules-live.js` 通过。
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `node --check assets/scripts/companionship-live.js` 通过。
+- `node --check assets/scripts/care-schedule-live.js` 通过。
+- `node --check assets/scripts/home-live.js` 通过。
+- `node --check local-app-server/server.js` 通过。
+- `npm run build:css` 通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过：
+  - `24 passed, 0 warnings, 0 failed`
+  - 已验证老人联系电话存在，闭环 warning 清零。
+- `git diff --check` 通过。
+- Chrome 实测：
+  - 首页登录真实家属 session 后显示默认家庭、盒子已同步、2 路摄像头和 6 张今日推送卡。
+  - 规则页人形、无人、跌倒、活动、明火开关均不禁用，跌倒开关可勾选并恢复。
+  - 家人资料页默认选中“母亲”，点击其他称呼会同步输入框和唯一选中态。
+  - 陪伴页“发消息”停留在陪伴页并显示本地 Web 限制说明，不再误跳事件页。
+  - 关怀推送页保存后，服务端 `care_card_schedule.delivery_rules` 已持久化。
+  - 首页和关怀推送页截图未发现明显横向溢出。
+
+当前边界：
+
+- 当前本地 Web 不接微信，只做正确占位提示；正式微信跳转放到 iOS App 阶段。
+- 当前本地闭环已保存分类推送规则，但真正按时间触发每日推送、异常即时推送、节日提前推送和 APNs 送达仍属于云端 scheduler / notification-service 阶段。
+- 当前定位距离仍未接 iOS 定位授权，不伪造手机与家的真实距离。
+- 天气和内容推荐已接平台 provider：天气已跑通和风天气，内容搜索已换入有效 Tavily key 并通过本地闭环；外部文章视频推荐仍需要白名单、过滤和内容质量控制后再作为正式推送能力。
+
+下一步：
+
+1. 进入云端前的数据库和服务准备：复跑 PostgreSQL store 验证，确认 `delivery_rules`、规则字段、老人联系电话和家庭成员过滤可迁移。
+2. 最小云部署后，把本地 `8788` 语义迁移到 HTTPS 云端，保持 App/H5 不直连盒子局域网。
+3. 云端跑通 scheduler / notification-service / APNs 后，再做 iOS App 封装和微信 / 系统分享跳转。
+
+## 65. 2026-07-08 天气和热点内容 Provider 接入
+
+背景：
+
+- 用户指出天气和热点内容还没有真实跑通，问天气是否需要 API、热点是否可以用 Tavily。
+- 产品判断：天气必须走天气 provider；Tavily 只适合做老人兴趣话题、文章和视频候选，不适合替代天气 API。
+- 模型、天气、搜索 key 均由 App 服务提供方通过 env 配置，普通用户不能在 App 页面配置。
+
+已完成：
+
+- `.env.example`
+  - 新增平台侧数据源配置：
+    - `GOHOME_WEATHER_PROVIDER`
+    - `GOHOME_QWEATHER_BASE_URL`
+    - `GOHOME_QWEATHER_GEO_BASE_URL`
+    - `GOHOME_QWEATHER_API_KEY`
+    - `GOHOME_QWEATHER_AUTH_MODE`
+    - `GOHOME_SEARCH_PROVIDER`
+    - `GOHOME_TAVILY_BASE_URL`
+    - `GOHOME_TAVILY_API_KEY`
+    - `GOHOME_TAVILY_MAX_RESULTS`
+    - `GOHOME_PROVIDER_REQUEST_TIMEOUT_MS`
+  - 本地 `.env` 已写入用户提供的和风天气 key 和 Tavily key；`.env` 已在 `.gitignore` 中，不进入代码仓库。
+- `local-app-server/server.js`
+  - 新增 `weatherRuntimeConfig()`、`contentSearchRuntimeConfig()` 和 provider 短缓存，避免首页连续刷新反复打外部 API。
+  - 新增和风天气 provider：
+    - 城市搜索使用 `geoapi.qweather.com/v2/city/lookup`。
+    - 实时天气使用 `devapi.qweather.com/v7/weather/now`。
+    - 兼容短 API Key 的 query 鉴权，也保留 `GOHOME_QWEATHER_AUTH_MODE=bearer` 给新版 token。
+  - 新增 Tavily Search provider：
+    - 默认 `POST https://api.tavily.com/search`。
+    - 先用 `Authorization: Bearer`，401/403 时兼容重试 body `api_key`。
+    - 返回结果清洗成 `title/url/source/summary/topic`。
+  - `GET /api/v1/families/{family_id}/weather-signals` 不再返回固定假天气，改为真实 provider 或明确 unavailable。
+  - 新增 `GET /api/v1/families/{family_id}/content-recommendations`。
+  - `careCardFacts()` 改为异步，关怀卡生成时会读取真实 weather/content signal。
+  - 模型上下文增加 `weather`、`content_recommendations`、`content_search`，provider 不可用时明确告诉模型不要编造天气或热点。
+- `assets/scripts/edge-client.js`
+  - 新增 `v1ContentRecommendations()`。
+- `assets/scripts/home-live.js`
+  - 首页信息流天气卡优先展示真实 `weather-signals`。
+  - 首页话题候选卡优先展示 Tavily 返回结果；无结果或 provider 失败时明确显示“内容搜索源暂不可用”。
+  - Chrome 验证当前首页 6 张卡片，天气卡显示 `QWeather · 实时信号`，话题候选卡显示 Tavily 未返回；未发现横向溢出。
+- `scripts/verify-local-closed-loop.js`
+  - 自检新增 `weather provider` 和 `content search`。
+  - provider 不可用时输出 warning，不把假数据算作通过。
+- `scripts/verify-local-app-server.js`
+  - 测试环境默认关闭外部 weather/search provider，避免单元回归依赖外网。
+
+验证：
+
+- `node --check local-app-server/server.js` 通过。
+- `node --check assets/scripts/home-live.js` 通过。
+- `node --check assets/scripts/edge-client.js` 通过。
+- `npm test` 通过。
+- 真实本地接口验证：
+  - 和风天气已跑通：`weather.available=true`，`provider=qweather`，城市为上海，返回实时天气和温度。
+  - Tavily 换入有效 key 后已跑通：`content.available=true`，返回 3 条候选。
+- `npm run verify:local-loop`：
+  - `26 passed, 0 warnings, 0 failed`
+
+当前边界：
+
+- 天气已经从假数据切到真实 provider。
+- Tavily 代码链路已经跑通，但当前搜索结果还只是候选，需要继续优化查询词、来源白名单、负面内容过滤和内容安全策略，避免把不适合家属关怀语境的新闻直接展示成温暖话题。
+- “每天几点自动推送什么消息”仍需云端 scheduler / notification-service / APNs；本地 Web 只负责设置和即时生成/展示，不伪装成真实手机推送。
+
+下一步：
+
+1. 优化 Tavily 查询词、来源白名单、负面内容过滤和候选打分，先让首页话题候选更贴近“温暖、可聊、适合老人兴趣”的产品语境。
+2. 继续验证新注册用户完整路径：注册 -> 创建家庭 -> 填老人资料 -> 绑定盒子 -> 摄像头配置 -> 首页关怀卡。
+3. 上云前跑 PostgreSQL store 验证，确认 provider 配置仍只走 env/Secret Manager，不进入普通用户数据库配置。
+
+## 66. 2026-07-08 Tavily Key 更新后闭环通过
+
+背景：
+
+- 用户提供新的 Tavily key，用于替换上一轮鉴权失败的 key。
+
+已完成：
+
+- 本地 `.env` 更新 `GOHOME_TAVILY_API_KEY`，保留 `GOHOME_SEARCH_PROVIDER=tavily` 和 `GOHOME_TAVILY_BASE_URL=https://api.tavily.com/search`。
+- 重启 `com.gohome.local-app-server`，让本地服务重新读取 `.env`。
+- 直接调用 `GET /api/v1/families/{family_id}/content-recommendations` 验证：
+  - `available=true`
+  - `provider=tavily`
+  - `recommendations.length=3`
+  - 候选结果包含标题、来源和 URL。
+
+验证：
+
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过：
+  - `26 passed, 0 warnings, 0 failed`
+  - `weather provider - qweather 上海 阴 34C`
+  - `content search - tavily 3 candidate(s)`
+
+当前边界：
+
+- Tavily 已经跑通，但第一批候选里可能出现偏泛新闻、负面消费新闻或不够温暖的内容。
+- 下一步不再只是“能搜到”，而是要把内容候选做成产品能力：白名单来源、老人兴趣匹配、负面词过滤、内容摘要重写和频率控制。
+
+## 67. 2026-07-08 首页关怀信息架构收口
+
+背景：
+
+- 首页此前把“今日关怀主卡”“今日推送信号”和历史卡混在一起展示，导致同类文案重复出现，且旧历史卡里的泛化标题继续污染首页观感。
+- 用户明确要求首页先做好：图文卡片要温暖、有场景感；首页内容应围绕家里情况、天气、日历、回家间隔、老人兴趣和历史关怀，不要为了功能强塞跳转。
+
+已完成：
+
+- `index.html`
+  - 新增 `最近关怀` 横滑历史卡区域。
+  - 首页顺序收口为：家庭状态摘要 -> 今日关怀主视觉卡 -> 最近关怀 -> 今日信号 -> 位置与回家 -> 家庭状态。
+- `assets/scripts/home-live.js`
+  - 今日关怀主卡不再被塞进“今日信号”流，信号流只保留天气、日历、回家间隔、话题候选和家庭状态。
+  - 首页主卡有生成图时，图片承担完整图文内容，图片下方只展示生成依据和两个事实点，不再重复图片标题正文。
+  - 历史关怀卡展示层新增文案清洗，旧卡片中的“家里一切平稳 / 聊聊家常”等泛化标题不会继续出现在首页。
+  - Tavily 候选不再把原始新闻标题直接暴露到首页，只作为“可聊话题”候选。
+- `assets/styles/stitch-app-adapt.css`
+  - 重做首页主卡、最近关怀卡和今日信号卡样式，减少生硬边框和大块渐变。
+  - 顶部安全区统一预留 `safe-area-inset-top`，普通浏览器也保留最小手机安全区，避免 iOS 刘海区域压住首屏内容。
+- `local-app-server/server.js`
+  - 默认关怀文案提示词禁止“家里一切平稳 / 聊聊家常”等占位句。
+  - 服务端增加模型输出后处理：模型标题若仍出现泛化句或超长标题，会用真实天气、回家间隔或老人兴趣改写。
+  - 生图提示词禁止品牌字样、logo、角标、水印、奖章和无关徽章。
+- `.env.example` / 本地 `.env`
+  - `GOHOME_MODEL_REQUEST_TIMEOUT_MS` 调整为 `120000`，减少 Wan 生图超时。
+  - API key 仍只在本地 `.env`，代码和 `.env.example` 只保留变量名。
+
+验证：
+
+- 强制重新生成今日关怀卡成功：
+  - 标题：`上海闷热，提醒喝水`
+  - 图片：`image_mode=generated`
+- `node --check assets/scripts/home-live.js` 通过。
+- `node --check local-app-server/server.js` 通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过：
+  - `26 passed, 0 warnings, 0 failed`
+  - 今日关怀卡为新标题，图片为 `generated image/png`。
+- 浏览器验证：
+  - 普通视口和 `390 x 844` 手机视口均无 body 横向滚动。
+  - 首页旧文案 `家里一切平稳 / 聊聊家常` 出现次数为 0。
+  - 390 x 844 下主卡和底部导航未互相挤压。
+
+当前边界：
+
+- 首页视觉与信息架构已经先收口，但 Tavily 候选仍需要下一步做来源白名单、负面词过滤和更稳定的老人兴趣匹配。
+- 历史卡里的旧图片本身可能仍包含旧文字；首页展示层会对旧泛化历史卡改用占位缩略图，避免继续露出旧生成图。后续可提供“重生成历史卡图片”能力。
+
+### 67.1 首页重复与远程关怀动作修正
+
+修正点：
+
+- 首页今日主卡如果已经生成完整 1:1 图文卡，页面不再在图片下方重复渲染标题、正文和事实条。
+- `最近关怀` 只展示历史卡，不再把今天这张主卡重复展示为缩略卡。
+- 旧历史卡如果没有可用高质量缩略图，展示为文字型历史卡，不再出现空白大块占位。
+- 服务端关怀文案增加不可行动作过滤：
+  - 禁止“递茶、端水、送到手边、陪在身边”等需要家属在现场的动作。
+  - 高温天气卡固定为“电话提醒喝水、少久晒、聊晚饭和近况”这类远程可执行动作。
+  - 高温天气卡正文不再让模型自由发挥老人近期兴趣，避免编造“听戏、最近看的节目”等无依据内容。
+
+本次强制重生成今日卡：
+
+- 标题：`上海闷热，提醒喝水`
+- 正文：`今天上海阴，34°C，适合电话提醒喝水、少久晒，再聊聊晚饭和近况。`
+- 图片：`image_mode=generated`
+
+验证：
+
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过，`26 passed, 0 warnings, 0 failed`。
+- 浏览器验证首页：
+  - 今日主卡 copy 区域隐藏。
+  - 最近关怀不包含今天主卡标题。
+  - `递杯茶 / 递茶 / 端水 / 送到手边 / 陪在身边 / 听戏` 出现次数为 0。
+
+### 67.2 首页刷新、内容源和图文主卡稳定性修正
+
+修正点：
+
+- 首页移除 60 秒自动 `setInterval(render)`，不再周期性整页重拉家庭、天气、内容和图片，避免用户看到“页面老刷新 / 主图闪回占位”。
+- 今日关怀主卡改为首屏主视觉：有 1:1 生图时，图片本身承载完整标题和短句，页面不再在图片下方重复正文。
+- `今日灵感` 保留天气、内容搜索、日历、回家提醒和家庭状态，但只作为生成依据展示，不把它们做成强跳转入口。
+- Tavily 内容搜索增加质量过滤：
+  - 过滤英文结果、政治新闻、负面消费新闻、诈骗/防骗/恐吓型标题和医疗诊断类内容。
+  - 查询词改为上海本地、健康生活、适合聊天、养生和节气方向。
+  - 允许上海本地媒体、卫健委和权威媒体来源；首页展示层把长机构标题改写为“可聊时令养生”等产品语言。
+- 服务端高温天气卡继续强制落到远程可执行动作：电话提醒喝水、少久晒、聊晚饭和近况。
+
+本次强制重生成今日卡：
+
+- 标题：`上海闷热，提醒喝水`
+- 正文：`今天上海阴，34°C，适合电话提醒喝水、少久晒，再聊聊晚饭和近况。`
+- 图片：`image_mode=generated`
+
+验证：
+
+- `node --check assets/scripts/home-live.js` 通过。
+- `node --check local-app-server/server.js` 通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过，`26 passed, 0 warnings, 0 failed`。
+- 浏览器 390 x 844 验证：
+  - 今日关怀图加载成功，图片为 `1024 x 1024`。
+  - 首页 `scrollWidth = clientWidth = 390`，无横向溢出。
+  - 今日主卡 copy 区域隐藏，不重复展示图片里的标题正文。
+  - 首页坏词 `递杯茶 / 递茶 / 端水 / 送到手边 / 陪在身边 / 家里一切平稳 / 家里一切安稳 / 聊聊家常` 出现次数为 0。
+
+### 67.3 “我的-关怀推送”作为内容偏好唯一来源
+
+背景：
+
+- 用户确认首页热点、天气、养生、防诈骗、老人兴趣和内容区域等能力，必须和“我的”里设置的关怀推送配置吻合。
+- 产品边界：普通家属只配置内容偏好；模型 Base URL、Key、Prompt、天气 provider 和 Tavily provider 仍由服务提供方通过 `.env` 配置。
+
+已完成：
+
+- `care_schedule.html`
+  - 关怀推送页新增内容类型：本地热点、防诈骗、文娱兴趣。
+  - 新增“内容区域”配置，支持城市、区县和常用区域快捷按钮。
+  - 老人兴趣扩展为本地生活、健康养生、防诈骗、电视节目、社区活动、节气饮食等可选项。
+- `assets/scripts/care-schedule-live.js`
+  - `care_card_schedule` 保存 `content_types.local_hotspots / anti_fraud / culture_entertainment / weather`。
+  - 保存 `content_region.city / district`，为空时由后端回落到老人资料城市/区县。
+  - `delivery_rules` 按内容类型拆分，不再只有“每天一次”的粗粒度设置。
+- `parent_profile.html` / `assets/scripts/stitch-app-data.js`
+  - 老人资料增加区县字段，作为内容区域默认值。
+- `assets/scripts/edge-client.js`
+  - `v1ContentRecommendations()` 支持传 `district`，避免显式调用时丢失区县。
+- `local-app-server/server.js`
+  - `defaultCareSchedule()` / `normalizeCareSchedule()` 支持新内容类型、内容区域和拆分后的投递规则。
+  - 新增 `contentSearchTasksFromPreferences()`：按“我的”里开启的模块拆成 Tavily 搜索任务，例如本地热点、健康养生、防诈骗、文娱兴趣、问候话题。
+  - `fetchContentRecommendations()` 增加 `content_recommendations_enabled` 总开关判断，新用户未开启内容推荐时不会因为默认 schedule 自动搜索。
+  - `careCardFacts()` 和 `/api/v1/families/{family_id}/content-recommendations` 都读取同一份 `care_card_schedule`，并把城市/区县传入天气、内容搜索和每日关怀卡生成上下文。
+
+验证：
+
+- `node --check assets/scripts/care-schedule-live.js` 通过。
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `node --check assets/scripts/edge-client.js` 通过。
+- `node --check local-app-server/server.js` 通过。
+- `npm run build:css` 通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过：
+  - `26 passed, 0 warnings, 0 failed`
+  - `weather provider - qweather 上海 阴 34C`
+  - `content search - tavily 3 candidate(s)`
+  - `cameras configured - 2 enabled`
+  - `camera online - 2/2`
+- 直接调用 `GET /api/v1/families/1/content-recommendations` 验证：
+  - `provider=tavily`
+  - 返回 3 条候选。
+  - 搜索任务按配置拆成 `local_hotspots / health_tips / culture_entertainment / elder_interest_topics`。
+- Chrome 390 x 844 登录态验证：
+  - 关怀推送页回填 `默认家庭 / 上海`。
+  - 已勾选 `home_status / elder_interest_topics / local_hotspots / health_tips / culture_entertainment / weather / visit_reminder / holidays / anniversaries`。
+  - 无横向溢出，`scrollWidth = clientWidth = 390`。
+
+当前边界：
+
+- 当前真实配置里的 `content_region` 为空，因此内容搜索回落到老人资料里的城市“上海”；后续用户在“我的 -> 关怀推送”填城市/区县后会覆盖默认区域。
+- 首页已经能读取同一内容源，但首页视觉和信息密度仍需要下一轮继续优化：把多任务候选包装成更像成熟 App 首页的信息流，而不是简单展示 provider 结果。
+
+### 67.4 首页今日信号信息流与安全区补强
+
+背景：
+
+- 用户继续要求首页先做好，信息要来自真实天气、内容搜索、日历、回家间隔和“我的 -> 关怀推送”设置，不能再像后台模块或泛泛卡片堆砌。
+- 当前首页已经接上 QWeather 和 Tavily，但展示层仍有三类问题：
+  - 天气文案没有充分转成远程可执行动作。
+  - 内容源和 fallback 文案偏技术说明。
+  - 首页信息流边界和阴影仍偏机械，顶部安全区需要再压实。
+
+本次修正：
+
+- `assets/scripts/home-live.js`
+  - 天气卡根据雨、高温、低温和降温等条件改写成远程关怀动作，例如提醒带伞、路滑慢一点、喝水和少久晒。
+  - 内容推荐来源从裸域名改为用户可读来源，如上海卫健委、上观新闻、人民网、新华社、央视和光明网。
+  - 本地热点、养生、文娱兴趣和问候开场卡片不再显示 provider 结果或技术 fallback，而是改成适合电话/微信开场的关怀文案。
+  - `今日可聊` 改成 `今日信号`，并继续从 `care_card_schedule.content_types` 读取“我的”设置作为唯一来源。
+- `assets/styles/stitch-app-adapt.css`
+  - 重新压缩首页信号卡间距、阴影和边界，第一张天气卡作为信息流头条，其余卡片保持双列扫读。
+  - 首页、守护、事件、陪伴和我的主页面底部统一预留底部导航空间。
+  - 首页主内容顶部安全距提升到 `calc(28px + safe-area)`，避免 iOS 刘海区域压住首屏内容。
+- `index.html`
+  - 更新首页说明文案和静态资源版本，避免浏览器缓存旧首页。
+- `local-app-server/server.js`
+  - 生图提示词增加约束：图片主视觉必须贴合当天主题，不生成泛泛家庭关怀模板，不画后台 UI、按钮面板、促销角标或信息堆叠卡。
+
+验证：
+
+- `node --check assets/scripts/home-live.js` 通过。
+- `node --check local-app-server/server.js` 通过。
+- `npm run build:css` 通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过：
+  - `26 passed, 0 warnings, 0 failed`
+  - `weather provider - qweather 上海 大雨 26C`
+  - `content search - tavily 3 candidate(s)`
+  - `care card image - generated image/png`
+  - `cameras configured - 2 enabled`
+  - `camera online - 2/2`
+- Chrome 首页验证：
+  - 首页渲染 8 张今日信号卡。
+  - 首页没有 `递杯茶 / 递茶 / 端水 / 送到手边 / 陪在身边 / 家里一切平稳 / 家里一切安稳 / 聊聊家常 / 多陪陪家人`。
+  - 首页不再显示 `QWeather / wsjkw.sh.gov.cn / sghexport.shobserver.com / news.gmw.cn` 等裸技术来源。
+  - 主内容顶部计算安全距为 `58px`，底部主内容预留 `124px`，固定底部导航不压住最后内容。
+
+当前边界：
+
+- 首页使用 Tavily 候选做关怀话题上下文，但仍只作为家属端“可聊信号”，不默认向老人推送外链。
+- 真正的每日到点推送、异常即时推送、APNs 和 iOS 定位授权仍属于云端 scheduler / notification-service / iOS 阶段。
+
+### 67.5 关怀推送配置源头整理
+
+背景：
+
+- 首页今日信号已经按“我的 -> 关怀推送”读取内容偏好，但设置页本身还偏字段堆叠，用户不容易理解勾选后首页会出现什么、哪些内容会即时提醒或提前提醒。
+- 普通家属不应该看到 `scheduler / APNs / 云端阶段 / 本地闭环` 这类开发和后端实现词。
+
+本次修正：
+
+- `care_schedule.html`
+  - 新增“当前配置预览”，直接说明：
+    - 首页会展示哪些模块。
+    - 内容搜索按哪个城市/区县和兴趣筛选。
+    - 每日卡、异常、节日、纪念日和回家间隔分别如何触发。
+  - 新增“推荐组合”：
+    - 基础关怀：家里状态、天气、节日和回家提醒。
+    - 日常推荐：加入本地、养生和文娱，让首页更丰富。
+    - 安心提醒：额外打开防诈骗和异常即时提醒。
+  - 新增自定义老人兴趣输入，允许家属添加老人关注的内容。
+  - 清理页面可见开发词，改成普通用户能理解的产品文案。
+  - 顶部安全区改为最小 `34px` 预留，避免页面贴近刘海区域。
+- `assets/scripts/care-schedule-live.js`
+  - 增加 `contentTypeMeta` 和 `presets`，推荐组合会真实写入 `content_types / interest_topics / message_focus / exception_push_enabled`。
+  - 自定义兴趣会动态添加到话题网格，勾选后随 `interest_topics` 保存。
+  - 配置预览会随时间、区域、内容类型、兴趣、节日提前天数、纪念日提前天数和回家间隔实时更新。
+  - 保存仍使用原来的 `CarePreference.metadata.care_card_schedule`，没有新增第二套配置源。
+
+验证：
+
+- `node --check assets/scripts/care-schedule-live.js` 通过。
+- `node --check assets/scripts/home-live.js` 通过。
+- `node --check local-app-server/server.js` 通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过：
+  - `26 passed, 0 warnings, 0 failed`
+  - 天气、Tavily、今日关怀图、设备绑定、两路摄像头和主页面均通过。
+- Chrome 验证 `care_schedule.html?app=1`：
+  - 首屏可见配置预览、每日汇总卡、推荐组合和推送规则。
+  - 推荐组合可切换并实时更新预览。
+  - 自定义兴趣可添加并勾选，但未提交保存，不污染当前真实配置。
+  - 页面没有 `scheduler / APNs / 云端阶段 / 本地闭环 / Base URL / API Key` 等普通用户不该看到的词。
+  - `document.body.scrollWidth <= document.body.clientWidth`，无横向溢出。
+
+当前边界：
+
+- 关怀推送页已经保存完整规则，但真实每日到点推送、异常即时推送和 iOS 推送送达仍需云端任务与 iOS 通知通道实现。
+
+### 67.6 守护规则与盒子视觉能力对齐
+
+背景：
+
+- 用户反馈“守护规则”里人形、无人和跌倒勾选状态和盒子实际视觉算法不一致，页面看起来像能配，但配置没有和盒子能力绑定。
+- 当前家庭盒子在线且规则同步正常，但盒子回传的视觉后端为 `基础视觉检测`；这意味着质量检测、运动检测、活动状态和烟火候选可以执行，人形、长时间无人和跌倒候选需要盒子端启用人形或姿态模型后才应开放。
+
+本次修正：
+
+- `local-app-server/server.js`
+  - `deviceVisionCapabilities()` 不再只看 `detector_backend`，同时兼容盒子回传的 `runtime.vision_capabilities`、`runtime.pose_enabled`、`runtime.worker` 等字段。
+  - App 的 `/api/app/device` 会标准化返回 `person_detection / no_person_detection / fall_candidate / activity_candidate / fire_candidate / pose_detection`。
+- `edge-agent/app/main.py`
+  - 盒子配置同步上报和本机 `/api/device` 增加 `vision_capabilities`，让 App 服务端能按真实能力展示规则开关。
+- `rules.html`
+  - 盒子视觉算法每一项新增状态标记：可用、需人形模型、需姿态模型或盒子未支持。
+  - 通知区域清理开发实现词，改成普通家属能理解的说明。
+- `assets/scripts/rules-live.js`
+  - 初始化时先读取盒子能力，再渲染规则开关。
+  - 不支持的算法项会禁用并取消勾选，保存时不会再把无效规则发给盒子。
+  - 若旧规则里已有当前盒子无法执行的算法项，页面会自动校准为关闭并保存。
+  - 保存状态优先按 `desired_rule_version === applied_rule_version` 判断，显示“已同步到家庭盒子 / 待同步 / 盒子未运行”。
+  - 待同步时增加轻量后续轮询，不需要手动刷新也能更新为“已生效”。
+
+验证：
+
+- `node --check assets/scripts/rules-live.js` 通过。
+- `node --check local-app-server/server.js` 通过。
+- `python3 -m py_compile edge-agent/app/main.py` 通过。
+- 重启本地 App 服务 `http://127.0.0.1:8788`，服务健康检查通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过：
+  - `26 passed, 0 warnings, 0 failed`
+  - `device visible - edge-042714be475b91da`
+  - `edge worker - reported running`
+  - `rules applied - rules-037e17c81a12`
+  - `cameras configured - 2 enabled`
+  - `camera online - 2/2`
+- 接口验证：
+  - `/api/app/device` 返回当前盒子能力：人形、无人、跌倒为不可用，活动和烟火为可用。
+  - `/api/rules` 已校准为 `person_detection_enabled=false`、`fall_detection_enabled=false`、`activity_detection_enabled=true`、`fire_detection_enabled=true`。
+  - `/api/v1/device/config` 下发给盒子的规则与 `/api/rules` 一致。
+  - `/api/rules/runtime` 显示 `desired_rule_version` 和 `applied_rule_version` 一致。
+- Chrome 验证 `rules.html?app=1`：
+  - 人形、长时间无人、疑似跌倒显示为不可用且禁用。
+  - 活动状态、明火或烟火显示为可用且可配置。
+  - 页面没有横向溢出。
+  - 页面没有 `APNs / 云端阶段 / 本地闭环 / provider / scheduler / Base URL / API Key` 等普通用户不该看到的词。
+  - 状态显示“已同步到家庭盒子”。
+
+当前边界：
+
+- 当前盒子回传的是基础视觉检测，所以人形、无人和跌倒暂时被正确禁用；如果要开放这三项，需要在盒子端启用人形或姿态模型，并让同步上报带回对应能力。
+- 守护规则已经能保存、下发、盒子应用并在 App 显示同步状态；下一步应继续补“真实事件反馈质量”，确认事件页展示的候选事件、规则证据和当前两路摄像头检测结果完全一致。
+
+### 67.7 事件页真实反馈与旧离线评估修复
+
+背景：
+
+- 用户继续要求核对进度和逻辑质量，上一轮已经把规则和盒子能力对齐；这一轮继续检查“守护事件真实反馈”。
+- 当前用户态事件列表和首页摘要已经是 0 条，说明旧离线事件没有继续污染用户事件列表。
+- 但发现 `/api/app/cameras/{id}/evaluation/latest` 仍从旧的离线事件反推最近评估，导致摄像头实际在线时，评估接口还显示旧的 `camera_offline` 状态。这会影响检测页、事件页空态和用户对系统是否还在工作的判断。
+
+本次修正：
+
+- `local-app-server/server.js`
+  - `latestCameraEvaluationPayload()` 过滤已恢复的旧离线事件。
+  - 如果当前摄像头在线且没有新的规则命中，评估接口返回：
+    - `camera_state=online`
+    - `candidates=[]`
+    - `explanation=摄像头在线，最近没有命中需要家属确认的规则。`
+  - 这样事件列表、首页摘要和每路摄像头最近评估保持一致。
+- `assets/scripts/events-live.js`
+  - 事件页不再只显示空态文案。
+  - 没有待确认事件时，展示每路启用摄像头的最近同步状态卡。
+  - 卡片显示“房间 · 摄像头名”、在线状态、是否命中告警规则和最近同步时间。
+  - 正常检测不会被伪装成事件，点击摄像头状态卡进入对应守护页。
+- `assets/styles/stitch-app-adapt.css`
+  - 新增摄像头检测状态卡样式，保持紧凑、低边界、无横向溢出。
+- `scripts/verify-local-closed-loop.js`
+  - 自检新增每路在线摄像头的最新评估断言。
+  - 如果摄像头在线但评估接口仍返回 `offline`，自检会直接失败。
+
+验证：
+
+- 重启本地 App 服务 `http://127.0.0.1:8788` 后接口验证：
+  - 摄像头 8：`camera_state=online`、`candidates_len=0`。
+  - 摄像头 9：`camera_state=online`、`candidates_len=0`。
+  - `/api/app/events?acknowledged=false` 返回 0。
+  - `/api/app/summary/today` 返回 `open_events=0`、`critical_events=0`。
+- `node --check local-app-server/server.js` 通过。
+- `node --check assets/scripts/events-live.js` 通过。
+- `node --check scripts/verify-local-closed-loop.js` 通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过：
+  - `28 passed, 0 warnings, 0 failed`
+  - 新增检查：
+    - `camera evaluation - 智能摄像头 online 0 candidate(s)`
+    - `camera evaluation - 智能摄像头2 online 0 candidate(s)`
+- Chrome 验证 `events.html?app=1`：
+  - 页面标题为 `2 路摄像头在线，暂无异常`。
+  - 两张摄像头状态卡分别显示：
+    - `客厅 · 智能摄像头 在线`
+    - `客厅 · 智能摄像头2 在线`
+  - 两张卡都显示 `未命中告警规则`。
+  - 页面无横向溢出。
+  - 页面没有旧工程错误文案和普通用户不该看到的开发词。
+
+当前边界：
+
+- 事件页现在能说明“系统在检测但没有异常”，不再让用户以为事件反馈断了。
+- 当前本地 App 服务仍没有持久化每帧正常检测记录，只保存告警事件和设备同步状态；后续如果要展示更细的“最近 10 次检测历史 / 画面质量趋势”，需要盒子侧把规则评估摘要作为非告警 telemetry 上报到 App 服务。
+
+### 67.8 首页、守护、检测、事件状态口径统一
+
+背景：
+
+- 上一轮修复了事件页和评估接口，但检测页、守护页仍可能在没有最新截图时显示“等待规则 / 等待检测摘要”，和 `evaluation/latest` 的在线状态不一致。
+- 用户需要看到的是同一条产品事实：摄像头在线、盒子在跑、当前没有命中需要确认的规则。
+
+本次修正：
+
+- `assets/scripts/detection-live.js`
+  - 检测页在没有最新截图时也会读取 `/api/app/cameras/{id}/evaluation/latest`。
+  - 如果评估状态是在线且无候选，页面显示：
+    - `摄像头在线，暂无异常`
+    - `未命中规则`
+    - `摄像头在线，最近没有命中需要家属确认的规则。`
+  - 检测页能力说明改为读取 `device.vision_capabilities`，不再硬写 YOLO 口径。
+  - 人形/无人、跌倒能力显示和守护规则页一致：当前基础视觉检测下显示“需模型”。
+- `assets/scripts/monitor-live.js`
+  - 守护页在没有最新截图时也读取最近评估。
+  - 若评估在线且无候选，则展示“暂无异常 / 未命中规则 / 家里平稳”，不再只显示“等待检测摘要”。
+- `monitor.html` / `detection.html` / `events.html`
+  - 更新脚本和样式版本号，避免浏览器继续使用旧缓存。
+
+验证：
+
+- `node --check assets/scripts/detection-live.js` 通过。
+- `node --check assets/scripts/monitor-live.js` 通过。
+- `node --check assets/scripts/events-live.js` 通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过：
+  - `28 passed, 0 warnings, 0 failed`
+  - 两路摄像头在线。
+  - 两路最新评估均为 `online 0 candidate(s)`。
+- Chrome 验证：
+  - `monitor.html?camera_id=8&app=1`
+    - 显示 `实时画面已返回`
+    - `画面在线 / 继续观察 / 无待处理`
+  - `detection.html?camera_id=8&app=1`
+    - 显示 `摄像头在线，暂无异常`
+    - 显示 `未命中规则`
+    - 规则摘要为 `摄像头在线，最近没有命中需要家属确认的规则。`
+    - 人形和跌倒能力说明与当前基础视觉能力一致。
+  - `events.html?app=1`
+    - 显示 `2 路摄像头在线，暂无异常`
+    - 两路摄像头状态卡均为在线、未命中告警规则。
+  - 三个页面均无横向溢出。
+  - 三个页面均没有旧工程错误文案和普通用户不该看到的开发词。
+
+当前边界：
+
+- 三个页面的用户态状态口径已经统一。
+- 仍未做“正常检测历史趋势”，因为当前本地服务没有持久化非告警评估流水；若需要趋势图，需要盒子侧额外上报正常检测摘要。
+
+### 67.9 新用户路径、账号隔离和用户可见文案复核
+
+背景：
+
+- 用户要求继续核对进度，明确“什么时候需要用户处理再提醒”。
+- 当前主账号、家庭、盒子、两路摄像头、天气、Tavily、关怀卡片和事件空状态已经通过本地闭环，但还需要把“注册 / 登录后是否串数据”做成可重复自检。
+- 同时页面里仍残留少量工程词或本地联调词，容易让普通家属误以为 App 直接依赖开发服务。
+
+本次修正：
+
+- `scripts/verify-local-closed-loop.js`
+  - 新增临时新账号路径自检。
+  - 自检会注册临时账号，确认新账号默认：
+    - 没有继承旧家庭。
+    - 没有继承旧摄像头。
+    - 没有继承旧盒子绑定。
+  - 随后创建临时家庭并保存老人资料，确认老人称呼、手机号和家里电话能按账号家庭持久化。
+  - 测试结束后会重新登录原主账号，避免本地默认账号停留在临时账号。
+- `login.html` / `assets/scripts/stitch-app-data.js`
+  - 登录页按钮从“演示验证码”改为“获取验证码”。
+  - 本地联调仍自动填入验证码，但不再把“演示”作为用户界面文案。
+- `assets/scripts/app-shell-live.js`
+- `assets/scripts/connect-live.js`
+- `assets/scripts/detection-live.js`
+- `assets/scripts/rules-live.js`
+- `assets/scripts/login-live.js`
+- `privacy.html`
+  - 把普通用户可见的 `edge-agent`、`这台 Mac`、`演示视觉`、`本地演示通知` 等词替换为产品语言：
+    - 家庭盒子服务。
+    - 家庭盒子负责拉流和检测。
+    - 基础视觉 / 基础视觉管线。
+    - 关怀提醒、告警通知和到家提醒设置。
+
+验证：
+
+- `node --check scripts/verify-local-closed-loop.js` 通过。
+- `node --check assets/scripts/stitch-app-data.js` 通过。
+- `node --check assets/scripts/app-shell-live.js` 通过。
+- `node --check assets/scripts/connect-live.js` 通过。
+- `node --check assets/scripts/detection-live.js` 通过。
+- `node --check assets/scripts/rules-live.js` 通过。
+- `node --check assets/scripts/login-live.js` 通过。
+- `npm run verify:local-loop` 通过：
+  - `36 passed, 0 warnings, 0 failed`
+  - 新增检查包括：
+    - `new user family isolation - no inherited family`
+    - `new user camera isolation - no inherited cameras`
+    - `new user device isolation - no inherited box binding`
+    - `new user elder profile - 测试长辈 021-00000000`
+    - `active user restore - 家属`
+- 浏览器手机宽度验证：
+  - `index.html`：默认家庭、母亲、2 路摄像头、天气、热点/养生/文娱/日历/位置与回家模块均显示；无横向溢出。
+  - `login.html?app=1`：手机号验证码入口显示“获取验证码”，无演示字样，无横向溢出。
+  - `privacy.html?app=1`：显示家属、默认家庭、母亲、家庭盒子已连接，不显示管理员身份。
+  - `cameras.html?app=1`：显示两路摄像头在线，说明“App 只提交配置和查看状态，画面、检测和事件都由盒子同步回来”，无横向溢出。
+
+当前边界：
+
+- 临时新账号自检会在本地 JSON 数据库留下测试账号和测试家庭记录；它们不影响当前主账号数据。若比赛演示前需要清爽数据库，需要补一个只清理 `verify-*` 自检数据的维护脚本。
+- 当前本地验证码仍是联调替身，不是真实短信服务。上云和原生 iOS 前，需要接正式短信验证码、Apple/微信登录或明确比赛演示账号方案。
+- 下一步应继续做“上云前收口”：
+  - 清理或归档自检数据。
+  - 把本地 JSON 当前真实家庭数据导出到 PostgreSQL seed。
+  - 用 `GOHOME_APP_STORE=postgres` 跑同样的 `verify:local-loop`。
+  - Postgres 通过后，再部署 HTTPS 云端 App API。
+
+### 67.10 自检临时数据清理与闭环脚本防污染
+
+背景：
+
+- 67.9 新增的新用户隔离自检会创建 `verify-*` 临时账号和 `流程自检-*` 临时家庭。
+- 如果每次本地闭环都留下这些数据，比赛演示库会变脏，也会干扰后续上云 seed。
+
+本次修正：
+
+- `local-app-server/server.js`
+  - 新增本机 / ops 维护接口：`POST /api/v1/internal/verify-data/cleanup`。
+  - 清理范围只包括：
+    - `verify-*@gohome.local` 临时账号。
+    - `流程自检-*` 临时家庭。
+    - 上述临时账号 / 临时家庭关联的会话、家庭成员、老人资料、设备绑定、绑定码、摄像头、媒体、事件、日历、关怀偏好、关怀卡片、模型任务、内容源和内容推荐。
+  - 不会删除默认家庭、真实家属账号、真实盒子、真实摄像头和真实关怀卡片。
+- `scripts/cleanup-verify-data.js`
+  - 新增维护脚本。
+  - 默认 dry-run，只展示可清理数据。
+  - `--apply` 才执行删除。
+- `package.json`
+  - 新增 `npm run db:cleanup-verify`，用于执行清理。
+- `scripts/verify-local-closed-loop.js`
+  - 新用户隔离自检结束后会恢复主账号，并自动调用清理接口。
+  - 后续每次 `npm run verify:local-loop` 都不会再留下 `verify-*` 临时账号和 `流程自检-*` 临时家庭。
+
+本次实际清理：
+
+- dry-run 命中：
+  - 4 个 `verify-*` 临时账号。
+  - 4 个 `流程自检-*` 临时家庭。
+  - 4 条临时会话。
+  - 4 条临时家庭成员关系。
+  - 4 条临时老人资料。
+- 执行 `npm run db:cleanup-verify` 后共清理 20 条临时记录。
+- 清理后数据库只保留：
+  - `admin@gohome.local`
+  - `84622435@qq.com`
+  - `13818462550@phone.gohome.local`
+  - `默认家庭`
+  - 默认家庭下两路在线摄像头。
+
+验证：
+
+- `node --check local-app-server/server.js` 通过。
+- `node --check scripts/cleanup-verify-data.js` 通过。
+- `node --check scripts/verify-local-closed-loop.js` 通过。
+- 重启 `com.gohome.local-app-server` 后 `/health` 正常。
+- `npm run db:cleanup-verify` 通过。
+- `npm test` 通过。
+- `npm run verify:local-loop` 通过：
+  - `37 passed, 0 warnings, 0 failed`
+  - 新增 `verify data cleanup - 5 record(s) removed`。
+- 再次 dry-run 清理显示：
+  - `Targets: 0 user(s), 0 family/families`
+  - `Total removable records: 0`
+
+当前边界：
+
+- 自检数据污染问题已解决。
+- 下一步进入 PostgreSQL 上云前验证：先导出当前 JSON seed，再用真实 PostgreSQL 连接串跑 `npm run verify:postgres-loop`。这一步需要用户提供可用的 PostgreSQL 连接串或确认使用哪个云数据库。
+
+### 67.11 上云前 JSON Seed 导出复核
+
+背景：
+
+- 自检临时数据清理完成后，可以把当前本地 JSON 运行态导出为云端 seed，用于下一步 PostgreSQL 验证。
+
+本次执行：
+
+- 运行 `npm run db:export`。
+- 输出文件：
+  - `data/app-server/cloud-seed.json`
+- schema：
+  - `001_initial_schema`
+
+导出结果：
+
+- `users=3`
+  - `admin@gohome.local`
+  - `84622435@qq.com`
+  - `13818462550@phone.gohome.local`
+- `families=1`
+  - `默认家庭`
+- `family_members=2`
+  - 管理员与当前家属账号均在默认家庭内。
+- `elder_profiles=1`
+  - 被守护人：母亲。
+  - 城市：上海。
+  - 手机号已导出。
+  - 家里电话当前为空；不影响当前拨号闭环，因为手机号存在。
+- `device_bindings=1`
+  - 默认家庭绑定当前家庭盒子。
+- `cameras=2`
+  - 两路摄像头都归属默认家庭和当前家庭盒子。
+- `camera_secrets=2`
+  - 两路摄像头的接入密钥配置已进入 seed，后续云端需要迁移到 Secret Manager / KMS，不应长期明文存数据库。
+- `care_preferences=1`
+- `care_cards=3`
+- `media_assets=49`
+- `events=124`
+- `model_generation_jobs=59`
+- `verify_users=0`
+
+验证：
+
+- seed 中没有 `verify-*` 临时账号。
+- seed 中没有 `流程自检-*` 临时家庭。
+- 默认家庭、老人资料、盒子绑定和两路摄像头关系完整。
+
+当前边界：
+
+- PostgreSQL 真实闭环还没跑，因为缺少 `GOHOME_DATABASE_URL`。
+- 下一步需要用户提供一个空 PostgreSQL 数据库连接串，或确认使用哪个云数据库。
+
+### 67.12 阿里云轻量服务器部署与盒子切云端
+
+时间：2026-07-09
+
+本轮目标：
+
+- 先把 App/H5 + App API 从本地 `127.0.0.1:8788` 推到云端公网 IP。
+- 云端使用 PostgreSQL，不再依赖本地 JSON 作为运行库。
+- 盒子继续留在老人家局域网，但把配置同步、心跳和上传目标切到云端。
+
+云端服务器：
+
+- 公网地址：`http://139.196.223.58`
+- 系统：Ubuntu 24.04
+- 运行目录：`/opt/gohome/app`
+- 服务：
+  - `gohome-app.service`：Node App API + H5，监听 `127.0.0.1:8788`
+  - `nginx`：公网 `80` 反向代理到 App API
+  - `postgresql`：本机 PostgreSQL 16
+- 已新增 2G swap。
+- 当前资源占用验证：
+  - `gohome-app`、`nginx`、`postgresql` 均为 `active` + `enabled`
+  - 内存可用约 1.1G，磁盘剩余约 32G
+
+安全处理：
+
+- 第三方模型、天气、Tavily、数据库、App token、设备 token 均保存在服务器 `.env` 或 `/opt/gohome` 私有文件中。
+- 没有把 key/token 写入代码或文档。
+- `/health` 已移除本地调试 token，不再向公网暴露内部 App token。
+- 启动日志里的 App token / Device token 已改为脱敏输出。
+
+数据库与迁移：
+
+- 已创建云端 PostgreSQL 用户和数据库。
+- `npm run verify:postgres-loop -- --allow-non-empty` 已在云端通过。
+- 云端 Postgres 当前写入 251 行业务数据。
+- 云端验证结果：
+  - 用户：`家属`
+  - 家庭：`默认家庭`
+  - 摄像头：2 路
+  - 关怀推送：已开启，`08:30`
+  - 关怀内容类型：9 类
+  - 关怀卡片：3 张
+
+本轮修复：
+
+- `PostgresStore` 写入 JSONB 字段时统一序列化数组/对象，修复 `care_preferences.interests` 写入 PostgreSQL 失败的问题。
+- `cloud-seed` 导出时会把历史事件里已不存在的 `camera_id` 置空，保留事件文案、房间、截图关系，避免旧摄像头 ID 卡住外键。
+- `data/app-server/cloud-seed.json` 已重新导出。
+- 本地 `npm test` 通过。
+
+盒子切云端：
+
+- 盒子 SSH：`gohome@192.168.1.12`
+- 设备 ID：`edge-042714be475b91da`
+- 已备份并更新盒子 `/home/gohome/gohome/edge-agent/.env.local`：
+  - `GOHOME_APP_SERVER_BASE_URL=http://139.196.223.58`
+  - `GOHOME_DEVICE_API_TOKEN` 使用云端生成的设备 token
+- 已重启 `gohome-edge-agent`。
+- 盒子侧验证：
+  - `config_sync_agent.app_server_base_url` 已为 `http://139.196.223.58`
+  - `config_sync_agent.last_error` 为空
+  - 2 路摄像头配置均已同步
+  - 规则版本已应用：`rules-037e17c81a12`
+  - `upload_agent` 已启用、运行中、配置完成，目标为云端地址
+- 云端侧验证：
+  - 云端能看到设备 `edge-042714be475b91da` 在线
+  - 设备 `last_seen_at` 已更新到切云端后的时间
+  - 云端 2 路摄像头均为 `online / synced`
+
+当前边界：
+
+- 当前已跑通“云端 App API + PostgreSQL + 盒子心跳/配置同步”。
+- 事件上传 agent 已指向云端并 ready；本轮没有强造假告警污染事件列表。实际画面抓拍成功，但未命中规则，所以没有生成新上传事件。
+- 外网实时直播还没有真正穿透。云端可以承接配置、事件、截图和状态；如果用户手机离开老人家局域网后仍要看实时视频，需要下一步做盒子到云端的视频隧道/中继，例如 WebRTC、反向 WebSocket/MJPEG 中继或云端 TURN/relay。
+- 当前公网只有 HTTP；iOS 真机、摄像头权限、Service Worker、正式推送和上架前仍需要 HTTPS。没有备案域名时，可以先用临时隧道或非备案域名/CDN 方案做演示 HTTPS。
+
+下一步：
+
+1. 用公网地址做一次页面级验收：登录、首页、守护、事件、陪伴、我的、设备管理、规则设置。
+2. 补“云端视频中继”最小方案，让手机离开家庭局域网后仍能看到实时画面。
+3. 做云端 scheduler / notification-service：按关怀推送规则定时生成卡片、调用天气和 Tavily、触发 App 推送。
+4. 接 HTTPS，再进入 iOS WebView/原生壳打包。
+
+### 67.13 登录入口改为手机号口径
+
+时间：2026-07-09
+
+问题：
+
+- 用户端登录页不应该暴露内部账号概念。
+- 历史实现中前端把手机号拼成 `手机号@phone.gohome.local` 再提交给后端，这属于工程实现细节，不符合产品口径。
+
+本轮处理：
+
+- `login.html` 文案改为“手机号登录 / 手机号码 / 验证码”。
+- 前端登录/注册提交改为 `{ phone, code }`，不再在浏览器侧拼内部 email。
+- 服务端兼容 `{ phone, code }`，内部自动映射到既有手机号账号格式，历史数据无需迁移。
+- `publicUser` 返回 `phone`，已有 `@phone.gohome.local` 历史账号会自动解析手机号。
+- 家庭页、首页、App 壳等用户展示点改为手机号优先，不再回退显示内部 email。
+- PostgreSQL seed 导出和恢复补齐 `users.phone`。
+
+验证：
+
+- `npm run db:export` 通过。
+- `npm test` 通过。
+- 本地 `POST /api/auth/login` 使用 `{ phone: "13818462550", code: "000000" }` 登录成功。
+- 公网 `http://139.196.223.58/login.html` 源码确认只显示手机号和验证码口径。
+- 公网 `POST /api/auth/login` 使用手机号登录成功，并返回 `phone=13818462550`。
+
+### 67.14 新用户配置路径和设备认领口径确认
+
+时间：2026-07-09
+
+本轮目标：
+
+- 先把产品路径写回 PRD / Plan，再开始改代码，避免继续按演示数据或局域网直连逻辑扩张。
+- 明确“盒子已联网以后，App 里到底怎么一步步完成配置”。
+
+已确认的产品路径：
+
+1. 盒子通电。
+2. 未联网时走 `GoHome-XXXX` 热点和 `/setup`，只完成 Wi-Fi 配网；已联网时直接打开 App。
+3. App 手机号登录或注册。
+4. 创建或加入家庭。
+5. 填写老人资料。老人资料未完成前，用户不能进入完整主功能。
+6. 绑定守护盒。
+   - 正式产品：扫盒身、包装盒或说明卡二维码。
+   - 当前树莓派没有二维码贴纸：先用云端或 `/admin` 生成的临时绑定码过渡。
+   - 局域网发现和 BLE 只作为辅助发现或配网能力，不能作为设备归属依据。
+7. 配置至少一路摄像头。
+8. 盒子从云端拉取摄像头配置，在老人家局域网内测试并回传同步状态。
+9. 配置完成后进入首页、守护、事件、陪伴和我的。
+
+出厂二维码口径：
+
+- 每台正式盒子出厂前必须生成稳定 `device_id`、设备序列号、设备密钥和一次性认领凭证。
+- 二维码只承载 `sn + claim_code`，不承载 IP、RTSP 地址或摄像头密码。
+- App 扫码后把 `sn + claim_code` 发给云端；云端确认设备存在、未绑定、凭证有效后，才把设备绑定到当前家庭。
+- 绑定成功后认领凭证失效；售后重绑需要解绑、恢复出厂或运营后台重新签发。
+
+云端数据口径：
+
+- 云端 `.env` 和服务密钥继续保留，包括模型、天气、Tavily、数据库、App token 和设备服务密钥。
+- 云端业务数据验收应为空：不预置演示用户、默认家庭、默认摄像头和默认关怀卡片。
+- 盒子可以作为未绑定设备持续上报心跳，但 `family_id` 必须为空；只有 App 完成认领后才写入家庭归属。
+- 新手机号默认不能读取旧家庭、旧摄像头、旧关怀卡片或旧事件。
+
+已更新文档：
+
+- `想家了吗-PRD.md`
+  - 更新标准家庭版使用链路。
+  - 新增设备绑定和认领规则。
+  - 修正设备安装流程为 App 登录、家庭、老人资料、扫码或绑定码认领、摄像头配置。
+- `想家了吗-Plan.md`
+  - 新增 `14.7 新用户配置向导和设备认领`。
+  - 云端验收清单加入空业务数据、新用户配置向导和未绑定设备状态。
+  - 下一步顺序调整为先做配置向导 / 设备认领 / 空云端验收，再做视频中继、推送和 iOS。
+
+当前边界：
+
+- 本条是产品路径和文档确认记录，代码尚未开始改。
+- 当前云端仍带有上一轮 seed 进去的默认家庭、默认摄像头和关怀卡片；下一步需要清空云端业务数据但保留服务器 `.env`。
+- 当前设备绑定页仍偏开发口径，下一步要改成“扫码绑定 / 输入绑定码”的用户口径。
+- 当前后端设备心跳逻辑需要修正，避免未绑定设备自动落到默认家庭。
+
+下一步：
+
+1. 后端补设备认领 / 绑定码模型，并修复未绑定设备自动归属默认家庭的问题。
+2. 前端补新用户配置向导，未完成家庭、老人资料、盒子绑定和摄像头配置前不进入主功能。
+3. 云端执行空业务数据重置，保留 `.env` 和设备服务能力。
+4. 用一个全新手机号从云端完整跑通注册、家庭、老人资料、绑定盒子、配置摄像头、盒子同步和首页进入。
