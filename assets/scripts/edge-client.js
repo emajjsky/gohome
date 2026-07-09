@@ -412,7 +412,7 @@
         let refreshMs = resolved.refreshMs;
         let retryMs = resolved.retryMs;
         let snapshotOnly = Boolean(options.snapshotOnly);
-        let snapshotRefreshMs = Math.max(8000, Number(options.snapshotRefreshMs || 12000));
+        let snapshotRefreshMs = Math.max(2500, Number(options.snapshotRefreshMs || 3000));
         let lastSnapshotPath = "";
         let lastSnapshotPayload = null;
         let disposed = false;
@@ -461,7 +461,7 @@
                 const snapshotPath = snapshot?.image_url || snapshot?.snapshot_path || "";
                 if (snapshot?.available === false || !snapshotPath) {
                     if (!imageHasFrame()) onStateChange("waiting");
-                    retryTimer = setTimeout(refreshSnapshotOnly, Math.max(retryMs, 5000));
+                    retryTimer = setTimeout(refreshSnapshotOnly, Math.max(Math.min(retryMs, 3000), 2500));
                     return;
                 }
                 const nextUrl = appMediaUrl(snapshotPath);
@@ -470,7 +470,7 @@
                     const loaded = await loadImageWithoutBlanking(nextUrl);
                     if (!loaded) {
                         if (!imageHasFrame()) onStateChange("waiting");
-                        retryTimer = setTimeout(refreshSnapshotOnly, Math.max(retryMs, 5000));
+                        retryTimer = setTimeout(refreshSnapshotOnly, Math.max(Math.min(retryMs, 3000), 2500));
                         return;
                     }
                     lastSnapshotPath = snapshotPath;
@@ -480,7 +480,7 @@
                 refreshTimer = setTimeout(refreshSnapshotOnly, snapshotRefreshMs);
             } catch (error) {
                 if (!imageHasFrame()) onStateChange("waiting", error);
-                retryTimer = setTimeout(refreshSnapshotOnly, Math.max(retryMs, 5000));
+                retryTimer = setTimeout(refreshSnapshotOnly, Math.max(Math.min(retryMs, 3000), 2500));
             }
         }
 
@@ -536,7 +536,7 @@
             refreshMs = resolved.refreshMs;
             retryMs = resolved.retryMs;
             snapshotOnly = Boolean(mergedOptions.snapshotOnly);
-            snapshotRefreshMs = Math.max(8000, Number(mergedOptions.snapshotRefreshMs || 12000));
+            snapshotRefreshMs = Math.max(2500, Number(mergedOptions.snapshotRefreshMs || 3000));
             lastSnapshotPath = "";
             lastSnapshotPayload = null;
             if (!cameraId) {

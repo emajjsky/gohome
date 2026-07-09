@@ -108,7 +108,7 @@
         };
     }
 
-    function isSupported(inputId) {
+    function isCapabilityReady(inputId) {
         const item = visionRules[inputId];
         if (!item) return true;
         return boolValue(state.capabilities[item.capability]);
@@ -138,25 +138,20 @@
         const input = $(inputId);
         const item = visionRules[inputId];
         if (!input || !item) return;
-        const supported = isSupported(inputId);
+        const supported = isCapabilityReady(inputId);
         const row = input.closest(".rule-row");
         const badge = $(item.badgeId);
-        input.disabled = !supported;
-        if (!supported) input.checked = false;
-        if (row) row.dataset.capability = supported ? "supported" : "unsupported";
-        if (badge) badge.textContent = supported ? item.supportedText : item.unsupportedText;
+        input.disabled = false;
+        if (row) row.dataset.capability = supported ? "supported" : "pending";
+        if (badge) badge.textContent = supported ? item.supportedText : `待启用 · ${item.unsupportedText}`;
     }
 
     function enforceCapabilityChecks() {
-        Object.keys(visionRules).forEach((inputId) => {
-            const input = $(inputId);
-            if (input && !isSupported(inputId)) input.checked = false;
-        });
         if (!$("personDetectionEnabled")?.checked) {
             if ($("noPersonMirror")) $("noPersonMirror").checked = false;
             return;
         }
-        if ($("noPersonMirror") && isSupported("noPersonMirror")) {
+        if ($("noPersonMirror")) {
             $("noPersonMirror").checked = true;
         }
     }
@@ -170,10 +165,10 @@
             offline_enabled: $("offlineEnabled").checked,
             black_screen_enabled: $("blackEnabled").checked,
             no_motion_enabled: $("noMotionEnabled").checked,
-            person_detection_enabled: isSupported("personDetectionEnabled") && $("personDetectionEnabled").checked,
-            fall_detection_enabled: isSupported("fallDetectionEnabled") && $("fallDetectionEnabled").checked,
-            activity_detection_enabled: isSupported("activityDetectionEnabled") && ($("activityDetectionEnabled")?.checked || false),
-            fire_detection_enabled: isSupported("fireDetectionEnabled") && ($("fireDetectionEnabled")?.checked || false),
+            person_detection_enabled: $("personDetectionEnabled").checked,
+            fall_detection_enabled: $("fallDetectionEnabled").checked,
+            activity_detection_enabled: $("activityDetectionEnabled")?.checked || false,
+            fire_detection_enabled: $("fireDetectionEnabled")?.checked || false,
             notification_enabled: $("notificationEnabled").checked,
         };
     }
@@ -185,20 +180,20 @@
         $("offlineEnabled").checked = Boolean(rules.offline_enabled);
         $("blackEnabled").checked = Boolean(rules.black_screen_enabled);
         $("noMotionEnabled").checked = Boolean(rules.no_motion_enabled);
-        $("personDetectionEnabled").checked = Boolean(rules.person_detection_enabled) && isSupported("personDetectionEnabled");
-        $("noPersonMirror").checked = Boolean(rules.person_detection_enabled) && isSupported("noPersonMirror");
-        $("fallDetectionEnabled").checked = Boolean(rules.fall_detection_enabled) && isSupported("fallDetectionEnabled");
-        if ($("activityDetectionEnabled")) $("activityDetectionEnabled").checked = Boolean(rules.activity_detection_enabled) && isSupported("activityDetectionEnabled");
-        if ($("fireDetectionEnabled")) $("fireDetectionEnabled").checked = Boolean(rules.fire_detection_enabled) && isSupported("fireDetectionEnabled");
+        $("personDetectionEnabled").checked = Boolean(rules.person_detection_enabled);
+        $("noPersonMirror").checked = Boolean(rules.person_detection_enabled);
+        $("fallDetectionEnabled").checked = Boolean(rules.fall_detection_enabled);
+        if ($("activityDetectionEnabled")) $("activityDetectionEnabled").checked = Boolean(rules.activity_detection_enabled);
+        if ($("fireDetectionEnabled")) $("fireDetectionEnabled").checked = Boolean(rules.fire_detection_enabled);
         $("notificationEnabled").checked = Boolean(rules.notification_enabled);
         enforceCapabilityChecks();
     }
 
     function hasUnsupportedEnabled(rules) {
-        return Boolean(rules.person_detection_enabled && !isSupported("personDetectionEnabled"))
-            || Boolean(rules.fall_detection_enabled && !isSupported("fallDetectionEnabled"))
-            || Boolean(rules.activity_detection_enabled && !isSupported("activityDetectionEnabled"))
-            || Boolean(rules.fire_detection_enabled && !isSupported("fireDetectionEnabled"));
+        return Boolean(rules.person_detection_enabled && !isCapabilityReady("personDetectionEnabled"))
+            || Boolean(rules.fall_detection_enabled && !isCapabilityReady("fallDetectionEnabled"))
+            || Boolean(rules.activity_detection_enabled && !isCapabilityReady("activityDetectionEnabled"))
+            || Boolean(rules.fire_detection_enabled && !isCapabilityReady("fireDetectionEnabled"));
     }
 
     function runtimeMatches(expectedUpdatedAt, runtime) {
@@ -259,32 +254,32 @@
         $("detectorBadge").textContent = backendLabel();
         Object.keys(visionRules).forEach(setRuleCapability);
 
-        const personReady = isSupported("personDetectionEnabled");
-        const fallReady = isSupported("fallDetectionEnabled");
+        const personReady = isCapabilityReady("personDetectionEnabled");
+        const fallReady = isCapabilityReady("fallDetectionEnabled");
         if (personReady && fallReady) {
             setText("personHint", `${backendLabel()}已连接，人形、无人和跌倒候选会随规则同步到盒子。`);
         } else if (personReady) {
-            setText("personHint", `${backendLabel()}已连接，人形和无人提醒可用；跌倒候选需要姿态或更完整的人形模型。`);
+            setText("personHint", `${backendLabel()}已连接，人形和无人提醒可用；跌倒候选已允许保存，盒子端模型启用后执行。`);
         } else {
-            setText("personHint", "当前盒子只回传基础视觉检测。人形、无人和跌倒提醒需要在盒子端启用人形或姿态模型。");
+            setText("personHint", "这里保存 App 的守护规则；当前盒子未启用人形/姿态模型时，相关规则会同步但不会产生命中。");
         }
         setText(
             "fallHint",
             fallReady
                 ? "开启后盒子会用连续帧判断疑似跌倒，只生成候选提醒，仍需要家属确认。"
-                : "需要盒子启用人形或姿态模型后才能使用，避免发送无法执行的跌倒规则。"
+                : "可先保存规则；需要盒子启用人形或姿态模型后才会真正产生命中。"
         );
         setText(
             "activityHint",
-            isSupported("activityDetectionEnabled")
+            isCapabilityReady("activityDetectionEnabled")
                 ? "用于久坐、长时间低活动等低风险候选，和安全告警分开呈现。"
-                : "当前盒子未回传活动状态能力。"
+                : "可先保存规则；当前盒子未回传活动状态能力时暂不产生命中。"
         );
         setText(
             "fireHint",
-            isSupported("fireDetectionEnabled")
+            isCapabilityReady("fireDetectionEnabled")
                 ? "本地连续帧命中后生成候选提醒，减少单帧误报。"
-                : "当前盒子未回传明火或烟火候选能力。"
+                : "可先保存规则；当前盒子未回传明火或烟火能力时暂不产生命中。"
         );
         enforceCapabilityChecks();
     }
@@ -292,14 +287,9 @@
     async function reconcileUnsupportedRules(rules) {
         if (state.staleRulesReconciled || !hasUnsupportedEnabled(rules)) return rules;
         state.staleRulesReconciled = true;
-        setSaveState("校准中");
-        setText("rulesStatusTitle", "正在按盒子能力校准");
-        setText("rulesStatusText", "检测到旧规则里有当前盒子无法执行的算法项，正在关闭这些无效开关。");
-        const saved = await GoHomeEdge.updateRules(readPayload());
-        state.latestSavedAt = saved.updated_at || null;
-        applyRules(saved);
-        applyCapability();
-        return saved;
+        setText("rulesStatusTitle", "规则已保存，等待盒子能力");
+        setText("rulesStatusText", "部分视觉规则已打开，但当前盒子未上报对应模型能力；模型启用后会按这些规则执行。");
+        return rules;
     }
 
     async function saveRules(immediate = false) {

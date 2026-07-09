@@ -15,11 +15,24 @@
             font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
         }
 
-        /* Custom radio button styles for tags */
-        input[type="radio"]:checked + label {
-            background-color: var(--tw-colors-primary-container);
-            color: var(--tw-colors-on-primary-container);
-            border-color: var(--tw-colors-primary-container);
+        input[name="location"] + label {
+            min-height: 42px;
+            background: #fffefa;
+        }
+        input[name="location"]:checked + label {
+            background: #e6efe4 !important;
+            color: #17251b !important;
+            border-color: #536d5a !important;
+            box-shadow: 0 8px 18px rgba(83, 109, 90, 0.16), inset 0 0 0 1px rgba(83, 109, 90, 0.2);
+            font-weight: 700;
+        }
+        input[name="location"]:focus-visible + label {
+            outline: 3px solid rgba(83, 109, 90, 0.22);
+            outline-offset: 2px;
+        }
+        .room-add-button {
+            min-height: 42px;
+            background: rgba(255, 254, 250, 0.72);
         }
     </style>
 <style>
@@ -99,7 +112,7 @@
 <h3 class="font-label-md text-label-md text-on-surface">安装位置</h3>
 </div>
 </div>
-<div class="flex flex-wrap gap-3">
+<div id="roomChoiceList" class="flex flex-wrap gap-3">
 <div>
 <input checked="" class="hidden" id="loc-living" name="location" type="radio"/>
 <label class="inline-flex items-center justify-center px-4 py-2 rounded-full border border-outline-variant text-on-surface-variant font-body-md text-body-md cursor-pointer transition-all hover:bg-surface-container-low" for="loc-living">
@@ -124,10 +137,10 @@
                             卧室
                         </label>
 </div>
-<span class="inline-flex items-center justify-center px-4 py-2 rounded-full border border-dashed border-outline text-outline font-body-md text-body-md gap-1 opacity-70">
+<button id="addRoomButton" type="button" class="room-add-button inline-flex items-center justify-center px-4 py-2 rounded-full border border-dashed border-outline text-outline font-body-md text-body-md gap-1 transition-all active:scale-[0.98]">
 <span class="material-symbols-outlined text-[18px]">add</span>
-                        更多房间后续补充
-                    </span>
+                        添加房间
+                    </button>
 </div>
 </section>
 <!-- Section: RTSP Access -->
@@ -236,6 +249,6 @@
   })();
 </script>
 <script src="assets/scripts/edge-client.js?v=20260709-stable-preview-2"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260709-family-flow-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260709-room-choice-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-cachefix-1"></script>
 </body></html>

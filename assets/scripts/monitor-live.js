@@ -18,6 +18,11 @@
         return `${prefix}-${String(camera?.id || "unknown").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
     }
 
+    function shouldUseSnapshotPreview() {
+        const host = window.location.hostname;
+        return !(["127.0.0.1", "localhost", "::1"].includes(host) && window.location.port === "8788");
+    }
+
     function cameraLabel(camera) {
         return [camera?.room, camera?.name]
             .filter(Boolean)
@@ -378,8 +383,8 @@
             const controller = GoHomeEdge.createManagedVideoStream(image, {
                 cameraId: camera.id,
                 scene: "monitor",
-                snapshotOnly: true,
-                snapshotRefreshMs: 12000,
+                snapshotOnly: shouldUseSnapshotPreview(),
+                snapshotRefreshMs: 3000,
                 onStateChange(nextState) {
                     if (Number(camera.id) === Number(selected?.id)) {
                         applyStreamState(camera, nextState);

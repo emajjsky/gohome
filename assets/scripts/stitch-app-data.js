@@ -553,6 +553,35 @@
     return $(`label[for='${checked.id}']`)?.innerText.trim() || "客厅";
   }
 
+  function addRoomChip(room, { checked = true } = {}) {
+    const value = String(room || "").trim().slice(0, 12);
+    const list = $("#roomChoiceList");
+    if (!value || !list) return null;
+    const existing = $$("input[name='location']").find((input) => {
+      const label = $(`label[for='${input.id}']`);
+      return label && text(label.innerText) === text(value);
+    });
+    if (existing) {
+      existing.checked = checked || existing.checked;
+      return existing;
+    }
+
+    const id = `loc-custom-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = `
+      <input class="hidden" id="${id}" name="location" type="radio"/>
+      <label class="inline-flex items-center justify-center px-4 py-2 rounded-full border border-outline-variant text-on-surface-variant font-body-md text-body-md cursor-pointer transition-all hover:bg-surface-container-low" for="${id}"></label>
+    `;
+    const label = wrapper.querySelector("label");
+    label.textContent = value;
+    const addButton = $("#addRoomButton");
+    if (addButton) list.insertBefore(wrapper, addButton);
+    else list.appendChild(wrapper);
+    const input = wrapper.querySelector("input");
+    input.checked = checked;
+    return input;
+  }
+
   function setCameraFeedback(message, tone = "neutral") {
     const node = $("#cameraConfigFeedback");
     if (!node) return;
@@ -626,6 +655,7 @@
       return label && text(label.innerText) === text(target);
     });
     if (match) match.checked = true;
+    else addRoomChip(target, { checked: true });
   }
 
   async function hydrateConnectEditMode() {
@@ -681,6 +711,16 @@
       const input = $("#cameraNameInput");
       if (input) input.value = "";
       input?.focus();
+    }, true);
+
+    $("#addRoomButton")?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const room = window.prompt("输入安装房间名称，例如：厨房、阳台、书房");
+      const input = addRoomChip(room, { checked: true });
+      if (input) {
+        setCameraFeedback(`已选择安装位置：${checkedRoom()}`);
+      }
     }, true);
 
     const action = $("#cameraSubmitButton")

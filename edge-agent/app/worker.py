@@ -29,7 +29,7 @@ class EdgeWorker:
         self.detect_agent = detect_agent
         self.event_agent = event_agent
         self.live_frame_upload_enabled = live_frame_upload_enabled
-        self.live_frame_upload_interval_seconds = max(3.0, float(live_frame_upload_interval_seconds or 12.0))
+        self.live_frame_upload_interval_seconds = max(1.0, float(live_frame_upload_interval_seconds or 12.0))
         self.remote_camera_id_resolver = remote_camera_id_resolver or (lambda camera_id: camera_id)
         self.last_live_upload_at: Dict[int, float] = {}
         self._stop = Event()

@@ -56,6 +56,44 @@ function bool(value, fallback = false) {
     return fallback;
 }
 
+function compactRows(rows, keysForRow) {
+    const merged = [];
+    const indexByKey = new Map();
+    const isNewer = (next, previous) => {
+        const nextTime = Date.parse(next?.updated_at || next?.created_at || "");
+        const previousTime = Date.parse(previous?.updated_at || previous?.created_at || "");
+        if (!Number.isFinite(nextTime)) return false;
+        if (!Number.isFinite(previousTime)) return true;
+        return nextTime >= previousTime;
+    };
+    for (const row of rows) {
+        const keys = keysForRow(row).filter(Boolean);
+        const existingIndex = keys.map((key) => indexByKey.get(key)).find((index) => index !== undefined);
+        if (existingIndex === undefined) {
+            const index = merged.length;
+            merged.push(row);
+            keys.forEach((key) => indexByKey.set(key, index));
+            continue;
+        }
+        const previous = merged[existingIndex];
+        const preferred = isNewer(row, previous) ? row : previous;
+        const fallback = preferred === row ? previous : row;
+        merged[existingIndex] = {
+            ...fallback,
+            ...preferred,
+            facts: Array.isArray(preferred.facts) && preferred.facts.length ? preferred.facts : (fallback.facts || []),
+            actions: Array.isArray(preferred.actions) && preferred.actions.length ? preferred.actions : (fallback.actions || []),
+            source_summary: Array.isArray(preferred.source_summary) && preferred.source_summary.length ? preferred.source_summary : (fallback.source_summary || []),
+            content_recommendations: Array.isArray(preferred.content_recommendations) && preferred.content_recommendations.length
+                ? preferred.content_recommendations
+                : (fallback.content_recommendations || []),
+            image_url: preferred.image_url || fallback.image_url || "",
+        };
+        keysForRow(merged[existingIndex]).filter(Boolean).forEach((key) => indexByKey.set(key, existingIndex));
+    }
+    return merged;
+}
+
 function sha256(value) {
     if (!value) return "";
     return crypto.createHash("sha256").update(String(value)).digest("hex");
@@ -387,7 +425,7 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(event.updated_at, iso(event.created_at, exportedAt)),
     }));
 
-    const careCards = toArray(db.care_cards).map((card) => ({
+    const rawCareCards = toArray(db.care_cards).map((card) => ({
         id: textId(card.id),
         card_id: String(card.card_id || `care:${card.family_id || fallbackFamilyId}:${card.card_date || exportedAt.slice(0, 10)}:${card.id || ""}`),
         family_id: textId(card.family_id, fallbackFamilyId),
@@ -409,6 +447,10 @@ function buildCloudSeedBundle(db, options = {}) {
         created_at: iso(card.created_at, exportedAt),
         updated_at: iso(card.updated_at, iso(card.created_at, exportedAt)),
     }));
+    const careCards = compactRows(rawCareCards, (card) => [
+        `card:${card.card_id}`,
+        `daily:${card.family_id}:${card.elder_id}:${card.card_date}:${card.card_type}`,
+    ]);
 
     const modelGenerationJobs = toArray(db.model_generation_jobs).map((job) => ({
         id: textId(job.id),

@@ -93,6 +93,11 @@
         if (eventsLink) eventsLink.href = eventsHref;
     }
 
+    function shouldUseSnapshotPreview() {
+        const host = window.location.hostname;
+        return !(["127.0.0.1", "localhost", "::1"].includes(host) && window.location.port === "8788");
+    }
+
     function normalizeProfiles(payload) {
         if (Array.isArray(payload)) return payload;
         if (Array.isArray(payload?.profiles)) return payload.profiles;
@@ -178,9 +183,11 @@
         setText("watchRoomBadge", camera ? cameraLabel(camera) : "未选择");
         setText("watchProfileBadge", profileLabel(state.selectedProfile));
         setText("watchDetectorBadge", state.device?.detector_backend === "yolo" ? "视觉检测" : "基础检测");
-        setText("watchFact", camera ? `${cameraLabel(camera)}实时画面` : "还没有接入摄像头");
+        setText("watchFact", camera ? `${cameraLabel(camera)}${shouldUseSnapshotPreview() ? "最新画面" : "实时画面"}` : "还没有接入摄像头");
         setText("watchMeta", camera
-            ? `${cameraMeta(camera)}。如果这里没有画面，说明家庭盒子还在返回第一帧。`
+            ? (shouldUseSnapshotPreview()
+                ? `${cameraMeta(camera)}。云端会持续刷新家庭盒子上传的最新画面。`
+                : `${cameraMeta(camera)}。本地网络内会直接代理家庭盒子的实时画面。`)
             : "等待摄像头");
         syncNavLinks();
     }
@@ -196,19 +203,29 @@
             return;
         }
         if (!state.streamController) {
+            const snapshotOnly = shouldUseSnapshotPreview();
             state.streamController = GoHomeEdge.createManagedVideoStream(image, {
                 cameraId: camera.id,
                 scene: "watch",
                 profile: state.selectedProfile,
+                snapshotOnly,
+                snapshotRefreshMs: 3000,
                 onStateChange(nextState) {
                     if (nextState === "loading") applyStageState("loading");
                     if (nextState === "waiting") applyStageState("waiting");
                     if (nextState === "playing") applyStageState("playing");
+                    if (nextState === "snapshot") applyStageState("playing");
                     if (nextState === "error") applyStageState("error", "画面暂时断开，正在重连");
                 },
             });
         }
-        state.streamController.setSource(camera.id, { scene: "watch", profile: state.selectedProfile });
+        const snapshotOnly = shouldUseSnapshotPreview();
+        state.streamController.setSource(camera.id, {
+            scene: "watch",
+            profile: state.selectedProfile,
+            snapshotOnly,
+            snapshotRefreshMs: 3000,
+        });
         applyStageState("loading");
     }
 

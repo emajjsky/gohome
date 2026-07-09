@@ -247,6 +247,61 @@ function maxExistingId(items) {
     }, 0);
 }
 
+function compactCareCards(cards = []) {
+    const byCardId = new Map();
+    const byDailyKey = new Map();
+    const merged = [];
+    const newerThan = (a, b) => Date.parse(a?.updated_at || a?.created_at || "") >= Date.parse(b?.updated_at || b?.created_at || "");
+    const dailyKey = (card) => [
+        card?.family_id || "",
+        card?.elder_id || "elder_primary",
+        card?.card_date || "",
+        card?.card_type || "daily",
+    ].join("|");
+    const mergeCard = (base, next) => {
+        const preferred = newerThan(next, base) ? next : base;
+        const fallback = preferred === next ? base : next;
+        return {
+            ...fallback,
+            ...preferred,
+            facts: Array.isArray(preferred.facts) && preferred.facts.length ? preferred.facts : (fallback.facts || []),
+            actions: Array.isArray(preferred.actions) && preferred.actions.length ? preferred.actions : (fallback.actions || []),
+            source_summary: Array.isArray(preferred.source_summary) && preferred.source_summary.length ? preferred.source_summary : (fallback.source_summary || []),
+            content_recommendations: Array.isArray(preferred.content_recommendations) && preferred.content_recommendations.length
+                ? preferred.content_recommendations
+                : (fallback.content_recommendations || []),
+            image_url: preferred.image_url || fallback.image_url || "",
+            image_mode: preferred.image_url ? preferred.image_mode : (preferred.image_mode || fallback.image_mode || "none"),
+        };
+    };
+
+    for (const raw of Array.isArray(cards) ? cards : []) {
+        if (!raw || typeof raw !== "object") continue;
+        const card = {
+            ...raw,
+            card_id: String(raw.card_id || `care-${raw.family_id || "family"}-${raw.card_date || dateKeyShanghai()}`),
+            elder_id: String(raw.elder_id || "elder_primary"),
+            card_type: String(raw.card_type || "daily"),
+        };
+        const keys = [`card:${card.card_id}`, `daily:${dailyKey(card)}`];
+        const existingIndex = keys.map((key) => byCardId.get(key) ?? byDailyKey.get(key)).find((index) => index !== undefined);
+        if (existingIndex === undefined) {
+            const index = merged.length;
+            merged.push(card);
+            keys.forEach((key) => {
+                if (key.startsWith("card:")) byCardId.set(key, index);
+                else byDailyKey.set(key, index);
+            });
+            continue;
+        }
+        merged[existingIndex] = mergeCard(merged[existingIndex], card);
+        const refreshed = merged[existingIndex];
+        byCardId.set(`card:${refreshed.card_id}`, existingIndex);
+        byDailyKey.set(`daily:${dailyKey(refreshed)}`, existingIndex);
+    }
+    return merged;
+}
+
 function createDefaultDb() {
     const timestamp = nowIso();
     return {
@@ -413,7 +468,7 @@ function normalizeDb(db) {
     db.rules = normalizeRules(db.rules || defaults.rules, defaults.rules);
     db.calendar_events = Array.isArray(db.calendar_events) ? db.calendar_events : [];
     db.care_preferences = db.care_preferences && typeof db.care_preferences === "object" ? db.care_preferences : {};
-    db.care_cards = Array.isArray(db.care_cards) ? db.care_cards : [];
+    db.care_cards = compactCareCards(Array.isArray(db.care_cards) ? db.care_cards : []);
     db.model_providers = Array.isArray(db.model_providers) ? db.model_providers : [];
     db.model_generation_jobs = Array.isArray(db.model_generation_jobs) ? db.model_generation_jobs : [];
     db.content_sources = Array.isArray(db.content_sources) ? db.content_sources : [];
@@ -3420,11 +3475,29 @@ function createLocalAppServer(options = {}) {
             }
         }
         await ensureCareCardImage(card, targetFamilyId, { ...factParts, preferences, forceImage: options.force });
-        if (existing) {
-            Object.assign(existing, card);
-            return existing;
+        const latestExisting = store.db.care_cards.find((item) => (
+            item !== card
+            && (
+                item.card_id === card.card_id
+                || (
+                    Number(item.family_id) === targetFamilyId
+                    && String(item.elder_id || "elder_primary") === String(card.elder_id || "elder_primary")
+                    && item.card_date === cardDate
+                    && String(item.card_type || "daily") === "daily"
+                )
+            )
+        ));
+        if (existing || latestExisting) {
+            const target = existing || latestExisting;
+            Object.assign(target, card, {
+                id: target.id || card.id,
+                created_at: target.created_at || card.created_at,
+            });
+            store.db.care_cards = compactCareCards(store.db.care_cards);
+            return target;
         }
         store.db.care_cards.push(card);
+        store.db.care_cards = compactCareCards(store.db.care_cards);
         return card;
     }
 
