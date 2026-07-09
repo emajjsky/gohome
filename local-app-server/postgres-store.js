@@ -22,6 +22,10 @@ const TABLE_ORDER = [
     "device_heartbeats",
     "calendar_events",
     "care_cards",
+    "app_messages",
+    "app_push_tokens",
+    "notification_deliveries",
+    "scheduler_runs",
     "model_generation_jobs",
     "content_recommendations",
     "device_config_versions",
@@ -72,6 +76,10 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         calendar_events: [],
         care_preferences: {},
         care_cards: [],
+        app_messages: [],
+        notification_deliveries: [],
+        app_push_tokens: [],
+        scheduler_runs: [],
         model_providers: [],
         model_generation_jobs: [],
         content_sources: [],
@@ -379,6 +387,96 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             content_recommendations: Array.isArray(card.content_recommendations) ? card.content_recommendations : [],
             created_at: iso(card.created_at, db.created_at),
             updated_at: iso(card.updated_at, iso(card.created_at, db.created_at)),
+        });
+    }
+
+    for (const message of rowsByTable.app_messages || []) {
+        db.app_messages.push({
+            id: message.id,
+            message_id: message.message_id || message.id,
+            family_id: message.family_id,
+            user_id: message.user_id || "",
+            care_card_id: message.care_card_id || "",
+            event_id: message.event_id || "",
+            message_type: message.message_type || "care",
+            title: message.title || "",
+            subtitle: message.subtitle || "",
+            body: message.body || "",
+            facts: Array.isArray(message.facts) ? message.facts : [],
+            actions: Array.isArray(message.actions) ? message.actions : [],
+            source: Array.isArray(message.source) ? message.source : [],
+            source_event_ids: Array.isArray(message.source_event_ids) ? message.source_event_ids : [],
+            priority: message.priority || "normal",
+            status: message.status || "open",
+            generated_by: message.generated_by || "",
+            idempotency_key: message.idempotency_key || message.message_id || message.id,
+            metadata: message.metadata || {},
+            scheduled_for: iso(message.scheduled_for),
+            delivered_at: iso(message.delivered_at),
+            read_at: iso(message.read_at),
+            created_at: iso(message.created_at, db.created_at),
+            updated_at: iso(message.updated_at, iso(message.created_at, db.created_at)),
+        });
+    }
+
+    for (const token of rowsByTable.app_push_tokens || []) {
+        db.app_push_tokens.push({
+            id: token.id,
+            family_id: token.family_id,
+            user_id: token.user_id || "",
+            app_install_id: token.app_install_id || "",
+            platform: token.platform || "ios",
+            push_token_hash: token.push_token_hash || "",
+            token_preview: token.token_preview || "",
+            status: token.status || "active",
+            device_name: token.device_name || "",
+            app_version: token.app_version || "",
+            metadata: token.metadata || {},
+            last_seen_at: iso(token.last_seen_at),
+            created_at: iso(token.created_at, db.created_at),
+            updated_at: iso(token.updated_at, iso(token.created_at, db.created_at)),
+        });
+    }
+
+    for (const delivery of rowsByTable.notification_deliveries || []) {
+        db.notification_deliveries.push({
+            id: delivery.id,
+            family_id: delivery.family_id,
+            user_id: delivery.user_id || "",
+            message_id: delivery.message_id || "",
+            channel: delivery.channel || "app_push",
+            provider: delivery.provider || "app_message",
+            target_type: delivery.target_type || "family",
+            target_id: delivery.target_id || "",
+            status: delivery.status || "queued",
+            title: delivery.title || "",
+            body: delivery.body || "",
+            error_message: delivery.error_message || "",
+            request_payload: delivery.request_payload || {},
+            response_payload: delivery.response_payload || {},
+            idempotency_key: delivery.idempotency_key || delivery.id,
+            scheduled_for: iso(delivery.scheduled_for),
+            sent_at: iso(delivery.sent_at),
+            delivered_at: iso(delivery.delivered_at),
+            clicked_at: iso(delivery.clicked_at),
+            created_at: iso(delivery.created_at, db.created_at),
+            updated_at: iso(delivery.updated_at, iso(delivery.created_at, db.created_at)),
+        });
+    }
+
+    for (const run of rowsByTable.scheduler_runs || []) {
+        db.scheduler_runs.push({
+            id: run.id,
+            family_id: run.family_id || null,
+            job_type: run.job_type || "care_notification",
+            status: run.status || "running",
+            scope: run.scope || {},
+            result: run.result || {},
+            error_message: run.error_message || "",
+            started_at: iso(run.started_at, db.created_at),
+            finished_at: iso(run.finished_at),
+            created_at: iso(run.created_at, db.created_at),
+            updated_at: iso(run.updated_at, iso(run.created_at, db.created_at)),
         });
     }
 

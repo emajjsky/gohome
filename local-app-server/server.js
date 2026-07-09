@@ -324,6 +324,10 @@ function createDefaultDb() {
             heartbeat: 1,
             calendar_event: 1,
             care_card: 1,
+            app_message: 1,
+            notification_delivery: 1,
+            app_push_token: 1,
+            scheduler_run: 1,
             model_generation_job: 1,
             content_recommendation: 1,
         },
@@ -370,6 +374,10 @@ function createDefaultDb() {
         calendar_events: [],
         care_preferences: {},
         care_cards: [],
+        app_messages: [],
+        notification_deliveries: [],
+        app_push_tokens: [],
+        scheduler_runs: [],
         model_providers: [],
         model_generation_jobs: [],
         content_sources: [],
@@ -469,6 +477,10 @@ function normalizeDb(db) {
     db.calendar_events = Array.isArray(db.calendar_events) ? db.calendar_events : [];
     db.care_preferences = db.care_preferences && typeof db.care_preferences === "object" ? db.care_preferences : {};
     db.care_cards = compactCareCards(Array.isArray(db.care_cards) ? db.care_cards : []);
+    db.app_messages = Array.isArray(db.app_messages) ? db.app_messages : [];
+    db.notification_deliveries = Array.isArray(db.notification_deliveries) ? db.notification_deliveries : [];
+    db.app_push_tokens = Array.isArray(db.app_push_tokens) ? db.app_push_tokens : [];
+    db.scheduler_runs = Array.isArray(db.scheduler_runs) ? db.scheduler_runs : [];
     db.model_providers = Array.isArray(db.model_providers) ? db.model_providers : [];
     db.model_generation_jobs = Array.isArray(db.model_generation_jobs) ? db.model_generation_jobs : [];
     db.content_sources = Array.isArray(db.content_sources) ? db.content_sources : [];
@@ -487,6 +499,10 @@ function normalizeDb(db) {
         heartbeat: db.heartbeats,
         calendar_event: db.calendar_events,
         care_card: db.care_cards,
+        app_message: db.app_messages,
+        notification_delivery: db.notification_deliveries,
+        app_push_token: db.app_push_tokens,
+        scheduler_run: db.scheduler_runs,
         model_generation_job: db.model_generation_jobs,
         content_recommendation: db.content_recommendations,
     };
@@ -509,6 +525,7 @@ function createLocalAppServer(options = {}) {
     const providerCache = new Map();
     const liveFrameCache = new Map();
     const liveFrameSequence = new Map();
+    let schedulerRunning = false;
     const LIVE_FRAME_TTL_MS = 10000;
 
     ensureDir(mediaDir);
@@ -1283,6 +1300,10 @@ function createLocalAppServer(options = {}) {
         countObject("elder_profiles", (profile, key) => verifyFamilyIds.has(idText(profile.family_id)) || [...verifyFamilyIds].some((familyId) => String(key).startsWith(`${familyId}:`)));
         countObject("care_preferences", (preferences, key) => verifyFamilyIds.has(idText(preferences.family_id)) || verifyFamilyIds.has(idText(key)));
         countArray("care_cards", (card) => verifyFamilyIds.has(idText(card.family_id)));
+        countArray("app_messages", (message) => verifyFamilyIds.has(idText(message.family_id)) || verifyUserIds.has(idText(message.user_id)));
+        countArray("notification_deliveries", (delivery) => verifyFamilyIds.has(idText(delivery.family_id)) || verifyUserIds.has(idText(delivery.user_id)));
+        countArray("app_push_tokens", (token) => verifyFamilyIds.has(idText(token.family_id)) || verifyUserIds.has(idText(token.user_id)));
+        countArray("scheduler_runs", (run) => verifyFamilyIds.has(idText(run.family_id)));
         countArray("model_generation_jobs", (job) => verifyFamilyIds.has(idText(job.family_id)));
         countArray("content_sources", (source) => verifyFamilyIds.has(idText(source.family_id)));
         countArray("content_recommendations", (recommendation) => verifyFamilyIds.has(idText(recommendation.family_id)));
@@ -1831,6 +1852,422 @@ function createLocalAppServer(options = {}) {
             created_at: card.created_at,
             updated_at: card.updated_at,
         };
+    }
+
+    function publicAppMessage(message) {
+        return {
+            id: message.message_id || message.id,
+            message_id: message.message_id || message.id,
+            family_id: message.family_id,
+            user_id: message.user_id || "",
+            care_card_id: message.care_card_id || "",
+            event_id: message.event_id || "",
+            message_type: message.message_type || "care",
+            title: message.title || "",
+            subtitle: message.subtitle || "",
+            body: message.body || "",
+            facts: Array.isArray(message.facts) ? message.facts : [],
+            actions: Array.isArray(message.actions) ? message.actions : [],
+            source: Array.isArray(message.source) ? message.source : [],
+            source_event_ids: Array.isArray(message.source_event_ids) ? message.source_event_ids : [],
+            priority: message.priority || "normal",
+            status: message.status || "open",
+            generated_by: message.generated_by || "notification-service",
+            scheduled_for: message.scheduled_for || "",
+            delivered_at: message.delivered_at || "",
+            read_at: message.read_at || "",
+            created_at: message.created_at,
+            updated_at: message.updated_at,
+        };
+    }
+
+    function publicNotificationDelivery(delivery) {
+        return {
+            id: delivery.id,
+            family_id: delivery.family_id,
+            user_id: delivery.user_id || "",
+            message_id: delivery.message_id || "",
+            channel: delivery.channel || "app_push",
+            provider: delivery.provider || "app_message",
+            target_type: delivery.target_type || "family",
+            target_id: delivery.target_id || "",
+            status: delivery.status || "queued",
+            title: delivery.title || "",
+            body: delivery.body || "",
+            error_message: delivery.error_message || "",
+            scheduled_for: delivery.scheduled_for || "",
+            sent_at: delivery.sent_at || "",
+            delivered_at: delivery.delivered_at || "",
+            clicked_at: delivery.clicked_at || "",
+            created_at: delivery.created_at,
+            updated_at: delivery.updated_at,
+        };
+    }
+
+    function publicAppPushToken(token) {
+        return {
+            id: token.id,
+            family_id: token.family_id,
+            user_id: token.user_id || "",
+            app_install_id: token.app_install_id || "",
+            platform: token.platform || "",
+            token_preview: token.token_preview || "",
+            status: token.status || "active",
+            device_name: token.device_name || "",
+            app_version: token.app_version || "",
+            last_seen_at: token.last_seen_at || "",
+            created_at: token.created_at,
+            updated_at: token.updated_at,
+        };
+    }
+
+    function appPushProviderConfigured() {
+        return Boolean(envFirst(["GOHOME_APNS_KEY_ID", "GOHOME_APNS_AUTH_KEY", "GOHOME_PUSH_PROVIDER"]));
+    }
+
+    function tokenPreview(value) {
+        const text = String(value || "").trim();
+        if (!text) return "";
+        if (text.length <= 10) return "***";
+        return `${text.slice(0, 4)}...${text.slice(-4)}`;
+    }
+
+    function upsertAppMessage(payload = {}) {
+        const timestamp = nowIso();
+        const familyId = normalizeNumber(payload.family_id, null);
+        if (!familyId) throw new Error("family_id required for app message");
+        const messageId = String(payload.message_id || `msg-${familyId}-${sha256(JSON.stringify(payload)).slice(0, 16)}`);
+        const idempotencyKey = String(payload.idempotency_key || messageId);
+        let message = store.db.app_messages.find((item) => (
+            String(item.message_id || item.id) === messageId
+            || String(item.idempotency_key || "") === idempotencyKey
+        ));
+        const patch = {
+            message_id: messageId,
+            family_id: familyId,
+            user_id: payload.user_id || "",
+            care_card_id: String(payload.care_card_id || ""),
+            event_id: String(payload.event_id || ""),
+            message_type: String(payload.message_type || "care"),
+            title: String(payload.title || "一条新的关怀提醒").trim().slice(0, 80),
+            subtitle: String(payload.subtitle || "").trim().slice(0, 160),
+            body: String(payload.body || "").trim().slice(0, 600),
+            facts: normalizeStringList(payload.facts, [], 6),
+            actions: Array.isArray(payload.actions) ? payload.actions.slice(0, 6) : [],
+            source: Array.isArray(payload.source) ? payload.source.slice(0, 8) : [],
+            source_event_ids: normalizeStringList(payload.source_event_ids, [], 12),
+            priority: String(payload.priority || "normal"),
+            status: String(payload.status || "open"),
+            generated_by: String(payload.generated_by || "notification-service"),
+            idempotency_key: idempotencyKey,
+            metadata: payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {},
+            scheduled_for: payload.scheduled_for || "",
+            delivered_at: payload.delivered_at || "",
+            updated_at: timestamp,
+        };
+        if (!message) {
+            message = {
+                id: store.nextId("app_message"),
+                ...patch,
+                read_at: "",
+                created_at: timestamp,
+            };
+            store.db.app_messages.push(message);
+        } else {
+            Object.assign(message, {
+                ...patch,
+                status: message.status === "read" && patch.status === "open" ? "read" : patch.status,
+                read_at: message.read_at || "",
+            });
+        }
+        return message;
+    }
+
+    function queueNotificationDelivery(message, options = {}) {
+        const timestamp = nowIso();
+        const familyId = normalizeNumber(message.family_id, null);
+        if (!familyId) return [];
+        const channel = String(options.channel || "app_push");
+        const activeTokens = store.db.app_push_tokens.filter((token) => (
+            Number(token.family_id) === Number(familyId)
+            && String(token.status || "active") === "active"
+        ));
+        const targets = activeTokens.length
+            ? activeTokens.map((token) => ({ type: "push_token", id: token.id, user_id: token.user_id || "" }))
+            : [{ type: "family", id: String(familyId), user_id: "" }];
+        const deliveries = [];
+        for (const target of targets) {
+            const idempotencyKey = [
+                "delivery",
+                message.message_id || message.id,
+                channel,
+                target.type,
+                target.id,
+            ].join(":");
+            let delivery = store.db.notification_deliveries.find((item) => String(item.idempotency_key || "") === idempotencyKey);
+            const hasPushProvider = appPushProviderConfigured();
+            const status = target.type === "push_token"
+                ? (hasPushProvider ? "queued" : "simulated")
+                : "app_message_only";
+            const patch = {
+                family_id: familyId,
+                user_id: target.user_id || message.user_id || "",
+                message_id: message.message_id || message.id,
+                channel,
+                provider: hasPushProvider ? "apns" : "app_message",
+                target_type: target.type,
+                target_id: String(target.id || ""),
+                status,
+                title: message.title || "",
+                body: message.subtitle || message.body || "",
+                error_message: hasPushProvider || target.type !== "push_token" ? "" : "APNs provider not configured; recorded as in-app delivery.",
+                request_payload: {
+                    message_type: message.message_type,
+                    priority: message.priority,
+                    actions: message.actions || [],
+                },
+                response_payload: {},
+                idempotency_key: idempotencyKey,
+                scheduled_for: options.scheduled_for || message.scheduled_for || "",
+                updated_at: timestamp,
+            };
+            if (!delivery) {
+                delivery = {
+                    id: store.nextId("notification_delivery"),
+                    ...patch,
+                    sent_at: status === "simulated" || status === "app_message_only" ? timestamp : "",
+                    delivered_at: status === "simulated" || status === "app_message_only" ? timestamp : "",
+                    clicked_at: "",
+                    created_at: timestamp,
+                };
+                store.db.notification_deliveries.push(delivery);
+            } else {
+                Object.assign(delivery, patch);
+            }
+            deliveries.push(delivery);
+        }
+        if (!message.delivered_at) message.delivered_at = timestamp;
+        message.updated_at = timestamp;
+        return deliveries;
+    }
+
+    function shanghaiTimeParts(date = new Date()) {
+        return new Intl.DateTimeFormat("en-GB", {
+            timeZone: "Asia/Shanghai",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+        }).formatToParts(date).reduce((acc, part) => {
+            if (part.type !== "literal") acc[part.type] = part.value;
+            return acc;
+        }, {});
+    }
+
+    function timeOfDayMinutes(value) {
+        const match = String(value || "").trim().match(/^(\d{2}):(\d{2})$/);
+        if (!match) return null;
+        return Number(match[1]) * 60 + Number(match[2]);
+    }
+
+    function currentShanghaiMinutes(date = new Date()) {
+        const parts = shanghaiTimeParts(date);
+        return Number(parts.hour || 0) * 60 + Number(parts.minute || 0);
+    }
+
+    function dailyCareMessageId(familyId, dateKey = dateKeyShanghai()) {
+        return `care-daily-${familyId}-${dateKey}`;
+    }
+
+    function dailyCareDue(familyId, schedule, options = {}) {
+        if (options.force) return true;
+        if (!schedule?.enabled || schedule.delivery_rules?.daily_digest?.enabled === false) return false;
+        const dueMinutes = timeOfDayMinutes(schedule.delivery_time || "08:30");
+        if (dueMinutes !== null && currentShanghaiMinutes() < dueMinutes) return false;
+        const existing = store.db.app_messages.find((message) => (
+            Number(message.family_id) === Number(familyId)
+            && String(message.message_id || "") === dailyCareMessageId(familyId)
+        ));
+        return !existing;
+    }
+
+    function createCareCardMessage(card, preferences, options = {}) {
+        const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
+        const family = selectedFamily(card.family_id) || {};
+        const dateKey = card.card_date || dateKeyShanghai();
+        const message = upsertAppMessage({
+            message_id: dailyCareMessageId(card.family_id, dateKey),
+            idempotency_key: `daily-care:${card.family_id}:${dateKey}`,
+            family_id: card.family_id,
+            care_card_id: card.card_id,
+            message_type: "care_card",
+            title: card.title || "今日关怀已生成",
+            subtitle: `${family.name || "当前家庭"} · ${schedule.delivery_time || "08:30"} 每日汇总`,
+            body: card.body || "今日关怀卡片已经生成。",
+            facts: Array.isArray(card.facts) ? card.facts.slice(0, 3) : [],
+            actions: [
+                { key: "open_care_card", label: "查看关怀卡" },
+                { key: "call", label: "打电话问候" },
+                { key: "message", label: "发微信问候" },
+            ],
+            source: [
+                { type: "care_card", id: card.card_id },
+                { type: "schedule", delivery_time: schedule.delivery_time || "08:30" },
+            ],
+            priority: "normal",
+            generated_by: card.generated_by ? `scheduler:${card.generated_by}` : "scheduler",
+            scheduled_for: options.scheduled_for || "",
+        });
+        if (!Array.isArray(card.source_message_ids)) card.source_message_ids = [];
+        if (!card.source_message_ids.includes(message.message_id)) {
+            card.source_message_ids.push(message.message_id);
+            card.updated_at = nowIso();
+        }
+        return message;
+    }
+
+    function createEventAlertMessage(event) {
+        const camera = store.db.cameras[String(event.camera_id)] || {};
+        return upsertAppMessage({
+            message_id: `event-alert-${event.id}`,
+            idempotency_key: `event-alert:${event.id}`,
+            family_id: event.family_id || camera.family_id,
+            event_id: event.id,
+            message_type: event.level === "critical" ? "alert" : "explain",
+            title: event.event_type === "camera_offline"
+                ? `${event.camera_name || event.room || "摄像头"} 暂时没有返回画面`
+                : (event.summary || "家里有提醒待确认"),
+            subtitle: `${event.room || event.camera_name || "摄像头"} · ${event.event_type}`,
+            body: event.event_type === "camera_offline"
+                ? "家庭盒子暂时没有拿到这路画面，会继续重试。"
+                : (event.payload?.rule?.reason || event.summary || "请先查看事件证据，再联系家里。"),
+            facts: [event.event_type, event.level].filter(Boolean),
+            actions: [{ key: "open_event", label: "查看事件" }],
+            source_event_ids: [event.id],
+            source: [{ type: "event", id: event.id }],
+            priority: event.level === "critical" ? "high" : "normal",
+            generated_by: "event-notification-service",
+        });
+    }
+
+    async function runNotificationScheduler(options = {}) {
+        if (schedulerRunning && !options.allow_concurrent) {
+            const result = {
+                families_checked: 0,
+                care_cards_generated: 0,
+                app_messages_created: 0,
+                notification_deliveries_created: 0,
+                event_alerts_created: 0,
+                skipped: [{ reason: "scheduler_already_running" }],
+            };
+            return {
+                ok: true,
+                run: {
+                    id: null,
+                    family_id: normalizeNumber(options.family_id, null) || null,
+                    job_type: String(options.job_type || "care_notification"),
+                    status: "skipped",
+                    scope: {
+                        force: Boolean(options.force),
+                        family_id: normalizeNumber(options.family_id, null) || null,
+                    },
+                    result,
+                    error_message: "",
+                    started_at: nowIso(),
+                    finished_at: nowIso(),
+                    created_at: nowIso(),
+                    updated_at: nowIso(),
+                },
+                result,
+            };
+        }
+        schedulerRunning = true;
+        const timestamp = nowIso();
+        const scopeFamilyId = normalizeNumber(options.family_id, null);
+        const run = {
+            id: store.nextId("scheduler_run"),
+            family_id: scopeFamilyId || null,
+            job_type: String(options.job_type || "care_notification"),
+            status: "running",
+            scope: {
+                force: Boolean(options.force),
+                family_id: scopeFamilyId || null,
+            },
+            result: {},
+            error_message: "",
+            started_at: timestamp,
+            finished_at: "",
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+        store.db.scheduler_runs.push(run);
+        const result = {
+            families_checked: 0,
+            care_cards_generated: 0,
+            app_messages_created: 0,
+            notification_deliveries_created: 0,
+            event_alerts_created: 0,
+            skipped: [],
+        };
+        try {
+            const families = store.db.families.filter((family) => (
+                (!scopeFamilyId || Number(family.id) === Number(scopeFamilyId))
+                && String(family.status || "active") !== "disabled"
+            ));
+            for (const family of families) {
+                result.families_checked += 1;
+                const preferences = carePreferences(family.id);
+                const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
+                if (!schedule.enabled) {
+                    result.skipped.push({ family_id: family.id, reason: "schedule_disabled" });
+                    continue;
+                }
+                if (dailyCareDue(family.id, schedule, options)) {
+                    const beforeMessages = store.db.app_messages.length;
+                    const beforeDeliveries = store.db.notification_deliveries.length;
+                    const card = await generateCareCard(family.id, { force: Boolean(options.force_generate_card) });
+                    const message = createCareCardMessage(card, preferences, {
+                        scheduled_for: `${dateKeyShanghai()}T${schedule.delivery_time || "08:30"}:00+08:00`,
+                    });
+                    queueNotificationDelivery(message, { scheduled_for: message.scheduled_for });
+                    result.care_cards_generated += 1;
+                    result.app_messages_created += Math.max(0, store.db.app_messages.length - beforeMessages);
+                    result.notification_deliveries_created += Math.max(0, store.db.notification_deliveries.length - beforeDeliveries);
+                } else {
+                    result.skipped.push({ family_id: family.id, reason: "daily_not_due_or_already_sent" });
+                }
+
+                const rules = schedule.delivery_rules || {};
+                if (rules.home_status?.exception_push_enabled !== false) {
+                    const familyIds = new Set([Number(family.id)]);
+                    const openEvents = eventList(new URL("/api/app/events?acknowledged=false&limit=20", "http://local"), {
+                        userVisible: true,
+                        familyIds,
+                    }).filter((event) => !event.acknowledged);
+                    for (const event of openEvents) {
+                        const beforeMessages = store.db.app_messages.length;
+                        const beforeDeliveries = store.db.notification_deliveries.length;
+                        const message = createEventAlertMessage(event);
+                        queueNotificationDelivery(message);
+                        result.event_alerts_created += Math.max(0, store.db.app_messages.length - beforeMessages);
+                        result.notification_deliveries_created += Math.max(0, store.db.notification_deliveries.length - beforeDeliveries);
+                    }
+                }
+            }
+            run.status = "succeeded";
+            run.result = result;
+            run.finished_at = nowIso();
+            run.updated_at = run.finished_at;
+            return { ok: true, run, result };
+        } catch (error) {
+            run.status = "failed";
+            run.error_message = error.message || "scheduler failed";
+            run.result = result;
+            run.finished_at = nowIso();
+            run.updated_at = run.finished_at;
+            throw error;
+        } finally {
+            schedulerRunning = false;
+        }
     }
 
     function modelJob(payload) {
@@ -5555,14 +5992,130 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
+            if (req.method === "GET" && pathname === "/api/v1/internal/scheduler/status") {
+                if (!requireOps(req, res)) return;
+                const limit = Math.max(1, Math.min(50, normalizeNumber(url.searchParams.get("limit"), 10)));
+                write(res, 200, {
+                    ok: true,
+                    enabled: normalizeBool(process.env.GOHOME_SCHEDULER_ENABLED),
+                    latest_runs: store.db.scheduler_runs
+                        .slice()
+                        .sort((a, b) => String(b.started_at || b.created_at || "").localeCompare(String(a.started_at || a.created_at || "")))
+                        .slice(0, limit),
+                    generated_at: nowIso(),
+                });
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/internal/scheduler/run") {
+                if (!requireOps(req, res)) return;
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const result = await runNotificationScheduler({
+                    family_id: payload.family_id || url.searchParams.get("family_id"),
+                    force: "force" in payload ? normalizeBool(payload.force) : normalizeBool(url.searchParams.get("force")),
+                    force_generate_card: "force_generate_card" in payload
+                        ? normalizeBool(payload.force_generate_card)
+                        : normalizeBool(url.searchParams.get("force_generate_card")),
+                    job_type: payload.job_type || "manual_scheduler_run",
+                });
+                await store.save();
+                write(res, 200, {
+                    ok: true,
+                    run: result.run,
+                    result: result.result,
+                });
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/internal/messages/generate") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const userFamilies = familiesForUser(activeAppUser(req).id);
+                const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                const result = await runNotificationScheduler({
+                    family_id: familyId,
+                    force: "force" in payload ? normalizeBool(payload.force) : true,
+                    force_generate_card: normalizeBool(payload.force_generate_card),
+                    job_type: "app_message_generate",
+                });
+                await store.save();
+                write(res, 200, {
+                    ok: true,
+                    run: result.run,
+                    result: result.result,
+                });
+                return;
+            }
+
+            const appMessageMatch = pathname.match(/^\/api\/v1\/app\/messages\/([^/]+)$/);
+            if (appMessageMatch && req.method === "GET") {
+                if (!requireApp(req, res)) return;
+                const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
+                const messageId = decodeURIComponent(appMessageMatch[1]);
+                const message = store.db.app_messages.find((item) => (
+                    (String(item.message_id || item.id) === messageId || String(item.id) === messageId)
+                    && userFamilyIds.has(Number(item.family_id))
+                ));
+                if (!message) {
+                    writeError(res, 404, "message not found");
+                    return;
+                }
+                write(res, 200, publicAppMessage(message));
+                return;
+            }
+
+            if (appMessageMatch && req.method === "PATCH") {
+                if (!requireApp(req, res)) return;
+                const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
+                const messageId = decodeURIComponent(appMessageMatch[1]);
+                const message = store.db.app_messages.find((item) => (
+                    (String(item.message_id || item.id) === messageId || String(item.id) === messageId)
+                    && userFamilyIds.has(Number(item.family_id))
+                ));
+                if (!message) {
+                    writeError(res, 404, "message not found");
+                    return;
+                }
+                const patch = await parseJsonBody(req).catch(() => ({}));
+                if ("status" in patch) {
+                    const status = String(patch.status || "open");
+                    message.status = ["open", "read", "archived"].includes(status) ? status : message.status;
+                    if (message.status === "read" && !message.read_at) message.read_at = nowIso();
+                }
+                if ("read" in patch && normalizeBool(patch.read)) {
+                    message.status = "read";
+                    message.read_at = message.read_at || nowIso();
+                }
+                message.updated_at = nowIso();
+                await store.save();
+                write(res, 200, publicAppMessage(message));
+                return;
+            }
+
             if (req.method === "GET" && pathname === "/api/v1/app/messages") {
                 if (!requireApp(req, res)) return;
                 const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
-                const events = eventList(url, { userVisible: true, familyIds: userFamilyIds })
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), null);
+                if (familyId && !requireFamilyAccess(req, res, familyId)) return;
+                const statusFilter = String(url.searchParams.get("status") || "open").trim();
+                const limit = Math.max(1, Math.min(60, normalizeNumber(url.searchParams.get("limit"), 20)));
+                const messageFamilyIds = familyId ? new Set([Number(familyId)]) : userFamilyIds;
+                const persisted = store.db.app_messages
+                    .filter((message) => messageFamilyIds.has(Number(message.family_id)))
+                    .filter((message) => !statusFilter || statusFilter === "all" || String(message.status || "open") === statusFilter)
+                    .map(publicAppMessage);
+                const persistedEventIds = new Set(persisted.flatMap((message) => (
+                    Array.isArray(message.source_event_ids) ? message.source_event_ids.map(String) : []
+                )));
+                const events = eventList(url, { userVisible: true, familyIds: messageFamilyIds })
                     .filter((event) => !event.acknowledged)
+                    .filter((event) => !persistedEventIds.has(String(event.id)))
                     .slice(0, 5);
-                write(res, 200, events.map((event) => ({
+                const eventMessages = events.map((event) => ({
                     id: `event-${event.id}`,
+                    message_id: `event-${event.id}`,
+                    family_id: event.family_id || store.db.cameras[String(event.camera_id)]?.family_id || null,
                     message_type: event.level === "critical" ? "alert" : "explain",
                     title: event.type === "camera_offline"
                         ? `${event.camera_name || event.room || "摄像头"} 暂时没有返回画面`
@@ -5575,8 +6128,168 @@ function createLocalAppServer(options = {}) {
                     actions: [{ key: "open_event", label: "查看事件" }],
                     source_event_ids: [event.id],
                     generated_by: "local-app-server",
+                    status: "open",
+                    priority: event.level === "critical" ? "high" : "normal",
                     created_at: event.created_at,
-                })));
+                    updated_at: event.updated_at || event.created_at,
+                }));
+                const messages = [...persisted, ...eventMessages]
+                    .sort((a, b) => {
+                        const priorityScore = (item) => item.priority === "high" ? 1 : 0;
+                        const priorityDelta = priorityScore(b) - priorityScore(a);
+                        if (priorityDelta) return priorityDelta;
+                        return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+                    })
+                    .slice(0, limit);
+                write(res, 200, messages);
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/v1/notifications/deliveries") {
+                if (!requireApp(req, res)) return;
+                const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), null);
+                if (familyId && !requireFamilyAccess(req, res, familyId)) return;
+                const limit = Math.max(1, Math.min(100, normalizeNumber(url.searchParams.get("limit"), 50)));
+                const deliveries = store.db.notification_deliveries
+                    .filter((delivery) => familyId ? Number(delivery.family_id) === Number(familyId) : userFamilyIds.has(Number(delivery.family_id)))
+                    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
+                    .slice(0, limit)
+                    .map(publicNotificationDelivery);
+                write(res, 200, deliveries);
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/notifications/test") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const user = activeAppUser(req);
+                const userFamilies = familiesForUser(user.id);
+                const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                const message = upsertAppMessage({
+                    message_id: `notification-test-${familyId}-${Date.now()}`,
+                    family_id: familyId,
+                    user_id: user.id,
+                    message_type: "test",
+                    title: String(payload.title || "测试通知").slice(0, 80),
+                    subtitle: "这是一条 App 内通知测试记录。",
+                    body: String(payload.body || "通知服务已写入本地送达记录。").slice(0, 300),
+                    facts: ["App 内消息", "送达记录"],
+                    actions: [{ key: "open_notifications", label: "查看通知设置" }],
+                    priority: "normal",
+                    generated_by: "notification-test",
+                });
+                const deliveries = queueNotificationDelivery(message);
+                await store.save();
+                write(res, 200, { ok: true, message: publicAppMessage(message), deliveries: deliveries.map(publicNotificationDelivery) });
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/v1/app/push-tokens") {
+                if (!requireApp(req, res)) return;
+                const user = activeAppUser(req);
+                const userFamilyIds = familyIdsForUser(user.id);
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), null);
+                if (familyId && !requireFamilyAccess(req, res, familyId)) return;
+                const tokens = store.db.app_push_tokens
+                    .filter((token) => Number(token.user_id) === Number(user.id) || userFamilyIds.has(Number(token.family_id)))
+                    .filter((token) => familyId ? Number(token.family_id) === Number(familyId) : true)
+                    .filter((token) => String(token.status || "active") !== "revoked")
+                    .map(publicAppPushToken);
+                write(res, 200, tokens);
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/app/push-tokens") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const user = activeAppUser(req);
+                const userFamilies = familiesForUser(user.id);
+                const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                const appInstallId = String(payload.app_install_id || payload.appInstallId || "").trim();
+                const pushToken = String(payload.push_token || payload.pushToken || "").trim();
+                if (!appInstallId || !pushToken) {
+                    writeError(res, 400, "app_install_id and push_token required");
+                    return;
+                }
+                const tokenHash = sha256(pushToken);
+                let token = store.db.app_push_tokens.find((item) => (
+                    String(item.app_install_id || "") === appInstallId
+                    && Number(item.user_id) === Number(user.id)
+                ));
+                const timestamp = nowIso();
+                const patch = {
+                    family_id: familyId,
+                    user_id: user.id,
+                    app_install_id: appInstallId,
+                    platform: String(payload.platform || "ios").toLowerCase(),
+                    push_token_hash: tokenHash,
+                    token_preview: tokenPreview(pushToken),
+                    status: "active",
+                    device_name: String(payload.device_name || payload.deviceName || "").slice(0, 80),
+                    app_version: String(payload.app_version || payload.appVersion || "").slice(0, 40),
+                    metadata: payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {},
+                    last_seen_at: timestamp,
+                    updated_at: timestamp,
+                };
+                if (!token) {
+                    token = {
+                        id: store.nextId("app_push_token"),
+                        ...patch,
+                        created_at: timestamp,
+                    };
+                    store.db.app_push_tokens.push(token);
+                } else {
+                    Object.assign(token, patch);
+                }
+                await store.save();
+                write(res, 200, publicAppPushToken(token));
+                return;
+            }
+
+            const appPushTokenMatch = pathname.match(/^\/api\/v1\/app\/push-tokens\/([^/]+)$/);
+            if (appPushTokenMatch && req.method === "DELETE") {
+                if (!requireApp(req, res)) return;
+                const user = activeAppUser(req);
+                const appInstallId = decodeURIComponent(appPushTokenMatch[1]);
+                const token = store.db.app_push_tokens.find((item) => (
+                    String(item.app_install_id || "") === appInstallId
+                    && Number(item.user_id) === Number(user.id)
+                ));
+                if (token) {
+                    token.status = "revoked";
+                    token.updated_at = nowIso();
+                    await store.save();
+                }
+                write(res, 200, { ok: true });
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/app/push-test") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const user = activeAppUser(req);
+                const userFamilies = familiesForUser(user.id);
+                const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                const message = upsertAppMessage({
+                    message_id: `push-test-${familyId}-${Date.now()}`,
+                    family_id: familyId,
+                    user_id: user.id,
+                    message_type: "test",
+                    title: "推送链路测试",
+                    subtitle: "已写入 App 内消息和送达记录。",
+                    body: "当前阶段未接 APNs 时会记录为模拟送达；接入 APNs 后同一接口会进入真实推送队列。",
+                    facts: ["App 内消息已生成", appPushProviderConfigured() ? "推送 provider 已配置" : "APNs 尚未配置"],
+                    actions: [{ key: "open_notifications", label: "查看通知设置" }],
+                    priority: "normal",
+                    generated_by: "push-test",
+                });
+                const deliveries = queueNotificationDelivery(message);
+                await store.save();
+                write(res, 200, { ok: true, message: publicAppMessage(message), deliveries: deliveries.map(publicNotificationDelivery) });
                 return;
             }
 
@@ -5587,6 +6300,19 @@ function createLocalAppServer(options = {}) {
     }
 
     const server = http.createServer(route);
+    let schedulerTimer = null;
+    if (normalizeBool(process.env.GOHOME_SCHEDULER_ENABLED)) {
+        const intervalMs = Math.max(60000, normalizeNumber(process.env.GOHOME_SCHEDULER_INTERVAL_MS, 60000));
+        schedulerTimer = setInterval(() => {
+            runNotificationScheduler({ job_type: "background_scheduler" })
+                .then(() => store.save())
+                .catch((error) => {
+                    console.error(`scheduler failed: ${error.message || error}`);
+                });
+        }, intervalMs);
+        schedulerTimer.unref?.();
+        server.on("close", () => clearInterval(schedulerTimer));
+    }
     return { server, store, dataDir, appToken, deviceToken };
 }
 

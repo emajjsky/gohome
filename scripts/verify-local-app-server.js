@@ -60,7 +60,12 @@ function schemaColumns(sql, tableName) {
 }
 
 function assertSeedBundleMatchesSchema(seedBundle) {
-    const schemaSql = fs.readFileSync(path.resolve(__dirname, "../local-app-server/migrations/001_initial_schema.sql"), "utf8");
+    const migrationsDir = path.resolve(__dirname, "../local-app-server/migrations");
+    const schemaSql = fs.readdirSync(migrationsDir)
+        .filter((file) => file.endsWith(".sql"))
+        .sort()
+        .map((file) => fs.readFileSync(path.join(migrationsDir, file), "utf8"))
+        .join("\n\n");
     for (const tableName of TABLE_ORDER) {
         const columns = schemaColumns(schemaSql, tableName);
         assert.ok(columns, `missing schema table: ${tableName}`);
@@ -654,6 +659,68 @@ async function main() {
         assert.equal(generatedCareCard.ok, true);
         assert.equal(generatedCareCard.card.card_id, careCard.card_id);
 
+        const pushToken = await requestJson(baseUrl, "/api/v1/app/push-tokens", {
+            method: "POST",
+            body: JSON.stringify({
+                family_id: family.id,
+                app_install_id: "verify-ios-install",
+                platform: "ios",
+                push_token: "verify-push-token-1234567890",
+                device_name: "iPhone Verify",
+                app_version: "0.1.0",
+            }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(pushToken.family_id, family.id);
+        assert.equal(pushToken.platform, "ios");
+        assert.equal(pushToken.token_preview, "veri...7890");
+
+        const schedulerRun = await requestJson(baseUrl, "/api/v1/internal/scheduler/run", {
+            method: "POST",
+            body: JSON.stringify({ family_id: family.id, force: true }),
+        });
+        assert.equal(schedulerRun.ok, true);
+        assert.equal(schedulerRun.run.status, "succeeded");
+        assert.equal(schedulerRun.result.families_checked, 1);
+        assert.ok(schedulerRun.result.care_cards_generated >= 1);
+        assert.ok(schedulerRun.result.notification_deliveries_created >= 1);
+
+        const appMessages = await requestJson(baseUrl, `/api/v1/app/messages?family_id=${family.id}&status=open`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        const careMessage = appMessages.find((message) => message.message_type === "care_card");
+        assert.ok(careMessage);
+        assert.equal(careMessage.care_card_id, generatedCareCard.card.card_id);
+        assert.ok(careMessage.actions.some((action) => action.key === "open_care_card"));
+
+        const readMessage = await requestJson(baseUrl, `/api/v1/app/messages/${encodeURIComponent(careMessage.message_id)}?family_id=${family.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ status: "read" }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(readMessage.status, "read");
+        assert.ok(readMessage.read_at);
+
+        const deliveries = await requestJson(baseUrl, `/api/v1/notifications/deliveries?family_id=${family.id}`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.ok(deliveries.some((delivery) => (
+            delivery.message_id === careMessage.message_id
+            && ["queued", "simulated", "app_message_only"].includes(delivery.status)
+        )));
+
+        const pushTest = await requestJson(baseUrl, "/api/v1/app/push-test", {
+            method: "POST",
+            body: JSON.stringify({ family_id: family.id }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(pushTest.ok, true);
+        assert.ok(pushTest.deliveries.length >= 1);
+
+        const schedulerStatus = await requestJson(baseUrl, "/api/v1/internal/scheduler/status");
+        assert.equal(schedulerStatus.ok, true);
+        assert.ok(schedulerStatus.latest_runs.length >= 1);
+
         const opsConfig = await requestJson(baseUrl, "/api/v1/ops/service-config", {
             headers: {},
         });
@@ -881,7 +948,7 @@ async function main() {
         streamResponse.body.cancel();
 
         const seedBundle = buildCloudSeedBundle(app.store.db, { source: "verify-local-app-server" });
-        assert.equal(seedBundle.schema_version, "001_initial_schema");
+        assert.equal(seedBundle.schema_version, "002_notifications");
         assert.equal(seedBundle.tables.users.length, 3);
         assert.ok(seedBundle.tables.users.some((user) => user.email === phoneAccountEmail));
         assert.equal(seedBundle.tables.families.length, 3);
@@ -912,6 +979,12 @@ async function main() {
         assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.anniversaries[0].label, "妈妈生日");
         assert.equal(seedBundle.tables.care_cards.length, 1);
         assert.equal(seedBundle.tables.care_cards[0].card_id, careCard.card_id);
+        assert.ok(seedBundle.tables.app_messages.some((message) => message.message_type === "care_card"));
+        assert.ok(seedBundle.tables.app_messages.some((message) => message.message_type === "test"));
+        assert.equal(seedBundle.tables.app_push_tokens.length, 1);
+        assert.equal(seedBundle.tables.app_push_tokens[0].push_token_hash.length, 64);
+        assert.ok(seedBundle.tables.notification_deliveries.length >= 2);
+        assert.ok(seedBundle.tables.scheduler_runs.some((run) => run.status === "succeeded"));
         assert.equal(seedBundle.tables.model_providers.length, 0);
         assertSeedBundleMatchesSchema(seedBundle);
 
@@ -937,6 +1010,10 @@ async function main() {
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.message_focus, "先说明家里是否平稳，再给女儿一个适合打电话时聊的轻松话题。");
         assert.equal(restoredDb.care_cards.length, 1);
         assert.equal(restoredDb.care_cards[0].card_id, careCard.card_id);
+        assert.ok(restoredDb.app_messages.some((message) => message.message_type === "care_card"));
+        assert.equal(restoredDb.app_push_tokens.length, 1);
+        assert.ok(restoredDb.notification_deliveries.length >= 2);
+        assert.ok(restoredDb.scheduler_runs.some((run) => run.status === "succeeded"));
         assert.equal(restoredDb.model_providers.length, 0);
 
         console.log(JSON.stringify({

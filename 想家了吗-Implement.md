@@ -9410,3 +9410,60 @@ GOHOME_APP_STORE=postgres GOHOME_DATABASE_URL='postgres://...' npm run app-serve
 - Tavily 仍只作为家属端“可聊话题候选”，不是直接向老人推送外链。
 - 若某个模块当天没有合格候选，首页应显示产品化兜底说明，而不是硬塞无关新闻。
 - 真正每日到点推送、异常即时推送和 APNs 送达仍属于云端 scheduler / notification-service / iOS 阶段。
+
+## 73. 2026-07-09 scheduler / notification-service 本地闭环
+
+背景：
+
+- 用户确认下一步要做云端 scheduler / notification-service。
+- 目标不是先接 APNs，而是先让服务端真的按“我的 -> 关怀推送”配置生成 App 内消息、通知送达记录和可审计调度记录。
+
+本轮新增：
+
+- 新增数据库迁移 `002_notifications.sql`：
+  - `app_messages`：App 内消息，承接每日关怀、事件提醒和测试消息。
+  - `app_push_tokens`：App 安装与 push token 登记，只保存 hash 和 preview，不保存明文 token。
+  - `notification_deliveries`：通知送达记录，当前可记录 `queued / simulated / app_message_only`。
+  - `scheduler_runs`：调度运行记录，保存 scope、result、错误信息和时间。
+- `local-app-server/server.js` 新增通知服务能力：
+  - `runNotificationScheduler()`：统一调度入口。
+  - 每日汇总卡：到达配置时间或手动 force 时生成今日关怀卡，并写入 `care_card` + `app_message` + `notification_delivery`。
+  - 异常即时提醒：未处理事件会生成事件型 App 消息和通知记录。
+  - 没有 APNs provider 时不伪装真推送，记录为 App 内送达或模拟送达。
+  - `GOHOME_SCHEDULER_ENABLED=1` 时可开启后台循环，默认关闭，便于本地测试和云端灰度。
+- 新增 / 补齐 API：
+  - `POST /api/v1/internal/scheduler/run`
+  - `GET /api/v1/internal/scheduler/status`
+  - `POST /api/v1/internal/messages/generate`
+  - `GET /api/v1/app/messages`
+  - `GET /api/v1/app/messages/{message_id}`
+  - `PATCH /api/v1/app/messages/{message_id}`
+  - `GET /api/v1/notifications/deliveries`
+  - `POST /api/v1/notifications/test`
+  - `GET /api/v1/app/push-tokens`
+  - `POST /api/v1/app/push-tokens`
+  - `DELETE /api/v1/app/push-tokens/{app_install_id}`
+  - `POST /api/v1/app/push-test`
+- PostgresStore 和 seed 导出已支持新表。
+- `scripts/verify-local-app-server.js` 已加入通知链路验证：
+  - 注册 push token。
+  - 手动跑 scheduler。
+  - 读取 App 消息。
+  - 标记消息已读。
+  - 查询送达记录。
+  - 执行 push-test。
+  - 校验 seed bundle 可恢复新表。
+
+本地验证：
+
+- `node --check local-app-server/server.js`
+- `node --check local-app-server/postgres-store.js`
+- `node --check scripts/export-local-app-db.js`
+- `node --check scripts/verify-local-app-server.js`
+- `npm test`
+
+当前边界：
+
+- 当前仍未接 APNs；没有 APNs provider 时，只生成 App 内消息和模拟 / App 内送达记录。
+- 后续 iOS 原生 App 接入后，需要把真实 APNs token 登记到 `app_push_tokens`，再接 APNs provider 发送。
+- 当前后台循环需要通过 `GOHOME_SCHEDULER_ENABLED=1` 打开；本地默认用手动 endpoint 验证，避免开发时反复触发模型和生图。
