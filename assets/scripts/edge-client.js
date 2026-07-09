@@ -411,6 +411,10 @@
         let profile = resolved.profile;
         let refreshMs = resolved.refreshMs;
         let retryMs = resolved.retryMs;
+        let snapshotOnly = Boolean(options.snapshotOnly);
+        let snapshotRefreshMs = Math.max(8000, Number(options.snapshotRefreshMs || 12000));
+        let lastSnapshotPath = "";
+        let lastSnapshotPayload = null;
         let disposed = false;
         let refreshTimer = null;
         let retryTimer = null;
@@ -432,15 +436,67 @@
             }
         }
 
+        function imageHasFrame() {
+            return image && image.naturalWidth > 0 && image.naturalHeight > 0;
+        }
+
+        function loadImageWithoutBlanking(url) {
+            return new Promise((resolve) => {
+                const probe = new Image();
+                probe.onload = () => {
+                    if (!disposed && image) image.src = url;
+                    resolve(true);
+                };
+                probe.onerror = () => resolve(false);
+                probe.src = url;
+            });
+        }
+
+        async function refreshSnapshotOnly() {
+            clearTimers();
+            if (disposed || !image || !cameraId) return;
+            try {
+                const snapshot = await appLatestSnapshot(cameraId, { allowMissing: true });
+                if (disposed || !image || !cameraId) return;
+                const snapshotPath = snapshot?.image_url || snapshot?.snapshot_path || "";
+                if (snapshot?.available === false || !snapshotPath) {
+                    if (!imageHasFrame()) onStateChange("waiting");
+                    retryTimer = setTimeout(refreshSnapshotOnly, Math.max(retryMs, 5000));
+                    return;
+                }
+                const nextUrl = appMediaUrl(snapshotPath);
+                const pathChanged = snapshotPath !== lastSnapshotPath;
+                if (pathChanged) {
+                    const loaded = await loadImageWithoutBlanking(nextUrl);
+                    if (!loaded) {
+                        if (!imageHasFrame()) onStateChange("waiting");
+                        retryTimer = setTimeout(refreshSnapshotOnly, Math.max(retryMs, 5000));
+                        return;
+                    }
+                    lastSnapshotPath = snapshotPath;
+                }
+                lastSnapshotPayload = snapshot;
+                onStateChange("snapshot", snapshot);
+                refreshTimer = setTimeout(refreshSnapshotOnly, snapshotRefreshMs);
+            } catch (error) {
+                if (!imageHasFrame()) onStateChange("waiting", error);
+                retryTimer = setTimeout(refreshSnapshotOnly, Math.max(retryMs, 5000));
+            }
+        }
+
         async function refresh() {
             clearTimers();
             if (disposed || !image || !cameraId) return;
+            if (snapshotOnly) {
+                await refreshSnapshotOnly();
+                return;
+            }
             onStateChange("loading");
             try {
                 image.src = await v1VideoStreamPlaybackUrl(cameraId, { profile });
                 frameCheckTimer = setTimeout(() => {
                     if (disposed || !cameraId) return;
-                    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+                    if (imageHasFrame()) {
                         onStateChange("playing");
                     } else {
                         showSnapshotFallback();
@@ -474,10 +530,15 @@
 
         function setSource(nextCameraId, nextOptions = {}) {
             cameraId = nextCameraId ? Number(nextCameraId) : null;
-            resolved = managedVideoStreamOptions({ ...options, ...nextOptions });
+            const mergedOptions = { ...options, ...nextOptions };
+            resolved = managedVideoStreamOptions(mergedOptions);
             profile = resolved.profile;
             refreshMs = resolved.refreshMs;
             retryMs = resolved.retryMs;
+            snapshotOnly = Boolean(mergedOptions.snapshotOnly);
+            snapshotRefreshMs = Math.max(8000, Number(mergedOptions.snapshotRefreshMs || 12000));
+            lastSnapshotPath = "";
+            lastSnapshotPayload = null;
             if (!cameraId) {
                 clearTimers();
                 image.removeAttribute("src");
@@ -496,19 +557,29 @@
 
         function handleLoad() {
             if (disposed || !cameraId) return;
-            if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+            if (snapshotOnly && imageHasFrame()) {
+                onStateChange("snapshot", lastSnapshotPayload);
+                return;
+            }
+            if (imageHasFrame()) {
                 onStateChange("playing");
             }
         }
 
         function handleVisibilityChange() {
-            if (!document.hidden && cameraId) refresh();
+            if (!document.hidden && cameraId) {
+                if (snapshotOnly) refreshSnapshotOnly();
+                else refresh();
+            }
         }
 
         image?.addEventListener("error", handleError);
         image?.addEventListener("load", handleLoad);
         document.addEventListener("visibilitychange", handleVisibilityChange);
-        if (cameraId) refresh();
+        if (cameraId) {
+            if (snapshotOnly) refreshSnapshotOnly();
+            else refresh();
+        }
 
         return {
             refresh,

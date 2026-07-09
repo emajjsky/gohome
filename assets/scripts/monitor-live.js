@@ -152,9 +152,9 @@
         }
         if (nextState === "snapshot") {
             setText("edgeStatusTitle", "最新画面已返回");
-            setText("edgeStatusText", "家庭盒子已上传最新画面，实时流会继续自动重连。");
+            setText("edgeStatusText", "家庭盒子已上传最新画面，预览会自动同步新帧。");
             setText("edgeUpdateTime", "最新画面");
-            setText("edgeStreamLabel", "最新画面");
+            setText("edgeStreamLabel", "最新画面已同步");
             setText("edgeMainMessage", "家庭盒子已上传最新画面。");
             setText("edgeFact", "画面在线");
             setText("edgeFeeling", "继续观察");
@@ -165,11 +165,11 @@
             return;
         }
         if (nextState === "waiting") {
-            setText("edgeStatusTitle", "等待画面帧");
-            setText("edgeStatusText", "家庭盒子在线，正在等待第一帧画面。");
-            setText("edgeUpdateTime", "等待第一帧");
-            setText("edgeStreamLabel", "等待第一帧");
-            setText("edgeMainMessage", "家庭盒子在线，正在等待第一帧画面。");
+            setText("edgeStatusTitle", "等待最新画面");
+            setText("edgeStatusText", "家庭盒子在线，正在等待上传最新预览。");
+            setText("edgeUpdateTime", "等待最新画面");
+            setText("edgeStreamLabel", "等待最新画面");
+            setText("edgeMainMessage", "家庭盒子在线，正在等待上传最新预览。");
             return;
         }
         if (nextState === "loading") {
@@ -181,11 +181,11 @@
             return;
         }
         if (nextState === "error") {
-            setText("edgeStatusTitle", camera?.status === "online" ? "画面暂时断开" : "摄像头离线");
-            setText("edgeStatusText", camera?.status === "online" ? "画面请求失败，正在重试。" : "摄像头当前不在线。");
-            setText("edgeUpdateTime", "重连中");
-            setText("edgeStreamLabel", "重连中");
-            setText("edgeMainMessage", "画面请求失败，正在重试。");
+            setText("edgeStatusTitle", camera?.status === "online" ? "预览暂不可用" : "摄像头离线");
+            setText("edgeStatusText", camera?.status === "online" ? "还没有拿到最新预览，盒子会继续上传。" : "摄像头当前不在线。");
+            setText("edgeUpdateTime", "等待预览");
+            setText("edgeStreamLabel", "等待预览");
+            setText("edgeMainMessage", "还没有拿到最新预览，盒子会继续上传。");
         }
     }
 
@@ -289,7 +289,7 @@
             <article class="gohome-camera-card">
                 <a ${activeAttrs.previewId ? `id="${activeAttrs.previewId}"` : ""} href="${watchHref}" class="gohome-camera-live">
                     <img id="${imageId}" alt="${escapeHtml(cameraTitle)}"/>
-                    <span class="gohome-live-badge">实时</span>
+                    <span class="gohome-live-badge">最新</span>
                     ${active ? `<span class="gohome-camera-current">当前</span>` : ""}
                     <p id="${streamLabelId}" class="gohome-stream-label">等待画面帧</p>
                 </a>
@@ -327,8 +327,6 @@
                 effective_status: effectiveStatus(item),
                 enabled: item.enabled !== false,
                 has_stream_config: Boolean(item.has_stream_config),
-                edge_reported_at: item.edge_reported_at || "",
-                last_seen_at: item.last_seen_at || "",
             })),
         });
         if (state.cameraGridSignature === signature) return;
@@ -348,9 +346,9 @@
         const label = $(cameraDomId("edgeStreamLabel", camera));
         if (!label) return;
         if (nextState === "playing") label.textContent = "实时画面已返回";
-        else if (nextState === "snapshot") label.textContent = "最新画面";
-        else if (nextState === "waiting") label.textContent = "等待第一帧";
-        else if (nextState === "error") label.textContent = "画面请求失败，正在重试";
+        else if (nextState === "snapshot") label.textContent = "最新画面已同步";
+        else if (nextState === "waiting") label.textContent = "等待最新画面";
+        else if (nextState === "error") label.textContent = "等待预览";
         else if (nextState === "loading") label.textContent = "正在连接画面";
         else label.textContent = "等待画面帧";
     }
@@ -380,6 +378,8 @@
             const controller = GoHomeEdge.createManagedVideoStream(image, {
                 cameraId: camera.id,
                 scene: "monitor",
+                snapshotOnly: true,
+                snapshotRefreshMs: 12000,
                 onStateChange(nextState) {
                     if (Number(camera.id) === Number(selected?.id)) {
                         applyStreamState(camera, nextState);
@@ -432,7 +432,7 @@
                     applyStreamState(camera, "playing");
                     if (evaluation) applyEvaluationStatus(camera, evaluation);
                 } else {
-                    applyStreamState(camera, effectiveStatus(camera) === "online" ? "waiting" : "error");
+                    applyStreamState(camera, "waiting");
                     if (evaluation) {
                         applyEvaluationStatus(camera, evaluation);
                     } else {
