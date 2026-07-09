@@ -244,6 +244,36 @@ async function main() {
         assert.equal(claimFamilyBindings.length, 1);
         assert.equal(claimFamilyBindings[0].device_id, "edge-claimable");
 
+        const claimFamilyCamera = await requestJson(baseUrl, "/api/cameras", {
+            method: "POST",
+            body: JSON.stringify({
+                family_id: claimFamily.id,
+                name: "厨房次视",
+                room: "厨房",
+                stream_url: "rtsp://192.168.1.21:554/stream2",
+                enabled: true,
+            }),
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.equal(String(claimFamilyCamera.family_id), String(claimFamily.id));
+        assert.equal(claimFamilyCamera.room, "厨房");
+
+        const blockedClaimFamilyCamera = await fetch(`${baseUrl}/api/cameras`, {
+            method: "POST",
+            body: JSON.stringify({
+                family_id: claimFamily.id,
+                name: "越权摄像头",
+                room: "书房",
+                stream_url: "rtsp://192.168.1.22:554/stream1",
+                enabled: true,
+            }),
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${appSessionToken}`,
+            },
+        });
+        assert.equal(blockedClaimFamilyCamera.status, 403);
+
         const adminBlockedFromDaughterFamily = await fetch(`${baseUrl}/api/v1/families/${family.id}/elders/elder_primary/profile`, {
             headers: { Authorization: `Bearer ${adminSessionToken}` },
         });
@@ -525,13 +555,13 @@ async function main() {
         assert.equal(newFamilyBindings.length, 1);
         assert.equal(newFamilyBindings[0].device_id, "edge-test");
 
-        const snapshot = await requestJson(baseUrl, "/api/app/cameras/1/snapshot/latest?allow_missing=1", {
+        const snapshot = await requestJson(baseUrl, `/api/app/cameras/${camera.id}/snapshot/latest?allow_missing=1`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(snapshot.available, true);
         assert.equal(snapshot.snapshot_path, "events/test.jpg");
 
-        const evaluation = await requestJson(baseUrl, "/api/app/cameras/1/evaluation/latest", {
+        const evaluation = await requestJson(baseUrl, `/api/app/cameras/${camera.id}/evaluation/latest`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(evaluation.candidates.length, 1);
@@ -842,10 +872,10 @@ async function main() {
 
         const streamSession = await requestJson(baseUrl, "/api/v1/video/sessions", {
             method: "POST",
-            body: JSON.stringify({ resource_type: "stream", camera_id: 1 }),
+            body: JSON.stringify({ resource_type: "stream", camera_id: camera.id }),
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        const streamResponse = await fetch(`${baseUrl}/api/v1/video/cameras/1/stream.mjpg?playback_ticket=${streamSession.ticket}`);
+        const streamResponse = await fetch(`${baseUrl}/api/v1/video/cameras/${camera.id}/stream.mjpg?playback_ticket=${streamSession.ticket}`);
         assert.equal(streamResponse.status, 200);
         assert.match(streamResponse.headers.get("content-type") || "", /multipart\/x-mixed-replace/);
         streamResponse.body.cancel();
@@ -862,8 +892,12 @@ async function main() {
         assert.equal(seededElderProfile.home_phone, "057100000000");
         assert.equal(seedBundle.tables.device_tokens.length, 1);
         assert.equal(seedBundle.tables.device_tokens[0].token_hash.length, 64);
-        assert.equal(seedBundle.tables.cameras.length, 1);
-        assert.equal(seedBundle.tables.camera_secrets.length, 1);
+        assert.equal(seedBundle.tables.cameras.length, 2);
+        assert.ok(seedBundle.tables.cameras.some((item) => (
+            String(item.id) === String(claimFamilyCamera.id)
+            && String(item.family_id) === String(claimFamily.id)
+        )));
+        assert.equal(seedBundle.tables.camera_secrets.length, 2);
         assert.equal(seedBundle.tables.events.length, 2);
         const seededFallEvent = seedBundle.tables.events.find((event) => event.event_type === "fall_candidate");
         const seededStaleOfflineEvent = seedBundle.tables.events.find((event) => String(event.id) === String(staleOffline.event.id));
@@ -887,7 +921,8 @@ async function main() {
         assert.equal(restoredDb.families.length, 3);
         assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].mobile_phone, "13800138000");
         assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].home_phone, "057100000000");
-        assert.equal(Object.values(restoredDb.cameras).length, 1);
+        assert.equal(Object.values(restoredDb.cameras).length, 2);
+        assert.equal(String(restoredDb.cameras[String(claimFamilyCamera.id)].family_id), String(claimFamily.id));
         assert.equal(restoredDb.events.length, 2);
         const restoredFallEvent = restoredDb.events.find((event) => event.event_type === "fall_candidate");
         const restoredStaleOfflineEvent = restoredDb.events.find((event) => String(event.id) === String(staleOffline.event.id));

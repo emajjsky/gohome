@@ -68,6 +68,12 @@
         }
     }
 
+    function familyPath(path, family = null) {
+        const url = new URL(path, window.location.href);
+        if (family?.id) url.searchParams.set("family_id", String(family.id));
+        return `${url.pathname.split("/").pop() || path}${url.search}${url.hash}`;
+    }
+
     function setHomeCareImageFallback(message, subtext, icon = "volunteer_activism") {
         const image = $("edgeHomeCareImage");
         const fallback = $("edgeHomeCareImageFallback");
@@ -1189,7 +1195,7 @@
         setText("edgeHomeCameraState", "待接入");
         setText("edgeHomeTitle", "把这台设备绑到家庭。");
         setText("edgeHomeSubtitle", "输入盒身二维码内容、序列号或临时绑定码后，才能配置摄像头。");
-        setAction("edgeHomePrimaryAction", "device_binding.html", "绑定设备", "link");
+        setAction("edgeHomePrimaryAction", familyPath("device_binding.html", family), "绑定设备", "link");
         setAction("edgeHomeSecondaryAction", "family.html", "家庭空间", "groups");
         toggleSetupMode(true);
     }
@@ -1258,7 +1264,7 @@
                     setText("edgeHomeCameraState", "未启用");
                     setText("edgeHomeTitle", "当前没有启用中的摄像头");
                     setText("edgeHomeSubtitle", "先在摄像头配置页启用至少一路摄像头，盒子同步成功后再进入首页。");
-                    setAction("edgeHomePrimaryAction", "connect.html", "配置摄像头", "nest_cam_indoor");
+                    setAction("edgeHomePrimaryAction", familyPath("connect.html", primaryFamily), "配置摄像头", "nest_cam_indoor");
                     toggleSetupMode(true);
                 } else {
                     renderHomeSummary({ user, family: primaryFamily, device, enabled: [], liveEvents, careCard: null, profile: elderProfile });
@@ -1266,7 +1272,7 @@
                     setText("edgeHomeCameraState", "未接入");
                     setText("edgeHomeTitle", "还没有添加摄像头");
                     setText("edgeHomeSubtitle", "在 App 里添加摄像头配置，家庭盒子会从云端拉取并在老人家局域网内测试。");
-                    setAction("edgeHomePrimaryAction", "connect.html", "添加摄像头", "nest_cam_indoor");
+                    setAction("edgeHomePrimaryAction", familyPath("connect.html", primaryFamily), "添加摄像头", "nest_cam_indoor");
                     toggleSetupMode(true);
                 }
                 return;

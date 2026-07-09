@@ -51,7 +51,10 @@
         if (!button) return;
         button.disabled = busy;
         button.classList.toggle("opacity-70", busy);
-        button.textContent = busy ? "绑定中..." : "绑定盒子";
+        const bound = hasActiveBinding();
+        const icon = bound ? "nest_cam_indoor" : "link";
+        const label = busy ? (bound ? "进入中..." : "绑定中...") : (bound ? "继续配置摄像头" : "绑定盒子");
+        button.innerHTML = `<span class="material-symbols-outlined text-[20px]">${icon}</span>${label}`;
     }
 
     function setTokenBusy(id, busy, busyText, idleText) {
@@ -129,6 +132,29 @@
         return state.families.find((family) => Number(family.id) === familyId) || null;
     }
 
+    function activeBindings() {
+        return state.bindings.filter((binding) => String(binding.status || "active") !== "revoked");
+    }
+
+    function hasActiveBinding() {
+        return activeBindings().length > 0;
+    }
+
+    function syncPrimaryAction() {
+        const button = $("bindingSubmitBtn");
+        if (!button) return;
+        const bound = hasActiveBinding();
+        button.dataset.mode = bound ? "continue" : "bind";
+        button.innerHTML = bound
+            ? `<span class="material-symbols-outlined text-[20px]">nest_cam_indoor</span>继续配置摄像头`
+            : `<span class="material-symbols-outlined text-[20px]">link</span>绑定盒子`;
+        const claimInput = $("bindingClaimInput");
+        if (claimInput) {
+            claimInput.required = !bound;
+            claimInput.placeholder = bound ? "已绑定，可直接继续" : "输入二维码内容、序列号或绑定码";
+        }
+    }
+
     function renderTokenCard() {
         const activeCode = state.bindingCodes.find((item) => item.status === "active") || state.bindingCodes[0] || null;
         const token = state.authStatus?.token || null;
@@ -140,8 +166,9 @@
     function renderBindings() {
         const list = $("bindingList");
         if (!list) return;
-        setText("bindingListBadge", `${state.bindings.length} 台`);
-        if (!state.bindings.length) {
+        const bindings = activeBindings();
+        setText("bindingListBadge", `${bindings.length} 台`);
+        if (!bindings.length) {
             list.innerHTML = `
                 <div class="app-soft-card bg-white p-5 text-center">
                     <p class="font-display text-[16px] font-bold text-on-surface">还没有绑定设备</p>
@@ -149,7 +176,7 @@
             `;
             return;
         }
-        list.innerHTML = state.bindings.map((binding) => `
+        list.innerHTML = bindings.map((binding) => `
             <article class="app-soft-card bg-white p-4">
                 <div class="flex items-center justify-between gap-3">
                     <div class="min-w-0">
@@ -158,6 +185,10 @@
                     </div>
                     <span class="px-2.5 py-1 rounded-full bg-[#edf6ee] text-[#2d7d5c] text-[10px] font-bold shrink-0">已绑定</span>
                 </div>
+                <a class="mt-3 h-10 rounded-2xl bg-primary text-on-primary font-sans text-[12px] font-bold flex items-center justify-center gap-2" href="${connectHref()}">
+                    <span class="material-symbols-outlined text-[18px]">nest_cam_indoor</span>
+                    继续配置摄像头
+                </a>
             </article>
         `).join("");
     }
@@ -203,11 +234,17 @@
             return;
         }
         state.bindings = await GoHomeEdge.deviceBindings(familyId);
-        const currentBound = state.bindings.some((binding) => binding.device_id === state.device?.device_id);
+        const currentBound = hasActiveBinding();
         setText("bindingStateText", currentBound ? "已绑定" : "待绑定");
         state.bindingCodes = await GoHomeEdge.deviceBindingCodes(familyId);
         renderBindings();
         renderTokenCard();
+        syncPrimaryAction();
+        if (currentBound) {
+            setFeedback("这个家庭已经绑定盒子，可以继续配置摄像头。", "success");
+        } else {
+            setFeedback("");
+        }
     }
 
     async function loadData() {
@@ -245,6 +282,13 @@
         const familyId = Number($("bindingFamilySelect")?.value || 0);
         if (!familyId) {
             setFeedback("先选家庭。", "error");
+            return;
+        }
+        if (hasActiveBinding()) {
+            setFeedback("盒子已绑定，正在进入摄像头配置。", "success");
+            setTimeout(() => {
+                window.location.href = connectHref();
+            }, 160);
             return;
         }
         const claimCode = $("bindingClaimInput")?.value.trim() || "";

@@ -129,7 +129,11 @@
     if (!(await ensureApi())) return null;
     const families = await GoHomeEdge.myFamilies();
     state.families = families;
-    if (families[0]) return families[0];
+    const requestedFamilyId = familyIdFromUrl();
+    const selected = requestedFamilyId
+      ? families.find((family) => String(family.id) === String(requestedFamilyId))
+      : families[0];
+    if (selected) return selected;
     if (!createIfMissing) {
       if (options.redirect !== false) go("family.html?mode=setup");
       return null;
@@ -472,8 +476,44 @@
     }, true);
   }
 
+  function familyIdFromUrl() {
+    return String(new URLSearchParams(window.location.search).get("family_id") || "").trim();
+  }
+
+  function selectedFamilyFromState() {
+    const requestedFamilyId = familyIdFromUrl();
+    if (requestedFamilyId) {
+      const matched = state.families.find((family) => String(family.id) === String(requestedFamilyId));
+      if (matched) return matched;
+      return null;
+    }
+    return state.families[0] || null;
+  }
+
+  async function ensureSelectedFamily() {
+    if (!(await ensureApi())) return null;
+    if (!state.families.length) {
+      state.families = await GoHomeEdge.myFamilies();
+    }
+    const requestedFamilyId = familyIdFromUrl();
+    const family = selectedFamilyFromState();
+    if (requestedFamilyId && !family) {
+      throw new Error("当前账号找不到这个家庭，请从首页或家庭空间重新进入配置。");
+    }
+    if (!family) {
+      throw new Error("请先创建家庭并绑定盒子，再添加摄像头。");
+    }
+    return family;
+  }
+
+  function familyScopedPath(path, familyId = currentFamilyId()) {
+    const url = new URL(path, window.location.href);
+    if (familyId) url.searchParams.set("family_id", String(familyId));
+    return `${url.pathname.split("/").pop() || path}${url.search}${url.hash}`;
+  }
+
   function currentFamilyId() {
-    return new URLSearchParams(window.location.search).get("family_id") || state.families[0]?.id || 1;
+    return familyIdFromUrl() || selectedFamilyFromState()?.id || "";
   }
 
   function currentCameraId() {
@@ -497,6 +537,13 @@
           toast(error.message || "生成绑定码失败", "error");
         }
       }, true);
+    });
+  }
+
+  function wireCameraIntro() {
+    const target = familyScopedPath("connect.html");
+    $$("a[href^='connect.html']").forEach((link) => {
+      link.href = window.GoHomeEdge?.pageHref?.(target) || target;
     });
   }
 
@@ -543,13 +590,15 @@
     return `rtsp://${hostOrUrl}:${port}${path}`;
   }
 
-  function cameraPayloadFromConnectForm({ editing = false, existing = null } = {}) {
+  function cameraPayloadFromConnectForm({ editing = false, existing = null, family = null } = {}) {
     const room = checkedRoom();
     const username = $("#cameraUsernameInput")?.value.trim() || "";
     const password = $("#cameraPasswordInput")?.value || "";
     const hostOrUrl = $("#cameraHostInput")?.value.trim() || "";
+    const familyId = family?.id || currentFamilyId();
+    if (!familyId) throw new Error("请先创建家庭并绑定盒子，再添加摄像头。");
     const payload = {
-      family_id: currentFamilyId(),
+      family_id: familyId,
       name: $("#cameraNameInput")?.value.trim() || `${room}摄像头`,
       room,
       enabled: true,
@@ -580,6 +629,7 @@
   }
 
   async function hydrateConnectEditMode() {
+    await ensureSelectedFamily();
     const cameraId = currentCameraId();
     if (!cameraId) return null;
     if (!(await ensureApi())) return null;
@@ -648,14 +698,15 @@
       try {
         setCameraSubmitBusy(action, true, editing);
         setCameraFeedback(editing ? "正在更新配置并等待家庭盒子同步..." : "正在保存配置并等待家庭盒子同步...");
-        const payload = cameraPayloadFromConnectForm({ editing, existing: state.editingCamera });
+        const family = await ensureSelectedFamily();
+        const payload = cameraPayloadFromConnectForm({ editing, existing: state.editingCamera, family });
         const camera = editing
           ? await GoHomeEdge.updateCamera(currentCameraId(), payload)
           : await GoHomeEdge.createCamera(payload);
         await GoHomeEdge.testCamera(camera.id).catch(() => null);
         toast(editing ? "已更新并提交同步" : "已提交给家庭盒子");
         setCameraFeedback("已提交。家庭盒子会在 10 秒内拉取配置并回传状态。", "success");
-        window.setTimeout(() => go(`cameras.html?camera_id=${camera.id}`), 420);
+        window.setTimeout(() => go(familyScopedPath(`cameras.html?camera_id=${encodeURIComponent(camera.id)}`, family.id)), 420);
       } catch (error) {
         setCameraFeedback(error.message || "添加失败", "error");
         toast(error.message || "添加失败", "error");
@@ -731,13 +782,13 @@
       const id = button.dataset.id;
       try {
         if (button.dataset.action === "add") {
-          go("connect.html");
+          go(familyScopedPath("connect.html"));
           return;
         } else if (button.dataset.action === "monitor") {
           go("monitor.html");
           return;
         } else if (button.dataset.action === "edit") {
-          go(`connect.html?camera_id=${encodeURIComponent(id)}`);
+          go(familyScopedPath(`connect.html?camera_id=${encodeURIComponent(id)}`));
           return;
         } else if (button.dataset.action === "delete") {
           await GoHomeEdge.deleteCamera(id);
@@ -794,6 +845,7 @@
     if (current === "parent_profile.html") wireParentProfile();
     if (current === "family.html") wireFamily();
     if (current === "device_binding.html") wireDeviceBinding();
+    if (current === "camera_intro.html") wireCameraIntro();
     if (current === "connect.html") wireConnect();
     if (current === "cameras.html") wireCameras();
     if (current === "privacy.html") hydratePrivacy();

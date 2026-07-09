@@ -149,6 +149,7 @@
 
     function payloadFromForm() {
         return {
+            family_id: selectedFamilyId() || null,
             name: $("cameraName").value.trim() || "局域网摄像头",
             room: $("cameraRoom").value.trim() || "客厅",
             stream_url: buildStreamUrl(),
@@ -183,6 +184,11 @@
         return normalizeStreamUrl(payload.stream_url) === normalizeStreamUrl(camera.stream_url);
     }
 
+    function sameFamily(payload, camera) {
+        if (!payload.family_id) return true;
+        return String(camera.family_id || "") === String(payload.family_id);
+    }
+
     async function setCameraEnabled(cameraId, enabled) {
         const target = state.cameras.find((camera) => Number(camera.id) === Number(cameraId));
         if (!target) return;
@@ -196,7 +202,7 @@
     }
 
     async function saveCamera(payload) {
-        const existing = state.cameras.find((camera) => sameCamera(payload, camera));
+        const existing = state.cameras.find((camera) => sameFamily(payload, camera) && sameCamera(payload, camera));
         const camera = existing
             ? await GoHomeEdge.updateCamera(existing.id, payload)
             : await GoHomeEdge.createCamera(payload);
