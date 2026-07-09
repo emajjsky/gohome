@@ -6,6 +6,7 @@
         device: null,
         bindings: [],
         bindingCodes: [],
+        claimable: [],
         authStatus: null,
         busy: false,
         tokenBusy: false,
@@ -50,7 +51,7 @@
         if (!button) return;
         button.disabled = busy;
         button.classList.toggle("opacity-70", busy);
-        button.textContent = busy ? "绑定中..." : "绑定当前设备";
+        button.textContent = busy ? "绑定中..." : "绑定盒子";
     }
 
     function setTokenBusy(id, busy, busyText, idleText) {
@@ -161,6 +162,37 @@
         `).join("");
     }
 
+    function renderClaimableDevices() {
+        const list = $("bindingClaimableList");
+        if (!list) return;
+        if (!state.claimable.length) {
+            list.innerHTML = `
+                <div class="rounded-2xl bg-surface-container-low px-4 py-3">
+                    <p class="font-sans text-[12px] leading-5 text-on-surface-variant">暂未发现可认领盒子。确认盒子已通电联网后，再输入盒身码绑定。</p>
+                </div>
+            `;
+            return;
+        }
+        list.innerHTML = state.claimable.map((device) => `
+            <button type="button" class="binding-claimable-row w-full rounded-2xl bg-surface-container-low px-4 py-3 text-left" data-serial="${device.serial_number || ""}">
+                <div class="flex items-center justify-between gap-3">
+                    <div class="min-w-0">
+                        <p class="font-sans text-[13px] font-bold text-on-surface">${device.name || "回家盒子"}</p>
+                        <p class="mt-1 break-all font-sans text-[12px] text-on-surface-variant">${device.serial_number || device.device_id || "待生成序列号"}</p>
+                    </div>
+                    <span class="rounded-full bg-[#edf6ee] px-2.5 py-1 font-sans text-[10px] font-bold text-[#2d7d5c]">在线</span>
+                </div>
+            </button>
+        `).join("");
+        list.querySelectorAll(".binding-claimable-row").forEach((button) => {
+            button.addEventListener("click", () => {
+                const serial = button.getAttribute("data-serial") || "";
+                if ($("bindingClaimInput") && serial) $("bindingClaimInput").value = serial;
+                setFeedback("已填入发现的盒子序列号，请确认后绑定。");
+            });
+        });
+    }
+
     async function loadBindings() {
         const familyId = Number($("bindingFamilySelect")?.value || preferredFamilyId());
         if (!familyId) {
@@ -179,12 +211,14 @@
     }
 
     async function loadData() {
-        const [families, device] = await Promise.all([
+        const [families, device, claimable] = await Promise.all([
             GoHomeEdge.myFamilies(),
             GoHomeEdge.device(),
+            GoHomeEdge.claimableDevices ? GoHomeEdge.claimableDevices().catch(() => []) : Promise.resolve([]),
         ]);
         state.families = families;
         state.device = device;
+        state.claimable = Array.isArray(claimable) ? claimable : [];
         state.authStatus = await GoHomeEdge.deviceAuthStatus().catch(() => null);
         setText("bindingDeviceText", device.device_id || "");
         setText("bindingDeviceName", device.device_name || "本机设备");
@@ -197,10 +231,12 @@
             syncSelectedFamilyParam("");
             syncFamilyLinks("");
             renderBindings();
+            renderClaimableDevices();
             return;
         }
         renderFamilyOptions();
         await loadBindings();
+        renderClaimableDevices();
     }
 
     async function bindCurrentDevice(event) {
@@ -211,15 +247,22 @@
             setFeedback("先选家庭。", "error");
             return;
         }
+        const claimCode = $("bindingClaimInput")?.value.trim() || "";
+        if (!claimCode) {
+            setFeedback("请输入盒身二维码内容、序列号或绑定码。", "error");
+            return;
+        }
         try {
             setBusy(true);
             setFeedback("");
-            await GoHomeEdge.bindDevice({
+            await GoHomeEdge.claimDevice({
                 family_id: familyId,
-                device_name: state.device?.device_name || "本机设备",
+                claim_code: claimCode,
+                device_name: state.device?.device_name || "回家盒子",
                 note: $("bindingNoteInput")?.value.trim() || "",
             });
             $("bindingNoteInput").value = "";
+            $("bindingClaimInput").value = "";
             await loadBindings();
             setFeedback("已绑定，正在进入摄像头接入。", "success");
             setTimeout(() => {

@@ -4,97 +4,9 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家 - 登录</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=Hanken+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "surface-tint": "#0060ac",
-                        "on-secondary-fixed-variant": "#474744",
-                        "surface-dim": "#dbd9d9",
-                        "outline": "#717783",
-                        "tertiary-fixed-dim": "#87dc2c",
-                        "on-secondary": "#ffffff",
-                        "on-error-container": "#93000a",
-                        "secondary-fixed": "#e4e2dd",
-                        "on-tertiary-fixed": "#0e2000",
-                        "surface-container-high": "#eae8e7",
-                        "outline-variant": "#c1c7d3",
-                        "tertiary-container": "#498300",
-                        "surface-container-lowest": "#ffffff",
-                        "on-tertiary-container": "#f9ffeb",
-                        "background": "#fbf9f8",
-                        "secondary-fixed-dim": "#c8c6c2",
-                        "on-tertiary": "#ffffff",
-                        "on-surface-variant": "#414751",
-                        "surface-container-highest": "#e4e2e2",
-                        "on-background": "#1b1c1c",
-                        "surface-variant": "#e4e2e2",
-                        "on-tertiary-fixed-variant": "#2a5000",
-                        "on-primary-container": "#fdfcff",
-                        "on-secondary-container": "#63635f",
-                        "on-primary-fixed": "#001c39",
-                        "inverse-surface": "#303030",
-                        "tertiary-fixed": "#a1fa49",
-                        "surface": "#fbf9f8",
-                        "surface-container-low": "#f5f3f3",
-                        "surface-bright": "#fbf9f8",
-                        "primary-container": "#2976c7",
-                        "on-surface": "#1b1c1c",
-                        "primary-fixed": "#d4e3ff",
-                        "primary": "#005da7",
-                        "on-primary-fixed-variant": "#004883",
-                        "error": "#ba1a1a",
-                        "on-error": "#ffffff",
-                        "inverse-on-surface": "#f2f0f0",
-                        "error-container": "#ffdad6",
-                        "secondary-container": "#e1dfdb",
-                        "primary-fixed-dim": "#a4c9ff",
-                        "tertiary": "#386800",
-                        "inverse-primary": "#a4c9ff",
-                        "surface-container": "#efeded",
-                        "secondary": "#5e5e5b",
-                        "on-secondary-fixed": "#1b1c19",
-                        "on-primary": "#ffffff"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px"
-                    },
-                    "spacing": {
-                        "stack-sm": "8px",
-                        "gutter-card": "16px",
-                        "stack-md": "16px",
-                        "stack-lg": "32px",
-                        "margin-page": "20px"
-                    },
-                    "fontFamily": {
-                        "body-lg": ["Inter"],
-                        "label-md": ["Inter"],
-                        "body-md": ["Inter"],
-                        "headline-md": ["Hanken Grotesk"],
-                        "headline-lg": ["Hanken Grotesk"],
-                        "headline-lg-mobile": ["Hanken Grotesk"]
-                    },
-                    "fontSize": {
-                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
-                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
-                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
-                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
-                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
-                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
-                    }
-                }
-            }
-        }
-    </script>
+
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <style>
         body {
             -webkit-tap-highlight-color: transparent;
@@ -107,7 +19,7 @@
         }
         /* Custom input styles */
         .glass-input:focus-within {
-            box-shadow: inset 0 0 0 2px #005da7;
+            box-shadow: inset 0 0 0 2px #536d5a;
             background-color: #ffffff;
         }
     </style>
@@ -145,14 +57,14 @@
     }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-cachefix-1"/>
 </head>
 <body class="bg-background text-on-background min-h-screen flex flex-col font-body-md selection:bg-primary-container selection:text-on-primary-container">
 <!-- TopAppBar (Transactional - Hidden Navigation Elements) -->
 <header class="flex justify-between items-center w-full px-margin-page py-4 bg-surface z-40">
 <!-- Back action implies temporary departure from main flow if this was a sub-page,
              but for a top-level transactional page like Login, we might just have a close or empty left. -->
-<button aria-label="Close" class="w-10 h-10 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low transition-colors">
+<button aria-label="Close" class="w-10 h-10 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low transition-colors" onclick="location.href='index.html?app=1'" type="button">
 <span class="material-symbols-outlined">close</span>
 </button>
 <div class="font-headline-md text-headline-md font-bold text-primary opacity-0">
@@ -172,11 +84,18 @@
                 欢迎回到「回家」
             </h1>
 <p class="font-body-md text-body-md text-on-surface-variant">
-                用最简单的陪伴，连接最深的牵挂。
+                登录已有家庭，或创建新的守护家庭。
             </p>
 </div>
 <!-- Login Form -->
 <form class="flex flex-col gap-stack-md w-full" onsubmit="event.preventDefault();">
+<div aria-label="手机号登录模式" class="grid grid-cols-2 gap-1 rounded-full bg-surface-container-low p-1" role="tablist">
+<button aria-pressed="true" class="gohome-auth-mode-tab rounded-full px-4 py-2.5 text-sm font-semibold bg-surface-container-lowest text-on-background shadow-sm" data-auth-mode="login" type="button">手机号登录</button>
+<button aria-pressed="false" class="gohome-auth-mode-tab rounded-full px-4 py-2.5 text-sm font-semibold text-on-surface-variant" data-auth-mode="register" type="button">首次创建</button>
+</div>
+<p class="font-body-md text-[13px] leading-relaxed text-on-surface-variant" id="auth-mode-hint">
+                用手机号登录，家庭与设备数据只跟随当前手机号显示。
+            </p>
 <!-- Phone Input Group -->
 <div class="flex flex-col gap-2">
 <label class="font-label-md text-label-md text-on-surface-variant sr-only" for="phone">手机号码</label>
@@ -196,8 +115,8 @@
 </div>
 </div>
 <!-- Login Button -->
-<button class="mt-stack-sm w-full bg-primary text-on-primary font-label-md text-label-md py-4 rounded-full shadow-[0_4px_12px_rgba(0,93,167,0.15)] hover:bg-on-primary-fixed-variant active:scale-[0.98] transition-all duration-200 flex justify-center items-center" type="submit">
-                一键登录
+<button class="mt-stack-sm w-full bg-primary text-on-primary font-label-md text-label-md py-4 rounded-full shadow-[0_4px_12px_rgba(54,67,53,0.14)] hover:bg-on-primary-fixed-variant active:scale-[0.98] transition-all duration-200 flex justify-center items-center" id="auth-submit" type="submit">
+                登录
             </button>
 <!-- User Agreement -->
 <div class="mt-stack-sm flex items-start gap-2">
@@ -208,39 +127,10 @@
                     我已阅读并同意
                     <a class="text-primary hover:underline" href="#">《用户服务协议》</a>、
                     <a class="text-primary hover:underline" href="#">《隐私政策》</a>
-<span>及</span>
-<a class="text-primary hover:underline" href="#">《中国移动认证服务协议》</a>
 </label>
 </div>
 </form>
-<!-- Spacer to push third-party login to bottom -->
 <div class="flex-grow"></div>
-<!-- Third Party Login -->
-<div class="mt-12 flex flex-col items-center">
-<div class="flex items-center w-full mb-6">
-<div class="flex-grow border-t border-outline-variant opacity-50"></div>
-<span class="mx-4 font-body-md text-[13px] text-outline">其他登录方式</span>
-<div class="flex-grow border-t border-outline-variant opacity-50"></div>
-</div>
-<div class="flex gap-6">
-<!-- WeChat -->
-<button aria-label="微信登录" class="w-12 h-12 rounded-full bg-surface-container-low flex items-center justify-center text-[#07C160] hover:bg-surface-container-high transition-colors">
-<svg class="w-6 h-6 fill-current" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-<path d="M8.28 12.3c2.97 0 5.4-2 5.4-4.5S11.25 3.3 8.28 3.3 2.88 5.3 2.88 7.8s2.43 4.5 5.4 4.5zM17.43 20.7c2.56 0 4.65-1.74 4.65-3.9 0-2.16-2.09-3.9-4.65-3.9s-4.65 1.74-4.65 3.9c0 2.16 2.09 3.9 4.65 3.9z"></path>
-<circle cx="6.5" cy="6.5" fill="#fff" r="0.8"></circle>
-<circle cx="10" cy="6.5" fill="#fff" r="0.8"></circle>
-<circle cx="15.5" cy="15" fill="#fff" r="0.6"></circle>
-<circle cx="19" cy="15" fill="#fff" r="0.6"></circle>
-</svg>
-</button>
-<!-- Apple -->
-<button aria-label="Apple登录" class="w-12 h-12 rounded-full bg-surface-container-low flex items-center justify-center text-on-background hover:bg-surface-container-high transition-colors">
-<svg class="w-6 h-6 fill-current" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-<path d="M16.365 1.053a4.706 4.706 0 0 1 1.097 3.35 5.093 5.093 0 0 1-3.23 2.766 4.417 4.417 0 0 1-1.077-3.328 4.887 4.887 0 0 1 3.21-2.788zM17.49 19.345c-1.127 1.637-2.316 3.255-4.108 3.273-1.774.02-2.355-1.07-4.383-1.07-2.029 0-2.666 1.05-4.348 1.09-1.737.04-3.08-1.77-4.225-3.42C-1.892 12.637-.624 6.772 2.68 4.823c1.62-1.037 3.364-1.693 4.968-1.711 1.693-.02 3.344 1.155 4.383 1.155 1.018 0 3.025-1.42 5.076-1.205 2.148.113 4.07 1.048 5.174 2.674-4.402 2.52-3.69 8.788.665 10.41-1.042 2.668-2.616 5.37-4.456 8.199z"></path>
-</svg>
-</button>
-</div>
-</div>
 </main>
 <!-- Bottom Navigation IS SUPPRESSED as per instructions for Transactional/Login screens -->
 
@@ -275,7 +165,7 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/edge-client.js?v=20260708-cachefix-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-cachefix-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-cachefix-1"></script>
 </body></html>

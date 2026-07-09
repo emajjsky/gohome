@@ -4,97 +4,9 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家 - 陪伴</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-          darkMode: "class",
-          theme: {
-            extend: {
-              "colors": {
-                      "surface-tint": "#0060ac",
-                      "on-secondary-fixed-variant": "#474744",
-                      "surface-dim": "#dbd9d9",
-                      "outline": "#717783",
-                      "tertiary-fixed-dim": "#87dc2c",
-                      "on-secondary": "#ffffff",
-                      "on-error-container": "#93000a",
-                      "secondary-fixed": "#e4e2dd",
-                      "on-tertiary-fixed": "#0e2000",
-                      "surface-container-high": "#eae8e7",
-                      "outline-variant": "#c1c7d3",
-                      "tertiary-container": "#498300",
-                      "surface-container-lowest": "#ffffff",
-                      "on-tertiary-container": "#f9ffeb",
-                      "background": "#fbf9f8",
-                      "secondary-fixed-dim": "#c8c6c2",
-                      "on-tertiary": "#ffffff",
-                      "on-surface-variant": "#414751",
-                      "surface-container-highest": "#e4e2e2",
-                      "on-background": "#1b1c1c",
-                      "surface-variant": "#e4e2e2",
-                      "on-tertiary-fixed-variant": "#2a5000",
-                      "on-primary-container": "#fdfcff",
-                      "on-secondary-container": "#63635f",
-                      "on-primary-fixed": "#001c39",
-                      "inverse-surface": "#303030",
-                      "tertiary-fixed": "#a1fa49",
-                      "surface": "#fbf9f8",
-                      "surface-container-low": "#f5f3f3",
-                      "surface-bright": "#fbf9f8",
-                      "primary-container": "#2976c7",
-                      "on-surface": "#1b1c1c",
-                      "primary-fixed": "#d4e3ff",
-                      "primary": "#005da7",
-                      "on-primary-fixed-variant": "#004883",
-                      "error": "#ba1a1a",
-                      "on-error": "#ffffff",
-                      "inverse-on-surface": "#f2f0f0",
-                      "error-container": "#ffdad6",
-                      "secondary-container": "#e1dfdb",
-                      "primary-fixed-dim": "#a4c9ff",
-                      "tertiary": "#386800",
-                      "inverse-primary": "#a4c9ff",
-                      "surface-container": "#efeded",
-                      "secondary": "#5e5e5b",
-                      "on-secondary-fixed": "#1b1c19",
-                      "on-primary": "#ffffff"
-              },
-              "borderRadius": {
-                      "DEFAULT": "0.25rem",
-                      "lg": "0.5rem",
-                      "xl": "0.75rem",
-                      "full": "9999px"
-              },
-              "spacing": {
-                      "stack-sm": "8px",
-                      "gutter-card": "16px",
-                      "stack-md": "16px",
-                      "stack-lg": "32px",
-                      "margin-page": "20px"
-              },
-              "fontFamily": {
-                      "body-lg": ["Inter"],
-                      "label-md": ["Inter"],
-                      "body-md": ["Inter"],
-                      "headline-md": ["Hanken Grotesk"],
-                      "headline-lg": ["Hanken Grotesk"],
-                      "headline-lg-mobile": ["Hanken Grotesk"]
-              },
-              "fontSize": {
-                      "body-lg": ["18px", {"lineHeight": "26px", "fontWeight": "400"}],
-                      "label-md": ["14px", {"lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600"}],
-                      "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
-                      "headline-md": ["22px", {"lineHeight": "28px", "fontWeight": "600"}],
-                      "headline-lg": ["28px", {"lineHeight": "36px", "fontWeight": "700"}],
-                      "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "700"}]
-              }
-            }
-          }
-        }
-    </script>
+
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <style>
         .glass-card {
             background: rgba(255, 255, 255, 0.7);
@@ -141,7 +53,7 @@
     }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-product-flow-1"/>
 </head>
 <body class="bg-surface text-on-surface antialiased min-h-screen flex flex-col pb-24 font-body-lg">
 <!-- TopAppBar -->
@@ -157,125 +69,59 @@
 </button>
 </header>
 <!-- Main Content -->
-<main class="flex-grow px-margin-page py-stack-md max-w-screen-xl mx-auto w-full flex flex-col gap-stack-lg">
-<!-- Status Card (Bento style) -->
-<section class="grid grid-cols-1 md:grid-cols-2 gap-gutter-card">
-<!-- Days since last call -->
-<div class="glass-card rounded-xl p-gutter-card flex flex-col justify-between h-40">
-<div class="flex justify-between items-start">
-<h2 class="font-headline-md text-headline-md text-on-surface">距离上次通话</h2>
-<span class="material-symbols-outlined text-primary text-3xl" data-icon="phone_in_talk">phone_in_talk</span>
-</div>
-<div class="flex items-end gap-2 mt-auto">
-<span class="font-headline-lg-mobile text-headline-lg-mobile text-primary text-5xl">3</span>
-<span class="font-body-md text-body-md text-on-surface-variant mb-1">天</span>
-</div>
-<p class="font-body-md text-body-md text-on-surface-variant mt-2 text-sm">上次联系: 周二晚 20:00</p>
-</div>
-<!-- Weekly Companion Stats -->
-<div class="glass-card rounded-xl p-gutter-card flex flex-col justify-between h-40 relative overflow-hidden">
-<div class="flex justify-between items-start relative z-10">
-<h2 class="font-headline-md text-headline-md text-on-surface">本周陪伴统计</h2>
-<span class="material-symbols-outlined text-tertiary text-3xl" data-icon="bar_chart">bar_chart</span>
-</div>
-<div class="flex flex-col mt-auto relative z-10">
-<div class="flex items-end gap-2">
-<span class="font-headline-lg-mobile text-headline-lg-mobile text-tertiary-container text-4xl">45</span>
-<span class="font-body-md text-body-md text-on-surface-variant mb-1">分钟</span>
-</div>
-<div class="w-full bg-surface-container-high rounded-full h-2 mt-2">
-<div class="bg-tertiary-container h-2 rounded-full" style="width: 60%"></div>
-</div>
-</div>
-<!-- Decorative background elements -->
-<div class="absolute -right-10 -bottom-10 w-32 h-32 bg-tertiary-fixed opacity-20 rounded-full blur-2xl"></div>
-</div>
+<main class="flex-grow px-margin-page max-w-screen-xl mx-auto w-full flex flex-col gap-stack-lg">
+<section class="gohome-page-lead">
+<p>亲情陪伴</p>
+<h2>今日关怀</h2>
+<p>把家里状态、日历话题和适合联系的理由整理成一张可分享的卡片。</p>
 </section>
 <!-- Daily Care Card -->
 <section id="companionshipCareSection" class="flex flex-col gap-stack-md">
-<div class="flex items-center justify-between gap-3">
+<div class="gohome-section-heading">
 <div>
-<h3 class="font-headline-md text-headline-md text-on-surface">今日关怀</h3>
-<p id="companionshipCareMeta" class="font-body-md text-body-md text-on-surface-variant text-sm mt-1">正在读取家庭状态</p>
+<h3>完整卡片</h3>
+<p id="companionshipCareMeta">正在读取家庭状态</p>
 </div>
 <span id="companionshipCareStatus" class="font-label-md text-label-md text-primary bg-primary-fixed px-3 py-1 rounded-full">同步中</span>
 </div>
-<article class="bg-surface-container-lowest rounded-xl p-gutter-card shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-highest">
-<div class="grid grid-cols-1 md:grid-cols-[minmax(160px,220px)_1fr] gap-4 items-start">
-<div id="companionshipCareImageFrame" class="relative w-full max-w-[280px] md:max-w-none mx-auto md:mx-0 aspect-[4/7] overflow-hidden rounded-xl bg-[#fff7e8] border border-[#f2d6ad]">
-<img id="companionshipCareImage" alt="今日关怀图文卡" class="hidden w-full h-full object-cover transition-opacity duration-200" loading="eager"/>
+<article class="gohome-panel gohome-companion-card">
+<div id="companionshipCareImageFrame" class="relative w-full max-w-[320px] md:max-w-none mx-auto md:mx-0 aspect-square overflow-hidden rounded-[20px] bg-[#fff7e8] border border-[#f2d6ad]">
+<img id="companionshipCareImage" alt="今日关怀图文卡" class="hidden w-full h-full object-contain transition-opacity duration-200" loading="eager"/>
 <div id="companionshipCareImageFallback" class="absolute inset-0 flex flex-col items-center justify-center text-center px-5">
 <span class="material-symbols-outlined text-[#9b6b23] text-4xl mb-3" data-icon="volunteer_activism">volunteer_activism</span>
 <p class="font-label-md text-label-md text-[#6f4d1d] leading-relaxed">今日关怀正在生成</p>
 <p class="font-body-md text-body-md text-[#7c633f] text-xs leading-relaxed mt-2">温暖卡片稍后出现</p>
 </div>
 </div>
-<div class="min-w-0 flex flex-col gap-4">
+<div class="gohome-companion-copy">
 <div class="flex items-start justify-between gap-4">
 <div class="min-w-0">
-<p id="companionshipCareTitle" class="font-headline-md text-headline-md text-on-surface">今天家里怎么样</p>
-<p id="companionshipCareBody" class="font-body-md text-body-md text-on-surface-variant text-sm leading-relaxed mt-2">正在根据设备、摄像头和提醒状态生成今日关怀卡片。</p>
+<h3 id="companionshipCareTitle">今天家里怎么样</h3>
+<p id="companionshipCareBody">正在根据设备、摄像头和提醒状态生成今日关怀卡片。</p>
 </div>
 <div class="w-11 h-11 rounded-lg bg-primary-container flex items-center justify-center shrink-0">
 <span class="material-symbols-outlined text-on-primary-container text-2xl" data-icon="favorite">favorite</span>
 </div>
 </div>
 <div id="companionshipCareFacts" class="grid grid-cols-1 gap-2"></div>
-<div id="companionshipCareActions" class="flex flex-col gap-2"></div>
+<div>
+<p class="text-[12px] font-bold text-on-surface-variant mb-2">现在可以联系一下</p>
+<div id="companionshipCareActions" class="gohome-contact-actions"></div>
 </div>
 </div>
 </article>
 </section>
-<!-- Interaction Suggestions -->
-<section class="flex flex-col gap-stack-md">
-<h3 class="font-headline-md text-headline-md text-on-surface">互动建议</h3>
-<div class="grid grid-cols-1 md:grid-cols-2 gap-gutter-card">
-<!-- Suggestion 1 -->
-<div class="bg-surface-container-lowest rounded-xl p-gutter-card flex gap-4 items-center shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-highest hover:bg-surface-container-low transition-colors cursor-pointer">
-<div class="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0">
-<img alt="Tea" class="w-full h-full object-cover" data-alt="A beautifully composed, high-quality photograph of a steaming cup of green tea on a wooden table, bathed in soft, warm morning sunlight. Minimalist, serene, evoking a sense of calm domestic life. Light mode aesthetic, subtle tones." src="assets/stitch-images/15-26da6c9dc9.jpg"/>
-</div>
-<div class="flex-grow">
-<h4 class="font-label-md text-label-md text-on-surface mb-1">分享生活日常</h4>
-<p class="font-body-md text-body-md text-on-surface-variant text-sm">发一张刚泡好的茶的照片，问问父母今天过得怎么样。</p>
-</div>
-<span class="material-symbols-outlined text-outline" data-icon="chevron_right">chevron_right</span>
-</div>
-<!-- Suggestion 2 -->
-<div class="bg-surface-container-lowest rounded-xl p-gutter-card flex gap-4 items-center shadow-[0_4px_12px_rgba(0,0,0,0.04)] border border-surface-container-highest hover:bg-surface-container-low transition-colors cursor-pointer">
-<div class="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-primary-container flex items-center justify-center">
-<span class="material-symbols-outlined text-on-primary-container text-3xl" data-icon="cloud">cloud</span>
-</div>
-<div class="flex-grow">
-<h4 class="font-label-md text-label-md text-on-surface mb-1">提醒天气变化</h4>
-<p class="font-body-md text-body-md text-on-surface-variant text-sm">老家明天降温，提醒父母添衣保暖。</p>
-</div>
-<span class="material-symbols-outlined text-outline" data-icon="chevron_right">chevron_right</span>
-</div>
-</div>
-</section>
 <!-- Live Messages -->
 <section id="companionshipMessageSection" class="hidden flex flex-col gap-stack-md">
-<div class="flex items-center justify-between gap-3">
+<div class="gohome-section-heading">
 <div>
-<h3 class="font-headline-md text-headline-md text-on-surface">亲情消息</h3>
-<p id="companionshipMessageMeta" class="font-body-md text-body-md text-on-surface-variant text-sm mt-1">当前家庭 · 当前展示打开中的消息</p>
+<h3>待办提醒</h3>
+<p id="companionshipMessageMeta">当前家庭 · 当前展示打开中的关怀提醒</p>
 </div>
 <span id="companionshipMessageCount" class="font-label-md text-label-md text-primary bg-primary-fixed px-3 py-1 rounded-full">0 条</span>
 </div>
 <p id="companionshipMessageFeedback" class="hidden font-body-md text-body-md text-primary text-sm"></p>
 <div id="companionshipMessageList" class="grid grid-cols-1 gap-gutter-card"></div>
-</section>
-<!-- Quick Actions (Bottom fixed above nav) -->
-<section class="mt-auto pt-stack-lg flex gap-4">
-<button class="flex-1 bg-surface-container-high text-on-surface py-4 rounded-full font-label-md text-label-md flex items-center justify-center gap-2 hover:bg-surface-variant transition-colors shadow-sm">
-<span class="material-symbols-outlined" data-icon="chat">chat</span>
-                发消息
-            </button>
-<button class="flex-1 bg-primary text-on-primary py-4 rounded-full font-label-md text-label-md flex items-center justify-center gap-2 hover:opacity-90 transition-opacity shadow-md">
-<span class="material-symbols-outlined" data-icon="call">call</span>
-                打电话
-            </button>
 </section>
 </main>
 <!-- BottomNavBar -->
@@ -290,10 +136,10 @@
 <span class="material-symbols-outlined group-hover:scale-110 transition-transform" data-icon="security">security</span>
 <span class="font-label-md text-label-md mt-1 text-xs">守护</span>
 </a>
-<!-- Tab 3: 消息 (Inactive) -->
+<!-- Tab 3: 事件 (Inactive) -->
 <a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-2xl group" href="#">
-<span class="material-symbols-outlined group-hover:scale-110 transition-transform" data-icon="chat_bubble">chat_bubble</span>
-<span class="font-label-md text-label-md mt-1 text-xs">消息</span>
+<span class="material-symbols-outlined group-hover:scale-110 transition-transform" data-icon="history">history</span>
+<span class="font-label-md text-label-md mt-1 text-xs">事件</span>
 </a>
 <!-- Tab 4: 陪伴 (Active) -->
 <a class="flex flex-col items-center justify-center bg-primary-container dark:bg-primary text-on-primary-container dark:text-on-primary rounded-2xl px-4 py-1.5 scale-90 duration-150 ease-in-out hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
@@ -306,20 +152,13 @@
 <span class="font-label-md text-label-md mt-1 text-xs">我的</span>
 </a>
 </nav>
-<!-- Desktop Side Nav Placeholder (Hidden on mobile) -->
-<div class="hidden md:flex fixed left-0 top-16 h-full w-64 bg-surface-container-low border-r border-surface-container-highest flex-col p-4 z-30">
-<!-- Replicating Bottom Nav logic for desktop side panel if needed, but per instructions web uses TopAppBar cluster,
-             Since BottomNavBar explicitly says md:hidden, we hide it. We'll leave this empty or minimal as the main nav is supposed to be in TopAppBar for web.
-             Actually, let's keep it simple and just rely on the TopAppBar as requested, adding nav items there would conflict with the provided JSON structure which only had leading/trailing. -->
-<p class="font-body-md text-body-md text-on-surface-variant opacity-50 p-4 text-center mt-10">Web Navigation Placeholder</p>
-</div>
-
 <script id="gohome-stitch-route-links">
   (() => {
     const routes = {
       "首页": "index.html",
       "守护": "monitor.html",
       "消息": "events.html",
+      "事件": "events.html",
       "陪伴": "companionship.html",
       "我的": "privacy.html",
       "实时画面": "watch.html",
@@ -345,8 +184,8 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
-<script src="assets/scripts/companionship-live.js?v=20260707-care-actions-2"></script>
+<script src="assets/scripts/edge-client.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/companionship-live.js?v=20260708-product-flow-1"></script>
 </body></html>

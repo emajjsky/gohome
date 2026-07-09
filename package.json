@@ -5,8 +5,12 @@
   "main": "index.js",
   "scripts": {
     "app-server": "node local-app-server/server.js",
+    "build:css": "tailwindcss -i tailwind.input.css -o assets/styles/tailwind.css --minify",
     "db:export": "node scripts/export-local-app-db.js",
     "db:migrate": "node scripts/apply-postgres-migrations.js",
+    "db:cleanup-verify": "node scripts/cleanup-verify-data.js --apply",
+    "verify:local-loop": "node scripts/verify-local-closed-loop.js",
+    "verify:postgres-loop": "node scripts/verify-postgres-loop.js",
     "verify:app-server": "node scripts/verify-local-app-server.js",
     "test": "npm run verify:app-server"
   },

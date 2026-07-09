@@ -37,6 +37,15 @@
         return parts.join(" · ") || "等待";
     }
 
+    function profileLabel(profileId) {
+        const labels = {
+            mobile: "流畅",
+            monitor: "守护",
+            detail: "清晰",
+        };
+        return labels[profileId] || profileId || "默认";
+    }
+
     function preferredCamera(cameras) {
         return [...cameras].sort((a, b) => {
             const score = (camera) => (
@@ -78,8 +87,8 @@
         const monitorLink = $("watchMonitorLink");
         const eventsLink = $("watchEventsLink");
         if (monitorTop) monitorTop.href = monitorHref;
-        if (detectionTop) detectionTop.href = detectionHref;
-        if (detectionAction) detectionAction.href = detectionHref;
+        if (detectionTop) detectionTop.href = monitorHref;
+        if (detectionAction) detectionAction.href = monitorHref;
         if (monitorLink) monitorLink.href = monitorHref;
         if (eventsLink) eventsLink.href = eventsHref;
     }
@@ -102,7 +111,7 @@
         if (kind === "loading" || kind === "waiting") {
             empty.classList.remove("hidden");
             setText("watchEmptyText", kind === "waiting"
-                ? "盒子已在线，但 App API 还没有收到可显示的视频帧。"
+                ? "家庭盒子已在线，正在等待可显示的视频帧。"
                 : "正在向家庭盒子请求实时画面。");
             setText("watchStatusBadge", kind === "waiting" ? "等待帧" : "连接中");
             return;
@@ -150,7 +159,7 @@
             const active = profile.id === state.selectedProfile;
             return `
                 <button type="button" data-profile-id="${escapeHtml(profile.id)}" class="profile-button ${active ? "active" : ""}">
-                    ${escapeHtml(profile.id)}
+                    ${escapeHtml(profileLabel(profile.id))}
                 </button>
             `;
         }).join("");
@@ -167,11 +176,11 @@
         const camera = activeCamera();
         setText("watchHeaderSub", state.device?.worker_running ? "服务在线" : "服务暂停");
         setText("watchRoomBadge", camera ? cameraLabel(camera) : "未选择");
-        setText("watchProfileBadge", state.selectedProfile);
-        setText("watchDetectorBadge", state.device?.detector_backend === "yolo" ? "YOLO" : "basic");
+        setText("watchProfileBadge", profileLabel(state.selectedProfile));
+        setText("watchDetectorBadge", state.device?.detector_backend === "yolo" ? "视觉检测" : "基础检测");
         setText("watchFact", camera ? `${cameraLabel(camera)}实时画面` : "还没有接入摄像头");
         setText("watchMeta", camera
-            ? `${cameraMeta(camera)}。如果这里没有画面，说明 App API 暂未收到第一帧。`
+            ? `${cameraMeta(camera)}。如果这里没有画面，说明家庭盒子还在返回第一帧。`
             : "等待摄像头");
         syncNavLinks();
     }
@@ -279,7 +288,7 @@
             renderProfileList();
             applyStageState("error", error.message || "页面暂时无法连接");
             setText("watchFact", error.message || "页面暂时无法连接");
-            setText("watchMeta", "请先确认登录态和本机服务");
+            setText("watchMeta", "请先确认登录态和家庭服务");
             setText("watchEventTitle", "等待恢复");
             setText("watchEventMeta", "连接恢复后自动刷新");
         }

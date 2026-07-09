@@ -4,97 +4,9 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家 - 摄像头配置引导</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-          darkMode: "class",
-          theme: {
-            extend: {
-              "colors": {
-                      "surface-tint": "#0060ac",
-                      "on-secondary-fixed-variant": "#474744",
-                      "surface-dim": "#dbd9d9",
-                      "outline": "#717783",
-                      "tertiary-fixed-dim": "#87dc2c",
-                      "on-secondary": "#ffffff",
-                      "on-error-container": "#93000a",
-                      "secondary-fixed": "#e4e2dd",
-                      "on-tertiary-fixed": "#0e2000",
-                      "surface-container-high": "#eae8e7",
-                      "outline-variant": "#c1c7d3",
-                      "tertiary-container": "#498300",
-                      "surface-container-lowest": "#ffffff",
-                      "on-tertiary-container": "#f9ffeb",
-                      "background": "#fbf9f8",
-                      "secondary-fixed-dim": "#c8c6c2",
-                      "on-tertiary": "#ffffff",
-                      "on-surface-variant": "#414751",
-                      "surface-container-highest": "#e4e2e2",
-                      "on-background": "#1b1c1c",
-                      "surface-variant": "#e4e2e2",
-                      "on-tertiary-fixed-variant": "#2a5000",
-                      "on-primary-container": "#fdfcff",
-                      "on-secondary-container": "#63635f",
-                      "on-primary-fixed": "#001c39",
-                      "inverse-surface": "#303030",
-                      "tertiary-fixed": "#a1fa49",
-                      "surface": "#fbf9f8",
-                      "surface-container-low": "#f5f3f3",
-                      "surface-bright": "#fbf9f8",
-                      "primary-container": "#2976c7",
-                      "on-surface": "#1b1c1c",
-                      "primary-fixed": "#d4e3ff",
-                      "primary": "#005da7",
-                      "on-primary-fixed-variant": "#004883",
-                      "error": "#ba1a1a",
-                      "on-error": "#ffffff",
-                      "inverse-on-surface": "#f2f0f0",
-                      "error-container": "#ffdad6",
-                      "secondary-container": "#e1dfdb",
-                      "primary-fixed-dim": "#a4c9ff",
-                      "tertiary": "#386800",
-                      "inverse-primary": "#a4c9ff",
-                      "surface-container": "#efeded",
-                      "secondary": "#5e5e5b",
-                      "on-secondary-fixed": "#1b1c19",
-                      "on-primary": "#ffffff"
-              },
-              "borderRadius": {
-                      "DEFAULT": "0.25rem",
-                      "lg": "0.5rem",
-                      "xl": "0.75rem",
-                      "full": "9999px"
-              },
-              "spacing": {
-                      "stack-sm": "8px",
-                      "gutter-card": "16px",
-                      "stack-md": "16px",
-                      "stack-lg": "32px",
-                      "margin-page": "20px"
-              },
-              "fontFamily": {
-                      "body-lg": ["Inter"],
-                      "label-md": ["Inter"],
-                      "body-md": ["Inter"],
-                      "headline-md": ["Hanken Grotesk"],
-                      "headline-lg": ["Hanken Grotesk"],
-                      "headline-lg-mobile": ["Hanken Grotesk"]
-              },
-              "fontSize": {
-                      "body-lg": ["18px", {"lineHeight": "26px", "fontWeight": "400"}],
-                      "label-md": ["14px", {"lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600"}],
-                      "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
-                      "headline-md": ["22px", {"lineHeight": "28px", "fontWeight": "600"}],
-                      "headline-lg": ["28px", {"lineHeight": "36px", "fontWeight": "700"}],
-                      "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "700"}]
-              }
-            }
-          }
-        }
-    </script>
+
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <style>
         body { -webkit-tap-highlight-color: transparent; }
         .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
@@ -135,15 +47,15 @@
     }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-cachefix-1"/>
 </head>
 <body class="bg-surface text-on-surface font-body-lg min-h-screen antialiased flex flex-col relative">
 <!-- Top Navigation (Transactional/Task-focused, custom simplified header) -->
 <header class="w-full px-margin-page py-4 flex justify-between items-center z-40 bg-surface">
-<button aria-label="返回" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-low transition-colors">
+<button aria-label="返回" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-low transition-colors" onclick="history.length > 1 ? history.back() : location.href='cameras.html?app=1'" type="button">
 <span class="material-symbols-outlined text-on-surface">arrow_back</span>
 </button>
-<h1 class="font-headline-md text-headline-md text-primary">添加设备</h1>
+<h1 class="font-headline-md text-headline-md text-primary">摄像头配置</h1>
 <div class="w-10"></div> <!-- Spacer for centering -->
 </header>
 <!-- Main Content Canvas -->
@@ -175,8 +87,8 @@
 <div class="glass-card rounded-xl p-stack-md flex flex-col items-center text-center relative overflow-hidden group">
 <div class="absolute top-0 left-0 w-full h-1 bg-surface-variant group-hover:bg-primary transition-colors"></div>
 <div class="w-16 h-16 rounded-full bg-primary-fixed flex items-center justify-center mb-stack-md text-primary font-headline-md text-headline-md">3</div>
-<h3 class="font-label-md text-label-md text-on-surface mb-2">扫码配对</h3>
-<p class="font-body-md text-body-md text-on-surface-variant text-sm">App 保存房间配置后，等待盒子同步并回传在线状态。</p>
+<h3 class="font-label-md text-label-md text-on-surface mb-2">App 内保存</h3>
+<p class="font-body-md text-body-md text-on-surface-variant text-sm">App 保存房间和 RTSP 信息后，等待盒子同步并回传在线状态。</p>
 <span class="material-symbols-outlined text-primary mt-stack-md opacity-20 text-5xl absolute -bottom-2 -right-2">qr_code_scanner</span>
 </div>
 </div>
@@ -211,17 +123,17 @@
 <div>
 <h4 class="font-label-md text-label-md text-on-surface mb-1">隐私与安全承诺</h4>
 <p class="font-body-md text-body-md text-on-surface-variant text-sm leading-relaxed">
-                    您的家人隐私是我们最大的关切。所有 AI 分析均在本地端加密处理，未经授权不会上传视频数据。
+                    视频分析在家庭盒子本地完成；云端只保存必要事件、截图和配置，不上传连续视频。
                 </p>
 </div>
 </div>
 </main>
 <!-- Bottom Action Area (Persistent CTA for transactional page) -->
 <div class="w-full px-margin-page py-stack-md bg-surface border-t border-surface-container-highest z-40 pb-safe">
-<button class="w-full bg-primary hover:bg-primary/90 text-on-primary font-label-md text-label-md py-4 rounded-full shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2">
+<a href="connect.html?app=1" class="w-full bg-primary hover:bg-primary/90 text-on-primary font-label-md text-label-md py-4 rounded-full shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2">
             开始配置
             <span class="material-symbols-outlined text-sm">arrow_forward</span>
-</button>
+</a>
 </div>
 <!-- Padding for bottom safe area on mobile devices -->
 <style>
@@ -259,7 +171,7 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/edge-client.js?v=20260708-cachefix-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-cachefix-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-cachefix-1"></script>
 </body></html>

@@ -4,97 +4,9 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>家庭成员 - 回家 App</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "surface-tint": "#0060ac",
-                        "on-secondary-fixed-variant": "#474744",
-                        "surface-dim": "#dbd9d9",
-                        "outline": "#717783",
-                        "tertiary-fixed-dim": "#87dc2c",
-                        "on-secondary": "#ffffff",
-                        "on-error-container": "#93000a",
-                        "secondary-fixed": "#e4e2dd",
-                        "on-tertiary-fixed": "#0e2000",
-                        "surface-container-high": "#eae8e7",
-                        "outline-variant": "#c1c7d3",
-                        "tertiary-container": "#498300",
-                        "surface-container-lowest": "#ffffff",
-                        "on-tertiary-container": "#f9ffeb",
-                        "background": "#fbf9f8",
-                        "secondary-fixed-dim": "#c8c6c2",
-                        "on-tertiary": "#ffffff",
-                        "on-surface-variant": "#414751",
-                        "surface-container-highest": "#e4e2e2",
-                        "on-background": "#1b1c1c",
-                        "surface-variant": "#e4e2e2",
-                        "on-tertiary-fixed-variant": "#2a5000",
-                        "on-primary-container": "#fdfcff",
-                        "on-secondary-container": "#63635f",
-                        "on-primary-fixed": "#001c39",
-                        "inverse-surface": "#303030",
-                        "tertiary-fixed": "#a1fa49",
-                        "surface": "#fbf9f8",
-                        "surface-container-low": "#f5f3f3",
-                        "surface-bright": "#fbf9f8",
-                        "primary-container": "#2976c7",
-                        "on-surface": "#1b1c1c",
-                        "primary-fixed": "#d4e3ff",
-                        "primary": "#005da7",
-                        "on-primary-fixed-variant": "#004883",
-                        "error": "#ba1a1a",
-                        "on-error": "#ffffff",
-                        "inverse-on-surface": "#f2f0f0",
-                        "error-container": "#ffdad6",
-                        "secondary-container": "#e1dfdb",
-                        "primary-fixed-dim": "#a4c9ff",
-                        "tertiary": "#386800",
-                        "inverse-primary": "#a4c9ff",
-                        "surface-container": "#efeded",
-                        "secondary": "#5e5e5b",
-                        "on-secondary-fixed": "#1b1c19",
-                        "on-primary": "#ffffff"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px"
-                    },
-                    "spacing": {
-                        "stack-sm": "8px",
-                        "gutter-card": "16px",
-                        "stack-md": "16px",
-                        "stack-lg": "32px",
-                        "margin-page": "20px"
-                    },
-                    "fontFamily": {
-                        "body-lg": ["Inter"],
-                        "label-md": ["Inter"],
-                        "body-md": ["Inter"],
-                        "headline-md": ["Hanken Grotesk"],
-                        "headline-lg": ["Hanken Grotesk"],
-                        "headline-lg-mobile": ["Hanken Grotesk"]
-                    },
-                    "fontSize": {
-                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
-                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
-                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
-                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
-                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
-                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
-                    }
-                }
-            }
-        }
-    </script>
+
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <style>
         body {
             -webkit-tap-highlight-color: transparent;
@@ -140,7 +52,7 @@
     }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-product-flow-2"/>
 </head>
 <body class="bg-background text-on-background min-h-screen flex flex-col font-body-md pb-[90px]">
 <!-- Top App Bar (From Shared Components) -->
@@ -157,122 +69,47 @@
 </header>
 <!-- Main Content Canvas -->
 <main class="flex-1 w-full max-w-screen-md mx-auto px-margin-page py-stack-md flex flex-col gap-stack-lg">
-<!-- Page Title Area -->
-<section class="flex flex-col gap-stack-sm">
-<h2 class="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg text-on-background">家庭成员</h2>
-<p class="font-body-md text-body-md text-on-surface-variant">管理您的家庭群组，邀请亲友共同守护。</p>
+<section class="gohome-page-lead">
+<p>家庭成员</p>
+<h2>共享守护</h2>
+<p>邀请家人共同查看家庭状态和处理事件，老人端不需要复杂操作。</p>
 </section>
-<!-- Invite Card (Bento Style) -->
-<section class="bg-primary-container rounded-3xl p-6 relative overflow-hidden shadow-[0_8px_24px_rgba(41,118,199,0.12)]">
-<div class="relative z-10 flex flex-col gap-4 items-start">
-<div class="w-12 h-12 rounded-2xl bg-on-primary-container/10 flex items-center justify-center text-on-primary-container backdrop-blur-sm">
-<span class="material-symbols-outlined text-3xl">group_add</span>
+<section class="gohome-panel-soft p-4">
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined w-11 h-11 rounded-[18px] bg-primary-fixed text-primary flex items-center justify-center shrink-0">group_add</span>
+<div class="min-w-0">
+<h3 class="text-[18px] leading-snug font-bold text-on-surface">邀请家人加入</h3>
+<p class="text-[13px] leading-relaxed text-on-surface-variant mt-1">正式账号体系上线后生成邀请链接。当前本地演示先保留家庭成员结构。</p>
 </div>
-<div class="text-on-primary-container flex flex-col gap-1">
-<h3 class="font-headline-md text-headline-md">邀请新成员</h3>
-<p class="font-body-md text-body-md opacity-90 max-w-[240px]">发送专属邀请链接，让关心的人快速加入家庭。</p>
 </div>
-<button class="mt-2 bg-on-primary-container text-primary-container font-label-md text-label-md px-6 py-3 rounded-full flex items-center gap-2 hover:opacity-90 transition-opacity shadow-md">
-<span class="material-symbols-outlined text-[20px]">share</span>
-                    发送邀请链接
-                </button>
-</div>
-<!-- Decorative Element -->
-<div class="absolute -bottom-10 -right-10 w-48 h-48 bg-primary opacity-20 rounded-full blur-3xl pointer-events-none"></div>
-<div class="absolute top-10 right-10 w-24 h-24 bg-tertiary-container opacity-10 rounded-full blur-2xl pointer-events-none"></div>
 </section>
-<!-- Members List -->
-<section class="flex flex-col gap-stack-sm">
-<div class="flex justify-between items-center mb-2 px-1">
-<h3 class="font-label-md text-label-md text-on-surface-variant uppercase tracking-wider">已加入 (3)</h3>
-<span class="font-label-md text-label-md text-primary cursor-pointer hover:underline">管理权限</span>
+<section class="gohome-simple-list">
+<article class="gohome-simple-card">
+<img class="gohome-simple-avatar object-cover" alt="家属头像" src="assets/stitch-images/03-12d81b2345.jpg"/>
+<div>
+<h3>家属账号</h3>
+<p>负责接收提醒、处理事件和配置家庭设置。</p>
 </div>
-<!-- List Container -->
-<div class="bg-surface-container-lowest rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] border border-surface-container-high overflow-hidden flex flex-col">
-<!-- Member Item: Me -->
-<div class="flex items-center gap-4 p-4 border-b border-surface-container hover:bg-surface-container-low transition-colors group cursor-default">
-<div class="relative">
-<img class="w-14 h-14 rounded-full object-cover border-2 border-surface" data-alt="A warm, professional headshot photo of a young adult, casual and friendly, light background, soft natural lighting." src="assets/stitch-images/20-cdf414309a.jpg"/>
-<div class="absolute -bottom-1 -right-1 bg-tertiary w-4 h-4 rounded-full border-2 border-surface"></div>
+<span class="gohome-status-tag">当前</span>
+</article>
+<article class="gohome-simple-card">
+<img class="gohome-simple-avatar object-cover" alt="被守护人头像" src="assets/stitch-images/27-99e00b12ca.jpg"/>
+<div>
+<h3>张阿姨</h3>
+<p>被守护人资料用于电话联系、纪念日和关怀卡片。</p>
 </div>
-<div class="flex-1 flex flex-col">
-<div class="flex items-center gap-2">
-<span class="font-body-lg text-body-lg text-on-surface font-semibold">我</span>
-<span class="bg-primary/10 text-primary font-label-md text-[11px] leading-tight px-2 py-0.5 rounded-full">管理员</span>
+<span class="gohome-status-tag">长辈</span>
+</article>
+<article class="gohome-simple-card">
+<span class="material-symbols-outlined">person_add</span>
+<div>
+<h3>其他家人</h3>
+<p>可在云端账号体系完成后邀请加入。</p>
 </div>
-<span class="font-body-md text-body-md text-on-surface-variant text-sm">当前设备在线</span>
-</div>
-<button class="w-10 h-10 rounded-full flex items-center justify-center text-outline opacity-0 group-hover:opacity-100 transition-opacity hover:bg-surface-variant">
-<span class="material-symbols-outlined">more_vert</span>
-</button>
-</div>
-<!-- Member Item: Mom -->
-<div class="flex items-center gap-4 p-4 border-b border-surface-container hover:bg-surface-container-low transition-colors group cursor-default">
-<div class="relative">
-<img class="w-14 h-14 rounded-full object-cover border-2 border-surface" data-alt="A warm, dignified headshot portrait of an elderly asian woman with a gentle smile, well-lit, soft indoor setting, high quality." src="assets/stitch-images/27-99e00b12ca.jpg"/>
-<div class="absolute -bottom-1 -right-1 bg-surface-dim w-4 h-4 rounded-full border-2 border-surface"></div>
-</div>
-<div class="flex-1 flex flex-col">
-<div class="flex items-center gap-2">
-<span class="font-body-lg text-body-lg text-on-surface">妈妈</span>
-<span class="bg-secondary-container text-on-secondary-container font-label-md text-[11px] leading-tight px-2 py-0.5 rounded-full">长辈被护者</span>
-</div>
-<span class="font-body-md text-body-md text-on-surface-variant text-sm">3小时前活跃</span>
-</div>
-<button class="w-10 h-10 rounded-full flex items-center justify-center text-outline opacity-0 group-hover:opacity-100 transition-opacity hover:bg-surface-variant">
-<span class="material-symbols-outlined">more_vert</span>
-</button>
-</div>
-<!-- Member Item: Sister -->
-<div class="flex items-center gap-4 p-4 hover:bg-surface-container-low transition-colors group cursor-default">
-<div class="relative flex items-center justify-center w-14 h-14 rounded-full bg-primary-fixed text-on-primary-fixed border-2 border-surface font-headline-md text-headline-md">
-                        妹
-                        <div class="absolute -bottom-1 -right-1 bg-tertiary w-4 h-4 rounded-full border-2 border-surface"></div>
-</div>
-<div class="flex-1 flex flex-col">
-<div class="flex items-center gap-2">
-<span class="font-body-lg text-body-lg text-on-surface">妹妹</span>
-<span class="bg-surface-variant text-on-surface-variant font-label-md text-[11px] leading-tight px-2 py-0.5 rounded-full">成员</span>
-</div>
-<span class="font-body-md text-body-md text-on-surface-variant text-sm">在线</span>
-</div>
-<button class="w-10 h-10 rounded-full flex items-center justify-center text-outline opacity-0 group-hover:opacity-100 transition-opacity hover:bg-surface-variant">
-<span class="material-symbols-outlined">more_vert</span>
-</button>
-</div>
-</div>
+<span class="gohome-status-tag muted">待邀请</span>
+</article>
 </section>
 </main>
-<!-- Bottom Nav Bar (From Shared Components) -->
-<!-- Suppressed on "My" sub-page according to rules? The prompt says "家庭成员页", usually accessed from Settings/My.
-         However, if it's a primary tab destination like "首页, 守护, 消息, 陪伴, 我的", this might be a sub-page of "我的".
-         The prompt implies a specific destination page. Given the rules "Suppress if sub-page featuring a Back action", and I added a Back button in top nav.
-         Wait, let's keep the nav if we consider it a main feature, but rule says: "Any sub-page featuring a 'Close' or 'Back' action that implies a temporary departure from the main navigation flow -> suppress".
-         I will follow the suppression rule to prioritize the canvas, but wait, the instructions ask to output the predicted components. The BottomNavBar is in the JSON. I will render it and set "我的" as active.
-         Actually, I will render it for compliance with JSON execution, but let's hide it on mobile if we strictly follow "Destination Rule". I will render it and set '我的' as active.
-    -->
-<nav class="bg-surface dark:bg-surface-dim shadow-[0_-4px_12px_rgba(0,0,0,0.04)] docked full-width bottom-0 z-50 rounded-t-xl fixed bottom-0 left-0 w-full flex justify-around items-center px-2 pb-6 pt-3 md:hidden">
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors group" href="#">
-<span class="material-symbols-outlined text-[24px] mb-1 group-active:scale-90 duration-150 ease-in-out">home</span>
-<span class="font-label-md text-label-md text-[12px]">首页</span>
-</a>
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors group" href="#">
-<span class="material-symbols-outlined text-[24px] mb-1 group-active:scale-90 duration-150 ease-in-out">security</span>
-<span class="font-label-md text-label-md text-[12px]">守护</span>
-</a>
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors group" href="#">
-<span class="material-symbols-outlined text-[24px] mb-1 group-active:scale-90 duration-150 ease-in-out">chat_bubble</span>
-<span class="font-label-md text-label-md text-[12px]">消息</span>
-</a>
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors group" href="#">
-<span class="material-symbols-outlined text-[24px] mb-1 group-active:scale-90 duration-150 ease-in-out">volunteer_activism</span>
-<span class="font-label-md text-label-md text-[12px]">陪伴</span>
-</a>
-<a class="flex flex-col items-center justify-center bg-primary-container dark:bg-primary text-on-primary-container dark:text-on-primary rounded-2xl px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors scale-90 duration-150 ease-in-out" href="#">
-<span class="material-symbols-outlined icon-filled text-[24px] mb-1">person</span>
-<span class="font-label-md text-label-md text-[12px]">我的</span>
-</a>
-</nav>
 
 <script id="gohome-stitch-route-links">
   (() => {
@@ -280,6 +117,7 @@
       "首页": "index.html",
       "守护": "monitor.html",
       "消息": "events.html",
+      "事件": "events.html",
       "陪伴": "companionship.html",
       "我的": "privacy.html",
       "实时画面": "watch.html",
@@ -305,7 +143,7 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/edge-client.js?v=20260708-product-flow-2"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-product-flow-2"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-2"></script>
 </body></html>

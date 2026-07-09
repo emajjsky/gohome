@@ -179,6 +179,10 @@
     async function connect() {
         const candidates = [];
         const requested = requestedBase();
+        const isLocalAppOrigin = window.location.protocol.startsWith("http")
+            && ["127.0.0.1", "localhost", "::1"].includes(window.location.hostname)
+            && window.location.port === "8788";
+        if (isLocalAppOrigin) candidates.push("");
         if (requested) candidates.push(requested);
         if (window.location.protocol.startsWith("http")) candidates.push("");
         candidates.push(defaultBase());
@@ -197,8 +201,8 @@
                     const payload = await response.json();
                     GoHomeEdge.apiBase = base;
                     if (base) localStorage.setItem(EDGE_KEY, base);
-                    if (!getAuthToken() && isAppShellMode() && payload?.local_app_demo_token) {
-                        setAuthToken(payload.local_app_demo_token);
+                    if (payload?.local_app_demo_token && getAuthToken() === payload.local_app_demo_token) {
+                        clearAuthToken();
                     }
                     return payload;
                 }
@@ -758,9 +762,24 @@
             const suffix = query.toString() ? `?${query.toString()}` : "";
             return request(`/api/v1/families/${encodeURIComponent(familyId)}/weather-signals${suffix}`);
         },
+        v1ContentRecommendations: (familyId, params = {}) => {
+            const query = new URLSearchParams();
+            if (params.elder_id) query.set("elder_id", params.elder_id);
+            if (params.city) query.set("city", params.city);
+            if (params.district) query.set("district", params.district);
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return request(`/api/v1/families/${encodeURIComponent(familyId)}/content-recommendations${suffix}`);
+        },
         v1CareCardToday: (familyId = "") => {
             const suffix = familyId ? `?family_id=${encodeURIComponent(familyId)}` : "";
             return request(`/api/v1/app/care-cards/today${suffix}`);
+        },
+        v1CareCards: (params = {}) => {
+            const query = new URLSearchParams();
+            if (params.family_id) query.set("family_id", String(params.family_id));
+            if (params.limit) query.set("limit", String(params.limit));
+            const suffix = query.toString() ? `?${query.toString()}` : "";
+            return request(`/api/v1/app/care-cards${suffix}`);
         },
         v1GenerateCareCard: (payload = {}) => request("/api/v1/internal/care-cards/generate", {
             method: "POST",
@@ -797,12 +816,21 @@
             method: "POST",
             body: JSON.stringify(payload),
         }),
+        joinFamily: (payload) => request("/api/families/join", {
+            method: "POST",
+            body: JSON.stringify(payload),
+        }),
         myFamilies: () => request("/api/families/mine"),
         bindDevice: (payload) => request("/api/device-bindings", {
             method: "POST",
             body: JSON.stringify(payload),
         }),
         deviceBindings: (familyId) => request(`/api/device-bindings?family_id=${encodeURIComponent(familyId)}`),
+        claimableDevices: () => request("/api/device-claims/available"),
+        claimDevice: (payload) => request("/api/device-claims/claim", {
+            method: "POST",
+            body: JSON.stringify(payload),
+        }),
         createDeviceBindingCode: (payload) => request("/api/device/binding-codes", {
             method: "POST",
             body: JSON.stringify(payload),

@@ -153,6 +153,9 @@ class ConfigSyncAgent:
         state["camera_map"] = camera_map
         state["config_version"] = str(config.get("config_version") or "")
         state["last_applied_at"] = self._utc_iso()
+        rules_result = self._apply_rules(config.get("rules") or {}, str(config.get("rules_version") or ""))
+        if rules_result.get("applied"):
+            state["rules_version"] = rules_result.get("rules_version") or ""
         self._save_state(state)
 
         return {
@@ -160,7 +163,25 @@ class ConfigSyncAgent:
             "skipped": skipped,
             "deleted": deleted,
             "camera_reports": reports,
+            "rules": rules_result,
         }
+
+    def _apply_rules(self, rules: Dict[str, Any], rules_version: str = "") -> Dict[str, Any]:
+        if not rules:
+            return {"applied": False, "rules_version": ""}
+        try:
+            updated = self.storage.update_rules(rules)
+            return {
+                "applied": True,
+                "rules_version": str(rules_version or updated.get("updated_at") or ""),
+                "updated_at": str(updated.get("updated_at") or ""),
+            }
+        except Exception as exc:
+            return {
+                "applied": False,
+                "rules_version": str(rules_version or ""),
+                "error": str(exc),
+            }
 
     def _apply_camera(self, camera_config: Dict[str, Any], camera_map: Dict[str, Any]) -> Dict[str, Any]:
         remote_id = self._remote_camera_id(camera_config)
@@ -233,6 +254,7 @@ class ConfigSyncAgent:
         return {
             "device_id": self.device_id_resolver(),
             "config_version": str(config.get("config_version") or ""),
+            "applied_rule_version": str((apply_result.get("rules") or {}).get("rules_version") or ""),
             "worker_running": worker_running,
             "status": {
                 "status": "online",

@@ -110,6 +110,40 @@ function sha256(value) {
     return crypto.createHash("sha256").update(String(value)).digest("hex");
 }
 
+function normalizeChinaPhone(value) {
+    const digits = String(value || "").replace(/\D/g, "");
+    if (/^1\d{10}$/.test(digits)) return digits;
+    if (/^861\d{10}$/.test(digits)) return digits.slice(2);
+    return "";
+}
+
+function phoneAccountEmail(phone) {
+    const normalized = normalizeChinaPhone(phone);
+    return normalized ? `${normalized}@phone.gohome.local` : "";
+}
+
+function phoneFromAccountEmail(email) {
+    const match = String(email || "").trim().toLowerCase().match(/^(\d{11})@phone\.gohome\.local$/);
+    return match ? normalizeChinaPhone(match[1]) : "";
+}
+
+function authIdentityFromPayload(payload = {}, fallbackEmail = "") {
+    const rawPhone = payload.phone || payload.mobile_phone || payload.mobile || payload.phone_number || "";
+    const phone = normalizeChinaPhone(rawPhone || (/^\d[\d\s-]{8,}$/.test(String(payload.email || "")) ? payload.email : ""));
+    if (phone) {
+        return { email: phoneAccountEmail(phone), phone, isPhone: true };
+    }
+    const email = String(payload.email || fallbackEmail || "").trim().toLowerCase();
+    return { email, phone: phoneFromAccountEmail(email), isPhone: Boolean(phoneFromAccountEmail(email)) };
+}
+
+function redactedSecret(value) {
+    const text = String(value || "");
+    if (!text) return "";
+    if (text.length <= 10) return "set";
+    return `${text.slice(0, 6)}...${text.slice(-4)}`;
+}
+
 function normalizeNumber(value, fallback = null) {
     if (value === null || value === undefined || value === "") return fallback;
     const number = Number(value);
@@ -120,6 +154,72 @@ function normalizeBool(value) {
     if (typeof value === "boolean") return value;
     if (value === "false" || value === "0" || value === 0) return false;
     return Boolean(value);
+}
+
+function defaultRules(timestamp = nowIso()) {
+    return {
+        capture_interval_seconds: 5,
+        motion_threshold: 0.015,
+        black_brightness_threshold: 18,
+        black_contrast_threshold: 8,
+        yolo_confidence: 0.35,
+        no_motion_seconds: 900,
+        no_person_seconds: 900,
+        offline_enabled: true,
+        black_screen_enabled: true,
+        no_motion_enabled: true,
+        person_detection_enabled: true,
+        fall_detection_enabled: true,
+        fall_score_threshold: 0.5,
+        fall_confirm_frames: 2,
+        fall_confirm_seconds: 4,
+        fall_recover_frames: 2,
+        activity_detection_enabled: false,
+        fire_detection_enabled: false,
+        fire_event_score_threshold: 0.62,
+        fire_motion_threshold: 0.12,
+        fire_temporal_threshold: 0.35,
+        fire_confirm_frames: 3,
+        notification_enabled: true,
+        updated_at: timestamp,
+    };
+}
+
+function clampNumber(value, fallback, min, max) {
+    const number = normalizeNumber(value, fallback);
+    return Math.min(max, Math.max(min, number));
+}
+
+function normalizeRules(value = {}, base = defaultRules()) {
+    const input = value && typeof value === "object" ? value : {};
+    const boolFrom = (key) => (key in input ? normalizeBool(input[key]) : Boolean(base[key]));
+    return {
+        ...base,
+        capture_interval_seconds: clampNumber(input.capture_interval_seconds, base.capture_interval_seconds, 1, 3600),
+        motion_threshold: clampNumber(input.motion_threshold, base.motion_threshold, 0, 1),
+        black_brightness_threshold: clampNumber(input.black_brightness_threshold, base.black_brightness_threshold, 0, 255),
+        black_contrast_threshold: clampNumber(input.black_contrast_threshold, base.black_contrast_threshold, 0, 255),
+        yolo_confidence: clampNumber(input.yolo_confidence, base.yolo_confidence, 0.01, 1),
+        no_motion_seconds: clampNumber(input.no_motion_seconds, base.no_motion_seconds, 10, 86400),
+        no_person_seconds: clampNumber(input.no_person_seconds, base.no_person_seconds, 10, 86400),
+        offline_enabled: boolFrom("offline_enabled"),
+        black_screen_enabled: boolFrom("black_screen_enabled"),
+        no_motion_enabled: boolFrom("no_motion_enabled"),
+        person_detection_enabled: boolFrom("person_detection_enabled"),
+        fall_detection_enabled: boolFrom("fall_detection_enabled"),
+        fall_score_threshold: clampNumber(input.fall_score_threshold, base.fall_score_threshold, 0, 1),
+        fall_confirm_frames: clampNumber(input.fall_confirm_frames, base.fall_confirm_frames, 1, 120),
+        fall_confirm_seconds: clampNumber(input.fall_confirm_seconds, base.fall_confirm_seconds, 0, 300),
+        fall_recover_frames: clampNumber(input.fall_recover_frames, base.fall_recover_frames, 1, 120),
+        activity_detection_enabled: boolFrom("activity_detection_enabled"),
+        fire_detection_enabled: boolFrom("fire_detection_enabled"),
+        fire_event_score_threshold: clampNumber(input.fire_event_score_threshold, base.fire_event_score_threshold, 0, 1),
+        fire_motion_threshold: clampNumber(input.fire_motion_threshold, base.fire_motion_threshold, 0, 1),
+        fire_temporal_threshold: clampNumber(input.fire_temporal_threshold, base.fire_temporal_threshold, 0, 1),
+        fire_confirm_frames: clampNumber(input.fire_confirm_frames, base.fire_confirm_frames, 1, 120),
+        notification_enabled: boolFrom("notification_enabled"),
+        updated_at: String(input.updated_at || base.updated_at || nowIso()),
+    };
 }
 
 function normalizeRemoteAddress(value) {
@@ -153,10 +253,13 @@ function createDefaultDb() {
         version: 1,
         created_at: timestamp,
         updated_at: timestamp,
+        active_user_id: 1,
         next_ids: {
             user: 2,
             family: 2,
+            family_member: 1,
             elder_profile: 1,
+            app_session: 1,
             binding: 1,
             binding_code: 1,
             device_token: 1,
@@ -186,7 +289,20 @@ function createDefaultDb() {
                 created_at: timestamp,
             },
         ],
+        family_members: [
+            {
+                id: "1:owner:1",
+                family_id: 1,
+                user_id: 1,
+                role: "owner",
+                status: "active",
+                joined_at: timestamp,
+                created_at: timestamp,
+                updated_at: timestamp,
+            },
+        ],
         elder_profiles: {},
+        app_sessions: [],
         device_bindings: [],
         binding_codes: [],
         device_tokens: [],
@@ -195,6 +311,7 @@ function createDefaultDb() {
         assets: [],
         events: [],
         heartbeats: [],
+        rules: defaultRules(timestamp),
         calendar_events: [],
         care_preferences: {},
         care_cards: [],
@@ -230,18 +347,70 @@ class JsonStore {
 
 function normalizeDb(db) {
     const defaults = createDefaultDb();
+    const hadActiveUserId = db.active_user_id !== undefined && db.active_user_id !== null;
     db.next_ids = { ...defaults.next_ids, ...(db.next_ids || {}) };
+    db.active_user_id = Number(db.active_user_id || defaults.active_user_id);
     db.users = Array.isArray(db.users) ? db.users : defaults.users;
+    if (!hadActiveUserId) {
+        const recentNonAdmin = [...db.users].reverse().find((item) => item.email !== "admin@gohome.local");
+        if (recentNonAdmin) db.active_user_id = recentNonAdmin.id;
+    }
     db.families = Array.isArray(db.families) ? db.families : defaults.families;
+    db.family_members = Array.isArray(db.family_members) ? db.family_members : [];
+    if (!db.family_members.length && db.families.length && db.users.length) {
+        const owner = db.users.find((item) => Number(item.id) === Number(db.active_user_id))
+            || [...db.users].reverse().find((item) => item.email !== "admin@gohome.local")
+            || db.users[0];
+        db.family_members = db.families.map((family) => ({
+            id: `${family.id}:owner:${owner.id}`,
+            family_id: family.id,
+            user_id: owner.id,
+            role: "owner",
+            status: "active",
+            joined_at: family.created_at || db.created_at,
+            created_at: family.created_at || db.created_at,
+            updated_at: family.updated_at || family.created_at || db.created_at,
+        }));
+    }
+    const activeUser = db.users.find((item) => Number(item.id) === Number(db.active_user_id));
+    const activeUserIsNonAdmin = activeUser && activeUser.email !== "admin@gohome.local";
+    const activeUserHasFamily = activeUser
+        ? db.family_members.some((item) => String(item.status || "active") === "active" && Number(item.user_id) === Number(activeUser.id))
+        : false;
+    if (activeUserIsNonAdmin && !activeUserHasFamily && db.families.length) {
+        db.family_members.push(...db.families.map((family) => ({
+            id: `${family.id}:owner:${activeUser.id}`,
+            family_id: family.id,
+            user_id: activeUser.id,
+            role: "owner",
+            status: "active",
+            joined_at: family.created_at || db.created_at,
+            created_at: family.created_at || db.created_at,
+            updated_at: family.updated_at || family.created_at || db.created_at,
+        })));
+    }
     db.elder_profiles = db.elder_profiles && typeof db.elder_profiles === "object" ? db.elder_profiles : {};
+    db.app_sessions = Array.isArray(db.app_sessions) ? db.app_sessions : [];
     db.device_bindings = Array.isArray(db.device_bindings) ? db.device_bindings : [];
     db.binding_codes = Array.isArray(db.binding_codes) ? db.binding_codes : [];
     db.device_tokens = Array.isArray(db.device_tokens) ? db.device_tokens : [];
     db.devices = db.devices && typeof db.devices === "object" ? db.devices : {};
+    Object.entries(db.devices).forEach(([key, device]) => {
+        if (!device || typeof device !== "object") {
+            delete db.devices[key];
+            return;
+        }
+        device.device_id = device.device_id || device.id || key;
+        device.id = device.id || device.device_id;
+        device.metadata = device.metadata && typeof device.metadata === "object" && !Array.isArray(device.metadata)
+            ? device.metadata
+            : {};
+    });
     db.cameras = db.cameras && typeof db.cameras === "object" ? db.cameras : {};
     db.assets = Array.isArray(db.assets) ? db.assets : [];
     db.events = Array.isArray(db.events) ? db.events : [];
     db.heartbeats = Array.isArray(db.heartbeats) ? db.heartbeats : [];
+    db.rules = normalizeRules(db.rules || defaults.rules, defaults.rules);
     db.calendar_events = Array.isArray(db.calendar_events) ? db.calendar_events : [];
     db.care_preferences = db.care_preferences && typeof db.care_preferences === "object" ? db.care_preferences : {};
     db.care_cards = Array.isArray(db.care_cards) ? db.care_cards : [];
@@ -252,6 +421,8 @@ function normalizeDb(db) {
     const idSources = {
         user: db.users,
         family: db.families,
+        family_member: db.family_members,
+        app_session: db.app_sessions,
         binding: db.device_bindings,
         binding_code: db.binding_codes,
         device_token: db.device_tokens,
@@ -280,22 +451,42 @@ function createLocalAppServer(options = {}) {
     const opsToken = String(options.opsToken || DEFAULT_OPS_TOKEN);
     const playbackTickets = new Map();
     const boxAdminSessions = new Map();
+    const providerCache = new Map();
 
     ensureDir(mediaDir);
 
     const defaultCareTextPrompt = [
         "你是回家 App 的亲情关怀卡片生成助手。",
-        "请基于老人资料、日历、天气、热点信息、设备状态、摄像头状态和最近事件生成一张每日关怀卡片。",
-        "输出必须温暖、克制、可解释，不替代安全告警，不编造没有事实依据的老人行为。",
-        "返回 JSON：title、body、facts、suggested_actions、tone、image_brief。",
+        "请基于老人资料、日历、天气、热点话题、设备状态、摄像头状态和最近事件生成一张每日关怀推送卡片。",
+        "产品目标是让成年子女自然地想起联系家里，不是做监控播报。",
+        "文案风格参考精致电商生活方式卡片：温暖、有画面感、像给家人看的今日小提醒。",
+        "标题必须贴合当天主题，例如家里平稳、节日、纪念日、回家间隔、老人兴趣话题，不要泛泛写建议。",
+        "不要把标题或正文写成“家里一切平稳”“聊聊家常”“多陪陪家人”这类泛化占位句。",
+        "如果没有安全事件，也必须从天气、周末、节假日、纪念日、回家间隔或老人兴趣中选择一个真实信号作为主题。",
+        "热点或内容搜索结果只能作为温和话题候选，不要照抄耸动标题、负面标题或平台水印式标题。",
+        "家属通常不在老人身边，行动建议必须是打电话、发微信、提醒喝水、约定回家或准备问候，禁止写成亲手递茶、端水、送到手边、陪在身边等现场照顾动作。",
+        "不要编造老人真实行为、健康结论、实时天气、手机定位距离或未接入的数据。",
+        "如果有高优先级安全事件，标题要明确提醒先确认事件；如果没有，只写安心和问候话题。",
+        "输出必须是 JSON，字段为 title、body、facts、suggested_actions、tone、image_brief。",
+        "title 不超过 16 个中文字符，body 不超过 80 个中文字符，facts 最多 3 条，每条不超过 24 个中文字符。",
+        "suggested_actions 最多 3 条，优先给打电话、发消息、准备节日问候；普通关怀不要引导去看监控。",
+        "tone 只能使用 warm、calm、alert、seasonal、memory 中的一个。",
+        "image_brief 用一句话描述画面场景，不要包含监控、危险证据、真实老人肖像。",
     ].join("\n");
 
     const defaultCareImagePrompt = [
-        "生成一张 4:7 竖版温馨可爱漫画图文卡片。",
-        "画面用于家属端每日亲情关怀，不是告警证据。",
-        "风格：柔和、清爽、适合中文移动端展示。",
-        "画面需要包含卡片标题和一两句简短中文关怀文字，文字必须清晰可读。",
-        "不要出现监控感、恐慌感、医疗诊断感或真实老人肖像。",
+        "生成一张 1:1 方形中文关怀图文卡片。",
+        "画面用于家属端首页和陪伴页展示，是温暖生活推送，不是告警证据。",
+        "美术方向参考精致电商活动封面和生活方式品牌卡片：单一主视觉、干净留白、柔和光线、温馨家居场景、可爱但不幼稚。",
+        "画面要像一张可直接推送给家属的温暖海报，主题和卡片标题强相关。",
+        "如果主题来自天气、节日、纪念日、回家间隔或老人兴趣，主视觉必须直接体现这个主题，不要生成泛泛的家庭关怀模板。",
+        "画面必须有清晰中文标题和一句 10 到 16 字短关怀文案，文字少、端正、可读，不要密集排版。",
+        "画面里的中文必须直接使用卡片标题和短句，不要额外生成英文、品牌词、角标或说明文字。",
+        "可以出现插画式客厅、餐桌、窗台、节日花束、天气小物、电话问候、日历贴纸等场景元素。",
+        "文案只能表达远程关心，例如打电话、发微信、提醒喝水、周末回家看看；不要写递茶、端水、送到手边或陪在身边。",
+        "不要出现品牌字样、logo、角标、水印、奖章、贴纸式品牌标签或无关徽章。",
+        "不要画成后台管理卡片、按钮面板、排行榜、促销角标或信息堆叠 UI。",
+        "不要出现真实老人肖像、监控画面、跌倒、火灾、医疗诊断、恐慌表情或红色警报风格。",
     ].join("\n");
 
     function envFirst(keys, fallback = "") {
@@ -341,6 +532,37 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function weatherRuntimeConfig() {
+        const qweatherKey = envFirst(["GOHOME_QWEATHER_API_KEY", "QWEATHER_API_KEY", "HEFENG_WEATHER_API_KEY", "GOHOME_WEATHER_API_KEY"]);
+        const configuredProvider = envFirst(["GOHOME_WEATHER_PROVIDER"], qweatherKey ? "qweather" : "none").toLowerCase();
+        const provider = ["qweather", "open-meteo", "none", "off", "disabled"].includes(configuredProvider)
+            ? configuredProvider
+            : "qweather";
+        return {
+            capability_id: "weather-signals",
+            provider,
+            api_key: qweatherKey,
+            base_url: envFirst(["GOHOME_QWEATHER_BASE_URL", "QWEATHER_BASE_URL", "GOHOME_WEATHER_BASE_URL"], "https://devapi.qweather.com").replace(/\/+$/, ""),
+            geo_base_url: envFirst(["GOHOME_QWEATHER_GEO_BASE_URL", "QWEATHER_GEO_BASE_URL"], "https://geoapi.qweather.com").replace(/\/+$/, ""),
+            auth_mode: envFirst(["GOHOME_QWEATHER_AUTH_MODE", "QWEATHER_AUTH_MODE"], "auto").toLowerCase(),
+        };
+    }
+
+    function contentSearchRuntimeConfig() {
+        const tavilyKey = envFirst(["GOHOME_TAVILY_API_KEY", "TAVILY_API_KEY", "GOHOME_SEARCH_API_KEY"]);
+        const configuredProvider = envFirst(["GOHOME_SEARCH_PROVIDER", "GOHOME_CONTENT_SEARCH_PROVIDER"], tavilyKey ? "tavily" : "none").toLowerCase();
+        const provider = ["tavily", "none", "off", "disabled"].includes(configuredProvider)
+            ? configuredProvider
+            : "tavily";
+        return {
+            capability_id: "content-search",
+            provider,
+            api_key: tavilyKey,
+            base_url: envFirst(["GOHOME_TAVILY_BASE_URL", "TAVILY_BASE_URL", "GOHOME_SEARCH_BASE_URL"], "https://api.tavily.com/search").replace(/\/+$/, ""),
+            max_results: Math.max(1, Math.min(8, normalizeNumber(process.env.GOHOME_TAVILY_MAX_RESULTS, 3))),
+        };
+    }
+
     function modelCallsEnabled() {
         const value = String(process.env.GOHOME_CARE_MODEL_CALLS || "1").trim().toLowerCase();
         return !["0", "false", "off", "disabled"].includes(value);
@@ -364,9 +586,14 @@ function createLocalAppServer(options = {}) {
         return Number.isFinite(value) && value >= 5000 ? value : 60000;
     }
 
+    function providerRequestTimeoutMs() {
+        const value = Number(process.env.GOHOME_PROVIDER_REQUEST_TIMEOUT_MS || 12000);
+        return Number.isFinite(value) && value >= 2000 ? value : 12000;
+    }
+
     function careImageSize() {
-        const value = String(process.env.GOHOME_CARE_IMAGE_SIZE || "1024*1792").trim();
-        return /^\d{3,4}\*\d{3,4}$/.test(value) ? value : "1024*1792";
+        const value = String(process.env.GOHOME_CARE_IMAGE_SIZE || "1024*1024").trim();
+        return /^\d{3,4}\*\d{3,4}$/.test(value) ? value : "1024*1024";
     }
 
     function careImagePollIntervalMs() {
@@ -382,6 +609,8 @@ function createLocalAppServer(options = {}) {
     function modelCapabilities() {
         const multimodal = multimodalRuntimeConfig();
         const image = imageRuntimeConfig();
+        const weather = weatherRuntimeConfig();
+        const contentSearch = contentSearchRuntimeConfig();
         return [
             {
                 capability_id: "multimodal-language",
@@ -408,14 +637,14 @@ function createLocalAppServer(options = {}) {
                 capability_id: "care-card-image",
                 name: "生图模型",
                 type: "image_generation",
-                scope: "care_card_image_4x7",
+                scope: "care_card_image_1x1",
                 configured: Boolean(image.base_url && image.api_key && image.model),
                 enabled: Boolean(image.base_url && image.api_key && image.model),
                 base_url_set: Boolean(image.base_url),
                 api_key_set: Boolean(image.api_key),
                 model: image.model,
-                purpose_label: "4:7 图文卡片生成",
-                aspect_ratio: "4:7",
+                purpose_label: "1:1 图文卡片生成",
+                aspect_ratio: "1:1",
                 prompt: image.prompt,
                 prompt_source: image.prompt_source,
                 env_keys: {
@@ -424,7 +653,46 @@ function createLocalAppServer(options = {}) {
                     model: ["GOHOME_IMAGE_MODEL", "GOHOME_WAN_MODEL", "WAN_MODEL"],
                     prompt: ["GOHOME_CARE_IMAGE_PROMPT"],
                 },
-                output_contract: "4:7 non-evidence illustrated care card image with readable Chinese text",
+                output_contract: "1:1 non-evidence illustrated care card image with readable Chinese text",
+            },
+            {
+                capability_id: "weather-signals",
+                name: "天气数据源",
+                type: "weather_provider",
+                scope: "care_card_weather_context",
+                configured: weather.provider === "open-meteo" || Boolean(weather.provider === "qweather" && weather.api_key),
+                enabled: !["none", "off", "disabled"].includes(weather.provider),
+                base_url_set: Boolean(weather.base_url),
+                api_key_set: Boolean(weather.api_key) || weather.provider === "open-meteo",
+                model: weather.provider,
+                purpose_label: "每日关怀天气上下文",
+                env_keys: {
+                    provider: ["GOHOME_WEATHER_PROVIDER"],
+                    base_url: ["GOHOME_QWEATHER_BASE_URL", "QWEATHER_BASE_URL", "GOHOME_WEATHER_BASE_URL"],
+                    geo_base_url: ["GOHOME_QWEATHER_GEO_BASE_URL", "QWEATHER_GEO_BASE_URL"],
+                    api_key: ["GOHOME_QWEATHER_API_KEY", "QWEATHER_API_KEY", "HEFENG_WEATHER_API_KEY", "GOHOME_WEATHER_API_KEY"],
+                    auth_mode: ["GOHOME_QWEATHER_AUTH_MODE", "QWEATHER_AUTH_MODE"],
+                },
+                output_contract: "WeatherSignal: city/condition/temperature/humidity/advice/source",
+            },
+            {
+                capability_id: "content-search",
+                name: "内容搜索源",
+                type: "content_search",
+                scope: "elder_interest_topic_candidates",
+                configured: Boolean(contentSearch.provider === "tavily" && contentSearch.api_key),
+                enabled: contentSearch.provider === "tavily",
+                base_url_set: Boolean(contentSearch.base_url),
+                api_key_set: Boolean(contentSearch.api_key),
+                model: contentSearch.provider,
+                purpose_label: "老人兴趣热点和文章视频候选",
+                env_keys: {
+                    provider: ["GOHOME_SEARCH_PROVIDER", "GOHOME_CONTENT_SEARCH_PROVIDER"],
+                    base_url: ["GOHOME_TAVILY_BASE_URL", "TAVILY_BASE_URL", "GOHOME_SEARCH_BASE_URL"],
+                    api_key: ["GOHOME_TAVILY_API_KEY", "TAVILY_API_KEY", "GOHOME_SEARCH_API_KEY"],
+                    max_results: ["GOHOME_TAVILY_MAX_RESULTS"],
+                },
+                output_contract: "ContentRecommendation[]: title/url/source/summary/topic",
             },
         ];
     }
@@ -454,6 +722,27 @@ function createLocalAppServer(options = {}) {
         return match ? match[1].trim() : "";
     }
 
+    function sessionForToken(token) {
+        if (!token) return null;
+        return [...store.db.app_sessions]
+            .reverse()
+            .find((session) => session.status === "active" && session.token === token) || null;
+    }
+
+    function issueAppSession(user) {
+        const token = `app_${crypto.randomBytes(18).toString("hex")}`;
+        const session = {
+            id: store.nextId("app_session"),
+            token,
+            user_id: user.id,
+            status: "active",
+            created_at: nowIso(),
+            last_seen_at: nowIso(),
+        };
+        store.db.app_sessions.push(session);
+        return session;
+    }
+
     function isLocalRequest(req) {
         const address = normalizeRemoteAddress(req.socket?.remoteAddress || "");
         return address === "127.0.0.1" || address === "localhost";
@@ -478,12 +767,24 @@ function createLocalAppServer(options = {}) {
         const playbackTicket = url.searchParams.get("playback_ticket") || "";
         const ticket = playbackTicket ? playbackTickets.get(playbackTicket) : null;
         if (ticket && Number(ticket.expires_at || 0) > Date.now()) {
+            if (ticket.user_id) req.appUserId = ticket.user_id;
+            return true;
+        }
+        const session = sessionForToken(token);
+        if (session) {
+            session.last_seen_at = nowIso();
+            req.appUserId = session.user_id;
+            return true;
+        }
+        if (token === appToken) {
+            req.appUserId = store.db.active_user_id;
             return true;
         }
         if (token !== appToken) {
             writeError(res, 401, "请先登录回家 App。");
             return false;
         }
+        req.appUserId = store.db.active_user_id;
         return true;
     }
 
@@ -497,29 +798,125 @@ function createLocalAppServer(options = {}) {
     }
 
     function publicUser(user) {
+        const phone = user.phone || phoneFromAccountEmail(user.email);
         return {
             id: user.id,
             email: user.email,
+            phone,
             display_name: user.display_name,
             created_at: user.created_at,
         };
     }
 
+    function activeAppUser(req = null) {
+        const userId = req?.appUserId || store.db.active_user_id;
+        return store.db.users.find((item) => Number(item.id) === Number(userId))
+            || [...store.db.users].reverse().find((item) => item.email !== "admin@gohome.local")
+            || store.db.users[0];
+    }
+
+    function familyIdsForUser(userId) {
+        const ids = store.db.family_members
+            .filter((item) => String(item.status || "active") === "active" && Number(item.user_id) === Number(userId))
+            .map((item) => Number(item.family_id));
+        return new Set(ids);
+    }
+
+    function familiesForUser(userId) {
+        const ids = familyIdsForUser(userId);
+        return store.db.families.filter((family) => ids.has(Number(family.id)));
+    }
+
+    function syncFamilyMemberCount(familyId) {
+        const family = selectedFamily(familyId);
+        if (!family) return null;
+        family.member_count = store.db.family_members.filter((item) => (
+            String(item.status || "active") === "active"
+            && Number(item.family_id) === Number(familyId)
+        )).length || 1;
+        family.updated_at = nowIso();
+        return family;
+    }
+
+    function ensureFamilyMember(familyId, userId, role = "owner") {
+        let member = store.db.family_members.find((item) => (
+            Number(item.family_id) === Number(familyId)
+            && Number(item.user_id) === Number(userId)
+        ));
+        if (!member) {
+            member = {
+                id: `${familyId}:${role}:${userId}`,
+                family_id: Number(familyId),
+                user_id: Number(userId),
+                role,
+                status: "active",
+                joined_at: nowIso(),
+                created_at: nowIso(),
+                updated_at: nowIso(),
+            };
+            store.db.family_members.push(member);
+        } else {
+            member.status = "active";
+            member.role = member.role || role;
+            member.updated_at = nowIso();
+        }
+        syncFamilyMemberCount(familyId);
+        return member;
+    }
+
+    function userCanAccessFamily(userId, familyId) {
+        return familyIdsForUser(userId).has(Number(familyId));
+    }
+
+    function requireFamilyAccess(req, res, familyId) {
+        const user = activeAppUser(req);
+        if (!selectedFamily(familyId)) {
+            writeError(res, 404, "family not found");
+            return false;
+        }
+        if (!userCanAccessFamily(user.id, familyId)) {
+            writeError(res, 403, "当前账号无权访问该家庭。");
+            return false;
+        }
+        return true;
+    }
+
     function publicFamily(family) {
+        const activeMembers = store.db.family_members.filter((item) => (
+            String(item.status || "active") === "active"
+            && Number(item.family_id) === Number(family.id)
+        )).length;
         return {
             id: family.id,
             name: family.name,
-            member_count: Number(family.member_count || 1),
+            member_count: activeMembers || Number(family.member_count || 1),
+            join_code: familyJoinCode(family),
             created_at: family.created_at,
             updated_at: family.updated_at || family.created_at,
         };
+    }
+
+    function familyJoinCode(family) {
+        if (!family) return "";
+        const hash = sha256(`${family.id}:${family.created_at || ""}:${family.name || ""}`).slice(0, 6).toUpperCase();
+        return `GH-${family.id}-${hash}`;
+    }
+
+    function familyForJoinCode(code) {
+        const normalized = String(code || "").trim().toUpperCase().replace(/\s+/g, "");
+        if (!normalized) return null;
+        const match = normalized.match(/^GH-?(\d+)-?([A-F0-9]{6})$/i);
+        if (!match) return null;
+        const family = selectedFamily(Number(match[1]));
+        if (!family) return null;
+        return familyJoinCode(family).replace(/\s+/g, "").toUpperCase() === normalized ? family : null;
     }
 
     function selectedFamily(familyId = null) {
         if (familyId !== null && familyId !== undefined && familyId !== "") {
             return store.db.families.find((item) => Number(item.id) === Number(familyId)) || null;
         }
-        return store.db.families[0] || null;
+        return null;
     }
 
     function elderProfileKey(familyId, elderId = "elder_primary") {
@@ -535,6 +932,10 @@ function createLocalAppServer(options = {}) {
             relationship: "母亲",
             age: null,
             city: "杭州",
+            district: "",
+            phone: "",
+            mobile_phone: "",
+            home_phone: "",
             health_notes: "",
             care_preferences: {
                 fall_detection: true,
@@ -546,6 +947,22 @@ function createLocalAppServer(options = {}) {
             created_at: store.db.created_at,
             updated_at: store.db.updated_at,
         };
+    }
+
+    function ensureElderProfile(familyId, elderId = "elder_primary") {
+        const family = selectedFamily(familyId);
+        if (!family) return null;
+        const key = elderProfileKey(family.id, elderId);
+        if (!store.db.elder_profiles[key]) {
+            store.db.elder_profiles[key] = defaultElderProfile(family.id, elderId);
+        }
+        return store.db.elder_profiles[key];
+    }
+
+    function existingElderProfile(familyId, elderId = "elder_primary") {
+        const family = selectedFamily(familyId);
+        if (!family) return null;
+        return store.db.elder_profiles[elderProfileKey(family.id, elderId)] || null;
     }
 
     function publicBinding(binding) {
@@ -595,6 +1012,212 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function objectValue(value) {
+        return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    }
+
+    function normalizeClaimCode(value) {
+        return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    }
+
+    function deviceSerial(deviceOrId = {}) {
+        const device = typeof deviceOrId === "object" && deviceOrId ? deviceOrId : store.db.devices[String(deviceOrId)] || {};
+        const deviceId = String(device.device_id || device.id || deviceOrId || "").trim();
+        const metadata = objectValue(device.metadata);
+        const existing = String(metadata.serial_number || device.serial_number || "").trim();
+        if (existing) return existing;
+        const suffix = normalizeClaimCode(deviceId).slice(-8) || crypto.randomBytes(4).toString("hex").toUpperCase();
+        return `GH-${suffix}`;
+    }
+
+    function ensureDeviceMetadata(deviceId, patch = {}) {
+        const key = String(deviceId || "").trim();
+        if (!key) return {};
+        const device = store.db.devices[key] || { id: key, device_id: key, name: "回家盒子", status: "online" };
+        const metadata = {
+            ...objectValue(device.metadata),
+            ...objectValue(patch),
+        };
+        metadata.serial_number = String(metadata.serial_number || deviceSerial({ ...device, metadata })).trim();
+        store.db.devices[key] = {
+            ...device,
+            id: key,
+            device_id: key,
+            metadata,
+            updated_at: nowIso(),
+        };
+        return metadata;
+    }
+
+    function deviceHasActiveBinding(deviceId) {
+        return store.db.device_bindings.some((item) => (
+            String(item.device_id || "") === String(deviceId || "")
+            && String(item.status || "active") !== "revoked"
+        ));
+    }
+
+    function publicClaimableDevice(device) {
+        const deviceId = String(device.device_id || device.id || "");
+        const metadata = ensureDeviceMetadata(deviceId);
+        return {
+            device_id: deviceId,
+            serial_number: metadata.serial_number || deviceSerial(device),
+            name: device.name || "回家盒子",
+            status: device.status || "online",
+            last_seen_at: device.last_seen_at || null,
+            claim_status: deviceHasActiveBinding(deviceId) || device.family_id ? "bound" : "claimable",
+        };
+    }
+
+    function claimCodeMatchesDevice(device, claimCode) {
+        const normalized = normalizeClaimCode(claimCode);
+        if (!normalized) return false;
+        const metadata = ensureDeviceMetadata(device.device_id || device.id);
+        const configuredClaim = normalizeClaimCode(process.env.GOHOME_DEVICE_CLAIM_CODE || "");
+        if (configuredClaim && normalized === configuredClaim) return true;
+        const hash = String(metadata.claim_code_hash || "").trim();
+        if (hash && sha256(normalized) === hash) return true;
+        const serial = normalizeClaimCode(metadata.serial_number || deviceSerial(device));
+        const deviceId = normalizeClaimCode(device.device_id || device.id || "");
+        if (serial && normalized === serial) return true;
+        if (deviceId && (normalized === deviceId || normalized === deviceId.slice(-8) || normalized === deviceId.slice(-12))) return true;
+        return false;
+    }
+
+    function bindDeviceToFamily({ familyId, deviceId, deviceName = "回家盒子", note = "", userId = null }) {
+        const normalizedFamilyId = normalizeNumber(familyId, null);
+        const normalizedDeviceId = String(deviceId || "").trim();
+        if (!normalizedFamilyId || !normalizedDeviceId || !selectedFamily(normalizedFamilyId)) return null;
+        let binding = store.db.device_bindings.find((item) => (
+            Number(item.family_id) === Number(normalizedFamilyId)
+            && String(item.device_id) === normalizedDeviceId
+        ));
+        if (!binding) {
+            binding = {
+                id: store.nextId("binding"),
+                family_id: normalizedFamilyId,
+                device_id: normalizedDeviceId,
+                device_name: String(deviceName || "回家盒子"),
+                device_type: "edge-agent",
+                status: "active",
+                note: String(note || ""),
+                bound_at: nowIso(),
+                created_at: nowIso(),
+                updated_at: nowIso(),
+            };
+            store.db.device_bindings.push(binding);
+        } else {
+            binding.status = "active";
+            binding.device_name = String(deviceName || binding.device_name || "回家盒子");
+            binding.note = String(note || binding.note || "");
+            binding.updated_at = nowIso();
+        }
+
+        const existingDevice = store.db.devices[normalizedDeviceId] || {};
+        const metadata = {
+            ...objectValue(existingDevice.metadata),
+            serial_number: objectValue(existingDevice.metadata).serial_number || deviceSerial({ ...existingDevice, device_id: normalizedDeviceId }),
+            claim_status: "bound",
+            claimed_at: nowIso(),
+            claimed_by_family_id: normalizedFamilyId,
+            claimed_by_user_id: userId || null,
+        };
+        store.db.devices[normalizedDeviceId] = {
+            ...existingDevice,
+            id: normalizedDeviceId,
+            device_id: normalizedDeviceId,
+            family_id: normalizedFamilyId,
+            name: binding.device_name || existingDevice.name || "回家盒子",
+            device_type: existingDevice.device_type || "edge-agent",
+            status: existingDevice.status || "active",
+            metadata,
+            updated_at: nowIso(),
+        };
+        store.db.device_tokens.forEach((token) => {
+            if (String(token.device_id || "") === normalizedDeviceId && token.status === "active" && !token.family_id) {
+                token.family_id = normalizedFamilyId;
+                token.updated_at = nowIso();
+            }
+        });
+        return binding;
+    }
+
+    function cleanupVerifyData(options = {}) {
+        const dryRun = normalizeBool(options.dry_run || options.dryRun);
+        const idText = (value) => String(value ?? "");
+        const verifyUsers = store.db.users.filter((user) => /^verify-[^@]+@gohome\.local$/i.test(String(user.email || "")));
+        const verifyUserIds = new Set(verifyUsers.map((user) => idText(user.id)));
+        const verifyFamilies = store.db.families.filter((family) => /^流程自检-/.test(String(family.name || "")));
+        const verifyFamilyIds = new Set(verifyFamilies.map((family) => idText(family.id)));
+        const verifyCameraIds = new Set(Object.values(store.db.cameras || {})
+            .filter((camera) => verifyFamilyIds.has(idText(camera.family_id)))
+            .map((camera) => idText(camera.id)));
+        const deleted = {};
+
+        function countArray(key, predicate) {
+            const items = Array.isArray(store.db[key]) ? store.db[key] : [];
+            const removeCount = items.filter(predicate).length;
+            deleted[key] = removeCount;
+            if (!dryRun && removeCount) {
+                store.db[key] = items.filter((item) => !predicate(item));
+            }
+        }
+
+        function countObject(key, predicate) {
+            const object = store.db[key] && typeof store.db[key] === "object" ? store.db[key] : {};
+            const entries = Object.entries(object);
+            const removeCount = entries.filter(([entryKey, value]) => predicate(value, entryKey)).length;
+            deleted[key] = removeCount;
+            if (!dryRun && removeCount) {
+                store.db[key] = Object.fromEntries(entries.filter(([entryKey, value]) => !predicate(value, entryKey)));
+            }
+        }
+
+        countArray("app_sessions", (session) => verifyUserIds.has(idText(session.user_id)));
+        countArray("family_members", (member) => verifyUserIds.has(idText(member.user_id)) || verifyFamilyIds.has(idText(member.family_id)));
+        countArray("users", (user) => verifyUserIds.has(idText(user.id)));
+        countArray("families", (family) => verifyFamilyIds.has(idText(family.id)));
+        countArray("device_bindings", (binding) => verifyFamilyIds.has(idText(binding.family_id)));
+        countArray("binding_codes", (code) => verifyFamilyIds.has(idText(code.family_id)));
+        countArray("device_tokens", (token) => verifyFamilyIds.has(idText(token.family_id)));
+        countObject("cameras", (camera) => verifyFamilyIds.has(idText(camera.family_id)));
+        countArray("assets", (asset) => verifyFamilyIds.has(idText(asset.family_id)) || verifyCameraIds.has(idText(asset.camera_id)));
+        countArray("events", (event) => verifyFamilyIds.has(idText(event.family_id)) || verifyCameraIds.has(idText(event.camera_id)));
+        countArray("calendar_events", (event) => verifyFamilyIds.has(idText(event.family_id)));
+        countObject("elder_profiles", (profile, key) => verifyFamilyIds.has(idText(profile.family_id)) || [...verifyFamilyIds].some((familyId) => String(key).startsWith(`${familyId}:`)));
+        countObject("care_preferences", (preferences, key) => verifyFamilyIds.has(idText(preferences.family_id)) || verifyFamilyIds.has(idText(key)));
+        countArray("care_cards", (card) => verifyFamilyIds.has(idText(card.family_id)));
+        countArray("model_generation_jobs", (job) => verifyFamilyIds.has(idText(job.family_id)));
+        countArray("content_sources", (source) => verifyFamilyIds.has(idText(source.family_id)));
+        countArray("content_recommendations", (recommendation) => verifyFamilyIds.has(idText(recommendation.family_id)));
+
+        if (!dryRun) {
+            if (verifyUserIds.has(idText(store.db.active_user_id))) {
+                const replacement = store.db.users.find((user) => !verifyUserIds.has(idText(user.id)) && user.email !== "admin@gohome.local")
+                    || store.db.users.find((user) => !verifyUserIds.has(idText(user.id)))
+                    || null;
+                store.db.active_user_id = replacement?.id || null;
+            }
+            for (const family of store.db.families) {
+                family.member_count = store.db.family_members.filter((member) => (
+                    String(member.status || "active") === "active"
+                    && Number(member.family_id) === Number(family.id)
+                )).length || 1;
+                family.updated_at = family.updated_at || nowIso();
+            }
+        }
+
+        return {
+            ok: true,
+            dry_run: dryRun,
+            targets: {
+                users: verifyUsers.map((user) => ({ id: user.id, email: user.email })),
+                families: verifyFamilies.map((family) => ({ id: family.id, name: family.name })),
+            },
+            deleted,
+        };
+    }
+
     function normalizeCameraPayload(payload = {}, existing = {}) {
         const id = existing.id || payload.id || store.nextId("camera");
         const streamUrl = String(payload.stream_url || existing.stream_url || "").trim();
@@ -603,7 +1226,7 @@ function createLocalAppServer(options = {}) {
         const defaultStatus = hasStreamUrl ? "pending_edge_sync" : "pending_edge_setup";
         return {
             id,
-            family_id: normalizeNumber(payload.family_id, existing.family_id ?? store.db.families[0]?.id ?? 1),
+            family_id: normalizeNumber(payload.family_id, existing.family_id ?? null),
             device_id: String(payload.device_id || existing.device_id || currentEdgeDeviceId()),
             name: String(payload.name || existing.name || "客厅主视"),
             room: String(payload.room || existing.room || "客厅"),
@@ -637,8 +1260,14 @@ function createLocalAppServer(options = {}) {
         return String(camera.source || "app_server_config") !== "edge_reported";
     }
 
-    function appConfigCameras() {
-        return Object.values(store.db.cameras).filter(isAppConfiguredCamera);
+    function appConfigCameras(familyIds = null) {
+        const allowedFamilyIds = familyIds instanceof Set ? familyIds : null;
+        return Object.values(store.db.cameras).filter((camera) => {
+            if (!isAppConfiguredCamera(camera)) return false;
+            if (!allowedFamilyIds) return true;
+            if (!camera.family_id) return false;
+            return allowedFamilyIds.has(Number(camera.family_id));
+        });
     }
 
     function sameDeviceScope(camera, deviceId) {
@@ -737,11 +1366,73 @@ function createLocalAppServer(options = {}) {
         return `camera-config-${crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 12)}`;
     }
 
+    function currentRules() {
+        store.db.rules = normalizeRules(store.db.rules || defaultRules(), store.db.rules || defaultRules());
+        return store.db.rules;
+    }
+
+    function deviceVisionCapabilities(device = {}, cameras = []) {
+        const runtime = device.runtime && typeof device.runtime === "object" ? device.runtime : {};
+        const worker = runtime.worker && typeof runtime.worker === "object" ? runtime.worker : {};
+        const reported = {
+            ...((device.vision_capabilities && typeof device.vision_capabilities === "object") ? device.vision_capabilities : {}),
+            ...((runtime.vision_capabilities && typeof runtime.vision_capabilities === "object") ? runtime.vision_capabilities : {}),
+            ...((worker.vision_capabilities && typeof worker.vision_capabilities === "object") ? worker.vision_capabilities : {}),
+        };
+        const backend = String(device.detector_backend || runtime.detector_backend || worker.detector_backend || "").trim().toLowerCase();
+        const demoCamera = Array.isArray(cameras) && cameras.some((camera) => String(camera.stream_url || "").trim().toLowerCase().startsWith("demo:"));
+        const modelBackends = new Set(["yolo", "demo", "rtmpose", "pose"]);
+        const anyCapability = (...values) => values.some((value) => normalizeBool(value));
+        const poseEnabled = anyCapability(
+            reported.pose_detection,
+            runtime.pose_enabled,
+            runtime.pose_detection_enabled,
+            worker.pose_enabled,
+            worker.pose_detection_enabled,
+            backend === "rtmpose",
+            backend === "pose"
+        );
+        const modelReported = normalizeBool(reported.person_detection)
+            || modelBackends.has(backend)
+            || Boolean(device.yolo_model || runtime.yolo_model || worker.yolo_model)
+            || demoCamera;
+        const backendLabel = reported.backend_label
+            || (backend === "yolo"
+                ? "YOLO 人形模型"
+                : backend === "demo"
+                    ? "演示视觉管线"
+                    : backend === "rtmpose" || backend === "pose" || poseEnabled
+                        ? "RTMPose 姿态模型"
+                        : backend === "basic"
+                            ? "基础视觉检测"
+                            : "盒子视觉管线");
+        return {
+            quality_detection: true,
+            motion_detection: true,
+            person_detection: modelReported,
+            no_person_detection: normalizeBool(reported.no_person_detection) || modelReported,
+            fall_candidate: normalizeBool(reported.fall_candidate) || modelReported || poseEnabled,
+            activity_candidate: reported.activity_candidate === undefined ? true : normalizeBool(reported.activity_candidate),
+            fire_candidate: reported.fire_candidate === undefined ? true : normalizeBool(reported.fire_candidate),
+            pose_detection: poseEnabled,
+            backend: backend || "unknown",
+            backend_label: backendLabel,
+        };
+    }
+
+    function rulesVersion() {
+        return `rules-${crypto.createHash("sha1").update(JSON.stringify(currentRules())).digest("hex").slice(0, 12)}`;
+    }
+
+    function deviceConfigVersion() {
+        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion()}|${rulesVersion()}`).digest("hex").slice(0, 12)}`;
+    }
+
     function deviceCameraConfig(camera) {
         return {
             id: camera.id,
             camera_id: camera.id,
-            family_id: camera.family_id || store.db.families[0]?.id || 1,
+            family_id: camera.family_id || null,
             device_id: camera.device_id || currentEdgeDeviceId(),
             name: camera.name,
             room: camera.room,
@@ -757,14 +1448,17 @@ function createLocalAppServer(options = {}) {
         };
     }
 
-    function deviceConfigPayload() {
+    function deviceConfigPayload(options = {}) {
+        const familyId = normalizeNumber(options.family_id ?? options.familyId, null);
+        const familyIds = familyId ? new Set([familyId]) : new Set();
         return {
             ok: true,
-            device_id: currentEdgeDeviceId(),
+            device_id: options.device_id || currentEdgeDeviceId(),
             generated_at: nowIso(),
-            config_version: cameraConfigVersion(),
-            cameras: appConfigCameras().map(deviceCameraConfig),
-            rules: {},
+            config_version: deviceConfigVersion(),
+            cameras: appConfigCameras(familyIds).map(deviceCameraConfig),
+            rules: currentRules(),
+            rules_version: rulesVersion(),
         };
     }
 
@@ -811,19 +1505,39 @@ function createLocalAppServer(options = {}) {
             content_types: {
                 home_status: true,
                 elder_interest_topics: true,
+                local_hotspots: true,
                 health_tips: true,
+                anti_fraud: false,
+                culture_entertainment: true,
                 weather: true,
                 holidays: true,
                 anniversaries: true,
                 visit_reminder: true,
             },
-            interest_topics: ["养生", "天气", "戏曲", "家常"],
+            content_region: {
+                city: "",
+                district: "",
+            },
+            interest_topics: ["养生", "天气", "戏曲", "家常", "本地生活"],
             message_focus: "用轻松自然的语气提醒今天家里状态，顺带给一个适合打电话时聊的话题。",
             visit_reminder: {
                 enabled: true,
                 threshold_days: 14,
                 location_tracking_enabled: false,
                 last_visit_at: "",
+            },
+            delivery_rules: {
+                daily_digest: { enabled: true, mode: "daily_digest" },
+                home_status: { enabled: true, mode: "daily_digest_plus_exception", exception_push_enabled: true },
+                elder_interest_topics: { enabled: true, mode: "daily_digest" },
+                local_hotspots: { enabled: true, mode: "daily_digest_region" },
+                health_tips: { enabled: true, mode: "daily_digest" },
+                anti_fraud: { enabled: false, mode: "low_frequency" },
+                culture_entertainment: { enabled: true, mode: "daily_digest" },
+                weather: { enabled: true, mode: "daily_digest_provider" },
+                holidays: { enabled: true, mode: "holiday_window", days_before: 1 },
+                anniversaries: { enabled: true, mode: "annual_window", days_before: 3 },
+                visit_reminder: { enabled: true, mode: "threshold", threshold_days: 14 },
             },
             anniversaries: [],
             updated_at: nowIso(),
@@ -848,7 +1562,10 @@ function createLocalAppServer(options = {}) {
         const defaults = defaultCareSchedule();
         const input = value && typeof value === "object" ? value : {};
         const contentTypes = input.content_types && typeof input.content_types === "object" ? input.content_types : {};
+        const contentRegion = input.content_region && typeof input.content_region === "object" ? input.content_region : {};
         const visitReminder = input.visit_reminder && typeof input.visit_reminder === "object" ? input.visit_reminder : {};
+        const deliveryRules = input.delivery_rules && typeof input.delivery_rules === "object" ? input.delivery_rules : {};
+        const ruleObject = (key) => deliveryRules[key] && typeof deliveryRules[key] === "object" ? deliveryRules[key] : {};
         return {
             enabled: "enabled" in input ? normalizeBool(input.enabled) : defaults.enabled,
             delivery_time: normalizeTimeOfDay(input.delivery_time, defaults.delivery_time),
@@ -857,11 +1574,18 @@ function createLocalAppServer(options = {}) {
             content_types: {
                 home_status: "home_status" in contentTypes ? normalizeBool(contentTypes.home_status) : defaults.content_types.home_status,
                 elder_interest_topics: "elder_interest_topics" in contentTypes ? normalizeBool(contentTypes.elder_interest_topics) : defaults.content_types.elder_interest_topics,
+                local_hotspots: "local_hotspots" in contentTypes ? normalizeBool(contentTypes.local_hotspots) : defaults.content_types.local_hotspots,
                 health_tips: "health_tips" in contentTypes ? normalizeBool(contentTypes.health_tips) : defaults.content_types.health_tips,
+                anti_fraud: "anti_fraud" in contentTypes ? normalizeBool(contentTypes.anti_fraud) : defaults.content_types.anti_fraud,
+                culture_entertainment: "culture_entertainment" in contentTypes ? normalizeBool(contentTypes.culture_entertainment) : defaults.content_types.culture_entertainment,
                 weather: "weather" in contentTypes ? normalizeBool(contentTypes.weather) : defaults.content_types.weather,
                 holidays: "holidays" in contentTypes ? normalizeBool(contentTypes.holidays) : defaults.content_types.holidays,
                 anniversaries: "anniversaries" in contentTypes ? normalizeBool(contentTypes.anniversaries) : defaults.content_types.anniversaries,
                 visit_reminder: "visit_reminder" in contentTypes ? normalizeBool(contentTypes.visit_reminder) : defaults.content_types.visit_reminder,
+            },
+            content_region: {
+                city: String(contentRegion.city || defaults.content_region.city || "").trim().slice(0, 24),
+                district: String(contentRegion.district || defaults.content_region.district || "").trim().slice(0, 24),
             },
             interest_topics: normalizeStringList(input.interest_topics, defaults.interest_topics, 20),
             message_focus: String(input.message_focus || defaults.message_focus).trim().slice(0, 400),
@@ -872,6 +1596,58 @@ function createLocalAppServer(options = {}) {
                 last_visit_at: /^\d{4}-\d{2}-\d{2}$/.test(String(visitReminder.last_visit_at || ""))
                     ? String(visitReminder.last_visit_at)
                     : "",
+            },
+            delivery_rules: {
+                daily_digest: {
+                    enabled: "enabled" in ruleObject("daily_digest") ? normalizeBool(ruleObject("daily_digest").enabled) : defaults.delivery_rules.daily_digest.enabled,
+                    mode: String(ruleObject("daily_digest").mode || defaults.delivery_rules.daily_digest.mode),
+                },
+                home_status: {
+                    enabled: "enabled" in ruleObject("home_status") ? normalizeBool(ruleObject("home_status").enabled) : defaults.delivery_rules.home_status.enabled,
+                    mode: String(ruleObject("home_status").mode || defaults.delivery_rules.home_status.mode),
+                    exception_push_enabled: "exception_push_enabled" in ruleObject("home_status")
+                        ? normalizeBool(ruleObject("home_status").exception_push_enabled)
+                        : defaults.delivery_rules.home_status.exception_push_enabled,
+                },
+                elder_interest_topics: {
+                    enabled: "enabled" in ruleObject("elder_interest_topics") ? normalizeBool(ruleObject("elder_interest_topics").enabled) : defaults.delivery_rules.elder_interest_topics.enabled,
+                    mode: String(ruleObject("elder_interest_topics").mode || defaults.delivery_rules.elder_interest_topics.mode),
+                },
+                local_hotspots: {
+                    enabled: "enabled" in ruleObject("local_hotspots") ? normalizeBool(ruleObject("local_hotspots").enabled) : defaults.delivery_rules.local_hotspots.enabled,
+                    mode: String(ruleObject("local_hotspots").mode || defaults.delivery_rules.local_hotspots.mode),
+                },
+                health_tips: {
+                    enabled: "enabled" in ruleObject("health_tips") ? normalizeBool(ruleObject("health_tips").enabled) : defaults.delivery_rules.health_tips.enabled,
+                    mode: String(ruleObject("health_tips").mode || defaults.delivery_rules.health_tips.mode),
+                },
+                anti_fraud: {
+                    enabled: "enabled" in ruleObject("anti_fraud") ? normalizeBool(ruleObject("anti_fraud").enabled) : defaults.delivery_rules.anti_fraud.enabled,
+                    mode: String(ruleObject("anti_fraud").mode || defaults.delivery_rules.anti_fraud.mode),
+                },
+                culture_entertainment: {
+                    enabled: "enabled" in ruleObject("culture_entertainment") ? normalizeBool(ruleObject("culture_entertainment").enabled) : defaults.delivery_rules.culture_entertainment.enabled,
+                    mode: String(ruleObject("culture_entertainment").mode || defaults.delivery_rules.culture_entertainment.mode),
+                },
+                weather: {
+                    enabled: "enabled" in ruleObject("weather") ? normalizeBool(ruleObject("weather").enabled) : defaults.delivery_rules.weather.enabled,
+                    mode: String(ruleObject("weather").mode || defaults.delivery_rules.weather.mode),
+                },
+                holidays: {
+                    enabled: "enabled" in ruleObject("holidays") ? normalizeBool(ruleObject("holidays").enabled) : defaults.delivery_rules.holidays.enabled,
+                    mode: String(ruleObject("holidays").mode || defaults.delivery_rules.holidays.mode),
+                    days_before: Math.min(30, Math.max(0, normalizeNumber(ruleObject("holidays").days_before, defaults.delivery_rules.holidays.days_before))),
+                },
+                anniversaries: {
+                    enabled: "enabled" in ruleObject("anniversaries") ? normalizeBool(ruleObject("anniversaries").enabled) : defaults.delivery_rules.anniversaries.enabled,
+                    mode: String(ruleObject("anniversaries").mode || defaults.delivery_rules.anniversaries.mode),
+                    days_before: Math.min(30, Math.max(0, normalizeNumber(ruleObject("anniversaries").days_before, defaults.delivery_rules.anniversaries.days_before))),
+                },
+                visit_reminder: {
+                    enabled: "enabled" in ruleObject("visit_reminder") ? normalizeBool(ruleObject("visit_reminder").enabled) : defaults.delivery_rules.visit_reminder.enabled,
+                    mode: String(ruleObject("visit_reminder").mode || defaults.delivery_rules.visit_reminder.mode),
+                    threshold_days: Math.min(90, Math.max(1, normalizeNumber(ruleObject("visit_reminder").threshold_days, visitReminder.threshold_days || defaults.delivery_rules.visit_reminder.threshold_days))),
+                },
             },
             anniversaries: (Array.isArray(input.anniversaries) ? input.anniversaries : [])
                 .map((item) => ({
@@ -912,7 +1688,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function carePreferences(familyId) {
-        const key = String(familyId || store.db.families[0]?.id || 1);
+        const key = String(familyId || "");
         const preferences = store.db.care_preferences[key] || defaultCarePreferences(key);
         preferences.metadata = normalizeCareMetadata(preferences.metadata || {});
         return preferences;
@@ -996,11 +1772,24 @@ function createLocalAppServer(options = {}) {
     }
 
     function careCardModelContext(familyId, parts) {
-        const family = selectedFamily(familyId) || store.db.families[0] || {};
+        const family = selectedFamily(familyId) || {};
         const preferences = parts.preferences || carePreferences(familyId);
         const profile = parts.profile || defaultElderProfile(familyId, preferences.elder_id || "elder_primary");
         const cameras = Array.isArray(parts.cameras) ? parts.cameras : appConfigCameras();
         const device = parts.device || Object.values(store.db.devices)[0] || {};
+        const weatherSignal = parts.weather || unavailableWeatherSignal({
+            familyId,
+            city: profile.city || "杭州",
+            provider: weatherRuntimeConfig().provider,
+            reason: "not_loaded",
+        });
+        const contentSignal = parts.content || unavailableContentRecommendations({
+            familyId,
+            city: profile.city || "杭州",
+            topics: contentTopicsFromPreferences(preferences),
+            provider: contentSearchRuntimeConfig().provider,
+            reason: "not_loaded",
+        });
         return {
             generated_at: nowIso(),
             card_date: dateKeyShanghai(),
@@ -1048,12 +1837,28 @@ function createLocalAppServer(options = {}) {
             })),
             critical_event_count: Array.isArray(parts.criticalEvents) ? parts.criticalEvents.length : 0,
             calendar_events: recentCalendarEvents(familyId, profile.elder_id || profile.id || "elder_primary"),
-            weather: {
-                city: profile.city || "杭州",
-                condition: "多云",
-                temperature_c: 24,
-                advice: "环境舒适，适合午休。下午注意通风。",
-            },
+            weather: weatherSignal.available
+                ? weatherSignal
+                : {
+                    ...weatherSignal,
+                    note: "天气数据不可用时，不要写天气现象、温度、降雨或实时预报。",
+                },
+            content_recommendations: contentSignal.available
+                ? contentSignal.recommendations
+                : [],
+            content_search: contentSignal.available
+                ? {
+                    provider: contentSignal.provider,
+                    topics: contentSignal.topics,
+                    source_policy: contentSignal.source_policy,
+                    updated_at: contentSignal.updated_at,
+                }
+                : {
+                    provider: contentSignal.provider,
+                    available: false,
+                    reason: contentSignal.reason,
+                    note: "内容搜索不可用时，只能基于老人兴趣生成通用问候话题，不要编造热点、文章或视频。",
+                },
         };
     }
 
@@ -1087,23 +1892,148 @@ function createLocalAppServer(options = {}) {
 
     function sanitizeModelCareCard(parsed) {
         if (!parsed || typeof parsed !== "object") return null;
-        const title = String(parsed.title || "").trim().slice(0, 40);
-        const body = String(parsed.body || "").trim().slice(0, 280);
+        const title = String(parsed.title || "").replace(/\s+/g, " ").trim().slice(0, 24);
+        const body = String(parsed.body || "").replace(/\s+/g, " ").trim().slice(0, 120);
         if (!title || !body) return null;
         const facts = Array.isArray(parsed.facts)
-            ? parsed.facts.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 5)
+            ? parsed.facts.map((item) => String(item || "").replace(/\s+/g, " ").trim().slice(0, 36)).filter(Boolean).slice(0, 3)
             : [];
         const suggestedActions = Array.isArray(parsed.suggested_actions)
-            ? parsed.suggested_actions.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 3)
+            ? parsed.suggested_actions.map((item) => String(item || "").replace(/\s+/g, " ").trim().slice(0, 18)).filter(Boolean).slice(0, 3)
             : [];
+        const rawTone = String(parsed.tone || "warm").trim();
+        const allowedTones = new Set(["warm", "calm", "alert", "seasonal", "memory"]);
         return {
             title,
             body,
             facts,
             suggested_actions: suggestedActions,
-            tone: String(parsed.tone || "warm").trim().slice(0, 32),
-            image_brief: String(parsed.image_brief || "").trim().slice(0, 180),
+            tone: allowedTones.has(rawTone) ? rawTone : "warm",
+            image_brief: String(parsed.image_brief || "").replace(/\s+/g, " ").trim().slice(0, 120),
         };
+    }
+
+    function removeUnavailableWeatherClaims(card, context) {
+        if (!card) return null;
+        if (context?.weather?.available) return card;
+        const weatherPattern = /(多云|晴天|晴朗|晴|小雨|中雨|大雨|暴雨|阵雨|雷雨|阴天|阴|降温|升温|气温|温度|\d+\s*度|实时预报|天气预报|梅雨|台风|寒潮|闷热|湿热|凉爽|雨季|回南天|雾霾|空气质量)/;
+        const stripWeatherText = (value) => String(value || "")
+            .replace(/[^，。；,;]*(多云|晴天|晴朗|晴|小雨|中雨|大雨|暴雨|阵雨|雷雨|阴天|阴|降温|升温|气温|温度|\d+\s*度|实时预报|天气预报|梅雨|台风|寒潮|闷热|湿热|凉爽|雨季|回南天|雾霾|空气质量)[^，。；,;]*[，。；,;]?/g, "")
+            .replace(/\s+/g, " ")
+            .trim();
+        const city = context?.weather?.city || context?.elder?.city || "老人所在城市";
+        const next = { ...card };
+        if (weatherPattern.test(next.title)) {
+            next.title = "家里今天很平稳";
+        }
+        if (weatherPattern.test(next.body)) {
+            const cleaned = stripWeatherText(next.body);
+            next.body = cleaned || `设备在线，近 24 小时无高优先级告警。今天先给家里打个电话，聊聊近况和喜欢的内容。`;
+        }
+        next.facts = (Array.isArray(next.facts) ? next.facts : [])
+            .map((item) => weatherPattern.test(item) ? "" : item)
+            .filter(Boolean)
+            .slice(0, 3);
+        if (next.facts.length < 3) {
+            next.facts.push(`${city}可作为问候话题`);
+        }
+        next.suggested_actions = (Array.isArray(next.suggested_actions) ? next.suggested_actions : [])
+            .map((item) => weatherPattern.test(item) ? "发一句问候" : item)
+            .filter(Boolean)
+            .slice(0, 3);
+        if (weatherPattern.test(next.image_brief)) {
+            next.image_brief = "温暖家居生活场景，电话问候和家常陪伴氛围。";
+        }
+        return next;
+    }
+
+    function contextualCareTheme(context = {}) {
+        const weather = context.weather || {};
+        const elder = context.elder || {};
+        const schedule = context.preferences?.care_card_schedule || {};
+        const topics = Array.isArray(schedule.interest_topics) && schedule.interest_topics.length
+            ? schedule.interest_topics
+            : (Array.isArray(context.preferences?.interests) ? context.preferences.interests : []);
+        const firstTopic = String(topics[0] || "近况").trim();
+        const visitDays = daysSinceDateString(schedule.visit_reminder?.last_visit_at);
+        if (Number(context.critical_event_count || 0) > 0) {
+            return {
+                title: "有提醒待确认",
+                body: `${elder.display_name || "家人"}家里有高优先级事件，先确认事件证据，再联系家里。`,
+                image_brief: "家属手机上的温和提醒界面，重点是先确认家里情况。",
+            };
+        }
+        if (weather.available) {
+            const city = weather.city || elder.city || "家里";
+            const condition = weather.condition || "天气";
+            const temp = Number.isFinite(Number(weather.temperature_c)) ? `${weather.temperature_c}°C` : "";
+            const isHot = Number(weather.temperature_c) >= 30 || /(闷热|炎热|高温|热)/.test(String(weather.advice || ""));
+            const weatherTitle = isHot
+                ? `${city}闷热，提醒喝水`
+                : `${city}${condition}，打个电话`;
+            return {
+                title: weatherTitle.slice(0, 16),
+                body: `今天${city}${condition}${temp ? `，${temp}` : ""}，适合电话提醒喝水、少久晒，再聊聊晚饭和近况。`,
+                image_brief: `${city}${condition}天气下的温馨家居场景，桌上有水杯、电话和日历，主题是远程提醒喝水。`,
+            };
+        }
+        if (visitDays !== null) {
+            return {
+                title: `离家${visitDays}天了`.slice(0, 16),
+                body: `距离上次回家已经 ${visitDays} 天，可以约个周末回家或先打一通电话。`,
+                image_brief: "温暖客厅里的日历和电话，表达想回家看看的氛围。",
+            };
+        }
+        return {
+            title: `${firstTopic}小话题`.slice(0, 16),
+            body: `今天可以围绕${firstTopic}准备一句自然开场，让问候更具体。`,
+            image_brief: `温馨家居场景，围绕${firstTopic}展开轻松问候。`,
+        };
+    }
+
+    function sanitizeContextualCareCard(card, context) {
+        if (!card) return null;
+        const genericPattern = /(家里.{0,6}(一切)?(很)?(平稳|安稳|安心)|一切(平稳|安稳)|聊聊家常|多陪陪家人|^今日关怀$|^今日关怀卡片$|今天问个安|打个电话聊聊近况)/;
+        const impossibleActionPattern = /(递|端|倒|送)(一)?(杯)?(水|茶|热水|温水)|送到(手边|身边)|陪在(身边|旁边)|给.{0,4}(递|端|倒|送)/;
+        const next = { ...card };
+        const theme = contextualCareTheme(context);
+        const weather = context?.weather || {};
+        const city = weather.city || context?.elder?.city || "";
+        const hotWeather = weather.available && (Number(weather.temperature_c) >= 30 || /(闷热|炎热|高温|热)/.test(String(weather.advice || "")));
+        if (genericPattern.test(next.title) || impossibleActionPattern.test(next.title) || next.title.length > 16) {
+            next.title = theme.title;
+        }
+        next.title = String(next.title || "")
+            .replace(/母亲/g, "妈妈")
+            .replace(/多提醒/g, "提醒")
+            .replace(/补水/g, "喝水")
+            .trim();
+        if (hotWeather && (!/喝水|饮水/.test(next.title) || /(一切|安稳|平稳|安心)/.test(next.title))) {
+            next.title = `${city || "天气"}闷热，提醒喝水`.slice(0, 16);
+        }
+        next.body = String(next.body || "")
+            .replace(/家里一切平稳[，,、 ]*/g, "")
+            .replace(/聊聊家常/g, "聊聊近况")
+            .replace(/母亲/g, "妈妈")
+            .replace(/补水/g, "喝水")
+            .replace(/给妈妈递杯茶/g, "电话提醒妈妈喝水")
+            .replace(/递杯茶/g, "提醒喝水")
+            .replace(/递(一)?杯(水|茶|热水|温水)/g, "提醒喝水")
+            .replace(/端(一)?杯(水|茶|热水|温水)/g, "提醒喝水")
+            .replace(/送到(手边|身边)/g, "电话提醒")
+            .replace(/\s+/g, " ")
+            .trim();
+        if (!next.body || genericPattern.test(next.body) || impossibleActionPattern.test(next.body)) {
+            next.body = theme.body;
+        }
+        if (hotWeather) {
+            next.body = theme.body;
+        }
+        if (next.body.length > 90) next.body = next.body.slice(0, 87).trim() + "...";
+        if (!next.image_brief || genericPattern.test(next.image_brief) || impossibleActionPattern.test(next.image_brief)) {
+            next.image_brief = theme.image_brief;
+        }
+        return next;
     }
 
     async function callMultimodalCareModel(context) {
@@ -1155,7 +2085,7 @@ function createLocalAppServer(options = {}) {
                 || responsePayload.text
                 || "";
             const parsed = extractJsonObject(content);
-            const card = sanitizeModelCareCard(parsed);
+            const card = sanitizeContextualCareCard(removeUnavailableWeatherClaims(sanitizeModelCareCard(parsed), context), context);
             if (!card) {
                 const error = new Error("model response is not valid CareCard JSON");
                 error.response_payload = {
@@ -1206,7 +2136,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function buildCareImagePrompt(card, context, runtime = imageRuntimeConfig()) {
-        const facts = (Array.isArray(card.facts) ? card.facts : []).slice(0, 4).map((item) => String(item || "").trim()).filter(Boolean);
+        const facts = (Array.isArray(card.facts) ? card.facts : []).slice(0, 3).map((item) => String(item || "").trim()).filter(Boolean);
         const schedule = context?.preferences?.care_card_schedule || {};
         const topicText = Array.isArray(schedule.interest_topics) && schedule.interest_topics.length
             ? schedule.interest_topics.slice(0, 5).join("、")
@@ -1214,14 +2144,20 @@ function createLocalAppServer(options = {}) {
         return [
             runtime.prompt,
             "",
-            `卡片标题：${compactPromptText(card.title, 28)}`,
-            `卡片短句：${compactPromptText(card.body, 64)}`,
+            `卡片标题：${compactPromptText(card.title, 16)}`,
+            `卡片短句：${compactPromptText(card.body, 34)}`,
             facts.length ? `事实依据摘要：${facts.join("；")}` : "",
             `老人兴趣话题：${topicText}`,
-            careImageBrief(card) ? `视觉建议：${compactPromptText(careImageBrief(card), 90)}` : "",
-            "生成要求：竖版 4:7，温馨可爱漫画风，画面像一张可直接发给家人的中文关怀图文卡。",
-            "中文字只保留标题和短句，必须清晰、端正、无错别字。",
-            "不要画真实监控画面、真实老人肖像、跌倒火灾等危险证据画面，也不要制造恐慌。",
+            careImageBrief(card) ? `视觉建议：${compactPromptText(careImageBrief(card), 70)}` : "",
+            "生成要求：方形 1:1，像精致电商活动封面和温暖生活方式卡片。",
+            "构图要有明确生活场景，例如窗边餐桌、客厅沙发、节日花束、电话问候、天气小物或日历贴纸。",
+            "主视觉必须对应当天卡片主题，不要用通用家庭关怀模板糊弄。",
+            "中文字只保留标题和一句短句，排版清爽，必须清晰、端正、无错别字，不能像后台说明。",
+            "不要额外生成英文、品牌词、角标或解释性小字；图片本身就是完整图文卡片。",
+            "标题和短句必须是远程关心语气，例如打电话、发微信、提醒喝水、周末回家看看；不要写递茶、端水、送到手边或陪在身边。",
+            "不要出现品牌字样、logo、角标、水印、奖章、贴纸式品牌标签或无关徽章。",
+            "不要画成后台管理卡片、按钮面板、排行榜、促销角标或信息堆叠 UI。",
+            "不要画真实监控画面、真实老人肖像、跌倒火灾等危险证据画面，也不要制造恐慌或医疗感。",
         ].filter(Boolean).join("\n");
     }
 
@@ -1290,6 +2226,488 @@ function createLocalAppServer(options = {}) {
         } finally {
             clearTimeout(timeout);
         }
+    }
+
+    function cachedProviderValue(cacheKey, ttlMs) {
+        const entry = providerCache.get(cacheKey);
+        if (!entry) return null;
+        if (Date.now() - entry.cached_at > ttlMs) {
+            providerCache.delete(cacheKey);
+            return null;
+        }
+        return entry.value;
+    }
+
+    function setCachedProviderValue(cacheKey, value) {
+        providerCache.set(cacheKey, { value, cached_at: Date.now() });
+        return value;
+    }
+
+    function providerUrl(baseUrl, pathname, params = {}) {
+        const url = new URL(baseUrl);
+        const basePath = url.pathname.replace(/\/+$/, "");
+        const nextPath = String(pathname || "").startsWith("/") ? String(pathname) : `/${pathname}`;
+        url.pathname = `${basePath}${nextPath}`;
+        Object.entries(params).forEach(([key, value]) => {
+            if (value !== null && value !== undefined && value !== "") {
+                url.searchParams.set(key, String(value));
+            }
+        });
+        return url;
+    }
+
+    async function fetchProviderJson(url, options = {}, errorPrefix = "provider request failed") {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), providerRequestTimeoutMs());
+        try {
+            const response = await fetch(url, {
+                ...options,
+                signal: controller.signal,
+            });
+            const responseText = await response.text();
+            const payload = safeJsonParse(responseText, { raw_text: responseText.slice(0, 1200) });
+            if (!response.ok) {
+                const detail = payload?.message || payload?.error?.message || payload?.code || responseText.slice(0, 200);
+                throw new Error(`${errorPrefix}: ${response.status} ${detail}`);
+            }
+            return payload;
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    function unavailableWeatherSignal({ familyId, city, provider, reason, detail = "" }) {
+        return {
+            family_id: Number(familyId || 0),
+            city: city || "杭州",
+            available: false,
+            provider,
+            reason,
+            detail: detail ? String(detail).slice(0, 160) : "",
+            condition: "",
+            temperature_c: null,
+            humidity: null,
+            precipitation_mm: null,
+            precipitation_probability: null,
+            advice: "天气数据源未接入或暂时不可用，关怀卡片不会编造温度、降雨或实时天气。",
+            updated_at: nowIso(),
+        };
+    }
+
+    function qweatherAuthMode(runtime) {
+        const configured = String(runtime.auth_mode || "auto").toLowerCase();
+        if (configured === "bearer" || configured === "query") return configured;
+        const key = String(runtime.api_key || "");
+        return key.includes(".") || key.length > 80 ? "bearer" : "query";
+    }
+
+    async function qweatherJson(runtime, pathname, params = {}, baseUrl = runtime.base_url) {
+        const url = providerUrl(baseUrl || "https://devapi.qweather.com", pathname, params);
+        const headers = { Accept: "application/json" };
+        if (qweatherAuthMode(runtime) === "bearer") {
+            headers.Authorization = `Bearer ${runtime.api_key}`;
+        } else {
+            url.searchParams.set("key", runtime.api_key);
+        }
+        const payload = await fetchProviderJson(url, { headers }, "qweather request failed");
+        const code = String(payload?.code || "");
+        if (code && code !== "200") {
+            throw new Error(`qweather returned code ${code}`);
+        }
+        return payload;
+    }
+
+    function weatherAdvice({ condition, temperature, humidity, precipitation }) {
+        const parts = [];
+        if (condition) parts.push(condition);
+        if (Number.isFinite(temperature)) {
+            if (temperature >= 33) parts.push("天热，电话里可以提醒多喝水、少久晒");
+            else if (temperature <= 8) parts.push("气温偏低，适合提醒添衣保暖");
+            else parts.push("天气适中，适合一句轻松问候");
+        }
+        if (Number.isFinite(precipitation) && precipitation > 0) parts.push("有降水，出门记得带伞");
+        if (Number.isFinite(humidity) && humidity >= 80) parts.push("湿度偏高，注意通风");
+        return parts.length ? parts.join("；") : "可作为今天电话问候的自然开场。";
+    }
+
+    async function fetchQWeatherSignal({ familyId, city }) {
+        const runtime = weatherRuntimeConfig();
+        if (!runtime.api_key) {
+            return unavailableWeatherSignal({ familyId, city, provider: "qweather", reason: "not_configured" });
+        }
+        const targetCity = String(city || "杭州").trim() || "杭州";
+        const cacheKey = `weather:qweather:${targetCity}`;
+        const cached = cachedProviderValue(cacheKey, 20 * 60 * 1000);
+        if (cached) return { ...cached, family_id: Number(familyId || cached.family_id || 0) };
+        try {
+            const geo = await qweatherJson(runtime, "/v2/city/lookup", {
+                location: targetCity,
+                number: 1,
+                lang: "zh",
+            }, runtime.geo_base_url || "https://geoapi.qweather.com");
+            const location = Array.isArray(geo.location) ? geo.location[0] : null;
+            if (!location?.id) throw new Error("qweather city lookup returned no location");
+            const weather = await qweatherJson(runtime, "/v7/weather/now", {
+                location: location.id,
+                lang: "zh",
+                unit: "m",
+            });
+            const now = weather.now || {};
+            const temperature = Number(now.temp);
+            const humidity = Number(now.humidity);
+            const precipitation = Number(now.precip);
+            const signal = {
+                family_id: Number(familyId || 0),
+                city: location.name || targetCity,
+                available: true,
+                provider: "qweather",
+                location_id: location.id,
+                location_name: [location.adm2, location.adm1].filter(Boolean).join(" · "),
+                condition: String(now.text || ""),
+                temperature_c: Number.isFinite(temperature) ? temperature : null,
+                humidity: Number.isFinite(humidity) ? humidity : null,
+                precipitation_mm: Number.isFinite(precipitation) ? precipitation : null,
+                precipitation_probability: null,
+                wind: [now.windDir, now.windScale ? `${now.windScale}级` : ""].filter(Boolean).join(" "),
+                advice: weatherAdvice({ condition: now.text, temperature, humidity, precipitation }),
+                source: "QWeather",
+                observed_at: now.obsTime || weather.updateTime || "",
+                updated_at: nowIso(),
+            };
+            return setCachedProviderValue(cacheKey, signal);
+        } catch (error) {
+            return unavailableWeatherSignal({
+                familyId,
+                city: targetCity,
+                provider: "qweather",
+                reason: "provider_error",
+                detail: error.message,
+            });
+        }
+    }
+
+    function weatherCodeText(code) {
+        const table = {
+            0: "晴朗",
+            1: "多云",
+            2: "多云",
+            3: "阴天",
+            45: "有雾",
+            48: "有雾",
+            51: "小雨",
+            53: "小雨",
+            55: "小雨",
+            61: "小雨",
+            63: "中雨",
+            65: "大雨",
+            80: "阵雨",
+            81: "阵雨",
+            82: "强阵雨",
+            95: "雷雨",
+        };
+        return table[Number(code)] || "天气已更新";
+    }
+
+    async function fetchOpenMeteoSignal({ familyId, city }) {
+        const targetCity = String(city || "杭州").trim() || "杭州";
+        const cacheKey = `weather:open-meteo:${targetCity}`;
+        const cached = cachedProviderValue(cacheKey, 20 * 60 * 1000);
+        if (cached) return { ...cached, family_id: Number(familyId || cached.family_id || 0) };
+        try {
+            const geoUrl = providerUrl("https://geocoding-api.open-meteo.com", "/v1/search", {
+                name: targetCity,
+                count: 1,
+                language: "zh",
+                format: "json",
+            });
+            const geo = await fetchProviderJson(geoUrl, { headers: { Accept: "application/json" } }, "open-meteo geocoding failed");
+            const location = Array.isArray(geo.results) ? geo.results[0] : null;
+            if (!location?.latitude || !location?.longitude) throw new Error("open-meteo city lookup returned no location");
+            const forecastUrl = providerUrl("https://api.open-meteo.com", "/v1/forecast", {
+                latitude: location.latitude,
+                longitude: location.longitude,
+                current: "temperature_2m,relative_humidity_2m,precipitation,weather_code,wind_speed_10m",
+                timezone: "Asia/Shanghai",
+                forecast_days: 1,
+            });
+            const forecast = await fetchProviderJson(forecastUrl, { headers: { Accept: "application/json" } }, "open-meteo forecast failed");
+            const current = forecast.current || {};
+            const temperature = Number(current.temperature_2m);
+            const humidity = Number(current.relative_humidity_2m);
+            const precipitation = Number(current.precipitation);
+            const condition = weatherCodeText(current.weather_code);
+            const signal = {
+                family_id: Number(familyId || 0),
+                city: location.name || targetCity,
+                available: true,
+                provider: "open-meteo",
+                location_id: "",
+                location_name: [location.admin1, location.country].filter(Boolean).join(" · "),
+                condition,
+                temperature_c: Number.isFinite(temperature) ? temperature : null,
+                humidity: Number.isFinite(humidity) ? humidity : null,
+                precipitation_mm: Number.isFinite(precipitation) ? precipitation : null,
+                precipitation_probability: null,
+                wind: Number.isFinite(Number(current.wind_speed_10m)) ? `${current.wind_speed_10m} km/h` : "",
+                advice: weatherAdvice({ condition, temperature, humidity, precipitation }),
+                source: "Open-Meteo",
+                observed_at: current.time || "",
+                updated_at: nowIso(),
+            };
+            return setCachedProviderValue(cacheKey, signal);
+        } catch (error) {
+            return unavailableWeatherSignal({
+                familyId,
+                city: targetCity,
+                provider: "open-meteo",
+                reason: "provider_error",
+                detail: error.message,
+            });
+        }
+    }
+
+    async function fetchWeatherSignal({ familyId, city }) {
+        const runtime = weatherRuntimeConfig();
+        if (["none", "off", "disabled"].includes(runtime.provider)) {
+            return unavailableWeatherSignal({ familyId, city, provider: runtime.provider, reason: "disabled" });
+        }
+        if (runtime.provider === "qweather") return fetchQWeatherSignal({ familyId, city });
+        return fetchOpenMeteoSignal({ familyId, city });
+    }
+
+    function unavailableContentRecommendations({ familyId, city, topics = [], provider, reason, detail = "" }) {
+        return {
+            family_id: Number(familyId || 0),
+            city: city || "杭州",
+            topics,
+            available: false,
+            provider,
+            reason,
+            detail: detail ? String(detail).slice(0, 160) : "",
+            recommendations: [],
+            source_policy: "candidate_only",
+            updated_at: nowIso(),
+        };
+    }
+
+    function contentTopicsFromPreferences(preferences = {}) {
+        const schedule = preferences.metadata?.care_card_schedule || {};
+        const contentTypes = schedule.content_types || {};
+        return [...new Set([
+            ...(Array.isArray(schedule.interest_topics) ? schedule.interest_topics : []),
+            ...(Array.isArray(preferences.interests) ? preferences.interests : []),
+            ...(contentTypes.local_hotspots ? ["本地生活", "社区活动"] : []),
+            ...(contentTypes.health_tips ? ["健康养生", "节气饮食"] : []),
+            ...(contentTypes.anti_fraud ? ["防诈骗"] : []),
+            ...(contentTypes.culture_entertainment ? ["戏曲", "电视节目"] : []),
+            "家常",
+        ].map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 8);
+    }
+
+    function contentRegionText(preferences = {}, fallbackCity = "杭州", fallbackDistrict = "") {
+        const schedule = preferences.metadata?.care_card_schedule || {};
+        const region = schedule.content_region || {};
+        const city = String(region.city || fallbackCity || "杭州").trim() || "杭州";
+        const district = String(region.district || fallbackDistrict || "").trim();
+        return {
+            city,
+            district,
+            label: `${city}${district ? ` ${district}` : ""}`.trim(),
+        };
+    }
+
+    function contentSearchTasksFromPreferences(preferences = {}, fallbackCity = "杭州", fallbackDistrict = "") {
+        const schedule = preferences.metadata?.care_card_schedule || {};
+        const contentTypes = schedule.content_types || {};
+        const topics = contentTopicsFromPreferences(preferences);
+        const region = contentRegionText(preferences, fallbackCity, fallbackDistrict);
+        const taskList = [];
+        if (contentTypes.local_hotspots) {
+            taskList.push({
+                type: "local_hotspots",
+                topic: "本地热点",
+                query: `${region.label} 今日 民生 社区活动 生活服务 适合老人聊天`,
+                domains: ["shobserver.com", "wsjkw.sh.gov.cn", "people.com.cn", "xinhuanet.com", "gmw.cn"],
+            });
+        }
+        if (contentTypes.health_tips) {
+            taskList.push({
+                type: "health_tips",
+                topic: "健康养生",
+                query: `${region.city} 今日 老年人 健康生活 养生 节气 饮食 作息`,
+                domains: ["wsjkw.sh.gov.cn", "shobserver.com", "people.com.cn", "xinhuanet.com", "cctv.com", "gmw.cn"],
+            });
+        }
+        if (contentTypes.anti_fraud) {
+            taskList.push({
+                type: "anti_fraud",
+                topic: "防诈骗提醒",
+                query: `${region.city} 老年人 防诈骗 社区 安全提醒 官方`,
+                domains: ["people.com.cn", "cctv.com", "gmw.cn", "mps.gov.cn", "xinhuanet.com"],
+            });
+        }
+        if (contentTypes.culture_entertainment) {
+            taskList.push({
+                type: "culture_entertainment",
+                topic: "文娱兴趣",
+                query: `${region.label} 老年人 戏曲 电视节目 社区文化 活动`,
+                domains: ["shobserver.com", "people.com.cn", "cctv.com", "gmw.cn"],
+            });
+        }
+        if (contentTypes.elder_interest_topics) {
+            taskList.push({
+                type: "elder_interest_topics",
+                topic: "问候话题",
+                query: `${region.label} 今日 适合老人 聊天话题 ${topics.slice(0, 5).join(" ")}`,
+                domains: ["shobserver.com", "wsjkw.sh.gov.cn", "people.com.cn", "xinhuanet.com", "cctv.com", "gmw.cn"],
+            });
+        }
+        if (!taskList.length) {
+            taskList.push({
+                type: "elder_interest_topics",
+                topic: topics[0] || "关怀话题",
+                query: `${region.label} 今日 老年人 健康生活 适合聊天 ${topics.slice(0, 5).join(" ")}`,
+                domains: ["shobserver.com", "wsjkw.sh.gov.cn", "people.com.cn", "xinhuanet.com", "cctv.com", "gmw.cn"],
+            });
+        }
+        return taskList.slice(0, 5);
+    }
+
+    function publicRecommendationFromTavily(result, topic) {
+        const url = String(result?.url || "").trim();
+        let source = "";
+        try {
+            source = new URL(url).hostname.replace(/^www\./, "");
+        } catch (_error) {
+            source = "内容源";
+        }
+        return {
+            type: "search_result",
+            topic,
+            title: String(result?.title || "今日可聊内容")
+                .replace(/[_｜|].*$/g, "")
+                .replace(/新闻频道|央视网|中国网|老年频道|公众号|视频号/g, "")
+                .replace(/\s+/g, " ")
+                .trim()
+                .slice(0, 80),
+            url,
+            source,
+            summary: String(result?.content || result?.raw_content || "").replace(/\s+/g, " ").trim().slice(0, 160),
+            score: Number.isFinite(Number(result?.score)) ? Number(result.score) : null,
+        };
+    }
+
+    function safeCareContentRecommendation(item, taskType = "") {
+        const text = `${item?.title || ""} ${item?.summary || ""}`;
+        const sourceText = `${item?.source || ""} ${item?.url || ""}`.toLowerCase();
+        if (!String(item?.title || "").trim() || !String(item?.url || "").trim()) return false;
+        if (!/[\u4e00-\u9fff]{4,}/.test(text)) return false;
+        if (/(dangjian|cpc\.people|qstheory|theory\.people)/.test(sourceText)) return false;
+        const blocked = taskType === "anti_fraud"
+            ? /(痴迷|割韭菜|谣言|投诉|死亡|猝死|癌|肿瘤|医院花钱|收割|曝光|乱象|焦虑|保健品骗局|坑老|习近平|金正恩|朝鲜|党代会|慢性病|疾病风险|医疗诊断)/
+            : /(痴迷|骗局|诈骗|防骗|割韭菜|谣言|投诉|死亡|猝死|癌|肿瘤|医院花钱|收割|警惕|曝光|乱象|焦虑|保健品骗局|坑老|习近平|金正恩|朝鲜|党代会|慢性病|疾病风险|医疗诊断)/;
+        if (blocked.test(text)) return false;
+        return true;
+    }
+
+    async function fetchTavilyContent({ familyId, city, district = "", topics = [], preferences = null }) {
+        const runtime = contentSearchRuntimeConfig();
+        if (runtime.provider !== "tavily") {
+            return unavailableContentRecommendations({ familyId, city, topics, provider: runtime.provider, reason: "disabled" });
+        }
+        if (!runtime.api_key) {
+            return unavailableContentRecommendations({ familyId, city, topics, provider: "tavily", reason: "not_configured" });
+        }
+        const targetCity = String(city || "杭州").trim() || "杭州";
+        const normalizedTopics = normalizeStringList(topics, ["健康养生", "家常"], 8);
+        const tasks = contentSearchTasksFromPreferences(preferences || {}, targetCity, district);
+        const cacheKey = `content:tavily:${targetCity}:${tasks.map((item) => `${item.type}:${item.query}`).join("|")}`;
+        const cached = cachedProviderValue(cacheKey, 30 * 60 * 1000);
+        if (cached) return { ...cached, family_id: Number(familyId || cached.family_id || 0) };
+        try {
+            const taskPayloads = await Promise.all(tasks.map(async (task) => {
+                const requestPayload = {
+                    query: task.query,
+                    search_depth: "basic",
+                    max_results: runtime.max_results,
+                    include_answer: false,
+                    include_raw_content: false,
+                    include_domains: task.domains,
+                };
+                try {
+                    return {
+                        task,
+                        payload: await fetchProviderJson(runtime.base_url, {
+                            method: "POST",
+                            headers: {
+                                Accept: "application/json",
+                                "Content-Type": "application/json",
+                                Authorization: `Bearer ${runtime.api_key}`,
+                            },
+                            body: JSON.stringify(requestPayload),
+                        }, "tavily request failed"),
+                    };
+                } catch (error) {
+                    if (!/(401|403|Unauthorized|invalid API key)/i.test(error.message || "")) return { task, error };
+                    return {
+                        task,
+                        payload: await fetchProviderJson(runtime.base_url, {
+                            method: "POST",
+                            headers: {
+                                Accept: "application/json",
+                                "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({ ...requestPayload, api_key: runtime.api_key }),
+                        }, "tavily request failed"),
+                    };
+                }
+            }));
+            const recommendations = taskPayloads
+                .flatMap(({ task, payload }) => (Array.isArray(payload?.results) ? payload.results : [])
+                    .map((item) => ({
+                        ...publicRecommendationFromTavily(item, task.topic),
+                        module: task.type,
+                    }))
+                    .filter((item) => safeCareContentRecommendation(item, task.type))
+                    .slice(0, 1))
+                .slice(0, runtime.max_results);
+            return setCachedProviderValue(cacheKey, {
+                family_id: Number(familyId || 0),
+                city: targetCity,
+                topics: normalizedTopics,
+                tasks: tasks.map(({ type, topic, query }) => ({ type, topic, query })),
+                available: recommendations.length > 0,
+                provider: "tavily",
+                query: tasks.map((item) => item.query).join(" | "),
+                recommendations,
+                source_policy: "candidate_only",
+                updated_at: nowIso(),
+            });
+        } catch (error) {
+            return unavailableContentRecommendations({
+                familyId,
+                city: targetCity,
+                topics: normalizedTopics,
+                provider: "tavily",
+                reason: "provider_error",
+                detail: error.message,
+            });
+        }
+    }
+
+    async function fetchContentRecommendations({ familyId, city, district = "", preferences }) {
+        const resolvedPreferences = preferences || carePreferences(familyId);
+        const topics = contentTopicsFromPreferences(resolvedPreferences);
+        if (resolvedPreferences.content_recommendations_enabled === false) {
+            return unavailableContentRecommendations({
+                familyId,
+                city,
+                topics,
+                provider: contentSearchRuntimeConfig().provider,
+                reason: "disabled_by_preferences",
+            });
+        }
+        return fetchTavilyContent({ familyId, city, district, topics, preferences: resolvedPreferences });
     }
 
     function parseDashScopePayloadText(responseText) {
@@ -1596,7 +3014,7 @@ function createLocalAppServer(options = {}) {
             metadata: {
                 capability_id: runtime.capability_id,
                 provider: "dashscope-wan",
-                aspect_ratio: "4:7",
+                aspect_ratio: "1:1",
             },
         });
         store.db.model_generation_jobs.push(job);
@@ -1640,21 +3058,154 @@ function createLocalAppServer(options = {}) {
         return Math.max(0, Math.floor((Date.now() - timestamp) / (24 * 60 * 60 * 1000)));
     }
 
-    function careCardFacts(familyId, preferences = carePreferences(familyId)) {
-        const cameras = appConfigCameras();
+    function shanghaiDayStart(dayString) {
+        const timestamp = Date.parse(`${dayString}T00:00:00+08:00`);
+        return Number.isFinite(timestamp) ? timestamp : null;
+    }
+
+    function daysUntilDay(dayString, nowMs = Date.now()) {
+        const timestamp = shanghaiDayStart(dayString);
+        if (timestamp === null) return null;
+        return Math.ceil((timestamp - nowMs) / (24 * 60 * 60 * 1000));
+    }
+
+    function monthDayFromDate(value) {
+        const match = String(value || "").match(/^\d{4}-(\d{2})-(\d{2})$/);
+        return match ? { month: match[1], day: match[2] } : null;
+    }
+
+    function nextAnnualOccurrence(value, now = new Date()) {
+        const parts = monthDayFromDate(value);
+        if (!parts) return null;
+        const year = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric" }).format(now));
+        const current = `${year}-${parts.month}-${parts.day}`;
+        const next = `${year + 1}-${parts.month}-${parts.day}`;
+        const currentDays = daysUntilDay(current, now.getTime());
+        return currentDays !== null && currentDays >= 0
+            ? { date: current, days: currentDays }
+            : { date: next, days: daysUntilDay(next, now.getTime()) };
+    }
+
+    function holidayCandidates(now = new Date()) {
+        const year = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric" }).format(now));
+        const fixed = (targetYear) => [
+            { title: "元旦", date: `${targetYear}-01-01` },
+            { title: "劳动节", date: `${targetYear}-05-01` },
+            { title: "国庆节", date: `${targetYear}-10-01` },
+        ];
+        const festivalTable = {
+            2026: [
+                { title: "春节", date: "2026-02-17" },
+                { title: "清明节", date: "2026-04-05" },
+                { title: "端午节", date: "2026-06-19" },
+                { title: "中秋节", date: "2026-09-25" },
+            ],
+            2027: [
+                { title: "春节", date: "2027-02-06" },
+                { title: "清明节", date: "2027-04-05" },
+                { title: "端午节", date: "2027-06-09" },
+                { title: "中秋节", date: "2027-09-15" },
+            ],
+        };
+        return [
+            ...fixed(year),
+            ...fixed(year + 1),
+            ...(festivalTable[year] || []),
+            ...(festivalTable[year + 1] || []),
+        ];
+    }
+
+    function upcomingScheduleFacts(schedule) {
+        const facts = [];
+        const now = new Date();
+        if (schedule.content_types?.anniversaries && schedule.anniversaries?.length) {
+            const upcoming = schedule.anniversaries
+                .map((item) => {
+                    const next = nextAnnualOccurrence(item.date, now);
+                    if (!next || next.days === null) return null;
+                    return { label: item.label, ...next };
+                })
+                .filter(Boolean)
+                .filter((item) => item.days <= 14)
+                .sort((a, b) => a.days - b.days)
+                .slice(0, 3);
+            if (upcoming.length) {
+                facts.push(...upcoming.map((item) => (
+                    item.days === 0
+                        ? `今天是${item.label}，适合推送纪念日问候。`
+                        : `${item.label}还有 ${item.days} 天，按每年 ${item.date.slice(5)} 提醒。`
+                )));
+            } else {
+                facts.push(`已配置 ${schedule.anniversaries.length} 个按月日每年重复的纪念日提醒。`);
+            }
+        }
+        if (schedule.content_types?.holidays) {
+            const upcoming = holidayCandidates(now)
+                .map((item) => ({ ...item, days: daysUntilDay(item.date, now.getTime()) }))
+                .filter((item) => item.days !== null && item.days >= 0 && item.days <= 14)
+                .sort((a, b) => a.days - b.days)
+                .slice(0, 2);
+            if (upcoming.length) {
+                facts.push(...upcoming.map((item) => (
+                    item.days === 0
+                        ? `今天是${item.title}，适合生成节日问候卡片。`
+                        : `${item.title}还有 ${item.days} 天，可以提前准备节日问候。`
+                )));
+            } else {
+                facts.push("已开启节日问候，会在常见节日前进入关怀卡片。");
+            }
+        }
+        return facts;
+    }
+
+    async function careCardFacts(familyId, preferences = carePreferences(familyId)) {
+        const familyIds = new Set([Number(familyId)]);
+        const cameras = appConfigCameras(familyIds);
         const onlineCameras = cameras.filter((camera) => String(camera.status || "").toLowerCase() === "online");
+        const activeCameraIds = new Set(cameras.filter((camera) => camera.enabled !== false).map((camera) => Number(camera.id)));
         const recentCutoff = Date.now() - 24 * 60 * 60 * 1000;
         const recentEvents = store.db.events.filter((event) => {
             const timestamp = Date.parse(event.occurred_at || event.created_at || "");
-            return Number.isFinite(timestamp) && timestamp >= recentCutoff;
+            if (!Number.isFinite(timestamp) || timestamp < recentCutoff) return false;
+            const eventCamera = store.db.cameras[String(event.camera_id)] || {};
+            const eventFamilyId = Number(event.family_id || eventCamera.family_id || 0);
+            if (!eventFamilyId || !familyIds.has(eventFamilyId)) return false;
+            if (!activeCameraIds.has(Number(event.camera_id))) return false;
+            if (event.event_type !== "camera_offline" || event.acknowledged) return true;
+            const camera = store.db.cameras[String(event.camera_id)] || {};
+            if (String(camera.status || "").toLowerCase() !== "online") return true;
+            const seenTime = Date.parse(camera.last_seen_at || camera.edge_reported_at || camera.updated_at || "");
+            return !(Number.isFinite(seenTime) && seenTime >= timestamp);
         });
         const openEvents = recentEvents.filter((event) => !event.acknowledged);
         const criticalEvents = openEvents.filter((event) => event.level === "critical");
-        const device = Object.values(store.db.devices)[0] || {};
-        const family = selectedFamily(familyId) || store.db.families[0] || {};
+        const binding = store.db.device_bindings.find((item) => Number(item.family_id) === Number(familyId) && item.status !== "revoked");
+        const device = binding ? (store.db.devices[String(binding.device_id)] || {}) : {};
+        const family = selectedFamily(familyId) || {};
         const profile = store.db.elder_profiles[elderProfileKey(family.id || familyId, "elder_primary")]
             || defaultElderProfile(family.id || familyId, "elder_primary");
         const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
+        const region = contentRegionText(preferences, profile.city || "杭州", profile.district || "");
+        const city = String(region.city || profile.city || "杭州").trim() || "杭州";
+        const district = String(region.district || profile.district || "").trim();
+        const [weather, content] = await Promise.all([
+            schedule.content_types?.weather && schedule.delivery_rules?.weather?.enabled !== false
+                ? fetchWeatherSignal({ familyId: family.id || familyId, city })
+                : unavailableWeatherSignal({ familyId: family.id || familyId, city, provider: weatherRuntimeConfig().provider, reason: "disabled_by_schedule" }),
+            (schedule.content_types?.elder_interest_topics
+                || schedule.content_types?.local_hotspots
+                || schedule.content_types?.health_tips
+                || schedule.content_types?.anti_fraud
+                || schedule.content_types?.culture_entertainment)
+                ? fetchContentRecommendations({ familyId: family.id || familyId, city, district, preferences })
+                : unavailableContentRecommendations({
+                    familyId: family.id || familyId,
+                    city,
+                    topics: contentTopicsFromPreferences(preferences),
+                    provider: contentSearchRuntimeConfig().provider,
+                    reason: "disabled_by_schedule",
+                }),
+        ]);
         const facts = [];
         if (device.last_seen_at) {
             facts.push("家庭盒子在线，今天仍在同步状态。");
@@ -1684,18 +3235,40 @@ function createLocalAppServer(options = {}) {
         if (schedule.content_types?.elder_interest_topics && schedule.interest_topics?.length) {
             facts.push(`老人关心的话题包括：${schedule.interest_topics.slice(0, 6).join("、")}。`);
         }
-        if (schedule.content_types?.anniversaries && schedule.anniversaries?.length) {
-            facts.push(`已配置 ${schedule.anniversaries.length} 个纪念日提醒。`);
+        if (schedule.content_types?.weather) {
+            if (weather.available) {
+                const temp = Number.isFinite(Number(weather.temperature_c)) ? `${weather.temperature_c}°C` : "";
+                facts.push(`${weather.city || city} ${weather.condition || "天气已更新"}${temp ? `，${temp}` : ""}，可作为今天问候开场。`);
+            } else {
+                facts.push("天气数据源暂不可用，本次不会生成实时天气或温度文案。");
+            }
         }
+        if ((schedule.content_types?.elder_interest_topics
+            || schedule.content_types?.local_hotspots
+            || schedule.content_types?.health_tips
+            || schedule.content_types?.anti_fraud
+            || schedule.content_types?.culture_entertainment) && content.available) {
+            const first = content.recommendations?.[0];
+            if (first?.title) facts.push(`今日内容候选：${first.title}`);
+        } else if (schedule.content_types?.elder_interest_topics
+            || schedule.content_types?.local_hotspots
+            || schedule.content_types?.health_tips
+            || schedule.content_types?.anti_fraud
+            || schedule.content_types?.culture_entertainment) {
+            facts.push("热点内容源暂未接通，先按老人兴趣生成通用聊天话题。");
+        }
+        facts.push(...upcomingScheduleFacts(schedule));
         if (schedule.message_focus) {
             facts.push(`本次关怀重点：${schedule.message_focus}`);
         }
-        facts.push(`${profile.display_name || "家人"} 所在城市按 ${profile.city || "杭州"} 生成天气问候。`);
-        return { facts, cameras, onlineCameras, openEvents, criticalEvents, device, profile };
+        return { facts, cameras, onlineCameras, openEvents, criticalEvents, device, profile, weather, content };
     }
 
     async function generateCareCard(familyId, options = {}) {
-        const targetFamilyId = Number(familyId || store.db.families[0]?.id || 1);
+        const targetFamilyId = Number(familyId || 0);
+        if (!targetFamilyId) {
+            throw new Error("family_id required for care card generation");
+        }
         const cardDate = dateKeyShanghai();
         const preferences = carePreferences(targetFamilyId);
         const existing = store.db.care_cards.find((card) => (
@@ -1703,25 +3276,47 @@ function createLocalAppServer(options = {}) {
         ));
         if (existing && !options.force) {
             if (careImageRequested(preferences) && !existing.image_url && existing.image_mode !== "failed_provider") {
-                const existingParts = careCardFacts(targetFamilyId, preferences);
+                const existingParts = await careCardFacts(targetFamilyId, preferences);
                 await ensureCareCardImage(existing, targetFamilyId, { ...existingParts, preferences });
             }
             return existing;
         }
-        const factParts = careCardFacts(targetFamilyId, preferences);
-        const { facts, onlineCameras, openEvents, criticalEvents, profile } = factParts;
+        const factParts = await careCardFacts(targetFamilyId, preferences);
+        const { facts, openEvents, criticalEvents, profile, weather, content } = factParts;
         const displayName = profile.display_name || "家人";
+        const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
+        const visitDays = daysSinceDateString(schedule.visit_reminder?.last_visit_at);
+        const firstTopic = Array.isArray(schedule.interest_topics) && schedule.interest_topics.length
+            ? String(schedule.interest_topics[0] || "").trim()
+            : "";
+        const weatherTemp = Number.isFinite(Number(weather?.temperature_c)) ? `${weather.temperature_c}°C` : "";
+        const calmTitle = weather?.available && weather?.condition
+            ? `${weather.condition}天问候`.slice(0, 16)
+            : visitDays !== null
+                ? `离家${visitDays}天了`.slice(0, 16)
+                : firstTopic
+                    ? `${firstTopic}小话题`.slice(0, 16)
+                    : "今天问个安";
+        const calmBody = weather?.available
+            ? `今天${weather.city || ""}${weather.condition || "天气已更新"}${weatherTemp ? `，${weatherTemp}` : ""}，可以从穿衣、喝水或晚饭聊起。`
+            : visitDays !== null
+                ? `距离上次回家已经 ${visitDays} 天，可以约个周末回家或先打一通电话。`
+                : firstTopic
+                    ? `今天可以围绕${firstTopic}准备一句自然开场，让问候更具体。`
+                    : `${displayName}家里暂无高优先级告警，可以发一句具体问候。`;
         const title = criticalEvents.length
-            ? "今天有重要提醒需要先看"
-            : "今天家里整体平稳";
+            ? "有提醒待确认"
+            : calmTitle;
         const body = criticalEvents.length
-            ? `${displayName} 家里有高优先级事件等待确认，建议先查看证据，再联系家里。`
-            : `${displayName} 家里设备仍在同步，当前没有未处理的高优先级告警。可以找个轻松的时间打个电话，问问今天过得怎么样。`;
+            ? `${displayName}家里有高优先级事件，先确认事件证据，再联系家里。`
+            : calmBody;
         const sourceSummary = [
             "设备在线状态",
             "摄像头同步状态",
             "未处理事件",
             "老人资料",
+            ...(weather?.available ? ["天气数据源"] : []),
+            ...(content?.available ? ["内容搜索候选"] : []),
         ];
         const card = {
             id: existing?.id || store.nextId("care_card"),
@@ -1738,13 +3333,13 @@ function createLocalAppServer(options = {}) {
             image_url: "",
             actions: [
                 { key: "call", label: "打电话问候" },
-                { key: "open_watch", label: onlineCameras.length ? "看看家里" : "查看设备" },
-                { key: "open_events", label: openEvents.length ? "查看提醒" : "查看今日状态" },
+                { key: "message", label: "发一句问候" },
+                { key: openEvents.length ? "open_events" : "prepare_greeting", label: openEvents.length ? "查看提醒" : "准备关怀卡" },
             ],
             status: "open",
             generated_by: "care-template-v2",
             source_summary: sourceSummary,
-            content_recommendations: [],
+            content_recommendations: content?.available ? content.recommendations : [],
             created_at: existing?.created_at || nowIso(),
             updated_at: nowIso(),
         };
@@ -1783,17 +3378,20 @@ function createLocalAppServer(options = {}) {
                 card.facts = generated.facts.length ? generated.facts : facts;
                 card.actions = [
                     { key: "call", label: generated.suggested_actions[0] || "打电话问候" },
-                    { key: "open_watch", label: generated.suggested_actions[1] || (onlineCameras.length ? "看看家里" : "查看设备") },
-                    { key: "open_events", label: generated.suggested_actions[2] || (openEvents.length ? "查看提醒" : "查看今日状态") },
+                    { key: "message", label: generated.suggested_actions[1] || "发一句问候" },
+                    { key: openEvents.length ? "open_events" : "prepare_greeting", label: generated.suggested_actions[2] || (openEvents.length ? "查看提醒" : "准备关怀卡") },
                 ];
                 card.generated_by = `model:${runtime.model}`;
                 card.source_summary = [
                     ...sourceSummary,
                     "多模态语言模型",
                 ];
-                card.content_recommendations = generated.image_brief
-                    ? [{ type: "image_brief", title: "关怀卡片配图建议", summary: generated.image_brief }]
-                    : [];
+                card.content_recommendations = [
+                    ...(content?.available ? content.recommendations : []),
+                    ...(generated.image_brief
+                        ? [{ type: "image_brief", title: "关怀卡片配图建议", summary: generated.image_brief }]
+                        : []),
+                ];
             } catch (error) {
                 updateModelJob(job, {
                     output_status: "failed",
@@ -1826,13 +3424,99 @@ function createLocalAppServer(options = {}) {
         return String(event?.payload?.edge_upload?.edge_device_id || "edge-local");
     }
 
-    function eventList(url) {
+    function ensureDeviceBindings() {
+        const candidates = [];
+        const explicitlyBoundDeviceIds = new Set(store.db.device_bindings
+            .filter((item) => item.status !== "revoked" && item.device_id)
+            .map((item) => String(item.device_id)));
+        for (const token of store.db.device_tokens) {
+            if (token.status !== "active" || !token.family_id || !token.device_id) continue;
+            explicitlyBoundDeviceIds.add(String(token.device_id));
+            candidates.push({
+                family_id: token.family_id,
+                device_id: token.device_id,
+                device_name: "回家盒子",
+                note: token.note || "device token",
+            });
+        }
+        for (const camera of Object.values(store.db.cameras)) {
+            if (!camera.family_id || !camera.device_id) continue;
+            if (explicitlyBoundDeviceIds.has(String(camera.device_id))) continue;
+            candidates.push({
+                family_id: camera.family_id,
+                device_id: camera.device_id,
+                device_name: store.db.devices[String(camera.device_id)]?.name || "回家盒子",
+                note: "camera config",
+            });
+        }
+        for (const device of Object.values(store.db.devices)) {
+            if (!device.family_id || !(device.device_id || device.id)) continue;
+            candidates.push({
+                family_id: device.family_id,
+                device_id: device.device_id || device.id,
+                device_name: device.name || "回家盒子",
+                note: "device report",
+            });
+        }
+
+        let changed = false;
+        for (const candidate of candidates) {
+            const familyId = normalizeNumber(candidate.family_id, null);
+            const deviceId = String(candidate.device_id || "").trim();
+            if (!familyId || !deviceId || !selectedFamily(familyId)) continue;
+            const beforeCount = store.db.device_bindings.length;
+            const binding = bindDeviceToFamily({
+                familyId,
+                deviceId,
+                deviceName: candidate.device_name || "回家盒子",
+                note: candidate.note || "auto recovered from local device state",
+            });
+            if (!binding) continue;
+            if (store.db.device_bindings.length > beforeCount) {
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    function eventTimestamp(event = {}) {
+        const timestamp = Date.parse(event.occurred_at || event.created_at || "");
+        return Number.isFinite(timestamp) ? timestamp : null;
+    }
+
+    function isStaleCameraOfflineEvent(event = {}) {
+        if (String(event.event_type || event.type || "") !== "camera_offline" || event.acknowledged) return false;
+        const camera = store.db.cameras[String(event.camera_id)] || {};
+        if (String(camera.status || "").toLowerCase() !== "online") return false;
+        const eventTime = eventTimestamp(event);
+        const seenTime = Date.parse(camera.last_seen_at || camera.edge_reported_at || camera.updated_at || "");
+        return Number.isFinite(eventTime) && Number.isFinite(seenTime) && seenTime >= eventTime;
+    }
+
+    function isUserVisibleEvent(event = {}, familyIds = null) {
+        const activeCameraIds = new Set(appConfigCameras(familyIds).filter((camera) => camera.enabled !== false).map((camera) => Number(camera.id)));
+        if (activeCameraIds.size && !activeCameraIds.has(Number(event.camera_id))) return false;
+        if (isStaleCameraOfflineEvent(event)) return false;
+        return true;
+    }
+
+    function eventList(url, options = {}) {
         const limit = Math.min(100, Math.max(1, normalizeNumber(url.searchParams.get("limit"), 30)));
         const cameraId = normalizeNumber(url.searchParams.get("camera_id"), null);
         const acknowledged = url.searchParams.get("acknowledged");
         let events = [...store.db.events];
+        if (options.familyIds instanceof Set) {
+            events = events.filter((event) => {
+                const camera = store.db.cameras[String(event.camera_id)] || {};
+                const familyId = Number(event.family_id || camera.family_id || 0);
+                return options.familyIds.has(familyId);
+            });
+        }
         if (cameraId !== null) {
             events = events.filter((event) => Number(event.camera_id) === cameraId);
+        }
+        if (options.userVisible) {
+            events = events.filter((event) => isUserVisibleEvent(event, options.familyIds));
         }
         if (acknowledged !== null) {
             const expected = normalizeBool(acknowledged);
@@ -1868,7 +3552,7 @@ function createLocalAppServer(options = {}) {
         const existing = store.db.cameras[cameraKey] || {};
         store.db.cameras[cameraKey] = {
             id: rawCameraId,
-            family_id: existing.family_id || store.db.families[0]?.id || 1,
+            family_id: existing.family_id || store.db.devices[deviceId]?.family_id || null,
             device_id: deviceId || existing.device_id || currentEdgeDeviceId(),
             name: existing.name || room || `摄像头 ${rawCameraId}`,
             room: room || existing.room || "",
@@ -1908,9 +3592,53 @@ function createLocalAppServer(options = {}) {
             .sort((a, b) => String(b.occurred_at || b.created_at).localeCompare(String(a.occurred_at || a.created_at)))[0] || null;
     }
 
+    function familyIdForCamera(cameraId) {
+        const camera = store.db.cameras[String(cameraId)] || null;
+        if (camera) return camera.family_id || null;
+        const event = latestMediaEvent(cameraId);
+        if (event) {
+            const eventCamera = store.db.cameras[String(event.camera_id)] || {};
+            return event.family_id || eventCamera.family_id || null;
+        }
+        return null;
+    }
+
+    function requireCameraAccess(req, res, cameraId) {
+        const familyId = familyIdForCamera(cameraId);
+        if (!familyId) {
+            writeError(res, 404, "camera not found");
+            return false;
+        }
+        return requireFamilyAccess(req, res, familyId);
+    }
+
     function eventAsset(event) {
         if (!event?.media_asset_id) return null;
         return store.db.assets.find((asset) => Number(asset.id) === Number(event.media_asset_id)) || null;
+    }
+
+    function familyIdForAsset(asset) {
+        if (!asset) return null;
+        if (asset.family_id) return asset.family_id;
+        if (asset.camera_id) {
+            const cameraFamilyId = familyIdForCamera(asset.camera_id);
+            if (cameraFamilyId) return cameraFamilyId;
+        }
+        const event = store.db.events.find((item) => Number(item.media_asset_id) === Number(asset.id));
+        if (event) {
+            const camera = store.db.cameras[String(event.camera_id)] || {};
+            return event.family_id || camera.family_id || null;
+        }
+        return null;
+    }
+
+    function requireAssetAccess(req, res, asset) {
+        const familyId = familyIdForAsset(asset);
+        if (!familyId) {
+            writeError(res, 404, "media asset not found");
+            return false;
+        }
+        return requireFamilyAccess(req, res, familyId);
     }
 
     function latestCameraSnapshotPayload(cameraId) {
@@ -1948,16 +3676,46 @@ function createLocalAppServer(options = {}) {
 
     function latestCameraEvaluationPayload(cameraId) {
         const targetCameraId = Number(cameraId);
+        const camera = store.db.cameras[String(targetCameraId)] || {};
         const event = [...store.db.events]
             .filter((item) => Number(item.camera_id) === targetCameraId)
+            .filter((item) => !isStaleCameraOfflineEvent(item))
             .sort((a, b) => String(b.occurred_at || b.created_at).localeCompare(String(a.occurred_at || a.created_at)))[0];
         if (!event) {
+            const status = String(camera.status || "").toLowerCase();
+            const enabled = camera.enabled !== false;
+            const cameraState = !enabled
+                ? "disabled"
+                : status === "online"
+                    ? "online"
+                    : status || "unknown";
+            const evaluatedAt = camera.last_seen_at || camera.edge_reported_at || camera.updated_at || nowIso();
+            const explanation = !enabled
+                ? "这路摄像头已停用，不参与守护检测。"
+                : status === "online"
+                    ? "摄像头在线，最近没有命中需要家属确认的规则。"
+                    : "等待家庭盒子回传这路摄像头的检测结果。";
             return {
                 camera_id: targetCameraId,
-                evaluated_at: nowIso(),
-                state: { camera_state: "unknown" },
+                snapshot_id: null,
+                evaluated_at: evaluatedAt,
+                matched_rules: [],
+                score: null,
+                state: {
+                    camera_state: cameraState,
+                    camera_status: camera.status || "",
+                    sync_status: camera.sync_status || "",
+                    enabled,
+                    last_seen_at: camera.last_seen_at || null,
+                    edge_reported_at: camera.edge_reported_at || null,
+                },
                 candidates: [],
-                explanation: "等待边缘盒子上传检测结果。",
+                explanation,
+                analysis: {
+                    camera_status: camera.status || "",
+                    sync_status: camera.sync_status || "",
+                    tags: [],
+                },
             };
         }
         const evidence = event.payload?.evidence || {};
@@ -1981,11 +3739,13 @@ function createLocalAppServer(options = {}) {
 
     function serveLatestCameraSnapshot(req, res, cameraId) {
         if (!requireApp(req, res)) return;
+        if (!requireCameraAccess(req, res, cameraId)) return;
         write(res, 200, latestCameraSnapshotPayload(cameraId));
     }
 
     function serveLatestCameraEvaluation(req, res, cameraId) {
         if (!requireApp(req, res)) return;
+        if (!requireCameraAccess(req, res, cameraId)) return;
         write(res, 200, latestCameraEvaluationPayload(cameraId));
     }
 
@@ -2135,12 +3895,14 @@ function createLocalAppServer(options = {}) {
 
     async function serveCameraMjpeg(req, res, cameraId) {
         if (!requireApp(req, res)) return;
+        if (!requireCameraAccess(req, res, cameraId)) return;
         if (await proxyCameraMjpeg(req, res, cameraId)) return;
         writeEmptyMjpeg(res);
     }
 
     async function handleDeviceMediaUpload(req, res, url) {
         if (!requireDevice(req, res)) return;
+        const issuedToken = store.db.device_tokens.find((item) => item.token === tokenFrom(req) && item.status === "active");
         const content = await readBody(req);
         const assetId = store.nextId("asset");
         const fileName = path.basename(url.searchParams.get("file_name") || `asset-${assetId}.jpg`).replace(/[^\w.\-]+/g, "_");
@@ -2152,6 +3914,9 @@ function createLocalAppServer(options = {}) {
         const snapshotPath = String(url.searchParams.get("snapshot_path") || relativePath).replace(/^\/+/, "");
         const asset = {
             id: assetId,
+            family_id: issuedToken?.family_id || null,
+            device_id: issuedToken?.device_id || "",
+            camera_id: normalizeNumber(url.searchParams.get("camera_id"), null),
             file_name: fileName,
             content_type: url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg",
             snapshot_path: snapshotPath,
@@ -2177,6 +3942,7 @@ function createLocalAppServer(options = {}) {
             : [...store.db.assets].reverse().find((item) => String(item.edge_event_id || "") === String(edgeEventId || ""));
         const event = {
             id: store.nextId("event"),
+            family_id: camera?.family_id || store.db.devices[String(camera?.device_id || "")]?.family_id || null,
             idempotency_key: String(payload.idempotency_key || stableId("event-")),
             edge_event_id: edgeEventId || null,
             event_type: String(payload.event_type || "event"),
@@ -2222,6 +3988,7 @@ function createLocalAppServer(options = {}) {
             ...payload,
             id: deviceId,
             device_id: deviceId,
+            family_id: store.db.devices[deviceId]?.family_id || issuedToken?.family_id || payload.family_id || null,
             last_seen_at: nowIso(),
         };
         store.db.heartbeats.push({
@@ -2230,6 +3997,7 @@ function createLocalAppServer(options = {}) {
             payload,
             created_at: nowIso(),
         });
+        ensureDeviceBindings();
         await store.save();
         write(res, 200, { ok: true, server_time: nowIso(), config: {} });
     }
@@ -2269,6 +4037,7 @@ function createLocalAppServer(options = {}) {
             ...existingDevice,
             id: deviceId,
             device_id: deviceId,
+            family_id: existingDevice.family_id || issuedToken?.family_id || payload.family_id || null,
             name: payload.device_name || existingDevice.name || "回家盒子",
             status: String(reportedStatus.status || payload.device_status || "online"),
             worker_running: payload.worker_running ?? existingDevice.worker_running ?? null,
@@ -2277,12 +4046,17 @@ function createLocalAppServer(options = {}) {
             last_seen_at: receivedAt,
             last_sync_at: receivedAt,
             reported_config_version: String(payload.config_version || payload.applied_config_version || ""),
+            applied_rule_version: String(payload.applied_rule_version || existingDevice.applied_rule_version || ""),
             app_version: String(payload.app_version || existingDevice.app_version || ""),
             model_version: String(payload.model_version || existingDevice.model_version || ""),
             detector_backend: detectorBackend || existingDevice.detector_backend || "",
             yolo_model: yoloModel || existingDevice.yolo_model || "",
             yolo_imgsz: yoloImgsz ?? existingDevice.yolo_imgsz ?? null,
             runtime,
+            metadata: {
+                ...objectValue(existingDevice.metadata),
+                serial_number: objectValue(existingDevice.metadata).serial_number || deviceSerial({ ...existingDevice, device_id: deviceId }),
+            },
             sync_status: String(reportedStatus.sync_status || payload.sync_status || "reported"),
             last_error: String(reportedStatus.last_error || payload.last_error || ""),
             updated_at: receivedAt,
@@ -2304,11 +4078,13 @@ function createLocalAppServer(options = {}) {
                 : null;
             const targetKey = String(localMatch?.id || rawCameraId);
             const existing = localMatch || existingById || {};
+            const resolvedFamilyId = existing.family_id || issuedToken?.family_id || store.db.devices[deviceId]?.family_id || null;
+            if (!resolvedFamilyId && !isAppConfiguredCamera(existing)) continue;
             const reportLocalCameraId = report.local_camera_id ?? existing.local_camera_id ?? (!isAppConfiguredCamera(existing) ? rawCameraId : null);
             const camera = {
                 ...existing,
                 id: existing.id || rawCameraId,
-                family_id: existing.family_id || issuedToken?.family_id || store.db.families[0]?.id || 1,
+                family_id: resolvedFamilyId,
                 device_id: String(report.device_id || existing.device_id || deviceId),
                 name: String(existing.name || report.name || `摄像头 ${rawCameraId}`),
                 room: String(existing.room || report.room || ""),
@@ -2330,15 +4106,20 @@ function createLocalAppServer(options = {}) {
             updatedCameras.push(publicCamera(camera));
         }
 
+        ensureDeviceBindings();
         await store.save();
         write(res, 200, {
             ok: true,
             device_id: deviceId,
             received_at: receivedAt,
             reported_config_version: store.db.devices[deviceId].reported_config_version,
-            current_config_version: cameraConfigVersion(),
+            current_config_version: deviceConfigVersion(),
+            rules_version: rulesVersion(),
             updated_cameras: updatedCameras,
-            config: deviceConfigPayload(),
+            config: deviceConfigPayload({
+                device_id: deviceId,
+                family_id: store.db.devices[deviceId]?.family_id || issuedToken?.family_id || null,
+            }),
         });
     }
 
@@ -2350,6 +4131,7 @@ function createLocalAppServer(options = {}) {
             writeError(res, 404, "media asset not found");
             return;
         }
+        if (!requireAssetAccess(req, res, asset)) return;
         write(res, 200, fs.readFileSync(filePath), {
             "Content-Type": asset.content_type || "image/jpeg",
             "Cache-Control": "private, max-age=60",
@@ -2364,6 +4146,7 @@ function createLocalAppServer(options = {}) {
             writeError(res, 404, "media asset not found");
             return;
         }
+        if (!requireAssetAccess(req, res, asset)) return;
         write(res, 200, fs.readFileSync(filePath), {
             "Content-Type": asset.content_type || "image/jpeg",
             "Cache-Control": "private, max-age=60",
@@ -2408,72 +4191,93 @@ function createLocalAppServer(options = {}) {
 
         try {
             if (req.method === "GET" && pathname === "/health") {
-                write(res, 200, {
+                const payload = {
                     ok: true,
                     service: "gohome-local-app-server",
                     store: store.kind || "json",
-                    app_server_base_url: `http://localhost:${DEFAULT_PORT}`,
+                    app_server_base_url: process.env.GOHOME_APP_SERVER_BASE_URL || `http://localhost:${DEFAULT_PORT}`,
                     events: store.db.events.length,
                     assets: store.db.assets.length,
                     updated_at: store.db.updated_at,
-                    local_app_demo_token: appToken,
-                });
+                };
+                if (isLocalRequest(req) && process.env.NODE_ENV !== "production") {
+                    payload.local_app_demo_token = appToken;
+                }
+                write(res, 200, payload);
                 return;
             }
 
             if (req.method === "POST" && (pathname === "/api/auth/login" || pathname === "/api/v1/identity/login")) {
                 const payload = await parseJsonBody(req);
-                const email = String(payload.email || "admin@gohome.local").trim();
-                const user = store.db.users.find((item) => item.email === email) || store.db.users[0];
+                const identity = authIdentityFromPayload(payload);
+                const email = identity.email;
+                const password = String(payload.password || payload.code || "");
+                const user = store.db.users.find((item) => String(item.email || "").toLowerCase() === email);
                 if (!user) {
-                    writeError(res, 401, "账号不存在");
+                    writeError(res, 401, identity.isPhone ? "手机号未注册" : "账号不存在");
                     return;
                 }
-                if (user.password && payload.password && String(user.password) !== String(payload.password)) {
-                    writeError(res, 401, "密码不正确");
+                const isPhoneAccount = identity.isPhone || /@phone\.gohome\.local$/i.test(email);
+                const phoneOtpLogin = isPhoneAccount && (password === "000000" || (user.password && String(user.password) === password));
+                const passwordMatches = user.password ? String(user.password) === password : Boolean(password);
+                if (!phoneOtpLogin && !passwordMatches) {
+                    writeError(res, 401, isPhoneAccount ? "验证码不正确" : "密码不正确");
                     return;
                 }
-                write(res, 200, { token: appToken, user: publicUser(user) });
+                store.db.active_user_id = user.id;
+                const session = issueAppSession(user);
+                await store.save();
+                write(res, 200, { token: session.token, user: publicUser(user) });
                 return;
             }
 
             if (req.method === "POST" && (pathname === "/api/auth/register" || pathname === "/api/v1/identity/register")) {
                 const payload = await parseJsonBody(req);
-                const email = String(payload.email || `user-${Date.now()}@gohome.local`).trim();
+                const identity = authIdentityFromPayload(payload, `user-${Date.now()}@gohome.local`);
+                const email = identity.email;
                 let user = store.db.users.find((item) => item.email === email);
-                if (!user) {
-                    user = {
-                        id: store.nextId("user"),
-                        email,
-                        display_name: String(payload.display_name || payload.name || "回家用户"),
-                        password: String(payload.password || ""),
-                        created_at: nowIso(),
-                    };
-                    store.db.users.push(user);
-                    await store.save();
+                if (user) {
+                    writeError(res, 409, identity.isPhone ? "手机号已注册，请直接登录。" : "账号已存在，请直接登录。");
+                    return;
                 }
-                write(res, 200, { token: appToken, user: publicUser(user) });
+                user = {
+                    id: store.nextId("user"),
+                    email,
+                    phone: identity.phone || "",
+                    display_name: String(payload.display_name || payload.name || "回家用户"),
+                    password: String(payload.password || payload.code || ""),
+                    created_at: nowIso(),
+                    updated_at: nowIso(),
+                };
+                store.db.users.push(user);
+                store.db.active_user_id = user.id;
+                const session = issueAppSession(user);
+                await store.save();
+                write(res, 200, { token: session.token, user: publicUser(user) });
                 return;
             }
 
             if (req.method === "GET" && (pathname === "/api/users/me" || pathname === "/api/v1/identity/me")) {
                 if (!requireApp(req, res)) return;
-                const user = store.db.users[0];
+                const user = activeAppUser(req);
                 write(res, 200, publicUser(user));
                 return;
             }
 
             if (req.method === "GET" && (pathname === "/api/families/mine" || pathname === "/api/v1/households/mine")) {
                 if (!requireApp(req, res)) return;
-                write(res, 200, store.db.families.map(publicFamily));
+                const user = activeAppUser(req);
+                write(res, 200, familiesForUser(user.id).map(publicFamily));
                 return;
             }
 
             if (req.method === "POST" && (pathname === "/api/families" || pathname === "/api/v1/households")) {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
+                const user = activeAppUser(req);
                 const name = String(payload.name || payload.household_name || "我的家庭").trim();
-                let family = store.db.families.find((item) => item.name === name);
+                const myFamilyIds = familyIdsForUser(user.id);
+                let family = store.db.families.find((item) => myFamilyIds.has(Number(item.id)) && item.name === name);
                 if (!family) {
                     family = {
                         id: store.nextId("family"),
@@ -2483,59 +4287,126 @@ function createLocalAppServer(options = {}) {
                         updated_at: nowIso(),
                     };
                     store.db.families.push(family);
-                    await store.save();
                 }
+                ensureFamilyMember(family.id, user.id, "owner");
+                await store.save();
+                write(res, 200, publicFamily(family));
+                return;
+            }
+
+            if (req.method === "POST" && (pathname === "/api/families/join" || pathname === "/api/v1/households/join")) {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req);
+                const family = familyForJoinCode(payload.code || payload.join_code || payload.invite_code);
+                if (!family) {
+                    writeError(res, 404, "邀请码无效或已失效。");
+                    return;
+                }
+                const user = activeAppUser(req);
+                ensureFamilyMember(family.id, user.id, "member");
+                await store.save();
                 write(res, 200, publicFamily(family));
                 return;
             }
 
             if (req.method === "GET" && pathname === "/api/device-bindings") {
                 if (!requireApp(req, res)) return;
-                const familyId = normalizeNumber(url.searchParams.get("family_id"), store.db.families[0]?.id || 1);
+                if (ensureDeviceBindings()) await store.save();
+                const userFamilies = familiesForUser(activeAppUser(req).id);
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), userFamilies[0]?.id || null);
+                if (!familyId) {
+                    write(res, 200, []);
+                    return;
+                }
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
                 const bindings = store.db.device_bindings.filter((item) => Number(item.family_id) === Number(familyId));
                 write(res, 200, bindings.map(publicBinding));
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/device-claims/available") {
+                if (!requireApp(req, res)) return;
+                const devices = Object.values(store.db.devices)
+                    .filter((device) => {
+                        const deviceId = String(device.device_id || device.id || "");
+                        if (!deviceId) return false;
+                        if (device.family_id || deviceHasActiveBinding(deviceId)) return false;
+                        return true;
+                    })
+                    .sort((a, b) => String(b.last_seen_at || b.updated_at || "").localeCompare(String(a.last_seen_at || a.updated_at || "")))
+                    .map(publicClaimableDevice);
+                write(res, 200, devices);
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/device-claims/claim") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req);
+                const user = activeAppUser(req);
+                const userFamilies = familiesForUser(user.id);
+                const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                const claimCode = payload.claim_code || payload.code || payload.serial_number || payload.serial || "";
+                const requestedSerial = normalizeClaimCode(payload.serial_number || payload.serial || "");
+                const requestedDeviceId = normalizeClaimCode(payload.device_id || "");
+                const candidates = Object.values(store.db.devices).filter((device) => {
+                    const deviceId = String(device.device_id || device.id || "");
+                    if (!deviceId) return false;
+                    if (deviceHasActiveBinding(deviceId) && Number(device.family_id) !== Number(familyId)) return false;
+                    const serial = normalizeClaimCode(deviceSerial(device));
+                    if (requestedSerial && requestedSerial !== serial) return false;
+                    if (requestedDeviceId && requestedDeviceId !== normalizeClaimCode(deviceId)) return false;
+                    return claimCodeMatchesDevice(device, claimCode);
+                });
+                const device = candidates[0] || null;
+                if (!device) {
+                    writeError(res, 404, "盒子绑定码无效，或这台盒子还没有连接到云端。");
+                    return;
+                }
+                const deviceId = String(device.device_id || device.id);
+                const binding = bindDeviceToFamily({
+                    familyId,
+                    deviceId,
+                    deviceName: payload.device_name || device.name || "回家盒子",
+                    note: payload.note || "app device claim",
+                    userId: user.id,
+                });
+                await store.save();
+                write(res, 200, {
+                    ok: true,
+                    binding: publicBinding(binding),
+                    device: publicClaimableDevice(store.db.devices[deviceId]),
+                    next: "camera_setup",
+                });
                 return;
             }
 
             if (req.method === "POST" && pathname === "/api/device-bindings") {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
-                const familyId = normalizeNumber(payload.family_id, store.db.families[0]?.id || 1);
-                const family = selectedFamily(familyId);
-                if (!family) {
-                    writeError(res, 404, "family not found");
+                if (payload.claim_code || payload.code || payload.serial_number || payload.serial) {
+                    const user = activeAppUser(req);
+                    const userFamilies = familiesForUser(user.id);
+                    const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
+                    if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                    const claimCode = payload.claim_code || payload.code || payload.serial_number || payload.serial || "";
+                    const device = Object.values(store.db.devices).find((item) => claimCodeMatchesDevice(item, claimCode));
+                    if (!device) {
+                        writeError(res, 404, "盒子绑定码无效，或这台盒子还没有连接到云端。");
+                        return;
+                    }
+                    const binding = bindDeviceToFamily({
+                        familyId,
+                        deviceId: device.device_id || device.id,
+                        deviceName: payload.device_name || device.name || "回家盒子",
+                        note: payload.note || "app device claim",
+                        userId: user.id,
+                    });
+                    await store.save();
+                    write(res, 200, publicBinding(binding));
                     return;
                 }
-                const deviceId = String(payload.device_id || currentEdgeDeviceId());
-                let binding = store.db.device_bindings.find((item) => Number(item.family_id) === Number(familyId) && item.device_id === deviceId);
-                if (!binding) {
-                    binding = {
-                        id: store.nextId("binding"),
-                        family_id: Number(familyId),
-                        device_id: deviceId,
-                        device_name: String(payload.device_name || "回家盒子"),
-                        device_type: "edge-agent",
-                        status: "active",
-                        note: String(payload.note || ""),
-                        bound_at: nowIso(),
-                    };
-                    store.db.device_bindings.push(binding);
-                } else {
-                    binding.status = "active";
-                    binding.device_name = String(payload.device_name || binding.device_name || "回家盒子");
-                    binding.note = String(payload.note || binding.note || "");
-                }
-                store.db.devices[deviceId] = {
-                    ...(store.db.devices[deviceId] || {}),
-                    id: deviceId,
-                    device_id: deviceId,
-                    name: binding.device_name,
-                    status: "active",
-                    last_seen_at: store.db.devices[deviceId]?.last_seen_at || null,
-                    updated_at: nowIso(),
-                };
-                await store.save();
-                write(res, 200, publicBinding(binding));
+                writeError(res, 400, "请通过盒身二维码、序列号或临时绑定码认领设备。");
                 return;
             }
 
@@ -2544,8 +4415,13 @@ function createLocalAppServer(options = {}) {
                 if (!requireApp(req, res)) return;
                 const familyId = Number(elderProfileMatch[1]);
                 const elderId = decodeURIComponent(elderProfileMatch[2]);
-                const key = elderProfileKey(familyId, elderId);
-                write(res, 200, store.db.elder_profiles[key] || defaultElderProfile(familyId, elderId));
+                if (!requireFamilyAccess(req, res, familyId)) return;
+                const profile = existingElderProfile(familyId, elderId);
+                if (!profile) {
+                    writeError(res, 404, "老人资料尚未填写。");
+                    return;
+                }
+                write(res, 200, profile);
                 return;
             }
 
@@ -2553,10 +4429,7 @@ function createLocalAppServer(options = {}) {
                 if (!requireApp(req, res)) return;
                 const familyId = Number(elderProfileMatch[1]);
                 const elderId = decodeURIComponent(elderProfileMatch[2]);
-                if (!selectedFamily(familyId)) {
-                    writeError(res, 404, "family not found");
-                    return;
-                }
+                if (!requireFamilyAccess(req, res, familyId)) return;
                 const payload = await parseJsonBody(req);
                 const key = elderProfileKey(familyId, elderId);
                 const existing = store.db.elder_profiles[key] || defaultElderProfile(familyId, elderId);
@@ -2577,6 +4450,7 @@ function createLocalAppServer(options = {}) {
             if (calendarMatch && req.method === "GET") {
                 if (!requireApp(req, res)) return;
                 const familyId = Number(calendarMatch[1]);
+                if (!requireFamilyAccess(req, res, familyId)) return;
                 const elderId = url.searchParams.get("elder_id") || "";
                 write(res, 200, store.db.calendar_events.filter((item) => (
                     Number(item.family_id) === familyId && (!elderId || item.elder_id === elderId)
@@ -2587,6 +4461,7 @@ function createLocalAppServer(options = {}) {
             if (calendarMatch && req.method === "POST") {
                 if (!requireApp(req, res)) return;
                 const familyId = Number(calendarMatch[1]);
+                if (!requireFamilyAccess(req, res, familyId)) return;
                 const payload = await parseJsonBody(req);
                 const event = {
                     id: store.nextId("calendar_event"),
@@ -2607,47 +4482,115 @@ function createLocalAppServer(options = {}) {
             const weatherMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/weather-signals$/);
             if (weatherMatch && req.method === "GET") {
                 if (!requireApp(req, res)) return;
-                write(res, 200, {
-                    family_id: Number(weatherMatch[1]),
-                    city: url.searchParams.get("city") || "杭州",
-                    condition: "多云",
-                    temperature_c: 24,
-                    humidity: 55,
-                    advice: "环境舒适，适合午休。下午注意通风。",
-                    updated_at: nowIso(),
-                });
+                const familyId = Number(weatherMatch[1]);
+                if (!requireFamilyAccess(req, res, familyId)) return;
+                const elderId = url.searchParams.get("elder_id") || "elder_primary";
+                const profile = existingElderProfile(familyId, elderId) || {};
+                const city = url.searchParams.get("city") || profile.city || "杭州";
+                write(res, 200, await fetchWeatherSignal({ familyId, city }));
+                return;
+            }
+
+            const contentRecommendationMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/content-recommendations$/);
+            if (contentRecommendationMatch && req.method === "GET") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(contentRecommendationMatch[1]);
+                if (!requireFamilyAccess(req, res, familyId)) return;
+                const elderId = url.searchParams.get("elder_id") || "elder_primary";
+                const profile = existingElderProfile(familyId, elderId) || {};
+                const preferences = carePreferences(familyId);
+                const region = contentRegionText(
+                    preferences,
+                    url.searchParams.get("city") || profile.city || "杭州",
+                    url.searchParams.get("district") || profile.district || "",
+                );
+                write(res, 200, await fetchContentRecommendations({
+                    familyId,
+                    city: region.city,
+                    district: region.district,
+                    preferences,
+                }));
                 return;
             }
 
             if (req.method === "GET" && (pathname === "/api/v1/devices" || pathname === "/api/v1/devices/current")) {
                 if (!requireApp(req, res)) return;
+                if (ensureDeviceBindings()) await store.save();
+                const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
+                const bindings = store.db.device_bindings
+                    .filter((item) => userFamilyIds.has(Number(item.family_id)))
+                    .map(publicBinding);
+                const primaryBinding = bindings[0] || null;
+                const primaryDevice = primaryBinding ? (store.db.devices[String(primaryBinding.device_id)] || {}) : {};
                 const device = {
-                    device_id: currentEdgeDeviceId(),
-                    name: store.db.devices[currentEdgeDeviceId()]?.name || "回家盒子",
-                    status: store.db.devices[currentEdgeDeviceId()]?.status || "active",
-                    last_seen_at: store.db.devices[currentEdgeDeviceId()]?.last_seen_at || null,
-                    bindings: store.db.device_bindings.map(publicBinding),
+                    device_id: primaryBinding ? String(primaryBinding.device_id) : "",
+                    name: primaryBinding ? (primaryDevice.name || primaryBinding.device_name || "回家盒子") : "未绑定家庭盒子",
+                    status: primaryBinding ? (primaryDevice.status || "active") : "unbound",
+                    last_seen_at: primaryBinding ? (primaryDevice.last_seen_at || primaryBinding.last_seen_at || null) : null,
+                    bindings,
                 };
-                write(res, 200, pathname.endsWith("/current") ? device : [device]);
+                write(res, 200, pathname.endsWith("/current") ? device : (primaryBinding ? [device] : []));
                 return;
             }
 
             if (req.method === "GET" && pathname === "/api/v1/devices/current/sync-state") {
                 if (!requireApp(req, res)) return;
+                if (ensureDeviceBindings()) await store.save();
+                const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
+                const primaryBinding = store.db.device_bindings.find((item) => userFamilyIds.has(Number(item.family_id)) && item.status !== "revoked");
+                const device = primaryBinding ? (store.db.devices[String(primaryBinding.device_id)] || {}) : {};
                 write(res, 200, {
-                    device_id: currentEdgeDeviceId(),
+                    device_id: primaryBinding ? String(primaryBinding.device_id) : "",
                     server_time: nowIso(),
-                    config_version: cameraConfigVersion(),
-                    cameras: appConfigCameras().map(publicCamera),
-                    rules_version: "local-demo-v1",
+                    config_version: deviceConfigVersion(),
+                    cameras: appConfigCameras(userFamilyIds).map(publicCamera),
+                    rules_version: rulesVersion(),
+                    applied_rule_version: device.applied_rule_version || "",
                     pending_commands: [],
                 });
                 return;
             }
 
+            if (req.method === "GET" && (pathname === "/api/rules" || pathname === "/api/v1/rules")) {
+                if (!requireApp(req, res)) return;
+                write(res, 200, currentRules());
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/rules/runtime") {
+                if (!requireApp(req, res)) return;
+                const device = store.db.devices[currentEdgeDeviceId()] || Object.values(store.db.devices)[0] || {};
+                write(res, 200, {
+                    worker_running: Boolean(device.worker_running),
+                    last_rules_loaded_at: device.last_sync_at || device.last_seen_at || "",
+                    desired_rule_version: rulesVersion(),
+                    applied_rule_version: device.applied_rule_version || "",
+                });
+                return;
+            }
+
+            if (req.method === "PUT" && (pathname === "/api/rules" || pathname === "/api/v1/rules")) {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req);
+                store.db.rules = normalizeRules({
+                    ...currentRules(),
+                    ...payload,
+                    updated_at: nowIso(),
+                }, currentRules());
+                await store.save();
+                write(res, 200, currentRules());
+                return;
+            }
+
             if (req.method === "GET" && pathname === "/api/device/binding-codes") {
                 if (!requireApp(req, res)) return;
-                const familyId = normalizeNumber(url.searchParams.get("family_id"), store.db.families[0]?.id || 1);
+                const userFamilies = familiesForUser(activeAppUser(req).id);
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), userFamilies[0]?.id || null);
+                if (!familyId) {
+                    write(res, 200, []);
+                    return;
+                }
+                if (!requireFamilyAccess(req, res, familyId)) return;
                 write(res, 200, store.db.binding_codes
                     .filter((item) => Number(item.family_id) === Number(familyId))
                     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
@@ -2658,11 +4601,13 @@ function createLocalAppServer(options = {}) {
             if (req.method === "POST" && pathname === "/api/device/binding-codes") {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
-                const familyId = normalizeNumber(payload.family_id, store.db.families[0]?.id || 1);
-                if (!selectedFamily(familyId)) {
-                    writeError(res, 404, "family not found");
+                const userFamilies = familiesForUser(activeAppUser(req).id);
+                const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
+                if (!familyId) {
+                    writeError(res, 400, "请先创建家庭。");
                     return;
                 }
+                if (!requireFamilyAccess(req, res, familyId)) return;
                 const code = {
                     id: store.nextId("binding_code"),
                     family_id: Number(familyId),
@@ -2708,28 +4653,12 @@ function createLocalAppServer(options = {}) {
                 code.status = "used";
                 code.used_at = nowIso();
                 code.device_id = deviceId;
-                let binding = store.db.device_bindings.find((item) => Number(item.family_id) === Number(code.family_id) && item.device_id === deviceId);
-                if (!binding) {
-                    binding = {
-                        id: store.nextId("binding"),
-                        family_id: Number(code.family_id),
-                        device_id: deviceId,
-                        device_name: String(payload.device_name || "回家盒子"),
-                        device_type: "edge-agent",
-                        status: "active",
-                        note: String(payload.note || ""),
-                        bound_at: nowIso(),
-                    };
-                    store.db.device_bindings.push(binding);
-                }
-                store.db.devices[deviceId] = {
-                    ...(store.db.devices[deviceId] || {}),
-                    id: deviceId,
-                    device_id: deviceId,
-                    name: binding.device_name || "回家盒子",
-                    status: "active",
-                    updated_at: nowIso(),
-                };
+                const binding = bindDeviceToFamily({
+                    familyId: code.family_id,
+                    deviceId,
+                    deviceName: payload.device_name || "回家盒子",
+                    note: payload.note || "",
+                });
                 await store.save();
                 write(res, 200, {
                     ok: true,
@@ -2770,29 +4699,37 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && (pathname === "/api/app/device" || pathname === "/api/device")) {
                 if (!requireApp(req, res)) return;
-                const device = Object.values(store.db.devices)[0] || {};
+                const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
+                const binding = store.db.device_bindings.find((item) => userFamilyIds.has(Number(item.family_id)) && item.status !== "revoked");
+                const device = binding ? (store.db.devices[String(binding.device_id)] || {}) : {};
+                const cameras = appConfigCameras(userFamilyIds);
                 write(res, 200, {
-                    device_id: currentEdgeDeviceId(),
-                    name: device.name || "回家盒子",
-                    worker_running: Boolean(device.worker_running),
+                    device_id: binding ? String(binding.device_id) : "",
+                    name: binding ? (device.name || binding.device_name || "回家盒子") : "未连接家庭盒子",
+                    worker_running: binding ? Boolean(device.worker_running) : false,
                     detector_backend: device.detector_backend || "basic",
                     yolo_model: device.yolo_model || "",
                     yolo_imgsz: device.yolo_imgsz || null,
-                    upload_agent: { configured: true, app_server_base_url: true },
+                    vision_capabilities: deviceVisionCapabilities(device, cameras),
+                    upload_agent: { configured: Boolean(binding), app_server_base_url: Boolean(binding) },
                 });
                 return;
             }
 
             if (req.method === "GET" && (pathname === "/api/app/cameras" || pathname === "/api/cameras")) {
                 if (!requireApp(req, res)) return;
-                write(res, 200, appConfigCameras().map(publicCamera));
+                const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
+                write(res, 200, appConfigCameras(userFamilyIds).map(publicCamera));
                 return;
             }
 
             if (req.method === "POST" && pathname === "/api/cameras") {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
-                const camera = normalizeCameraPayload(payload);
+                const userFamilies = familiesForUser(activeAppUser(req).id);
+                const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                const camera = normalizeCameraPayload({ ...payload, family_id: familyId });
                 store.db.cameras[String(camera.id)] = camera;
                 await store.save();
                 write(res, 200, publicCamera(camera));
@@ -2825,6 +4762,7 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "camera not found");
                     return;
                 }
+                if (!existing.family_id || !requireFamilyAccess(req, res, existing.family_id)) return;
                 const patch = await parseJsonBody(req);
                 const camera = normalizeCameraPayload({ ...existing, ...patch, id: existing.id }, existing);
                 store.db.cameras[cameraId] = camera;
@@ -2840,6 +4778,7 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "camera not found");
                     return;
                 }
+                if (!store.db.cameras[cameraId].family_id || !requireFamilyAccess(req, res, store.db.cameras[cameraId].family_id)) return;
                 delete store.db.cameras[cameraId];
                 await store.save();
                 write(res, 200, { ok: true, deleted: Number(cameraId) || cameraId });
@@ -2854,6 +4793,7 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "camera not found");
                     return;
                 }
+                if (!camera.family_id || !requireFamilyAccess(req, res, camera.family_id)) return;
                 camera.status = camera.stream_url ? "pending_edge_verify" : "pending_edge_setup";
                 camera.sync_status = "pending_edge_sync";
                 camera.last_error = "";
@@ -2895,7 +4835,7 @@ function createLocalAppServer(options = {}) {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
                 const ticket = stableId("play-");
-                playbackTickets.set(ticket, { payload, expires_at: Date.now() + 120000 });
+                playbackTickets.set(ticket, { payload, user_id: activeAppUser(req).id, expires_at: Date.now() + 120000 });
                 write(res, 200, { ticket, expires_at: new Date(Date.now() + 120000).toISOString() });
                 return;
             }
@@ -2924,7 +4864,17 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && pathname === "/api/v1/device/config") {
                 if (!requireDevice(req, res)) return;
-                write(res, 200, deviceConfigPayload());
+                const rawToken = tokenFrom(req);
+                const rawTokenHash = sha256(rawToken);
+                const issuedToken = store.db.device_tokens.find((item) => item.status === "active" && (
+                    item.token === rawToken || (item.token_hash && item.token_hash === rawTokenHash)
+                ));
+                const deviceId = String(issuedToken?.device_id || currentEdgeDeviceId());
+                const device = store.db.devices[deviceId] || {};
+                write(res, 200, deviceConfigPayload({
+                    device_id: deviceId,
+                    family_id: issuedToken?.family_id || device.family_id || null,
+                }));
                 return;
             }
 
@@ -2949,7 +4899,8 @@ function createLocalAppServer(options = {}) {
                 pathname === "/api/v1/events"
             )) {
                 if (!requireApp(req, res)) return;
-                write(res, 200, eventList(url));
+                const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
+                write(res, 200, eventList(url, { userVisible: true, familyIds: userFamilyIds }));
                 return;
             }
 
@@ -2961,6 +4912,8 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "event not found");
                     return;
                 }
+                const camera = store.db.cameras[String(event.camera_id)] || {};
+                if (!(event.family_id || camera.family_id) || !requireFamilyAccess(req, res, event.family_id || camera.family_id)) return;
                 write(res, 200, publicEvent(event));
                 return;
             }
@@ -2971,6 +4924,8 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "event not found");
                     return;
                 }
+                const camera = store.db.cameras[String(event.camera_id)] || {};
+                if (!(event.family_id || camera.family_id) || !requireFamilyAccess(req, res, event.family_id || camera.family_id)) return;
                 const patch = await parseJsonBody(req);
                 if ("acknowledged" in patch) event.acknowledged = normalizeBool(patch.acknowledged);
                 if ("resolution" in patch) event.resolution = String(patch.resolution || "");
@@ -2986,15 +4941,23 @@ function createLocalAppServer(options = {}) {
                 pathname === "/api/v1/summary/today"
             )) {
                 if (!requireApp(req, res)) return;
-                const open = store.db.events.filter((event) => !event.acknowledged).length;
-                const critical = store.db.events.filter((event) => !event.acknowledged && event.level === "critical").length;
-                write(res, 200, { events: store.db.events.length, open_events: open, critical_events: critical });
+                const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
+                const events = store.db.events
+                    .filter((event) => {
+                        const camera = store.db.cameras[String(event.camera_id)] || {};
+                        return userFamilyIds.has(Number(event.family_id || camera.family_id || 0));
+                    })
+                    .filter((event) => isUserVisibleEvent(event, userFamilyIds));
+                const open = events.filter((event) => !event.acknowledged).length;
+                const critical = events.filter((event) => !event.acknowledged && event.level === "critical").length;
+                write(res, 200, { events: events.length, open_events: open, critical_events: critical });
                 return;
             }
 
             const carePreferenceMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/care-preferences$/);
             if (carePreferenceMatch && req.method === "GET") {
                 if (!requireApp(req, res)) return;
+                if (!requireFamilyAccess(req, res, Number(carePreferenceMatch[1]))) return;
                 write(res, 200, publicCarePreferences(carePreferences(carePreferenceMatch[1])));
                 return;
             }
@@ -3002,10 +4965,7 @@ function createLocalAppServer(options = {}) {
             if (carePreferenceMatch && req.method === "PUT") {
                 if (!requireApp(req, res)) return;
                 const familyId = Number(carePreferenceMatch[1]);
-                if (!selectedFamily(familyId)) {
-                    writeError(res, 404, "family not found");
-                    return;
-                }
+                if (!requireFamilyAccess(req, res, familyId)) return;
                 const payload = await parseJsonBody(req);
                 const existing = carePreferences(familyId);
                 const nextMetadata = payload.metadata && typeof payload.metadata === "object"
@@ -3032,17 +4992,36 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && pathname === "/api/v1/app/care-cards/today") {
                 if (!requireApp(req, res)) return;
-                const familyId = normalizeNumber(url.searchParams.get("family_id"), store.db.families[0]?.id || 1);
+                const userFamilies = familiesForUser(activeAppUser(req).id);
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
                 const card = await generateCareCard(familyId);
                 await store.save();
                 write(res, 200, publicCareCard(card));
                 return;
             }
 
+            if (req.method === "GET" && pathname === "/api/v1/app/care-cards") {
+                if (!requireApp(req, res)) return;
+                const userFamilies = familiesForUser(activeAppUser(req).id);
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                const limit = Math.max(1, Math.min(60, normalizeNumber(url.searchParams.get("limit"), 20)));
+                const cards = store.db.care_cards
+                    .filter((card) => Number(card.family_id) === Number(familyId))
+                    .sort((a, b) => String(b.card_date || b.created_at || "").localeCompare(String(a.card_date || a.created_at || "")))
+                    .slice(0, limit)
+                    .map(publicCareCard);
+                write(res, 200, cards);
+                return;
+            }
+
             if (req.method === "POST" && pathname === "/api/v1/internal/care-cards/generate") {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
-                const familyId = normalizeNumber(payload.family_id, store.db.families[0]?.id || 1);
+                const userFamilies = familiesForUser(activeAppUser(req).id);
+                const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
                 const card = await generateCareCard(familyId, { force: normalizeBool(payload.force) });
                 await store.save();
                 write(res, 200, { ok: true, card: publicCareCard(card) });
@@ -3094,15 +5073,34 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
+            if (req.method === "POST" && pathname === "/api/v1/internal/verify-data/cleanup") {
+                if (!requireOps(req, res)) return;
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const dryRun = "dry_run" in payload
+                    ? normalizeBool(payload.dry_run)
+                    : normalizeBool(url.searchParams.get("dry_run"));
+                const result = cleanupVerifyData({ dry_run: dryRun });
+                if (!dryRun) await store.save();
+                write(res, 200, result);
+                return;
+            }
+
             if (req.method === "GET" && pathname === "/api/v1/app/messages") {
                 if (!requireApp(req, res)) return;
-                const events = eventList(url).filter((event) => !event.acknowledged).slice(0, 5);
+                const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
+                const events = eventList(url, { userVisible: true, familyIds: userFamilyIds })
+                    .filter((event) => !event.acknowledged)
+                    .slice(0, 5);
                 write(res, 200, events.map((event) => ({
                     id: `event-${event.id}`,
                     message_type: event.level === "critical" ? "alert" : "explain",
-                    title: event.summary,
+                    title: event.type === "camera_offline"
+                        ? `${event.camera_name || event.room || "摄像头"} 暂时没有返回画面`
+                        : event.summary,
                     subtitle: `${event.room || event.camera_name || "摄像头"} · ${event.event_type}`,
-                    body: event.payload?.rule?.reason || event.summary,
+                    body: event.type === "camera_offline"
+                        ? "家庭盒子暂时没有拿到这路画面，会继续重试。"
+                        : (event.payload?.rule?.reason || event.summary),
                     facts: [event.event_type, event.level],
                     actions: [{ key: "open_event", label: "查看事件" }],
                     source_event_ids: [event.id],
@@ -3170,8 +5168,8 @@ if (require.main === module) {
             app.server.listen(DEFAULT_PORT, DEFAULT_HOST, () => {
                 console.log(`GoHome local App server listening on http://${DEFAULT_HOST}:${DEFAULT_PORT}`);
                 console.log(`Store: ${app.store.kind || "json"}`);
-                console.log(`App token: ${app.appToken}`);
-                console.log(`Device token: ${app.deviceToken}`);
+                console.log(`App token: ${redactedSecret(app.appToken)}`);
+                console.log(`Device token: ${redactedSecret(app.deviceToken)}`);
                 console.log(`Data dir: ${app.dataDir}`);
             });
         })

@@ -1,362 +1,493 @@
 <!DOCTYPE html>
-
-<html lang="zh-CN"><head>
+<html lang="zh-CN">
+<head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
-<title>回家 - 规则设置</title>
-<!-- Material Symbols -->
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@100..900&family=Inter:wght@100..900&display=swap" rel="stylesheet"/>
-<!-- Tailwind CSS -->
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<!-- Theme Configuration -->
-<script id="tailwind-config">
-      tailwind.config = {
-        darkMode: "class",
-        theme: {
-          extend: {
-            "colors": {
-                    "surface-tint": "#0060ac",
-                    "on-secondary-fixed-variant": "#474744",
-                    "surface-dim": "#dbd9d9",
-                    "outline": "#717783",
-                    "tertiary-fixed-dim": "#87dc2c",
-                    "on-secondary": "#ffffff",
-                    "on-error-container": "#93000a",
-                    "secondary-fixed": "#e4e2dd",
-                    "on-tertiary-fixed": "#0e2000",
-                    "surface-container-high": "#eae8e7",
-                    "outline-variant": "#c1c7d3",
-                    "tertiary-container": "#498300",
-                    "surface-container-lowest": "#ffffff",
-                    "on-tertiary-container": "#f9ffeb",
-                    "background": "#fbf9f8",
-                    "secondary-fixed-dim": "#c8c6c2",
-                    "on-tertiary": "#ffffff",
-                    "on-surface-variant": "#414751",
-                    "surface-container-highest": "#e4e2e2",
-                    "on-background": "#1b1c1c",
-                    "surface-variant": "#e4e2e2",
-                    "on-tertiary-fixed-variant": "#2a5000",
-                    "on-primary-container": "#fdfcff",
-                    "on-secondary-container": "#63635f",
-                    "on-primary-fixed": "#001c39",
-                    "inverse-surface": "#303030",
-                    "tertiary-fixed": "#a1fa49",
-                    "surface": "#fbf9f8",
-                    "surface-container-low": "#f5f3f3",
-                    "surface-bright": "#fbf9f8",
-                    "primary-container": "#2976c7",
-                    "on-surface": "#1b1c1c",
-                    "primary-fixed": "#d4e3ff",
-                    "primary": "#005da7",
-                    "on-primary-fixed-variant": "#004883",
-                    "error": "#ba1a1a",
-                    "on-error": "#ffffff",
-                    "inverse-on-surface": "#f2f0f0",
-                    "error-container": "#ffdad6",
-                    "secondary-container": "#e1dfdb",
-                    "primary-fixed-dim": "#a4c9ff",
-                    "tertiary": "#386800",
-                    "inverse-primary": "#a4c9ff",
-                    "surface-container": "#efeded",
-                    "secondary": "#5e5e5b",
-                    "on-secondary-fixed": "#1b1c19",
-                    "on-primary": "#ffffff"
-            },
-            "borderRadius": {
-                    "DEFAULT": "0.25rem",
-                    "lg": "0.5rem",
-                    "xl": "0.75rem",
-                    "full": "9999px"
-            },
-            "spacing": {
-                    "stack-sm": "8px",
-                    "gutter-card": "16px",
-                    "stack-md": "16px",
-                    "stack-lg": "32px",
-                    "margin-page": "20px"
-            },
-            "fontFamily": {
-                    "body-lg": ["Inter"],
-                    "label-md": ["Inter"],
-                    "body-md": ["Inter"],
-                    "headline-md": ["Hanken Grotesk"],
-                    "headline-lg": ["Hanken Grotesk"],
-                    "headline-lg-mobile": ["Hanken Grotesk"]
-            },
-            "fontSize": {
-                    "body-lg": ["18px", {"lineHeight": "26px", "fontWeight": "400"}],
-                    "label-md": ["14px", {"lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600"}],
-                    "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
-                    "headline-md": ["22px", {"lineHeight": "28px", "fontWeight": "600"}],
-                    "headline-lg": ["28px", {"lineHeight": "36px", "fontWeight": "700"}],
-                    "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "700"}]
-            }
-          }
-        }
-      }
-    </script>
-<style>
-        /* Custom Toggle Switch Styles */
-        .toggle-checkbox:checked {
-            right: 0;
-            border-color: #68D391; /* success color placeholder */
-        }
-        .toggle-checkbox:checked + .toggle-label {
-            background-color: var(--color-primary, #005da7); /* Map to primary */
-        }
+<title>守护规则 - 回家</title>
 
-        /* Subtle Pattern Background */
-        .bg-pattern {
-            background-image: radial-gradient(var(--color-outline-variant, #c1c7d3) 1px, transparent 1px);
-            background-size: 24px 24px;
-            background-position: -12px -12px;
-        }
-    </style>
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-product-flow-1"/>
 <style>
-    body {
-      min-height: max(884px, 100dvh);
-    }
-  </style>
-
-<style id="gohome-app-minimal-adapt">
   :root {
+    --bg: #f6f7f3;
+    --panel: #fffefc;
+    --soft: #eef2eb;
+    --line: rgba(70, 82, 70, 0.13);
+    --text: #202520;
+    --muted: #687168;
+    --primary: #536d5a;
+    --primary-strong: #1f2a22;
+    --primary-soft: #e8efe8;
+    --good: #2d7d5c;
+    --warn: #b66e3f;
     --safe-top: env(safe-area-inset-top, 0px);
-    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-top-reserved: max(var(--safe-top), 38px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
-    --safe-left: env(safe-area-inset-left, 0px);
   }
-  html, body {
-    min-height: 100dvh;
-    background: #fbf9f8;
-  }
+  * { box-sizing: border-box; }
   body {
-    padding-left: var(--safe-left);
-    padding-right: var(--safe-right);
+    margin: 0;
+    min-height: 100dvh;
+    background:
+      radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0) 38%),
+      linear-gradient(180deg, #f8f9f4 0%, var(--bg) 48%, #eef1ea 100%);
+    color: var(--text);
+    font-family: "Noto Sans SC Local", "PingFang SC", "Hiragino Sans GB", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
+    padding-bottom: calc(92px + var(--safe-bottom));
   }
-  nav.fixed.bottom-0,
-  nav.docked.bottom-0,
-  nav.pb-safe-area-bottom {
-    padding-bottom: calc(10px + var(--safe-bottom)) !important;
+  .material-symbols-outlined { font-variation-settings: "FILL" 0, "wght" 430, "GRAD" 0, "opsz" 24; }
+  .page {
+    width: min(100%, 430px);
+    margin: 0 auto;
+    padding: calc(18px + var(--safe-top-reserved)) 20px 24px;
   }
-  @media (display-mode: standalone) {
-    body {
-      padding-top: var(--safe-top);
-    }
+  .topbar {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .icon-button {
+    width: 42px;
+    height: 42px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    background: rgba(255, 255, 255, 0.68);
+    color: var(--text);
+    box-shadow: 0 8px 20px rgba(60, 73, 58, 0.06);
+    backdrop-filter: blur(14px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+  }
+  .title {
+    text-align: center;
+    min-width: 0;
+  }
+  .title h1 {
+    margin: 0;
+    font-size: 21px;
+    line-height: 1.15;
+  }
+  .title p {
+    margin: 5px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .status-card,
+  .rule-group {
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    background: var(--panel);
+    box-shadow: 0 14px 34px rgba(54, 67, 53, 0.06);
+  }
+  .status-card {
+    padding: 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .status-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 18px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+  .status-card h2 {
+    margin: 0;
+    font-size: 19px;
+  }
+  .status-card p {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .app-section-badge,
+  .small-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 26px;
+    border-radius: 999px;
+    padding: 5px 10px;
+    background: rgba(83, 109, 90, 0.1);
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+  .section-title {
+    margin: 22px 0 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .section-title h3 {
+    margin: 0;
+    font-size: 18px;
+  }
+  .section-title p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .rule-group {
+    overflow: hidden;
+  }
+  .rule-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: center;
+    padding: 15px 16px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    user-select: none;
+  }
+  .rule-row:last-child { border-bottom: 0; }
+  .rule-row h4 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 800;
+  }
+  .rule-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .rule-heading h4 {
+    min-width: 0;
+  }
+  .rule-state-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    border-radius: 999px;
+    padding: 4px 8px;
+    background: rgba(45, 125, 92, 0.1);
+    color: var(--good);
+    font-size: 10px;
+    font-weight: 900;
+    white-space: nowrap;
+  }
+  .rule-row[data-capability="unsupported"] {
+    cursor: not-allowed;
+    background: rgba(239, 242, 235, 0.42);
+  }
+  .rule-row[data-capability="unsupported"] h4,
+  .rule-row[data-capability="unsupported"] p {
+    color: #8b938a;
+  }
+  .rule-row[data-capability="unsupported"] .rule-state-badge {
+    background: rgba(104, 113, 104, 0.1);
+    color: #687168;
+  }
+  .rule-row p {
+    margin: 5px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .switch {
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    position: relative;
+    width: 52px !important;
+    height: 30px !important;
+    min-width: 52px !important;
+    border: 0 !important;
+    border-radius: 999px !important;
+    background: #d8ddd4 !important;
+    box-shadow: inset 0 1px 2px rgba(57, 49, 58, 0.08);
+    transition: background-color 180ms ease, box-shadow 180ms ease;
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  .switch::before {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    background: #ffffff;
+    border: 1px solid rgba(196, 193, 201, 0.92);
+    box-shadow: 0 3px 10px rgba(57, 49, 58, 0.14);
+    transition: transform 180ms ease, border-color 180ms ease;
+  }
+  .switch:checked {
+    background: var(--primary) !important;
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.18), 0 8px 18px rgba(54, 67, 53, 0.16);
+  }
+  .switch:checked::before {
+    transform: translateX(22px);
+    border-color: rgba(255, 255, 255, 0.92);
+  }
+  .switch:focus-visible {
+    outline: 0;
+    box-shadow: 0 0 0 4px rgba(83, 109, 90, 0.16);
+  }
+  .switch:disabled {
+    opacity: 0.48;
+    cursor: not-allowed;
+  }
+  .number-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .field {
+    display: block;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: #fbfcf8;
+    padding: 12px;
+  }
+  .field span {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+    margin-bottom: 8px;
+  }
+  .field input {
+    width: 100%;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--text);
+    font-size: 20px;
+    font-weight: 800;
+  }
+  .save-button {
+    width: 100%;
+    min-height: 50px;
+    margin-top: 18px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--primary-strong);
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 900;
+  }
+  .bottom-nav {
+    position: fixed;
+    left: 50%;
+    bottom: 0;
+    z-index: 50;
+    width: min(100%, 430px);
+    transform: translateX(-50%);
+    display: flex;
+    justify-content: space-around;
+    padding: 10px 10px calc(10px + var(--safe-bottom));
+    background: linear-gradient(180deg, rgba(246, 247, 243, 0), rgba(246, 247, 243, 0.92) 24%, rgba(246, 247, 243, 0.98));
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+    box-shadow: none;
+  }
+  .bottom-nav a {
+    min-width: 58px;
+    min-height: 52px;
+    border-radius: 999px;
+    color: var(--muted);
+    text-decoration: none;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 800;
+    gap: 3px;
+  }
+  .bottom-nav a.active {
+    background: var(--primary-soft);
+    color: var(--primary-strong);
+  }
+  @media (max-width: 380px) {
+    .number-grid { grid-template-columns: minmax(0, 1fr); }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
 </head>
-<body class="bg-surface text-on-surface font-body-md min-h-screen flex flex-col relative pb-32 overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
-<!-- Ambient Background Pattern -->
-<div class="fixed inset-0 bg-pattern opacity-30 pointer-events-none z-0"></div>
-<!-- TopAppBar (from JSON) -->
-<header class="docked full-width top-0 z-40 bg-surface dark:bg-background flex justify-between items-center w-full px-margin-page py-4 max-w-screen-xl mx-auto border-none sticky">
-<!-- Leading Avatar -->
-<div class="w-10 h-10 rounded-full bg-surface-container-high overflow-hidden shadow-sm flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity">
-<img alt="User Profile Photo" class="w-full h-full object-cover" data-alt="A close-up, warm and dignified profile photo of a modern elderly person or caring family member. Soft, natural light mode lighting, conveying trust and safety. Professional corporate style with high-end iOS aesthetic." src="assets/stitch-images/19-870083332d.jpg"/>
-</div>
-<!-- Headline -->
-<h1 class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed-dim tracking-tight">回家</h1>
-<!-- Trailing Icon -->
-<button aria-label="Notifications" class="w-10 h-10 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low transition-colors duration-200">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">notifications</span>
-</button>
-</header>
-<!-- Main Content -->
-<main class="flex-1 w-full max-w-screen-md mx-auto px-margin-page py-stack-md z-10 flex flex-col gap-stack-lg">
-<!-- Page Header -->
-<div class="flex flex-col gap-2">
-<h2 class="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg text-on-surface">守护规则设置</h2>
-<p class="font-body-md text-body-md text-on-surface-variant">个性化调整监测选项与灵敏度，为家人提供最适宜的安全保障。</p>
-</div>
-<!-- Settings Cards Container -->
-<div class="flex flex-col gap-stack-md">
-<!-- Card 1: Fall Detection -->
-<section class="bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.03)] p-gutter-card flex flex-col gap-stack-md border border-surface-variant transition-transform hover:-translate-y-1 duration-300">
-<div class="flex justify-between items-start">
-<div class="flex gap-4 items-start">
-<div class="w-12 h-12 rounded-full bg-error-container text-on-error-container flex items-center justify-center flex-shrink-0">
-<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">personal_injury</span>
-</div>
-<div class="flex flex-col gap-1">
-<h3 class="font-headline-md text-headline-md text-on-surface">跌倒监测</h3>
-<p class="font-body-md text-body-md text-on-surface-variant max-w-[280px]">实时监测老人姿态，发生疑似跌倒时立即向紧急联系人发送警报与位置信息。</p>
-</div>
-</div>
-<!-- Toggle -->
-<label class="relative inline-flex items-center cursor-pointer mt-2">
-<input checked="" class="sr-only peer" type="checkbox" value=""/>
-<div class="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-</label>
-</div>
-<div class="border-t border-surface-variant pt-4">
-<div class="flex justify-between items-center mb-3">
-<span class="font-label-md text-label-md text-on-surface-variant">灵敏度调节</span>
-<span class="font-label-md text-label-md text-primary">高 (推荐)</span>
-</div>
-<!-- Segmented Control -->
-<div class="flex bg-surface-container rounded-lg p-1 w-full relative">
-<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">低</button>
-<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">中</button>
-<button class="flex-1 py-2 font-label-md text-label-md bg-surface-container-lowest text-primary shadow-sm rounded-md z-10">高</button>
-</div>
-<p class="font-body-md text-body-md text-outline text-sm mt-2">高灵敏度可能产生误报，但能最大限度避免遗漏严重跌倒事件。</p>
-</div>
-</section>
-<!-- Card 2: Abnormal Wandering -->
-<section class="bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.03)] p-gutter-card flex flex-col gap-stack-md border border-surface-variant transition-transform hover:-translate-y-1 duration-300">
-<div class="flex justify-between items-start">
-<div class="flex gap-4 items-start">
-<div class="w-12 h-12 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center flex-shrink-0">
-<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">directions_walk</span>
-</div>
-<div class="flex flex-col gap-1">
-<h3 class="font-headline-md text-headline-md text-on-surface">异常徘徊</h3>
-<p class="font-body-md text-body-md text-on-surface-variant max-w-[280px]">智能识别长时间在同一区域无目的走动，预防认知障碍长者走失风险。</p>
-</div>
-</div>
-<!-- Toggle -->
-<label class="relative inline-flex items-center cursor-pointer mt-2">
-<input checked="" class="sr-only peer" type="checkbox" value=""/>
-<div class="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-</label>
-</div>
-<div class="border-t border-surface-variant pt-4">
-<div class="flex justify-between items-center mb-3">
-<span class="font-label-md text-label-md text-on-surface-variant">判定时长 (灵敏度)</span>
-<span class="font-label-md text-label-md text-on-surface">中 (15分钟)</span>
-</div>
-<!-- Segmented Control -->
-<div class="flex bg-surface-container rounded-lg p-1 w-full relative">
-<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">低 (30分)</button>
-<button class="flex-1 py-2 font-label-md text-label-md bg-surface-container-lowest text-on-surface shadow-sm rounded-md z-10">中 (15分)</button>
-<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">高 (5分)</button>
-</div>
-</div>
-</section>
-<!-- Card 3: Sound Alert -->
-<section class="bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.03)] p-gutter-card flex flex-col gap-stack-md border border-surface-variant transition-transform hover:-translate-y-1 duration-300">
-<div class="flex justify-between items-start">
-<div class="flex gap-4 items-start">
-<div class="w-12 h-12 rounded-full bg-tertiary-container text-on-tertiary-container flex items-center justify-center flex-shrink-0">
-<span class="material-symbols-outlined text-[28px]" style="font-variation-settings: 'FILL' 1;">record_voice_over</span>
-</div>
-<div class="flex flex-col gap-1">
-<h3 class="font-headline-md text-headline-md text-on-surface">响声预警</h3>
-<p class="font-body-md text-body-md text-on-surface-variant max-w-[280px]">持续分析环境异常声响特征（如呼救声、玻璃破碎声等），及时捕捉潜在危险信号。</p>
-</div>
-</div>
-<!-- Toggle -->
-<label class="relative inline-flex items-center cursor-pointer mt-2">
-<input class="sr-only peer" type="checkbox" value=""/>
-<div class="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-</label>
-</div>
-<div class="border-t border-surface-variant pt-4 opacity-50 pointer-events-none">
-<div class="flex justify-between items-center mb-3">
-<span class="font-label-md text-label-md text-on-surface-variant">识别灵敏度</span>
-<span class="font-label-md text-label-md text-on-surface-variant">未开启</span>
-</div>
-<!-- Segmented Control -->
-<div class="flex bg-surface-container rounded-lg p-1 w-full relative">
-<button class="flex-1 py-2 font-label-md text-label-md bg-surface-container-lowest text-on-surface shadow-sm rounded-md z-10">低</button>
-<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">中</button>
-<button class="flex-1 py-2 font-label-md text-label-md text-on-surface-variant hover:text-on-surface transition-colors rounded-md z-10">高</button>
-</div>
-</div>
-</section>
-</div>
+<body>
+<main class="page">
+  <header class="topbar">
+    <a class="icon-button" href="privacy.html?app=1" aria-label="返回我的">
+      <span class="material-symbols-outlined">arrow_back</span>
+    </a>
+    <div class="title">
+      <h1>守护规则</h1>
+      <p>我的 · 设备规则</p>
+    </div>
+    <span id="rulesSaveState" class="small-badge">同步中</span>
+  </header>
+
+  <section class="status-card">
+    <span class="status-icon">
+      <span class="material-symbols-outlined">tune</span>
+    </span>
+    <div class="min-w-0">
+      <div class="flex items-start justify-between gap-2">
+        <h2 id="rulesStatusTitle">正在读取规则</h2>
+        <span id="detectorBadge" class="small-badge">检测中</span>
+      </div>
+      <p id="rulesStatusText">规则保存后会同步到家庭盒子，并在下一轮检测时生效。</p>
+    </div>
+  </section>
+
+  <div class="section-title">
+    <div>
+      <h3>检测频率</h3>
+      <p>这些阈值会影响盒子多久抽帧、多久生成提醒。</p>
+    </div>
+  </div>
+  <section class="number-grid">
+    <label class="field">
+      <span>抽帧间隔 秒</span>
+      <input id="captureInterval" data-rule-input type="number" min="1" max="3600" value="5">
+    </label>
+    <label class="field">
+      <span>静止阈值 秒</span>
+      <input id="noMotionSeconds" data-rule-input type="number" min="10" max="86400" value="900">
+    </label>
+    <label class="field">
+      <span>无人阈值 秒</span>
+      <input id="noPersonSeconds" data-rule-input type="number" min="10" max="86400" value="900">
+    </label>
+  </section>
+
+  <div class="section-title">
+    <div>
+      <h3>基础提醒</h3>
+      <p>不依赖大模型，来自摄像头状态和本机规则。</p>
+    </div>
+  </div>
+  <section class="rule-group">
+    <label class="rule-row">
+      <span>
+        <h4>摄像头离线提醒</h4>
+        <p>摄像头无法连接或盒子长时间拿不到画面时提醒。</p>
+      </span>
+      <input id="offlineEnabled" data-rule-input class="switch" type="checkbox">
+    </label>
+    <label class="rule-row">
+      <span>
+        <h4>黑屏或遮挡提醒</h4>
+        <p>画面亮度和对比度异常时提醒，适合发现遮挡、强背光或设备异常。</p>
+      </span>
+      <input id="blackEnabled" data-rule-input class="switch" type="checkbox">
+    </label>
+    <label class="rule-row">
+      <span>
+        <h4>长时间静止提醒</h4>
+        <p>画面持续低变化超过阈值时生成候选提醒。</p>
+      </span>
+      <input id="noMotionEnabled" data-rule-input class="switch" type="checkbox">
+    </label>
+  </section>
+
+  <div class="section-title">
+    <div>
+      <h3>盒子视觉算法</h3>
+      <p id="personHint">正在读取家庭盒子的视觉能力。</p>
+    </div>
+  </div>
+  <section class="rule-group">
+    <label class="rule-row">
+      <span>
+        <span class="rule-heading">
+          <h4>人形检测能力</h4>
+          <span id="personCapabilityBadge" class="rule-state-badge">读取中</span>
+        </span>
+        <p>开启后盒子会在人形检测可用时记录人数和人体框。</p>
+      </span>
+      <input id="personDetectionEnabled" data-rule-input class="switch" type="checkbox">
+    </label>
+    <label class="rule-row">
+      <span>
+        <span class="rule-heading">
+          <h4>长时间无人提醒</h4>
+          <span id="noPersonCapabilityBadge" class="rule-state-badge">读取中</span>
+        </span>
+        <p>连续未检测到人形超过阈值时提醒。此项依赖人形检测。</p>
+      </span>
+      <input id="noPersonMirror" data-rule-input class="switch" type="checkbox">
+    </label>
+    <label class="rule-row">
+      <span>
+        <span class="rule-heading">
+          <h4>疑似跌倒候选提醒</h4>
+          <span id="fallCapabilityBadge" class="rule-state-badge">读取中</span>
+        </span>
+        <p id="fallHint">需要家庭盒子的视觉模型可用。</p>
+      </span>
+      <input id="fallDetectionEnabled" data-rule-input class="switch" type="checkbox">
+    </label>
+    <label class="rule-row">
+      <span>
+        <span class="rule-heading">
+          <h4>活动状态候选提醒</h4>
+          <span id="activityCapabilityBadge" class="rule-state-badge">读取中</span>
+        </span>
+        <p id="activityHint">用于久坐、长时间低活动等候选状态。</p>
+      </span>
+      <input id="activityDetectionEnabled" data-rule-input class="switch" type="checkbox">
+    </label>
+    <label class="rule-row">
+      <span>
+        <span class="rule-heading">
+          <h4>明火或烟火候选提醒</h4>
+          <span id="fireCapabilityBadge" class="rule-state-badge">读取中</span>
+        </span>
+        <p id="fireHint">本地连续帧命中后生成候选提醒。</p>
+      </span>
+      <input id="fireDetectionEnabled" data-rule-input class="switch" type="checkbox">
+    </label>
+  </section>
+
+  <div class="section-title">
+    <div>
+      <h3>通知</h3>
+      <p>开启后有提醒会进入家属端消息，并按手机通知设置送达。</p>
+    </div>
+  </div>
+  <section class="rule-group">
+    <label class="rule-row">
+      <span>
+        <h4>生成提醒通知</h4>
+        <p>关闭后仍会记录事件，但不主动推送给家属端。</p>
+      </span>
+      <input id="notificationEnabled" data-rule-input class="switch" type="checkbox">
+    </label>
+  </section>
+
+  <button id="saveRulesButton" class="save-button" type="button">保存规则</button>
 </main>
-<!-- BottomNavBar (from JSON) -->
-<nav class="docked full-width bottom-0 z-50 rounded-t-xl bg-surface dark:bg-surface-dim shadow-[0_-4px_12px_rgba(0,0,0,0.04)] fixed bottom-0 left-0 w-full flex justify-around items-center px-2 pb-6 pt-3 md:hidden">
-<!-- Item 1: 首页 (Inactive) -->
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-2xl group" href="#">
-<span class="material-symbols-outlined text-[24px] mb-1 group-hover:scale-110 transition-transform" style="font-variation-settings: 'FILL' 0;">home</span>
-<span class="font-label-md text-label-md text-[12px]">首页</span>
-</a>
-<!-- Item 2: 守护 (Active - matches monitoring settings) -->
-<a class="flex flex-col items-center justify-center bg-primary-container dark:bg-primary text-on-primary-container dark:text-on-primary rounded-2xl px-4 py-1.5 scale-90 duration-150 ease-in-out hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
-<span class="material-symbols-outlined text-[24px] mb-1" style="font-variation-settings: 'FILL' 1;">security</span>
-<span class="font-label-md text-label-md text-[12px]">守护</span>
-</a>
-<!-- Item 3: 消息 (Inactive) -->
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-2xl group" href="#">
-<div class="relative">
-<span class="material-symbols-outlined text-[24px] mb-1 group-hover:scale-110 transition-transform" style="font-variation-settings: 'FILL' 0;">chat_bubble</span>
-<span class="absolute top-0 right-0 w-2 h-2 bg-error rounded-full"></span>
-</div>
-<span class="font-label-md text-label-md text-[12px]">消息</span>
-</a>
-<!-- Item 4: 陪伴 (Inactive) -->
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-2xl group" href="#">
-<span class="material-symbols-outlined text-[24px] mb-1 group-hover:scale-110 transition-transform" style="font-variation-settings: 'FILL' 0;">volunteer_activism</span>
-<span class="font-label-md text-label-md text-[12px]">陪伴</span>
-</a>
-<!-- Item 5: 我的 (Inactive) -->
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-2xl group" href="#">
-<span class="material-symbols-outlined text-[24px] mb-1 group-hover:scale-110 transition-transform" style="font-variation-settings: 'FILL' 0;">person</span>
-<span class="font-label-md text-label-md text-[12px]">我的</span>
-</a>
-</nav>
-<!-- Desktop Navigation Alternative (Hidden on Mobile) -->
-<nav class="hidden md:flex flex-col fixed top-1/2 -translate-y-1/2 left-4 gap-4 z-50">
-<div class="bg-surface-container-lowest shadow-lg rounded-2xl p-2 flex flex-col gap-2 border border-surface-variant">
-<button class="w-12 h-12 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors" title="首页">
-<span class="material-symbols-outlined">home</span>
-</button>
-<button class="w-12 h-12 rounded-xl flex items-center justify-center bg-primary-container text-on-primary-container shadow-inner" title="守护">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">security</span>
-</button>
-<button class="w-12 h-12 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors relative" title="消息">
-<span class="material-symbols-outlined">chat_bubble</span>
-<span class="absolute top-3 right-3 w-2 h-2 bg-error rounded-full"></span>
-</button>
-<button class="w-12 h-12 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors" title="陪伴">
-<span class="material-symbols-outlined">volunteer_activism</span>
-</button>
-<button class="w-12 h-12 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors" title="我的">
-<span class="material-symbols-outlined">person</span>
-</button>
-</div>
+
+<nav class="bottom-nav" aria-label="底部导航">
+  <a href="index.html?app=1"><span class="material-symbols-outlined">home</span>首页</a>
+  <a href="monitor.html?app=1"><span class="material-symbols-outlined">security</span>守护</a>
+  <a href="events.html?app=1"><span class="material-symbols-outlined">history</span>事件</a>
+  <a href="companionship.html?app=1"><span class="material-symbols-outlined">volunteer_activism</span>陪伴</a>
+  <a class="active" href="privacy.html?app=1"><span class="material-symbols-outlined">person</span>我的</a>
 </nav>
 
-<script id="gohome-stitch-route-links">
-  (() => {
-    const routes = {
-      "首页": "index.html",
-      "守护": "monitor.html",
-      "消息": "events.html",
-      "陪伴": "companionship.html",
-      "我的": "privacy.html",
-      "实时画面": "watch.html",
-      "事件列表": "events.html",
-      "规则设置": "rules.html",
-      "家庭成员": "family_members.html",
-      "通知设置": "notifications.html",
-      "隐私与数据": "privacy_data.html",
-      "添加摄像头": "connect.html",
-      "设备管理": "cameras.html"
-    };
-    document.addEventListener("click", (event) => {
-      const item = event.target.closest("a, button");
-      if (!item) return;
-      if (item.hasAttribute("onclick")) return;
-      const href = item.getAttribute("href");
-      if (href && href !== "#") return;
-      const text = (item.innerText || item.textContent || "").replace(/\s+/g, "").trim();
-      const route = routes[text];
-      if (!route) return;
-      event.preventDefault();
-      window.location.href = route;
-    });
-  })();
-</script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
-</body></html>
+<script src="assets/scripts/edge-client.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/rules-live.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
+</body>
+</html>

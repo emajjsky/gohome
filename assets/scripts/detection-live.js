@@ -3,6 +3,7 @@
         cameras: [],
         selectedCameraId: null,
         detectorBackend: "basic",
+        capabilities: {},
         latestSnapshot: null,
         streamCameraId: null,
         streamController: null,
@@ -15,6 +16,37 @@
     function setText(id, value) {
         const node = $(id);
         if (node) node.textContent = value;
+    }
+
+    function boolValue(value, fallback = false) {
+        if (value === undefined || value === null || value === "") return fallback;
+        if (typeof value === "string") {
+            const normalized = value.trim().toLowerCase();
+            if (!normalized) return fallback;
+            return !["0", "false", "off", "no", "否"].includes(normalized);
+        }
+        return Boolean(value);
+    }
+
+    function backendLabel(backend) {
+        if (backend === "yolo") return "人形检测";
+        if (backend === "demo") return "基础视觉";
+        if (backend === "rtmpose" || backend === "pose") return "姿态检测";
+        if (backend === "basic") return "基础检测";
+        return "盒子视觉";
+    }
+
+    function normalizeCapabilities(raw = {}, backend = "basic") {
+        const normalizedBackend = String(raw.backend || backend || "basic").trim().toLowerCase();
+        return {
+            person_detection: boolValue(raw.person_detection),
+            no_person_detection: boolValue(raw.no_person_detection),
+            fall_candidate: boolValue(raw.fall_candidate),
+            activity_candidate: boolValue(raw.activity_candidate, true),
+            fire_candidate: boolValue(raw.fire_candidate, true),
+            backend: normalizedBackend,
+            backend_label: raw.backend_label || backendLabel(normalizedBackend),
+        };
     }
 
     function escapeHtml(value) {
@@ -162,7 +194,7 @@
         const eventsSecondary = $("detectionSecondaryEventsLink");
         const eventsNav = $("detectionNavEventsLink");
         if (monitorNav) monitorNav.href = monitorHref;
-        if (watchBack) watchBack.href = watchHref;
+        if (watchBack) watchBack.href = monitorHref;
         if (eventsPrimary) eventsPrimary.href = eventsHref;
         if (eventsSecondary) eventsSecondary.href = eventsHref;
         if (eventsNav) eventsNav.href = eventsHref;
@@ -253,16 +285,19 @@
 
     function renderDevice(device) {
         state.detectorBackend = device.detector_backend || "basic";
-        const yoloEnabled = state.detectorBackend === "yolo";
-        setText("detectionStatusBadge", device.worker_running ? "服务在线" : "服务暂停");
-        setText("detectionBackend", yoloEnabled ? "YOLO" : "basic");
-        setText("detectionCapabilityBadge", yoloEnabled ? "YOLO 可用" : "基础检测");
-        setText("detectionPersonCapability", yoloEnabled ? "当前由 YOLO 人数结果执行。" : "需要以 YOLO 模式启动。");
-        setText("detectionFallCapability", yoloEnabled ? "当前由 YOLO 人框比例执行。" : "需要以 YOLO 模式启动。");
-        $("detectionPersonBadge").textContent = yoloEnabled ? "可用" : "待启用";
-        $("detectionPersonBadge").className = `app-mini-pill ${yoloEnabled ? "good" : "muted"} not-italic`;
-        $("detectionFallBadge").textContent = yoloEnabled ? "可用" : "待启用";
-        $("detectionFallBadge").className = `app-mini-pill ${yoloEnabled ? "good" : "muted"} not-italic`;
+        state.capabilities = normalizeCapabilities(device.vision_capabilities || {}, state.detectorBackend);
+        const personReady = state.capabilities.person_detection || state.capabilities.no_person_detection;
+        const fallReady = state.capabilities.fall_candidate;
+        const label = state.capabilities.backend_label || backendLabel(state.detectorBackend);
+        setText("detectionStatusBadge", device.worker_running ? "盒子在线" : "盒子暂停");
+        setText("detectionBackend", label);
+        setText("detectionCapabilityBadge", label);
+        setText("detectionPersonCapability", personReady ? "人形和长时间无人规则可用。" : "当前盒子未启用人形模型，人形和无人规则不会执行。");
+        setText("detectionFallCapability", fallReady ? "疑似跌倒候选规则可用，命中后进入事件页确认。" : "需要人形或姿态模型后才会开放跌倒候选。");
+        $("detectionPersonBadge").textContent = personReady ? "可用" : "需模型";
+        $("detectionPersonBadge").className = `app-mini-pill ${personReady ? "good" : "muted"} not-italic`;
+        $("detectionFallBadge").textContent = fallReady ? "可用" : "需模型";
+        $("detectionFallBadge").className = `app-mini-pill ${fallReady ? "good" : "muted"} not-italic`;
     }
 
     function renderCameraList() {
@@ -405,14 +440,13 @@
         const candidates = Array.isArray(evaluation?.candidates) ? evaluation.candidates : [];
         const evalState = evaluation?.state || {};
         const hasCandidates = candidates.length > 0;
+        const cameraState = String(evalState.camera_state || evalState.camera_status || "").toLowerCase();
         const badge = $("detectionRuleBadge");
-        badge.textContent = hasCandidates ? `${candidates.length} 个候选` : "未命中规则";
-        badge.className = `app-mini-pill ${hasCandidates ? "warn" : "good"}`;
+        badge.textContent = hasCandidates ? `${candidates.length} 个候选` : (cameraState === "online" ? "未命中规则" : "等待规则");
+        badge.className = `app-mini-pill ${hasCandidates ? "warn" : (cameraState === "online" ? "good" : "muted")}`;
         setText(
             "detectionRuleSummary",
-            hasCandidates
-                ? evaluationSummary(evaluation)
-                : "当前检测结果没有生成告警候选。"
+            evaluationSummary(evaluation)
         );
         setText("detectionNoPerson", fmtDuration(evalState.no_person_seconds));
         setText("detectionNoMotion", fmtDuration(evalState.no_motion_seconds));
@@ -423,7 +457,7 @@
         const badge = $("detectionRuleBadge");
         badge.textContent = "等待规则";
         badge.className = "app-mini-pill muted";
-        setText("detectionRuleSummary", "后台 worker 还没有给这个摄像头生成规则评估，抓帧或等待下一轮抽帧。");
+        setText("detectionRuleSummary", "等待家庭盒子回传这路摄像头的检测状态。");
         setText("detectionNoPerson", "-");
         setText("detectionNoMotion", "-");
         setText("detectionEvalTime", "-");
@@ -432,6 +466,28 @@
     async function loadEvaluation(cameraId) {
         const evaluation = await GoHomeEdge.appLatestEvaluation(cameraId);
         renderEvaluation(evaluation);
+        return evaluation;
+    }
+
+    function renderEvaluationHeader(evaluation) {
+        const cameraState = String(evaluation?.state?.camera_state || evaluation?.state?.camera_status || "").toLowerCase();
+        const candidates = Array.isArray(evaluation?.candidates) ? evaluation.candidates : [];
+        if (candidates.length) {
+            setText("detectionTitle", "命中需要确认的候选");
+            setText("detectionSubtitle", evaluationSummary(evaluation));
+            setText("detectionStatusBadge", "需要确认");
+            return;
+        }
+        if (cameraState === "online") {
+            setText("detectionTitle", "摄像头在线，暂无异常");
+            setText("detectionSubtitle", evaluationSummary(evaluation));
+            setText("detectionStatusBadge", "当前平稳");
+            if (evaluation?.evaluated_at) setText("detectionTime", `${GoHomeEdge.fmtTime(evaluation.evaluated_at)} 同步`);
+            return;
+        }
+        setText("detectionTitle", "等待检测状态");
+        setText("detectionSubtitle", evaluationSummary(evaluation));
+        setText("detectionStatusBadge", "等待同步");
     }
 
     async function loadCurrentSnapshot() {
@@ -441,9 +497,16 @@
             await attachStream(state.selectedCameraId);
             const snapshot = await GoHomeEdge.appLatestSnapshot(state.selectedCameraId, { allowMissing: true });
             if (snapshot?.available === false) {
-                renderEmptyEvaluation();
-                setText("detectionSubtitle", "实时画面已连接，等待后台生成最新检测截图。");
-                setText("detectionTime", "实时预览中");
+                renderEmptySnapshot();
+                const evaluation = await loadEvaluation(state.selectedCameraId).catch(() => null);
+                if (evaluation) {
+                    renderEvaluationHeader(evaluation);
+                } else {
+                    renderEmptyEvaluation();
+                    setText("detectionTitle", "等待检测状态");
+                    setText("detectionSubtitle", "家庭盒子在线后会回传这路摄像头的检测状态。");
+                    setText("detectionStatusBadge", "等待同步");
+                }
             } else {
                 await renderSnapshot(snapshot);
                 await loadEvaluation(state.selectedCameraId).catch(renderEmptyEvaluation);
@@ -491,7 +554,7 @@
                 return;
             }
             setText("detectionTitle", "本机服务未连接");
-            setText("detectionSubtitle", "启动 edge-agent 后，这里会显示真实检测结果。");
+            setText("detectionSubtitle", "启动家庭盒子服务后，这里会显示真实检测结果。");
             setText("detectionStatusBadge", "未连接");
             detachStream();
             renderEmptySnapshot();

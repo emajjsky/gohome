@@ -124,11 +124,16 @@
     }
   }
 
-  async function ensureFamily() {
+  async function ensureFamily(options = {}) {
+    const createIfMissing = Boolean(options.createIfMissing);
     if (!(await ensureApi())) return null;
     const families = await GoHomeEdge.myFamilies();
     state.families = families;
     if (families[0]) return families[0];
+    if (!createIfMissing) {
+      if (options.redirect !== false) go("family.html?mode=setup");
+      return null;
+    }
     const family = await GoHomeEdge.createFamily({ name: "我的家" });
     state.families = [family];
     return family;
@@ -139,34 +144,195 @@
     return selected?.dataset?.name || selected?.innerText?.trim() || "母亲";
   }
 
+  function setInputValue(selector, value) {
+    const input = $(selector);
+    if (input) input.value = String(value || "");
+  }
+
+  function setParentProfileNextEnabled() {
+    const next = $("#next-button");
+    if (!next) return;
+    const hasName = Boolean($("#custom-name")?.value.trim());
+    next.disabled = !hasName;
+  }
+
+  function selectRelationshipCard(name) {
+    const targetName = String(name || "").trim();
+    $$(".relationship-card").forEach((card) => {
+      const selected = targetName && card.dataset.name === targetName;
+      card.setAttribute("aria-pressed", selected ? "true" : "false");
+      card.classList.toggle("selected", selected);
+      card.classList.toggle("border-primary", selected);
+      card.classList.toggle("bg-primary-container", selected);
+      card.classList.toggle("text-on-primary-container", selected);
+      card.classList.toggle("border-surface-container-highest", !selected);
+      card.classList.toggle("bg-surface-container-lowest", !selected);
+    });
+  }
+
+  function wireRelationshipCards() {
+    const input = $("#custom-name");
+    const clear = $("#clear-input");
+    const next = $("#next-button");
+    $$(".relationship-card").forEach((card) => {
+      card.setAttribute("aria-pressed", card.classList.contains("selected") ? "true" : "false");
+      card.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const name = String(card.dataset.name || "").trim();
+        selectRelationshipCard(name);
+        if (input) input.value = name;
+        clear?.classList.toggle("hidden", !name);
+        if (next) next.disabled = !name;
+        setParentProfileNextEnabled();
+      }, true);
+    });
+  }
+
+  function setParentProfileCopy(editing) {
+    const title = document.querySelector("body.gohome-page-parent_profile header div.font-headline-md");
+    const heading = document.querySelector("body.gohome-page-parent_profile main h1");
+    const subheading = document.querySelector("body.gohome-page-parent_profile main h1 + p");
+    const next = $("#next-button");
+    if (title) title.textContent = editing ? "家人资料" : "添加家人";
+    if (heading) heading.textContent = editing ? "编辑被守护人资料" : "先补全被守护人资料";
+    if (subheading) subheading.textContent = "用于关怀卡片、电话联系和回家提醒。";
+    if (next) {
+      const textNode = Array.from(next.childNodes).find((child) => child.nodeType === Node.TEXT_NODE && child.textContent.trim());
+      if (textNode) textNode.textContent = editing ? "保存资料 " : "下一步 ";
+    }
+  }
+
+  async function hydrateParentProfile() {
+    if (!(await ensureApi())) return null;
+    if (!GoHomeEdge.isAuthenticated?.()) {
+      go(GoHomeEdge.loginHref?.(GoHomeEdge.currentPagePath?.() || "parent_profile.html") || "login.html");
+      return null;
+    }
+    let families = [];
+    try {
+      await GoHomeEdge.currentUser();
+      families = await GoHomeEdge.myFamilies();
+    } catch (_error) {
+      GoHomeEdge.clearAuthToken?.();
+      go(GoHomeEdge.loginHref?.(GoHomeEdge.currentPagePath?.() || "parent_profile.html") || "login.html");
+      return null;
+    }
+    state.families = families;
+    const familyId = new URLSearchParams(window.location.search).get("family_id") || families[0]?.id || "";
+    if (!familyId) {
+      go("family.html?mode=setup");
+      return null;
+    }
+    try {
+      const profile = await GoHomeEdge.v1ElderProfile(familyId, "elder_primary");
+      const editing = Boolean(profile?.display_name || profile?.mobile_phone || profile?.phone || profile?.home_phone);
+      setParentProfileCopy(editing);
+      const relationship = profile.relationship || "";
+      setInputValue("#custom-name", profile.display_name || relationship || "");
+      setInputValue("#elder-mobile", profile.mobile_phone || profile.phone || "");
+      setInputValue("#elder-home-phone", profile.home_phone || "");
+      setInputValue("#elder-city", profile.city || "杭州");
+      setInputValue("#elder-district", profile.district || "");
+      selectRelationshipCard(relationship);
+      $("#clear-input")?.classList.toggle("hidden", !$("#custom-name")?.value.trim());
+      setParentProfileNextEnabled();
+      return { family: families.find((item) => String(item.id) === String(familyId)) || families[0] || null, profile };
+    } catch (_error) {
+      setParentProfileCopy(false);
+      return { family: families.find((item) => String(item.id) === String(familyId)) || families[0] || null, profile: null };
+    }
+  }
+
   function wireLogin() {
     const form = $("form");
     if (!form) return;
+    let authMode = new URLSearchParams(window.location.search).get("mode") === "register" ? "register" : "login";
+    const tabs = $$(".gohome-auth-mode-tab", form);
+    const hint = $("#auth-mode-hint");
+    const submitButton = $("#auth-submit") || $("button[type='submit']", form);
+
+    function setAuthMode(mode) {
+      authMode = mode === "register" ? "register" : "login";
+      tabs.forEach((tab) => {
+        const selected = tab.dataset.authMode === authMode;
+        tab.setAttribute("aria-pressed", selected ? "true" : "false");
+        tab.classList.toggle("bg-surface-container-lowest", selected);
+        tab.classList.toggle("text-on-background", selected);
+        tab.classList.toggle("shadow-sm", selected);
+        tab.classList.toggle("text-on-surface-variant", !selected);
+      });
+      if (hint) {
+        hint.textContent = authMode === "register"
+          ? "用手机号创建新的家属身份。新手机号不会自动读取已有家庭、盒子和摄像头数据。"
+          : "用手机号登录，家庭与设备数据只跟随当前手机号显示。";
+      }
+      if (submitButton) submitButton.textContent = authMode === "register" ? "创建并登录" : "登录";
+    }
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setAuthMode(tab.dataset.authMode);
+      }, true);
+    });
+    setAuthMode(authMode);
+
+    const codeButton = $$("button", form).find((button) => /获取验证码|演示验证码/.test(text(button.innerText)));
+    codeButton?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const codeInput = $("#code");
+      if (codeInput) codeInput.value = "000000";
+      toast("验证码已填入");
+    }, true);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (form.reportValidity && !form.reportValidity()) return;
       if (!(await ensureApi())) return;
-      const phone = $("#phone")?.value.trim() || "13800000000";
+      const phone = ($("#phone")?.value || "").replace(/\D/g, "");
       const code = $("#code")?.value.trim() || "000000";
-      const submit = $("button[type='submit']", form);
+      if (!/^\d{11}$/.test(phone)) {
+        toast("请输入 11 位手机号", "error");
+        return;
+      }
+      const submit = submitButton || $("button[type='submit']", form);
       const oldText = submit?.textContent || "";
       if (submit) {
         submit.disabled = true;
-        submit.textContent = "正在登录...";
+        submit.textContent = authMode === "register" ? "正在创建..." : "正在登录...";
       }
       try {
-        await GoHomeEdge.register({
-          email: `${phone}@phone.gohome.local`,
-          password: code.padEnd(6, "0"),
+        const payload = {
+          phone,
+          code: code.padEnd(6, "0"),
           display_name: "家属",
-        });
+        };
+        if (authMode === "register") {
+          await GoHomeEdge.register(payload);
+          toast("手机号已创建");
+          window.setTimeout(() => go("family.html?mode=setup"), 220);
+          return;
+        }
+        await GoHomeEdge.login(payload);
         toast("登录成功");
-        window.setTimeout(() => go("parent_profile.html"), 220);
+        const families = await GoHomeEdge.myFamilies().catch(() => []);
+        const fallback = Array.isArray(families) && families.length ? "index.html" : "family.html?mode=setup";
+        const target = GoHomeEdge.redirectTarget?.(fallback) || fallback;
+        window.setTimeout(() => go(target), 220);
       } catch (error) {
-        toast(error.message || "登录失败", "error");
+        if (authMode === "register" && error.status === 409) {
+          toast("手机号已注册，请切换到手机号登录", "error");
+        } else if (authMode === "login" && error.status === 401) {
+          toast("手机号未注册或验证码不正确", "error");
+        } else {
+          toast(error.message || (authMode === "register" ? "创建失败" : "登录失败"), "error");
+        }
       } finally {
         if (submit) {
           submit.disabled = false;
-          submit.textContent = oldText;
+          submit.textContent = oldText || (authMode === "register" ? "创建并登录" : "登录");
         }
       }
     });
@@ -175,41 +341,133 @@
   function wireParentProfile() {
     const next = $("#next-button");
     if (!next) return;
+    hydrateParentProfile();
+    wireRelationshipCards();
+    ["#custom-name", "#elder-mobile", "#elder-home-phone", "#elder-city", "#elder-district"].forEach((selector) => {
+      $(selector)?.addEventListener("input", setParentProfileNextEnabled);
+    });
     next.addEventListener("click", async (event) => {
       event.preventDefault();
       event.stopImmediatePropagation();
       if (next.disabled) return;
       try {
-        const family = await ensureFamily();
+        const family = await ensureFamily({ redirect: true });
         if (!family) return;
         const relationship = selectedRelationship();
         const displayName = $("#custom-name")?.value.trim() || relationship || "妈妈";
         await GoHomeEdge.v1UpsertElderProfile(family.id, "elder_primary", {
           display_name: displayName,
           relationship,
-          city: "杭州",
+          city: $("#elder-city")?.value.trim() || "杭州",
+          district: $("#elder-district")?.value.trim() || "",
+          phone: $("#elder-mobile")?.value.trim() || "",
+          mobile_phone: $("#elder-mobile")?.value.trim() || "",
+          home_phone: $("#elder-home-phone")?.value.trim() || "",
         });
         toast("资料已保存");
-        window.setTimeout(() => go(`family.html?family_id=${family.id}`), 220);
+        const target = GoHomeEdge.redirectTarget?.(`family.html?family_id=${family.id}`) || `family.html?family_id=${family.id}`;
+        window.setTimeout(() => go(target), 220);
       } catch (error) {
         toast(error.message || "保存失败", "error");
       }
     }, true);
   }
 
+  async function hydrateFamilySetup() {
+    if (!(await ensureApi())) return;
+    if (!GoHomeEdge.isAuthenticated?.()) {
+      go(GoHomeEdge.loginHref?.("family.html?mode=setup") || "login.html");
+      return;
+    }
+    const status = $("#familySetupStatus");
+    const list = $("#familyExistingList");
+    const createInput = $("#spaceName");
+    try {
+      const families = await GoHomeEdge.myFamilies();
+      state.families = Array.isArray(families) ? families : [];
+      if (createInput && !createInput.value.trim()) createInput.value = state.families.length ? "" : "我的家";
+      if (status) {
+        status.textContent = state.families.length
+          ? "你已经加入家庭。可以继续绑定盒子、填写资料，或把邀请码发给其他家人。"
+          : "新账号还没有家庭数据。创建家庭或输入邀请码后，才能看到盒子、摄像头和关怀卡片。";
+      }
+      if (!list) return;
+      if (!state.families.length) {
+        list.classList.add("hidden");
+        list.innerHTML = "";
+        return;
+      }
+      list.classList.remove("hidden");
+      list.innerHTML = state.families.map((family) => {
+        const profileHref = GoHomeEdge.pageHref?.(`parent_profile.html?family_id=${family.id}`, {
+          next: `device_binding.html?family_id=${family.id}`,
+        }) || `parent_profile.html?family_id=${family.id}`;
+        const bindingHref = GoHomeEdge.pageHref?.(`device_binding.html?family_id=${family.id}`) || `device_binding.html?family_id=${family.id}`;
+        return `
+          <article class="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4 shadow-sm">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="font-label-md text-label-md text-on-surface">${escapeHtml(family.name || "我的家")}</p>
+                <p class="mt-1 font-body-md text-[13px] text-on-surface-variant">${Number(family.member_count || 1)} 位家人共享守护</p>
+              </div>
+              <span class="rounded-full bg-primary-container px-3 py-1 font-label-md text-[12px] text-primary">已加入</span>
+            </div>
+            <div class="mt-3 rounded-xl bg-surface-container-low px-3 py-2">
+              <p class="font-body-md text-[12px] text-on-surface-variant">家庭邀请码</p>
+              <p class="mt-1 break-all font-label-md text-label-md text-on-surface">${escapeHtml(family.join_code || "待生成")}</p>
+            </div>
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <a class="rounded-xl bg-primary text-on-primary py-3 text-center font-label-md text-label-md" href="${profileHref}">填写资料</a>
+              <a class="rounded-xl bg-primary-container text-primary py-3 text-center font-label-md text-label-md" href="${bindingHref}">绑定盒子</a>
+            </div>
+          </article>
+        `;
+      }).join("");
+    } catch (error) {
+      if (status) {
+        status.textContent = error.message || "读取家庭信息失败，请稍后重试。";
+        status.classList.add("text-[#93000a]");
+      }
+    }
+  }
+
   function wireFamily() {
-    const button = $$("button").find((item) => text(item.innerText).includes("创建") || text(item.innerText).includes("继续"));
-    if (!button) return;
-    button.addEventListener("click", async (event) => {
+    hydrateFamilySetup();
+    const createButton = $("#familyCreateButton")
+      || $$("button").find((item) => text(item.innerText).includes("创建") || text(item.innerText).includes("继续"));
+    const joinButton = $("#familyJoinButton");
+    createButton?.addEventListener("click", async (event) => {
       event.preventDefault();
       event.stopImmediatePropagation();
       try {
-        const family = await ensureFamily();
+        if (!(await ensureApi())) return;
+        const name = $("#spaceName")?.value.trim() || "我的家";
+        const family = await GoHomeEdge.createFamily({ name });
         if (!family) return;
         toast("家庭空间已就绪");
-        window.setTimeout(() => go(`device_binding.html?family_id=${family.id}`), 220);
+        const next = GoHomeEdge.pageHref?.(`parent_profile.html?family_id=${family.id}`, {
+          next: `device_binding.html?family_id=${family.id}`,
+        }) || `parent_profile.html?family_id=${family.id}&next=device_binding.html`;
+        window.setTimeout(() => go(next), 220);
       } catch (error) {
         toast(error.message || "创建失败", "error");
+      }
+    }, true);
+    joinButton?.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      try {
+        if (!(await ensureApi())) return;
+        const code = $("#familyJoinCode")?.value.trim() || "";
+        if (!code) {
+          toast("请填写家庭邀请码", "error");
+          return;
+        }
+        const family = await GoHomeEdge.joinFamily({ code });
+        toast("已加入家庭");
+        window.setTimeout(() => go(`index.html?family_id=${family.id}`), 220);
+      } catch (error) {
+        toast(error.message || "加入失败", "error");
       }
     }, true);
   }
@@ -223,7 +481,8 @@
   }
 
   function wireDeviceBinding() {
-    const buttons = $$("button").filter((item) => /扫描包装二维码|手动输入序列号|稍后设置/.test(item.innerText || ""));
+    if ($("#bindingClaimInput")) return;
+    const buttons = $$("button").filter((item) => /扫描.*二维码|输入.*序列号|手动输入序列号|稍后设置/.test(item.innerText || ""));
     buttons.forEach((button) => {
       button.addEventListener("click", async (event) => {
         event.preventDefault();
@@ -421,26 +680,23 @@
 
   function cameraCard(camera, index) {
     const state = cameraState(camera);
-    const dotClass = state.tone === "ok" ? "bg-tertiary" : (state.tone === "error" ? "bg-error" : "bg-primary");
+    const badgeTone = state.tone === "ok" ? "good" : (state.tone === "error" ? "warn" : "muted");
     return `
-      <article class="rounded-xl border border-surface-container-low bg-surface-container-lowest p-4 shadow-[0_4px_12px_rgba(0,0,0,0.035)] flex flex-col gap-3" data-camera-id="${camera.id}">
+      <article class="gohome-camera-device-card" data-camera-id="${camera.id}">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="w-2 h-2 rounded-full ${dotClass} shrink-0"></span>
-              <span class="font-label-md text-label-md text-on-surface">${state.label}</span>
-            </div>
-            <h3 class="font-headline-md text-headline-md text-on-background truncate">${escapeHtml(camera.room || camera.name || "摄像头")}</h3>
-            <p class="font-body-md text-[14px] leading-5 text-on-surface-variant">${escapeHtml(camera.name || "摄像头")} · ${escapeHtml(state.detail)}</p>
+            <span class="app-mini-pill ${badgeTone}">${state.label}</span>
+            <h3 class="mt-2">${escapeHtml(camera.room || camera.name || "摄像头")}</h3>
+            <p>${escapeHtml(camera.name || "摄像头")} ${escapeHtml(state.detail)}</p>
           </div>
-          <button aria-label="同步状态" class="w-10 h-10 rounded-full hover:bg-surface-container-low text-primary shrink-0 inline-flex items-center justify-center" data-action="sync" data-id="${camera.id}">
+          <button aria-label="同步状态" class="w-10 h-10 rounded-full bg-surface-container-low text-primary shrink-0 inline-flex items-center justify-center" data-action="sync" data-id="${camera.id}">
             <span class="material-symbols-outlined">sync</span>
           </button>
         </div>
-        <div class="grid grid-cols-3 gap-2">
-          <button class="min-h-10 rounded-lg bg-primary text-on-primary font-label-md text-label-md whitespace-nowrap" data-action="edit" data-id="${camera.id}">配置</button>
-          <button class="min-h-10 rounded-lg bg-surface-container-low text-on-surface font-label-md text-label-md whitespace-nowrap" data-action="toggle" data-id="${camera.id}">${camera.enabled ? "停用" : "启用"}</button>
-          <button class="min-h-10 rounded-lg bg-[#fff4f1] text-[#93000a] font-label-md text-label-md whitespace-nowrap" data-action="delete" data-id="${camera.id}">删除</button>
+        <div class="gohome-camera-device-actions">
+          <button data-action="edit" data-id="${camera.id}">配置</button>
+          <button data-action="toggle" data-id="${camera.id}">${camera.enabled ? "停用" : "启用"}</button>
+          <button data-action="delete" data-id="${camera.id}">删除</button>
         </div>
       </article>
     `;
@@ -453,9 +709,11 @@
     const cameras = await GoHomeEdge.cameras();
     grid.innerHTML = cameras.length
       ? cameras.map(cameraCard).join("")
-      : `<div class="bg-surface-container-lowest rounded-2xl p-6 text-center text-on-surface-variant md:col-span-2 lg:col-span-3">
-          <p class="mb-4">还没有摄像头，先在 App 里提交摄像头接入信息。</p>
-          <button class="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-5 py-3 text-on-primary font-label-md text-label-md" data-action="add">
+      : `<div class="gohome-panel gohome-empty-state md:col-span-2 lg:col-span-3">
+          <span class="material-symbols-outlined">linked_camera</span>
+          <h3>还没有摄像头</h3>
+          <p>先在 App 里提交摄像头接入信息，家庭盒子会自动同步。</p>
+          <button class="gohome-pill-button primary inline-flex items-center justify-center gap-2 mt-4" data-action="add">
             <span class="material-symbols-outlined text-[20px]">add</span>
             添加摄像头
           </button>
@@ -502,19 +760,28 @@
   async function hydratePrivacy() {
     if (!(await ensureApi())) return;
     try {
-      const [user, families, auth] = await Promise.all([
+      const [user, families, auth, device, cameras] = await Promise.all([
         GoHomeEdge.currentUser(),
         GoHomeEdge.myFamilies(),
         GoHomeEdge.deviceAuthStatus().catch(() => null),
+        GoHomeEdge.appDevice().catch(() => null),
+        GoHomeEdge.appCameras().catch(() => []),
       ]);
+      const family = families[0] || null;
+      const profile = family
+        ? await GoHomeEdge.v1ElderProfile(family.id, "elder_primary").catch(() => null)
+        : null;
       const cardTitle = $(".user-card-gradient h2");
-      if (cardTitle) cardTitle.textContent = user.display_name || "家属";
+      const rawName = String(user.display_name || "").trim();
+      const userName = rawName && rawName !== "回家管理员" ? rawName : (profile?.display_name ? `${profile.display_name}家属` : "家属账号");
+      if (cardTitle) cardTitle.textContent = userName;
       const uid = $(".user-card-gradient p");
-      if (uid) uid.textContent = user.email || "";
+      if (uid) uid.textContent = family ? `${family.name || "家庭空间"} · ${profile?.relationship || "家属"}` : "家属端账号";
       const familyText = $$("button").find((item) => text(item.innerText).includes("家庭成员"))?.querySelector("p");
-      if (familyText) familyText.textContent = `${families[0]?.member_count || 1}位家人共享位置`;
+      if (familyText) familyText.textContent = `${families[0]?.member_count || 1}位家人共享守护`;
       const badge = $(".user-card-gradient .font-label-md.text-label-md.text-white\\/90");
-      if (badge) badge.textContent = auth?.configured ? "家庭盒子已绑定" : "等待绑定家庭盒子";
+      const connected = Boolean(auth?.configured || device?.worker_running || (Array.isArray(cameras) && cameras.some((camera) => camera.enabled !== false && camera.status === "online")));
+      if (badge) badge.textContent = connected ? "家庭盒子已连接" : "等待连接家庭盒子";
     } catch (_error) {
       // Static content remains usable.
     }

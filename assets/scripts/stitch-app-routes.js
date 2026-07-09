@@ -5,6 +5,7 @@
   const mainTabs = [
     ["首页", "index.html"],
     ["守护", "monitor.html"],
+    ["事件", "events.html"],
     ["消息", "events.html"],
     ["陪伴", "companionship.html"],
     ["我的", "privacy.html"]
@@ -22,11 +23,7 @@
     ],
     "login.html": [
       ["隐私政策", "privacy_data.html"],
-      ["用户服务协议", "privacy_data.html"],
-      ["中国移动认证服务协议", "privacy_data.html"],
-      ["微信登录", "parent_profile.html"],
-      ["Apple登录", "parent_profile.html"],
-      ["一键登录", "parent_profile.html"]
+      ["用户服务协议", "privacy_data.html"]
     ],
     "parent_profile.html": [
       ["下一步", "family.html"]
@@ -38,7 +35,9 @@
     ],
     "device_binding.html": [
       ["扫描包装二维码", "camera_intro.html"],
+      ["扫描盒子二维码", "camera_intro.html"],
       ["手动输入序列号", "camera_intro.html"],
+      ["输入盒子序列号", "camera_intro.html"],
       ["稍后设置", "camera_intro.html"],
       ["绑定", "camera_intro.html"]
     ],
@@ -54,24 +53,20 @@
       ["添加新设备", "connect.html"],
       ["添加摄像头", "connect.html"],
       ["重新连接", "connect.html"],
-      ["规则设置", "rules.html"],
       ["查看", "watch.html"]
     ],
     "index.html": [
-      ["调整睡眠模式", "rules.html"],
       ["客厅环境", "monitor.html"],
       ["安防系统", "monitor.html"],
-      ["通话", "companionship.html"],
-      ["留言", "events.html"],
-      ["查看", "watch.html"],
-      ["行程", "events.html"]
+      ["守护画面", "monitor.html"],
+      ["事件记录", "events.html"],
+      ["设备管理", "cameras.html"],
+      ["关怀推送", "care_schedule.html"]
     ],
     "monitor.html": [
       ["客厅", "watch.html"],
       ["卧室", "watch.html"],
-      ["实时画面", "watch.html"],
-      ["事件列表", "events.html"],
-      ["规则设置", "rules.html"]
+      ["实时画面", "watch.html"]
     ],
     "watch.html": [
       ["客厅缩略图", "watch.html"],
@@ -93,11 +88,10 @@
       ["高", "rules.html"]
     ],
     "companionship.html": [
-      ["语音通话", "companionship.html"],
-      ["视频看看", "watch.html"],
-      ["视频", "watch.html"]
+      ["语音通话", "companionship.html"]
     ],
     "privacy.html": [
+      ["家人资料", "parent_profile.html?next=privacy.html"],
       ["关怀推送", "care_schedule.html"],
       ["家庭成员", "family_members.html"],
       ["通知设置", "notifications.html"],
@@ -120,13 +114,14 @@
 
   const globalRoutes = [
     ["设备管理", "cameras.html"],
-    ["添加设备", "camera_intro.html"],
+    ["家人资料", "parent_profile.html"],
     ["添加摄像头", "connect.html"],
     ["家庭成员", "family_members.html"],
     ["通知设置", "notifications.html"],
     ["关怀推送", "care_schedule.html"],
     ["隐私与数据", "privacy_data.html"],
     ["规则设置", "rules.html"],
+    ["事件记录", "events.html"],
     ["事件列表", "events.html"],
     ["实时画面", "watch.html"],
     ["查看实时画面", "watch.html"]
@@ -137,10 +132,6 @@
     arrow_back: "back",
     arrow_back_ios_new: "back",
     close: "back",
-    settings: "rules.html",
-    settings_suggest: "rules.html",
-    add: "camera_intro.html",
-    add_circle: "camera_intro.html",
     videocam: "watch.html",
     play_circle: "watch.html"
   };
@@ -195,7 +186,7 @@
       else window.location.href = "index.html";
       return;
     }
-    window.location.href = route;
+    window.location.href = window.GoHomeEdge?.pageHref?.(route) || route;
   };
 
   document.addEventListener(
@@ -213,12 +204,6 @@
     },
     true
   );
-
-  document.addEventListener("submit", (event) => {
-    if (page() !== "login.html") return;
-    event.preventDefault();
-    go("parent_profile.html");
-  });
 
   document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll("a, button, article.cursor-pointer, div.cursor-pointer, .glass-card").forEach((item) => {

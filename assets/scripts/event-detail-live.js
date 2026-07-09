@@ -74,12 +74,45 @@
             return "系统检测到画面亮度和对比度异常，可能是遮挡、黑屏或强背光。";
         }
         if (event.type === "camera_offline") {
-            return "本机守护服务暂时无法连接摄像头，可能是网络、账号或摄像头电源问题。";
+            return "家庭盒子暂时无法连接摄像头，可能是网络、账号或摄像头电源问题。";
         }
         if (event.type === "no_motion") {
             return "系统在设定时间内没有看到明显画面变化，需要结合时间段判断是否异常。";
         }
-        return "这条提醒来自本机守护服务的检测结果，建议结合截图和现实情况确认。";
+        return "这条提醒来自家庭盒子的检测结果，建议结合截图和现实情况确认。";
+    }
+
+    function engineeringCopy(text) {
+        return /edge[-_ ]?agent|cannot open|network stream|no frame|rtsp|ffmpeg|opencv|traceback|http \d+|failed/i.test(String(text || ""));
+    }
+
+    function cleanReason(event, text) {
+        const value = String(text || "").trim();
+        if (!value) return "";
+        if (!engineeringCopy(value)) return value;
+        if (event.type === "camera_offline") return "家庭盒子暂时没有拿到这路画面，会继续重试。";
+        if (event.type === "black_screen") return "家庭盒子拿到的画面质量异常，需要确认是否遮挡或背光。";
+        return "家庭盒子回传了一条需要查看的提醒。";
+    }
+
+    function displaySummary(event) {
+        if (!event) return "正在读取事件";
+        if (event.type === "camera_offline") {
+            return `${event.camera_name || event.room || "摄像头"} 暂时没有返回画面`;
+        }
+        if (event.type === "black_screen") {
+            return `${event.camera_name || event.room || "摄像头"} 画面疑似遮挡或黑屏`;
+        }
+        if (event.type === "no_motion") {
+            return `${event.camera_name || event.room || "摄像头"} 长时间没有明显变化`;
+        }
+        if (event.type === "no_person") {
+            return `${event.camera_name || event.room || "摄像头"} 长时间未检测到人`;
+        }
+        if (event.type === "fall_candidate") {
+            return `${event.camera_name || event.room || "摄像头"} 出现疑似跌倒姿态`;
+        }
+        return cleanReason(event, event.summary) || GoHomeEdge.eventLabel(event.type);
     }
 
     function fmtMetricValue(key, value) {
@@ -149,7 +182,7 @@
 
     function factText(event, _payload, rule) {
         const label = rule?.label || GoHomeEdge.eventLabel(event.type);
-        const reason = rule?.reason ? `，原因是：${rule.reason}` : "";
+        const reason = rule?.reason ? `，原因是：${cleanReason(event, rule.reason)}` : "";
         return `${GoHomeEdge.fmtDateTime(event.occurred_at)}，${event.camera_name || "摄像头"} 触发了${label}${reason}`;
     }
 
@@ -175,12 +208,12 @@
         }
         setText("edgeDetailTime", GoHomeEdge.fmtTime(event.occurred_at));
         setText("edgeDetailStatus", statusText(event));
-        setText("edgeDetailHero", event.summary);
-        setText("edgeDetailTitle", event.summary);
-        setText("edgeDetailRoom", event.room || event.camera_name || "本机测试");
+        setText("edgeDetailHero", displaySummary(event));
+        setText("edgeDetailTitle", displaySummary(event));
+        setText("edgeDetailRoom", event.room || event.camera_name || "家庭摄像头");
         setText("edgeDetailDuration", durationText(event, payload, rule));
         setText("edgeDetailDurationHint", durationHint(event, payload, rule));
-        setText("edgeDetailNote", rule.reason || detailNote(event));
+        setText("edgeDetailNote", cleanReason(event, rule.reason) || detailNote(event));
         setText("edgeDetailFact", factText(event, payload, rule));
         setText("edgeDetailFactSub", factSubText(payload, rule));
         syncActionState(event);

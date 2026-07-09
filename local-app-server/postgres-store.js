@@ -58,6 +58,8 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         ...fallbackDb,
         users: [],
         families: [],
+        family_members: [],
+        app_sessions: [],
         elder_profiles: {},
         device_bindings: [],
         binding_codes: [],
@@ -81,6 +83,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             id: user.id,
             email: user.email,
             display_name: user.display_name || "",
+            phone: user.phone || "",
             password: "",
             created_at: iso(user.created_at, db.created_at),
             updated_at: iso(user.updated_at, iso(user.created_at, db.created_at)),
@@ -97,6 +100,20 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         });
     }
 
+    for (const member of rowsByTable.family_members || []) {
+        db.family_members.push({
+            id: member.id,
+            family_id: member.family_id,
+            user_id: member.user_id,
+            role: member.role || "member",
+            status: member.status || "active",
+            invited_by: member.invited_by || null,
+            joined_at: iso(member.joined_at, iso(member.created_at, db.created_at)),
+            created_at: iso(member.created_at, db.created_at),
+            updated_at: iso(member.updated_at, iso(member.created_at, db.created_at)),
+        });
+    }
+
     for (const profile of rowsByTable.elder_profiles || []) {
         const familyId = textId(profile.family_id);
         const elderId = String(profile.elder_id || profile.id || "elder_primary");
@@ -108,6 +125,9 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             relationship: profile.relationship || "",
             age: profile.age ?? null,
             city: profile.city || "",
+            phone: profile.phone || "",
+            mobile_phone: profile.mobile_phone || "",
+            home_phone: profile.home_phone || "",
             health_notes: profile.health_notes || "",
             care_preferences: profile.care_preferences || {},
             created_at: iso(profile.created_at, db.created_at),
@@ -173,6 +193,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             sync_status: device.sync_status || "",
             last_error: device.last_error || "",
             runtime: device.runtime || {},
+            metadata: device.metadata || {},
             last_seen_at: iso(device.last_seen_at),
             last_sync_at: iso(device.last_sync_at),
             created_at: iso(device.created_at, db.created_at),
@@ -416,7 +437,13 @@ async function insertRows(client, table, rows) {
         const columns = Object.keys(row);
         if (!columns.length) continue;
         const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ");
-        const values = columns.map((column) => row[column]);
+        const values = columns.map((column) => {
+            const value = row[column];
+            if (value && typeof value === "object" && !Buffer.isBuffer(value) && !(value instanceof Date)) {
+                return JSON.stringify(value);
+            }
+            return value;
+        });
         await client.query(`insert into ${table} (${columns.join(", ")}) values (${placeholders})`, values);
     }
 }

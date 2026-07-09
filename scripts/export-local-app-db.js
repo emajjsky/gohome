@@ -61,6 +61,11 @@ function sha256(value) {
     return crypto.createHash("sha256").update(String(value)).digest("hex");
 }
 
+function phoneFromAccountEmail(email) {
+    const match = String(email || "").trim().toLowerCase().match(/^(\d{11})@phone\.gohome\.local$/);
+    return match ? match[1] : "";
+}
+
 function defaultFamilyId(db) {
     return textId(toArray(db.families)[0]?.id, "1");
 }
@@ -81,13 +86,12 @@ function buildCloudSeedBundle(db, options = {}) {
     const exportedAt = options.exportedAt || new Date().toISOString();
     const fallbackFamilyId = defaultFamilyId(db);
     const fallbackDeviceId = defaultDeviceId(db);
-    const firstUserId = textId(toArray(db.users)[0]?.id, "");
 
     const users = toArray(db.users).map((user) => ({
         id: textId(user.id),
         email: String(user.email || ""),
         display_name: String(user.display_name || ""),
-        phone: String(user.phone || ""),
+        phone: String(user.phone || phoneFromAccountEmail(user.email)),
         password_hash: user.password_hash || null,
         status: String(user.status || "active"),
         metadata: {
@@ -109,21 +113,52 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(family.updated_at, iso(family.created_at, exportedAt)),
     }));
 
-    const familyMembers = firstUserId
-        ? families.map((family) => ({
-            id: `${family.id}:owner:${firstUserId}`,
-            family_id: family.id,
-            user_id: firstUserId,
-            role: "owner",
-            status: "active",
-            invited_by: null,
-            joined_at: family.created_at,
-            created_at: family.created_at,
-            updated_at: family.updated_at,
-        }))
-        : [];
+    const rawFamilyMembers = toArray(db.family_members);
+    const firstUserId = textId(toArray(db.users)[0]?.id, "");
+    const familyMembers = rawFamilyMembers.length
+        ? rawFamilyMembers.map((member) => ({
+            id: textId(member.id || `${member.family_id}:member:${member.user_id}`),
+            family_id: textId(member.family_id),
+            user_id: textId(member.user_id),
+            role: String(member.role || "member"),
+            status: String(member.status || "active"),
+            invited_by: nullableTextId(member.invited_by),
+            joined_at: iso(member.joined_at, iso(member.created_at, exportedAt)),
+            created_at: iso(member.created_at, exportedAt),
+            updated_at: iso(member.updated_at, iso(member.created_at, exportedAt)),
+        })).filter((member) => member.family_id && member.user_id)
+        : (firstUserId
+            ? families.map((family) => ({
+                id: `${family.id}:owner:${firstUserId}`,
+                family_id: family.id,
+                user_id: firstUserId,
+                role: "owner",
+                status: "active",
+                invited_by: null,
+                joined_at: family.created_at,
+                created_at: family.created_at,
+                updated_at: family.updated_at,
+            }))
+            : []);
 
-    const elderProfiles = Object.entries(db.elder_profiles || {}).map(([key, profile]) => ({
+    const elderProfileEntries = new Map(Object.entries(db.elder_profiles || {}));
+    for (const family of families) {
+        const key = `${family.id}:elder_primary`;
+        if (!elderProfileEntries.has(key)) {
+            elderProfileEntries.set(key, {
+                id: "elder_primary",
+                elder_id: "elder_primary",
+                family_id: family.id,
+                display_name: "张阿姨",
+                relationship: "母亲",
+                city: "杭州",
+                created_at: family.created_at,
+                updated_at: family.updated_at,
+            });
+        }
+    }
+
+    const elderProfiles = Array.from(elderProfileEntries.entries()).map(([key, profile]) => ({
         id: textId(profile.id || key),
         family_id: textId(profile.family_id, key.split(":")[0] || fallbackFamilyId),
         elder_id: String(profile.elder_id || profile.id || key.split(":")[1] || "elder_primary"),
@@ -131,6 +166,9 @@ function buildCloudSeedBundle(db, options = {}) {
         relationship: String(profile.relationship || ""),
         age: numberOrNull(profile.age),
         city: String(profile.city || ""),
+        phone: String(profile.phone || ""),
+        mobile_phone: String(profile.mobile_phone || ""),
+        home_phone: String(profile.home_phone || ""),
         health_notes: String(profile.health_notes || ""),
         care_preferences: profile.care_preferences || {},
         metadata: profile.metadata && typeof profile.metadata === "object" ? profile.metadata : {},
@@ -140,7 +178,7 @@ function buildCloudSeedBundle(db, options = {}) {
 
     const devices = toObjectValues(db.devices).map((device) => ({
         device_id: textId(device.device_id || device.id),
-        family_id: nullableTextId(device.family_id || fallbackFamilyId),
+        family_id: nullableTextId(device.family_id),
         name: String(device.name || "回家盒子"),
         device_type: String(device.device_type || "edge-agent"),
         status: String(device.status || "active"),
@@ -156,7 +194,7 @@ function buildCloudSeedBundle(db, options = {}) {
         sync_status: String(device.sync_status || ""),
         last_error: String(device.last_error || ""),
         runtime: device.runtime || {},
-        metadata: {},
+        metadata: device.metadata && typeof device.metadata === "object" ? device.metadata : {},
         last_seen_at: iso(device.last_seen_at),
         last_sync_at: iso(device.last_sync_at),
         created_at: iso(device.created_at, exportedAt),
@@ -222,6 +260,11 @@ function buildCloudSeedBundle(db, options = {}) {
         created_at: iso(camera.created_at, exportedAt),
         updated_at: iso(camera.updated_at, iso(camera.created_at, exportedAt)),
     }));
+    const validCameraIds = new Set(cameras.map((camera) => textId(camera.id)).filter(Boolean));
+    const cameraReference = (value) => {
+        const id = textId(value);
+        return id && validCameraIds.has(id) ? id : null;
+    };
 
     const cameraSecrets = toObjectValues(db.cameras)
         .filter((camera) => camera.stream_url || camera.username || camera.password)
@@ -284,7 +327,7 @@ function buildCloudSeedBundle(db, options = {}) {
         id: textId(asset.id),
         family_id: nullableTextId(asset.family_id || fallbackFamilyId),
         device_id: nullableTextId(asset.device_id || fallbackDeviceId),
-        camera_id: nullableTextId(asset.camera_id),
+        camera_id: cameraReference(asset.camera_id),
         file_name: String(asset.file_name || ""),
         content_type: String(asset.content_type || "image/jpeg"),
         snapshot_path: String(asset.snapshot_path || ""),
@@ -304,7 +347,7 @@ function buildCloudSeedBundle(db, options = {}) {
         id: textId(event.id),
         family_id: nullableTextId(event.family_id || fallbackFamilyId),
         device_id: nullableTextId(event.device_id || event.payload?.edge_upload?.edge_device_id || fallbackDeviceId),
-        camera_id: nullableTextId(event.camera_id),
+        camera_id: cameraReference(event.camera_id),
         media_asset_id: nullableTextId(event.media_asset_id),
         idempotency_key: String(event.idempotency_key || `event:${event.id}`),
         edge_event_id: nullableTextId(event.edge_event_id || event.payload?.edge_upload?.edge_event_id),

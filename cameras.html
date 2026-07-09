@@ -4,97 +4,9 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家 - 摄像头管理</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&amp;family=Hanken+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "surface-tint": "#0060ac",
-                        "on-secondary-fixed-variant": "#474744",
-                        "surface-dim": "#dbd9d9",
-                        "outline": "#717783",
-                        "tertiary-fixed-dim": "#87dc2c",
-                        "on-secondary": "#ffffff",
-                        "on-error-container": "#93000a",
-                        "secondary-fixed": "#e4e2dd",
-                        "on-tertiary-fixed": "#0e2000",
-                        "surface-container-high": "#eae8e7",
-                        "outline-variant": "#c1c7d3",
-                        "tertiary-container": "#498300",
-                        "surface-container-lowest": "#ffffff",
-                        "on-tertiary-container": "#f9ffeb",
-                        "background": "#fbf9f8",
-                        "secondary-fixed-dim": "#c8c6c2",
-                        "on-tertiary": "#ffffff",
-                        "on-surface-variant": "#414751",
-                        "surface-container-highest": "#e4e2e2",
-                        "on-background": "#1b1c1c",
-                        "surface-variant": "#e4e2e2",
-                        "on-tertiary-fixed-variant": "#2a5000",
-                        "on-primary-container": "#fdfcff",
-                        "on-secondary-container": "#63635f",
-                        "on-primary-fixed": "#001c39",
-                        "inverse-surface": "#303030",
-                        "tertiary-fixed": "#a1fa49",
-                        "surface": "#fbf9f8",
-                        "surface-container-low": "#f5f3f3",
-                        "surface-bright": "#fbf9f8",
-                        "primary-container": "#2976c7",
-                        "on-surface": "#1b1c1c",
-                        "primary-fixed": "#d4e3ff",
-                        "primary": "#005da7",
-                        "on-primary-fixed-variant": "#004883",
-                        "error": "#ba1a1a",
-                        "on-error": "#ffffff",
-                        "inverse-on-surface": "#f2f0f0",
-                        "error-container": "#ffdad6",
-                        "secondary-container": "#e1dfdb",
-                        "primary-fixed-dim": "#a4c9ff",
-                        "tertiary": "#386800",
-                        "inverse-primary": "#a4c9ff",
-                        "surface-container": "#efeded",
-                        "secondary": "#5e5e5b",
-                        "on-secondary-fixed": "#1b1c19",
-                        "on-primary": "#ffffff"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px"
-                    },
-                    "spacing": {
-                        "stack-sm": "8px",
-                        "gutter-card": "16px",
-                        "stack-md": "16px",
-                        "stack-lg": "32px",
-                        "margin-page": "20px"
-                    },
-                    "fontFamily": {
-                        "body-lg": ["Inter"],
-                        "label-md": ["Inter"],
-                        "body-md": ["Inter"],
-                        "headline-md": ["Hanken Grotesk"],
-                        "headline-lg": ["Hanken Grotesk"],
-                        "headline-lg-mobile": ["Hanken Grotesk"]
-                    },
-                    "fontSize": {
-                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
-                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
-                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
-                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
-                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
-                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
-                    }
-                }
-            }
-        }
-    </script>
+
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <style>
         body { background-color: theme('colors.background'); color: theme('colors.on-background'); }
         .glass-card {
@@ -139,7 +51,7 @@
     }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-product-flow-1"/>
 </head>
 <body class="antialiased min-h-screen flex flex-col pb-[90px] md:pb-0">
 <!-- TopAppBar -->
@@ -157,36 +69,37 @@
 </div>
 </header>
 <!-- Main Content -->
-<main class="flex-grow w-full max-w-screen-xl mx-auto px-margin-page py-stack-md flex flex-col gap-stack-lg">
-<!-- Header Section -->
-<section class="flex flex-col md:flex-row md:items-end md:justify-between gap-stack-sm">
-<div class="space-y-2">
-<h2 class="font-headline-lg-mobile md:font-headline-lg text-headline-lg-mobile md:text-headline-lg text-on-background">设备管理</h2>
-<p class="font-body-md text-body-md text-on-surface-variant">查看家庭盒子同步回来的摄像头状态，App 不直接连接摄像头。</p>
+<main class="flex-grow w-full max-w-screen-xl mx-auto px-margin-page flex flex-col gap-stack-lg">
+<section class="gohome-page-lead">
+<p>设备管理</p>
+<h2>摄像头与盒子</h2>
+<p>查看家庭盒子同步回来的摄像头状态，手机不直接连接摄像头。</p>
+</section>
+<section class="gohome-panel-soft p-4 flex flex-col gap-3">
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined w-11 h-11 rounded-[18px] bg-primary-fixed text-primary flex items-center justify-center shrink-0">hub</span>
+<div class="min-w-0">
+<h3 class="text-[18px] leading-snug font-bold text-on-surface">家庭盒子负责接入摄像头</h3>
+<p class="text-[13px] leading-relaxed text-on-surface-variant mt-1">App 只提交配置和查看状态，画面、检测和事件都由盒子同步回来。</p>
 </div>
-<div class="flex gap-2 md:justify-end">
-<button id="cameraAddButton" data-action="add" class="min-h-11 inline-flex items-center justify-center gap-1 rounded-full bg-primary px-4 py-2 text-on-primary font-label-md text-label-md shadow-lg whitespace-nowrap" aria-label="添加摄像头">
+</div>
+<div class="gohome-device-actions">
+<button id="cameraAddButton" data-action="add" class="gohome-pill-button primary inline-flex items-center justify-center gap-1" aria-label="添加摄像头">
 <span class="material-symbols-outlined text-[20px]">add</span>
-添加
+添加摄像头
 </button>
-<button id="cameraMonitorButton" data-action="monitor" class="min-h-11 inline-flex items-center justify-center gap-1 rounded-full bg-surface-container-low px-4 py-2 text-on-surface font-label-md text-label-md whitespace-nowrap" aria-label="回到守护">
+<button id="cameraMonitorButton" data-action="monitor" class="gohome-pill-button soft inline-flex items-center justify-center gap-1" aria-label="回到守护">
 <span class="material-symbols-outlined text-[20px]">security</span>
-守护
+回守护
 </button>
 </div>
 </section>
 <!-- Device Grid -->
 <section id="cameraDeviceGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-gutter-card">
-<div class="bg-surface-container-lowest rounded-xl border border-surface-container-low p-5 text-on-surface-variant md:col-span-2 lg:col-span-3">
-<div class="flex items-start gap-4">
-<div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center shrink-0">
-<span class="material-symbols-outlined text-on-primary-fixed-variant">linked_camera</span>
-</div>
-<div class="min-w-0 flex-1">
-<h3 class="font-headline-md text-headline-md text-on-background">正在读取设备</h3>
-<p class="font-body-md text-[14px] leading-5 mt-1">这里会显示 App 后端数据库里由家庭盒子同步回来的真实摄像头。</p>
-</div>
-</div>
+<div class="gohome-panel gohome-empty-state md:col-span-2 lg:col-span-3">
+<span class="material-symbols-outlined">linked_camera</span>
+<h3>正在读取设备</h3>
+<p>这里会显示家庭盒子同步回来的真实摄像头。</p>
 </div>
 </section>
 <!-- Add Device FAB (Desktop) -->
@@ -209,8 +122,8 @@
 <span class="font-label-md text-label-md">守护</span>
 </a>
 <a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5" href="#">
-<span class="material-symbols-outlined mb-1">chat_bubble</span>
-<span class="font-label-md text-label-md">消息</span>
+<span class="material-symbols-outlined mb-1">history</span>
+<span class="font-label-md text-label-md">事件</span>
 </a>
 <a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5" href="#">
 <span class="material-symbols-outlined mb-1">volunteer_activism</span>
@@ -228,6 +141,7 @@
       "首页": "index.html",
       "守护": "monitor.html",
       "消息": "events.html",
+      "事件": "events.html",
       "陪伴": "companionship.html",
       "我的": "privacy.html",
       "实时画面": "watch.html",
@@ -253,7 +167,7 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260706-config-flow-1"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260706-real-camera-grid-1"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260706-route-action-1"></script>
+<script src="assets/scripts/edge-client.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
 </body></html>

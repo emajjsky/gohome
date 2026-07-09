@@ -4,43 +4,61 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>关怀推送 - 回家</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260709-home-feed-2"/>
 <style>
+    @font-face {
+        font-family: "Noto Sans SC Local";
+        src: url("assets/fonts/NotoSansSC-Regular.woff2") format("woff2");
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+    }
     :root {
-        --bg: #fbf9f8;
-        --panel: #ffffff;
-        --soft: #efeded;
-        --text: #1b1c1c;
-        --muted: #606773;
-        --line: #d8dde6;
-        --primary: #005da7;
-        --primary-soft: #d4e3ff;
-        --accent: #386800;
+        --bg: #f6f7f3;
+        --panel: #fffefc;
+        --panel-soft: #eef2eb;
+        --panel-strong: #1f2a22;
+        --text: #202520;
+        --muted: #687168;
+        --quiet: #8a9289;
+        --line: rgba(70, 82, 70, 0.13);
+        --primary: #536d5a;
+        --primary-strong: #334d3a;
+        --primary-soft: #e8efe8;
+        --warn-soft: #f6ead7;
+        --shadow: 0 20px 52px rgba(54, 67, 53, 0.09);
     }
     * { box-sizing: border-box; }
+    html { background: #e9ece5; }
     body {
         margin: 0;
         min-height: 100dvh;
-        background: var(--bg);
+        background:
+            radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0) 38%),
+            linear-gradient(180deg, #f8f9f4 0%, var(--bg) 48%, #eef1ea 100%);
         color: var(--text);
-        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-family: "Noto Sans SC Local", "PingFang SC", "Hiragino Sans GB", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         -webkit-font-smoothing: antialiased;
+        -webkit-tap-highlight-color: transparent;
     }
     .material-symbols-outlined { font-variation-settings: "FILL" 0, "wght" 420, "GRAD" 0, "opsz" 24; }
     .page {
-        width: min(100%, 760px);
+        width: 100%;
         margin: 0 auto;
-        padding: max(18px, env(safe-area-inset-top)) 20px calc(28px + env(safe-area-inset-bottom));
+        padding:
+            max(34px, calc(16px + env(safe-area-inset-top, 0px)))
+            max(18px, calc(18px + env(safe-area-inset-right, 0px)))
+            calc(22px + env(safe-area-inset-bottom, 0px))
+            max(18px, calc(18px + env(safe-area-inset-left, 0px)));
     }
     .topbar {
         display: grid;
         grid-template-columns: 42px minmax(0, 1fr) 42px;
         align-items: center;
-        gap: 12px;
-        margin-bottom: 18px;
+        gap: 10px;
+        min-height: 44px;
+        margin-bottom: 14px;
     }
     .icon-button {
         width: 40px;
@@ -48,11 +66,20 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border: 0;
+        border: 1px solid rgba(255, 255, 255, 0.72);
         border-radius: 999px;
-        background: var(--soft);
+        background: rgba(255, 255, 255, 0.68);
         color: var(--text);
         text-decoration: none;
+        box-shadow: 0 8px 20px rgba(60, 73, 58, 0.06);
+        backdrop-filter: blur(14px);
+        flex: 0 0 auto;
+    }
+    .icon-button:active,
+    .button:active,
+    .choice-row:active,
+    .topic-chip:active {
+        transform: scale(0.98);
     }
     .title {
         min-width: 0;
@@ -60,147 +87,499 @@
     }
     .title h1 {
         margin: 0;
-        font-family: "Hanken Grotesk", Inter, sans-serif;
-        font-size: 24px;
-        line-height: 1.15;
+        font-size: 17px;
+        font-weight: 800;
+        line-height: 1.2;
+        letter-spacing: 0;
     }
     .title p {
         margin: 5px 0 0;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 12px;
     }
-    .hero {
-        border-radius: 16px;
-        background: #eaf2fb;
-        border: 1px solid #cbdcec;
+    .summary-card {
+        position: relative;
+        overflow: hidden;
+        border-radius: 28px;
+        background:
+            radial-gradient(circle at 88% 18%, rgba(255, 255, 255, 0.34), transparent 28%),
+            linear-gradient(135deg, #5f7a65 0%, #314c38 100%);
+        color: #fff;
         padding: 18px;
-        margin-bottom: 16px;
+        margin-bottom: 14px;
+        box-shadow: var(--shadow);
     }
-    .hero-row {
+    .summary-card::after {
+        content: "";
+        position: absolute;
+        right: -38px;
+        bottom: -58px;
+        width: 160px;
+        height: 160px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+    }
+    .summary-top,
+    .summary-bottom {
+        position: relative;
+        z-index: 1;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 12px;
+        gap: 14px;
     }
-    .hero h2 {
+    .summary-label {
         margin: 0;
-        font-family: "Hanken Grotesk", Inter, sans-serif;
-        font-size: 22px;
+        color: rgba(255, 255, 255, 0.76);
+        font-size: 12px;
+        line-height: 1.4;
     }
-    .hero p {
-        margin: 6px 0 0;
-        color: var(--muted);
+    .summary-time {
+        margin: 0;
+        font-size: 34px;
+        line-height: 1;
+        font-weight: 900;
+        letter-spacing: 0;
+    }
+    .summary-copy {
+        position: relative;
+        z-index: 1;
+        width: min(100%, 280px);
+        margin: 12px 0 0;
+        color: rgba(255, 255, 255, 0.86);
         line-height: 1.55;
         font-size: 14px;
+    }
+    .summary-bottom {
+        margin-top: 18px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.16);
+    }
+    .summary-metric {
+        min-width: 0;
+    }
+    .summary-metric strong {
+        display: block;
+        color: #fff;
+        font-size: 15px;
+        line-height: 1.2;
+    }
+    .summary-metric span {
+        display: block;
+        margin-top: 3px;
+        color: rgba(255, 255, 255, 0.68);
+        font-size: 11px;
+        line-height: 1.35;
     }
     .status-pill {
         flex: 0 0 auto;
         border-radius: 999px;
-        background: var(--primary);
+        background: rgba(255, 255, 255, 0.18);
         color: #fff;
-        padding: 7px 11px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        padding: 7px 10px;
         font-size: 12px;
-        font-weight: 700;
+        font-weight: 800;
+        backdrop-filter: blur(12px);
+    }
+    .config-preview {
+        display: grid;
+        gap: 9px;
+        margin-top: -2px;
+        margin-bottom: 14px;
+    }
+    .preview-row {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr);
+        align-items: center;
+        gap: 10px;
+        min-height: 58px;
+        padding: 11px 12px;
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.72);
+        box-shadow: 0 10px 26px rgba(54, 67, 53, 0.045);
+    }
+    .preview-row .material-symbols-outlined {
+        width: 34px;
+        height: 34px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 14px;
+        background: var(--primary-soft);
+        color: var(--primary-strong);
+        font-size: 20px;
+    }
+    .preview-row strong {
+        display: block;
+        color: var(--panel-strong);
+        font-size: 13px;
+        line-height: 1.28;
+    }
+    .preview-row span:not(.material-symbols-outlined) {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.42;
+    }
+    .preset-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 9px;
+    }
+    .preset-button {
+        min-width: 0;
+        min-height: 78px;
+        padding: 11px 9px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: #fbfcf8;
+        color: var(--text);
+        text-align: left;
+        transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease;
+    }
+    .preset-button strong,
+    .preset-button small {
+        display: block;
+    }
+    .preset-button strong {
+        font-size: 14px;
+        line-height: 1.28;
+    }
+    .preset-button small {
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.35;
+    }
+    .preset-button.selected {
+        border-color: rgba(83, 109, 90, 0.42);
+        background: var(--primary-soft);
+        color: var(--primary-strong);
+    }
+    .section,
+    .setting-card {
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: var(--panel);
+        box-shadow: 0 14px 36px rgba(54, 67, 53, 0.055);
     }
     .section {
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        background: var(--panel);
         padding: 16px;
-        margin-top: 12px;
+        margin-top: 14px;
     }
     .section-head {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        margin-bottom: 14px;
+        margin-bottom: 12px;
     }
     .section-head h3 {
         margin: 0;
-        font-family: "Hanken Grotesk", Inter, sans-serif;
-        font-size: 18px;
+        font-size: 17px;
+        font-weight: 900;
+        line-height: 1.25;
     }
     .section-head p {
         margin: 4px 0 0;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 12px;
+        line-height: 1.45;
     }
-    .switch-line {
+    .setting-card {
+        overflow: hidden;
+        margin-top: 14px;
+    }
+    .setting-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 12px;
+        gap: 14px;
+        min-height: 64px;
+        padding: 14px 16px;
     }
-    .toggle {
-        width: 48px;
-        height: 28px;
-        flex: 0 0 auto;
-        accent-color: var(--primary);
+    .setting-row + .setting-row {
+        border-top: 1px solid var(--line);
     }
-    .care-input {
-        width: 100%;
-        min-height: 44px;
-        border: 1px solid var(--line);
-        border-radius: 10px;
-        background: #fff;
-        padding: 0 12px;
+    .setting-row h3,
+    .setting-row h4 {
+        margin: 0;
         font-size: 15px;
+        font-weight: 900;
+        line-height: 1.3;
     }
-    .care-textarea {
-        min-height: 96px;
-        padding: 12px;
-        resize: vertical;
-        line-height: 1.5;
+    .setting-row p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
     }
-    .chips {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
+    .switch {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        width: 52px;
+        height: 32px;
+        flex: 0 0 auto;
     }
-    .chip input {
+    .switch-input {
         position: absolute;
         opacity: 0;
         pointer-events: none;
     }
-    .chip span {
-        min-height: 38px;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        border: 1px solid var(--line);
+    .switch-track {
+        position: relative;
+        width: 52px;
+        height: 32px;
+        border-radius: 999px;
+        background: #dfe4dd;
+        box-shadow: inset 0 0 0 1px rgba(60, 73, 58, 0.08);
+        transition: background-color 180ms ease;
+    }
+    .switch-track::after {
+        content: "";
+        position: absolute;
+        left: 3px;
+        top: 3px;
+        width: 26px;
+        height: 26px;
         border-radius: 999px;
         background: #fff;
-        padding: 0 13px;
-        font-size: 14px;
-        font-weight: 700;
+        box-shadow: 0 4px 12px rgba(35, 43, 36, 0.18);
+        transition: transform 180ms ease;
     }
-    .chip input:checked + span {
+    .switch-input:checked + .switch-track {
+        background: var(--primary);
+    }
+    .switch-input:checked + .switch-track::after {
+        transform: translateX(20px);
+    }
+    .care-input {
+        width: 100%;
+        min-height: 44px;
+        border: 1px solid rgba(70, 82, 70, 0.14);
+        border-radius: 14px;
+        background: #fbfcf8;
+        padding: 0 12px;
+        color: var(--text);
+        font-size: 15px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.84);
+    }
+    .care-input:focus {
+        outline: none;
+        border-color: rgba(83, 109, 90, 0.5);
+        box-shadow: 0 0 0 4px rgba(83, 109, 90, 0.12);
+    }
+    .care-textarea {
+        min-height: 108px;
+        padding: 12px;
+        resize: vertical;
+        line-height: 1.5;
+    }
+    .time-input {
+        width: 122px;
+        flex: 0 0 122px;
+        text-align: center;
+        font-weight: 900;
+        color: var(--primary-strong);
+    }
+    .small-number {
+        width: 72px;
+        min-width: 72px;
+        text-align: center;
+        font-weight: 900;
+        color: var(--primary-strong);
+    }
+    .push-rule-list {
+        display: grid;
+        gap: 9px;
+    }
+    .push-rule-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        min-height: 58px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: #fbfcf8;
+        padding: 11px 12px;
+    }
+    .push-rule-copy strong {
+        display: block;
+        font-size: 14px;
+        line-height: 1.3;
+    }
+    .push-rule-copy small {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.35;
+    }
+    .rule-inline-control {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+        white-space: nowrap;
+    }
+    .choice-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .choice-row {
+        position: relative;
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr);
+        align-items: center;
+        gap: 12px;
+        min-height: 58px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: #fbfcf8;
+        padding: 10px 12px;
+        transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease;
+    }
+    .choice-row input,
+    .topic-chip input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+    }
+    .choice-check {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        border: 1px solid rgba(70, 82, 70, 0.16);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #fff;
+        color: transparent;
+        transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+    }
+    .choice-check .material-symbols-outlined {
+        font-size: 18px;
+        font-variation-settings: "FILL" 0, "wght" 700, "GRAD" 0, "opsz" 20;
+    }
+    .choice-copy strong {
+        display: block;
+        font-size: 14px;
+        line-height: 1.3;
+    }
+    .choice-copy small {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.35;
+    }
+    .choice-row input:checked + .choice-check {
         border-color: var(--primary);
+        background: var(--primary);
+        color: #fff;
+    }
+    .choice-row:has(input:checked) {
+        border-color: rgba(83, 109, 90, 0.36);
         background: var(--primary-soft);
-        color: #00345f;
+    }
+    .topic-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 9px;
+    }
+    .topic-chip {
+        position: relative;
+        min-height: 42px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: #fbfcf8;
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 900;
+        transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease;
+    }
+    .topic-chip:has(input:checked) {
+        border-color: rgba(83, 109, 90, 0.36);
+        background: var(--primary-soft);
+        color: var(--primary-strong);
+    }
+    .topic-chip.selected {
+        border-color: rgba(83, 109, 90, 0.42);
+        background: var(--primary-soft);
+        color: var(--primary-strong);
     }
     .field-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
     }
+    .custom-topic-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 9px;
+        margin-top: 12px;
+    }
+    .custom-topic-row .button {
+        min-height: 44px;
+        padding: 0 15px;
+        border-radius: 15px;
+    }
     .field span {
         display: block;
-        margin-bottom: 6px;
+        margin-bottom: 7px;
         color: var(--muted);
         font-size: 12px;
-        font-weight: 700;
+        font-weight: 900;
+        line-height: 1.35;
+    }
+    .anniversary-row {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) 38px !important;
+        gap: 9px !important;
+        align-items: center !important;
+    }
+    #anniversaryList {
+        display: grid;
+        gap: 9px;
+    }
+    .anniversary-row [data-field="label"] {
+        grid-column: 1 / -1;
+    }
+    .anniversary-row [data-field="date"] {
+        grid-column: 1 / 2;
+        min-width: 0;
+    }
+    .anniversary-row .icon-button {
+        width: 38px;
+        height: 38px;
+        background: #f2f4ef;
+        box-shadow: none;
     }
     .actions {
+        position: sticky;
+        bottom: 0;
+        z-index: 4;
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-        gap: 12px;
-        margin-top: 16px;
+        gap: 10px;
+        margin: 16px -18px 0;
+        padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0px));
+        background: linear-gradient(180deg, rgba(246, 247, 243, 0), rgba(246, 247, 243, 0.96) 30%, rgba(246, 247, 243, 0.98));
+        backdrop-filter: blur(14px);
     }
     .button {
         min-height: 48px;
-        border: 0;
+        border: 1px solid transparent;
         border-radius: 999px;
         display: inline-flex;
         align-items: center;
@@ -208,36 +587,70 @@
         gap: 8px;
         font-weight: 800;
         text-decoration: none;
+        white-space: nowrap;
     }
     .button.primary {
-        background: var(--primary);
+        background: var(--panel-strong);
         color: #fff;
     }
     .button.secondary {
-        background: var(--soft);
+        background: #fff;
+        border-color: var(--line);
         color: var(--text);
     }
     .feedback {
         min-height: 20px;
-        margin: 12px 0 0;
+        margin: 8px 0 0;
         color: var(--muted);
         font-size: 13px;
+        line-height: 1.5;
+    }
+    .inline-hint {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+        margin: 10px 0 0;
+    }
+    .soft-note {
+        border-radius: 18px;
+        background: var(--warn-soft);
+        color: #5a4122;
+        padding: 10px 12px;
+        font-size: 12px;
+        line-height: 1.45;
+    }
+    .mt-3 { margin-top: 12px; }
+    .mt-4 { margin-top: 16px; }
+    [hidden] { display: none !important; }
+    @supports not selector(:has(*)) {
+        .choice-row input:checked ~ .choice-copy strong,
+        .topic-chip input:checked + span {
+            color: var(--primary-strong);
+        }
     }
     @media (max-width: 520px) {
-        .field-grid,
-        .actions,
-        .anniversary-row {
+        .field-grid {
             grid-template-columns: minmax(0, 1fr);
         }
-        .hero-row,
-        .section-head,
-        .switch-line {
-            align-items: flex-start;
+        .preset-grid {
+            grid-template-columns: minmax(0, 1fr);
+        }
+        .section-head {
+            align-items: center;
+        }
+    }
+    @media (max-width: 374px) {
+        .page {
+            padding-left: 14px;
+            padding-right: 14px;
+        }
+        .button {
+            font-size: 13px;
         }
     }
 </style>
 </head>
-<body>
+<body class="gohome-page-care_schedule">
 <main class="page">
     <header class="topbar">
         <a class="icon-button" href="privacy.html?app=1" aria-label="返回">
@@ -252,30 +665,126 @@
         </a>
     </header>
 
-    <section class="hero">
-        <div class="hero-row">
+    <section class="summary-card" aria-label="关怀推送概览">
+        <div class="summary-top">
             <div>
-                <h2 id="scheduleSummary">08:30 · 7 类内容</h2>
-                <p>每日卡片会合并家里状态、问候话题、节日纪念日和回家间隔。</p>
+                <p class="summary-label">每日关怀卡片</p>
+                <h2 id="scheduleSummary" class="summary-time">08:30</h2>
             </div>
             <span id="scheduleStatus" class="status-pill">已开启</span>
+        </div>
+        <p id="scheduleLead" class="summary-copy">每天按这个时间生成一张关怀卡片，合并家里状态、问候话题和重要日期。</p>
+        <div class="summary-bottom">
+            <div class="summary-metric">
+                <strong id="scheduleContentCount">7 类内容</strong>
+                <span>卡片内容范围</span>
+            </div>
+            <div class="summary-metric">
+                <strong>首页展示</strong>
+                <span>点开看完整图文</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="config-preview" aria-label="当前配置预览">
+        <div class="preview-row">
+            <span class="material-symbols-outlined">home_app_logo</span>
+            <div>
+                <strong id="previewHomeFeed">首页会展示今日关怀和今日信号</strong>
+                <span id="previewHomeFeedSub">按你的内容模块生成，不强行跳转其他页面。</span>
+            </div>
+        </div>
+        <div class="preview-row">
+            <span class="material-symbols-outlined">travel_explore</span>
+            <div>
+                <strong id="previewSearchScope">内容搜索按老人所在区域筛选</strong>
+                <span id="previewSearchScopeSub">天气走天气源，热点和兴趣只做候选话题。</span>
+            </div>
+        </div>
+        <div class="preview-row">
+            <span class="material-symbols-outlined">notifications_active</span>
+            <div>
+                <strong id="previewDeliveryRules">每日卡、异常、节日和纪念日分别触发</strong>
+                <span id="previewDeliveryRulesSub">保存后按这些规则准备提醒。</span>
+            </div>
         </div>
     </section>
 
     <form id="careScheduleForm">
-        <section class="section">
-            <div class="switch-line">
+        <section class="setting-card" aria-label="每日推送设置">
+            <div class="setting-row">
                 <div>
-                    <h3>每日推送</h3>
-                    <p class="feedback">每天按设置生成一张关怀卡片。</p>
+                    <h3>每日汇总卡</h3>
+                    <p>每天按这个时间准备关怀卡，当前也可以手动立即生成。</p>
                 </div>
-                <input id="scheduleEnabled" class="toggle" type="checkbox" checked>
-            </div>
-            <div class="field-grid mt-4">
-                <label class="field">
-                    <span>推送时间</span>
-                    <input id="deliveryTime" class="care-input" type="time" value="08:30">
+                <label class="switch" aria-label="开启每日推送">
+                    <input id="scheduleEnabled" class="switch-input" type="checkbox" checked>
+                    <span class="switch-track"></span>
                 </label>
+            </div>
+            <div class="setting-row">
+                <div>
+                    <h4>推送时间</h4>
+                    <p>建议选老人起床后、家属方便查看的时间。</p>
+                </div>
+                <input id="deliveryTime" class="care-input time-input" type="time" value="08:30" aria-label="推送时间">
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <div>
+                    <h3>推荐组合</h3>
+                    <p>先选一个适合你家的组合，再细调内容和提醒规则。</p>
+                </div>
+            </div>
+            <div class="preset-grid">
+                <button class="preset-button" type="button" data-care-preset="light">
+                    <strong>基础关怀</strong>
+                    <small>家里状态、天气、节日和回家提醒。</small>
+                </button>
+                <button class="preset-button selected" type="button" data-care-preset="balanced">
+                    <strong>日常推荐</strong>
+                    <small>加入本地、养生和文娱，首页更丰富。</small>
+                </button>
+                <button class="preset-button" type="button" data-care-preset="safety">
+                    <strong>安心提醒</strong>
+                    <small>额外打开防诈骗和异常即时提醒。</small>
+                </button>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <div>
+                    <h3>推送规则</h3>
+                    <p>一张每日汇总卡负责日常关怀，异常和特殊日期按规则触发提醒。</p>
+                </div>
+            </div>
+            <div class="push-rule-list">
+                <div class="push-rule-item">
+                    <span class="push-rule-copy"><strong>每日汇总</strong><small>把家里状态、问候话题、天气和日历合成一张图文卡。</small></span>
+                    <span class="status-pill" style="color: var(--primary-strong); background: var(--primary-soft); border-color: rgba(83, 109, 90, 0.18);">按时</span>
+                </div>
+                <div class="push-rule-item">
+                    <span class="push-rule-copy"><strong>家里异常</strong><small>摄像头离线、跌倒候选等事件不等每日卡，单独提醒。</small></span>
+                    <label class="switch" aria-label="开启异常即时提醒">
+                        <input id="exceptionPushEnabled" class="switch-input" type="checkbox" checked>
+                        <span class="switch-track"></span>
+                    </label>
+                </div>
+                <label class="push-rule-item">
+                    <span class="push-rule-copy"><strong>节日问候</strong><small>传统节日、节气进入卡片，可提前准备问候。</small></span>
+                    <span class="rule-inline-control"><input id="holidayLeadDays" class="care-input small-number" type="number" min="0" max="30" value="1"><small>天前</small></span>
+                </label>
+                <label class="push-rule-item">
+                    <span class="push-rule-copy"><strong>纪念日</strong><small>生日等按每年同月同日重复，不回到出生年份。</small></span>
+                    <span class="rule-inline-control"><input id="anniversaryLeadDays" class="care-input small-number" type="number" min="0" max="30" value="3"><small>天前</small></span>
+                </label>
+                <div class="push-rule-item">
+                    <span class="push-rule-copy"><strong>回家间隔</strong><small>用下方“超过多少天提醒”作为触发阈值。</small></span>
+                    <span class="status-pill" style="color: var(--primary-strong); background: #fff; border-color: var(--line);">按阈值</span>
+                </div>
             </div>
         </section>
 
@@ -283,17 +792,85 @@
             <div class="section-head">
                 <div>
                     <h3>卡片内容</h3>
-                    <p>选择每天想看到的问候素材。</p>
+                    <p>勾选后进入每日图文卡，分类规则决定是否提前或即时提醒。</p>
                 </div>
             </div>
-            <div class="chips">
-                <label class="chip"><input name="contentType" value="home_status" type="checkbox"><span>家里状态</span></label>
-                <label class="chip"><input name="contentType" value="elder_interest_topics" type="checkbox"><span>热点话题</span></label>
-                <label class="chip"><input name="contentType" value="health_tips" type="checkbox"><span>养生技巧</span></label>
-                <label class="chip"><input name="contentType" value="weather" type="checkbox"><span>天气问候</span></label>
-                <label class="chip"><input name="contentType" value="visit_reminder" type="checkbox"><span>多久没回家</span></label>
-                <label class="chip"><input name="contentType" value="holidays" type="checkbox"><span>节日</span></label>
-                <label class="chip"><input name="contentType" value="anniversaries" type="checkbox"><span>纪念日</span></label>
+            <div class="choice-list">
+                <label class="choice-row">
+                    <input name="contentType" value="home_status" type="checkbox">
+                    <span class="choice-check"><span class="material-symbols-outlined">check</span></span>
+                    <span class="choice-copy"><strong>家里状态</strong><small>设备在线、摄像头同步和今日安全事件。</small></span>
+                </label>
+                <label class="choice-row">
+                    <input name="contentType" value="elder_interest_topics" type="checkbox">
+                    <span class="choice-check"><span class="material-symbols-outlined">check</span></span>
+                    <span class="choice-copy"><strong>问候话题</strong><small>按老人兴趣给一个适合开口聊的话题。</small></span>
+                </label>
+                <label class="choice-row">
+                    <input name="contentType" value="local_hotspots" type="checkbox">
+                    <span class="choice-check"><span class="material-symbols-outlined">check</span></span>
+                    <span class="choice-copy"><strong>本地热点</strong><small>只取老人所在区域的民生、社区和生活内容。</small></span>
+                </label>
+                <label class="choice-row">
+                    <input name="contentType" value="health_tips" type="checkbox">
+                    <span class="choice-check"><span class="material-symbols-outlined">check</span></span>
+                    <span class="choice-copy"><strong>养生小贴士</strong><small>只做生活提醒，不替代医疗建议。</small></span>
+                </label>
+                <label class="choice-row">
+                    <input name="contentType" value="anti_fraud" type="checkbox">
+                    <span class="choice-check"><span class="material-symbols-outlined">check</span></span>
+                    <span class="choice-copy"><strong>防诈骗提醒</strong><small>低频出现，优先选官方和社区安全提醒。</small></span>
+                </label>
+                <label class="choice-row">
+                    <input name="contentType" value="culture_entertainment" type="checkbox">
+                    <span class="choice-check"><span class="material-symbols-outlined">check</span></span>
+                    <span class="choice-copy"><strong>文娱兴趣</strong><small>戏曲、电视节目、社区活动等轻松话题。</small></span>
+                </label>
+                <label class="choice-row">
+                    <input name="contentType" value="weather" type="checkbox">
+                    <span class="choice-check"><span class="material-symbols-outlined">check</span></span>
+                    <span class="choice-copy"><strong>天气问候</strong><small>降温、下雨、出门等日常提醒。</small></span>
+                </label>
+                <label class="choice-row">
+                    <input name="contentType" value="visit_reminder" type="checkbox">
+                    <span class="choice-check"><span class="material-symbols-outlined">check</span></span>
+                    <span class="choice-copy"><strong>回家间隔</strong><small>超过设定天数后，提醒家属回家看看。</small></span>
+                </label>
+                <label class="choice-row">
+                    <input name="contentType" value="holidays" type="checkbox">
+                    <span class="choice-check"><span class="material-symbols-outlined">check</span></span>
+                    <span class="choice-copy"><strong>节日问候</strong><small>节气和传统节日进入当天卡片。</small></span>
+                </label>
+                <label class="choice-row">
+                    <input name="contentType" value="anniversaries" type="checkbox">
+                    <span class="choice-check"><span class="material-symbols-outlined">check</span></span>
+                    <span class="choice-copy"><strong>纪念日</strong><small>生日、结婚纪念日等按每年同月同日提醒。</small></span>
+                </label>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-head">
+                <div>
+                    <h3>内容区域</h3>
+                    <p>热点、本地生活和社区活动按这里的城市/区县搜索。</p>
+                </div>
+            </div>
+            <div class="field-grid">
+                <label class="field">
+                    <span>城市</span>
+                    <input id="contentCity" class="care-input" type="text" placeholder="例如：上海">
+                </label>
+                <label class="field">
+                    <span>区县</span>
+                    <input id="contentDistrict" class="care-input" type="text" placeholder="例如：浦东">
+                </label>
+            </div>
+            <div class="topic-grid mt-3" aria-label="常用区域">
+                <button class="topic-chip" type="button" data-region-city="上海" data-region-district="浦东"><span>上海浦东</span></button>
+                <button class="topic-chip" type="button" data-region-city="上海" data-region-district="徐汇"><span>上海徐汇</span></button>
+                <button class="topic-chip" type="button" data-region-city="杭州" data-region-district="西湖"><span>杭州西湖</span></button>
+                <button class="topic-chip" type="button" data-region-city="杭州" data-region-district="上城"><span>杭州上城</span></button>
             </div>
         </section>
 
@@ -301,12 +878,12 @@
             <div class="section-head">
                 <div>
                     <h3>关怀重点</h3>
-                    <p>用来决定卡片的语气和重点。</p>
+                    <p>决定每天卡片的语气和侧重点，和上面的内容模块一起进入生成任务。</p>
                 </div>
             </div>
             <label class="field">
-                <span>希望每天提醒什么</span>
-                <textarea id="messageFocus" class="care-input care-textarea" maxlength="400" placeholder="例如：先说家里是否平稳，再给一个适合打电话时聊的话题，语气轻松一点。"></textarea>
+                <span>希望卡片怎么说</span>
+                <textarea id="messageFocus" class="care-input care-textarea" maxlength="400" placeholder="例如：先说家里是否平稳，再给一个适合打电话时聊的话题，语气轻松自然。"></textarea>
             </label>
         </section>
 
@@ -314,16 +891,24 @@
             <div class="section-head">
                 <div>
                     <h3>老人关心的话题</h3>
-                    <p>用于热点、文章和问候建议的召回。</p>
+                    <p>用于生成问候话题和后续合规内容推荐。</p>
                 </div>
             </div>
-            <div class="chips">
-                <label class="chip"><input name="interestTopic" value="养生" type="checkbox"><span>养生</span></label>
-                <label class="chip"><input name="interestTopic" value="天气" type="checkbox"><span>天气</span></label>
-                <label class="chip"><input name="interestTopic" value="戏曲" type="checkbox"><span>戏曲</span></label>
-                <label class="chip"><input name="interestTopic" value="家常" type="checkbox"><span>家常</span></label>
-                <label class="chip"><input name="interestTopic" value="杭州本地" type="checkbox"><span>杭州本地</span></label>
-                <label class="chip"><input name="interestTopic" value="慢病管理" type="checkbox"><span>慢病管理</span></label>
+            <div id="interestTopicGrid" class="topic-grid">
+                <label class="topic-chip"><input name="interestTopic" value="养生" type="checkbox"><span>养生</span></label>
+                <label class="topic-chip"><input name="interestTopic" value="天气" type="checkbox"><span>天气</span></label>
+                <label class="topic-chip"><input name="interestTopic" value="戏曲" type="checkbox"><span>戏曲</span></label>
+                <label class="topic-chip"><input name="interestTopic" value="家常" type="checkbox"><span>家常</span></label>
+                <label class="topic-chip"><input name="interestTopic" value="本地生活" type="checkbox"><span>本地生活</span></label>
+                <label class="topic-chip"><input name="interestTopic" value="健康养生" type="checkbox"><span>健康养生</span></label>
+                <label class="topic-chip"><input name="interestTopic" value="防诈骗" type="checkbox"><span>防诈骗</span></label>
+                <label class="topic-chip"><input name="interestTopic" value="电视节目" type="checkbox"><span>电视节目</span></label>
+                <label class="topic-chip"><input name="interestTopic" value="社区活动" type="checkbox"><span>社区活动</span></label>
+                <label class="topic-chip"><input name="interestTopic" value="节气饮食" type="checkbox"><span>节气饮食</span></label>
+            </div>
+            <div class="custom-topic-row">
+                <input id="customInterestTopic" class="care-input" type="text" maxlength="12" placeholder="添加老人关注的内容">
+                <button id="addInterestTopic" class="button secondary" type="button">添加</button>
             </div>
         </section>
 
@@ -331,33 +916,35 @@
             <div class="section-head">
                 <div>
                     <h3>回家提醒</h3>
-                    <p>按上次回家日期和阈值生成提醒。</p>
+                    <p>按上次回家日期和间隔天数进入每日卡片。</p>
                 </div>
-                <input id="locationTracking" class="toggle" type="checkbox">
             </div>
+            <input id="locationTracking" type="checkbox" hidden>
             <div class="field-grid">
                 <label class="field">
                     <span>上次回家日期</span>
                     <input id="lastVisitAt" class="care-input" type="date">
                 </label>
                 <label class="field">
-                    <span>提醒阈值</span>
+                    <span>超过多少天提醒</span>
                     <input id="visitThreshold" class="care-input" type="number" min="1" max="90" value="14">
                 </label>
             </div>
+            <p class="inline-hint">当前先用手动日期；后续可结合到家记录和定位授权自动更新。</p>
         </section>
 
         <section class="section">
             <div class="section-head">
                 <div>
                     <h3>纪念日</h3>
-                    <p>生日、结婚纪念日、复诊日等。</p>
+                    <p>生日、结婚纪念日等按每年同月同日提醒。</p>
                 </div>
-                <button id="addAnniversary" class="icon-button" type="button" aria-label="添加纪念日">
+                <button id="addAnniversary" class="icon-button" type="button" data-action="add-anniversary" aria-label="添加纪念日">
                     <span class="material-symbols-outlined">add</span>
                 </button>
             </div>
             <div id="anniversaryList" class="grid gap-2"></div>
+            <p class="soft-note mt-3">例：1956-11-06 妈妈生日，会在每年 11 月 6 日前后进入关怀卡片。</p>
         </section>
 
         <div class="actions">
@@ -367,14 +954,15 @@
             </button>
             <button class="button primary" type="submit">
                 <span class="material-symbols-outlined">save</span>
-                保存
+                保存设置
             </button>
         </div>
         <p id="careScheduleFeedback" class="feedback"></p>
     </form>
 </main>
-<script src="assets/scripts/edge-client.js?v=20260707-care-schedule-1"></script>
-<script src="assets/scripts/care-schedule-live.js?v=20260707-care-schedule-1"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/edge-client.js?v=20260709-care-schedule-2"></script>
+<script src="assets/scripts/care-schedule-live.js?v=20260709-care-schedule-2"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-cachefix-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-cachefix-1"></script>
 </body>
 </html>

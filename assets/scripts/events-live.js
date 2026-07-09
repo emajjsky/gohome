@@ -7,6 +7,15 @@
         if (node) node.textContent = value;
     }
 
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
     function requestedCameraId() {
         const value = new URLSearchParams(window.location.search).get("camera_id");
         return value ? Number(value) : null;
@@ -133,17 +142,66 @@
         if (fallScore !== null && fallScore !== undefined) parts.push(`跌倒 ${Number(fallScore).toFixed(2)}`);
         if (fireScore !== null && fireScore !== undefined) parts.push(`火灾 ${Number(fireScore).toFixed(3)}`);
 
-        return parts.slice(0, 3).join(" · ");
+        return parts.slice(0, 3).join("，");
+    }
+
+    function engineeringCopy(text) {
+        return /edge[-_ ]?agent|cannot open|network stream|no frame|rtsp|ffmpeg|opencv|traceback|http \d+|failed/i.test(String(text || ""));
+    }
+
+    function cleanReason(event, text) {
+        const value = String(text || "").trim();
+        if (!value) return "";
+        if (!engineeringCopy(value)) return value;
+        if (event.type === "camera_offline") return "家庭盒子暂时没有拿到这路画面，会继续重试。";
+        if (event.type === "black_screen") return "家庭盒子拿到的画面质量异常，需要确认是否遮挡或背光。";
+        return "家庭盒子回传了一条需要查看的提醒。";
+    }
+
+    function cameraMap(cameras) {
+        return new Map((Array.isArray(cameras) ? cameras : []).map((camera) => [Number(camera.id), camera]));
+    }
+
+    function isStaleCameraOffline(event, camerasById) {
+        if (event?.type !== "camera_offline" || event.acknowledged) return false;
+        const camera = camerasById.get(Number(event.camera_id));
+        if (!camera || String(camera.status || "").toLowerCase() !== "online") return false;
+        const eventTime = Date.parse(event.occurred_at || event.created_at || "");
+        const seenTime = Date.parse(camera.last_seen_at || camera.edge_reported_at || camera.updated_at || "");
+        return Number.isFinite(eventTime) && Number.isFinite(seenTime) && seenTime >= eventTime;
     }
 
     function actionText(event) {
         const rule = event?.payload?.rule || {};
         if (event.acknowledged) return "已处理，可以作为记录查看。";
-        if (rule.reason) return compactEventFacts(event) ? `${rule.reason} ${compactEventFacts(event)}。` : rule.reason;
+        if (rule.reason) {
+            const reason = cleanReason(event, rule.reason);
+            return compactEventFacts(event) ? `${reason} ${compactEventFacts(event)}。` : reason;
+        }
         if (event.type === "fall_candidate") return "建议先确认老人状态，再标记处理。";
-        if (event.type === "camera_offline") return "建议检查本机服务和摄像头连接。";
+        if (event.type === "camera_offline") return "家庭盒子暂时没有拿到这路画面，会继续重试。";
         if (event.type === "black_screen") return "建议打开截图，看是否遮挡或背光。";
         return "适合现在看一眼。";
+    }
+
+    function displaySummary(event) {
+        if (!event) return "";
+        if (event.type === "camera_offline") {
+            return `${event.camera_name || event.room || "摄像头"} 暂时没有返回画面`;
+        }
+        if (event.type === "black_screen") {
+            return `${event.camera_name || event.room || "摄像头"} 画面疑似遮挡或黑屏`;
+        }
+        if (event.type === "no_motion") {
+            return `${event.camera_name || event.room || "摄像头"} 长时间没有明显变化`;
+        }
+        if (event.type === "no_person") {
+            return `${event.camera_name || event.room || "摄像头"} 长时间未检测到人`;
+        }
+        if (event.type === "fall_candidate") {
+            return `${event.camera_name || event.room || "摄像头"} 出现疑似跌倒姿态`;
+        }
+        return cleanReason(event, event.summary) || GoHomeEdge.eventLabel(event.type);
     }
 
     function renderEvent(event, cameraId) {
@@ -158,43 +216,108 @@
             : "bg-[#fff4e8] text-[#c87b2a]";
 
         return `
-            <a href="${detailHref}" class="app-soft-card bg-white p-4 group">
-                <div class="flex items-start justify-between gap-3">
-                    <div class="flex items-center gap-2 text-on-surface-variant font-sans text-xs font-semibold">
-                        <span class="material-symbols-outlined text-[16px]">schedule</span>${time}
-                        <span class="w-1 h-1 rounded-full bg-outline-variant"></span>
-                        <span class="material-symbols-outlined text-[16px]">nest_cam_indoor</span>${room}
-                    </div>
+            <a href="${detailHref}" class="gohome-event-card">
+                <div class="gohome-event-meta">
+                    <span>${time} ${escapeHtml(room)}</span>
                     <span class="px-2.5 py-1 rounded-full ${statusClass} text-[10px] font-semibold">${status}</span>
                 </div>
-                <div class="flex items-start gap-3 mt-3">
-                    <div class="w-11 h-11 rounded-full ${iconTone(event)} flex items-center justify-center shrink-0">
+                <div class="gohome-event-body">
+                    <div class="gohome-event-icon ${iconTone(event)}">
                         <span class="material-symbols-outlined">${GoHomeEdge.eventIcon(event.type)}</span>
                     </div>
                     <div class="min-w-0">
-                        <h3 class="font-display text-[18px] font-bold text-on-surface">${event.summary}</h3>
-                        <p class="font-sans text-[13px] text-on-surface-variant mt-1.5 leading-relaxed">${label} · ${GoHomeEdge.fmtDateTime(event.occurred_at)}</p>
-                        <p class="font-sans text-[12px] text-primary font-semibold mt-2">${actionText(event)}</p>
+                        <h3>${escapeHtml(displaySummary(event))}</h3>
+                        <p>${label} ${GoHomeEdge.fmtDateTime(event.occurred_at)}</p>
+                        <p class="gohome-event-action">${actionText(event)}</p>
                     </div>
                 </div>
             </a>
         `;
     }
 
-    function renderEmpty() {
+    function cameraTitle(camera) {
+        const room = String(camera.room || "").trim();
+        const name = String(camera.name || "").trim();
+        if (room && name && room !== name) return `${room} · ${name}`;
+        return room || name || `摄像头 ${camera.id}`;
+    }
+
+    function cameraStatusText(camera, evaluation) {
+        const status = String(camera.status || evaluation?.state?.camera_state || "").toLowerCase();
+        if (camera.enabled === false) return "已停用";
+        if (status === "online") return "在线";
+        if (status === "pending_edge_sync") return "待同步";
+        if (status === "pending_edge_setup") return "待配置";
+        return status ? "待确认" : "等待回传";
+    }
+
+    function cameraStatusClass(camera, evaluation) {
+        const status = String(camera.status || evaluation?.state?.camera_state || "").toLowerCase();
+        if (camera.enabled === false) return "muted";
+        if (status === "online") return "ok";
+        return "warn";
+    }
+
+    function evaluationText(camera, evaluation) {
+        if (evaluation?.candidates?.length) return `${evaluation.candidates.length} 条候选待核对`;
+        if (evaluation?.explanation) return cleanReason({ type: "camera_offline" }, evaluation.explanation);
+        if (String(camera.status || "").toLowerCase() === "online") return "摄像头在线，最近没有命中需要确认的规则。";
+        return "等待家庭盒子回传检测状态。";
+    }
+
+    function renderCameraCheck(camera, evaluation) {
+        const statusClass = cameraStatusClass(camera, evaluation);
+        const status = cameraStatusText(camera, evaluation);
+        const evaluatedAt = evaluation?.evaluated_at || camera.last_seen_at || camera.edge_reported_at || camera.updated_at;
+        const ruleText = evaluation?.matched_rules?.length ? `${evaluation.matched_rules.length} 条规则命中` : "未命中告警规则";
+        const href = GoHomeEdge.pageHref(`monitor.html?camera_id=${encodeURIComponent(camera.id)}`) || `monitor.html?camera_id=${encodeURIComponent(camera.id)}`;
+        return `
+            <a class="gohome-camera-check-card" href="${href}">
+                <div class="gohome-camera-check-head">
+                    <span>${escapeHtml(cameraTitle(camera))}</span>
+                    <span class="gohome-camera-check-badge ${statusClass}">${escapeHtml(status)}</span>
+                </div>
+                <p>${escapeHtml(evaluationText(camera, evaluation))}</p>
+                <div class="gohome-camera-check-foot">
+                    <span>${escapeHtml(ruleText)}</span>
+                    <span>${escapeHtml(evaluatedAt ? GoHomeEdge.fmtDateTime(evaluatedAt) : "等待首次同步")}</span>
+                </div>
+            </a>
+        `;
+    }
+
+    function renderEmpty(cameras = [], evaluations = new Map()) {
         const list = $("edgeEventsList");
         if (!list) return;
+        const enabled = cameras.filter((camera) => camera.enabled !== false);
+        const checks = enabled
+            .map((camera) => renderCameraCheck(camera, evaluations.get(Number(camera.id))))
+            .join("");
         list.innerHTML = `
-            <div class="app-soft-card bg-white p-5 text-center">
-                <span class="material-symbols-outlined text-primary text-[30px]">health_and_safety</span>
-                <h3 class="font-display text-[18px] font-bold text-on-surface mt-2">今天暂时没有告警</h3>
-                <p class="font-sans text-[13px] text-on-surface-variant mt-1 leading-relaxed">本机守护服务会在异常时把截图和事件同步到这里。</p>
+            <div class="gohome-panel gohome-empty-state">
+                <span class="material-symbols-outlined">health_and_safety</span>
+                <h3>暂无待确认事件</h3>
+                <p>事件列表只记录需要家属处理的异常。下面是当前摄像头的最近同步状态。</p>
+                ${checks ? `<div class="gohome-camera-check-list">${checks}</div>` : ""}
             </div>
         `;
     }
 
     function enabledCameraIds(cameras) {
         return new Set(cameras.filter((camera) => camera.enabled).map((camera) => Number(camera.id)));
+    }
+
+    async function loadEvaluations(cameras) {
+        const entries = await Promise.all((Array.isArray(cameras) ? cameras : [])
+            .filter((camera) => camera.enabled !== false)
+            .map(async (camera) => {
+                try {
+                    return [Number(camera.id), await GoHomeEdge.appLatestEvaluation(camera.id)];
+                } catch (_error) {
+                    return [Number(camera.id), null];
+                }
+            }));
+        return new Map(entries);
     }
 
     async function render() {
@@ -207,9 +330,13 @@
                 GoHomeEdge.appCameras(),
                 GoHomeEdge.appEvents("limit=30"),
             ]);
+            const evaluations = await loadEvaluations(cameras);
             const activeCameraIds = enabledCameraIds(cameras);
+            const camerasById = cameraMap(cameras);
             pruneAppliedUpdates(allEvents);
-            const events = applyPendingUpdates(allEvents).filter((event) => activeCameraIds.has(Number(event.camera_id)));
+            const events = applyPendingUpdates(allEvents)
+                .filter((event) => activeCameraIds.has(Number(event.camera_id)))
+                .filter((event) => !isStaleCameraOffline(event, camerasById));
             const openEvents = events.filter((event) => !event.acknowledged);
             const mainEvent = openEvents[0] || events[0];
             const requested = requestedCameraId();
@@ -220,14 +347,15 @@
             syncSelectedCameraParam(selectedCameraId);
             syncNavLinks(selectedCameraId);
 
-            setText("edgeTimelineTitle", mainEvent ? `今天最让人在意的是：${mainEvent.summary}` : summary.main_message);
+            const onlineCount = cameras.filter((camera) => camera.enabled !== false && String(camera.status || "").toLowerCase() === "online").length;
+            setText("edgeTimelineTitle", mainEvent ? displaySummary(mainEvent) : `${onlineCount} 路摄像头在线，暂无异常`);
             setText("edgeTimelineBadge", openEvents.length ? `${openEvents.length} 条待确认` : "当前平稳");
-            setText("edgeTimelineAction", openEvents.length ? "先看最新提醒" : "继续守护");
+            setText("edgeTimelineAction", openEvents.length ? "按时间线处理最新提醒，处理后这里会同步状态。" : "最近没有需要处理的安全事件，正常检测不会进入事件列表。");
 
             const list = $("edgeEventsList");
             if (!list) return;
             if (!events.length) {
-                renderEmpty();
+                renderEmpty(cameras, evaluations);
                 return;
             }
             list.innerHTML = events.map((event) => renderEvent(event, selectedCameraId)).join("");
@@ -240,7 +368,7 @@
             syncNavLinks(requestedCameraId());
             setText("edgeTimelineTitle", "本机守护服务还没连接");
             setText("edgeTimelineBadge", "离线演示");
-            setText("edgeTimelineAction", "启动 edge-agent");
+            setText("edgeTimelineAction", "启动家庭盒子服务");
         }
     }
 

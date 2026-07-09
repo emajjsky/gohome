@@ -107,9 +107,9 @@
         const hasDevice = Boolean(state.device?.device_id);
         const cameraCount = state.cameras.filter((item) => item.enabled !== false).length;
         setText("appShellStatusBadge", "已接入");
-        setText("appShellHeadline", family ? `${family.name || "家庭空间"} 已接住 App 壳` : "账号已进入 App 壳");
+        setText("appShellHeadline", family ? `${family.name || "家庭空间"} 已接住 App 壳` : "手机号已登录");
         setText("appShellMeta", hasDevice ? "登录态和本机守护服务已经打通，可继续进入实时观看。" : "先补家庭或设备绑定，再进入实时观看。");
-        setText("appShellAccountValue", state.user?.display_name || state.user?.email || "已登录");
+        setText("appShellAccountValue", state.user?.display_name || state.user?.phone || "已登录");
         setText("appShellFamilyValue", family?.name || "待创建");
         setText("appShellDeviceValue", state.device?.device_name || state.device?.device_id || "待接入");
         setText("appShellCameraValue", cameraCount ? `${cameraCount} 路` : "未接入");
@@ -208,7 +208,7 @@
         } catch (error) {
             setText("appShellStatusBadge", "未连接");
             setText("appShellHeadline", "App 壳已打开，但守护服务未连接。");
-            setText("appShellMeta", error.message || "请先启动 edge-agent。");
+            setText("appShellMeta", error.message || "请先启动家庭盒子服务。");
             renderActions();
         }
     }

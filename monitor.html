@@ -4,97 +4,9 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家 - 守护</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "surface-tint": "#0060ac",
-                        "on-secondary-fixed-variant": "#474744",
-                        "surface-dim": "#dbd9d9",
-                        "outline": "#717783",
-                        "tertiary-fixed-dim": "#87dc2c",
-                        "on-secondary": "#ffffff",
-                        "on-error-container": "#93000a",
-                        "secondary-fixed": "#e4e2dd",
-                        "on-tertiary-fixed": "#0e2000",
-                        "surface-container-high": "#eae8e7",
-                        "outline-variant": "#c1c7d3",
-                        "tertiary-container": "#498300",
-                        "surface-container-lowest": "#ffffff",
-                        "on-tertiary-container": "#f9ffeb",
-                        "background": "#fbf9f8",
-                        "secondary-fixed-dim": "#c8c6c2",
-                        "on-tertiary": "#ffffff",
-                        "on-surface-variant": "#414751",
-                        "surface-container-highest": "#e4e2e2",
-                        "on-background": "#1b1c1c",
-                        "surface-variant": "#e4e2e2",
-                        "on-tertiary-fixed-variant": "#2a5000",
-                        "on-primary-container": "#fdfcff",
-                        "on-secondary-container": "#63635f",
-                        "on-primary-fixed": "#001c39",
-                        "inverse-surface": "#303030",
-                        "tertiary-fixed": "#a1fa49",
-                        "surface": "#fbf9f8",
-                        "surface-container-low": "#f5f3f3",
-                        "surface-bright": "#fbf9f8",
-                        "primary-container": "#2976c7",
-                        "on-surface": "#1b1c1c",
-                        "primary-fixed": "#d4e3ff",
-                        "primary": "#005da7",
-                        "on-primary-fixed-variant": "#004883",
-                        "error": "#ba1a1a",
-                        "on-error": "#ffffff",
-                        "inverse-on-surface": "#f2f0f0",
-                        "error-container": "#ffdad6",
-                        "secondary-container": "#e1dfdb",
-                        "primary-fixed-dim": "#a4c9ff",
-                        "tertiary": "#386800",
-                        "inverse-primary": "#a4c9ff",
-                        "surface-container": "#efeded",
-                        "secondary": "#5e5e5b",
-                        "on-secondary-fixed": "#1b1c19",
-                        "on-primary": "#ffffff"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px"
-                    },
-                    "spacing": {
-                        "stack-sm": "8px",
-                        "gutter-card": "16px",
-                        "stack-md": "16px",
-                        "stack-lg": "32px",
-                        "margin-page": "20px"
-                    },
-                    "fontFamily": {
-                        "body-lg": ["Inter"],
-                        "label-md": ["Inter"],
-                        "body-md": ["Inter"],
-                        "headline-md": ["Hanken Grotesk"],
-                        "headline-lg": ["Hanken Grotesk"],
-                        "headline-lg-mobile": ["Hanken Grotesk"]
-                    },
-                    "fontSize": {
-                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
-                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
-                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
-                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
-                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
-                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
-                    }
-                }
-            }
-        }
-    </script>
+
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <style>
         .pulse-ring {
             animation: pulse 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
@@ -116,7 +28,7 @@
             padding: 4px 9px;
             border-radius: 9999px;
             background: rgba(108, 111, 147, 0.09);
-            color: #004883;
+            color: #1f2a22;
             font-size: 10px;
             font-weight: 700;
             white-space: nowrap;
@@ -187,7 +99,7 @@
     }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260709-state-1"/>
 </head>
 <body class="bg-background text-on-background antialiased min-h-screen flex flex-col pb-24">
 <!-- TopAppBar -->
@@ -207,72 +119,45 @@
 </div>
 </header>
 <!-- Main Content Area -->
-<main class="flex-grow px-margin-page pt-4 max-w-screen-md mx-auto w-full flex flex-col gap-stack-lg">
-<!-- Status Header -->
-<section class="bg-surface-container-lowest rounded-xl border border-surface-container-low p-4 ambient-shadow">
+<main class="flex-grow px-margin-page max-w-screen-md mx-auto w-full flex flex-col gap-stack-lg">
+<section class="gohome-page-lead">
+<p>家庭守护</p>
+<h2>实时状态</h2>
+<p>这里只展示家庭盒子同步回来的真实画面和检测状态。</p>
+</section>
+<section class="gohome-monitor-hero">
 <div class="flex items-start gap-3">
 <span id="edgeStatusIcon" class="app-story-icon good shrink-0">
 <span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;">health_and_safety</span>
 </span>
 <div class="min-w-0 flex-1">
-<h2 id="edgeStatusTitle" class="font-headline-md text-headline-md text-on-background">正在同步</h2>
-<p id="edgeStatusText" class="font-body-md text-[14px] leading-5 text-on-surface-variant mt-1">正在读取家庭盒子回传状态</p>
-<div class="flex flex-wrap gap-2 mt-3">
+<h2 id="edgeStatusTitle">正在同步</h2>
+<p id="edgeStatusText">正在读取家庭盒子回传状态</p>
+</div>
+</div>
+<div class="flex flex-wrap gap-2">
 <span id="edgeDeviceStatus" class="app-mini-pill muted">连接中</span>
 <span id="edgeDetector" class="app-mini-pill muted">检测中</span>
 </div>
-</div>
-</div>
 </section>
-<!-- Camera Feeds - Glassmorphism/Bento style -->
 <section class="flex flex-col gap-gutter-card">
-<div class="flex justify-between items-end mb-2">
-<h3 class="font-headline-md text-headline-md text-on-background">实时画面</h3>
-<a id="edgeMonitorDeviceLink" class="inline-flex items-center gap-1 rounded-full bg-surface-container-low px-3 py-2 text-primary font-label-md text-label-md" href="cameras.html">
-<span class="material-symbols-outlined text-[18px]">settings</span>
-设备管理
+<div class="gohome-monitor-tools">
+<div>
+<h3>摄像头画面</h3>
+<p>点开画面可进入单路实时查看。</p>
+</div>
+<a id="edgeMonitorDeviceLink" class="gohome-text-link" href="cameras.html">
+<span class="material-symbols-outlined text-[18px]">linked_camera</span>
+设备
 </a>
 </div>
-<div id="edgeMonitorCameraGrid" class="grid grid-cols-1 md:grid-cols-2 gap-gutter-card">
-<div class="bg-surface-container-lowest rounded-xl ambient-shadow p-5 md:col-span-2">
-<div class="flex items-start gap-4">
-<div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center shrink-0">
-<span class="material-symbols-outlined text-on-primary-fixed-variant">linked_camera</span>
-</div>
-<div class="min-w-0 flex-1">
-<h4 class="font-headline-md text-headline-md text-on-background">正在读取摄像头</h4>
-<p class="font-body-md text-sm text-on-surface-variant mt-1">App 正在读取家庭盒子同步回来的真实摄像头状态。</p>
+<div id="edgeMonitorCameraGrid" class="gohome-camera-grid">
+<div class="gohome-panel gohome-empty-state">
+<span class="material-symbols-outlined">linked_camera</span>
+<h3>正在读取摄像头</h3>
+<p>正在读取家庭盒子同步回来的真实摄像头状态。</p>
 </div>
 </div>
-</div>
-</div>
-</section>
-<!-- Quick Actions Bento -->
-<section class="grid grid-cols-2 sm:grid-cols-4 gap-gutter-card pb-8">
-<a id="edgeMonitorWatchTopLink" href="watch.html" class="flex flex-col items-center justify-center p-4 bg-surface-container-lowest rounded-xl ambient-shadow hover:bg-surface-container-low transition-colors group">
-<div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
-<span class="material-symbols-outlined text-on-primary-fixed-variant" style="font-variation-settings: 'FILL' 1;">videocam</span>
-</div>
-<span class="font-label-md text-label-md text-on-surface">实时画面</span>
-</a>
-<a id="edgeMonitorEventsLink" href="events.html" class="flex flex-col items-center justify-center p-4 bg-surface-container-lowest rounded-xl ambient-shadow hover:bg-surface-container-low transition-colors group">
-<div class="w-12 h-12 rounded-full bg-secondary-fixed flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
-<span class="material-symbols-outlined text-on-secondary-fixed-variant" style="font-variation-settings: 'FILL' 1;">list_alt</span>
-</div>
-<span class="font-label-md text-label-md text-on-surface">事件列表</span>
-</a>
-<a id="edgeMonitorDetectionLink" href="detection.html" class="flex flex-col items-center justify-center p-4 bg-surface-container-lowest rounded-xl ambient-shadow hover:bg-surface-container-low transition-colors group">
-<div class="w-12 h-12 rounded-full bg-secondary-fixed flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
-<span class="material-symbols-outlined text-on-secondary-fixed-variant" style="font-variation-settings: 'FILL' 1;">settings_suggest</span>
-</div>
-<span class="font-label-md text-label-md text-on-surface">规则设置</span>
-</a>
-<a href="cameras.html" class="flex flex-col items-center justify-center p-4 bg-surface-container-lowest rounded-xl ambient-shadow hover:bg-surface-container-low transition-colors group">
-<div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center mb-2 group-hover:scale-105 transition-transform">
-<span class="material-symbols-outlined text-on-primary-fixed-variant" style="font-variation-settings: 'FILL' 1;">linked_camera</span>
-</div>
-<span class="font-label-md text-label-md text-on-surface">设备管理</span>
-</a>
 </section>
 </main>
 <!-- BottomNavBar (Mobile Only) -->
@@ -287,10 +172,10 @@
 <span class="material-symbols-outlined mb-1" style="font-variation-settings: 'FILL' 1;">security</span>
 <span class="font-label-md text-label-md font-bold">守护</span>
 </a>
-<!-- Item 3: 消息 (Inactive) -->
+<!-- Item 3: 事件 (Inactive) -->
 <a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors group" href="#">
-<span class="material-symbols-outlined mb-1 group-active:scale-90 duration-150 ease-in-out" style="font-variation-settings: 'FILL' 0;">chat_bubble</span>
-<span class="font-label-md text-label-md">消息</span>
+<span class="material-symbols-outlined mb-1 group-active:scale-90 duration-150 ease-in-out" style="font-variation-settings: 'FILL' 0;">history</span>
+<span class="font-label-md text-label-md">事件</span>
 </a>
 <!-- Item 4: 陪伴 (Inactive) -->
 <a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors group" href="#">
@@ -310,6 +195,7 @@
       "首页": "index.html",
       "守护": "monitor.html",
       "消息": "events.html",
+      "事件": "events.html",
       "陪伴": "companionship.html",
       "我的": "privacy.html",
       "实时画面": "watch.html",
@@ -335,8 +221,8 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260706-layout-truth-1"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260706-real-camera-grid-1"></script>
-<script src="assets/scripts/monitor-live.js?v=20260706-multi-camera-1"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260706-route-action-1"></script>
+<script src="assets/scripts/edge-client.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/monitor-live.js?v=20260709-state-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
 </body></html>

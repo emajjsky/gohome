@@ -4,105 +4,17 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>通知设置 - 回家</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=Hanken+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "surface-tint": "#0060ac",
-                        "on-secondary-fixed-variant": "#474744",
-                        "surface-dim": "#dbd9d9",
-                        "outline": "#717783",
-                        "tertiary-fixed-dim": "#87dc2c",
-                        "on-secondary": "#ffffff",
-                        "on-error-container": "#93000a",
-                        "secondary-fixed": "#e4e2dd",
-                        "on-tertiary-fixed": "#0e2000",
-                        "surface-container-high": "#eae8e7",
-                        "outline-variant": "#c1c7d3",
-                        "tertiary-container": "#498300",
-                        "surface-container-lowest": "#ffffff",
-                        "on-tertiary-container": "#f9ffeb",
-                        "background": "#fbf9f8",
-                        "secondary-fixed-dim": "#c8c6c2",
-                        "on-tertiary": "#ffffff",
-                        "on-surface-variant": "#414751",
-                        "surface-container-highest": "#e4e2e2",
-                        "on-background": "#1b1c1c",
-                        "surface-variant": "#e4e2e2",
-                        "on-tertiary-fixed-variant": "#2a5000",
-                        "on-primary-container": "#fdfcff",
-                        "on-secondary-container": "#63635f",
-                        "on-primary-fixed": "#001c39",
-                        "inverse-surface": "#303030",
-                        "tertiary-fixed": "#a1fa49",
-                        "surface": "#fbf9f8",
-                        "surface-container-low": "#f5f3f3",
-                        "surface-bright": "#fbf9f8",
-                        "primary-container": "#2976c7",
-                        "on-surface": "#1b1c1c",
-                        "primary-fixed": "#d4e3ff",
-                        "primary": "#005da7",
-                        "on-primary-fixed-variant": "#004883",
-                        "error": "#ba1a1a",
-                        "on-error": "#ffffff",
-                        "inverse-on-surface": "#f2f0f0",
-                        "error-container": "#ffdad6",
-                        "secondary-container": "#e1dfdb",
-                        "primary-fixed-dim": "#a4c9ff",
-                        "tertiary": "#386800",
-                        "inverse-primary": "#a4c9ff",
-                        "surface-container": "#efeded",
-                        "secondary": "#5e5e5b",
-                        "on-secondary-fixed": "#1b1c19",
-                        "on-primary": "#ffffff"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px"
-                    },
-                    "spacing": {
-                        "stack-sm": "8px",
-                        "gutter-card": "16px",
-                        "stack-md": "16px",
-                        "stack-lg": "32px",
-                        "margin-page": "20px"
-                    },
-                    "fontFamily": {
-                        "body-lg": ["Inter"],
-                        "label-md": ["Inter"],
-                        "body-md": ["Inter"],
-                        "headline-md": ["Hanken Grotesk"],
-                        "headline-lg": ["Hanken Grotesk"],
-                        "headline-lg-mobile": ["Hanken Grotesk"]
-                    },
-                    "fontSize": {
-                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
-                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
-                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
-                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
-                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
-                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
-                    }
-                }
-            }
-        }
-    </script>
+
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <style>
         /* Custom toggle switch styling using Tailwind classes where possible, supplemented by custom CSS for the input element */
         .toggle-checkbox:checked {
             right: 0;
-            border-color: #2976c7; /* primary-container */
+            border-color: #e8efe8; /* primary-container */
         }
         .toggle-checkbox:checked + .toggle-label {
-            background-color: #2976c7; /* primary-container */
+            background-color: #e8efe8; /* primary-container */
         }
         .toggle-checkbox {
             right: 0;
@@ -169,7 +81,7 @@
     }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-product-flow-2"/>
 </head>
 <body class="bg-background text-on-background min-h-screen font-body-md antialiased pb-24 md:pb-0">
 <!-- TopAppBar -->
@@ -185,123 +97,73 @@
 </div>
 </header>
 <main class="max-w-screen-md mx-auto px-margin-page py-stack-lg space-y-stack-lg">
-<!-- Routine Reminders Section -->
-<section class="bg-surface-container-lowest rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.04)] overflow-hidden">
-<div class="px-gutter-card py-stack-md border-b border-surface-container-highest">
-<h2 class="font-headline-md text-headline-md text-on-background">常规提醒</h2>
-<p class="font-body-md text-body-md text-on-surface-variant mt-1">健康打卡、天气变化等日常事务通知</p>
-</div>
-<div class="divide-y divide-surface-container-highest">
-<!-- App Push -->
-<div class="p-gutter-card flex items-center justify-between hover:bg-surface-container-low transition-colors">
-<div class="flex items-center gap-4">
-<div class="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center text-on-primary-fixed">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">notifications</span>
-</div>
+<section class="gohome-page-lead">
+<p>通知设置</p>
+<h2>提醒渠道</h2>
+<p>当前本地闭环只验证站内提醒和页面状态，正式手机推送等上云后接入。</p>
+</section>
+<section class="gohome-settings-list">
+<label class="gohome-settings-row">
+<span class="material-symbols-outlined">notifications_active</span>
 <div>
-<h3 class="font-label-md text-label-md text-on-background">App 推送通知</h3>
-<p class="font-body-md text-body-md text-sm text-on-surface-variant">在手机通知栏显示消息</p>
+<h3>安全事件提醒</h3>
+<p>摄像头离线、黑屏、无人、静止、疑似跌倒等事件进入事件页。</p>
 </div>
-</div>
-<div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
-<input checked="" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" id="toggle_app_routine" name="toggle_app_routine" type="checkbox"/>
-<label class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer" for="toggle_app_routine"></label>
-</div>
-</div>
-<!-- WeChat -->
-<div class="p-gutter-card flex items-center justify-between hover:bg-surface-container-low transition-colors">
-<div class="flex items-center gap-4">
-<div class="w-10 h-10 rounded-full bg-tertiary-fixed flex items-center justify-center text-on-tertiary-fixed">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">forum</span>
-</div>
+<input checked class="gohome-setting-toggle" type="checkbox"/>
+</label>
+<label class="gohome-settings-row">
+<span class="material-symbols-outlined">favorite</span>
 <div>
-<h3 class="font-label-md text-label-md text-on-background">微信提醒</h3>
-<p class="font-body-md text-body-md text-sm text-on-surface-variant">通过微信服务号发送通知</p>
+<h3>每日关怀卡片</h3>
+<p>按关怀推送设置生成图文卡片，首页和陪伴页展示。</p>
+</div>
+<input checked class="gohome-setting-toggle" type="checkbox"/>
+</label>
+<label class="gohome-settings-row">
+<span class="material-symbols-outlined">app_badging</span>
+<div>
+<h3>站内消息</h3>
+<p>本地演示阶段用于验证消息状态，不等同于正式手机推送。</p>
+</div>
+<input checked class="gohome-setting-toggle" type="checkbox"/>
+</label>
+</section>
+<section class="gohome-section-tight">
+<div class="gohome-section-heading">
+<div>
+<h3>正式渠道</h3>
+<p>云端部署和 iOS App 阶段接入。</p>
 </div>
 </div>
-<div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
-<input checked="" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" id="toggle_wx_routine" name="toggle_wx_routine" type="checkbox"/>
-<label class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer" for="toggle_wx_routine"></label>
+<div class="gohome-simple-list">
+<article class="gohome-simple-card">
+<span class="material-symbols-outlined">mobile_friendly</span>
+<div>
+<h3>iOS 推送</h3>
+<p>需要云端通知服务和 APNs 证书后启用。</p>
 </div>
+<span class="gohome-status-tag muted">待接入</span>
+</article>
+<article class="gohome-simple-card">
+<span class="material-symbols-outlined">call</span>
+<div>
+<h3>电话联系</h3>
+<p>当前只支持在陪伴页手动拨打老人电话。</p>
 </div>
+<span class="gohome-status-tag">手动</span>
+</article>
+<article class="gohome-simple-card">
+<span class="material-symbols-outlined">sms</span>
+<div>
+<h3>短信通知</h3>
+<p>未进入本地闭环，后续作为增值通知渠道评估。</p>
+</div>
+<span class="gohome-status-tag muted">未启用</span>
+</article>
 </div>
 </section>
-<!-- Emergency Notifications Section -->
-<section class="bg-surface-container-lowest rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.04)] overflow-hidden border border-error-container">
-<div class="px-gutter-card py-stack-md bg-error-container/30 border-b border-error-container">
-<div class="flex items-center gap-2">
-<span class="material-symbols-outlined text-error" style="font-variation-settings: 'FILL' 1;">warning</span>
-<h2 class="font-headline-md text-headline-md text-error">紧急通知</h2>
-</div>
-<p class="font-body-md text-body-md text-on-surface-variant mt-1">跌倒检测、SOS求助、电子围栏报警等极其重要的通知</p>
-</div>
-<div class="divide-y divide-surface-container-highest">
-<!-- Phone Call -->
-<div class="p-gutter-card flex items-center justify-between bg-error-container/5 hover:bg-error-container/10 transition-colors">
-<div class="flex items-center gap-4">
-<div class="w-10 h-10 rounded-full bg-error text-on-error flex items-center justify-center">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">call</span>
-</div>
-<div>
-<h3 class="font-label-md text-label-md text-on-background">电话自动拨打</h3>
-<p class="font-body-md text-body-md text-sm text-on-surface-variant">发生紧急情况时，自动拨打紧急联系人电话</p>
-</div>
-</div>
-<div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
-<input checked="" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" id="toggle_phone_urgent" name="toggle_phone_urgent" type="checkbox"/>
-<label class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer" for="toggle_phone_urgent"></label>
-</div>
-</div>
-<!-- SMS -->
-<div class="p-gutter-card flex items-center justify-between bg-error-container/5 hover:bg-error-container/10 transition-colors">
-<div class="flex items-center gap-4">
-<div class="w-10 h-10 rounded-full bg-error-container text-on-error-container flex items-center justify-center">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">sms</span>
-</div>
-<div>
-<h3 class="font-label-md text-label-md text-on-background">短信提醒</h3>
-<p class="font-body-md text-body-md text-sm text-on-surface-variant">发送带有位置信息的紧急短信</p>
-</div>
-</div>
-<div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
-<input checked="" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" id="toggle_sms_urgent" name="toggle_sms_urgent" type="checkbox"/>
-<label class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer" for="toggle_sms_urgent"></label>
-</div>
-</div>
-<!-- DND Override -->
-<div class="p-gutter-card flex items-start justify-between bg-surface-container-lowest hover:bg-surface-container-low transition-colors">
-<div class="flex items-start gap-4">
-<div class="w-10 h-10 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center shrink-0 mt-1">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">do_not_disturb_off</span>
-</div>
-<div>
-<h3 class="font-label-md text-label-md text-on-background font-bold">突破免打扰模式</h3>
-<p class="font-body-md text-body-md text-sm text-on-surface-variant mt-1">即使手机处于静音或免打扰状态，紧急通知依然会以最大音量响铃震动。强烈建议开启。</p>
-</div>
-</div>
-<div class="relative inline-block w-12 mr-2 mt-2 align-middle select-none transition duration-200 ease-in shrink-0">
-<input checked="" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" id="toggle_dnd_override" name="toggle_dnd_override" type="checkbox"/>
-<label class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer" for="toggle_dnd_override"></label>
-</div>
-</div>
-</div>
-</section>
-<div class="flex justify-center pt-4">
-<button class="bg-primary text-on-primary rounded-full px-8 py-3 font-label-md text-label-md hover:bg-on-primary-fixed-variant transition-colors shadow-sm">
-                保存设置
-            </button>
-</div>
+<p class="gohome-note-panel">设置项会在云端通知服务接入后保存到账号。当前本地演示以页面状态、事件列表和关怀卡片生成为准。</p>
 </main>
-<!-- Scripts for interaction (if needed) -->
-<script>
-        // Simple logic to ensure DND override visually looks important if checked
-        const dndToggle = document.getElementById('toggle_dnd_override');
-        dndToggle.addEventListener('change', function() {
-            if(this.checked) {
-                // Could add extra visual cues here if needed
-            }
-        });
-    </script>
 
 <script id="gohome-stitch-route-links">
   (() => {
@@ -334,7 +196,7 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/edge-client.js?v=20260708-product-flow-2"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-product-flow-2"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-2"></script>
 </body></html>

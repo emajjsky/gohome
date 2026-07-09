@@ -115,7 +115,7 @@
         state.user = user;
         state.families = families;
         setText("familyUserName", user.display_name || "家庭空间");
-        setText("familyStatusText", user.email || "");
+        setText("familyStatusText", user.phone || "");
         renderFamilies();
     }
 

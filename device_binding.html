@@ -4,104 +4,14 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家 - 绑定守护设备</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&family=Inter:wght@400;600&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@100..900&family=Inter:wght@100..900&display=swap" rel="stylesheet"/>
+
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <style>
         .material-symbols-outlined {
             font-variation-settings: 'FILL' 1;
         }
     </style>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "surface-tint": "#0060ac",
-                        "on-secondary-fixed-variant": "#474744",
-                        "surface-dim": "#dbd9d9",
-                        "outline": "#717783",
-                        "tertiary-fixed-dim": "#87dc2c",
-                        "on-secondary": "#ffffff",
-                        "on-error-container": "#93000a",
-                        "secondary-fixed": "#e4e2dd",
-                        "on-tertiary-fixed": "#0e2000",
-                        "surface-container-high": "#eae8e7",
-                        "outline-variant": "#c1c7d3",
-                        "tertiary-container": "#498300",
-                        "surface-container-lowest": "#ffffff",
-                        "on-tertiary-container": "#f9ffeb",
-                        "background": "#fbf9f8",
-                        "secondary-fixed-dim": "#c8c6c2",
-                        "on-tertiary": "#ffffff",
-                        "on-surface-variant": "#414751",
-                        "surface-container-highest": "#e4e2e2",
-                        "on-background": "#1b1c1c",
-                        "surface-variant": "#e4e2e2",
-                        "on-tertiary-fixed-variant": "#2a5000",
-                        "on-primary-container": "#fdfcff",
-                        "on-secondary-container": "#63635f",
-                        "on-primary-fixed": "#001c39",
-                        "inverse-surface": "#303030",
-                        "tertiary-fixed": "#a1fa49",
-                        "surface": "#fbf9f8",
-                        "surface-container-low": "#f5f3f3",
-                        "surface-bright": "#fbf9f8",
-                        "primary-container": "#2976c7",
-                        "on-surface": "#1b1c1c",
-                        "primary-fixed": "#d4e3ff",
-                        "primary": "#005da7",
-                        "on-primary-fixed-variant": "#004883",
-                        "error": "#ba1a1a",
-                        "on-error": "#ffffff",
-                        "inverse-on-surface": "#f2f0f0",
-                        "error-container": "#ffdad6",
-                        "secondary-container": "#e1dfdb",
-                        "primary-fixed-dim": "#a4c9ff",
-                        "tertiary": "#386800",
-                        "inverse-primary": "#a4c9ff",
-                        "surface-container": "#efeded",
-                        "secondary": "#5e5e5b",
-                        "on-secondary-fixed": "#1b1c19",
-                        "on-primary": "#ffffff"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px",
-                        "2xl": "1rem",
-                        "3xl": "1.5rem"
-                    },
-                    "spacing": {
-                        "stack-sm": "8px",
-                        "gutter-card": "16px",
-                        "stack-md": "16px",
-                        "stack-lg": "32px",
-                        "margin-page": "20px"
-                    },
-                    "fontFamily": {
-                        "body-lg": ["Inter"],
-                        "label-md": ["Inter"],
-                        "body-md": ["Inter"],
-                        "headline-md": ["Hanken Grotesk"],
-                        "headline-lg": ["Hanken Grotesk"],
-                        "headline-lg-mobile": ["Hanken Grotesk"]
-                    },
-                    "fontSize": {
-                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
-                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
-                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
-                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
-                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
-                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
-                    }
-                }
-            }
-        }
-    </script>
 <style>
     body {
       min-height: max(884px, 100dvh);
@@ -136,12 +46,12 @@
     }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-cachefix-1"/>
 </head>
 <body class="bg-background text-on-background antialiased h-screen flex flex-col pt-safe-top pb-safe-bottom">
 <!-- Header (Nav suppressed as this is a linear task) -->
 <header class="flex items-center px-margin-page py-4">
-<button aria-label="Back" class="w-10 h-10 flex items-center justify-center rounded-full bg-surface-container-low hover:bg-surface-container-high transition-colors">
+<button aria-label="Back" class="w-10 h-10 flex items-center justify-center rounded-full bg-surface-container-low hover:bg-surface-container-high transition-colors" onclick="history.length > 1 ? history.back() : location.href='family.html?app=1'" type="button">
 <span class="material-symbols-outlined text-on-surface">arrow_back</span>
 </button>
 </header>
@@ -149,10 +59,10 @@
 <main class="flex-1 overflow-y-auto px-margin-page pb-stack-lg flex flex-col">
 <div class="mb-stack-lg mt-stack-md text-center">
 <h1 class="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg text-on-background mb-stack-sm">
-                绑定守护伴侣
+                连接家庭盒子
             </h1>
 <p class="font-body-md text-body-md text-on-surface-variant max-w-sm mx-auto">
-                将设备连接至您的账号，随时随地关心家人的安全与健康。
+                盒子完成本地 Wi-Fi 配网后，在这里关联到当前家庭。
             </p>
 </div>
 <!-- Device Image Area -->
@@ -160,32 +70,57 @@
 <img class="object-cover w-full h-full" data-alt="A high-quality, softly lit lifestyle photograph of a sleek, modern, white, rounded smart health monitoring device resting on a clean, warm wooden bedside table. The aesthetic is warm, domestic, and corporate modern, utilizing a soft cream and warm white color palette with gentle, diffused natural lighting. Minimalist style, reassuring mood." src="assets/stitch-images/18-c88194a6a8.jpg"/>
 <div class="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent"></div>
 </div>
-<!-- Action Cards -->
-<div class="grid grid-cols-1 md:grid-cols-2 gap-gutter-card flex-1 max-w-2xl mx-auto w-full">
-<!-- Scan QR Code -->
-<button class="bg-surface-container-lowest border-none shadow-[0_4px_12px_rgba(0,0,0,0.04)] rounded-2xl p-stack-md flex items-center justify-start text-left hover:bg-surface-container-low transition-colors group">
-<div class="w-14 h-14 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center mr-gutter-card shrink-0">
-<span class="material-symbols-outlined text-[28px]">qr_code_scanner</span>
+<section id="bindingEmptySection" class="hidden max-w-2xl mx-auto w-full">
+<div class="app-soft-card bg-white p-5 text-center">
+<p class="font-display text-[17px] font-bold text-on-surface">先创建家庭</p>
+<p class="mt-2 font-sans text-[13px] leading-6 text-on-surface-variant">盒子需要绑定到某一个家庭，再继续配置摄像头。</p>
+<a id="bindingEmptyFamilyLink" href="family.html?app=1" class="mt-4 inline-flex h-11 items-center justify-center rounded-full bg-primary px-5 font-label-md text-label-md text-on-primary">去创建家庭</a>
+</div>
+</section>
+<section id="bindingFormSection" class="max-w-2xl mx-auto w-full">
+<form id="bindingForm" class="app-soft-card bg-white p-5 space-y-4">
+<div>
+<label class="font-label-md text-label-md text-on-surface" for="bindingFamilySelect">绑定到</label>
+<select id="bindingFamilySelect" class="mt-2 w-full rounded-2xl border border-outline-variant bg-surface-container-low px-4 py-3 font-body-md text-body-md text-on-surface outline-none focus:border-primary">
+</select>
 </div>
 <div>
-<h2 class="font-headline-md text-headline-md text-on-background mb-1 group-hover:text-primary transition-colors">扫描包装二维码</h2>
-<p class="font-body-md text-body-md text-on-surface-variant">最快捷的方式，对准包装盒上的二维码即可自动绑定。</p>
+<label class="font-label-md text-label-md text-on-surface" for="bindingClaimInput">盒子码</label>
+<div class="mt-2 relative">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">qr_code_2</span>
+<input id="bindingClaimInput" class="w-full rounded-2xl border border-outline-variant bg-surface-container-low py-3 pl-12 pr-4 font-body-lg text-body-lg text-on-surface placeholder:text-on-surface-variant outline-none focus:border-primary" placeholder="输入二维码内容、序列号或绑定码" autocomplete="off" autocapitalize="characters" spellcheck="false" type="text"/>
 </div>
-</button>
-<!-- Manual Entry -->
-<button class="bg-surface-container-lowest border-none shadow-[0_4px_12px_rgba(0,0,0,0.04)] rounded-2xl p-stack-md flex items-center justify-start text-left hover:bg-surface-container-low transition-colors group">
-<div class="w-14 h-14 rounded-full bg-surface-variant text-on-surface-variant flex items-center justify-center mr-gutter-card shrink-0">
-<span class="material-symbols-outlined text-[28px]">keyboard</span>
+<p class="mt-2 font-body-md text-[12px] leading-5 text-on-surface-variant">正式产品扫盒身二维码；当前树莓派没有贴纸时，用云端临时码或设备序列号完成认领。</p>
 </div>
 <div>
-<h2 class="font-headline-md text-headline-md text-on-background mb-1 group-hover:text-primary transition-colors">手动输入序列号</h2>
-<p class="font-body-md text-body-md text-on-surface-variant">找不到二维码？查看设备底部的数字序列号进行输入。</p>
+<label class="font-label-md text-label-md text-on-surface" for="bindingNoteInput">备注</label>
+<input id="bindingNoteInput" class="mt-2 w-full rounded-2xl border border-outline-variant bg-surface-container-low px-4 py-3 font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant outline-none focus:border-primary" placeholder="例如 妈妈家的盒子" type="text"/>
 </div>
+<button id="bindingSubmitBtn" class="w-full h-12 rounded-full bg-primary text-on-primary font-label-md text-label-md flex items-center justify-center gap-2 active:scale-[0.98] transition-all" type="submit">
+<span class="material-symbols-outlined text-[20px]">link</span>
+绑定盒子
 </button>
+<p id="bindingFeedback" class="min-h-[20px] font-sans text-[12px] leading-5 text-on-surface-variant"></p>
+</form>
+<div class="mt-4 app-soft-card bg-white p-4">
+<div class="flex items-center justify-between gap-3">
+<div>
+<p class="font-display text-[15px] font-bold text-on-surface">已绑定设备</p>
+<p class="mt-1 font-sans text-[12px] text-on-surface-variant">绑定成功后会进入摄像头配置。</p>
 </div>
+<span id="bindingListBadge" class="rounded-full bg-surface-container-low px-3 py-1 font-sans text-[11px] text-on-surface-variant">0 台</span>
+</div>
+<div id="bindingList" class="mt-3 space-y-3"></div>
+</div>
+<div class="mt-4 app-soft-card bg-white p-4">
+<p class="font-display text-[15px] font-bold text-on-surface">云端发现</p>
+<p class="mt-1 font-sans text-[12px] leading-5 text-on-surface-variant">只显示在线但尚未被家庭认领的盒子摘要，仍需要盒子码确认。</p>
+<div id="bindingClaimableList" class="mt-3 space-y-2"></div>
+</div>
+</section>
 <div class="mt-stack-lg text-center">
 <button class="font-label-md text-label-md text-primary hover:text-primary-fixed-dim underline-offset-4 hover:underline transition-all">
-                遇到问题？查看帮助
+                盒子还没配网？先连接 GoHome 热点完成 Wi-Fi 配网
             </button>
 </div>
 </main>
@@ -221,7 +156,8 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/edge-client.js?v=20260708-cachefix-1"></script>
+<script src="assets/scripts/device-binding-live.js?v=20260709-claim-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-cachefix-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-cachefix-1"></script>
 </body></html>

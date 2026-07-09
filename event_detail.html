@@ -1,249 +1,299 @@
 <!DOCTYPE html>
-
-<html class="light" lang="zh-CN"><head>
+<html lang="zh-CN">
+<head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
-<title>回家 - 消息详情</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "surface-tint": "#0060ac",
-                        "on-secondary-fixed-variant": "#474744",
-                        "surface-dim": "#dbd9d9",
-                        "outline": "#717783",
-                        "tertiary-fixed-dim": "#87dc2c",
-                        "on-secondary": "#ffffff",
-                        "on-error-container": "#93000a",
-                        "secondary-fixed": "#e4e2dd",
-                        "on-tertiary-fixed": "#0e2000",
-                        "surface-container-high": "#eae8e7",
-                        "outline-variant": "#c1c7d3",
-                        "tertiary-container": "#498300",
-                        "surface-container-lowest": "#ffffff",
-                        "on-tertiary-container": "#f9ffeb",
-                        "background": "#fbf9f8",
-                        "secondary-fixed-dim": "#c8c6c2",
-                        "on-tertiary": "#ffffff",
-                        "on-surface-variant": "#414751",
-                        "surface-container-highest": "#e4e2e2",
-                        "on-background": "#1b1c1c",
-                        "surface-variant": "#e4e2e2",
-                        "on-tertiary-fixed-variant": "#2a5000",
-                        "on-primary-container": "#fdfcff",
-                        "on-secondary-container": "#63635f",
-                        "on-primary-fixed": "#001c39",
-                        "inverse-surface": "#303030",
-                        "tertiary-fixed": "#a1fa49",
-                        "surface": "#fbf9f8",
-                        "surface-container-low": "#f5f3f3",
-                        "surface-bright": "#fbf9f8",
-                        "primary-container": "#2976c7",
-                        "on-surface": "#1b1c1c",
-                        "primary-fixed": "#d4e3ff",
-                        "primary": "#005da7",
-                        "on-primary-fixed-variant": "#004883",
-                        "error": "#ba1a1a",
-                        "on-error": "#ffffff",
-                        "inverse-on-surface": "#f2f0f0",
-                        "error-container": "#ffdad6",
-                        "secondary-container": "#e1dfdb",
-                        "primary-fixed-dim": "#a4c9ff",
-                        "tertiary": "#386800",
-                        "inverse-primary": "#a4c9ff",
-                        "surface-container": "#efeded",
-                        "secondary": "#5e5e5b",
-                        "on-secondary-fixed": "#1b1c19",
-                        "on-primary": "#ffffff"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px"
-                    },
-                    "spacing": {
-                        "stack-sm": "8px",
-                        "gutter-card": "16px",
-                        "stack-md": "16px",
-                        "stack-lg": "32px",
-                        "margin-page": "20px"
-                    },
-                    "fontFamily": {
-                        "body-lg": ["Inter"],
-                        "label-md": ["Inter"],
-                        "body-md": ["Inter"],
-                        "headline-md": ["Hanken Grotesk"],
-                        "headline-lg": ["Hanken Grotesk"],
-                        "headline-lg-mobile": ["Hanken Grotesk"]
-                    },
-                    "fontSize": {
-                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
-                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
-                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
-                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
-                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
-                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
-                    }
-                }
-            }
-        }
-    </script>
-<style>
-        body {
-            -webkit-tap-highlight-color: transparent;
-        }
-    </style>
-<style>
-    body {
-      min-height: max(884px, 100dvh);
-    }
-  </style>
+<title>事件详情 - 回家</title>
 
-<style id="gohome-app-minimal-adapt">
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-product-flow-2"/>
+<style>
   :root {
+    --bg: #f6f7f3;
+    --panel: #fffefc;
+    --soft: #eef2eb;
+    --line: rgba(70, 82, 70, 0.13);
+    --text: #202520;
+    --muted: #687168;
+    --primary: #536d5a;
+    --primary-strong: #1f2a22;
+    --primary-soft: #e8efe8;
+    --warn: #ba1a1a;
+    --warn-soft: #ffdad6;
     --safe-top: env(safe-area-inset-top, 0px);
-    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-top-reserved: max(var(--safe-top), 38px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
-    --safe-left: env(safe-area-inset-left, 0px);
   }
-  html, body {
-    min-height: 100dvh;
-    background: #fbf9f8;
-  }
+  * { box-sizing: border-box; }
   body {
-    padding-left: var(--safe-left);
-    padding-right: var(--safe-right);
+    margin: 0;
+    min-height: 100dvh;
+    background:
+      radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0) 38%),
+      linear-gradient(180deg, #f8f9f4 0%, var(--bg) 48%, #eef1ea 100%);
+    color: var(--text);
+    font-family: "Noto Sans SC Local", "PingFang SC", "Hiragino Sans GB", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
   }
-  nav.fixed.bottom-0,
-  nav.docked.bottom-0,
-  nav.pb-safe-area-bottom {
-    padding-bottom: calc(10px + var(--safe-bottom)) !important;
+  .material-symbols-outlined { font-variation-settings: "FILL" 0, "wght" 430, "GRAD" 0, "opsz" 24; }
+  .page {
+    width: min(100%, 430px);
+    margin: 0 auto;
+    padding: calc(18px + var(--safe-top-reserved)) 20px calc(116px + var(--safe-bottom));
   }
-  @media (display-mode: standalone) {
-    body {
-      padding-top: var(--safe-top);
-    }
+  .topbar {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
   }
+  .icon-button {
+    width: 42px;
+    height: 42px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    background: rgba(255, 255, 255, 0.68);
+    color: var(--text);
+    box-shadow: 0 8px 20px rgba(60, 73, 58, 0.06);
+    backdrop-filter: blur(14px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+  }
+  .title {
+    text-align: center;
+    min-width: 0;
+  }
+  .title h1 {
+    margin: 0;
+    font-size: 20px;
+    line-height: 1.15;
+  }
+  .title p {
+    margin: 5px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .hero,
+  .panel {
+    border-radius: 24px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    box-shadow: 0 14px 34px rgba(54, 67, 53, 0.06);
+  }
+  .hero {
+    padding: 18px;
+  }
+  .hero-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    border-radius: 999px;
+    padding: 5px 10px;
+    background: var(--warn-soft);
+    color: #93000a;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+  .time {
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .hero h2 {
+    margin: 0;
+    font-size: 24px;
+    line-height: 1.22;
+  }
+  .hero p {
+    margin: 10px 0 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .media {
+    position: relative;
+    margin-top: 14px;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 18px;
+    background: #17202a;
+  }
+  .media img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .media img:not([src]),
+  .media img[src=""] {
+    display: none;
+  }
+  .media-fallback {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: rgba(255, 255, 255, 0.78);
+    text-align: center;
+    padding: 18px;
+  }
+  .panel {
+    margin-top: 14px;
+    padding: 16px;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .row:last-child { border-bottom: 0; }
+  .row-label {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .row-value {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.45;
+  }
+  .row-value small {
+    display: block;
+    margin-top: 3px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .evidence h3 {
+    margin: 0 0 10px;
+    font-size: 18px;
+  }
+  .evidence p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.65;
+  }
+  .evidence p + p { margin-top: 10px; }
+  .bottom-actions {
+    position: fixed;
+    left: 50%;
+    bottom: 0;
+    z-index: 50;
+    width: min(100%, 430px);
+    transform: translateX(-50%);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+    gap: 10px;
+    padding: 12px 20px calc(14px + var(--safe-bottom));
+    background: linear-gradient(180deg, rgba(246, 247, 243, 0), rgba(246, 247, 243, 0.94) 26%, #f6f7f3 100%);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+  }
+  .action {
+    min-height: 48px;
+    border: 0;
+    border-radius: 999px;
+    font-weight: 800;
+    font-size: 14px;
+  }
+  .action.secondary {
+    background: #ffffff;
+    border: 1px solid var(--line);
+    color: var(--text);
+  }
+  .action.primary {
+    background: var(--primary-strong);
+    color: #ffffff;
+  }
+  .action:disabled {
+    opacity: 0.58;
+  }
+  .opacity-60 { opacity: 0.6; }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
 </head>
-<body class="bg-background text-on-background antialiased min-h-screen flex flex-col">
-<!-- TopAppBar -->
-<header class="bg-surface docked full-width top-0 z-40 flex justify-between items-center w-full px-margin-page py-4 max-w-screen-xl mx-auto flat no shadows">
-<div class="flex items-center gap-4">
-<button class="p-2 -ml-2 rounded-full hover:bg-surface-container-low transition-colors" onclick="history.back()">
-<span class="material-symbols-outlined text-primary text-[24px]">arrow_back</span>
-</button>
-<h1 class="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary">消息详情</h1>
-</div>
-<button class="w-10 h-10 rounded-full overflow-hidden hover:bg-surface-container-low transition-colors flex items-center justify-center">
-<img alt="User Profile Photo" class="w-full h-full object-cover" data-alt="A warm, inviting portrait of an elderly person, well-lit, soft focus background, conveying safety and trust. High quality, realistic." src="assets/stitch-images/31-f8df9d6791.jpg"/>
-</button>
-</header>
-<!-- Main Content Canvas (Transactional/Focused Journey - No Nav Shells) -->
-<main class="flex-1 px-margin-page pb-stack-lg max-w-2xl mx-auto w-full flex flex-col gap-stack-md mt-4">
-<!-- Alert Status Card -->
-<div class="bg-error-container rounded-xl p-gutter-card flex items-start gap-4 shadow-sm border border-error/20">
-<span class="material-symbols-outlined text-error text-[28px]" style="font-variation-settings: 'FILL' 1;">warning</span>
-<div class="flex-1">
-<h2 class="font-headline-md text-headline-md text-error mb-1">异常警告：检测到人员跌倒</h2>
-<p class="font-body-md text-body-md text-on-error-container">客厅摄像头于 10:42 AM 侦测到异常动作，疑似跌倒事件。</p>
-</div>
-</div>
-<!-- Media Snapshot -->
-<div class="rounded-xl overflow-hidden bg-surface-container-highest shadow-sm relative group">
-<div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent z-10"></div>
-<img alt="Incident Snapshot" class="w-full aspect-video object-cover" data-alt="A high-quality, wide-angle interior shot of a modern, softly lit living room. In the center, a subtle blur suggests a sudden movement or a person on the floor. The lighting is warm and natural, emphasizing a domestic, safe environment despite the event. High resolution, realistic style." src="assets/stitch-images/06-05ce0c3df4.jpg"/>
-<div class="absolute bottom-4 left-4 z-20 text-white">
-<div class="flex items-center gap-2 mb-1">
-<span class="material-symbols-outlined text-[18px]">videocam</span>
-<span class="font-label-md text-label-md">客厅全景摄像机</span>
-</div>
-<span class="font-body-md text-body-md opacity-80">2023年10月24日 10:42:15 AM</span>
-</div>
-<!-- Play Overlay (visual only) -->
-<button class="absolute inset-0 m-auto w-16 h-16 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center z-20 group-hover:bg-white/30 transition-colors">
-<span class="material-symbols-outlined text-white text-[32px]" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
-</button>
-</div>
-<!-- Details List -->
-<div class="bg-surface-container-lowest rounded-xl p-gutter-card shadow-[0_4px_12px_rgba(0,0,0,0.04)] flex flex-col gap-stack-sm">
-<div class="flex justify-between items-center py-2 border-b border-surface-variant">
-<span class="font-body-md text-body-md text-on-surface-variant">事件类型</span>
-<span class="font-label-md text-label-md text-on-surface">AI 跌倒检测</span>
-</div>
-<div class="flex justify-between items-center py-2 border-b border-surface-variant">
-<span class="font-body-md text-body-md text-on-surface-variant">发生位置</span>
-<span class="font-label-md text-label-md text-on-surface">一楼 客厅</span>
-</div>
-<div class="flex justify-between items-center py-2 border-b border-surface-variant">
-<span class="font-body-md text-body-md text-on-surface-variant">状态</span>
-<span class="font-label-md text-label-md text-error flex items-center gap-1">
-<span class="w-2 h-2 rounded-full bg-error"></span> 待处理
-                </span>
-</div>
-<div class="flex justify-between items-center py-2">
-<span class="font-body-md text-body-md text-on-surface-variant">设备连通性</span>
-<span class="font-label-md text-label-md text-tertiary flex items-center gap-1">
-<span class="material-symbols-outlined text-[16px]">wifi</span> 正常在线
-                </span>
-</div>
-</div>
-</main>
-<!-- Bottom Action Bar (Sticky) -->
-<div class="fixed bottom-0 left-0 w-full bg-surface-container-lowest p-gutter-card pb-[calc(16px+env(safe-area-inset-bottom))] shadow-[0_-4px_12px_rgba(0,0,0,0.08)] flex gap-4 z-50">
-<button class="flex-1 bg-surface-container-high text-on-surface font-label-md text-label-md py-3 rounded-full hover:bg-surface-variant transition-colors">
-            查看详情
-        </button>
-<button class="flex-[2] bg-error text-on-error font-label-md text-label-md py-3 rounded-full shadow-md flex items-center justify-center gap-2 hover:bg-on-error-container transition-colors">
-<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">call</span>
-            立即联系
-        </button>
-</div>
-<!-- Padding spacer for sticky bottom bar -->
-<div class="h-24"></div>
+<body>
+<main class="page">
+  <header class="topbar">
+    <a id="edgeDetailBackLink" class="icon-button" href="events.html?app=1" aria-label="返回事件列表">
+      <span class="material-symbols-outlined">arrow_back</span>
+    </a>
+    <div class="title">
+      <h1>事件详情</h1>
+      <p>守护事件</p>
+    </div>
+    <a id="edgeDetailWatchLink" class="icon-button" href="watch.html?app=1" aria-label="查看实时画面">
+      <span class="material-symbols-outlined">nest_cam_indoor</span>
+    </a>
+  </header>
 
-<script id="gohome-stitch-route-links">
-  (() => {
-    const routes = {
-      "首页": "index.html",
-      "守护": "monitor.html",
-      "消息": "events.html",
-      "陪伴": "companionship.html",
-      "我的": "privacy.html",
-      "实时画面": "watch.html",
-      "事件列表": "events.html",
-      "规则设置": "rules.html",
-      "家庭成员": "family_members.html",
-      "通知设置": "notifications.html",
-      "隐私与数据": "privacy_data.html",
-      "添加摄像头": "connect.html",
-      "设备管理": "cameras.html"
-    };
-    document.addEventListener("click", (event) => {
-      const item = event.target.closest("a, button");
-      if (!item) return;
-      if (item.hasAttribute("onclick")) return;
-      const href = item.getAttribute("href");
-      if (href && href !== "#") return;
-      const text = (item.innerText || item.textContent || "").replace(/\s+/g, "").trim();
-      const route = routes[text];
-      if (!route) return;
-      event.preventDefault();
-      window.location.href = route;
-    });
-  })();
-</script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
-</body></html>
+  <section class="hero">
+    <div class="hero-meta">
+      <span id="edgeDetailTime" class="time">--:--</span>
+      <span id="edgeDetailStatus" class="pill">需要确认</span>
+    </div>
+    <h2 id="edgeDetailHero">正在读取事件</h2>
+    <p id="edgeDetailNote">连接家庭服务后，会显示这条提醒的来源和处理建议。</p>
+  </section>
+
+  <section class="media" aria-label="事件截图">
+    <div class="media-fallback">
+      <div>
+        <span class="material-symbols-outlined">image_search</span>
+        <p>等待证据截图</p>
+      </div>
+    </div>
+    <img id="edgeDetailImage" alt="事件证据截图"/>
+  </section>
+
+  <section class="panel">
+    <div class="row">
+      <div class="row-label">事件</div>
+      <div id="edgeDetailTitle" class="row-value">正在读取</div>
+    </div>
+    <div class="row">
+      <div class="row-label">位置</div>
+      <div id="edgeDetailRoom" class="row-value">家庭摄像头</div>
+    </div>
+    <div class="row">
+      <div class="row-label">持续</div>
+      <div class="row-value">
+        <span id="edgeDetailDuration">实时事件</span>
+        <small id="edgeDetailDurationHint">等待规则解释</small>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel evidence">
+    <h3>提醒依据</h3>
+    <p id="edgeDetailFact">正在读取检测事实。</p>
+    <p id="edgeDetailFactSub">如果这条事件由规则触发，这里会显示当前观测和规则阈值。</p>
+  </section>
+</main>
+
+<div class="bottom-actions">
+  <button id="edgeMarkFalsePositive" class="action secondary" type="button">标记误报</button>
+  <button id="edgeMarkHandled" class="action primary" type="button">已确认安全</button>
+</div>
+
+<script src="assets/scripts/edge-client.js?v=20260708-product-flow-2"></script>
+<script src="assets/scripts/event-detail-live.js?v=20260708-product-flow-2"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-2"></script>
+</body>
+</html>

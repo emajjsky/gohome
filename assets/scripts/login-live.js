@@ -21,7 +21,7 @@
         $("authRegisterTab")?.classList.toggle("text-on-surface-variant", mode !== "register");
         $("authDisplayNameGroup")?.classList.toggle("hidden", mode !== "register");
         $("authPassword")?.setAttribute("autocomplete", mode === "login" ? "current-password" : "new-password");
-        setText("authSubmitBtn", mode === "login" ? "立即登录" : "创建账号");
+        setText("authSubmitBtn", mode === "login" ? "立即登录" : "创建并登录");
         setFeedback("");
     }
 
@@ -33,7 +33,7 @@
         submit.classList.toggle("opacity-70", busy);
         submit.textContent = busy
             ? (state.mode === "login" ? "正在登录..." : "正在创建...")
-            : (state.mode === "login" ? "立即登录" : "创建账号");
+            : (state.mode === "login" ? "立即登录" : "创建并登录");
     }
 
     function setFeedback(message, tone = "neutral") {
@@ -55,7 +55,7 @@
         $("authForm")?.classList.toggle("hidden", visible);
         if (visible && user) {
             setText("authLoggedInTitle", `${user.display_name || "家属"}`);
-            setText("authLoggedInSub", user.email || "");
+            setText("authLoggedInSub", user.phone || "");
         }
     }
 
@@ -86,8 +86,8 @@
     function readForm() {
         return {
             display_name: $("authDisplayName")?.value.trim() || "",
-            email: $("authEmail")?.value.trim() || "",
-            password: $("authPassword")?.value || "",
+            phone: ($("authPhone") || $("phone") || $("authEmail"))?.value.trim() || "",
+            code: ($("authCode") || $("code") || $("authPassword"))?.value || "",
         };
     }
 
@@ -95,8 +95,8 @@
         if (state.mode === "register" && !payload.display_name) {
             return "请先填写你的称呼。";
         }
-        if (!payload.email) return "请先填写邮箱账号。";
-        if (!payload.password || payload.password.length < 6) return "密码至少需要 6 位。";
+        if (!/^\d{11}$/.test(String(payload.phone || "").replace(/\D/g, ""))) return "请先填写 11 位手机号。";
+        if (!payload.code || payload.code.length < 6) return "验证码至少需要 6 位。";
         return "";
     }
 
@@ -114,7 +114,7 @@
             setBusy(true);
             setFeedback(state.mode === "login" ? "正在验证账号..." : "正在创建账号...", "neutral");
             if (state.mode === "login") {
-                await GoHomeEdge.login({ email: payload.email, password: payload.password });
+                await GoHomeEdge.login({ phone: payload.phone, code: payload.code });
             } else {
                 await GoHomeEdge.register(payload);
             }
@@ -137,7 +137,7 @@
             refreshLoggedInActionLabel();
         } catch (error) {
             setText("authServiceStatus", "守护服务未连接");
-            setFeedback(error.message || "本机守护服务未连接，请先启动 edge-agent。", "error");
+            setFeedback(error.message || "本机守护服务未连接，请先启动家庭盒子服务。", "error");
         }
     }
 

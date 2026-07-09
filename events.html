@@ -3,12 +3,13 @@
 <html lang="zh-CN"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
-<title>回家 - 消息中心</title>
+<title>回家 - 事件记录</title>
+
+<link rel="icon" href="data:,"/>
 <!-- Tailwind CSS -->
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <!-- Material Symbols -->
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="assets/styles/app.css?v=20260708-cachefix-1" rel="stylesheet"/>
 <style>
         .material-symbols-outlined {
             font-family: 'Material Symbols Outlined';
@@ -27,93 +28,6 @@
         }
     </style>
 <!-- Tailwind Configuration -->
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                            "surface-tint": "#0060ac",
-                            "on-secondary-fixed-variant": "#474744",
-                            "surface-dim": "#dbd9d9",
-                            "outline": "#717783",
-                            "tertiary-fixed-dim": "#87dc2c",
-                            "on-secondary": "#ffffff",
-                            "on-error-container": "#93000a",
-                            "secondary-fixed": "#e4e2dd",
-                            "on-tertiary-fixed": "#0e2000",
-                            "surface-container-high": "#eae8e7",
-                            "outline-variant": "#c1c7d3",
-                            "tertiary-container": "#498300",
-                            "surface-container-lowest": "#ffffff",
-                            "on-tertiary-container": "#f9ffeb",
-                            "background": "#fbf9f8",
-                            "secondary-fixed-dim": "#c8c6c2",
-                            "on-tertiary": "#ffffff",
-                            "on-surface-variant": "#414751",
-                            "surface-container-highest": "#e4e2e2",
-                            "on-background": "#1b1c1c",
-                            "surface-variant": "#e4e2e2",
-                            "on-tertiary-fixed-variant": "#2a5000",
-                            "on-primary-container": "#fdfcff",
-                            "on-secondary-container": "#63635f",
-                            "on-primary-fixed": "#001c39",
-                            "inverse-surface": "#303030",
-                            "tertiary-fixed": "#a1fa49",
-                            "surface": "#fbf9f8",
-                            "surface-container-low": "#f5f3f3",
-                            "surface-bright": "#fbf9f8",
-                            "primary-container": "#2976c7",
-                            "on-surface": "#1b1c1c",
-                            "primary-fixed": "#d4e3ff",
-                            "primary": "#005da7",
-                            "on-primary-fixed-variant": "#004883",
-                            "error": "#ba1a1a",
-                            "on-error": "#ffffff",
-                            "inverse-on-surface": "#f2f0f0",
-                            "error-container": "#ffdad6",
-                            "secondary-container": "#e1dfdb",
-                            "primary-fixed-dim": "#a4c9ff",
-                            "tertiary": "#386800",
-                            "inverse-primary": "#a4c9ff",
-                            "surface-container": "#efeded",
-                            "secondary": "#5e5e5b",
-                            "on-secondary-fixed": "#1b1c19",
-                            "on-primary": "#ffffff"
-                    },
-                    "borderRadius": {
-                            "DEFAULT": "0.25rem",
-                            "lg": "0.5rem",
-                            "xl": "0.75rem",
-                            "full": "9999px"
-                    },
-                    "spacing": {
-                            "stack-sm": "8px",
-                            "gutter-card": "16px",
-                            "stack-md": "16px",
-                            "stack-lg": "32px",
-                            "margin-page": "20px"
-                    },
-                    "fontFamily": {
-                            "body-lg": ["Inter", "sans-serif"],
-                            "label-md": ["Inter", "sans-serif"],
-                            "body-md": ["Inter", "sans-serif"],
-                            "headline-md": ["Hanken Grotesk", "sans-serif"],
-                            "headline-lg": ["Hanken Grotesk", "sans-serif"],
-                            "headline-lg-mobile": ["Hanken Grotesk", "sans-serif"]
-                    },
-                    "fontSize": {
-                            "body-lg": ["18px", {"lineHeight": "26px", "fontWeight": "400"}],
-                            "label-md": ["14px", {"lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600"}],
-                            "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
-                            "headline-md": ["22px", {"lineHeight": "28px", "fontWeight": "600"}],
-                            "headline-lg": ["28px", {"lineHeight": "36px", "fontWeight": "700"}],
-                            "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "700"}]
-                    }
-                }
-            }
-        }
-    </script>
 <style>
     body {
       min-height: max(884px, 100dvh);
@@ -148,7 +62,7 @@
     }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260709-state-1"/>
 </head>
 <body class="bg-background text-on-background min-h-screen flex flex-col font-body-md text-body-md pb-[90px]">
 <!-- TopAppBar -->
@@ -164,111 +78,32 @@
 </button>
 </header>
 <!-- Main Content -->
-<main class="flex-1 px-margin-page py-stack-md flex flex-col gap-stack-lg max-w-screen-md mx-auto w-full">
-<!-- Header Text -->
-<div class="px-1">
-<h2 class="font-headline-lg-mobile text-headline-lg-mobile text-on-surface">消息中心</h2>
-<p class="font-body-md text-body-md text-on-surface-variant mt-1">守护您与家人的每一刻</p>
-</div>
-<!-- Weather Reminder Card -->
-<section class="bg-primary-container text-on-primary-container rounded-[20px] p-5 flex flex-col gap-3 shadow-[0_4px_12px_rgba(0,0,0,0.04)] relative overflow-hidden group cursor-pointer hover:bg-[#2069b8] transition-colors duration-300">
-<!-- Decorative Icon -->
-<div class="absolute -right-4 -top-4 opacity-10 transform group-hover:scale-110 transition-transform duration-500 pointer-events-none">
-<span class="material-symbols-outlined text-[140px]" style="font-variation-settings: 'FILL' 1;">cloud</span>
-</div>
-<div class="flex justify-between items-start z-10">
-<div class="flex items-center gap-2">
-<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">routine</span>
-<span class="font-label-md text-label-md bg-on-primary-container text-primary-container px-2.5 py-1 rounded-full text-xs">气象关怀</span>
-</div>
-<span class="font-body-md text-body-md opacity-80 text-sm">北京市</span>
-</div>
-<div class="z-10 mt-1">
-<h3 class="font-headline-md text-headline-md">今日降温，预计有雨</h3>
-<p class="font-body-md text-body-md opacity-90 mt-2 leading-relaxed max-w-[90%]">下午至夜间气温较低，建议提醒家中长辈减少外出。如需外出，请备好雨具并添加保暖外套。</p>
-</div>
+<main class="flex-1 px-margin-page flex flex-col gap-stack-lg max-w-screen-md mx-auto w-full">
+<section class="gohome-page-lead">
+<p>守护事件</p>
+<h2>事件记录</h2>
+<p>这里只放家庭盒子、摄像头和规则生成的安全事件，普通关怀内容留在首页和陪伴。</p>
 </section>
-<!-- Emergency Alerts -->
-<section class="flex flex-col gap-stack-sm">
-<div class="flex items-center gap-2 px-1 mb-1">
-<span class="material-symbols-outlined text-error text-[20px]" style="font-variation-settings: 'FILL' 1;">error</span>
-<h3 class="font-headline-md text-headline-md text-on-surface">紧急告警</h3>
+<section class="gohome-panel gohome-event-summary">
+<div class="min-w-0">
+<h3 id="edgeTimelineTitle">正在读取事件</h3>
+<p id="edgeTimelineAction">连接家庭服务后会显示待确认事件。</p>
 </div>
-<div class="flex flex-col gap-3">
-<!-- Alert 1 -->
-<article class="bg-error-container rounded-xl p-4 flex items-start gap-4 cursor-pointer active:scale-[0.98] transition-transform duration-200 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
-<div class="w-12 h-12 rounded-full bg-on-error-container text-error-container flex items-center justify-center flex-shrink-0 shadow-sm">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">vital_signs</span>
-</div>
-<div class="flex-1 flex flex-col pt-1">
-<div class="flex justify-between items-start">
-<h4 class="font-label-md text-label-md text-on-error-container">心率异常提醒</h4>
-<span class="font-body-md text-body-md text-on-error-container opacity-70 text-xs mt-0.5">10分钟前</span>
-</div>
-<p class="font-body-md text-body-md text-on-error-container mt-1.5 text-sm leading-relaxed opacity-90">手环检测到佩戴者心率短时间内偏高 (110 bpm)，请及时拨打电话确认情况。</p>
-</div>
-</article>
-<!-- Alert 2 -->
-<article class="bg-error-container rounded-xl p-4 flex items-start gap-4 cursor-pointer active:scale-[0.98] transition-transform duration-200 shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
-<div class="w-12 h-12 rounded-full bg-on-error-container text-error-container flex items-center justify-center flex-shrink-0 shadow-sm">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">sensor_door</span>
-</div>
-<div class="flex-1 flex flex-col pt-1">
-<div class="flex justify-between items-start">
-<h4 class="font-label-md text-label-md text-on-error-container">夜间大门未关</h4>
-<span class="font-body-md text-body-md text-on-error-container opacity-70 text-xs mt-0.5">昨晚 23:45</span>
-</div>
-<p class="font-body-md text-body-md text-on-error-container mt-1.5 text-sm leading-relaxed opacity-90">智能门磁显示入户门持续开启超过10分钟，已在本地触发语音提醒。</p>
-</div>
-</article>
-</div>
+<span id="edgeTimelineBadge" class="app-mini-pill muted shrink-0">同步中</span>
 </section>
-<!-- Life Reminders -->
-<section class="flex flex-col gap-stack-sm mb-4">
-<div class="flex items-center gap-2 px-1 mb-1 mt-2">
-<span class="material-symbols-outlined text-primary text-[20px]" style="font-variation-settings: 'FILL' 1;">calendar_month</span>
-<h3 class="font-headline-md text-headline-md text-on-surface">生活提醒</h3>
+<section class="flex flex-col gap-stack-md mb-4">
+<div class="gohome-section-heading">
+<div>
+<h3>时间线</h3>
+<p>按最新事件排序，处理后状态会同步。</p>
 </div>
-<div class="flex flex-col gap-3">
-<!-- Reminder 1 -->
-<article class="bg-surface-container-lowest rounded-xl p-4 flex items-start gap-4 cursor-pointer hover:bg-surface-container-low active:scale-[0.98] transition-all duration-200 shadow-[0_4px_12px_rgba(0,0,0,0.03)] border border-surface-container-highest">
-<div class="w-12 h-12 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center flex-shrink-0">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">medication</span>
 </div>
-<div class="flex-1 flex flex-col pt-1">
-<div class="flex justify-between items-start">
-<h4 class="font-label-md text-label-md text-on-surface">服药提醒</h4>
-<span class="font-body-md text-body-md text-on-surface-variant opacity-70 text-xs mt-0.5">上午 08:30</span>
+<div id="edgeEventsList" class="gohome-event-list">
+<div class="gohome-panel gohome-empty-state">
+<span class="material-symbols-outlined">progress_activity</span>
+<h3>正在同步事件</h3>
+<p>稍后显示摄像头离线、黑屏、疑似跌倒等真实记录。</p>
 </div>
-<p class="font-body-md text-body-md text-on-surface-variant mt-1.5 text-sm leading-relaxed">降压药服用时间已到，智能药盒已亮灯提示，请确认长辈是否按时服用。</p>
-</div>
-</article>
-<!-- Reminder 2 -->
-<article class="bg-surface-container-lowest rounded-xl p-4 flex items-start gap-4 cursor-pointer hover:bg-surface-container-low active:scale-[0.98] transition-all duration-200 shadow-[0_4px_12px_rgba(0,0,0,0.03)] border border-surface-container-highest">
-<div class="w-12 h-12 rounded-full overflow-hidden flex-shrink-0 bg-surface-container">
-<img class="w-full h-full object-cover" data-alt="A candid, warm portrait of a young adult daughter smiling cheerfully, bathed in soft afternoon sunlight, conveying family connection and a modern lifestyle aesthetic." src="assets/stitch-images/26-c176ad5281.jpg"/>
-</div>
-<div class="flex-1 flex flex-col pt-1">
-<div class="flex justify-between items-start">
-<h4 class="font-label-md text-label-md text-on-surface">家庭相册更新</h4>
-<span class="font-body-md text-body-md text-on-surface-variant opacity-70 text-xs mt-0.5">昨天</span>
-</div>
-<p class="font-body-md text-body-md text-on-surface-variant mt-1.5 text-sm leading-relaxed">女儿上传了 5 张周末植物园游玩的新照片，去相册看看吧。</p>
-</div>
-</article>
-<!-- Reminder 3 -->
-<article class="bg-surface-container-lowest rounded-xl p-4 flex items-start gap-4 cursor-pointer hover:bg-surface-container-low active:scale-[0.98] transition-all duration-200 shadow-[0_4px_12px_rgba(0,0,0,0.03)] border border-surface-container-highest">
-<div class="w-12 h-12 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center flex-shrink-0">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">local_florist</span>
-</div>
-<div class="flex-1 flex flex-col pt-1">
-<div class="flex justify-between items-start">
-<h4 class="font-label-md text-label-md text-on-surface">长寿花养护</h4>
-<span class="font-body-md text-body-md text-on-surface-variant opacity-70 text-xs mt-0.5">前天</span>
-</div>
-<p class="font-body-md text-body-md text-on-surface-variant mt-1.5 text-sm leading-relaxed">根据记录，阳台的长寿花需要浇水了，可以趁着午后阳光正好顺便打理一下。</p>
-</div>
-</article>
 </div>
 </section>
 </main>
@@ -280,14 +115,14 @@
 <span class="font-label-md text-label-md mt-1 text-[11px]">首页</span>
 </a>
 <!-- 守护 -->
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors group" href="#">
+<a id="edgeEventsNavMonitorLink" class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors group" href="#">
 <span class="material-symbols-outlined group-hover:scale-110 transition-transform" data-icon="security" style="font-variation-settings: 'FILL' 0;">security</span>
 <span class="font-label-md text-label-md mt-1 text-[11px]">守护</span>
 </a>
-<!-- 消息 (Active) -->
+<!-- 事件 (Active) -->
 <a class="flex flex-col items-center justify-center bg-primary-container dark:bg-primary text-on-primary-container dark:text-on-primary rounded-2xl px-4 py-1.5 scale-90 duration-150 ease-in-out cursor-default" href="#">
-<span class="material-symbols-outlined" data-icon="chat_bubble" style="font-variation-settings: 'FILL' 1;">chat_bubble</span>
-<span class="font-label-md text-label-md mt-1 text-[11px]">消息</span>
+<span class="material-symbols-outlined" data-icon="history" style="font-variation-settings: 'FILL' 1;">history</span>
+<span class="font-label-md text-label-md mt-1 text-[11px]">事件</span>
 </a>
 <!-- 陪伴 -->
 <a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors group" href="#">
@@ -307,6 +142,7 @@
       "首页": "index.html",
       "守护": "monitor.html",
       "消息": "events.html",
+      "事件": "events.html",
       "陪伴": "companionship.html",
       "我的": "privacy.html",
       "实时画面": "watch.html",
@@ -332,7 +168,8 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/edge-client.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/events-live.js?v=20260709-state-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-product-flow-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
 </body></html>

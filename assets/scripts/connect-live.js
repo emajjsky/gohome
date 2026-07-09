@@ -114,7 +114,7 @@
             return "请检查摄像头 IP、端口、账号、密码和路由器连接。";
         }
         if (lowered.includes("cannot open network stream")) {
-            return "本机没有连上这路 RTSP 画面。请检查摄像头 IP、端口、视频路径，以及 Mac 和摄像头是否在同一局域网。";
+            return "家庭盒子没有连上这路 RTSP 画面。请检查摄像头 IP、端口、视频路径，以及盒子和摄像头是否在同一局域网。";
         }
         if (lowered.includes("opened but no frame was returned")) {
             return "已经连到摄像头，但没有取到首帧。常见原因是账号密码不对、码流路径不对，或摄像头没有打开子码流。";
@@ -320,13 +320,13 @@
             syncBackLink();
             syncNextStepLinks(false);
             setText("edgeConnectionStatus", "本机守护服务已连接");
-            setText("edgeConnectionSubtitle", `服务地址 ${health.lan_url || GoHomeEdge.apiBase || "本机"}，添加后由这台 Mac 负责拉流和检测。`);
+            setText("edgeConnectionSubtitle", `服务地址 ${health.lan_url || GoHomeEdge.apiBase || "本机"}，添加后由家庭盒子负责拉流和检测。`);
             await loadCameras();
         } catch (error) {
             syncBackLink();
             syncNextStepLinks(false);
             setText("edgeConnectionStatus", "本机服务未连接");
-            setText("edgeConnectionSubtitle", error.message || "启动 edge-agent 后再回来接入摄像头。");
+            setText("edgeConnectionSubtitle", error.message || "启动家庭盒子服务后再回来接入摄像头。");
             setText("edgeLastTest", "离线");
         }
     }

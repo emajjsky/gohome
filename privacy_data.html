@@ -4,99 +4,9 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>隐私与数据 - 回家 App</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com" rel="preconnect"/>
-<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,100..900;1,100..900&amp;family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "surface-tint": "#0060ac",
-                        "on-secondary-fixed-variant": "#474744",
-                        "surface-dim": "#dbd9d9",
-                        "outline": "#717783",
-                        "tertiary-fixed-dim": "#87dc2c",
-                        "on-secondary": "#ffffff",
-                        "on-error-container": "#93000a",
-                        "secondary-fixed": "#e4e2dd",
-                        "on-tertiary-fixed": "#0e2000",
-                        "surface-container-high": "#eae8e7",
-                        "outline-variant": "#c1c7d3",
-                        "tertiary-container": "#498300",
-                        "surface-container-lowest": "#ffffff",
-                        "on-tertiary-container": "#f9ffeb",
-                        "background": "#fbf9f8",
-                        "secondary-fixed-dim": "#c8c6c2",
-                        "on-tertiary": "#ffffff",
-                        "on-surface-variant": "#414751",
-                        "surface-container-highest": "#e4e2e2",
-                        "on-background": "#1b1c1c",
-                        "surface-variant": "#e4e2e2",
-                        "on-tertiary-fixed-variant": "#2a5000",
-                        "on-primary-container": "#fdfcff",
-                        "on-secondary-container": "#63635f",
-                        "on-primary-fixed": "#001c39",
-                        "inverse-surface": "#303030",
-                        "tertiary-fixed": "#a1fa49",
-                        "surface": "#fbf9f8",
-                        "surface-container-low": "#f5f3f3",
-                        "surface-bright": "#fbf9f8",
-                        "primary-container": "#2976c7",
-                        "on-surface": "#1b1c1c",
-                        "primary-fixed": "#d4e3ff",
-                        "primary": "#005da7",
-                        "on-primary-fixed-variant": "#004883",
-                        "error": "#ba1a1a",
-                        "on-error": "#ffffff",
-                        "inverse-on-surface": "#f2f0f0",
-                        "error-container": "#ffdad6",
-                        "secondary-container": "#e1dfdb",
-                        "primary-fixed-dim": "#a4c9ff",
-                        "tertiary": "#386800",
-                        "inverse-primary": "#a4c9ff",
-                        "surface-container": "#efeded",
-                        "secondary": "#5e5e5b",
-                        "on-secondary-fixed": "#1b1c19",
-                        "on-primary": "#ffffff"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px"
-                    },
-                    "spacing": {
-                        "stack-sm": "8px",
-                        "gutter-card": "16px",
-                        "stack-md": "16px",
-                        "stack-lg": "32px",
-                        "margin-page": "20px"
-                    },
-                    "fontFamily": {
-                        "body-lg": ["Inter"],
-                        "label-md": ["Inter"],
-                        "body-md": ["Inter"],
-                        "headline-md": ["Hanken Grotesk"],
-                        "headline-lg": ["Hanken Grotesk"],
-                        "headline-lg-mobile": ["Hanken Grotesk"]
-                    },
-                    "fontSize": {
-                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
-                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
-                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
-                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
-                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
-                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
-                    }
-                },
-            },
-        }
-    </script>
+
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <style>
         body { background-color: theme('colors.background'); color: theme('colors.on-background'); }
         /* Toggles */
@@ -139,7 +49,7 @@
     }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-product-flow-2"/>
 </head>
 <body class="min-h-screen font-body-md antialiased md:bg-surface-container-low flex justify-center">
 <div class="w-full max-w-md bg-surface min-h-screen relative shadow-sm">
@@ -151,87 +61,72 @@
 <h1 class="font-headline-md text-headline-md text-on-surface flex-1 text-center pr-[48px]">隐私与数据</h1>
 </header>
 <!-- Main Content -->
-<main class="px-margin-page py-6 pb-24 space-y-8">
-<div class="text-center space-y-2 mb-4">
-<div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary-container text-primary mb-2">
-<span class="material-symbols-outlined text-4xl" style="font-variation-settings: 'FILL' 1;">security</span>
-</div>
-<h2 class="font-headline-md text-headline-md text-on-surface">我们承诺保护您的隐私</h2>
-<p class="font-body-md text-body-md text-on-surface-variant">您的数据由您完全掌控，我们仅将其用于提供更好的陪伴与守护服务。</p>
-<p class="font-label-md text-label-md text-on-surface-variant mt-2">最近更新：今天</p>
-</div>
-<!-- Storage Settings Section -->
-<section class="space-y-4">
-<h3 class="font-label-md text-label-md text-primary tracking-wide pl-2 uppercase">存储设置</h3>
-<div class="bg-surface-container-lowest rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.02)] border border-surface-variant/50 overflow-hidden">
-<div class="p-5 border-b border-surface-variant/50 flex justify-between items-center group cursor-pointer hover:bg-surface-container-low transition-colors">
-<div class="flex-1 pr-4">
-<h4 class="font-body-md text-body-md text-on-surface font-semibold mb-1">监控截图保留时长</h4>
-<p class="font-body-md text-body-md text-on-surface-variant text-sm">自动清理过期监控截图以节省空间</p>
-</div>
-<div class="flex items-center text-on-surface-variant group-hover:text-primary transition-colors">
-<span class="font-label-md text-label-md mr-2">30天</span>
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">chevron_right</span>
-</div>
-</div>
-<div class="p-5 flex justify-between items-center group cursor-pointer hover:bg-surface-container-low transition-colors">
-<div class="flex-1 pr-4">
-<h4 class="font-body-md text-body-md text-on-surface font-semibold mb-1">录像云端保存期限</h4>
-<p class="font-body-md text-body-md text-on-surface-variant text-sm">历史监控视频的云端留存时间</p>
-</div>
-<div class="flex items-center text-on-surface-variant group-hover:text-primary transition-colors">
-<span class="font-label-md text-label-md mr-2">7天</span>
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">chevron_right</span>
-</div>
+<main class="px-margin-page py-6 pb-24 space-y-stack-lg">
+<section class="gohome-page-lead">
+<p>隐私与数据</p>
+<h2>只上传必要结果</h2>
+<p>家庭盒子优先在本地处理画面，云端只承接事件、截图、规则和账号配置。</p>
+</section>
+<section class="gohome-panel-soft p-4">
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined w-11 h-11 rounded-[18px] bg-primary-fixed text-primary flex items-center justify-center shrink-0">shield_lock</span>
+<div class="min-w-0">
+<h3 class="text-[18px] leading-snug font-bold text-on-surface">当前原型边界</h3>
+<p class="text-[13px] leading-relaxed text-on-surface-variant mt-1">本地演示使用临时服务和家庭盒子代理画面。正式上云前，不把未接入能力写成已完成。</p>
 </div>
 </div>
 </section>
-<!-- Access Control Section -->
-<section class="space-y-4">
-<h3 class="font-label-md text-label-md text-primary tracking-wide pl-2 uppercase">访问权限管理</h3>
-<div class="bg-surface-container-lowest rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.02)] border border-surface-variant/50 overflow-hidden p-5 space-y-6">
-<div class="flex items-start justify-between">
-<div class="flex-1 pr-4">
-<h4 class="font-body-md text-body-md text-on-surface font-semibold mb-1">家人共享实时画面</h4>
-<p class="font-body-md text-body-md text-on-surface-variant text-sm">允许已绑定的家庭成员查看家中的实时监控画面</p>
+<section class="gohome-simple-list">
+<article class="gohome-simple-card">
+<span class="material-symbols-outlined">event_note</span>
+<div>
+<h3>事件数据</h3>
+<p>事件类型、时间、摄像头、处理状态和规则依据。</p>
 </div>
-<div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in mt-1">
-<input checked="" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-all duration-300" id="toggle1" name="toggle" type="checkbox"/>
-<label class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer transition-colors duration-300" for="toggle1"></label>
+<span class="gohome-status-tag">已接</span>
+</article>
+<article class="gohome-simple-card">
+<span class="material-symbols-outlined">image</span>
+<div>
+<h3>截图证据</h3>
+<p>仅在事件需要确认时保存必要截图或媒体引用。</p>
 </div>
+<span class="gohome-status-tag">按需</span>
+</article>
+<article class="gohome-simple-card">
+<span class="material-symbols-outlined">videocam_off</span>
+<div>
+<h3>长期录像</h3>
+<p>当前不做云端长期录像留存，不把产品变成监控回放工具。</p>
 </div>
-<div class="w-full h-px bg-surface-variant"></div>
-<div class="flex items-start justify-between">
-<div class="flex-1 pr-4">
-<h4 class="font-body-md text-body-md text-on-surface font-semibold mb-1">健康数据报告分析</h4>
-<p class="font-body-md text-body-md text-on-surface-variant text-sm">授权App生成每日健康活动摘要并发送给指定亲属</p>
+<span class="gohome-status-tag muted">未启用</span>
+</article>
+<article class="gohome-simple-card">
+<span class="material-symbols-outlined">location_off</span>
+<div>
+<h3>定位距离</h3>
+<p>iOS 定位授权未接入前，不展示真实距离。</p>
 </div>
-<div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in mt-1">
-<input checked="" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-all duration-300" id="toggle2" name="toggle" type="checkbox"/>
-<label class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer transition-colors duration-300" for="toggle2"></label>
-</div>
-</div>
-</div>
+<span class="gohome-status-tag muted">待接入</span>
+</article>
 </section>
-<!-- Data Management Section -->
-<section class="space-y-4">
-<h3 class="font-label-md text-label-md text-primary tracking-wide pl-2 uppercase">数据与账号管理</h3>
-<div class="bg-surface-container-lowest rounded-2xl shadow-[0_4px_12px_rgba(0,0,0,0.02)] border border-surface-variant/50 overflow-hidden flex flex-col">
-<button class="p-5 flex items-center w-full text-left hover:bg-surface-container-low transition-colors border-b border-surface-variant/50 group">
-<span class="material-symbols-outlined mr-4 text-on-surface-variant group-hover:text-primary transition-colors" style="font-variation-settings: 'FILL' 0;">download</span>
-<div class="flex-1">
-<h4 class="font-body-md text-body-md text-on-surface font-semibold">导出我的数据</h4>
-<p class="font-body-md text-body-md text-on-surface-variant text-sm mt-0.5">获取您的账号信息、历史记录副本</p>
+<section class="gohome-settings-list">
+<button class="gohome-settings-row">
+<span class="material-symbols-outlined">download</span>
+<div>
+<h3>导出数据</h3>
+<p>云端数据库启用后提供账号、事件和配置导出。</p>
 </div>
+<span class="gohome-status-tag muted">后续</span>
 </button>
-<button class="p-5 flex items-center w-full text-left hover:bg-error-container/20 transition-colors group">
-<span class="material-symbols-outlined mr-4 text-error" style="font-variation-settings: 'FILL' 0;">delete_forever</span>
-<div class="flex-1">
-<h4 class="font-body-md text-body-md text-error font-semibold">注销账号</h4>
-<p class="font-body-md text-body-md text-error/80 text-sm mt-0.5">永久删除您的账号及所有相关数据</p>
+<button class="gohome-settings-row">
+<span class="material-symbols-outlined">delete_forever</span>
+<div>
+<h3>注销账号</h3>
+<p>正式账号体系上线后接入删除和撤销授权流程。</p>
 </div>
+<span class="gohome-status-tag muted">后续</span>
 </button>
-</div>
 </section>
 </main>
 </div>
@@ -267,7 +162,7 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/edge-client.js?v=20260708-product-flow-2"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-product-flow-2"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-2"></script>
 </body></html>

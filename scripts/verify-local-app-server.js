@@ -9,6 +9,8 @@ const path = require("path");
 
 process.env.GOHOME_CARE_MODEL_CALLS = "0";
 process.env.GOHOME_CARE_IMAGE_CALLS = "0";
+process.env.GOHOME_WEATHER_PROVIDER = "none";
+process.env.GOHOME_SEARCH_PROVIDER = "none";
 
 const { createDefaultDb, createLocalAppServer, normalizeDb } = require("../local-app-server/server");
 const { createDbFromCloudRows, TABLE_ORDER } = require("../local-app-server/postgres-store");
@@ -70,6 +72,17 @@ function assertSeedBundleMatchesSchema(seedBundle) {
     }
 }
 
+function assertHtmlUsesLocalTailwind() {
+    const rootDir = path.resolve(__dirname, "..");
+    const htmlFiles = fs.readdirSync(rootDir).filter((file) => file.endsWith(".html"));
+    assert.ok(htmlFiles.length > 0, "missing html files");
+    for (const file of htmlFiles) {
+        const html = fs.readFileSync(path.join(rootDir, file), "utf8");
+        assert.ok(!html.includes("cdn.tailwindcss.com"), `${file} still depends on Tailwind CDN`);
+        assert.ok(!html.includes("tailwind.config"), `${file} still includes runtime Tailwind config`);
+    }
+}
+
 async function main() {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-app-server-"));
     const app = createLocalAppServer({
@@ -81,46 +94,185 @@ async function main() {
     const baseUrl = await listen(app.server);
 
     try {
+        assertHtmlUsesLocalTailwind();
+
         const health = await requestJson(baseUrl, "/health");
         assert.equal(health.ok, true);
+
+        const unknownLogin = await fetch(`${baseUrl}/api/auth/login`, {
+            method: "POST",
+            body: JSON.stringify({ email: "unknown@gohome.local", password: "secret123" }),
+            headers: { "Content-Type": "application/json" },
+        });
+        assert.equal(unknownLogin.status, 401);
 
         const login = await requestJson(baseUrl, "/api/auth/login", {
             method: "POST",
             body: JSON.stringify({ email: "admin@gohome.local", password: "gohome" }),
         });
-        assert.equal(login.token, APP_TOKEN);
+        assert.match(login.token, /^app_/);
+        assert.equal(login.user.email, "admin@gohome.local");
+        const adminSessionToken = login.token;
+        const adminFamilies = await requestJson(baseUrl, "/api/families/mine", {
+            headers: { Authorization: `Bearer ${adminSessionToken}` },
+        });
+        assert.equal(adminFamilies.length, 1);
+        assert.equal(adminFamilies[0].name, "默认家庭");
 
         const registered = await requestJson(baseUrl, "/api/auth/register", {
             method: "POST",
             body: JSON.stringify({ email: "daughter@gohome.local", password: "secret123", display_name: "女儿" }),
         });
         assert.equal(registered.user.email, "daughter@gohome.local");
+        assert.match(registered.token, /^app_/);
+        const appSessionToken = registered.token;
+
+        const duplicateRegister = await fetch(`${baseUrl}/api/auth/register`, {
+            method: "POST",
+            body: JSON.stringify({ email: "daughter@gohome.local", password: "secret123", display_name: "女儿" }),
+            headers: { "Content-Type": "application/json" },
+        });
+        assert.equal(duplicateRegister.status, 409);
+
+        const phoneAccountEmail = "13900000000@phone.gohome.local";
+        const phoneRegistered = await requestJson(baseUrl, "/api/auth/register", {
+            method: "POST",
+            body: JSON.stringify({ phone: "13900000000", code: "000000", display_name: "家属" }),
+        });
+        assert.equal(phoneRegistered.user.email, phoneAccountEmail);
+        assert.equal(phoneRegistered.user.phone, "13900000000");
+        assert.match(phoneRegistered.token, /^app_/);
+
+        const phoneFamilies = await requestJson(baseUrl, "/api/families/mine", {
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.equal(phoneFamilies.length, 0);
+
+        const phoneWrongCode = await fetch(`${baseUrl}/api/auth/login`, {
+            method: "POST",
+            body: JSON.stringify({ phone: "13900000000", code: "123456" }),
+            headers: { "Content-Type": "application/json" },
+        });
+        assert.equal(phoneWrongCode.status, 401);
+
+        const phoneLogin = await requestJson(baseUrl, "/api/auth/login", {
+            method: "POST",
+            body: JSON.stringify({ phone: "13900000000", code: "000000" }),
+        });
+        assert.match(phoneLogin.token, /^app_/);
+
+        const emptyNewUserFamilies = await requestJson(baseUrl, "/api/families/mine", {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(emptyNewUserFamilies.length, 0);
 
         const family = await requestJson(baseUrl, "/api/families", {
             method: "POST",
             body: JSON.stringify({ name: "测试家庭" }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(family.name, "测试家庭");
+        assert.match(family.join_code, /^GH-\d+-[A-F0-9]{6}$/);
+
+        const invalidJoin = await fetch(`${baseUrl}/api/families/join`, {
+            method: "POST",
+            body: JSON.stringify({ code: "GH-0-BAD000" }),
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${phoneRegistered.token}`,
+            },
+        });
+        assert.equal(invalidJoin.status, 404);
+
+        const joinedFamily = await requestJson(baseUrl, "/api/families/join", {
+            method: "POST",
+            body: JSON.stringify({ code: family.join_code }),
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.equal(String(joinedFamily.id), String(family.id));
+        assert.equal(joinedFamily.member_count, 2);
+
+        const phoneFamiliesAfterJoin = await requestJson(baseUrl, "/api/families/mine", {
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.equal(phoneFamiliesAfterJoin.length, 1);
+        assert.equal(String(phoneFamiliesAfterJoin[0].id), String(family.id));
+
+        const claimFamily = await requestJson(baseUrl, "/api/families", {
+            method: "POST",
+            body: JSON.stringify({ name: "认领测试家庭" }),
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        const claimHeartbeat = await requestJson(baseUrl, "/api/v1/device/heartbeat", {
+            method: "POST",
+            body: JSON.stringify({
+                device_id: "edge-claimable",
+                name: "待认领盒子",
+                status: "online",
+                metadata: { serial_number: "GH-CLAIM001" },
+            }),
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+        });
+        assert.equal(claimHeartbeat.ok, true);
+        const claimableDevices = await requestJson(baseUrl, "/api/device-claims/available", {
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.ok(claimableDevices.some((item) => item.device_id === "edge-claimable" && item.serial_number === "GH-CLAIM001"));
+        const unclaimedConfig = await requestJson(baseUrl, "/api/v1/device/config", {
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+        });
+        assert.equal(unclaimedConfig.cameras.length, 0);
+        const noCodeBinding = await fetch(`${baseUrl}/api/device-bindings`, {
+            method: "POST",
+            body: JSON.stringify({ family_id: claimFamily.id }),
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${phoneRegistered.token}`,
+            },
+        });
+        assert.equal(noCodeBinding.status, 400);
+        const claimedDevice = await requestJson(baseUrl, "/api/device-claims/claim", {
+            method: "POST",
+            body: JSON.stringify({ family_id: claimFamily.id, claim_code: "GH-CLAIM001" }),
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.equal(claimedDevice.ok, true);
+        assert.equal(claimedDevice.binding.device_id, "edge-claimable");
+        const claimFamilyBindings = await requestJson(baseUrl, `/api/device-bindings?family_id=${claimFamily.id}`, {
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.equal(claimFamilyBindings.length, 1);
+        assert.equal(claimFamilyBindings[0].device_id, "edge-claimable");
+
+        const adminBlockedFromDaughterFamily = await fetch(`${baseUrl}/api/v1/families/${family.id}/elders/elder_primary/profile`, {
+            headers: { Authorization: `Bearer ${adminSessionToken}` },
+        });
+        assert.equal(adminBlockedFromDaughterFamily.status, 403);
 
         const elderProfile = await requestJson(baseUrl, `/api/v1/families/${family.id}/elders/elder_primary/profile`, {
             method: "PUT",
-            body: JSON.stringify({ display_name: "张阿姨", relationship: "母亲", city: "杭州" }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            body: JSON.stringify({
+                display_name: "张阿姨",
+                relationship: "母亲",
+                city: "杭州",
+                mobile_phone: "13800138000",
+                home_phone: "057100000000",
+            }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(elderProfile.display_name, "张阿姨");
 
         const bindingCode = await requestJson(baseUrl, "/api/device/binding-codes", {
             method: "POST",
             body: JSON.stringify({ family_id: family.id, expires_in_minutes: 10 }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(bindingCode.status, "active");
 
         const exchanged = await requestJson(baseUrl, "/api/device/token/exchange", {
             method: "POST",
             body: JSON.stringify({ code: bindingCode.code, device_id: "edge-test", device_name: "测试盒子" }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(exchanged.ok, true);
         assert.ok(exchanged.device_token);
@@ -140,7 +292,7 @@ async function main() {
                 stream_url: "rtsp://192.168.1.20:554/stream1",
                 enabled: true,
             }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(camera.room, "客厅");
         assert.equal(camera.connection_owner, "edge_agent");
@@ -150,13 +302,13 @@ async function main() {
         const patchedCamera = await requestJson(baseUrl, `/api/cameras/${camera.id}`, {
             method: "PATCH",
             body: JSON.stringify({ enabled: false }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(patchedCamera.enabled, false);
 
         const testedCamera = await requestJson(baseUrl, `/api/cameras/${camera.id}/test`, {
             method: "POST",
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(testedCamera.ok, true);
         assert.equal(testedCamera.camera.status, "pending_edge_verify");
@@ -164,7 +316,7 @@ async function main() {
         const enabledCamera = await requestJson(baseUrl, `/api/cameras/${camera.id}`, {
             method: "PATCH",
             body: JSON.stringify({ enabled: true }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(enabledCamera.enabled, true);
 
@@ -200,12 +352,41 @@ async function main() {
         assert.equal(deviceSync.current_config_version, deviceConfig.config_version);
 
         const appCameras = await requestJson(baseUrl, "/api/app/cameras", {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         const syncedCamera = appCameras.find((item) => String(item.id) === String(camera.id));
         assert.equal(syncedCamera.status, "online");
         assert.equal(syncedCamera.sync_status, "synced");
         assert.ok(syncedCamera.last_seen_at);
+
+        const staleOffline = await requestJson(baseUrl, "/api/v1/device/events", {
+            method: "POST",
+            body: JSON.stringify({
+                idempotency_key: "event:stale-offline",
+                event_type: "camera_offline",
+                summary: "客厅主视曾短暂离线",
+                level: "critical",
+                room: "客厅",
+                camera_id: camera.id,
+                occurred_at: "2026-07-05T09:00:00.000Z",
+                payload: {
+                    error: "network stream opened but no frame was returned",
+                    rule: { id: "camera_offline", label: "摄像头离线提醒" },
+                },
+            }),
+            headers: { Authorization: `Bearer ${exchanged.device_token}` },
+        });
+        assert.equal(staleOffline.event.event_type, "camera_offline");
+
+        const hiddenStaleEvents = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false", {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(hiddenStaleEvents.some((item) => String(item.id) === String(staleOffline.event.id)), false);
+        const summaryAfterStaleEvent = await requestJson(baseUrl, "/api/app/summary/today", {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(summaryAfterStaleEvent.open_events, 0);
+        assert.equal(summaryAfterStaleEvent.critical_events, 0);
 
         const stableDeviceConfig = await requestJson(baseUrl, "/api/v1/device/config", {
             headers: { Authorization: `Bearer ${exchanged.device_token}` },
@@ -233,7 +414,7 @@ async function main() {
         assert.equal(String(localIdOnlySync.updated_cameras[0].id), String(camera.id));
 
         const camerasAfterLocalIdOnlySync = await requestJson(baseUrl, "/api/app/cameras", {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(camerasAfterLocalIdOnlySync.length, 1);
         assert.equal(camerasAfterLocalIdOnlySync.some((item) => String(item.id) === "11"), false);
@@ -252,11 +433,11 @@ async function main() {
                 stream_url: "demo:delete_probe",
                 enabled: true,
             }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         const deletedProbe = await requestJson(baseUrl, `/api/cameras/${deleteProbe.id}`, {
             method: "DELETE",
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(deletedProbe.ok, true);
         const deleteSync = await requestJson(baseUrl, "/api/v1/device/sync", {
@@ -276,7 +457,7 @@ async function main() {
         });
         assert.equal(deleteSync.ok, true);
         const camerasAfterDeleteSync = await requestJson(baseUrl, "/api/app/cameras", {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(camerasAfterDeleteSync.some((item) => String(item.id) === String(deleteProbe.id)), false);
 
@@ -328,49 +509,49 @@ async function main() {
         assert.equal(created.event.media_asset_id, media.asset.id);
 
         const events = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false", {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(events.length, 1);
         assert.equal(events[0].type, "fall_candidate");
 
-        const bindings = await requestJson(baseUrl, "/api/device-bindings?family_id=1", {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+        const blockedDefaultFamilyBindings = await fetch(`${baseUrl}/api/device-bindings?family_id=1`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        assert.equal(bindings.length, 0);
+        assert.equal(blockedDefaultFamilyBindings.status, 403);
 
         const newFamilyBindings = await requestJson(baseUrl, `/api/device-bindings?family_id=${family.id}`, {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(newFamilyBindings.length, 1);
         assert.equal(newFamilyBindings[0].device_id, "edge-test");
 
         const snapshot = await requestJson(baseUrl, "/api/app/cameras/1/snapshot/latest?allow_missing=1", {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(snapshot.available, true);
         assert.equal(snapshot.snapshot_path, "events/test.jpg");
 
         const evaluation = await requestJson(baseUrl, "/api/app/cameras/1/evaluation/latest", {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(evaluation.candidates.length, 1);
         assert.equal(evaluation.state.latest_event_type, "fall_candidate");
 
         const detail = await requestJson(baseUrl, `/api/app/events/${events[0].id}`, {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(detail.payload.rule.observed.confirm_frames, 2);
 
         const patched = await requestJson(baseUrl, `/api/app/events/${events[0].id}`, {
             method: "PATCH",
             body: JSON.stringify({ acknowledged: true, resolution: "handled" }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(patched.acknowledged, true);
         assert.equal(patched.resolution, "handled");
 
         const carePreferences = await requestJson(baseUrl, `/api/v1/families/${family.id}/care-preferences`, {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(carePreferences.family_id, family.id);
         assert.equal(carePreferences.frequency, "daily");
@@ -413,7 +594,7 @@ async function main() {
                     },
                 },
             }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(updatedCarePreferences.image_generation_enabled, true);
         assert.equal(updatedCarePreferences.image_model, "wan2.7-image");
@@ -428,7 +609,7 @@ async function main() {
         assert.equal(savedSchedule.anniversaries[0].label, "妈妈生日");
 
         const careCard = await requestJson(baseUrl, `/api/v1/app/care-cards/today?family_id=${family.id}`, {
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(careCard.card_type, "daily");
         assert.ok(careCard.facts.length >= 3);
@@ -438,7 +619,7 @@ async function main() {
         const generatedCareCard = await requestJson(baseUrl, "/api/v1/internal/care-cards/generate", {
             method: "POST",
             body: JSON.stringify({ family_id: family.id, force: true }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(generatedCareCard.ok, true);
         assert.equal(generatedCareCard.card.card_id, careCard.card_id);
@@ -451,7 +632,7 @@ async function main() {
         assert.equal(opsConfig.secret_policy.database, "no_plain_secret");
         assert.ok(Array.isArray(opsConfig.env_files));
         assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "multimodal-language"));
-        assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "care-card-image" && capability.aspect_ratio === "4:7"));
+        assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "care-card-image" && capability.aspect_ratio === "1:1"));
         for (const capability of opsConfig.model_capabilities) {
             assert.equal("base_url" in capability, false);
             assert.equal("api_key_preview" in capability, false);
@@ -460,7 +641,7 @@ async function main() {
         const appTokenCannotWriteModelConfig = await fetch(`${baseUrl}/api/v1/model-providers/care-card-image`, {
             method: "PUT",
             body: JSON.stringify({ model: "wan2.7", api_key: "secret" }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}`, "Content-Type": "application/json" },
+            headers: { Authorization: `Bearer ${appSessionToken}`, "Content-Type": "application/json" },
         });
         assert.equal(appTokenCannotWriteModelConfig.status, 405);
 
@@ -514,7 +695,7 @@ async function main() {
             const modelCareCard = await requestJson(baseUrl, "/api/v1/internal/care-cards/generate", {
                 method: "POST",
                 body: JSON.stringify({ family_id: family.id, force: true }),
-                headers: { Authorization: `Bearer ${APP_TOKEN}` },
+                headers: { Authorization: `Bearer ${appSessionToken}` },
             });
             assert.equal(modelCareCard.ok, true);
             assert.equal(modelCareCard.card.title, "模型生成的今日关怀");
@@ -552,12 +733,12 @@ async function main() {
                 });
                 const payload = JSON.parse(body);
                 assert.equal(payload.model, "mock-wan-image");
-                assert.equal(payload.parameters.size, "1024*1792");
+                assert.equal(payload.parameters.size, "1024*1024");
                 assert.equal(payload.parameters.n, 1);
                 assert.equal(payload.parameters.thinking_mode, true);
                 assert.equal(payload.parameters.stream, undefined);
                 assert.equal(payload.parameters.enable_interleave, undefined);
-                assert.match(payload.input.messages[0].content[0].text, /4:7/);
+                assert.match(payload.input.messages[0].content[0].text, /1:1/);
                 assert.match(payload.input.messages[0].content[0].text, /卡片标题/);
                 res.writeHead(200, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({
@@ -592,7 +773,7 @@ async function main() {
             const imageCareCard = await requestJson(baseUrl, "/api/v1/internal/care-cards/generate", {
                 method: "POST",
                 body: JSON.stringify({ family_id: family.id, force: true }),
-                headers: { Authorization: `Bearer ${APP_TOKEN}` },
+                headers: { Authorization: `Bearer ${appSessionToken}` },
             });
             assert.equal(imageCareCard.ok, true);
             assert.equal(imageCareCard.card.image_mode, "generated");
@@ -609,7 +790,7 @@ async function main() {
             const imageSession = await requestJson(baseUrl, "/api/v1/video/sessions", {
                 method: "POST",
                 body: JSON.stringify({ resource_type: "snapshot", snapshot_path: imageCareCard.card.image_url }),
-                headers: { Authorization: `Bearer ${APP_TOKEN}` },
+                headers: { Authorization: `Bearer ${appSessionToken}` },
             });
             const careImageResponse = await fetch(`${baseUrl}/api/v1/video/media/snapshots/${encodeURIComponent(imageCareCard.card.image_url)}?playback_ticket=${imageSession.ticket}`);
             assert.equal(careImageResponse.status, 200);
@@ -636,7 +817,7 @@ async function main() {
             const blockedOpsPage = await fetch(`${opsBaseUrl}/ops.html`);
             assert.equal(blockedOpsPage.status, 403);
             const blockedOpsConfig = await fetch(`${opsBaseUrl}/api/v1/ops/service-config`, {
-                headers: { Authorization: `Bearer ${APP_TOKEN}` },
+                headers: { Authorization: `Bearer ${appSessionToken}` },
             });
             assert.equal(blockedOpsConfig.status, 403);
             const allowedOpsPage = await fetch(`${opsBaseUrl}/ops.html?ops_token=verify-ops-token`);
@@ -651,7 +832,7 @@ async function main() {
         const session = await requestJson(baseUrl, "/api/v1/video/sessions", {
             method: "POST",
             body: JSON.stringify({ resource_type: "snapshot", snapshot_path: "events/test.jpg" }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.ok(session.ticket);
 
@@ -662,7 +843,7 @@ async function main() {
         const streamSession = await requestJson(baseUrl, "/api/v1/video/sessions", {
             method: "POST",
             body: JSON.stringify({ resource_type: "stream", camera_id: 1 }),
-            headers: { Authorization: `Bearer ${APP_TOKEN}` },
+            headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         const streamResponse = await fetch(`${baseUrl}/api/v1/video/cameras/1/stream.mjpg?playback_ticket=${streamSession.ticket}`);
         assert.equal(streamResponse.status, 200);
@@ -671,15 +852,24 @@ async function main() {
 
         const seedBundle = buildCloudSeedBundle(app.store.db, { source: "verify-local-app-server" });
         assert.equal(seedBundle.schema_version, "001_initial_schema");
-        assert.equal(seedBundle.tables.users.length, 2);
-        assert.equal(seedBundle.tables.families.length, 2);
-        assert.equal(seedBundle.tables.family_members.length, 2);
+        assert.equal(seedBundle.tables.users.length, 3);
+        assert.ok(seedBundle.tables.users.some((user) => user.email === phoneAccountEmail));
+        assert.equal(seedBundle.tables.families.length, 3);
+        assert.equal(seedBundle.tables.family_members.length, 4);
+        assert.equal(seedBundle.tables.elder_profiles.length, 3);
+        const seededElderProfile = seedBundle.tables.elder_profiles.find((profile) => String(profile.family_id) === String(family.id));
+        assert.equal(seededElderProfile.mobile_phone, "13800138000");
+        assert.equal(seededElderProfile.home_phone, "057100000000");
         assert.equal(seedBundle.tables.device_tokens.length, 1);
         assert.equal(seedBundle.tables.device_tokens[0].token_hash.length, 64);
         assert.equal(seedBundle.tables.cameras.length, 1);
         assert.equal(seedBundle.tables.camera_secrets.length, 1);
-        assert.equal(seedBundle.tables.events.length, 1);
-        assert.equal(seedBundle.tables.events[0].camera_id, String(camera.id));
+        assert.equal(seedBundle.tables.events.length, 2);
+        const seededFallEvent = seedBundle.tables.events.find((event) => event.event_type === "fall_candidate");
+        const seededStaleOfflineEvent = seedBundle.tables.events.find((event) => String(event.id) === String(staleOffline.event.id));
+        assert.ok(seededFallEvent);
+        assert.ok(seededStaleOfflineEvent);
+        assert.equal(seededFallEvent.camera_id, String(camera.id));
         assert.equal(seedBundle.tables.media_assets.length, 2);
         assert.equal(seedBundle.tables.care_preferences.length, 1);
         assert.equal(seedBundle.tables.care_preferences[0].image_model, "wan2.7-image");
@@ -692,12 +882,19 @@ async function main() {
         assertSeedBundleMatchesSchema(seedBundle);
 
         const restoredDb = normalizeDb(createDbFromCloudRows(seedBundle.tables, createDefaultDb()));
-        assert.equal(restoredDb.users.length, 2);
-        assert.equal(restoredDb.families.length, 2);
+        assert.equal(restoredDb.users.length, 3);
+        assert.ok(restoredDb.users.some((user) => user.email === phoneAccountEmail));
+        assert.equal(restoredDb.families.length, 3);
+        assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].mobile_phone, "13800138000");
+        assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].home_phone, "057100000000");
         assert.equal(Object.values(restoredDb.cameras).length, 1);
-        assert.equal(restoredDb.events.length, 1);
-        assert.equal(restoredDb.events[0].summary, "疑似跌倒");
-        assert.equal(String(restoredDb.events[0].camera_id), String(camera.id));
+        assert.equal(restoredDb.events.length, 2);
+        const restoredFallEvent = restoredDb.events.find((event) => event.event_type === "fall_candidate");
+        const restoredStaleOfflineEvent = restoredDb.events.find((event) => String(event.id) === String(staleOffline.event.id));
+        assert.ok(restoredFallEvent);
+        assert.ok(restoredStaleOfflineEvent);
+        assert.equal(restoredFallEvent.summary, "疑似跌倒");
+        assert.equal(String(restoredFallEvent.camera_id), String(camera.id));
         assert.equal(restoredDb.assets.length, 2);
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);
         assert.equal(restoredDb.care_preferences[String(family.id)].image_model, "wan2.7-image");

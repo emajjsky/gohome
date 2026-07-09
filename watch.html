@@ -4,17 +4,22 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
   <title>回家 - 实时查看</title>
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-product-flow-2"/>
   <style>
     :root {
       --safe-top: env(safe-area-inset-top, 0px);
+      --safe-top-reserved: max(var(--safe-top), 38px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
-      --bg: #fbf8f4;
-      --surface: #fffdfb;
-      --line: #ece5de;
-      --text: #161b22;
-      --muted: #667085;
-      --primary: #0b68b7;
+      --bg: #f6f7f3;
+      --surface: #fffefc;
+      --line: rgba(70, 82, 70, 0.13);
+      --text: #202520;
+      --muted: #687168;
+      --primary: #536d5a;
+      --primary-strong: #1f2a22;
+      --primary-soft: #e8efe8;
       --good: #2d7d5c;
       --warn: #b66e3f;
       --danger: #ba1a1a;
@@ -22,7 +27,7 @@
     * { box-sizing: border-box; }
     html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
     body {
-      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: "Noto Sans SC Local", "PingFang SC", "Hiragino Sans GB", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       -webkit-font-smoothing: antialiased;
       overflow-x: hidden;
     }
@@ -32,8 +37,10 @@
       width: min(100vw, 430px);
       min-height: 100dvh;
       margin: 0 auto;
-      padding: calc(12px + var(--safe-top)) 16px calc(98px + var(--safe-bottom));
-      background: var(--bg);
+      padding: calc(16px + var(--safe-top-reserved)) 18px calc(104px + var(--safe-bottom));
+      background:
+        radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0) 38%),
+        linear-gradient(180deg, #f8f9f4 0%, var(--bg) 48%, #eef1ea 100%);
     }
     .topbar {
       height: 48px;
@@ -50,30 +57,31 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      background: rgba(255, 253, 251, 0.86);
-      color: #4b5563;
-      box-shadow: 0 8px 22px rgba(70, 60, 50, 0.08);
+      background: rgba(255, 255, 255, 0.68);
+      color: var(--text);
+      box-shadow: 0 8px 20px rgba(60, 73, 58, 0.06);
+      backdrop-filter: blur(14px);
     }
     .page-title {
       margin: 0;
       text-align: center;
       font-size: 17px;
       line-height: 24px;
-      font-weight: 700;
-      color: #5d6673;
+      font-weight: 900;
+      color: var(--text);
     }
     .panel {
       margin-top: 16px;
       padding: 18px;
-      border-radius: 26px;
+      border-radius: 28px;
       background: var(--surface);
-      border: 1px solid rgba(236, 229, 222, 0.9);
-      box-shadow: 0 18px 45px rgba(72, 61, 49, 0.08);
+      border: 1px solid var(--line);
+      box-shadow: 0 18px 44px rgba(54, 67, 53, 0.075);
     }
     .eyebrow {
       display: block;
       margin-bottom: 8px;
-      color: #486d92;
+      color: var(--primary);
       font-size: 12px;
       line-height: 16px;
       font-weight: 800;
@@ -174,7 +182,7 @@
       min-height: 70px;
       padding: 12px;
       border-radius: 18px;
-      background: #fbf8f5;
+      background: #f8faf5;
       border: 1px solid var(--line);
     }
     .metric span { display: block; color: #79818e; font-size: 12px; font-weight: 800; }
@@ -194,17 +202,17 @@
       justify-content: center;
       gap: 8px;
       padding: 0 14px;
-      background: #fffdfb;
-      color: #4d5870;
+      background: var(--surface);
+      color: var(--text);
       font-size: 14px;
       font-weight: 800;
       white-space: nowrap;
     }
     .btn.primary {
-      background: #586293;
-      border-color: #586293;
+      background: var(--primary-strong);
+      border-color: var(--primary-strong);
       color: #fff;
-      box-shadow: 0 10px 24px rgba(88, 98, 147, 0.22);
+      box-shadow: 0 16px 34px rgba(54, 67, 53, 0.18);
     }
     .section-head {
       display: flex;
@@ -230,7 +238,7 @@
       border: 1px solid var(--line);
       border-radius: 18px;
       padding: 12px 14px;
-      background: #fffdfb;
+      background: var(--surface);
       text-align: left;
       display: flex;
       justify-content: space-between;
@@ -239,8 +247,8 @@
     }
     .watch-source-button em { font-style: normal; align-self: center; }
     .watch-source-button.active {
-      border-color: #cec9f0;
-      background: #f6f3ff;
+      border-color: rgba(83, 109, 90, 0.24);
+      background: var(--primary-soft);
     }
     .watch-source-button strong, .watch-source-button span { display: block; }
     .watch-source-button span { margin-top: 3px; color: var(--muted); font-size: 12px; }
@@ -249,23 +257,25 @@
       min-height: 38px;
       border: 1px solid var(--line);
       border-radius: 999px;
-      background: #fffdfb;
-      color: #566071;
+      background: var(--surface);
+      color: var(--text);
       font-size: 12px;
       font-weight: 800;
       white-space: nowrap;
     }
-    .profile-button.active { background: #586293; border-color: #586293; color: #fff; }
+    .profile-button.active { background: var(--primary-strong); border-color: var(--primary-strong); color: #fff; }
     .bottom-nav {
       position: fixed;
       left: 50%;
-      bottom: calc(12px + var(--safe-bottom));
+      bottom: 0;
       transform: translateX(-50%);
-      width: min(calc(100vw - 32px), 398px);
-      height: 72px;
-      border-radius: 28px;
-      background: rgba(255,253,251,0.94);
-      box-shadow: 0 12px 34px rgba(70,60,50,0.12);
+      width: min(100%, 430px);
+      min-height: 82px;
+      padding: 10px 10px calc(10px + var(--safe-bottom));
+      border-radius: 0;
+      background: linear-gradient(180deg, rgba(246, 247, 243, 0), rgba(246, 247, 243, 0.92) 24%, rgba(246, 247, 243, 0.98));
+      box-shadow: none;
+      backdrop-filter: blur(22px);
       display: grid;
       grid-template-columns: repeat(5, 1fr);
       align-items: center;
@@ -277,11 +287,11 @@
       flex-direction: column;
       align-items: center;
       gap: 3px;
-      color: #596273;
+      color: var(--muted);
       font-size: 11px;
       font-weight: 800;
     }
-    .bottom-nav a.active { color: var(--primary); }
+    .bottom-nav a.active { color: var(--primary-strong); background: var(--primary-soft); border-radius: 999px; min-height: 54px; }
     .material-symbols-outlined { font-size: 22px; line-height: 1; }
   </style>
 </head>
@@ -298,7 +308,7 @@
     </header>
 
     <section class="panel">
-      <span class="eyebrow">LIVE</span>
+      <span class="eyebrow">实时</span>
       <h1 id="watchFact">正在连接画面</h1>
       <p id="watchMeta" class="subtitle">等待家庭盒子返回第一帧。</p>
       <div class="badge-row">
@@ -311,12 +321,12 @@
         <div class="stage-shade"></div>
         <div class="stage-badges">
           <span id="watchRoomBadge" class="pill">未选择</span>
-          <span id="watchProfileBadge" class="pill">mobile</span>
-          <span id="watchDetectorBadge" class="pill">YOLO</span>
+          <span id="watchProfileBadge" class="pill">流畅</span>
+          <span id="watchDetectorBadge" class="pill">视觉</span>
         </div>
         <div id="watchEmptyState" class="empty-state">
           <strong>等待实时画面</strong>
-          <span id="watchEmptyText">在线只代表盒子已接入；这里会在 App API 收到第一帧后显示画面。</span>
+          <span id="watchEmptyText">在线只代表盒子已接入；这里会在收到第一帧后显示画面。</span>
         </div>
       </div>
 
@@ -326,9 +336,9 @@
       </div>
 
       <div class="action-row">
-        <a id="watchDetectionLink" class="btn primary" href="detection.html">
-          <span class="material-symbols-outlined">center_focus_strong</span>
-          看检测
+        <a id="watchDetectionLink" class="btn primary" href="monitor.html">
+          <span class="material-symbols-outlined">security</span>
+          回守护
         </a>
         <a id="watchEventsLink" class="btn" href="events.html">
           <span class="material-symbols-outlined">history</span>
@@ -365,8 +375,8 @@
     <a href="privacy.html"><span class="material-symbols-outlined">person</span>我的</a>
   </nav>
 
-  <script src="assets/scripts/edge-client.js?v=20260706-real-video-state-1"></script>
-  <script src="assets/scripts/watch-live.js?v=20260706-real-video-state-1"></script>
-  <script src="assets/scripts/stitch-app-routes.js?v=20260706-route-action-1"></script>
+  <script src="assets/scripts/edge-client.js?v=20260708-product-flow-2"></script>
+  <script src="assets/scripts/watch-live.js?v=20260708-product-flow-2"></script>
+  <script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-2"></script>
 </body>
 </html>

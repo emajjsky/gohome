@@ -4,99 +4,9 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>创建家庭空间 - 回家</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com" rel="preconnect"/>
-<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
-<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "surface-tint": "#0060ac",
-                        "on-secondary-fixed-variant": "#474744",
-                        "surface-dim": "#dbd9d9",
-                        "outline": "#717783",
-                        "tertiary-fixed-dim": "#87dc2c",
-                        "on-secondary": "#ffffff",
-                        "on-error-container": "#93000a",
-                        "secondary-fixed": "#e4e2dd",
-                        "on-tertiary-fixed": "#0e2000",
-                        "surface-container-high": "#eae8e7",
-                        "outline-variant": "#c1c7d3",
-                        "tertiary-container": "#498300",
-                        "surface-container-lowest": "#ffffff",
-                        "on-tertiary-container": "#f9ffeb",
-                        "background": "#fbf9f8",
-                        "secondary-fixed-dim": "#c8c6c2",
-                        "on-tertiary": "#ffffff",
-                        "on-surface-variant": "#414751",
-                        "surface-container-highest": "#e4e2e2",
-                        "on-background": "#1b1c1c",
-                        "surface-variant": "#e4e2e2",
-                        "on-tertiary-fixed-variant": "#2a5000",
-                        "on-primary-container": "#fdfcff",
-                        "on-secondary-container": "#63635f",
-                        "on-primary-fixed": "#001c39",
-                        "inverse-surface": "#303030",
-                        "tertiary-fixed": "#a1fa49",
-                        "surface": "#fbf9f8",
-                        "surface-container-low": "#f5f3f3",
-                        "surface-bright": "#fbf9f8",
-                        "primary-container": "#2976c7",
-                        "on-surface": "#1b1c1c",
-                        "primary-fixed": "#d4e3ff",
-                        "primary": "#005da7",
-                        "on-primary-fixed-variant": "#004883",
-                        "error": "#ba1a1a",
-                        "on-error": "#ffffff",
-                        "inverse-on-surface": "#f2f0f0",
-                        "error-container": "#ffdad6",
-                        "secondary-container": "#e1dfdb",
-                        "primary-fixed-dim": "#a4c9ff",
-                        "tertiary": "#386800",
-                        "inverse-primary": "#a4c9ff",
-                        "surface-container": "#efeded",
-                        "secondary": "#5e5e5b",
-                        "on-secondary-fixed": "#1b1c19",
-                        "on-primary": "#ffffff"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px"
-                    },
-                    "spacing": {
-                        "stack-sm": "8px",
-                        "gutter-card": "16px",
-                        "stack-md": "16px",
-                        "stack-lg": "32px",
-                        "margin-page": "20px"
-                    },
-                    "fontFamily": {
-                        "body-lg": ["Inter"],
-                        "label-md": ["Inter"],
-                        "body-md": ["Inter"],
-                        "headline-md": ["Hanken Grotesk"],
-                        "headline-lg": ["Hanken Grotesk"],
-                        "headline-lg-mobile": ["Hanken Grotesk"]
-                    },
-                    "fontSize": {
-                        "body-lg": ["18px", { "lineHeight": "26px", "fontWeight": "400" }],
-                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.5px", "fontWeight": "600" }],
-                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
-                        "headline-md": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
-                        "headline-lg": ["28px", { "lineHeight": "36px", "fontWeight": "700" }],
-                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }]
-                    }
-                }
-            }
-        }
-    </script>
+
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <style>
         body {
             -webkit-tap-highlight-color: transparent;
@@ -142,12 +52,12 @@
     }
   }
 </style>
-<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260705-phone-app-3"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-cachefix-1"/>
 </head>
 <body class="bg-background text-on-background font-body-md min-h-screen flex flex-col antialiased">
 <!-- Top App Bar (Suppressed because this is an onboarding/transactional flow) -->
 <header class="w-full px-margin-page py-4 flex justify-between items-center z-40 bg-surface">
-<button aria-label="Back" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-low transition-colors">
+<button aria-label="Back" class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-surface-container-low transition-colors" onclick="history.length > 1 ? history.back() : location.href='parent_profile.html?app=1'" type="button">
 <span class="material-symbols-outlined text-on-surface">arrow_back</span>
 </button>
 <span class="font-headline-md text-headline-md text-primary font-bold tracking-tight">回家</span>
@@ -156,8 +66,8 @@
 <!-- Main Content Canvas -->
 <main class="flex-1 flex flex-col px-margin-page pb-stack-lg max-w-lg mx-auto w-full">
 <div class="mt-stack-md mb-stack-lg flex flex-col gap-stack-sm">
-<h1 class="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg text-on-background">创建您的家庭空间</h1>
-<p class="font-body-lg text-body-lg text-on-surface-variant">给您的家起个名字，开始建立专属的数字陪伴空间。</p>
+<h1 class="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg text-on-background">设置家庭空间</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant">先创建家庭，或用家人给的邀请码加入已有家庭。家庭盒子、摄像头和关怀卡片都会归到家庭下。</p>
 </div>
 <!-- Illustration -->
 <div class="w-full aspect-[4/3] rounded-xl overflow-hidden mb-stack-lg shadow-[0_4px_12px_rgba(0,0,0,0.04)] bg-surface-container-lowest">
@@ -168,16 +78,30 @@
 <label class="font-label-md text-label-md text-on-surface" for="spaceName">家庭空间名称</label>
 <div class="relative">
 <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant icon-fill">home</span>
-<input class="w-full pl-12 pr-4 py-4 rounded-xl bg-surface-container-low border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary font-body-lg text-body-lg text-on-surface placeholder:text-on-surface-variant transition-colors outline-none shadow-inner" id="spaceName" placeholder="例如：李家的温馨小窝" type="text"/>
+<input class="w-full pl-12 pr-4 py-4 rounded-xl bg-surface-container-low border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary font-body-lg text-body-lg text-on-surface placeholder:text-on-surface-variant transition-colors outline-none shadow-inner" id="spaceName" placeholder="例如：妈妈家" type="text"/>
 </div>
 </div>
-<!-- Spacer to push button to bottom on short screens -->
-<div class="flex-1"></div>
-<!-- Primary Action -->
-<button class="w-full py-4 rounded-full bg-primary text-on-primary font-label-md text-label-md flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_4px_12px_rgba(0,93,167,0.2)] mt-stack-lg">
-<span>创建并邀请成员</span>
-<span class="material-symbols-outlined text-[20px]">person_add</span>
+<button id="familyCreateButton" data-action="create-family" class="w-full py-4 rounded-full bg-primary text-on-primary font-label-md text-label-md flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_4px_12px_rgba(54,67,53,0.16)]">
+<span>创建家庭并填写资料</span>
+<span class="material-symbols-outlined text-[20px]">arrow_forward</span>
 </button>
+<div class="mt-stack-lg rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-4">
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-primary">group_add</span>
+<div class="min-w-0 flex-1">
+<h2 class="font-label-md text-label-md text-on-surface">加入已有家庭</h2>
+<p class="mt-1 font-body-md text-[13px] leading-relaxed text-on-surface-variant">如果家人已经创建家庭，让对方在家庭页复制邀请码给你。</p>
+</div>
+</div>
+<div class="mt-4 flex gap-2">
+<input class="min-w-0 flex-1 rounded-xl bg-surface-container-low border border-outline-variant px-4 py-3 font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant focus:border-primary focus:ring-1 focus:ring-primary outline-none" id="familyJoinCode" placeholder="例如 GH-1-ABC123" type="text"/>
+<button id="familyJoinButton" data-action="join-family" class="shrink-0 rounded-xl bg-primary-container px-4 py-3 font-label-md text-label-md text-primary">加入</button>
+</div>
+</div>
+<div id="familyExistingList" class="mt-stack-lg hidden"></div>
+<p id="familySetupStatus" class="mt-stack-md min-h-[20px] font-body-md text-[13px] leading-relaxed text-on-surface-variant"></p>
+<!-- Spacer to push content to bottom on short screens -->
+<div class="flex-1"></div>
 </main>
 <!-- Bottom Nav Bar (Suppressed as per rules for transactional/onboarding screens) -->
 
@@ -212,7 +136,7 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260705-app-server-3"></script>
-<script src="assets/scripts/stitch-app-routes.js?v=20260705-phone-app-3"></script>
+<script src="assets/scripts/edge-client.js?v=20260708-cachefix-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260708-cachefix-1"></script>
+<script src="assets/scripts/stitch-app-routes.js?v=20260708-cachefix-1"></script>
 </body></html>
