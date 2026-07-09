@@ -158,23 +158,27 @@ function buildCloudSeedBundle(db, options = {}) {
         }
     }
 
-    const elderProfiles = Array.from(elderProfileEntries.entries()).map(([key, profile]) => ({
-        id: textId(profile.id || key),
-        family_id: textId(profile.family_id, key.split(":")[0] || fallbackFamilyId),
-        elder_id: String(profile.elder_id || profile.id || key.split(":")[1] || "elder_primary"),
-        display_name: String(profile.display_name || ""),
-        relationship: String(profile.relationship || ""),
-        age: numberOrNull(profile.age),
-        city: String(profile.city || ""),
-        phone: String(profile.phone || ""),
-        mobile_phone: String(profile.mobile_phone || ""),
-        home_phone: String(profile.home_phone || ""),
-        health_notes: String(profile.health_notes || ""),
-        care_preferences: profile.care_preferences || {},
-        metadata: profile.metadata && typeof profile.metadata === "object" ? profile.metadata : {},
-        created_at: iso(profile.created_at, exportedAt),
-        updated_at: iso(profile.updated_at, iso(profile.created_at, exportedAt)),
-    }));
+    const elderProfiles = Array.from(elderProfileEntries.entries()).map(([key, profile]) => {
+        const familyId = textId(profile.family_id, key.split(":")[0] || fallbackFamilyId);
+        const elderId = String(profile.elder_id || key.split(":")[1] || "elder_primary");
+        return {
+            id: `${familyId}:${elderId}`,
+            family_id: familyId,
+            elder_id: elderId,
+            display_name: String(profile.display_name || ""),
+            relationship: String(profile.relationship || ""),
+            age: numberOrNull(profile.age),
+            city: String(profile.city || ""),
+            phone: String(profile.phone || ""),
+            mobile_phone: String(profile.mobile_phone || ""),
+            home_phone: String(profile.home_phone || ""),
+            health_notes: String(profile.health_notes || ""),
+            care_preferences: profile.care_preferences || {},
+            metadata: profile.metadata && typeof profile.metadata === "object" ? profile.metadata : {},
+            created_at: iso(profile.created_at, exportedAt),
+            updated_at: iso(profile.updated_at, iso(profile.created_at, exportedAt)),
+        };
+    });
 
     const devices = toObjectValues(db.devices).map((device) => ({
         device_id: textId(device.device_id || device.id),
