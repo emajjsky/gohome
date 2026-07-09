@@ -2620,58 +2620,104 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function shanghaiDateParts(date = new Date()) {
+        return new Intl.DateTimeFormat("zh-CN", {
+            timeZone: "Asia/Shanghai",
+            year: "numeric",
+            month: "numeric",
+            day: "numeric",
+            weekday: "short",
+        }).formatToParts(date).reduce((acc, part) => {
+            if (part.type !== "literal") acc[part.type] = part.value;
+            return acc;
+        }, {});
+    }
+
+    function contentSearchDateContext(date = new Date()) {
+        const parts = shanghaiDateParts(date);
+        const year = Number(parts.year || date.getFullYear());
+        const month = Number(parts.month || date.getMonth() + 1);
+        const day = Number(parts.day || date.getDate());
+        return {
+            year,
+            today: `${year}年${month}月${day}日`,
+            month: `${year}年${month}月`,
+            weekday: parts.weekday || "",
+        };
+    }
+
     function contentSearchTasksFromPreferences(preferences = {}, fallbackCity = "杭州", fallbackDistrict = "") {
         const schedule = preferences.metadata?.care_card_schedule || {};
         const contentTypes = schedule.content_types || {};
         const topics = contentTopicsFromPreferences(preferences);
         const region = contentRegionText(preferences, fallbackCity, fallbackDistrict);
+        const dateContext = contentSearchDateContext();
+        const commonOfficialDomains = ["people.com.cn", "xinhuanet.com", "cctv.com", "gmw.cn"];
         const taskList = [];
         if (contentTypes.local_hotspots) {
             taskList.push({
                 type: "local_hotspots",
                 topic: "本地热点",
-                query: `${region.label} 今日 民生 社区活动 生活服务 适合老人聊天`,
-                domains: ["shobserver.com", "wsjkw.sh.gov.cn", "people.com.cn", "xinhuanet.com", "gmw.cn"],
+                query: `${dateContext.today} ${region.label} 本周 民生 社区活动 便民服务 本地生活 适合老人聊天`,
+                domains: ["shobserver.com", "wsjkw.sh.gov.cn", ...commonOfficialDomains],
+                search_topic: "news",
+                time_range: "week",
+                max_age_days: 21,
             });
         }
         if (contentTypes.health_tips) {
             taskList.push({
                 type: "health_tips",
                 topic: "健康养生",
-                query: `${region.city} 今日 老年人 健康生活 养生 节气 饮食 作息`,
-                domains: ["wsjkw.sh.gov.cn", "shobserver.com", "people.com.cn", "xinhuanet.com", "cctv.com", "gmw.cn"],
+                query: `${dateContext.month} 老年人 健康生活 养生 节气 饮食 作息 官方 科普`,
+                domains: ["wsjkw.sh.gov.cn", "shobserver.com", ...commonOfficialDomains],
+                search_topic: "general",
+                time_range: "month",
+                max_age_days: 180,
             });
         }
         if (contentTypes.anti_fraud) {
             taskList.push({
                 type: "anti_fraud",
                 topic: "防诈骗提醒",
-                query: `${region.city} 老年人 防诈骗 社区 安全提醒 官方`,
-                domains: ["people.com.cn", "cctv.com", "gmw.cn", "mps.gov.cn", "xinhuanet.com"],
+                query: `${dateContext.month} ${region.city} 老年人 防诈骗 反诈 社区 安全提醒 官方`,
+                domains: ["mps.gov.cn", ...commonOfficialDomains],
+                search_topic: "news",
+                time_range: "month",
+                max_age_days: 120,
             });
         }
         if (contentTypes.culture_entertainment) {
             taskList.push({
                 type: "culture_entertainment",
                 topic: "文娱兴趣",
-                query: `${region.label} 老年人 戏曲 电视节目 社区文化 活动`,
-                domains: ["shobserver.com", "people.com.cn", "cctv.com", "gmw.cn"],
+                query: `${dateContext.month} ${region.label} 老年人 戏曲 电视节目 社区文化 活动`,
+                domains: ["shobserver.com", ...commonOfficialDomains],
+                search_topic: "news",
+                time_range: "month",
+                max_age_days: 90,
             });
         }
         if (contentTypes.elder_interest_topics) {
             taskList.push({
                 type: "elder_interest_topics",
                 topic: "问候话题",
-                query: `${region.label} 今日 适合老人 聊天话题 ${topics.slice(0, 5).join(" ")}`,
-                domains: ["shobserver.com", "wsjkw.sh.gov.cn", "people.com.cn", "xinhuanet.com", "cctv.com", "gmw.cn"],
+                query: `${dateContext.today} ${region.label} 适合老人 聊天话题 ${topics.slice(0, 5).join(" ")}`,
+                domains: ["shobserver.com", "wsjkw.sh.gov.cn", ...commonOfficialDomains],
+                search_topic: "general",
+                time_range: "month",
+                max_age_days: 90,
             });
         }
         if (!taskList.length) {
             taskList.push({
                 type: "elder_interest_topics",
                 topic: topics[0] || "关怀话题",
-                query: `${region.label} 今日 老年人 健康生活 适合聊天 ${topics.slice(0, 5).join(" ")}`,
-                domains: ["shobserver.com", "wsjkw.sh.gov.cn", "people.com.cn", "xinhuanet.com", "cctv.com", "gmw.cn"],
+                query: `${dateContext.today} ${region.label} 老年人 健康生活 适合聊天 ${topics.slice(0, 5).join(" ")}`,
+                domains: ["shobserver.com", "wsjkw.sh.gov.cn", ...commonOfficialDomains],
+                search_topic: "general",
+                time_range: "month",
+                max_age_days: 90,
             });
         }
         return taskList.slice(0, 5);
@@ -2685,32 +2731,91 @@ function createLocalAppServer(options = {}) {
         } catch (_error) {
             source = "内容源";
         }
+        const title = String(result?.title || "今日可聊内容")
+            .replace(/^\s*[\[【][^\]】]{1,18}[\]】]\s*/g, "")
+            .replace(/[_｜|].*$/g, "")
+            .replace(/新闻频道|央视网|中国网|老年频道|公众号|视频号/g, "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 80);
         return {
             type: "search_result",
             topic,
-            title: String(result?.title || "今日可聊内容")
-                .replace(/[_｜|].*$/g, "")
-                .replace(/新闻频道|央视网|中国网|老年频道|公众号|视频号/g, "")
-                .replace(/\s+/g, " ")
-                .trim()
-                .slice(0, 80),
+            title,
             url,
             source,
             summary: String(result?.content || result?.raw_content || "").replace(/\s+/g, " ").trim().slice(0, 160),
+            published_at: String(result?.published_date || result?.publishedAt || result?.date || "").trim(),
             score: Number.isFinite(Number(result?.score)) ? Number(result.score) : null,
         };
     }
 
-    function safeCareContentRecommendation(item, taskType = "") {
+    function parseContentPublishedAt(value) {
+        const raw = String(value || "").trim();
+        if (!raw) return null;
+        const timestamp = Date.parse(raw);
+        return Number.isFinite(timestamp) ? timestamp : null;
+    }
+
+    function contentAgeDays(item) {
+        const timestamp = parseContentPublishedAt(item?.published_at);
+        if (!timestamp) return null;
+        return Math.floor((Date.now() - timestamp) / (24 * 60 * 60 * 1000));
+    }
+
+    function containsStaleYear(text, maxYearAge = 1) {
+        const currentYear = contentSearchDateContext().year;
+        const years = String(text || "").match(/\b20\d{2}\b/g) || [];
+        return years.some((year) => currentYear - Number(year) > maxYearAge);
+    }
+
+    function seasonalTermMismatched(text) {
+        const month = contentSearchDateContext().month;
+        const value = String(text || "");
+        const seasonalWindows = [
+            { pattern: /春节|元宵/, months: [1, 2] },
+            { pattern: /清明/, months: [3, 4] },
+            { pattern: /端午/, months: [5, 6] },
+            { pattern: /中秋/, months: [9, 10] },
+            { pattern: /国庆/, months: [9, 10] },
+            { pattern: /重阳/, months: [10, 11] },
+        ];
+        return seasonalWindows.some((item) => item.pattern.test(value) && !item.months.includes(month));
+    }
+
+    function matchesModuleIntent(text, taskType = "") {
+        const value = String(text || "");
+        if (taskType === "anti_fraud") {
+            return /(诈骗|反诈|防骗|防诈|养老诈骗|电信网络|陌生电话|陌生链接|转账|刷单|冒充|保健品骗局)/.test(value);
+        }
+        if (taskType === "local_hotspots") {
+            return /(社区|便民|民生|服务|活动|出行|公交|地铁|菜场|文旅|公园|街道|本地|上海|杭州)/.test(value);
+        }
+        if (taskType === "health_tips") {
+            return /(健康|养生|饮食|作息|喝水|睡眠|运动|防暑|降温|节气|科普|老人|老年)/.test(value);
+        }
+        if (taskType === "culture_entertainment") {
+            return /(戏曲|电视|节目|演出|文化|文旅|活动|社区|展览|电影|广播)/.test(value);
+        }
+        return true;
+    }
+
+    function safeCareContentRecommendation(item, taskType = "", task = {}) {
         const text = `${item?.title || ""} ${item?.summary || ""}`;
         const sourceText = `${item?.source || ""} ${item?.url || ""}`.toLowerCase();
         if (!String(item?.title || "").trim() || !String(item?.url || "").trim()) return false;
         if (!/[\u4e00-\u9fff]{4,}/.test(text)) return false;
         if (/(dangjian|cpc\.people|qstheory|theory\.people)/.test(sourceText)) return false;
+        if (!matchesModuleIntent(text, taskType)) return false;
         const blocked = taskType === "anti_fraud"
             ? /(痴迷|割韭菜|谣言|投诉|死亡|猝死|癌|肿瘤|医院花钱|收割|曝光|乱象|焦虑|保健品骗局|坑老|习近平|金正恩|朝鲜|党代会|慢性病|疾病风险|医疗诊断)/
             : /(痴迷|骗局|诈骗|防骗|割韭菜|谣言|投诉|死亡|猝死|癌|肿瘤|医院花钱|收割|警惕|曝光|乱象|焦虑|保健品骗局|坑老|习近平|金正恩|朝鲜|党代会|慢性病|疾病风险|医疗诊断)/;
         if (blocked.test(text)) return false;
+        if (containsStaleYear(text, taskType === "health_tips" ? 2 : 1)) return false;
+        if (seasonalTermMismatched(text)) return false;
+        const ageDays = contentAgeDays(item);
+        const maxAgeDays = Number(task?.max_age_days || 0);
+        if (ageDays !== null && maxAgeDays > 0 && ageDays > maxAgeDays) return false;
         return true;
     }
 
@@ -2732,10 +2837,16 @@ function createLocalAppServer(options = {}) {
             const taskPayloads = await Promise.all(tasks.map(async (task) => {
                 const requestPayload = {
                     query: task.query,
+                    auto_parameters: false,
+                    topic: task.search_topic || "general",
                     search_depth: "basic",
                     max_results: runtime.max_results,
+                    time_range: task.time_range || null,
                     include_answer: false,
                     include_raw_content: false,
+                    include_images: false,
+                    include_image_descriptions: false,
+                    include_favicon: false,
                     include_domains: task.domains,
                 };
                 try {
@@ -2771,15 +2882,18 @@ function createLocalAppServer(options = {}) {
                     .map((item) => ({
                         ...publicRecommendationFromTavily(item, task.topic),
                         module: task.type,
+                        search_topic: task.search_topic || "general",
+                        time_range: task.time_range || "",
                     }))
-                    .filter((item) => safeCareContentRecommendation(item, task.type))
+                    .filter((item) => safeCareContentRecommendation(item, task.type, task))
                     .slice(0, 1))
+                .filter((item, index, source) => source.findIndex((candidate) => candidate.url === item.url) === index)
                 .slice(0, runtime.max_results);
             return setCachedProviderValue(cacheKey, {
                 family_id: Number(familyId || 0),
                 city: targetCity,
                 topics: normalizedTopics,
-                tasks: tasks.map(({ type, topic, query }) => ({ type, topic, query })),
+                tasks: tasks.map(({ type, topic, query, search_topic, time_range }) => ({ type, topic, query, search_topic, time_range })),
                 available: recommendations.length > 0,
                 provider: "tavily",
                 query: tasks.map((item) => item.query).join(" | "),
