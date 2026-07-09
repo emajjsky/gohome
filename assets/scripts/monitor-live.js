@@ -4,9 +4,7 @@
     const state = {
         cameras: [],
         selectedCameraId: null,
-        streamController: null,
         streamControllers: new Map(),
-        streamImage: null,
         streamState: "idle",
         cameraGridSignature: "",
     };
@@ -321,8 +319,6 @@
         });
         if (state.cameraGridSignature === signature) return;
         state.cameraGridSignature = signature;
-        state.streamController?.dispose();
-        state.streamController = null;
         state.streamControllers.forEach((controller) => controller.dispose());
         state.streamControllers.clear();
         if (!state.cameras.length) {
@@ -332,28 +328,6 @@
         grid.innerHTML = state.cameras
             .map((item, index) => cameraCard(item, index, Number(item.id) === Number(camera?.id)))
             .join("");
-    }
-
-    async function attachMonitorStream(camera) {
-        const image = $("edgeSnapshotImage");
-        if (!image || !camera) return;
-        if (state.streamImage !== image) {
-            state.streamController?.dispose();
-            state.streamController = null;
-            state.streamImage = image;
-        }
-        if (!state.streamController) {
-            state.streamController = GoHomeEdge.createManagedVideoStream(image, {
-                cameraId: camera.id,
-                scene: "monitor",
-                onStateChange(nextState) {
-                    applyStreamState(camera, nextState);
-                },
-            });
-        }
-        applyStreamState(camera, "loading");
-        state.streamController.setSource(camera.id, { scene: "monitor" });
-        image.classList.remove("object-[center_38%]");
     }
 
     function updateCardStreamLabel(camera, nextState) {
@@ -501,6 +475,7 @@
     });
 
     window.addEventListener("beforeunload", () => {
-        state.streamController?.dispose();
+        state.streamControllers.forEach((controller) => controller.dispose());
+        state.streamControllers.clear();
     });
 })();
