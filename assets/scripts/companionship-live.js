@@ -57,6 +57,8 @@
     function messageBadge(messageType) {
         const type = String(messageType || "").trim();
         if (type === "alert") return { label: "告警", tone: "warn", icon: "notifications_active" };
+        if (type === "care_card") return { label: "关怀", tone: "good", icon: "volunteer_activism" };
+        if (type === "test") return { label: "测试", tone: "info", icon: "science" };
         if (type === "gohome") return { label: "回家", tone: "good", icon: "home" };
         if (type === "explain") return { label: "解释", tone: "info", icon: "visibility" };
         return { label: "陪伴", tone: "info", icon: "favorite" };

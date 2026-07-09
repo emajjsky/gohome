@@ -98,41 +98,95 @@
 </header>
 <main class="max-w-screen-md mx-auto px-margin-page py-stack-lg space-y-stack-lg">
 <section class="gohome-page-lead">
-<p>通知设置</p>
-<h2>提醒渠道</h2>
-<p>当前本地闭环只验证站内提醒和页面状态，正式手机推送等上云后接入。</p>
+<p id="notificationFamilyLine">通知设置</p>
+<h2 id="notificationSummaryTitle">提醒渠道</h2>
+<p id="notificationSummaryText">正在读取站内消息、推送 token 和最近投递记录。</p>
+</section>
+<section class="gohome-panel p-5 space-y-4">
+<div class="flex items-start justify-between gap-3">
+<div class="min-w-0">
+<p class="gohome-kicker">通知链路</p>
+<h3 id="notificationDeliveryTitle" class="mt-1 font-display text-[20px] font-bold leading-tight text-on-surface">正在同步</h3>
+<p id="notificationDeliveryText" class="mt-2 font-sans text-[13px] leading-6 text-on-surface-variant">本地和云端会先保证站内消息可见，iOS 真机阶段再接 APNs。</p>
+</div>
+<span id="notificationDeliveryBadge" class="gohome-status-tag muted">同步中</span>
+</div>
+<div class="grid grid-cols-3 gap-2">
+<div class="rounded-[18px] bg-white/70 px-3 py-3">
+<p class="font-sans text-[11px] font-semibold text-on-surface-variant">打开中</p>
+<strong id="notificationOpenCount" class="mt-1 block font-display text-[20px] leading-none text-primary">-</strong>
+</div>
+<div class="rounded-[18px] bg-white/70 px-3 py-3">
+<p class="font-sans text-[11px] font-semibold text-on-surface-variant">投递记录</p>
+<strong id="notificationDeliveryCount" class="mt-1 block font-display text-[20px] leading-none text-primary">-</strong>
+</div>
+<div class="rounded-[18px] bg-white/70 px-3 py-3">
+<p class="font-sans text-[11px] font-semibold text-on-surface-variant">iOS Token</p>
+<strong id="notificationTokenCount" class="mt-1 block font-display text-[20px] leading-none text-primary">-</strong>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-3">
+<button id="notificationGenerateButton" data-action="notification-test" class="app-btn-secondary font-sans text-[13px] font-semibold transition-all active:scale-[0.98] flex items-center justify-center gap-1.5" type="button">
+<span class="material-symbols-outlined text-[18px]">add_alert</span>
+生成测试通知
+</button>
+<button id="notificationPushTestButton" data-action="push-test" class="app-btn-secondary font-sans text-[13px] font-semibold transition-all active:scale-[0.98] flex items-center justify-center gap-1.5" type="button">
+<span class="material-symbols-outlined text-[18px]">mobile_friendly</span>
+推送链路测试
+</button>
+</div>
+<p id="notificationFeedback" class="hidden rounded-[18px] bg-primary-fixed px-4 py-3 font-sans text-[12px] leading-5 text-primary"></p>
 </section>
 <section class="gohome-settings-list">
 <label class="gohome-settings-row">
 <span class="material-symbols-outlined">notifications_active</span>
 <div>
 <h3>安全事件提醒</h3>
-<p>摄像头离线、黑屏、无人、静止、疑似跌倒等事件进入事件页。</p>
+<p id="notificationSafetyText">摄像头离线、黑屏、无人、静止、疑似跌倒等事件会进入事件页和站内消息。</p>
 </div>
-<input checked class="gohome-setting-toggle" type="checkbox"/>
+<input checked class="gohome-setting-toggle" type="checkbox" disabled/>
 </label>
 <label class="gohome-settings-row">
-<span class="material-symbols-outlined">favorite</span>
+<span class="material-symbols-outlined">volunteer_activism</span>
 <div>
 <h3>每日关怀卡片</h3>
-<p>按关怀推送设置生成图文卡片，首页和陪伴页展示。</p>
+<p id="notificationCareText">按关怀推送规则生成图文卡片，首页和陪伴页展示。</p>
 </div>
-<input checked class="gohome-setting-toggle" type="checkbox"/>
+<input checked class="gohome-setting-toggle" type="checkbox" disabled/>
 </label>
 <label class="gohome-settings-row">
 <span class="material-symbols-outlined">app_badging</span>
 <div>
 <h3>站内消息</h3>
-<p>本地演示阶段用于验证消息状态，不等同于正式手机推送。</p>
+<p id="notificationInAppText">当前阶段以站内消息作为可验证闭环，正式推送会在 iOS App 接入 token 后启用。</p>
 </div>
-<input checked class="gohome-setting-toggle" type="checkbox"/>
+<input checked class="gohome-setting-toggle" type="checkbox" disabled/>
 </label>
 </section>
 <section class="gohome-section-tight">
 <div class="gohome-section-heading">
 <div>
+<h3>最近消息</h3>
+<p id="notificationMessageMeta">显示当前家庭最近生成的关怀和测试消息。</p>
+</div>
+<button id="notificationRefreshButton" data-action="notification-refresh" class="gohome-status-tag" type="button">刷新</button>
+</div>
+<div id="notificationMessageList" class="gohome-simple-list"></div>
+</section>
+<section class="gohome-section-tight">
+<div class="gohome-section-heading">
+<div>
+<h3>投递记录</h3>
+<p id="notificationDeliveryMeta">显示通知服务写入的真实投递状态。</p>
+</div>
+</div>
+<div id="notificationDeliveryList" class="gohome-simple-list"></div>
+</section>
+<section class="gohome-section-tight">
+<div class="gohome-section-heading">
+<div>
 <h3>正式渠道</h3>
-<p>云端部署和 iOS App 阶段接入。</p>
+<p>云端部署和 iOS App 阶段接入，不让普通用户配置底层 API。</p>
 </div>
 </div>
 <div class="gohome-simple-list">
@@ -140,29 +194,21 @@
 <span class="material-symbols-outlined">mobile_friendly</span>
 <div>
 <h3>iOS 推送</h3>
-<p>需要云端通知服务和 APNs 证书后启用。</p>
+<p id="notificationPushTokenText">等待真机 App 登记 APNs token。</p>
 </div>
-<span class="gohome-status-tag muted">待接入</span>
+<span id="notificationPushTokenBadge" class="gohome-status-tag muted">未登记</span>
 </article>
 <article class="gohome-simple-card">
 <span class="material-symbols-outlined">call</span>
 <div>
 <h3>电话联系</h3>
-<p>当前只支持在陪伴页手动拨打老人电话。</p>
+<p>陪伴页读取老人资料中的电话，点击后走系统拨号。</p>
 </div>
 <span class="gohome-status-tag">手动</span>
 </article>
-<article class="gohome-simple-card">
-<span class="material-symbols-outlined">sms</span>
-<div>
-<h3>短信通知</h3>
-<p>未进入本地闭环，后续作为增值通知渠道评估。</p>
-</div>
-<span class="gohome-status-tag muted">未启用</span>
-</article>
 </div>
 </section>
-<p class="gohome-note-panel">设置项会在云端通知服务接入后保存到账号。当前本地演示以页面状态、事件列表和关怀卡片生成为准。</p>
+<p class="gohome-note-panel">这里验证的是产品通知闭环：关怀任务生成消息，通知服务记录投递，首页和陪伴页展示。APNs 证书和真机 token 接入后，状态会从站内/模拟转为真实推送队列。</p>
 </main>
 
 <script id="gohome-stitch-route-links">
@@ -199,4 +245,5 @@
 <script src="assets/scripts/edge-client.js?v=20260709-cloud-stream-1"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260709-family-flow-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-2"></script>
+<script src="assets/scripts/notifications-live.js?v=20260709-notifications-1"></script>
 </body></html>
