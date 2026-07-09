@@ -1,5 +1,6 @@
 (function () {
     const $ = (id) => document.getElementById(id);
+    const CAMERA_STALE_MS = 3 * 60 * 1000;
     const state = {
         cameras: [],
         selectedCameraId: null,
@@ -7,6 +8,7 @@
         streamControllers: new Map(),
         streamImage: null,
         streamState: "idle",
+        cameraGridSignature: "",
     };
 
     function setText(id, value) {
@@ -42,23 +44,50 @@
         return camera?.id ? `?camera_id=${encodeURIComponent(camera.id)}` : "";
     }
 
-    function statusLabel(status) {
+    function cameraSeenAt(camera) {
+        return Date.parse(camera?.edge_reported_at || camera?.last_seen_at || camera?.updated_at || "");
+    }
+
+    function cameraStaleMinutes(camera) {
+        const seenAt = cameraSeenAt(camera);
+        if (!Number.isFinite(seenAt)) return null;
+        return Math.max(1, Math.round((Date.now() - seenAt) / 60000));
+    }
+
+    function effectiveStatus(camera) {
+        const status = String(camera?.status || "").toLowerCase();
+        if (status === "online") {
+            const seenAt = cameraSeenAt(camera);
+            if (Number.isFinite(seenAt) && Date.now() - seenAt > CAMERA_STALE_MS) return "stale";
+        }
+        return status;
+    }
+
+    function statusLabel(camera) {
+        const status = effectiveStatus(camera);
         if (status === "online") return "在线";
+        if (status === "stale") return "未同步";
         if (status === "offline") return "离线";
         if (status === "disabled") return "未启用";
         return "待同步";
     }
 
-    function statusTone(status) {
+    function statusTone(camera) {
+        const status = effectiveStatus(camera);
         if (status === "online") return "good";
-        if (status === "offline") return "warn";
+        if (status === "offline" || status === "stale") return "warn";
         return "muted";
     }
 
     function statusText(camera) {
         if (!camera) return "等待接入摄像头";
-        if (camera.status === "online") return "家庭盒子在线，正在返回画面";
-        if (camera.status === "offline") return camera.last_error || "家庭盒子暂未回传画面";
+        const status = effectiveStatus(camera);
+        if (status === "online") return "家庭盒子在线，正在返回画面";
+        if (status === "stale") {
+            const minutes = cameraStaleMinutes(camera);
+            return minutes ? `家庭盒子已 ${minutes} 分钟未同步这路画面` : "家庭盒子长时间未同步这路画面";
+        }
+        if (status === "offline") return camera.last_error || "家庭盒子暂未回传画面";
         if (!camera.has_stream_config) return "还缺少 RTSP / 摄像头接入信息";
         return "等待家庭盒子同步配置并完成本地接入";
     }
@@ -90,15 +119,17 @@
 
     function applyEvaluationStatus(camera, evaluation) {
         const evalState = evaluation?.state || {};
-        const cameraState = String(evalState.camera_state || evalState.camera_status || camera?.status || "").toLowerCase();
+        const cameraState = effectiveStatus(camera) === "stale"
+            ? "stale"
+            : String(evalState.camera_state || evalState.camera_status || camera?.status || "").toLowerCase();
         const candidates = Array.isArray(evaluation?.candidates) ? evaluation.candidates : [];
         const online = cameraState === "online";
-        setText("edgeStatusTitle", candidates.length ? "需要确认" : (online ? "暂无异常" : "等待检测状态"));
+        setText("edgeStatusTitle", candidates.length ? "需要确认" : (online ? "暂无异常" : (cameraState === "stale" ? "盒子未同步" : "等待检测状态")));
         setText("edgeStatusText", evaluationSummary(evaluation));
         setText("edgeUpdateTime", evaluation?.evaluated_at ? `${GoHomeEdge.fmtTime(evaluation.evaluated_at)} 同步` : "等待同步");
         setText("edgeMainMessage", evaluationSummary(evaluation));
         setText("edgeFact", candidates.length ? `${candidates.length} 条候选` : (online ? "未命中规则" : "等待检测"));
-        setText("edgeFeeling", online ? "家里平稳" : statusLabel(camera?.status));
+        setText("edgeFeeling", online ? "家里平稳" : statusLabel(camera));
         setText("edgeNext", candidates.length ? "去确认" : "继续观察");
         setText("edgeBrightness", online ? "检测在线" : "等待亮度");
         setPillTone("edgeFeeling", candidates.length ? "warn" : (online ? "good" : "muted"));
@@ -156,7 +187,7 @@
         return [...cameras].sort((a, b) => {
             const score = (camera) => (
                 (camera.enabled !== false ? 100 : 0) +
-                (camera.status === "online" ? 30 : 0)
+                (effectiveStatus(camera) === "online" ? 30 : 0)
             );
             return score(b) - score(a) || Number(b.id) - Number(a.id);
         })[0] || null;
@@ -226,7 +257,7 @@
     function cameraCard(camera, index, active) {
         const suffix = cameraSuffix(camera);
         const watchHref = pageHref(`watch.html${suffix}`);
-        const tone = statusTone(camera.status);
+        const tone = statusTone(camera);
         const imageId = active ? "edgeSnapshotImage" : cameraDomId("edgeSnapshotImage", camera);
         const streamLabelId = active ? "edgeStreamLabel" : cameraDomId("edgeStreamLabel", camera);
         const cameraTitle = cameraLabel(camera);
@@ -256,12 +287,12 @@
                             <h4 ${activeAttrs.roomId ? `id="${activeAttrs.roomId}"` : ""}>${escapeHtml(cameraTitle)}</h4>
                             <p ${activeAttrs.updateId ? `id="${activeAttrs.updateId}"` : ""}>${escapeHtml(statusText(camera))}</p>
                         </div>
-                        <span class="app-mini-pill ${tone}">${statusLabel(camera.status)}</span>
+                        <span class="app-mini-pill ${tone}">${statusLabel(camera)}</span>
                     </div>
                     <p ${activeAttrs.messageId ? `id="${activeAttrs.messageId}"` : ""}>${escapeHtml(statusText(camera))}</p>
                     <div class="flex flex-wrap gap-2">
                         <span ${activeAttrs.factId ? `id="${activeAttrs.factId}"` : ""} class="app-mini-pill muted">等待检测</span>
-                        <span ${activeAttrs.feelingId ? `id="${activeAttrs.feelingId}"` : ""} class="app-mini-pill ${tone}">${statusLabel(camera.status)}</span>
+                        <span ${activeAttrs.feelingId ? `id="${activeAttrs.feelingId}"` : ""} class="app-mini-pill ${tone}">${statusLabel(camera)}</span>
                         <span ${activeAttrs.nextId ? `id="${activeAttrs.nextId}"` : ""} class="app-mini-pill muted">继续观察</span>
                         <span ${activeAttrs.brightnessId ? `id="${activeAttrs.brightnessId}"` : ""} class="app-mini-pill muted">等待亮度</span>
                     </div>
@@ -274,6 +305,22 @@
     function renderCameraGrid(camera) {
         const grid = $("edgeMonitorCameraGrid");
         if (!grid) return;
+        const signature = JSON.stringify({
+            selected: camera?.id || null,
+            cameras: state.cameras.map((item) => ({
+                id: item.id,
+                name: item.name || "",
+                room: item.room || "",
+                status: item.status || "",
+                effective_status: effectiveStatus(item),
+                enabled: item.enabled !== false,
+                has_stream_config: Boolean(item.has_stream_config),
+                edge_reported_at: item.edge_reported_at || "",
+                last_seen_at: item.last_seen_at || "",
+            })),
+        });
+        if (state.cameraGridSignature === signature) return;
+        state.cameraGridSignature = signature;
         state.streamController?.dispose();
         state.streamController = null;
         state.streamControllers.forEach((controller) => controller.dispose());
@@ -339,7 +386,6 @@
             if (!image) return;
             const existing = state.streamControllers.get(Number(camera.id));
             if (existing) {
-                existing.setSource(camera.id, { scene: "monitor" });
                 return;
             }
             const controller = GoHomeEdge.createManagedVideoStream(image, {
@@ -397,7 +443,7 @@
                     applyStreamState(camera, "playing");
                     if (evaluation) applyEvaluationStatus(camera, evaluation);
                 } else {
-                    applyStreamState(camera, camera.status === "online" ? "waiting" : "error");
+                    applyStreamState(camera, effectiveStatus(camera) === "online" ? "waiting" : "error");
                     if (evaluation) {
                         applyEvaluationStatus(camera, evaluation);
                     } else {
@@ -416,7 +462,7 @@
             setText("edgeUpdateTime", `${GoHomeEdge.fmtTime(snapshot.captured_at)} 更新`);
             setText("edgeMainMessage", snapshotMessage(snapshot));
             setText("edgeStatusTitle", statusTitle(snapshot));
-            setText("edgeStatusText", camera.status === "online" ? "家庭盒子正在运行并回传状态。" : "摄像头当前不在线。");
+            setText("edgeStatusText", effectiveStatus(camera) === "online" ? "家庭盒子正在运行并回传状态。" : statusText(camera));
             setText("edgeFact", snapshot.person_count === null || snapshot.person_count === undefined ? "画面正常" : `${snapshot.person_count} 人`);
             setText("edgeFeeling", (snapshot.tags || []).length ? "需要看一眼" : "家里平稳");
             setText("edgeNext", (snapshot.tags || []).includes("fall_candidate") ? "立即联系" : "继续观察");
