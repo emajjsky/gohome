@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from threading import Event, Thread
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 import time
 from datetime import datetime, timezone
 
@@ -19,11 +19,19 @@ class EdgeWorker:
         camera_agent: Any,
         detect_agent: Any,
         event_agent: Any,
+        *,
+        live_frame_upload_enabled: bool = False,
+        live_frame_upload_interval_seconds: float = 12.0,
+        remote_camera_id_resolver: Callable[[int], Any] | None = None,
     ) -> None:
         self.storage = storage
         self.camera_agent = camera_agent
         self.detect_agent = detect_agent
         self.event_agent = event_agent
+        self.live_frame_upload_enabled = live_frame_upload_enabled
+        self.live_frame_upload_interval_seconds = max(3.0, float(live_frame_upload_interval_seconds or 12.0))
+        self.remote_camera_id_resolver = remote_camera_id_resolver or (lambda camera_id: camera_id)
+        self.last_live_upload_at: Dict[int, float] = {}
         self._stop = Event()
         self._wake = Event()
         self._thread: Thread | None = None
@@ -111,6 +119,7 @@ class EdgeWorker:
                 person_count=analysis.get("person_count"),
                 analysis=analysis,
             )
+            self._enqueue_live_frame_upload(camera_id, snapshot)
             self.storage.update_camera_status(camera_id, "online")
 
             detection_result = self.storage.create_detection_result(
@@ -169,6 +178,42 @@ class EdgeWorker:
         except Exception as exc:
             self.storage.update_camera_status(camera_id, "error", str(exc))
             return {"ok": False, "error": str(exc)}
+
+    def _enqueue_live_frame_upload(self, camera_id: int, snapshot: Dict[str, Any]) -> None:
+        if not self.live_frame_upload_enabled:
+            return
+        snapshot_id = snapshot.get("id")
+        snapshot_path = str(snapshot.get("image_path") or "").strip()
+        if not snapshot_id or not snapshot_path:
+            return
+        now = time.time()
+        last_uploaded = float(self.last_live_upload_at.get(camera_id) or 0)
+        if now - last_uploaded < self.live_frame_upload_interval_seconds:
+            return
+        self.last_live_upload_at[camera_id] = now
+        try:
+            remote_camera_id = self.remote_camera_id_resolver(camera_id) or camera_id
+            bucket = int(now // self.live_frame_upload_interval_seconds)
+            self.storage.enqueue_upload_job(
+                job_type="media_upload",
+                object_type="live_frame",
+                idempotency_key=f"live-frame:{remote_camera_id}:{bucket}",
+                priority=80,
+                snapshot_id=int(snapshot_id),
+                camera_id=int(camera_id),
+                payload={
+                    "target": "app_server",
+                    "purpose": "live_preview",
+                    "camera_id": remote_camera_id,
+                    "local_camera_id": camera_id,
+                    "snapshot_id": int(snapshot_id),
+                    "snapshot_path": snapshot_path,
+                    "captured_at": snapshot.get("captured_at") or snapshot.get("created_at") or "",
+                    "content_type": "image/jpeg",
+                },
+            )
+        except Exception:
+            return
 
     def _pose_runtime_config(self, camera_id: int, rules: Dict[str, Any]) -> Dict[str, Any]:
         needs_pose = bool(rules.get("fall_detection_enabled") or rules.get("activity_detection_enabled"))

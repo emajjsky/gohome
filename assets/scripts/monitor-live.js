@@ -150,6 +150,20 @@
             setPillTone("edgeNext", "muted");
             return;
         }
+        if (nextState === "snapshot") {
+            setText("edgeStatusTitle", "最新画面已返回");
+            setText("edgeStatusText", "家庭盒子已上传最新画面，实时流会继续自动重连。");
+            setText("edgeUpdateTime", "最新画面");
+            setText("edgeStreamLabel", "最新画面");
+            setText("edgeMainMessage", "家庭盒子已上传最新画面。");
+            setText("edgeFact", "画面在线");
+            setText("edgeFeeling", "继续观察");
+            setText("edgeNext", "无待处理");
+            setText("edgeBrightness", "最新帧");
+            setPillTone("edgeFeeling", "good");
+            setPillTone("edgeNext", "muted");
+            return;
+        }
         if (nextState === "waiting") {
             setText("edgeStatusTitle", "等待画面帧");
             setText("edgeStatusText", "家庭盒子在线，正在等待第一帧画面。");
@@ -334,6 +348,7 @@
         const label = $(cameraDomId("edgeStreamLabel", camera));
         if (!label) return;
         if (nextState === "playing") label.textContent = "实时画面已返回";
+        else if (nextState === "snapshot") label.textContent = "最新画面";
         else if (nextState === "waiting") label.textContent = "等待第一帧";
         else if (nextState === "error") label.textContent = "画面请求失败，正在重试";
         else if (nextState === "loading") label.textContent = "正在连接画面";

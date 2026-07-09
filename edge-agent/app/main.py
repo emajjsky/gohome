@@ -360,6 +360,23 @@ def read_local_device_token() -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
+def remote_camera_id_for_local_camera(local_camera_id: int) -> str | int:
+    state_path = settings.runtime_dir / "config-sync-state.json"
+    if not state_path.exists():
+        return local_camera_id
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return local_camera_id
+    camera_map = state.get("camera_map") if isinstance(state, dict) else {}
+    if not isinstance(camera_map, dict):
+        return local_camera_id
+    for remote_id, mapped_local_id in camera_map.items():
+        if str(mapped_local_id) == str(local_camera_id):
+            return str(remote_id)
+    return local_camera_id
+
+
 def write_local_device_token(token: str) -> None:
     local_device_token_path().write_text(token.strip(), encoding="utf-8")
 
@@ -1069,7 +1086,19 @@ detect_agent = DetectAgent(
 )
 notifier = Notifier(settings)
 event_agent = EventAgent(storage, notifier, settings.event_throttle_seconds)
-worker = EdgeWorker(storage, camera_agent, detect_agent, event_agent)
+worker = EdgeWorker(
+    storage,
+    camera_agent,
+    detect_agent,
+    event_agent,
+    live_frame_upload_enabled=(
+        settings.live_frame_upload_enabled
+        and settings.upload_worker_enabled
+        and bool(settings.app_server_base_url)
+    ),
+    live_frame_upload_interval_seconds=settings.live_frame_upload_interval_seconds,
+    remote_camera_id_resolver=remote_camera_id_for_local_camera,
+)
 video_distribution_service = VideoDistributionService(
     storage=storage,
     settings=settings,

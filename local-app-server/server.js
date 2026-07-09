@@ -748,12 +748,17 @@ function createLocalAppServer(options = {}) {
         return address === "127.0.0.1" || address === "localhost";
     }
 
-    function requireDevice(req, res) {
+    function issuedDeviceTokenFromRequest(req) {
         const token = tokenFrom(req);
         const tokenHash = sha256(token);
-        const issued = store.db.device_tokens.find((item) => item.status === "active" && (
+        return store.db.device_tokens.find((item) => item.status === "active" && (
             item.token === token || (item.token_hash && item.token_hash === tokenHash)
-        ));
+        )) || null;
+    }
+
+    function requireDevice(req, res) {
+        const token = tokenFrom(req);
+        const issued = issuedDeviceTokenFromRequest(req);
         if (token !== deviceToken && !issued) {
             writeError(res, 401, "device token invalid");
             return false;
@@ -1327,8 +1332,16 @@ function createLocalAppServer(options = {}) {
     function cameraStreamProxyTarget(req, cameraId) {
         const camera = store.db.cameras[String(cameraId)];
         if (!camera) return null;
-        const localCameraId = normalizeNumber(camera.local_camera_id || camera.edge_camera_id || camera.local_id, null);
-        if (!localCameraId) return null;
+        const localCameraIds = [
+            camera.local_camera_id,
+            camera.edge_camera_id,
+            camera.local_id,
+            cameraId,
+        ]
+            .map((value) => normalizeNumber(value, null))
+            .filter(Boolean)
+            .filter((value, index, values) => values.indexOf(value) === index);
+        if (!localCameraIds.length) return null;
         const device = store.db.devices[String(camera.device_id || "")] || Object.values(store.db.devices)[0] || {};
         const runtime = device.runtime || {};
         const base = [
@@ -1342,7 +1355,7 @@ function createLocalAppServer(options = {}) {
         if (!base) return null;
         return {
             base,
-            localCameraId,
+            localCameraIds,
             token: streamProxyTokenForDevice(camera.device_id || device.device_id || device.id),
         };
     }
@@ -3592,6 +3605,13 @@ function createLocalAppServer(options = {}) {
             .sort((a, b) => String(b.occurred_at || b.created_at).localeCompare(String(a.occurred_at || a.created_at)))[0] || null;
     }
 
+    function latestCameraAsset(cameraId = null) {
+        const targetCameraId = cameraId === null ? null : Number(cameraId);
+        return [...store.db.assets]
+            .filter((asset) => asset.relative_path && (targetCameraId === null || Number(asset.camera_id) === targetCameraId))
+            .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0] || null;
+    }
+
     function familyIdForCamera(cameraId) {
         const camera = store.db.cameras[String(cameraId)] || null;
         if (camera) return camera.family_id || null;
@@ -3645,6 +3665,28 @@ function createLocalAppServer(options = {}) {
         const event = latestMediaEvent(cameraId);
         const asset = eventAsset(event);
         if (!event || !asset) {
+            const latestAsset = latestCameraAsset(cameraId);
+            if (latestAsset) {
+                return {
+                    available: true,
+                    id: null,
+                    asset_id: latestAsset.id,
+                    camera_id: latestAsset.camera_id || Number(cameraId),
+                    image_url: latestAsset.snapshot_path,
+                    snapshot_path: latestAsset.snapshot_path,
+                    captured_at: latestAsset.captured_at || latestAsset.created_at,
+                    width: latestAsset.width || null,
+                    height: latestAsset.height || null,
+                    brightness: latestAsset.brightness ?? null,
+                    motion_score: latestAsset.motion_score ?? null,
+                    person_count: latestAsset.person_count ?? null,
+                    tags: [],
+                    analysis: {
+                        event_type: "latest_frame",
+                        summary: "家庭盒子最新回传画面",
+                    },
+                };
+            }
             return { available: false };
         }
         const evidence = event.payload?.evidence || {};
@@ -3872,25 +3914,31 @@ function createLocalAppServer(options = {}) {
         const target = cameraStreamProxyTarget(req, cameraId);
         if (!target) return false;
 
-        const deviceUrl = applyStreamParams(new URL(`/api/v1/device/cameras/${target.localCameraId}/stream.mjpg`, target.base), req);
-        const deviceProxied = await proxyMjpegRequest(req, res, deviceUrl, {
-            Authorization: `Bearer ${target.token}`,
-            "X-GoHome-Device-Token": target.token,
-        }, {
-            "X-GoHome-Device-Base": target.base,
-            "X-GoHome-Local-Camera-Id": String(target.localCameraId),
-            "X-GoHome-Proxy-Mode": "device-token",
-        });
-        if (deviceProxied || res.headersSent) return deviceProxied;
+        for (const localCameraId of target.localCameraIds) {
+            const deviceUrl = applyStreamParams(new URL(`/api/v1/device/cameras/${localCameraId}/stream.mjpg`, target.base), req);
+            const deviceProxied = await proxyMjpegRequest(req, res, deviceUrl, {
+                Authorization: `Bearer ${target.token}`,
+                "X-GoHome-Device-Token": target.token,
+            }, {
+                "X-GoHome-Device-Base": target.base,
+                "X-GoHome-Local-Camera-Id": String(localCameraId),
+                "X-GoHome-Proxy-Mode": "device-token",
+            });
+            if (deviceProxied || res.headersSent) return deviceProxied;
+        }
 
         const adminCookie = await requestBoxAdminCookie(target.base);
         if (!adminCookie) return false;
-        const adminUrl = applyStreamParams(new URL(`/api/cameras/${target.localCameraId}/stream.mjpg`, target.base), req);
-        return proxyMjpegRequest(req, res, adminUrl, { Cookie: adminCookie }, {
-            "X-GoHome-Device-Base": target.base,
-            "X-GoHome-Local-Camera-Id": String(target.localCameraId),
-            "X-GoHome-Proxy-Mode": "admin-cookie",
-        });
+        for (const localCameraId of target.localCameraIds) {
+            const adminUrl = applyStreamParams(new URL(`/api/cameras/${localCameraId}/stream.mjpg`, target.base), req);
+            const adminProxied = await proxyMjpegRequest(req, res, adminUrl, { Cookie: adminCookie }, {
+                "X-GoHome-Device-Base": target.base,
+                "X-GoHome-Local-Camera-Id": String(localCameraId),
+                "X-GoHome-Proxy-Mode": "admin-cookie",
+            });
+            if (adminProxied || res.headersSent) return adminProxied;
+        }
+        return false;
     }
 
     async function serveCameraMjpeg(req, res, cameraId) {
@@ -3902,7 +3950,7 @@ function createLocalAppServer(options = {}) {
 
     async function handleDeviceMediaUpload(req, res, url) {
         if (!requireDevice(req, res)) return;
-        const issuedToken = store.db.device_tokens.find((item) => item.token === tokenFrom(req) && item.status === "active");
+        const issuedToken = issuedDeviceTokenFromRequest(req);
         const content = await readBody(req);
         const assetId = store.nextId("asset");
         const fileName = path.basename(url.searchParams.get("file_name") || `asset-${assetId}.jpg`).replace(/[^\w.\-]+/g, "_");
@@ -3912,18 +3960,29 @@ function createLocalAppServer(options = {}) {
         ensureDir(path.dirname(target));
         fs.writeFileSync(target, content);
         const snapshotPath = String(url.searchParams.get("snapshot_path") || relativePath).replace(/^\/+/, "");
+        const rawCameraId = url.searchParams.get("camera_id");
+        const localCameraId = url.searchParams.get("local_camera_id") || rawCameraId;
+        const mappedCamera = resolveAppCameraForDeviceCameraId(rawCameraId, {
+            local_camera_id: localCameraId,
+            edge_camera_id: localCameraId,
+        }, issuedToken?.device_id || "");
+        const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
         const asset = {
             id: assetId,
             family_id: issuedToken?.family_id || null,
             device_id: issuedToken?.device_id || "",
-            camera_id: normalizeNumber(url.searchParams.get("camera_id"), null),
+            camera_id: cameraId,
             file_name: fileName,
             content_type: url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg",
             snapshot_path: snapshotPath,
             relative_path: relativePath,
             edge_event_id: url.searchParams.get("edge_event_id") || "",
+            purpose: url.searchParams.get("purpose") || "",
+            local_camera_id: normalizeNumber(localCameraId, null),
+            captured_at: url.searchParams.get("captured_at") || nowIso(),
             size: content.length,
             created_at: nowIso(),
+            updated_at: nowIso(),
             url: `/api/v1/video/media/snapshots/${encodeURIComponent(snapshotPath)}`,
         };
         store.db.assets.push(asset);
@@ -3978,7 +4037,7 @@ function createLocalAppServer(options = {}) {
         if (!requireDevice(req, res)) return;
         const payload = await parseJsonBody(req);
         const deviceId = String(payload.device_id || payload.id || "edge-local");
-        const issuedToken = store.db.device_tokens.find((item) => item.token === tokenFrom(req) && item.status === "active");
+        const issuedToken = issuedDeviceTokenFromRequest(req);
         if (issuedToken) {
             issuedToken.device_id = deviceId;
             issuedToken.last_heartbeat_at = nowIso();
@@ -4017,7 +4076,7 @@ function createLocalAppServer(options = {}) {
         if (!requireDevice(req, res)) return;
         const payload = await parseJsonBody(req);
         const receivedAt = nowIso();
-        const issuedToken = store.db.device_tokens.find((item) => item.token === tokenFrom(req) && item.status === "active");
+        const issuedToken = issuedDeviceTokenFromRequest(req);
         const deviceId = String(payload.device_id || issuedToken?.device_id || currentEdgeDeviceId() || "edge-local");
         const reportedStatus = payload.status && typeof payload.status === "object" ? payload.status : {};
         const existingDevice = store.db.devices[deviceId] || {};
@@ -4847,8 +4906,11 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
-            if (req.method === "GET" && pathname.startsWith("/api/v1/video/media/snapshots/")) {
-                serveMedia(req, res, pathname.slice("/api/v1/video/media/snapshots/".length));
+            const mediaSnapshotPrefix = pathname.startsWith("/api/app/media/snapshots/")
+                ? "/api/app/media/snapshots/"
+                : (pathname.startsWith("/api/v1/video/media/snapshots/") ? "/api/v1/video/media/snapshots/" : "");
+            if (req.method === "GET" && mediaSnapshotPrefix) {
+                serveMedia(req, res, pathname.slice(mediaSnapshotPrefix.length));
                 return;
             }
 
@@ -4864,11 +4926,7 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && pathname === "/api/v1/device/config") {
                 if (!requireDevice(req, res)) return;
-                const rawToken = tokenFrom(req);
-                const rawTokenHash = sha256(rawToken);
-                const issuedToken = store.db.device_tokens.find((item) => item.status === "active" && (
-                    item.token === rawToken || (item.token_hash && item.token_hash === rawTokenHash)
-                ));
+                const issuedToken = issuedDeviceTokenFromRequest(req);
                 const deviceId = String(issuedToken?.device_id || currentEdgeDeviceId());
                 const device = store.db.devices[deviceId] || {};
                 write(res, 200, deviceConfigPayload({

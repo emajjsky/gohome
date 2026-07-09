@@ -316,6 +316,21 @@
         return withToken(`/api/app/media/snapshots/${String(path).replace(/^\/+/, "")}`);
     }
 
+    function latestSnapshotSuffix(options = {}) {
+        const params = new URLSearchParams();
+        if (options.allowMissing) params.set("allow_missing", "1");
+        const query = params.toString();
+        return query ? `?${query}` : "";
+    }
+
+    function appLatestSnapshot(cameraId, options = {}) {
+        const suffix = latestSnapshotSuffix(options);
+        return withDeviceAccessFallback(
+            () => request(`/api/app/cameras/${cameraId}/snapshot/latest${suffix}`),
+            () => request(`/api/cameras/${cameraId}/snapshot/latest${suffix}`)
+        );
+    }
+
     async function appStreamPlaybackUrl(cameraId, options = {}) {
         return videoStreamPlaybackUrl("/api/app/playback-sessions", `/api/app/cameras/${cameraId}/stream.mjpg`, cameraId, options);
     }
@@ -428,13 +443,32 @@
                     if (image.naturalWidth > 0 && image.naturalHeight > 0) {
                         onStateChange("playing");
                     } else {
-                        onStateChange("waiting");
+                        showSnapshotFallback();
                     }
                 }, 1500);
                 refreshTimer = setTimeout(refresh, refreshMs);
             } catch (error) {
                 onStateChange("error", error);
                 retryTimer = setTimeout(refresh, retryMs);
+            }
+        }
+
+        async function showSnapshotFallback() {
+            if (disposed || !image || !cameraId) return;
+            try {
+                const snapshot = await appLatestSnapshot(cameraId, { allowMissing: true });
+                if (disposed || !image || !cameraId) return;
+                if (snapshot?.available === false || !(snapshot?.image_url || snapshot?.snapshot_path)) {
+                    onStateChange("waiting");
+                    retryTimer = setTimeout(refresh, Math.max(retryMs, 8000));
+                    return;
+                }
+                image.src = appMediaUrl(snapshot.image_url || snapshot.snapshot_path);
+                onStateChange("snapshot", snapshot);
+                retryTimer = setTimeout(refresh, Math.max(retryMs, 10000));
+            } catch (error) {
+                onStateChange("waiting", error);
+                retryTimer = setTimeout(refresh, Math.max(retryMs, 8000));
             }
         }
 
@@ -959,16 +993,7 @@
             const query = params.toString();
             return request(`/api/cameras/${cameraId}/snapshot/latest${query ? `?${query}` : ""}`);
         },
-        appLatestSnapshot: (cameraId, options = {}) => {
-            const params = new URLSearchParams();
-            if (options.allowMissing) params.set("allow_missing", "1");
-            const query = params.toString();
-            const suffix = `${query ? `?${query}` : ""}`;
-            return withDeviceAccessFallback(
-                () => request(`/api/app/cameras/${cameraId}/snapshot/latest${suffix}`),
-                () => request(`/api/cameras/${cameraId}/snapshot/latest${suffix}`)
-            );
-        },
+        appLatestSnapshot,
         latestEvaluation: (cameraId) => request(`/api/cameras/${cameraId}/evaluation/latest`),
         appLatestEvaluation: (cameraId) => withDeviceAccessFallback(
             () => request(`/api/app/cameras/${cameraId}/evaluation/latest`),

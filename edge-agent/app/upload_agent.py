@@ -143,8 +143,18 @@ class UploadAgent:
             "snapshot_path": snapshot_path,
             "content_type": str(payload.get("content_type") or "image/jpeg"),
         }
+        camera_id = payload.get("app_camera_id") or payload.get("remote_camera_id") or payload.get("camera_id") or job.get("camera_id")
+        local_camera_id = payload.get("local_camera_id") or job.get("camera_id")
+        if camera_id:
+            params["camera_id"] = str(camera_id)
+        if local_camera_id:
+            params["local_camera_id"] = str(local_camera_id)
         if payload.get("event_id"):
             params["edge_event_id"] = str(payload["event_id"])
+        if payload.get("captured_at"):
+            params["captured_at"] = str(payload["captured_at"])
+        if payload.get("purpose"):
+            params["purpose"] = str(payload["purpose"])
         response = self._request_json(
             "POST",
             f"/api/v1/device/media-assets/upload?{urlencode(params)}",

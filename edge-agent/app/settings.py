@@ -48,6 +48,8 @@ class Settings:
         self.upload_worker_interval_seconds = float(os.getenv("GOHOME_UPLOAD_WORKER_INTERVAL_SECONDS", "5"))
         self.upload_worker_batch_size = int(os.getenv("GOHOME_UPLOAD_WORKER_BATCH_SIZE", "4"))
         self.upload_request_timeout_seconds = float(os.getenv("GOHOME_UPLOAD_REQUEST_TIMEOUT_SECONDS", "12"))
+        self.live_frame_upload_enabled = os.getenv("GOHOME_LIVE_FRAME_UPLOAD_ENABLED", "1") == "1"
+        self.live_frame_upload_interval_seconds = float(os.getenv("GOHOME_LIVE_FRAME_UPLOAD_INTERVAL_SECONDS", "12"))
 
         self.host = os.getenv("GOHOME_AGENT_HOST", "0.0.0.0")
         self.port = int(os.getenv("GOHOME_AGENT_PORT", "8711"))
