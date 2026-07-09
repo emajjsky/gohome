@@ -9467,3 +9467,162 @@ GOHOME_APP_STORE=postgres GOHOME_DATABASE_URL='postgres://...' npm run app-serve
 - 当前仍未接 APNs；没有 APNs provider 时，只生成 App 内消息和模拟 / App 内送达记录。
 - 后续 iOS 原生 App 接入后，需要把真实 APNs token 登记到 `app_push_tokens`，再接 APNs provider 发送。
 - 当前后台循环需要通过 `GOHOME_SCHEDULER_ENABLED=1` 打开；本地默认用手动 endpoint 验证，避免开发时反复触发模型和生图。
+
+## 74. 2026-07-09 通知页真实展示与云端运行态复核
+
+背景：
+
+- scheduler / notification-service 已经具备后台生成 App 内消息、通知投递记录和调度记录的能力。
+- 但用户端 `notifications.html` 仍是静态说明页，不能直接看到“关怀消息是否生成、投递是否记录、iOS token 是否登记”。
+
+本轮新增：
+
+- 新增 `assets/scripts/notifications-live.js`。
+- `notifications.html` 改成真实通知状态页：
+  - 读取当前家庭 `app_messages`。
+  - 读取 `notification_deliveries`。
+  - 读取 `app_push_tokens`。
+  - 展示打开中消息数、投递记录数、iOS token 数。
+  - 展示最近消息和最近投递记录。
+  - 支持“生成测试通知”和“推送链路测试”。
+  - 没有 APNs 或 iOS token 时明确显示站内消息 / 模拟送达，不伪装正式推送。
+- 首页通知图标改为明确链接到 `notifications.html`。
+- 首页和陪伴页的 `care_card` 消息标签改为“关怀”，`test` 消息标签改为“测试”。
+
+本地验证：
+
+- `node --check assets/scripts/notifications-live.js`
+- `node --check assets/scripts/companionship-live.js`
+- `node --check assets/scripts/home-live.js`
+- `npm test`
+- 使用本机 Chrome + Playwright 打开 `http://127.0.0.1:8788/notifications.html?app=1`：
+  - 无控制台错误。
+  - 移动端 `393px` 宽度无横向溢出。
+  - 点击“生成测试通知”后：
+    - 打开中消息从 `5` 变为 `6`。
+    - 投递记录从 `0` 变为 `1`。
+    - 最近投递状态为 `站内已记录`。
+
+云端部署：
+
+- 已同步以下文件到 `/opt/gohome/app`：
+  - `notifications.html`
+  - `index.html`
+  - `assets/scripts/notifications-live.js`
+  - `assets/scripts/companionship-live.js`
+  - `assets/scripts/home-live.js`
+- 云端服务：
+  - `gohome-app.service=active`
+  - `/health` 返回 `store=postgres`
+- 云端验证：
+  - 当前家庭：`妈妈的家`
+  - `app_messages=1`
+  - 首条消息类型：`care_card`
+  - `notification_deliveries=1`
+  - 首条投递状态：`app_message_only`
+  - `app_push_tokens=0`
+
+Git：
+
+- 已提交并推送：`345c58a feat: show live notification delivery state`
+
+## 75. 2026-07-09 云端运行态复核与下一步边界
+
+本轮复核目的：
+
+- 用户要求查看当前进度、未完成事项和下一步。
+- 本轮不做功能扩张，先复核代码、文档、云端服务和树莓派真实运行态。
+
+代码和测试状态：
+
+- 本地 Git 工作区干净。
+- 最新提交：
+  - `345c58a feat: show live notification delivery state`
+  - `be00fed feat: add care notification scheduler`
+  - `eaa1eb0 fix: tighten care content search quality`
+  - `cd9b4d8 feat: relay live preview frames through cloud`
+- 本地 `npm test` 通过。
+
+云端服务状态：
+
+- 云端主机：`139.196.223.58`
+- 云端应用目录：`/opt/gohome/app`
+- `gohome-app.service=active`
+- `/health`：
+  - `store=postgres`
+  - `app_server_base_url=http://139.196.223.58`
+- 云端 scheduler 运维接口已验证：
+  - `enabled=true`
+  - 最近后台任务均为 `succeeded`
+  - 当前跳过原因为 `daily_not_due_or_already_sent`，表示今日关怀已经生成，不重复推送。
+
+树莓派盒子状态：
+
+- SSH：`gohome@192.168.1.12`
+- `gohome-edge-agent=active`
+- `/health` 返回：
+  - `worker_running=true`
+  - `config_sync_agent.running=true`
+  - `config_sync_agent.configured=true`
+  - `last_config_version=device-config-ac10e8ec5f9c`
+  - `rules.applied=true`
+  - `live_relay_agent.running=true`
+  - `live_relay_agent.configured=true`
+  - `fps=8`
+  - `active_cameras=[9,10]`
+- 盒子当前从云端同步 2 路摄像头：
+  - 远端 `camera_id=1`，本地 `local_camera_id=9`，名称 `冰箱上`，状态 `online / synced`
+  - 远端 `camera_id=2`，本地 `local_camera_id=10`，名称 `智能摄像头2`，状态 `online / synced`
+
+当前云端业务态：
+
+- 家庭数量：`1`
+- 当前家庭：`id=2`，`name=妈妈的家`
+- 可认领设备：`0`
+- 设备绑定：`1`
+- 摄像头：`2`
+  - `冰箱上`：`online / synced`
+  - `智能摄像头2`：`online / synced`
+- App 消息：`1`
+  - 类型：`care_card`
+- 通知投递：`1`
+  - 状态：`app_message_only`
+- iOS push token：`0`
+
+当前真实进度判断：
+
+- 已经完成“最小云端 App API + PostgreSQL + 树莓派盒子连云 + 2 路摄像头配置同步 + 实时帧中继 + 关怀卡片 + 站内通知记录”的验证。
+- 当前不再是纯本地闭环，但也还不是正式 iOS 商业版。
+- 当前处在 V0 到 V1 之间，正在做 V1 家庭试点版的最小云闭环。
+
+仍未完成：
+
+- HTTPS。
+- iOS 原生 App 或 WebView 壳。
+- APNs 真推送和 iOS push token 登记。
+- 正式短信验证码。
+- 正式出厂二维码和一次性认领凭证生产流程。
+- 完整破坏性新用户公网验收。
+- 7 天或至少 24 小时稳定性报告。
+- 姿态骨架、火灾候选、误报反馈和算法质量评估产品化。
+- 视频链路最终架构选择和压测。
+
+完整新用户公网验收边界：
+
+- 当前唯一真实盒子已经绑定到 `妈妈的家`。
+- 因为当前可认领设备数为 `0`，不能在不影响现有演示数据的情况下，用另一个全新手机号重新认领同一台盒子。
+- 如果要做“从空云端开始”的完整新用户验收，必须先备份数据库，并明确允许：
+  - 清空当前业务数据，或
+  - 解绑当前盒子并恢复 `claimable` 状态。
+- 默认不执行破坏性重置，避免破坏当前已经跑通的云端演示家庭。
+
+下一步推荐：
+
+1. 先做非破坏性公网验收：
+   - 用当前账号验证公网登录、首页、守护、实时画面、摄像头、事件、关怀、通知、规则同步。
+2. 补 HTTPS：
+   - 若已有备案域名，优先用子域名反代到当前服务。
+   - 若暂时没有域名，比赛演示可继续 HTTP；但 iOS 真机和 APNs 前必须解决 HTTPS。
+3. 再决定是否做破坏性新用户验收：
+   - 用户确认后再备份、清业务数据或解绑盒子。
+4. HTTPS 和完整公网路径通过后，再进入 iOS 壳、push token 登记和 APNs。
