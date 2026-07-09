@@ -2134,7 +2134,7 @@ body.gohome-page-parent_profile #relationship-grid {
 }
 
 body.gohome-page-parent_profile .relationship-card,
-body.gohome-page-device_binding main button,
+body.gohome-page-device_binding .binding-claimable-row,
 body.gohome-page-camera_intro .glass-card,
 body.gohome-page-camera_intro main > div:not(:first-child),
 body.gohome-page-connect section {
@@ -2163,9 +2163,32 @@ body.gohome-page-camera_intro main img {
   box-shadow: 0 12px 30px rgba(64, 79, 61, 0.07) !important;
 }
 
-body.gohome-page-device_binding main button {
-  min-height: 112px;
-  padding: 15px !important;
+body.gohome-page-device_binding main > div.aspect-square {
+  display: none !important;
+}
+
+body.gohome-page-device_binding .binding-claimable-row {
+  min-height: 70px !important;
+  padding: 12px 14px !important;
+}
+
+body.gohome-page-device_binding #bindingSubmitBtn {
+  position: sticky !important;
+  bottom: calc(14px + var(--gohome-safe-bottom)) !important;
+  z-index: 30 !important;
+  display: flex !important;
+  min-height: 52px !important;
+  height: 52px !important;
+  padding: 0 18px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: var(--gohome-primary) !important;
+  color: #fffefc !important;
+  box-shadow: 0 12px 26px rgba(38, 56, 42, 0.18) !important;
+}
+
+body.gohome-page-device_binding #bindingSubmitBtn .material-symbols-outlined {
+  color: inherit !important;
 }
 
 body.gohome-page-device_binding main button h2 {
