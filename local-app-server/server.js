@@ -507,6 +507,9 @@ function createLocalAppServer(options = {}) {
     const playbackTickets = new Map();
     const boxAdminSessions = new Map();
     const providerCache = new Map();
+    const liveFrameCache = new Map();
+    const liveFrameSequence = new Map();
+    const LIVE_FRAME_TTL_MS = 10000;
 
     ensureDir(mediaDir);
 
@@ -3931,6 +3934,52 @@ function createLocalAppServer(options = {}) {
         return true;
     }
 
+    function latestLiveFrame(cameraId) {
+        const item = liveFrameCache.get(String(cameraId));
+        if (!item?.frame || Date.now() - Number(item.received_at_ms || 0) > LIVE_FRAME_TTL_MS) return null;
+        return item;
+    }
+
+    function latestRelayFrame(cameraId) {
+        const live = latestLiveFrame(cameraId);
+        if (live) {
+            return {
+                key: `live:${live.frame_id}`,
+                frame: live.frame,
+                contentType: live.content_type || "image/jpeg",
+                capturedAt: live.captured_at || live.received_at,
+                source: "live",
+                assetId: "",
+            };
+        }
+
+        const asset = latestCameraAsset(cameraId);
+        const filePath = assetAbsolutePath(asset);
+        if (!asset || !filePath || !fs.existsSync(filePath)) return null;
+        let stat;
+        try {
+            stat = fs.statSync(filePath);
+        } catch (_error) {
+            return null;
+        }
+        if (!stat.isFile() || stat.size <= 0) return null;
+        let frame;
+        try {
+            frame = fs.readFileSync(filePath);
+        } catch (_error) {
+            return null;
+        }
+        if (!frame.length) return null;
+        return {
+            key: `asset:${asset.id || ""}:${asset.relative_path || ""}:${stat.mtimeMs}:${stat.size}`,
+            frame,
+            contentType: asset.content_type || "image/jpeg",
+            capturedAt: asset.captured_at || asset.created_at,
+            source: "asset",
+            assetId: asset.id ? String(asset.id) : "",
+        };
+    }
+
     function writeLatestFrameMjpegStream(req, res, cameraId) {
         const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
         let lastAssetKey = "";
@@ -3949,51 +3998,27 @@ function createLocalAppServer(options = {}) {
         });
         if (typeof res.flushHeaders === "function") res.flushHeaders();
 
-        function frameKey(asset, stat) {
-            return [
-                asset?.id || "",
-                asset?.relative_path || "",
-                stat?.mtimeMs || "",
-                stat?.size || "",
-            ].join(":");
-        }
-
         function writeNextFrame({ force = false } = {}) {
             if (closed || res.destroyed || res.writableEnded) return;
-            const asset = latestCameraAsset(cameraId);
-            const filePath = assetAbsolutePath(asset);
-            if (!asset || !filePath || !fs.existsSync(filePath)) return;
-            let stat;
-            try {
-                stat = fs.statSync(filePath);
-            } catch (_error) {
-                return;
-            }
-            if (!stat.isFile() || stat.size <= 0) return;
-            const key = frameKey(asset, stat);
-            if (!force && key === lastAssetKey) return;
-            let frame;
-            try {
-                frame = fs.readFileSync(filePath);
-            } catch (_error) {
-                return;
-            }
-            if (!frame.length) return;
-            lastAssetKey = key;
+            const relayFrame = latestRelayFrame(cameraId);
+            if (!relayFrame) return;
+            if (!force && relayFrame.key === lastAssetKey) return;
+            lastAssetKey = relayFrame.key;
             res.write(`--${boundary}\r\n`);
-            res.write(`Content-Type: ${asset.content_type || "image/jpeg"}\r\n`);
-            res.write(`Content-Length: ${frame.length}\r\n`);
-            if (asset.id) res.write(`X-GoHome-Asset-Id: ${asset.id}\r\n`);
-            if (asset.captured_at || asset.created_at) {
-                res.write(`X-GoHome-Captured-At: ${asset.captured_at || asset.created_at}\r\n`);
+            res.write(`Content-Type: ${relayFrame.contentType}\r\n`);
+            res.write(`Content-Length: ${relayFrame.frame.length}\r\n`);
+            res.write(`X-GoHome-Frame-Source: ${relayFrame.source}\r\n`);
+            if (relayFrame.assetId) res.write(`X-GoHome-Asset-Id: ${relayFrame.assetId}\r\n`);
+            if (relayFrame.capturedAt) {
+                res.write(`X-GoHome-Captured-At: ${relayFrame.capturedAt}\r\n`);
             }
             res.write("\r\n");
-            res.write(frame);
+            res.write(relayFrame.frame);
             res.write("\r\n");
         }
 
         writeNextFrame({ force: true });
-        const timer = setInterval(writeNextFrame, 700);
+        const timer = setInterval(writeNextFrame, 120);
         req.on("close", () => {
             closed = true;
             clearInterval(timer);
@@ -4003,6 +4028,48 @@ function createLocalAppServer(options = {}) {
             clearInterval(timer);
         });
         return true;
+    }
+
+    async function handleDeviceLiveFrameUpload(req, res, url) {
+        if (!requireDevice(req, res)) return;
+        const issuedToken = issuedDeviceTokenFromRequest(req);
+        const content = await readBody(req, 4 * 1024 * 1024);
+        if (!content.length) {
+            writeError(res, 400, "live frame body is empty");
+            return;
+        }
+        const rawCameraId = url.searchParams.get("camera_id");
+        const localCameraId = url.searchParams.get("local_camera_id") || rawCameraId;
+        const mappedCamera = resolveAppCameraForDeviceCameraId(rawCameraId, {
+            local_camera_id: localCameraId,
+            edge_camera_id: localCameraId,
+        }, issuedToken?.device_id || "");
+        const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
+        if (!cameraId) {
+            writeError(res, 400, "camera_id is required");
+            return;
+        }
+        const sequence = Number(liveFrameSequence.get(String(cameraId)) || 0) + 1;
+        liveFrameSequence.set(String(cameraId), sequence);
+        const receivedAt = nowIso();
+        liveFrameCache.set(String(cameraId), {
+            frame_id: `${cameraId}-${Date.now()}-${sequence}`,
+            frame: content,
+            camera_id: cameraId,
+            local_camera_id: normalizeNumber(localCameraId, null),
+            device_id: issuedToken?.device_id || "",
+            content_type: url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg",
+            captured_at: url.searchParams.get("captured_at") || receivedAt,
+            received_at: receivedAt,
+            received_at_ms: Date.now(),
+            size: content.length,
+        });
+        write(res, 200, {
+            ok: true,
+            camera_id: cameraId,
+            live_frame_id: liveFrameCache.get(String(cameraId)).frame_id,
+            received_at: receivedAt,
+        });
     }
 
     function applyStreamParams(sourceUrl, req) {
@@ -5164,6 +5231,11 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "POST" && pathname === "/api/v1/device/sync") {
                 await handleDeviceSync(req, res);
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/device/live-frames/upload") {
+                await handleDeviceLiveFrameUpload(req, res, url);
                 return;
             }
 

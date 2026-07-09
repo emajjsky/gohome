@@ -29,6 +29,7 @@ from .config_sync_agent import ConfigSyncAgent
 from .detect_agent import DetectAgent
 from .edge_bootstrap_service import EdgeBootstrapService
 from .event_agent import EventAgent
+from .live_relay_agent import LiveRelayAgent
 from .notifier import Notifier
 from .object_storage_service import ObjectStorageService, build_object_storage_router
 from .package_service import PackageService
@@ -1111,6 +1112,14 @@ upload_agent = UploadAgent(
     device_id_resolver=current_device_id,
     token_resolver=read_local_device_token,
 )
+live_relay_agent = LiveRelayAgent(
+    storage=storage,
+    settings=settings,
+    camera_agent=camera_agent,
+    device_id_resolver=current_device_id,
+    token_resolver=read_local_device_token,
+    remote_camera_id_resolver=remote_camera_id_for_local_camera,
+)
 config_sync_agent = ConfigSyncAgent(
     storage=storage,
     settings=settings,
@@ -1351,6 +1360,7 @@ def on_startup() -> None:
     if not settings.disable_worker:
         worker.start()
     upload_agent.start()
+    live_relay_agent.start()
     config_sync_agent.start()
     app_runtime_guard.start()
 
@@ -1359,6 +1369,7 @@ def on_startup() -> None:
 def on_shutdown() -> None:
     app_runtime_guard.stop()
     config_sync_agent.stop()
+    live_relay_agent.stop()
     upload_agent.stop()
     worker.stop()
 
@@ -1370,6 +1381,7 @@ def health() -> Dict[str, Any]:
         "service": "gohome-edge-agent",
         "worker_running": worker.is_running,
         "config_sync_agent": config_sync_agent.status(),
+        "live_relay_agent": live_relay_agent.status(),
         "lan_url": f"http://{local_ip()}:{settings.port}",
         "distribution": video_distribution_service.service_info(),
         "app_runtime": app_runtime_guard.status(),
@@ -1412,6 +1424,7 @@ def device() -> Dict[str, Any]:
         },
         "worker_running": worker.is_running,
         "upload_agent": upload_agent.status(),
+        "live_relay_agent": live_relay_agent.status(),
         "config_sync_agent": config_sync_agent.status(),
         "video_distribution": video_distribution_service.service_info(),
         "app_runtime": app_runtime_guard.status(),

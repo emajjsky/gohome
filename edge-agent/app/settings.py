@@ -50,6 +50,13 @@ class Settings:
         self.upload_request_timeout_seconds = float(os.getenv("GOHOME_UPLOAD_REQUEST_TIMEOUT_SECONDS", "12"))
         self.live_frame_upload_enabled = os.getenv("GOHOME_LIVE_FRAME_UPLOAD_ENABLED", "1") == "1"
         self.live_frame_upload_interval_seconds = float(os.getenv("GOHOME_LIVE_FRAME_UPLOAD_INTERVAL_SECONDS", "12"))
+        self.live_relay_enabled = os.getenv("GOHOME_LIVE_RELAY_ENABLED", "1") == "1"
+        self.live_relay_fps = int(os.getenv("GOHOME_LIVE_RELAY_FPS", "5"))
+        self.live_relay_width = int(os.getenv("GOHOME_LIVE_RELAY_WIDTH", "640"))
+        self.live_relay_height = int(os.getenv("GOHOME_LIVE_RELAY_HEIGHT", "360"))
+        self.live_relay_quality = int(os.getenv("GOHOME_LIVE_RELAY_QUALITY", "55"))
+        self.live_relay_drop_stale_frames = int(os.getenv("GOHOME_LIVE_RELAY_DROP_STALE_FRAMES", "4"))
+        self.live_relay_request_timeout_seconds = float(os.getenv("GOHOME_LIVE_RELAY_REQUEST_TIMEOUT_SECONDS", "2"))
 
         self.host = os.getenv("GOHOME_AGENT_HOST", "0.0.0.0")
         self.port = int(os.getenv("GOHOME_AGENT_PORT", "8711"))
