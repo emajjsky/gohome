@@ -9274,3 +9274,99 @@ GOHOME_APP_STORE=postgres GOHOME_DATABASE_URL='postgres://...' npm run app-serve
 - 本地路径已跑通，云端业务数据还没有执行清空重置。
 - 当前正式二维码贴纸还没有实物生产流程；本地和云端先用序列号 / 临时绑定码过渡。
 - 下一步上云前，需要把云端保留 `.env`，清空演示业务数据，再用全新手机号从公网完整验收一次。
+
+### 67.16 云端部署新用户路径并清空业务数据
+
+时间：2026-07-09
+
+本轮处理：
+
+- 使用 SSH key `~/.ssh/gohome_cloud_ed25519` 连接阿里云主机 `139.196.223.58`。
+- 云端应用目录：`/opt/gohome/app`。
+- 云端当前不是 git checkout，因此本轮采用压缩包部署：
+  - 本地打包 App / H5 / local-app-server / scripts / docs。
+  - 排除 `.env`、`node_modules`、`data`、`.git`、盒子侧大目录和本地模型文件。
+  - 上传到云端后解包到 `app_next`。
+  - 保留远端 `.env`。
+  - 安装依赖、语法检查后切换目录并重启 `gohome-app.service`。
+- 部署前已做备份：
+  - 远端应用备份：`/opt/gohome/backups/app-20260709-161536.tgz`
+  - 远端数据库备份：`/opt/gohome/backups/db-20260709-161536.sql.gz`
+  - 清业务数据前数据库备份：`/opt/gohome/backups/db-before-business-reset-20260709-162757.sql.gz`
+
+本轮修复：
+
+- 云端新建家庭时触发 `elder_profiles_pkey` 冲突。
+- 根因：PostgreSQL `elder_profiles.id` 是主键，但导出 seed 时多个家庭都可能用 `elder_primary` 作为 id。
+- 修复：导出时使用 `family_id:elder_id` 作为 `elder_profiles.id`，确保跨家庭唯一。
+- 已提交：`cb18499 fix: make elder profile seed ids family scoped`。
+
+云端业务数据重置：
+
+- 已清空：
+  - `users`
+  - `families`
+  - `family_members`
+  - `elder_profiles`
+  - `device_bindings`
+  - `binding_codes`
+  - `device_tokens`
+  - `cameras`
+  - `camera_secrets`
+  - `events`
+  - `media_assets`
+  - `care_preferences`
+  - `care_cards`
+  - `model_generation_jobs`
+  - `content_sources`
+  - `content_recommendations`
+- 已保留：
+  - 服务器 `.env`
+  - 模型 / 天气 / Tavily 等环境变量配置
+  - PostgreSQL 连接配置
+  - 当前树莓派盒子设备记录
+- 已删除旧自检盒子 `edge-check`。
+- 当前保留的真实盒子：
+  - `device_id=edge-042714be475b91da`
+  - 设备码 / 当前临时序列号：`GH-475B91DA`
+  - 状态：`online`
+  - 认领状态：`claimable`
+
+验证结果：
+
+- 公网健康检查：
+  - `http://139.196.223.58/health`
+  - `store=postgres`
+  - `events=0`
+  - `assets=0`
+- 数据库最终计数：
+  - `users=0`
+  - `families=0`
+  - `cameras=0`
+  - `events=0`
+  - `care_cards=0`
+  - `device_bindings=0`
+  - `devices=1`
+- 新用户公网验证：
+  - 注册成功。
+  - 默认家庭数量为 0。
+  - `/api/device-claims/available` 返回 1 台可认领设备。
+  - 不带设备码直接绑定会返回 400。
+  - 未绑定盒子拉 `/api/v1/device/config` 时 `cameras=0`。
+
+当前云端测试路径：
+
+1. 打开 `http://139.196.223.58/index.html?app=1`。
+2. 用全新手机号注册。
+3. 创建家庭。
+4. 填老人资料。
+5. 进入设备绑定页。
+6. 输入设备码 `GH-475B91DA` 绑定当前树莓派盒子。
+7. 进入摄像头配置页添加摄像头。
+8. 等盒子从云端拉配置并回传同步状态。
+
+当前边界：
+
+- 当前公网仍是 HTTP，不是 HTTPS。
+- 正式产品二维码尚未生成贴纸；当前用 `GH-475B91DA` 作为这台树莓派的临时设备码。
+- 云端已经具备“空业务数据 + 可认领盒子”的真实新用户起点。
