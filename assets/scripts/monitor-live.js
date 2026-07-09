@@ -18,11 +18,6 @@
         return `${prefix}-${String(camera?.id || "unknown").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
     }
 
-    function shouldUseSnapshotPreview() {
-        const host = window.location.hostname;
-        return !(["127.0.0.1", "localhost", "::1"].includes(host) && window.location.port === "8788");
-    }
-
     function cameraLabel(camera) {
         return [camera?.room, camera?.name]
             .filter(Boolean)
@@ -156,25 +151,25 @@
             return;
         }
         if (nextState === "snapshot") {
-            setText("edgeStatusTitle", "最新画面已返回");
-            setText("edgeStatusText", "家庭盒子已上传最新画面，预览会自动同步新帧。");
-            setText("edgeUpdateTime", "最新画面");
-            setText("edgeStreamLabel", "最新画面已同步");
-            setText("edgeMainMessage", "家庭盒子已上传最新画面。");
+            setText("edgeStatusTitle", "实时画面已返回");
+            setText("edgeStatusText", "家庭盒子正在通过云端返回实时画面。");
+            setText("edgeUpdateTime", "实时画面");
+            setText("edgeStreamLabel", "实时画面已返回");
+            setText("edgeMainMessage", "实时画面已返回。");
             setText("edgeFact", "画面在线");
             setText("edgeFeeling", "继续观察");
             setText("edgeNext", "无待处理");
-            setText("edgeBrightness", "最新帧");
+            setText("edgeBrightness", "实时帧");
             setPillTone("edgeFeeling", "good");
             setPillTone("edgeNext", "muted");
             return;
         }
         if (nextState === "waiting") {
-            setText("edgeStatusTitle", "等待最新画面");
-            setText("edgeStatusText", "家庭盒子在线，正在等待上传最新预览。");
-            setText("edgeUpdateTime", "等待最新画面");
-            setText("edgeStreamLabel", "等待最新画面");
-            setText("edgeMainMessage", "家庭盒子在线，正在等待上传最新预览。");
+            setText("edgeStatusTitle", "等待实时画面");
+            setText("edgeStatusText", "家庭盒子在线，正在等待可显示的视频帧。");
+            setText("edgeUpdateTime", "等待实时画面");
+            setText("edgeStreamLabel", "等待实时画面");
+            setText("edgeMainMessage", "家庭盒子在线，正在等待可显示的视频帧。");
             return;
         }
         if (nextState === "loading") {
@@ -351,8 +346,8 @@
         const label = $(cameraDomId("edgeStreamLabel", camera));
         if (!label) return;
         if (nextState === "playing") label.textContent = "实时画面已返回";
-        else if (nextState === "snapshot") label.textContent = "最新画面已同步";
-        else if (nextState === "waiting") label.textContent = "等待最新画面";
+        else if (nextState === "snapshot") label.textContent = "实时画面已返回";
+        else if (nextState === "waiting") label.textContent = "等待实时画面";
         else if (nextState === "error") label.textContent = "等待预览";
         else if (nextState === "loading") label.textContent = "正在连接画面";
         else label.textContent = "等待画面帧";
@@ -383,7 +378,6 @@
             const controller = GoHomeEdge.createManagedVideoStream(image, {
                 cameraId: camera.id,
                 scene: "monitor",
-                snapshotOnly: shouldUseSnapshotPreview(),
                 snapshotRefreshMs: 3000,
                 onStateChange(nextState) {
                     if (Number(camera.id) === Number(selected?.id)) {

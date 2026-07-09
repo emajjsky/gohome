@@ -771,10 +771,38 @@ function createLocalAppServer(options = {}) {
         write(res, statusCode, { detail });
     }
 
+    function cookieMap(req) {
+        return Object.fromEntries(String(req.headers.cookie || "")
+            .split(";")
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .map((part) => {
+                const equalsIndex = part.indexOf("=");
+                if (equalsIndex < 0) return [part, ""];
+                const key = part.slice(0, equalsIndex).trim();
+                const value = part.slice(equalsIndex + 1).trim();
+                try {
+                    return [key, decodeURIComponent(value)];
+                } catch (_error) {
+                    return [key, value];
+                }
+            }));
+    }
+
+    function appSessionCookieHeader(token) {
+        const encoded = encodeURIComponent(String(token || ""));
+        return `gohome_app_session=${encoded}; Max-Age=2592000; Path=/; SameSite=Lax`;
+    }
+
+    function clearAppSessionCookieHeader() {
+        return "gohome_app_session=; Max-Age=0; Path=/; SameSite=Lax";
+    }
+
     function tokenFrom(req) {
         const header = String(req.headers.authorization || "");
         const match = header.match(/^Bearer\s+(.+)$/i);
-        return match ? match[1].trim() : "";
+        if (match) return match[1].trim();
+        return cookieMap(req).gohome_app_session || "";
     }
 
     function sessionForToken(token) {
@@ -801,6 +829,11 @@ function createLocalAppServer(options = {}) {
     function isLocalRequest(req) {
         const address = normalizeRemoteAddress(req.socket?.remoteAddress || "");
         return address === "127.0.0.1" || address === "localhost";
+    }
+
+    function isLocalBrowserRequest(req) {
+        const rawHost = String(req.headers.host || "").split(":")[0].trim().toLowerCase();
+        return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(rawHost);
     }
 
     function issuedDeviceTokenFromRequest(req) {
@@ -3898,6 +3931,80 @@ function createLocalAppServer(options = {}) {
         return true;
     }
 
+    function writeLatestFrameMjpegStream(req, res, cameraId) {
+        const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
+        let lastAssetKey = "";
+        let closed = false;
+
+        if (typeof req.setTimeout === "function") req.setTimeout(0);
+        if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
+
+        res.writeHead(200, {
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store, no-transform",
+            "Connection": "keep-alive",
+            "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
+            "X-Accel-Buffering": "no",
+            "X-GoHome-Stream-State": "cloud_relay",
+        });
+        if (typeof res.flushHeaders === "function") res.flushHeaders();
+
+        function frameKey(asset, stat) {
+            return [
+                asset?.id || "",
+                asset?.relative_path || "",
+                stat?.mtimeMs || "",
+                stat?.size || "",
+            ].join(":");
+        }
+
+        function writeNextFrame({ force = false } = {}) {
+            if (closed || res.destroyed || res.writableEnded) return;
+            const asset = latestCameraAsset(cameraId);
+            const filePath = assetAbsolutePath(asset);
+            if (!asset || !filePath || !fs.existsSync(filePath)) return;
+            let stat;
+            try {
+                stat = fs.statSync(filePath);
+            } catch (_error) {
+                return;
+            }
+            if (!stat.isFile() || stat.size <= 0) return;
+            const key = frameKey(asset, stat);
+            if (!force && key === lastAssetKey) return;
+            let frame;
+            try {
+                frame = fs.readFileSync(filePath);
+            } catch (_error) {
+                return;
+            }
+            if (!frame.length) return;
+            lastAssetKey = key;
+            res.write(`--${boundary}\r\n`);
+            res.write(`Content-Type: ${asset.content_type || "image/jpeg"}\r\n`);
+            res.write(`Content-Length: ${frame.length}\r\n`);
+            if (asset.id) res.write(`X-GoHome-Asset-Id: ${asset.id}\r\n`);
+            if (asset.captured_at || asset.created_at) {
+                res.write(`X-GoHome-Captured-At: ${asset.captured_at || asset.created_at}\r\n`);
+            }
+            res.write("\r\n");
+            res.write(frame);
+            res.write("\r\n");
+        }
+
+        writeNextFrame({ force: true });
+        const timer = setInterval(writeNextFrame, 700);
+        req.on("close", () => {
+            closed = true;
+            clearInterval(timer);
+        });
+        res.on("close", () => {
+            closed = true;
+            clearInterval(timer);
+        });
+        return true;
+    }
+
     function applyStreamParams(sourceUrl, req) {
         const requestedUrl = new URL(req.url, "http://local");
         const profile = requestedUrl.searchParams.get("profile") || "mobile";
@@ -4039,8 +4146,10 @@ function createLocalAppServer(options = {}) {
     async function serveCameraMjpeg(req, res, cameraId) {
         if (!requireApp(req, res)) return;
         if (!requireCameraAccess(req, res, cameraId)) return;
-        if (writeLatestFrameImage(res, cameraId)) return;
+        if (isLocalBrowserRequest(req) && await proxyCameraMjpeg(req, res, cameraId)) return;
+        if (writeLatestFrameMjpegStream(req, res, cameraId)) return;
         if (await proxyCameraMjpeg(req, res, cameraId)) return;
+        if (writeLatestFrameImage(res, cameraId)) return;
         writeEmptyMjpeg(res);
     }
 
@@ -4382,7 +4491,9 @@ function createLocalAppServer(options = {}) {
                 store.db.active_user_id = user.id;
                 const session = issueAppSession(user);
                 await store.save();
-                write(res, 200, { token: session.token, user: publicUser(user) });
+                write(res, 200, { token: session.token, user: publicUser(user) }, {
+                    "Set-Cookie": appSessionCookieHeader(session.token),
+                });
                 return;
             }
 
@@ -4408,7 +4519,26 @@ function createLocalAppServer(options = {}) {
                 store.db.active_user_id = user.id;
                 const session = issueAppSession(user);
                 await store.save();
-                write(res, 200, { token: session.token, user: publicUser(user) });
+                write(res, 200, { token: session.token, user: publicUser(user) }, {
+                    "Set-Cookie": appSessionCookieHeader(session.token),
+                });
+                return;
+            }
+
+            if (req.method === "POST" && (pathname === "/api/auth/logout" || pathname === "/api/v1/identity/logout")) {
+                const token = tokenFrom(req);
+                if (token) {
+                    const session = sessionForToken(token);
+                    if (session) {
+                        session.status = "revoked";
+                        session.revoked_at = nowIso();
+                        session.updated_at = nowIso();
+                        await store.save();
+                    }
+                }
+                write(res, 200, { ok: true }, {
+                    "Set-Cookie": clearAppSessionCookieHeader(),
+                });
                 return;
             }
 

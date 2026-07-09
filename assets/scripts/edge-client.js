@@ -23,23 +23,56 @@
     }
 
     function getAuthToken() {
-        return localStorage.getItem(AUTH_TOKEN_KEY) || "";
+        return localStorage.getItem(AUTH_TOKEN_KEY) || cookieValue("gohome_app_session") || "";
+    }
+
+    function cookieValue(name) {
+        const prefix = `${name}=`;
+        const item = String(document.cookie || "")
+            .split(";")
+            .map((part) => part.trim())
+            .find((part) => part.startsWith(prefix));
+        if (!item) return "";
+        try {
+            return decodeURIComponent(item.slice(prefix.length));
+        } catch (_error) {
+            return item.slice(prefix.length);
+        }
+    }
+
+    function setAuthCookie(token) {
+        document.cookie = `gohome_app_session=${encodeURIComponent(String(token || ""))}; Max-Age=2592000; Path=/; SameSite=Lax`;
+    }
+
+    function clearAuthCookie() {
+        document.cookie = "gohome_app_session=; Max-Age=0; Path=/; SameSite=Lax";
     }
 
     function setAuthToken(token) {
         if (!token) {
             localStorage.removeItem(AUTH_TOKEN_KEY);
+            clearAuthCookie();
             playbackSessionCache.clear();
             return "";
         }
         localStorage.setItem(AUTH_TOKEN_KEY, String(token));
+        setAuthCookie(token);
         playbackSessionCache.clear();
         return String(token);
     }
 
     function clearAuthToken() {
+        const token = getAuthToken();
         localStorage.removeItem(AUTH_TOKEN_KEY);
+        clearAuthCookie();
         playbackSessionCache.clear();
+        if (token) {
+            fetch(`${GoHomeEdge.apiBase || ""}/api/auth/logout`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+                keepalive: true,
+            }).catch(() => {});
+        }
     }
 
     function isDeviceAccessError(error) {
@@ -201,9 +234,6 @@
                     const payload = await response.json();
                     GoHomeEdge.apiBase = base;
                     if (base) localStorage.setItem(EDGE_KEY, base);
-                    if (payload?.local_app_demo_token && getAuthToken() === payload.local_app_demo_token) {
-                        clearAuthToken();
-                    }
                     return payload;
                 }
             } catch (_error) {
