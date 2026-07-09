@@ -3803,6 +3803,28 @@ function createLocalAppServer(options = {}) {
         if (typeof res.flushHeaders === "function") res.flushHeaders();
     }
 
+    function writeLatestFrameImage(res, cameraId) {
+        const asset = latestCameraAsset(cameraId);
+        const filePath = assetAbsolutePath(asset);
+        if (!asset || !filePath || !fs.existsSync(filePath)) return false;
+
+        const stat = fs.statSync(filePath);
+        if (!stat.isFile() || stat.size <= 0) return false;
+
+        const headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store, no-transform",
+            "Connection": "close",
+            "Content-Length": String(stat.size),
+            "Content-Type": asset.content_type || "image/jpeg",
+            "X-GoHome-Stream-State": "latest_snapshot",
+        };
+        if (asset.id) headers["X-GoHome-Asset-Id"] = String(asset.id);
+        res.writeHead(200, headers);
+        fs.createReadStream(filePath).pipe(res);
+        return true;
+    }
+
     function applyStreamParams(sourceUrl, req) {
         const requestedUrl = new URL(req.url, "http://local");
         const profile = requestedUrl.searchParams.get("profile") || "mobile";
@@ -3944,6 +3966,7 @@ function createLocalAppServer(options = {}) {
     async function serveCameraMjpeg(req, res, cameraId) {
         if (!requireApp(req, res)) return;
         if (!requireCameraAccess(req, res, cameraId)) return;
+        if (writeLatestFrameImage(res, cameraId)) return;
         if (await proxyCameraMjpeg(req, res, cameraId)) return;
         writeEmptyMjpeg(res);
     }
