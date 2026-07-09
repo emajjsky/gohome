@@ -9626,3 +9626,152 @@ Git：
 3. 再决定是否做破坏性新用户验收：
    - 用户确认后再备份、清业务数据或解绑盒子。
 4. HTTPS 和完整公网路径通过后，再进入 iOS 壳、push token 登记和 APNs。
+
+## 76. 2026-07-10 破坏性完整新用户公网验收
+
+背景：
+
+- 用户明确允许做破坏性完整新用户公网验收。
+- 目标是验证“空云端 -> 新手机号注册 -> 创建家庭 -> 填老人资料 -> 认领真实盒子 -> 重建摄像头配置 -> 盒子同步 -> 首页 / 守护 / 关怀 / 通知可用”。
+
+安全措施：
+
+- 操作前已做完整数据库备份：
+  - `/opt/gohome/backups/db-before-full-new-user-20260709-235352.sql.gz`
+- 操作前已导出当前业务配置备份：
+  - `/opt/gohome/backups/business-before-full-new-user-20260709-235352.json`
+- 业务配置备份包含当前家庭、老人资料、设备绑定、2 路摄像头接入配置和关怀偏好；文件权限为 `600`，不在对话和日志中输出 RTSP 密码。
+
+清理方式：
+
+- 第一次尝试使用 SQL heredoc 清理时因为 shell 引号问题触发事务回滚，未清除业务数据，也未删除设备记录。
+- 随后改用 Node/pg 在事务中逐表 `delete`，避免 `truncate ... cascade` 误伤 `devices` 表。
+- 清理后保留：
+  - 云端 `.env`
+  - PostgreSQL 连接
+  - 第三方模型、天气、Tavily 配置
+  - 真实树莓派设备记录 `edge-042714be475b91da`
+- 清理后删除：
+  - users / families / family_members / elder_profiles
+  - device_bindings / binding_codes / device_tokens
+  - cameras / camera_secrets
+  - events / media_assets
+  - care_preferences / care_cards / model_generation_jobs / content_sources / content_recommendations
+  - app_messages / notification_deliveries / scheduler_runs / audit_logs / device_config_versions
+
+清理后状态：
+
+- `users=0`
+- `families=0`
+- `device_bindings=0`
+- `cameras=0`
+- `events=0`
+- `care_cards=0`
+- `app_messages=0`
+- `notification_deliveries=0`
+- `devices=1`
+- 设备 `edge-042714be475b91da` 的 `family_id=null`，可重新认领。
+
+公网新用户路径：
+
+- 使用公网地址 `http://139.196.223.58`。
+- 使用全新手机号注册，注册后 `families_before_count=0`，确认新用户没有继承旧家庭。
+- 创建家庭：
+  - `id=10`
+  - `name=妈妈的家`
+- 写入老人资料：
+  - `display_name=母亲`
+  - `relationship=母亲`
+  - `city=上海`
+  - 老人手机号已写入
+  - 家里电话当前为空
+- 认领盒子：
+  - 清理后 `claimable_before_count=1`
+  - 使用当前临时设备码认领成功
+  - 绑定设备：`edge-042714be475b91da`
+  - `device_bindings=1`
+- 从备份恢复并通过 API 重建 2 路摄像头：
+  - `id=1`，`name=冰箱上`
+  - `id=2`，`name=智能摄像头2`
+  - 两路均有 stream config，密码已设置。
+
+盒子同步验证：
+
+- 通过公网 App API 登录新手机号后轮询：
+  - 家庭：`妈妈的家`
+  - 设备绑定：`active`
+  - 摄像头 1：`online / synced`
+  - 摄像头 2：`online / synced`
+- 树莓派无需人工 SSH 修改即可从云端重新拉取新家庭的摄像头配置并回传状态。
+
+实时画面验证：
+
+- 通过公网 App API 创建播放会话。
+- 请求 `/api/v1/video/cameras/1/stream.mjpg?playback_ticket=...`。
+- 返回：
+  - HTTP `200`
+  - `content-type=multipart/x-mixed-replace`
+  - 首包 `1435 bytes`
+- 结论：新用户绑定后的云端实时画面链路可用。
+
+关怀与通知验证：
+
+- 当前家庭今日关怀卡接口正常：
+  - `GET /api/v1/app/care-cards/today?family_id=10`
+  - 返回关怀卡，图片 URL 已生成。
+- 关怀历史当前有 2 张：
+  - `2026-07-09`
+  - `2026-07-10`
+  - 不是同一天重复，数据库唯一约束正常。
+- App 消息：
+  - `count=1`
+  - 类型：`care_card`
+  - 状态：`open`
+- 通知投递：
+  - `count=1`
+  - 状态：`app_message_only`
+- iOS push token：
+  - `0`
+  - 符合当前未接 iOS 原生 App 和 APNs 的阶段。
+- scheduler 状态：
+  - `enabled=true`
+  - 最近后台任务均为 `succeeded`
+  - 跳过原因：`daily_not_due_or_already_sent`
+
+页面级验证：
+
+- 使用公网 H5、新账号 token 和 iPhone 宽度 `393px` 验证：
+  - `index.html?app=1`
+  - `monitor.html?app=1`
+  - `notifications.html?app=1`
+  - `companionship.html?app=1`
+  - `privacy.html?app=1`
+- 所有页面：
+  - `bodyWidth=393`
+  - `innerWidth=393`
+  - 无横向溢出。
+- 验证时为了避免实时视频和图片资源拖住 `networkidle`，页面检查拦截了图片 / MJPEG 资源；因此控制台中出现的资源失败来自测试拦截，不代表线上页面脚本错误。
+- 实时画面已通过接口首包单独验证。
+
+当前结论：
+
+- 破坏性完整新用户公网路径已跑通。
+- 当前云端不再是旧演示家庭数据，而是通过新手机号重新完成家庭、老人资料、设备认领、摄像头配置和盒子同步后的真实状态。
+- 当前新家庭 ID 为 `10`，真实盒子已重新绑定，2 路摄像头在线同步。
+
+仍未完成：
+
+- HTTPS。
+- iOS 原生 App / WebView 壳。
+- iOS push token 登记和 APNs 真推送。
+- 正式短信验证码。
+- 正式出厂二维码和一次性认领凭证生产流程。
+- 家里电话仍为空；如果比赛演示需要点击“打电话”直接拨家里电话，需要在家人资料里补充家里电话。
+- 长时间稳定性报告仍未形成，下一步应至少跑 24 小时观察。
+
+下一步建议：
+
+1. 先补 HTTPS，或明确比赛演示阶段继续使用 HTTP。
+2. 若继续做 iOS，先做 WebView 壳和登录态保持，再接 push token 登记。
+3. 继续观察树莓派 24 小时：心跳、配置同步、实时帧中继、CPU / 温度 / 内存、摄像头断流恢复。
+4. 比赛前补一份演示账号、设备码、摄像头状态、关怀卡片和通知链路自检清单。
