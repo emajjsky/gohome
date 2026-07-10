@@ -8805,14 +8805,14 @@ GOHOME_APP_STORE=postgres GOHOME_DATABASE_URL='postgres://...' npm run app-serve
 - 新增 `scripts/deploy-to-pi.sh`：部署时强制排除 `.venv / .venv-pi / data / .env / .env.local`，不再允许开发机环境覆盖盒子运行环境和设备数据。
 - 新增 `scripts/verify-vision-runtime.py`，并写入 systemd `ExecStartPre`；每次启动前检查 Pi Python、torch、ultralytics、YOLO 权重、onnxruntime、rtmlib 和 RTMPose 模型缓存，任一缺失则服务不进入假运行状态。
 - YOLO 和 RTMPose 模型实例增加进程内推理锁，避免管理台、worker 和多摄像头请求同时进入共享模型。
-- RTMPose 在 `tracking=false` 时强制 `det_frequency=1`。原配置 `tracking=0 + det_frequency=8` 会让 RTMLib 在跳过检测的中间调用中拿到空人体框，历史数据库中已有 560 条姿态推理错误；两路摄像头共享实例时不能启用跨摄像头 tracking，因此每个“姿态采样帧”必须先做人体检测。
+- RTMPose 在 `tracking=false` 时使用无状态 `Body` 推理器，不再进入 RTMLib 0.0.15 的 `PoseTracker` tracking 分支。原配置 `tracking=0 + det_frequency=8` 会在跳过检测的中间调用拿到空人体框；即使频率改为 1，RTMLib 仍可能误入 tracking 分支并修改上一帧框。历史数据库中已有 560 条姿态推理错误；两路摄像头共享实例时不能跨摄像头 tracking，因此每个“姿态采样帧”必须独立完成人体检测和姿态推理。
 - 姿态短缓存状态从矛盾的 `disabled + 有骨架` 改为 `cached`，并明确显示沿用时长；缓存骨架不会直接生成跌倒告警。
 
 验证：
 
 - systemd 启动前检查全部通过，服务重启后 6 秒内恢复，`ExecStartPre.status=0`。
-- 12 个并发人形/跌倒预览请求：YOLO 模型错误 0，RTMPose `error/unavailable` 0；8 次 fresh 姿态、3 次 cached 姿态。
-- worker 最近 80 张快照中抽到 18 次 RTMPose `ready`，错误 0；两路摄像头均持续写入真实骨架数据。
+- 最终无状态 Body 修复后，20 个并发跌倒预览请求全部返回 RTMPose `ready`，`error/unavailable` 为 0。
+- 修复后连续观察 5 轮 worker，两路共 10 次自动姿态采样全部为 RTMPose `ready`，新错误 0；两路摄像头均持续写入真实骨架数据。
 - Chrome 验证摄像头 13 跌倒预览：2 人、2 组骨架、34 个关键点、36 条骨架线，组合模型显示 `yolo11n.pt + RTMPose-lightweight (onnxruntime/cpu)`。
 - 盒子 `/api/device` 返回 `person_detection=true / pose_detection=true / yolo_runtime=true / pose_runtime=true`；云端 `/api/app/device` 已同步返回 `person_detection=true / pose_detection=true`。
 

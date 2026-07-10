@@ -173,15 +173,27 @@ class RtmposeAnalyzer:
         try:
             from rtmlib import Body, PoseTracker  # type: ignore
 
-            self._pose_tracker = PoseTracker(
-                Body,
-                det_frequency=self.det_frequency,
-                tracking=self.tracking,
-                mode=self.mode,
-                to_openpose=False,
-                backend=self.runtime_backend,
-                device=self.device,
-            )
+            if self.tracking:
+                self._pose_tracker = PoseTracker(
+                    Body,
+                    det_frequency=self.det_frequency,
+                    tracking=True,
+                    mode=self.mode,
+                    to_openpose=False,
+                    backend=self.runtime_backend,
+                    device=self.device,
+                )
+            else:
+                # RTMLib PoseTracker 0.0.15 still enters its tracking branch
+                # when tracking=False and det_frequency=1. Body is stateless,
+                # which is also the correct behavior for a shared multi-camera
+                # analyzer.
+                self._pose_tracker = Body(
+                    mode=self.mode,
+                    to_openpose=False,
+                    backend=self.runtime_backend,
+                    device=self.device,
+                )
         except ModuleNotFoundError as exc:
             self._load_error = f"姿态依赖未安装：{exc.name}"
             return False, self._load_error

@@ -2507,7 +2507,7 @@ P1 用户端：
 - 原 RTMPose 路线已恢复：`onnxruntime 1.27.0 + rtmlib 0.0.15`，沿用原 YOLOX tiny 与 RTMPose-S ONNX 模型缓存。
 - worker 在跌倒或活动规则开启时继续按间隔采样姿态，管理台跌倒、用餐和久坐预览会实时启用姿态，不改成两路摄像头全时高频运行。
 - 已增加 Pi 专用安装脚本、部署排除规则和 systemd 启动前检查，禁止再次把 Mac `.venv` 覆盖到盒子，并在依赖或模型缺失时直接阻止服务假启动。
-- RTMPose 在 `tracking=0` 时强制每个姿态采样帧先做人形检测，修复历史 `'NoneType' object is not subscriptable` 偶发错误；12 路并发预览请求压测为 0 错误。
+- RTMPose 在 `tracking=0` 时改用无状态 `Body` 推理器，每个姿态采样帧独立完成人形检测，避免 RTMLib `PoseTracker` 跨两路摄像头复用上一帧框导致 `'NoneType' object is not subscriptable`。
 
 当前边界与下一步：
 
