@@ -14,7 +14,7 @@ process.env.GOHOME_SEARCH_PROVIDER = "none";
 
 const { createDefaultDb, createLocalAppServer, normalizeDb } = require("../local-app-server/server");
 const { createDbFromCloudRows, TABLE_ORDER } = require("../local-app-server/postgres-store");
-const { buildCloudSeedBundle } = require("./export-local-app-db");
+const { buildCloudSeedBundle, sha256 } = require("./export-local-app-db");
 
 const DEVICE_TOKEN = "verify-device-token";
 const APP_TOKEN = "verify-app-token";
@@ -1019,9 +1019,12 @@ async function main() {
         streamResponse.body.cancel();
 
         const seedBundle = buildCloudSeedBundle(app.store.db, { source: "verify-local-app-server" });
-        assert.equal(seedBundle.schema_version, "003_device_transfer");
+        assert.equal(seedBundle.schema_version, "004_app_sessions");
         assert.equal(seedBundle.tables.users.length, 3);
         assert.ok(seedBundle.tables.users.some((user) => user.email === phoneAccountEmail));
+        assert.ok(seedBundle.tables.app_sessions.length >= 3);
+        assert.ok(seedBundle.tables.app_sessions.every((session) => session.token_hash.length === 64));
+        assert.ok(seedBundle.tables.app_sessions.every((session) => !("token" in session)));
         assert.ok(seedBundle.tables.families.some((item) => String(item.id) === String(transferFamily.id)));
         assert.ok(seedBundle.tables.family_members.some((item) => (
             String(item.family_id) === String(transferFamily.id)
@@ -1066,6 +1069,7 @@ async function main() {
         const restoredDb = normalizeDb(createDbFromCloudRows(seedBundle.tables, createDefaultDb()));
         assert.equal(restoredDb.users.length, 3);
         assert.ok(restoredDb.users.some((user) => user.email === phoneAccountEmail));
+        assert.ok(restoredDb.app_sessions.some((session) => session.token_hash === sha256(appSessionToken)));
         assert.ok(restoredDb.families.some((item) => String(item.id) === String(transferFamily.id)));
         assert.ok(restoredDb.device_bindings.some((item) => (
             String(item.family_id) === String(transferFamily.id)

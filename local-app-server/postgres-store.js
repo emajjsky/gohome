@@ -4,6 +4,7 @@ const { buildCloudSeedBundle } = require("../scripts/export-local-app-db");
 
 const TABLE_ORDER = [
     "users",
+    "app_sessions",
     "families",
     "family_members",
     "elder_profiles",
@@ -95,6 +96,21 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             password: "",
             created_at: iso(user.created_at, db.created_at),
             updated_at: iso(user.updated_at, iso(user.created_at, db.created_at)),
+        });
+    }
+
+    for (const session of rowsByTable.app_sessions || []) {
+        db.app_sessions.push({
+            id: session.id,
+            user_id: session.user_id,
+            token: "",
+            token_hash: session.token_hash || "",
+            status: session.status || "active",
+            created_at: iso(session.created_at, db.created_at),
+            updated_at: iso(session.updated_at, iso(session.created_at, db.created_at)),
+            last_seen_at: iso(session.last_seen_at),
+            expires_at: iso(session.expires_at),
+            revoked_at: iso(session.revoked_at),
         });
     }
 

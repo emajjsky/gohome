@@ -827,20 +827,31 @@ function createLocalAppServer(options = {}) {
 
     function sessionForToken(token) {
         if (!token) return null;
+        const tokenHash = sha256(token);
+        const now = Date.now();
         return [...store.db.app_sessions]
             .reverse()
-            .find((session) => session.status === "active" && session.token === token) || null;
+            .find((session) => (
+                session.status === "active"
+                && (session.token === token || session.token_hash === tokenHash)
+                && (!session.expires_at || Date.parse(session.expires_at) > now)
+            )) || null;
     }
 
     function issueAppSession(user) {
         const token = `app_${crypto.randomBytes(18).toString("hex")}`;
+        const timestamp = nowIso();
         const session = {
-            id: store.nextId("app_session"),
+            id: `session-${crypto.randomUUID()}`,
             token,
+            token_hash: sha256(token),
             user_id: user.id,
             status: "active",
-            created_at: nowIso(),
-            last_seen_at: nowIso(),
+            created_at: timestamp,
+            updated_at: timestamp,
+            last_seen_at: timestamp,
+            expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+            revoked_at: null,
         };
         store.db.app_sessions.push(session);
         return session;

@@ -139,6 +139,18 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(user.updated_at, iso(user.created_at, exportedAt)),
     }));
 
+    const appSessions = toArray(db.app_sessions).map((session) => ({
+        id: textId(session.id),
+        user_id: textId(session.user_id),
+        token_hash: String(session.token_hash || sha256(session.token || "")),
+        status: String(session.status || "active"),
+        last_seen_at: iso(session.last_seen_at),
+        expires_at: iso(session.expires_at),
+        revoked_at: iso(session.revoked_at),
+        created_at: iso(session.created_at, exportedAt),
+        updated_at: iso(session.updated_at, iso(session.created_at, exportedAt)),
+    })).filter((session) => session.id && session.user_id && session.token_hash);
+
     const families = toArray(db.families).map((family) => ({
         id: textId(family.id),
         name: String(family.name || "默认家庭"),
@@ -570,6 +582,7 @@ function buildCloudSeedBundle(db, options = {}) {
 
     const tables = {
         users,
+        app_sessions: appSessions,
         families,
         family_members: familyMembers,
         elder_profiles: elderProfiles,
@@ -601,7 +614,7 @@ function buildCloudSeedBundle(db, options = {}) {
     const counts = Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, rows.length]));
 
     return {
-        schema_version: "003_device_transfer",
+        schema_version: "004_app_sessions",
         exported_at: exportedAt,
         source: options.source || "local-app-server-json",
         counts,
