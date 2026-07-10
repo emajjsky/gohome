@@ -534,6 +534,20 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         });
     }
 
+    const edgeRules = (rowsByTable.care_rules || []).find((rule) => (
+        rule.rule_type === "edge_rules"
+        && rule.enabled !== false
+        && rule.config
+        && typeof rule.config === "object"
+    ));
+    if (edgeRules) {
+        db.rules = {
+            ...db.rules,
+            ...edgeRules.config,
+            updated_at: iso(edgeRules.updated_at, db.rules?.updated_at || db.updated_at),
+        };
+    }
+
     return db;
 }
 

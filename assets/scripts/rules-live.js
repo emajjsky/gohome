@@ -4,6 +4,7 @@
         device: null,
         capabilities: {},
         saving: false,
+        pendingSave: false,
         saveTimer: null,
         runtimeTimer: null,
         latestSavedAt: null,
@@ -294,24 +295,37 @@
 
     async function saveRules(immediate = false) {
         clearTimeout(state.saveTimer);
+        if (state.saving) {
+            state.pendingSave = true;
+        }
         const run = async () => {
-            if (state.saving) return;
+            if (state.saving) {
+                state.pendingSave = true;
+                return;
+            }
             state.saving = true;
             setSaveState("保存中");
             try {
                 ["captureInterval", "noMotionSeconds", "noPersonSeconds"].forEach(clampInput);
                 enforceCapabilityChecks();
                 const saved = await GoHomeEdge.updateRules(readPayload());
+                const superseded = state.pendingSave;
                 state.latestSavedAt = saved.updated_at || null;
-                applyRules(saved);
-                applyCapability();
-                await refreshRuntime(state.latestSavedAt, 4, 250);
+                if (!superseded) {
+                    applyRules(saved);
+                    applyCapability();
+                    await refreshRuntime(state.latestSavedAt, 4, 250);
+                }
             } catch (error) {
                 setSaveState("保存失败", "bad");
                 setText("rulesStatusTitle", "规则保存失败");
                 setText("rulesStatusText", error.message || "请确认家庭盒子服务正在运行。");
             } finally {
                 state.saving = false;
+                if (state.pendingSave) {
+                    state.pendingSave = false;
+                    saveRules(true).catch(() => {});
+                }
             }
         };
         if (immediate) {
@@ -346,12 +360,12 @@
 
         $("personDetectionEnabled").addEventListener("change", () => {
             if ($("personDetectionEnabled").disabled) return;
-            $("noPersonMirror").checked = $("personDetectionEnabled").checked && isSupported("noPersonMirror");
+            $("noPersonMirror").checked = $("personDetectionEnabled").checked && isCapabilityReady("noPersonMirror");
         });
 
         $("noPersonMirror").addEventListener("change", () => {
             if ($("noPersonMirror").disabled) return;
-            $("personDetectionEnabled").checked = $("noPersonMirror").checked && isSupported("personDetectionEnabled");
+            $("personDetectionEnabled").checked = $("noPersonMirror").checked && isCapabilityReady("personDetectionEnabled");
         });
 
         document.querySelectorAll("[data-rule-input], #captureInterval, #noMotionSeconds, #noPersonSeconds").forEach((node) => {

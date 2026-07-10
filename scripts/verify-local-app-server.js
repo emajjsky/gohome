@@ -89,6 +89,20 @@ function assertHtmlUsesLocalTailwind() {
 }
 
 async function main() {
+    const defaultDb = createDefaultDb();
+    for (const key of [
+        "offline_enabled",
+        "black_screen_enabled",
+        "no_motion_enabled",
+        "person_detection_enabled",
+        "fall_detection_enabled",
+        "activity_detection_enabled",
+        "fire_detection_enabled",
+        "notification_enabled",
+    ]) {
+        assert.equal(defaultDb.rules[key], true, `${key} must be enabled by default`);
+    }
+
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-app-server-"));
     const app = createLocalAppServer({
         rootDir: path.resolve(__dirname, ".."),
@@ -1018,6 +1032,13 @@ async function main() {
         assert.match(streamResponse.headers.get("content-type") || "", /multipart\/x-mixed-replace/);
         streamResponse.body.cancel();
 
+        const customizedRules = await requestJson(baseUrl, "/api/rules", {
+            method: "PUT",
+            body: JSON.stringify({ activity_detection_enabled: false }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(customizedRules.activity_detection_enabled, false);
+
         const seedBundle = buildCloudSeedBundle(app.store.db, { source: "verify-local-app-server" });
         assert.equal(seedBundle.schema_version, "004_app_sessions");
         assert.equal(seedBundle.tables.users.length, 3);
@@ -1043,6 +1064,9 @@ async function main() {
             && String(item.family_id) === String(claimFamily.id)
         )));
         assert.equal(seedBundle.tables.camera_secrets.length, 2);
+        assert.equal(seedBundle.tables.care_rules.length, 1);
+        assert.equal(seedBundle.tables.care_rules[0].rule_type, "edge_rules");
+        assert.equal(seedBundle.tables.care_rules[0].config.activity_detection_enabled, false);
         assert.equal(seedBundle.tables.events.length, 2);
         const seededFallEvent = seedBundle.tables.events.find((event) => event.event_type === "fall_candidate");
         const seededStaleOfflineEvent = seedBundle.tables.events.find((event) => String(event.id) === String(staleOffline.event.id));
@@ -1089,6 +1113,8 @@ async function main() {
         assert.equal(String(restoredFallEvent.camera_id), String(camera.id));
         assert.equal(restoredDb.assets.length, 2);
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);
+        assert.equal(restoredDb.rules.activity_detection_enabled, false);
+        assert.equal(restoredDb.rules.fire_detection_enabled, true);
         assert.equal(restoredDb.care_preferences[String(family.id)].image_model, "wan2.7-image");
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.delivery_time, "07:45");
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.message_focus, "先说明家里是否平稳，再给女儿一个适合打电话时聊的轻松话题。");

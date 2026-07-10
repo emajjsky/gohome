@@ -580,6 +580,19 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(recommendation.updated_at, iso(recommendation.created_at, exportedAt)),
     }));
 
+    const careRules = fallbackFamilyId
+        ? [{
+            id: `${fallbackFamilyId}:edge_rules`,
+            family_id: fallbackFamilyId,
+            camera_id: null,
+            rule_type: "edge_rules",
+            enabled: true,
+            config: db.rules && typeof db.rules === "object" ? db.rules : {},
+            created_at: iso(db.created_at, exportedAt),
+            updated_at: iso(db.rules?.updated_at, exportedAt),
+        }]
+        : [];
+
     const tables = {
         users,
         app_sessions: appSessions,
@@ -592,7 +605,7 @@ function buildCloudSeedBundle(db, options = {}) {
         device_tokens: deviceTokens,
         cameras,
         camera_secrets: cameraSecrets,
-        care_rules: [],
+        care_rules: careRules,
         care_preferences: carePreferences,
         model_providers: modelProviders,
         content_sources: contentSources,
