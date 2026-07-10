@@ -887,17 +887,20 @@ function renderDetectionOverlay(snapshot) {
   const rect = imageFitRect(snapshot);
   const mode = state.previewAlgorithm || "quality";
   const people = overlayPeopleForMode(snapshot, mode);
-  const poses = shouldRenderPoseForMode(mode) ? snapshotPoses(snapshot) : [];
+  const poses = shouldRenderPoseForMode(mode)
+    ? snapshotPoses(snapshot).filter((pose) => mode !== "person" || pose.person_evidence_eligible !== false)
+    : [];
   const boxes = people.length
     ? people.map((person, index) => {
         const [x1, y1, x2, y2] = person.bbox || [0, 0, 0, 0];
         const confidence = person.confidence ? ` · ${Math.round(person.confidence * 100)}%` : "";
+        const candidateScore = !person.confidence && person.candidate_score ? ` · 候选分 ${Math.round(person.candidate_score * 100)}%` : "";
         const presence = isPresenceCandidate(person);
         const poseValidated = Boolean(person.pose_validated || person.source === "pose_person");
         const tracked = person.pose_tracking_state === "cached";
         const kind = presence && !poseValidated ? "presence" : person.fall_candidate ? "fall" : "person";
         const prefix = tracked ? "骨架跟踪" : poseValidated ? "骨架确认" : presence ? "存在候选" : mode === "person" ? "人形识别" : mode === "fall" ? "跌倒证据" : "人像";
-        const label = `${prefix} ${index + 1}${confidence}`;
+        const label = `${prefix} ${index + 1}${confidence}${candidateScore}`;
         return { bbox: [x1, y1, x2, y2], label: person.fall_candidate ? `${label} · 疑似跌倒` : label, kind: tracked ? "tracked" : kind };
       })
     : [];
@@ -1060,7 +1063,7 @@ function algorithmPreviewMetaItems(mode, snapshot) {
       { label: "人数", value: String(peopleCount) },
       { label: "骨架", value: String(poseCount) },
       { label: "最高置信", value: algorithmPeopleConfidence(snapshot) ? `${algorithmPeopleConfidence(snapshot)}%` : "-" },
-      { label: "存在增强", value: analysis.presence_enhanced ? "启用" : "未启用" },
+      { label: "候选复核", value: analysis.presence_enhanced ? "待骨架确认" : "无需" },
       { label: "标签", value: tagText },
     ];
   }
@@ -1613,7 +1616,16 @@ function algorithmEvidenceLine(mode, snapshot) {
   if (mode === "person") {
     const confidence = people.map((person) => Number(person.confidence || 0)).filter(Boolean).sort((a, b) => b - a)[0];
     const presenceCount = people.filter(isPresenceCandidate).length;
-    if (presenceCount) return `真实指标：人体存在候选 ${presenceCount} 个，增强置信度 ${confidence ? Math.round(confidence * 100) : "-"}%。`;
+    if (presenceCount) {
+      const modelConfidence = people
+        .filter((person) => isPresenceCandidate(person) && person.confidence_kind === "model")
+        .map((person) => Number(person.model_confidence || person.confidence || 0))
+        .filter(Boolean)
+        .sort((a, b) => b - a)[0];
+      return modelConfidence
+        ? `真实指标：YOLO 低置信候选 ${presenceCount} 个，最高模型置信度 ${Math.round(modelConfidence * 100)}%，等待骨架复核。`
+        : `真实指标：启发式存在候选 ${presenceCount} 个，不作为人数和模型置信度结论。`;
+    }
     return confidence ? `真实指标：检测到 ${people.length} 人，最高置信度 ${Math.round(confidence * 100)}%。` : `真实指标：当前人数 ${snapshot.person_count ?? analysis.person_count ?? 0}。`;
   }
   if (mode === "fire") {
@@ -1650,7 +1662,7 @@ function algorithmAccuracyLine(mode, snapshot) {
   }
   if (backend === "yolo") {
     if (snapshot?.analysis?.presence_enhanced) {
-      return "准确率口径：YOLO 高置信未命中，本帧启用坐姿/半身人体存在增强；正式报警仍需要连续帧复核。";
+      return "准确率口径：YOLO 高置信未命中，低置信候选必须经过 RTMPose 骨架确认后才计入人数。";
     }
     return "准确率口径：YOLO 模型已启用，以模型置信度和连续帧复核作为主要依据。";
   }

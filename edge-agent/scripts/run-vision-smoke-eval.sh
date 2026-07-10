@@ -5,7 +5,9 @@ cd "$(dirname "$0")/.."
 
 PYTHON_BIN="${PYTHON_BIN:-}"
 if [[ -z "$PYTHON_BIN" ]]; then
-  if [[ -x ".venv/bin/python" ]]; then
+  if [[ -x ".venv-pi/bin/python" ]]; then
+    PYTHON_BIN=".venv-pi/bin/python"
+  elif [[ -x ".venv/bin/python" ]]; then
     PYTHON_BIN=".venv/bin/python"
   else
     PYTHON_BIN="python3"

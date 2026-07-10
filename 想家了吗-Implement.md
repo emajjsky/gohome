@@ -9974,3 +9974,50 @@ UR Fall: TP=8, TN=12, FP=0, FN=0, errors=0
 - `run-vision-smoke-eval.sh`
 
 当前仍保持 `fall_detection_enabled=0`。本轮证明的是已知家庭误报被压制且现有 UR Fall 小样本召回未下降，不代表医疗级准确率。正式开启前仍需当前家庭视角的安全模拟跌倒正样本和更长时间正常活动负样本。
+
+## 81. 2026-07-10 人形假置信度修复与公开样本扩展
+
+用户在空客厅的人形预览中看到 3 个 50%-71% 的人体候选。复查原始结果后确认，这些框来自 `presence_skin` 和 `presence_upperbody` 的肤色/Haar 启发式增强，电视柜、沙发和窗户纹理被错误框选；页面又把启发式分数包装成“增强置信度”并计入 `person_count`，造成了模型识别出 3 个人的假象。
+
+实现修复：
+
+- `person_yolo.py` 默认关闭 `presence_classical_enhancement_enabled`；需要回归经典候选时必须显式开启。
+- YOLO 低置信候选继续保留真实 `model_confidence`，删除固定增加 `0.24` 的分数包装。
+- 肤色/Haar 候选改为输出 `candidate_score`、`confidence_kind=heuristic` 和 `confidence=null`，不再伪装模型置信度。
+- `pipeline.py` 和 `pose_rtmpose.py` 增加 `person_evidence_eligible`。启用姿态复核但没有可信骨架时，经典候选不能进入人数和后续人形规则。
+- 人形算法预览加入 RTMPose；低质量姿态仍可留作调试数据，但不能确认人体或参与跌倒 refinement。
+- 管理台只绘制可信姿态骨架；低置信 YOLO 显示“等待骨架复核”，经典启发式显示“候选分，不作为人数和模型置信度结论”。
+- `verify-vision-pipeline.py` 增加经典增强默认关闭和显式开启的回归断言。
+
+实机回归：
+
+```text
+空客厅摄像头连续 5 次: person_count=0, people=[], pose_count=0, pose_status=ready
+有人摄像头连续 5 次: person_count=1, pose_status=ready/cached
+```
+
+新增公开样本工具：
+
+- `import-gmdcsa24-sample.py` / `run-gmdcsa24-eval.sh`：从 MIT 许可的 GMDCSA24 仓库抽取 Subject 1 的跌倒和 ADL 视频帧，覆盖睡床、阅读、坐姿、走动和弯腰。
+- `import-wikimedia-indoor-negatives.py` / `run-wikimedia-person-negative-eval.sh`：通过 Wikimedia Commons API 下载 5 张人工确认无人的室内负样本，并在 manifest 保存每张图片的来源和许可。
+- `vision_dataset_catalog.json` 已登记 GMDCSA24 与 Wikimedia 室内负样本。
+- UR Fall 导入范围扩大到 8 组跌倒和 10 组 ADL，共 88 帧。
+- 公共数据 runner 新增 `--eval-only`，盒子只同步抽帧和 manifest 时可以直接复验，不要求重复下载原视频。
+- `eval_vision_common.py` 新增并记录姿态跌倒阈值、姿态质量门控参数；YOLO 输入尺寸默认改为 416，修复离线评测默认 `pose threshold=0.90 / imgsz=960` 与盒子生产配置 `0.78 / 416` 不一致的问题。
+- `run-vision-smoke-eval.sh` 优先使用 `.venv-pi`，修复盒子系统 Python 缺少 OpenCV 时的假失败。
+- 原始公开视频、抽帧、manifest 和家庭私有画面均位于 `edge-agent/data/`，已被 Git 忽略；仓库只提交导入器、runner、catalog 和评测说明。
+
+树莓派评测：
+
+```text
+Wikimedia 空室内: count=5, TN=5, FP=0, errors=0
+GMDCSA24: count=22, TP=6, FP=4, TN=10, FN=2, precision=0.60, recall=0.75, FPR=0.2857
+UR Fall 扩展: count=88, TP=29, FP=0, TN=56, FN=3, precision=1.00, recall=0.90625, FPR=0
+```
+
+以上结果统一使用盒子当前生产参数：`yolo11n.pt / confidence=0.20 / imgsz=416 / pose_fall_threshold=0.78 / pose quality=0.36, 8 visible, 2 core`。GMDCSA24 的 4 个误报全部为正常睡床，说明单帧横向骨架无法区分“睡在床上”和“跌倒在地”；其 2 个漏报以及 UR Fall 的 3 个漏报来自人体大部分出画或骨架证据不足。后续不能靠继续放宽或收紧一个单帧阈值解决，必须进入视频时序和场景区域阶段：
+
+1. 实现视频序列 evaluator，验证活动/站坐、快速下降、低位持续和恢复状态。
+2. 增加床、沙发和非地面区域配置，区分正常卧躺与异常卧地。
+3. 扩充出画、遮挡、低光、轮椅、躺沙发和当前家庭视角安全模拟跌倒样本。
+4. 正式跌倒通知继续保持 `fall_detection_enabled=0`，直到上述时序和区域规则完成并经过连续观察。

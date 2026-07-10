@@ -60,6 +60,30 @@
       "caveats": ["Kinect setup differs from normal home IP camera; use as regression, not final accuracy proof."]
     },
     {
+      "id": "gmdcsa24",
+      "name": "GMDCSA24: A Dataset for Human Fall Detection in Videos",
+      "url": "https://github.com/ekramalam/GMDCSA24-A-Dataset-for-Human-Fall-Detection-in-Videos",
+      "tasks": ["fall_detection", "sleeping_negative", "sitting_negative", "bending_negative"],
+      "priority": "p0",
+      "access": "direct_github_download",
+      "local_importer": "scripts/run-gmdcsa24-eval.sh",
+      "size_note": "Four subjects with separately downloadable fall and ADL videos.",
+      "fit_for_gohome": "Indoor side/front views include chair falls, walking falls, sleeping, reading, sitting and bending.",
+      "caveats": ["Staged falls; use for regression, not as product accuracy proof.", "MIT repository license; cite DOI 10.5281/zenodo.12921216."]
+    },
+    {
+      "id": "wikimedia-indoor-negatives",
+      "name": "Wikimedia Commons curated indoor negatives",
+      "url": "https://commons.wikimedia.org/",
+      "tasks": ["person_false_positive", "empty_room", "furniture_negative"],
+      "priority": "p0",
+      "access": "commons_api",
+      "local_importer": "scripts/run-wikimedia-person-negative-eval.sh",
+      "size_note": "Five manually curated thumbnails; per-file license metadata is saved in the manifest.",
+      "fit_for_gohome": "Direct regression for sofas, cabinets, windows and empty living rooms being mistaken for people.",
+      "caveats": ["Manually verify every curated image remains person-free if the title list changes."]
+    },
+    {
       "id": "ntu-rgbd",
       "name": "NTU RGB+D / NTU RGB+D 120",
       "url": "https://rose1.ntu.edu.sg/dataset/actionRecognition/",

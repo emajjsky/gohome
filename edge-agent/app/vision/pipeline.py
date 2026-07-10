@@ -99,7 +99,14 @@ class VisionPipeline:
         raw_people = list(person.get("people") or [])
         raw_pose = self.pose.analyze(frame, runtime_config)
         pose = self._pose_with_short_cache(raw_pose, runtime_config, quality)
-        people = self._refine_people_with_pose(raw_people, pose.get("poses") or [], frame, runtime_config)
+        person_poses = self._poses_for_person_evidence(pose.get("poses") or [])
+        people = self._refine_people_with_pose(raw_people, person_poses, frame, runtime_config)
+        if (
+            runtime_config.get("pose_detection_enabled")
+            and pose.get("pose_model_status") in {"ready", "not_visible"}
+            and not person_poses
+        ):
+            people = [person for person in people if not person.get("presence_candidate")]
         self._update_person_result_after_pose_refine(person, people, pose.get("poses") or [])
         fall = self.fall.analyze(self._people_for_fall_alerts(people, raw_people, runtime_config), runtime_config)
         pose_fall_candidate = bool(pose.get("pose_fall_candidate"))
@@ -382,6 +389,9 @@ class VisionPipeline:
 
     def _fresh_people_for_alerts(self, people: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
         return [person for person in people if person.get("pose_tracking_state") != "cached"]
+
+    def _poses_for_person_evidence(self, poses: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+        return [pose for pose in poses if pose.get("person_evidence_eligible", True)]
 
     def _people_for_fall_alerts(
         self,

@@ -53,8 +53,15 @@ def main() -> None:
     )
     red_light_result = agent.analyze_frame_with_config(red_light)
     demo_result = agent.analyze_frame_with_config(normal, config={"force_demo_vision": True})
-    presence_result = analyze_with_mocked_yolo_miss(seated_half_body)
-    blank_presence_result = analyze_with_mocked_yolo_miss(black)
+    default_presence_result = analyze_with_mocked_yolo_miss(seated_half_body)
+    presence_result = analyze_with_mocked_yolo_miss(
+        seated_half_body,
+        {"presence_classical_enhancement_enabled": True},
+    )
+    blank_presence_result = analyze_with_mocked_yolo_miss(
+        black,
+        {"presence_classical_enhancement_enabled": True},
+    )
     weak_fall_result = FallAnalyzer().analyze(synthetic_weak_fall_people(), {})
     pose_refine_result = verify_pose_refines_presence_candidates()
     pose_cache_result = verify_pose_cache_stabilizes_tracking()
@@ -72,6 +79,7 @@ def main() -> None:
         "dynamic_fire_temporal_score": dynamic_fire_result.get("fire_temporal_score"),
         "red_light_fire_candidate": bool(red_light_result["fire_candidate"]),
         "demo_person_count": demo_result.get("person_count"),
+        "default_classical_presence_person_count": default_presence_result.get("person_count"),
         "presence_person_count": presence_result.get("person_count"),
         "presence_enhanced": bool(presence_result.get("presence_enhanced")),
         "blank_presence_person_count": blank_presence_result.get("person_count"),
@@ -114,6 +122,8 @@ def main() -> None:
         raise SystemExit(f"algorithm result keys mismatch: {checks['algorithm_results']}")
     if not isinstance(checks["demo_person_count"], int) or checks["demo_person_count"] < 1:
         raise SystemExit("demo person check failed")
+    if checks["default_classical_presence_person_count"] != 0:
+        raise SystemExit("classical skin/Haar presence enhancement must be disabled by default")
     if not isinstance(checks["presence_person_count"], int) or checks["presence_person_count"] < 1:
         raise SystemExit("seated half-body presence enhancement check failed")
     if not checks["presence_enhanced"]:
@@ -181,10 +191,10 @@ def synthetic_seated_half_body_frame() -> np.ndarray:
     return frame
 
 
-def analyze_with_mocked_yolo_miss(frame: np.ndarray) -> dict:
+def analyze_with_mocked_yolo_miss(frame: np.ndarray, config: dict | None = None) -> dict:
     detector = PersonDetector(detector_backend="yolo", yolo_confidence=0.35)
     detector._detect_people_with_yolo = lambda frame, confidence=None: []  # type: ignore[method-assign]
-    return detector.analyze(frame, {})
+    return detector.analyze(frame, config or {})
 
 
 def synthetic_weak_fall_people() -> list[dict]:

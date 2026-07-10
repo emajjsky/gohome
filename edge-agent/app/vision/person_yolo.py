@@ -46,10 +46,19 @@ class PersonDetector:
                         for person in raw_people
                         if self._is_plausible_presence_box(person)
                     ]
-                    people = self._merge_people([*low_confidence_people, *self._detect_presence_enhancement(frame)], max_count=3)
+                    classical_candidates = (
+                        self._detect_presence_enhancement(frame)
+                        if config.get("presence_classical_enhancement_enabled", False)
+                        else []
+                    )
+                    people = self._merge_people([*low_confidence_people, *classical_candidates], max_count=3)
                     if people:
                         model_status = "ready_presence_enhanced"
-                        model_message = "YOLO 未命中高置信人形，已启用坐姿/半身人体存在增强。"
+                        model_message = (
+                            "YOLO 未命中高置信人形，当前仅保留待姿态复核的低置信候选。"
+                            if low_confidence_people
+                            else "经典存在增强已显式启用，当前结果仅为启发式候选。"
+                        )
                     else:
                         model_status = "ready"
                 else:
@@ -264,7 +273,8 @@ class PersonDetector:
         candidate["presence_candidate"] = True
         candidate["method"] = method
         candidate["model_confidence"] = round(raw_confidence, 4)
-        candidate["confidence"] = round(clamp(raw_confidence + 0.24, 0.42, 0.62), 4)
+        candidate["confidence"] = round(raw_confidence, 4)
+        candidate["confidence_kind"] = "model"
         candidate["fall_candidate"] = False
         return candidate
 
@@ -312,7 +322,7 @@ class PersonDetector:
             for x, y, w, h in bodies[:3]:
                 confidence = self._presence_confidence(0.53, (w * h) / max(1, width * height))
                 candidates.append(
-                    self.person_box(
+                    self._mark_heuristic_candidate(self.person_box(
                         x - w * 0.12,
                         y - h * 0.08,
                         x + w * 1.12,
@@ -324,7 +334,7 @@ class PersonDetector:
                         label="人体存在",
                         presence_candidate=True,
                         method="haar_upperbody",
-                    )
+                    ))
                 )
         return candidates
 
@@ -421,7 +431,7 @@ class PersonDetector:
         body_width = max(w * 3.15, width * 0.14)
         body_height = max(h * 5.2, height * 0.28)
         confidence = self._presence_confidence(0.48, (w * h) / max(1, width * height))
-        return self.person_box(
+        return self._mark_heuristic_candidate(self.person_box(
             center_x - body_width / 2.0,
             y - h * 0.75,
             center_x + body_width / 2.0,
@@ -433,7 +443,7 @@ class PersonDetector:
             label="人体存在",
             presence_candidate=True,
             method=method,
-        )
+        ))
 
     def _presence_box_from_region(
         self,
@@ -448,7 +458,7 @@ class PersonDetector:
         method: str,
     ) -> Dict[str, Any]:
         confidence = self._presence_confidence(0.50, (w * h) / max(1, width * height))
-        return self.person_box(
+        return self._mark_heuristic_candidate(self.person_box(
             x - w * 0.10,
             y - h * 0.12,
             x + w * 1.10,
@@ -460,7 +470,14 @@ class PersonDetector:
             label="人体存在",
             presence_candidate=True,
             method=method,
-        )
+        ))
+
+    def _mark_heuristic_candidate(self, candidate: Dict[str, Any]) -> Dict[str, Any]:
+        score = float(candidate.get("confidence") or 0.0)
+        candidate["candidate_score"] = round(score, 4)
+        candidate["confidence"] = None
+        candidate["confidence_kind"] = "heuristic"
+        return candidate
 
     def _presence_confidence(self, base: float, seed_area_ratio: float) -> float:
         return round(clamp(base + seed_area_ratio * 8.0, 0.42, 0.72), 4)
@@ -486,7 +503,11 @@ class PersonDetector:
 
     def _merge_people(self, people: list[Dict[str, Any]], max_count: int = 3) -> list[Dict[str, Any]]:
         merged: list[Dict[str, Any]] = []
-        ordered = sorted(people, key=lambda person: float(person.get("confidence") or 0.0), reverse=True)
+        ordered = sorted(
+            people,
+            key=lambda person: float(person.get("confidence") or person.get("candidate_score") or 0.0),
+            reverse=True,
+        )
         for person in ordered:
             if any(self._box_iou(person.get("bbox"), existing.get("bbox")) >= 0.34 for existing in merged):
                 continue

@@ -41,11 +41,15 @@ def parse_common_args(description: str, task: str) -> argparse.ArgumentParser:
     parser.add_argument("--detector-backend", default="basic", choices=["basic", "yolo"])
     parser.add_argument("--yolo-model", default="yolo11n.pt")
     parser.add_argument("--yolo-confidence", type=float, default=0.20)
-    parser.add_argument("--yolo-imgsz", type=int, default=960)
+    parser.add_argument("--yolo-imgsz", type=int, default=416)
     parser.add_argument("--pose-enabled", action="store_true")
     parser.add_argument("--pose-mode", default="lightweight")
     parser.add_argument("--pose-device", default="cpu")
     parser.add_argument("--pose-det-frequency", type=int, default=1)
+    parser.add_argument("--pose-fall-threshold", type=float, default=0.78)
+    parser.add_argument("--pose-fall-min-confidence", type=float, default=0.36)
+    parser.add_argument("--pose-fall-min-visible-keypoints", type=int, default=8)
+    parser.add_argument("--pose-fall-min-core-keypoints", type=int, default=2)
     parser.add_argument("--max-video-frames", type=int, default=120)
     parser.add_argument("--video-stride", type=int, default=12)
     parser.add_argument("--limit", type=int, default=0)
@@ -65,6 +69,10 @@ def make_agent(args: argparse.Namespace) -> DetectAgent:
         pose_mode=args.pose_mode,
         pose_device=args.pose_device,
         pose_det_frequency=args.pose_det_frequency,
+        pose_fall_threshold=args.pose_fall_threshold,
+        pose_fall_min_confidence=args.pose_fall_min_confidence,
+        pose_fall_min_visible_keypoints=args.pose_fall_min_visible_keypoints,
+        pose_fall_min_core_keypoints=args.pose_fall_min_core_keypoints,
     )
 
 
@@ -279,6 +287,10 @@ def run_eval(
             "pose_mode": args.pose_mode,
             "pose_device": args.pose_device,
             "pose_det_frequency": args.pose_det_frequency,
+            "pose_fall_threshold": args.pose_fall_threshold,
+            "pose_fall_min_confidence": args.pose_fall_min_confidence,
+            "pose_fall_min_visible_keypoints": args.pose_fall_min_visible_keypoints,
+            "pose_fall_min_core_keypoints": args.pose_fall_min_core_keypoints,
         },
         "rows": rows,
     }

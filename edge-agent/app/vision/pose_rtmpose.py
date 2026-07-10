@@ -118,6 +118,7 @@ class RtmposeAnalyzer:
             quality = self._fall_evidence_quality(pose, config)
             pose["raw_fall_score"] = pose.get("fall_score")
             pose["fall_evidence_eligible"] = quality["eligible"]
+            pose["person_evidence_eligible"] = quality["eligible"]
             pose["fall_quality"] = quality
             if float(pose.get("fall_score") or 0.0) >= threshold and not quality["eligible"]:
                 rejected_fall_candidates += 1

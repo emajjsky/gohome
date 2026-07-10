@@ -21,19 +21,19 @@ for arg in "$@"; do
 done
 
 if [[ "$EVAL_ONLY" -eq 0 ]]; then
-  "$PYTHON_BIN" scripts/import-ur-fall-sample.py "${IMPORT_ARGS[@]}"
+  "$PYTHON_BIN" scripts/import-wikimedia-indoor-negatives.py "${IMPORT_ARGS[@]}"
 fi
 
-if [[ ! -f data/eval/samples/fall/ur_fall/manifest.jsonl ]]; then
-  echo "UR Fall manifest not found; run without --eval-only first." >&2
+if [[ ! -f data/eval/samples/person/wikimedia_indoor_negative/manifest.jsonl ]]; then
+  echo "Wikimedia indoor-negative manifest not found; run without --eval-only first." >&2
   exit 1
 fi
 
-"$PYTHON_BIN" scripts/eval-fall.py \
-  --use-pose \
-  --samples-dir data/eval/samples/fall/ur_fall \
-  --manifest data/eval/samples/fall/ur_fall/manifest.jsonl \
-  --detector-backend "${GOHOME_DETECTOR_BACKEND:-yolo}" \
+"$PYTHON_BIN" scripts/eval-person.py \
+  --pose-enabled \
+  --samples-dir data/eval/samples/person/wikimedia_indoor_negative \
+  --manifest data/eval/samples/person/wikimedia_indoor_negative/manifest.jsonl \
+  --detector-backend yolo \
   --yolo-model "${GOHOME_YOLO_MODEL:-yolo11n.pt}" \
   --yolo-confidence "${GOHOME_YOLO_CONFIDENCE:-0.20}" \
   --yolo-imgsz "${GOHOME_YOLO_IMGSZ:-416}" \
