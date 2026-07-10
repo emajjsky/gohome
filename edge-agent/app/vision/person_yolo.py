@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import RLock
 from typing import Any, Dict
 
 from .base import AlgorithmResult, clamp
@@ -18,6 +19,7 @@ class PersonDetector:
         self.yolo_confidence = yolo_confidence
         self.yolo_imgsz = yolo_imgsz
         self._yolo_model: Any = None
+        self._yolo_lock = RLock()
         self._cascade_cache: dict[str, Any | None] = {}
 
     def analyze(self, frame: Any, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -203,6 +205,10 @@ class PersonDetector:
         }
 
     def _detect_people_with_yolo(self, frame: Any, confidence: float | None = None) -> list[Dict[str, Any]]:
+        with self._yolo_lock:
+            return self._detect_people_with_yolo_locked(frame, confidence=confidence)
+
+    def _detect_people_with_yolo_locked(self, frame: Any, confidence: float | None = None) -> list[Dict[str, Any]]:
         if self._yolo_model is None:
             try:
                 from ultralytics import YOLO  # type: ignore

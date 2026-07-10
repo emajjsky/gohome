@@ -8778,7 +8778,48 @@ GOHOME_APP_STORE=postgres GOHOME_DATABASE_URL='postgres://...' npm run app-serve
 - 最新持久化分析中，摄像头 13 检测到 1 人，摄像头 14 检测到 3 人，均为 `model_status=ready`。
 - 无头 Chrome 验证管理台人形预览：实时画面显示真实人形框、人数 1、置信度 63%、模型 `yolo11n.pt`、分析延迟 132ms，页面无横向溢出。
 - 云端 `/api/app/device` 已同步返回 YOLO 后端及人形、长时间无人、跌倒候选能力；盒子当前规则已启用人形检测。
-- 跌倒当前仍是人框比例和位置的候选规则，不等同于可靠姿态识别；`GOHOME_POSE_ENABLED` 保持关闭，待 RTMPose/等价姿态模型在 Pi 上单独完成性能和误报验证后再开放姿态能力。
+- 本节完成时只恢复了 YOLO；后续 67.6.2 已继续恢复原 RTMPose 运行环境和 worker 姿态采样，当前状态以 67.6.2 为准。
+
+### 67.6.2 2026-07-10 原视觉算法失效根因与 RTMPose 恢复
+
+历史事实：
+
+- 旧算法不是未实现。盒子数据库共有 2357 条 `pose_model_status=ready` 的历史快照，包含 `pose_count / keypoints / pose_fall_score`。
+- 第一条姿态成功记录为 2026-07-05，最后一条旧环境成功记录为 2026-07-06 20:06（北京时间）。
+- 旧 `.venv` 的 `pyvenv.cfg` 和 Python 链接指向 Mac `/opt/homebrew/...`，目录中同时存在 macOS Mach-O OpenCV 动态库和 Linux aarch64 包，属于跨机器复制造成的环境污染。
+- 2026-07-06 19:46 新建 `.venv-pi`，当时只安装 FastAPI、uvicorn、基础 OpenCV 和 numpy；22:27 systemd 重启后优先使用 `.venv-pi`，因此此前仍在内存中工作的 YOLO 和 RTMPose 在进程重启后一起消失。
+- `.env.local` 切到 `basic` 是对缺失依赖的临时显示纠偏，不是算法失效根因。
+
+恢复与根治：
+
+- `.venv-pi` 已恢复完整 Pi 原生视觉依赖：
+  - `torch==2.10.0`
+  - `torchvision==0.25.0`
+  - `ultralytics==8.4.91`
+  - `onnxruntime==1.27.0`
+  - `rtmlib==0.0.15`
+  - `opencv-contrib-python==4.10.0.84`
+- 保留并复用原模型：`yolo11n.pt`、YOLOX tiny ONNX、RTMPose-S ONNX。
+- `requirements-pose.txt` 改为继承 `requirements-yolo.txt`，标准姿态安装不再生成“只有姿态依赖或只有基础依赖”的半套环境。
+- 新增 `scripts/install-pi-vision-runtime.sh`：只允许 Linux aarch64，检测到 Homebrew、`/Users/` 或 Windows 路径时拒绝继续。
+- 新增 `scripts/deploy-to-pi.sh`：部署时强制排除 `.venv / .venv-pi / data / .env / .env.local`，不再允许开发机环境覆盖盒子运行环境和设备数据。
+- 新增 `scripts/verify-vision-runtime.py`，并写入 systemd `ExecStartPre`；每次启动前检查 Pi Python、torch、ultralytics、YOLO 权重、onnxruntime、rtmlib 和 RTMPose 模型缓存，任一缺失则服务不进入假运行状态。
+- YOLO 和 RTMPose 模型实例增加进程内推理锁，避免管理台、worker 和多摄像头请求同时进入共享模型。
+- RTMPose 在 `tracking=false` 时强制 `det_frequency=1`。原配置 `tracking=0 + det_frequency=8` 会让 RTMLib 在跳过检测的中间调用中拿到空人体框，历史数据库中已有 560 条姿态推理错误；两路摄像头共享实例时不能启用跨摄像头 tracking，因此每个“姿态采样帧”必须先做人体检测。
+- 姿态短缓存状态从矛盾的 `disabled + 有骨架` 改为 `cached`，并明确显示沿用时长；缓存骨架不会直接生成跌倒告警。
+
+验证：
+
+- systemd 启动前检查全部通过，服务重启后 6 秒内恢复，`ExecStartPre.status=0`。
+- 12 个并发人形/跌倒预览请求：YOLO 模型错误 0，RTMPose `error/unavailable` 0；8 次 fresh 姿态、3 次 cached 姿态。
+- worker 最近 80 张快照中抽到 18 次 RTMPose `ready`，错误 0；两路摄像头均持续写入真实骨架数据。
+- Chrome 验证摄像头 13 跌倒预览：2 人、2 组骨架、34 个关键点、36 条骨架线，组合模型显示 `yolo11n.pt + RTMPose-lightweight (onnxruntime/cpu)`。
+- 盒子 `/api/device` 返回 `person_detection=true / pose_detection=true / yolo_runtime=true / pose_runtime=true`；云端 `/api/app/device` 已同步返回 `person_detection=true / pose_detection=true`。
+
+当前边界：
+
+- 姿态链路已经恢复为原有实际模型，不再是待做 POC。
+- 跌倒仍属于候选检测，需要人框、骨架、连续帧、持续时间和恢复状态共同确认；下一步应补真实跌倒/非跌倒样本评估和误报反馈，而不是继续更换模型路线。
 
 ### 67.7 事件页真实反馈与旧离线评估修复
 

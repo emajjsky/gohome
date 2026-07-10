@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import RLock
 from typing import Any, Dict
 
 from .base import AlgorithmResult
@@ -65,13 +66,17 @@ class RtmposeAnalyzer:
         self.mode = self._normalize_mode(mode)
         self.runtime_backend = runtime_backend.strip().lower() or "onnxruntime"
         self.device = device.strip().lower() or "cpu"
-        self.det_frequency = max(1, int(det_frequency))
         self.min_keypoint_confidence = float(min_keypoint_confidence)
         self.max_poses = max(1, int(max_poses))
         self.fall_threshold = float(fall_threshold)
         self.tracking = bool(tracking)
+        # PoseTracker only supports detector skipping when tracking is active.
+        # This analyzer is shared by multiple cameras, so cross-camera tracking
+        # stays disabled and every sampled pose frame runs person detection.
+        self.det_frequency = max(1, int(det_frequency)) if self.tracking else 1
         self._pose_tracker: Any = None
         self._load_error = ""
+        self._model_lock = RLock()
 
     @property
     def model_name(self) -> str:
@@ -82,15 +87,16 @@ class RtmposeAnalyzer:
         if not runtime_enabled:
             return self._disabled_result("姿态检测未启用。")
 
-        ready, message = self._ensure_ready()
-        if not ready:
-            return self._disabled_result(message, status="unavailable")
+        with self._model_lock:
+            ready, message = self._ensure_ready()
+            if not ready:
+                return self._disabled_result(message, status="unavailable")
 
-        try:
-            keypoints, scores = self._pose_tracker(frame)
-            poses = self._extract_poses(keypoints, scores, frame)
-        except Exception as exc:
-            return self._disabled_result(f"RTMPose 推理失败：{exc}", status="error")
+            try:
+                keypoints, scores = self._pose_tracker(frame)
+                poses = self._extract_poses(keypoints, scores, frame)
+            except Exception as exc:
+                return self._disabled_result(f"RTMPose 推理失败：{exc}", status="error")
 
         pose_count = len(poses)
         tags: list[str] = []

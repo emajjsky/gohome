@@ -6,6 +6,7 @@ __pycache__/
 .env
 .env.local
 edge-agent/.venv/
+edge-agent/.venv-pi/
 edge-agent/data/
 edge-agent/logs/
 edge-agent/*.pt

@@ -34,6 +34,12 @@ PYTHON_BIN="$(select_python_bin)" || {
   exit 1
 }
 
+VISION_PREFLIGHT="$SCRIPT_DIR/verify-vision-runtime.py"
+if [[ -f "$VISION_PREFLIGHT" ]]; then
+  USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
+  HOME="${USER_HOME:-/home/$USER_NAME}" "$PYTHON_BIN" "$VISION_PREFLIGHT" --require-yolo --require-pose
+fi
+
 if [[ "${EUID}" -ne 0 ]]; then
   echo "please run with sudo: sudo bash scripts/install-systemd-service.sh" >&2
   exit 1
@@ -147,6 +153,7 @@ Wants=NetworkManager.service
 Type=simple
 User=$USER_NAME
 WorkingDirectory=$AGENT_ROOT
+ExecStartPre=$PYTHON_BIN $VISION_PREFLIGHT --require-yolo --require-pose
 ExecStart=/bin/bash $RUN_SH
 Restart=always
 RestartSec=3

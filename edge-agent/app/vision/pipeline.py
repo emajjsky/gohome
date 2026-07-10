@@ -333,6 +333,8 @@ class VisionPipeline:
         cached_pose["pose_count"] = len(cached_poses)
         cached_pose["pose_tracking_state"] = "cached"
         cached_pose["pose_track_age_seconds"] = round(age, 3)
+        cached_pose["pose_model_status"] = "cached"
+        cached_pose["pose_model_message"] = f"短暂沿用上一组可信骨架，跟踪 {age:.1f} 秒。"
         cached_pose["pose_fall_score"] = 0.0
         cached_pose["pose_fall_candidate"] = False
         cached_pose["pose_action_hints"] = [hint for hint in cached_pose.get("pose_action_hints", []) if hint != "fall_candidate"]
@@ -349,6 +351,8 @@ class VisionPipeline:
                 "pose_count": len(cached_poses),
                 "pose_fall_score": 0.0,
                 "pose_fall_candidate": False,
+                "pose_model_status": "cached",
+                "pose_model_message": cached_pose["pose_model_message"],
                 "pose_tracking_state": "cached",
                 "pose_track_age_seconds": round(age, 3),
             }

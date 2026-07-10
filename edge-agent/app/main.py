@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote
+from importlib.util import find_spec
 import ipaddress
 import json
 import re
@@ -95,6 +96,26 @@ def model_dump(model: Any) -> Dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump()
     return model.dict()
+
+
+def vision_runtime_capabilities() -> Dict[str, bool]:
+    yolo_available = find_spec("torch") is not None and find_spec("ultralytics") is not None
+    pose_available = find_spec("onnxruntime") is not None and find_spec("rtmlib") is not None
+    person_available = settings.detector_backend == "demo" or (
+        settings.detector_backend in {"yolo", "rtmpose", "pose"} and yolo_available
+    )
+    return {
+        "quality_detection": True,
+        "motion_detection": True,
+        "person_detection": person_available,
+        "no_person_detection": person_available,
+        "fall_candidate": person_available or pose_available,
+        "activity_candidate": True,
+        "fire_candidate": True,
+        "pose_detection": pose_available,
+        "yolo_runtime": yolo_available,
+        "pose_runtime": pose_available,
+    }
 
 
 def local_ip() -> str:
@@ -1136,16 +1157,7 @@ config_sync_agent = ConfigSyncAgent(
         "yolo_imgsz": settings.yolo_imgsz if settings.detector_backend == "yolo" else None,
         "pose_enabled": settings.pose_enabled,
         "pose_backend": settings.pose_backend,
-        "vision_capabilities": {
-            "quality_detection": True,
-            "motion_detection": True,
-            "person_detection": settings.detector_backend in {"yolo", "demo", "rtmpose", "pose"},
-            "no_person_detection": settings.detector_backend in {"yolo", "demo", "rtmpose", "pose"},
-            "fall_candidate": settings.detector_backend in {"yolo", "demo", "rtmpose", "pose"} or settings.pose_enabled,
-            "activity_candidate": True,
-            "fire_candidate": True,
-            "pose_detection": settings.pose_enabled,
-        },
+        "vision_capabilities": vision_runtime_capabilities(),
         "worker": worker.runtime_status(),
     },
 )
@@ -1413,16 +1425,7 @@ def device() -> Dict[str, Any]:
         "pose_cache_max_motion": settings.pose_cache_max_motion,
         "activity_window_seconds": settings.activity_window_seconds,
         "activity_max_samples": settings.activity_max_samples,
-        "vision_capabilities": {
-            "quality_detection": True,
-            "motion_detection": True,
-            "person_detection": settings.detector_backend in {"yolo", "demo", "rtmpose", "pose"},
-            "no_person_detection": settings.detector_backend in {"yolo", "demo", "rtmpose", "pose"},
-            "fall_candidate": settings.detector_backend in {"yolo", "demo", "rtmpose", "pose"} or settings.pose_enabled,
-            "activity_candidate": True,
-            "fire_candidate": True,
-            "pose_detection": settings.pose_enabled,
-        },
+        "vision_capabilities": vision_runtime_capabilities(),
         "worker_running": worker.is_running,
         "upload_agent": upload_agent.status(),
         "live_relay_agent": live_relay_agent.status(),

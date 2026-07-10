@@ -14,6 +14,7 @@ from app.detect_agent import DetectAgent
 from app.vision.fall import FallAnalyzer
 from app.vision.person_yolo import PersonDetector
 from app.vision.pipeline import VisionPipeline
+from app.vision.pose_rtmpose import RtmposeAnalyzer
 
 
 def main() -> None:
@@ -58,6 +59,7 @@ def main() -> None:
     pose_refine_result = verify_pose_refines_presence_candidates()
     pose_cache_result = verify_pose_cache_stabilizes_tracking()
     activity_temporal_result = verify_activity_temporal_candidates()
+    pose_runtime_config = verify_pose_runtime_config()
 
     checks = {
         "black_screen": bool(black_result["black_screen"]),
@@ -76,11 +78,14 @@ def main() -> None:
         "pose_refine_filtered_count": pose_refine_result["filtered_count"],
         "pose_refine_pose_added": pose_refine_result["pose_added"],
         "pose_cache_state": pose_cache_result["tracking_state"],
+        "pose_cache_model_status": pose_cache_result["model_status"],
         "pose_cache_person_count": pose_cache_result["person_count"],
         "pose_cache_fall_candidate": pose_cache_result["fall_candidate"],
         "activity_temporal_meal_candidate": activity_temporal_result["meal_candidate"],
         "activity_temporal_daze_candidate": activity_temporal_result["daze_candidate"],
         "activity_temporal_samples": activity_temporal_result["sample_count"],
+        "pose_det_frequency_without_tracking": pose_runtime_config["without_tracking"],
+        "pose_det_frequency_with_tracking": pose_runtime_config["with_tracking"],
         "pose_result_status": fire_result.get("algorithm_results", {}).get("pose", {}).get("status"),
         "pipeline_version": fire_result.get("pipeline_version"),
         "algorithm_results": sorted((fire_result.get("algorithm_results") or {}).keys()),
@@ -114,12 +119,18 @@ def main() -> None:
         raise SystemExit("pose refinement should add a pose-confirmed person when YOLO boxes are unusable")
     if checks["pose_cache_state"] != "cached" or checks["pose_cache_person_count"] != 1:
         raise SystemExit("pose cache should stabilize a short RTMPose miss")
+    if checks["pose_cache_model_status"] != "cached":
+        raise SystemExit("pose cache should report cached runtime status")
     if checks["pose_cache_fall_candidate"]:
         raise SystemExit("cached pose should not become a fall candidate")
     if not checks["activity_temporal_meal_candidate"]:
         raise SystemExit("temporal meal candidate check failed")
     if not checks["activity_temporal_daze_candidate"]:
         raise SystemExit("temporal daze candidate check failed")
+    if checks["pose_det_frequency_without_tracking"] != 1:
+        raise SystemExit("RTMPose without tracking must run person detection on every sampled pose frame")
+    if checks["pose_det_frequency_with_tracking"] != 8:
+        raise SystemExit("RTMPose tracking mode should preserve configured detector frequency")
     if checks["pose_result_status"] != "disabled":
         raise SystemExit("pose disabled status check failed")
 
@@ -286,8 +297,18 @@ def verify_pose_cache_stabilizes_tracking() -> dict:
     fall = pipeline.fall.analyze(alert_people, {})
     return {
         "tracking_state": cached_pose.get("pose_tracking_state"),
+        "model_status": cached_pose.get("pose_model_status"),
         "person_count": len(refined),
         "fall_candidate": bool(fall.get("fall_candidate") or cached_pose.get("pose_fall_candidate")),
+    }
+
+
+def verify_pose_runtime_config() -> dict:
+    without_tracking = RtmposeAnalyzer(enabled=True, det_frequency=8, tracking=False)
+    with_tracking = RtmposeAnalyzer(enabled=True, det_frequency=8, tracking=True)
+    return {
+        "without_tracking": without_tracking.det_frequency,
+        "with_tracking": with_tracking.det_frequency,
     }
 
 
