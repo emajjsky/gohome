@@ -60,6 +60,9 @@ def main() -> None:
     pose_cache_result = verify_pose_cache_stabilizes_tracking()
     activity_temporal_result = verify_activity_temporal_candidates()
     pose_runtime_config = verify_pose_runtime_config()
+    pose_fall_quality = verify_pose_fall_quality_gate()
+    pose_retry = verify_pose_transient_retry()
+    pose_posture = verify_pose_posture_direction()
 
     checks = {
         "black_screen": bool(black_result["black_screen"]),
@@ -86,6 +89,12 @@ def main() -> None:
         "activity_temporal_samples": activity_temporal_result["sample_count"],
         "pose_det_frequency_without_tracking": pose_runtime_config["without_tracking"],
         "pose_det_frequency_with_tracking": pose_runtime_config["with_tracking"],
+        "pose_fall_low_quality_eligible": pose_fall_quality["low_quality_eligible"],
+        "pose_fall_valid_quality_eligible": pose_fall_quality["valid_quality_eligible"],
+        "pose_transient_retry_count": pose_retry["call_count"],
+        "pose_transient_retry_used": pose_retry["retried"],
+        "pose_front_seated_posture": pose_posture["front_seated"],
+        "pose_horizontal_fall_posture": pose_posture["horizontal_fall"],
         "pose_result_status": fire_result.get("algorithm_results", {}).get("pose", {}).get("status"),
         "pipeline_version": fire_result.get("pipeline_version"),
         "algorithm_results": sorted((fire_result.get("algorithm_results") or {}).keys()),
@@ -131,6 +140,16 @@ def main() -> None:
         raise SystemExit("RTMPose without tracking must run person detection on every sampled pose frame")
     if checks["pose_det_frequency_with_tracking"] != 8:
         raise SystemExit("RTMPose tracking mode should preserve configured detector frequency")
+    if checks["pose_fall_low_quality_eligible"]:
+        raise SystemExit("low-confidence sofa-like skeleton must not become fall evidence")
+    if not checks["pose_fall_valid_quality_eligible"]:
+        raise SystemExit("valid pose must remain eligible as fall evidence")
+    if checks["pose_transient_retry_count"] != 2 or not checks["pose_transient_retry_used"]:
+        raise SystemExit("RTMPose transient NoneType failure should retry exactly once")
+    if checks["pose_front_seated_posture"] == "lying":
+        raise SystemExit("front-facing seated torso must not be classified as lying")
+    if checks["pose_horizontal_fall_posture"] != "lying":
+        raise SystemExit("horizontal shoulder-to-hip direction should remain a lying pose")
     if checks["pose_result_status"] != "disabled":
         raise SystemExit("pose disabled status check failed")
 
@@ -309,6 +328,85 @@ def verify_pose_runtime_config() -> dict:
     return {
         "without_tracking": without_tracking.det_frequency,
         "with_tracking": with_tracking.det_frequency,
+    }
+
+
+def verify_pose_fall_quality_gate() -> dict:
+    analyzer = RtmposeAnalyzer(enabled=True)
+    keypoints = [
+        {
+            "name": name,
+            "confidence": 0.34,
+            "visible": True,
+        }
+        for name in [
+            "nose",
+            "left_eye",
+            "right_eye",
+            "left_shoulder",
+            "right_shoulder",
+            "left_hip",
+            "right_hip",
+            "left_knee",
+            "right_knee",
+        ]
+    ]
+    low_quality = analyzer._fall_evidence_quality(
+        {"confidence": 0.34, "keypoints": keypoints},
+        {},
+    )
+    valid_quality = analyzer._fall_evidence_quality(
+        {"confidence": 0.52, "keypoints": keypoints},
+        {},
+    )
+    return {
+        "low_quality_eligible": low_quality["eligible"],
+        "valid_quality_eligible": valid_quality["eligible"],
+    }
+
+
+def verify_pose_transient_retry() -> dict:
+    analyzer = RtmposeAnalyzer(enabled=True)
+    calls = {"count": 0}
+
+    def transient_tracker(frame):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise TypeError("'NoneType' object is not subscriptable")
+        return np.array([]), np.array([])
+
+    analyzer._pose_tracker = transient_tracker
+    _, _, retried = analyzer._infer_pose(np.zeros((8, 8, 3), dtype=np.uint8))
+    return {"call_count": calls["count"], "retried": retried}
+
+
+def verify_pose_posture_direction() -> dict:
+    analyzer = RtmposeAnalyzer(enabled=True)
+
+    def point(name: str, x: float, y: float) -> dict:
+        return {"name": name, "x": x, "y": y, "confidence": 0.8, "visible": True}
+
+    front_seated = [
+        point("left_shoulder", 380, 238),
+        point("right_shoulder", 333, 235),
+        point("left_hip", 370, 264),
+        point("right_hip", 338, 267),
+        point("left_knee", 370, 261),
+        point("right_knee", 334, 262),
+        point("left_ankle", 385, 299),
+        point("right_ankle", 315, 294),
+    ]
+    horizontal_fall = [
+        point("left_shoulder", 220, 140),
+        point("right_shoulder", 224, 180),
+        point("left_hip", 310, 144),
+        point("right_hip", 314, 184),
+        point("left_knee", 380, 150),
+        point("right_knee", 382, 188),
+    ]
+    return {
+        "front_seated": analyzer._estimate_posture(front_seated),
+        "horizontal_fall": analyzer._estimate_posture(horizontal_fall),
     }
 
 

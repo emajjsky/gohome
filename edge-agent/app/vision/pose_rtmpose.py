@@ -47,6 +47,13 @@ SKELETON_EDGES = [
     ("right_knee", "right_ankle"),
 ]
 
+FALL_CORE_KEYPOINT_NAMES = {
+    "left_shoulder",
+    "right_shoulder",
+    "left_hip",
+    "right_hip",
+}
+
 
 class RtmposeAnalyzer:
     def __init__(
@@ -60,6 +67,9 @@ class RtmposeAnalyzer:
         min_keypoint_confidence: float = 0.30,
         max_poses: int = 1,
         fall_threshold: float = 0.78,
+        fall_min_pose_confidence: float = 0.36,
+        fall_min_visible_keypoints: int = 8,
+        fall_min_core_keypoints: int = 2,
         tracking: bool = False,
     ) -> None:
         self.enabled = enabled
@@ -69,6 +79,9 @@ class RtmposeAnalyzer:
         self.min_keypoint_confidence = float(min_keypoint_confidence)
         self.max_poses = max(1, int(max_poses))
         self.fall_threshold = float(fall_threshold)
+        self.fall_min_pose_confidence = float(fall_min_pose_confidence)
+        self.fall_min_visible_keypoints = max(1, int(fall_min_visible_keypoints))
+        self.fall_min_core_keypoints = max(1, int(fall_min_core_keypoints))
         self.tracking = bool(tracking)
         # PoseTracker only supports detector skipping when tracking is active.
         # This analyzer is shared by multiple cameras, so cross-camera tracking
@@ -93,27 +106,47 @@ class RtmposeAnalyzer:
                 return self._disabled_result(message, status="unavailable")
 
             try:
-                keypoints, scores = self._pose_tracker(frame)
+                keypoints, scores, inference_retried = self._infer_pose(frame)
                 poses = self._extract_poses(keypoints, scores, frame)
             except Exception as exc:
                 return self._disabled_result(f"RTMPose 推理失败：{exc}", status="error")
+
+        threshold = float(config.get("pose_fall_threshold", self.fall_threshold))
+        raw_pose_fall_score = max([float(pose.get("fall_score") or 0.0) for pose in poses], default=0.0)
+        rejected_fall_candidates = 0
+        for pose in poses:
+            quality = self._fall_evidence_quality(pose, config)
+            pose["raw_fall_score"] = pose.get("fall_score")
+            pose["fall_evidence_eligible"] = quality["eligible"]
+            pose["fall_quality"] = quality
+            if float(pose.get("fall_score") or 0.0) >= threshold and not quality["eligible"]:
+                rejected_fall_candidates += 1
+                pose["action_hints"] = [
+                    hint for hint in pose.get("action_hints", []) if hint != "fall_candidate"
+                ]
 
         pose_count = len(poses)
         tags: list[str] = []
         action_hints = self._merge_hints([hint for pose in poses for hint in pose.get("action_hints", [])])
         if pose_count:
             tags.append("pose_detected")
+        if inference_retried:
+            tags.append("pose_inference_retried")
         if any(pose.get("posture") == "lying" for pose in poses):
             tags.append("pose_low_body")
         if "hand_near_face" in action_hints:
             tags.append("pose_hand_near_face")
 
-        threshold = float(config.get("pose_fall_threshold", self.fall_threshold))
-        pose_fall_score = max([float(pose.get("fall_score") or 0.0) for pose in poses], default=0.0)
+        pose_fall_score = max(
+            [float(pose.get("fall_score") or 0.0) for pose in poses if pose.get("fall_evidence_eligible")],
+            default=0.0,
+        )
         pose_fall_candidate = pose_fall_score >= threshold
         if pose_fall_candidate:
             tags.append("pose_fall_candidate")
             action_hints = self._merge_hints([*action_hints, "fall_candidate"])
+        elif rejected_fall_candidates:
+            tags.append("pose_fall_low_quality")
 
         status = "not_visible"
         level = "info"
@@ -126,6 +159,8 @@ class RtmposeAnalyzer:
             posture = poses[0].get("posture") or "unknown"
             if pose_fall_candidate:
                 summary = f"RTMPose 骨架命中疑似跌倒候选，分数 {pose_fall_score:.2f}。"
+            elif rejected_fall_candidates:
+                summary = "RTMPose 检测到低质量跌倒形态，证据不足，未触发告警。"
             else:
                 summary = f"RTMPose 检测到 {pose_count} 组骨架，主姿态为 {posture}。"
 
@@ -143,10 +178,12 @@ class RtmposeAnalyzer:
                 "pose_skeleton_edges": SKELETON_EDGES,
                 "pose_action_hints": action_hints,
                 "pose_fall_score": round(pose_fall_score, 4),
+                "raw_pose_fall_score": round(raw_pose_fall_score, 4),
                 "pose_fall_candidate": pose_fall_candidate,
+                "pose_fall_rejected_low_quality": rejected_fall_candidates,
                 "pose_model_status": "ready",
                 "pose_model_name": self.model_name,
-                "pose_model_message": message,
+                "pose_model_message": self._ready_message(message, inference_retried),
                 "pose_backend": "rtmpose",
                 "pose_fall_threshold": threshold,
             },
@@ -157,10 +194,12 @@ class RtmposeAnalyzer:
             "pose_skeleton_edges": SKELETON_EDGES,
             "pose_action_hints": action_hints,
             "pose_fall_score": round(pose_fall_score, 4),
+            "raw_pose_fall_score": round(raw_pose_fall_score, 4),
             "pose_fall_candidate": pose_fall_candidate,
+            "pose_fall_rejected_low_quality": rejected_fall_candidates,
             "pose_model_status": "ready",
             "pose_model_name": self.model_name,
-            "pose_model_message": message,
+            "pose_model_message": self._ready_message(message, inference_retried),
             "tags": tags,
             "result": result,
         }
@@ -201,6 +240,21 @@ class RtmposeAnalyzer:
             self._load_error = f"RTMPose 模型加载失败：{exc}"
             return False, self._load_error
         return True, "RTMPose 模型已就绪。"
+
+    def _infer_pose(self, frame: Any) -> tuple[Any, Any, bool]:
+        try:
+            keypoints, scores = self._pose_tracker(frame)
+            return keypoints, scores, False
+        except TypeError as exc:
+            if "NoneType" not in str(exc):
+                raise
+            keypoints, scores = self._pose_tracker(frame)
+            return keypoints, scores, True
+
+    def _ready_message(self, message: str, inference_retried: bool) -> str:
+        if inference_retried:
+            return f"{message} 本帧人体框推理瞬态失败后重试成功。"
+        return message
 
     def _extract_poses(self, keypoints: Any, scores: Any, frame: Any) -> list[Dict[str, Any]]:
         import math
@@ -261,6 +315,40 @@ class RtmposeAnalyzer:
         poses.sort(key=lambda pose: float(pose.get("confidence") or 0.0), reverse=True)
         return poses
 
+    def _fall_evidence_quality(self, pose: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+        keypoints = pose.get("keypoints") if isinstance(pose.get("keypoints"), list) else []
+        visible = [point for point in keypoints if point.get("visible")]
+        core_visible = [point for point in visible if point.get("name") in FALL_CORE_KEYPOINT_NAMES]
+        confidence = float(pose.get("confidence") or 0.0)
+        min_confidence = float(config.get("pose_fall_min_confidence", self.fall_min_pose_confidence))
+        min_visible = max(
+            1,
+            int(config.get("pose_fall_min_visible_keypoints", self.fall_min_visible_keypoints)),
+        )
+        min_core = max(
+            1,
+            int(config.get("pose_fall_min_core_keypoints", self.fall_min_core_keypoints)),
+        )
+        reasons: list[str] = []
+        if confidence < min_confidence:
+            reasons.append("low_pose_confidence")
+        if len(visible) < min_visible:
+            reasons.append("insufficient_visible_keypoints")
+        if len(core_visible) < min_core:
+            reasons.append("insufficient_core_keypoints")
+        return {
+            "eligible": not reasons,
+            "reasons": reasons,
+            "pose_confidence": round(confidence, 4),
+            "visible_keypoints": len(visible),
+            "core_keypoints": len(core_visible),
+            "thresholds": {
+                "pose_confidence": min_confidence,
+                "visible_keypoints": min_visible,
+                "core_keypoints": min_core,
+            },
+        }
+
     def _score_at(self, scores: Any, pose_index: int, keypoint_index: int) -> float:
         try:
             return float(scores[pose_index, keypoint_index])
@@ -314,7 +402,7 @@ class RtmposeAnalyzer:
             torso_dy = abs(mid_hip[1] - mid_shoulder[1])
             if torso_dy <= max(26.0, torso_dx * 0.72) and width >= height * 0.95:
                 return "lying"
-        if width > height * 1.45:
+        elif width > height * 1.45:
             return "lying"
         if knees and not ankles:
             return "seated_or_half_body"
@@ -409,7 +497,9 @@ class RtmposeAnalyzer:
                 "pose_skeleton_edges": SKELETON_EDGES,
                 "pose_action_hints": [],
                 "pose_fall_score": 0.0,
+                "raw_pose_fall_score": 0.0,
                 "pose_fall_candidate": False,
+                "pose_fall_rejected_low_quality": 0,
                 "pose_model_status": status,
                 "pose_model_name": self.model_name,
                 "pose_model_message": message,
@@ -422,7 +512,9 @@ class RtmposeAnalyzer:
             "pose_skeleton_edges": SKELETON_EDGES,
             "pose_action_hints": [],
             "pose_fall_score": 0.0,
+            "raw_pose_fall_score": 0.0,
             "pose_fall_candidate": False,
+            "pose_fall_rejected_low_quality": 0,
             "pose_model_status": status,
             "pose_model_name": self.model_name,
             "pose_model_message": message,

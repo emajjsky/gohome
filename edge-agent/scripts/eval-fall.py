@@ -19,6 +19,8 @@ def main() -> None:
             "fall_score": analysis.get("fall_score"),
             "pose_fall_candidate": analysis.get("pose_fall_candidate"),
             "pose_fall_score": analysis.get("pose_fall_score"),
+            "raw_pose_fall_score": analysis.get("raw_pose_fall_score"),
+            "pose_fall_rejected_low_quality": analysis.get("pose_fall_rejected_low_quality"),
             "person_count": analysis.get("person_count"),
             "pose_count": analysis.get("pose_count"),
         },

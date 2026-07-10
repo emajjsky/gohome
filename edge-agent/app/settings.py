@@ -80,6 +80,9 @@ class Settings:
         self.pose_runtime_backend = os.getenv("GOHOME_POSE_RUNTIME_BACKEND", "onnxruntime").strip().lower() or "onnxruntime"
         self.pose_device = os.getenv("GOHOME_POSE_DEVICE", "cpu").strip().lower() or "cpu"
         self.pose_fall_threshold = float(os.getenv("GOHOME_POSE_FALL_THRESHOLD", "0.78"))
+        self.pose_fall_min_confidence = float(os.getenv("GOHOME_POSE_FALL_MIN_CONFIDENCE", "0.36"))
+        self.pose_fall_min_visible_keypoints = int(os.getenv("GOHOME_POSE_FALL_MIN_VISIBLE_KEYPOINTS", "8"))
+        self.pose_fall_min_core_keypoints = int(os.getenv("GOHOME_POSE_FALL_MIN_CORE_KEYPOINTS", "2"))
         self.pose_det_frequency = int(os.getenv("GOHOME_POSE_DET_FREQUENCY", "8"))
         self.pose_min_keypoint_confidence = float(os.getenv("GOHOME_POSE_MIN_KEYPOINT_CONFIDENCE", "0.30"))
         self.pose_max_poses = int(os.getenv("GOHOME_POSE_MAX_POSES", "3"))

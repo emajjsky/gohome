@@ -9930,3 +9930,47 @@ Git：
 - 数据库仅保存 token SHA-256 摘要，不保存明文 token。
 - 同一个登录 token 在 `gohome-app.service` 重启前后访问用户、事件接口均返回 200。
 - 服务重启后事件证据 JPEG 仍返回 200，登录状态不再因进程重启丢失。
+
+## 80. 2026-07-10 RTMPose 跌倒误报根因修复与实机回归
+
+本轮先恢复并确认原 YOLO + RTMPose 路线，再针对历史高分记录做实拍复验。数据库历史记录中存在大量 `pose_fall_score >= 0.78`，抽查发现空客厅沙发、远处半身和正常坐姿曾被判为跌倒。
+
+根因：
+
+- RTMPose 原逻辑只要求 4 个可见关键点即可计算跌倒分数，低置信家具骨架也能进入告警判断。
+- 正面坐姿的肩髋区域宽度刚好超过高度 `1.45` 倍时，旧通用宽高比规则会覆盖真实竖直躯干方向并返回 `lying`。
+- RTMLib 0.0.15 的人体检测偶发返回空内部结果，单帧会报 `'NoneType' object is not subscriptable`。
+- MJPEG 长连接存在时，systemd 默认会等待 90 秒关闭服务，影响部署和恢复速度。
+
+实现：
+
+- `RtmposeAnalyzer` 新增：
+  - `pose_fall_min_confidence=0.36`
+  - `pose_fall_min_visible_keypoints=8`
+  - `pose_fall_min_core_keypoints=2`
+- 每组骨架新增 `raw_fall_score`、`fall_evidence_eligible` 和 `fall_quality`；顶层新增 `raw_pose_fall_score` 与 `pose_fall_rejected_low_quality`。
+- 低质量高分骨架保留关键点和原始分数，但移除 `fall_candidate` 行为提示，不进入正式跌倒候选。
+- 肩、髋均可见时优先使用肩髋中点方向判断卧姿；通用宽高比仅用于肩髋不完整的骨架。
+- RTMPose 特定 `NoneType` 瞬态错误只重试一次，成功时标记 `pose_inference_retried`，二次失败仍返回 `error`。
+- `install-systemd-service.sh` 增加 `TimeoutStopSec=15`，盒子现有服务已应用。
+- `eval-fall.py` 报告增加原始姿态跌倒分数和低质量拒绝数量。
+- `verify-vision-pipeline.py` 增加低质量骨架、受控重试、正面坐姿和横向跌倒姿态回归。
+- 在 Git 忽略的 `data/eval/samples/fall/home_false_positive` 中保存 6 张家庭私有实拍负样本及 manifest；样本已同步到测试 Pi，但不提交到代码仓库。
+
+树莓派最终验证：
+
+```text
+家庭负样本: TN=6, FP=0, errors=0
+UR Fall: TP=8, TN=12, FP=0, FN=0, errors=0
+两路实机并发预览: 20/20 ready, errors=0, fall_candidates=0
+```
+
+同时通过：
+
+- `verify-vision-runtime.py --require-yolo --require-pose --smoke`
+- `verify-vision-pipeline.py`
+- `verify-fall-rule-engine.py`
+- `verify-alert-dedupe.py`
+- `run-vision-smoke-eval.sh`
+
+当前仍保持 `fall_detection_enabled=0`。本轮证明的是已知家庭误报被压制且现有 UR Fall 小样本召回未下降，不代表医疗级准确率。正式开启前仍需当前家庭视角的安全模拟跌倒正样本和更长时间正常活动负样本。
