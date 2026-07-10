@@ -8750,6 +8750,36 @@ GOHOME_APP_STORE=postgres GOHOME_DATABASE_URL='postgres://...' npm run app-serve
 - 当前盒子回传的是基础视觉检测，所以人形、无人和跌倒暂时被正确禁用；如果要开放这三项，需要在盒子端启用人形或姿态模型，并让同步上报带回对应能力。
 - 守护规则已经能保存、下发、盒子应用并在 App 显示同步状态；下一步应继续补“真实事件反馈质量”，确认事件页展示的候选事件、规则证据和当前两路摄像头检测结果完全一致。
 
+### 67.6.1 2026-07-10 树莓派 YOLO 真实运行环境恢复
+
+背景：
+
+- 盒子管理台实时画面中有人，但“人形 / 无人”始终显示人数 0。
+- 排查确认 `.env.local` 覆盖仓库 `.env`，实际运行的是 `GOHOME_DETECTOR_BACKEND=basic`。
+- 此前为了规避 Python 3.13 环境缺少 `torch / ultralytics` 导致的模型错误，曾主动降级到 basic；算法开关可以同步，但 basic 不具备真实人形检测能力。
+
+本次恢复：
+
+- 真实设备为 aarch64、8GB 内存，Python 3.13.5。
+- 在现有 `.venv-pi` 安装并验证：
+  - `torch==2.10.0`
+  - `torchvision==0.25.0`
+  - `ultralytics==8.4.91`
+- `requirements-yolo.txt` 锁定上述 ARM64 兼容版本，避免后续安装拉取更大的未验证版本。
+- 使用当前两路摄像头真实截图运行 `yolo11n.pt`：
+  - 首次模型预热约 2.3 秒。
+  - 后续 416 尺寸单帧推理约 90-95ms。
+  - 两路画面均识别到真实人物并返回检测框和置信度。
+- Pi 正式配置恢复为 `GOHOME_DETECTOR_BACKEND=yolo`，模型为 `yolo11n.pt`，推理尺寸设为 416。
+
+验证结果：
+
+- `/api/device` 已返回 `detector_backend=yolo`、`person_detection=true`、`yolo_imgsz=416`。
+- 最新持久化分析中，摄像头 13 检测到 1 人，摄像头 14 检测到 3 人，均为 `model_status=ready`。
+- 无头 Chrome 验证管理台人形预览：实时画面显示真实人形框、人数 1、置信度 63%、模型 `yolo11n.pt`、分析延迟 132ms，页面无横向溢出。
+- 云端 `/api/app/device` 已同步返回 YOLO 后端及人形、长时间无人、跌倒候选能力；盒子当前规则已启用人形检测。
+- 跌倒当前仍是人框比例和位置的候选规则，不等同于可靠姿态识别；`GOHOME_POSE_ENABLED` 保持关闭，待 RTMPose/等价姿态模型在 Pi 上单独完成性能和误报验证后再开放姿态能力。
+
 ### 67.7 事件页真实反馈与旧离线评估修复
 
 背景：
