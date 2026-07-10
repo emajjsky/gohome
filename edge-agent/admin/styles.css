@@ -1231,6 +1231,16 @@ label.wide,
     0 0 0 4px oklch(61% 0.09 205 / .12);
 }
 
+.detection-box.scene {
+  border-color: oklch(68% 0.11 205);
+  border-style: dashed;
+  background: oklch(68% 0.11 205 / .08);
+  box-shadow:
+    0 0 0 1px oklch(12% 0.02 238 / .38),
+    0 0 0 4px oklch(68% 0.11 205 / .10);
+  animation: none;
+}
+
 .detection-box span {
   position: absolute;
   left: -2px;
@@ -1261,6 +1271,10 @@ label.wide,
 
 .detection-box.tracked span {
   background: oklch(34% 0.075 205 / .9);
+}
+
+.detection-box.scene span {
+  background: oklch(34% 0.075 205 / .92);
 }
 
 @keyframes detection-pulse {

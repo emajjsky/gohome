@@ -55,6 +55,7 @@ class RuleEngine:
         self.last_motion_at: Dict[int, datetime] = {}
         self.last_person_seen_at: Dict[int, datetime] = {}
         self.fall_tracks: Dict[int, Dict[str, Any]] = {}
+        self.fall_upright_states: Dict[int, Dict[str, Any]] = {}
         self.fire_confirm_counts: Dict[int, int] = {}
 
     def evaluate_snapshot(
@@ -151,7 +152,7 @@ class RuleEngine:
                     rule={
                         "id": "fall_candidate",
                         "label": "跌倒应急报警",
-                        "reason": "同一人体轨迹连续出现倒地姿态证据，达到帧数、持续时间和置信度阈值。",
+                        "reason": "同一人体先出现站坐状态，随后快速下降并在非床/沙发区域持续倒地，达到帧数、持续时间和置信度阈值。",
                         "observed": {
                             **fall_runtime["observed"],
                             "people": analysis.get("people", []),
@@ -375,12 +376,19 @@ class RuleEngine:
         recover_frames = max(2, int(rules.get("fall_recover_frames") or 2))
         fall_evidence = self._fall_evidence(analysis)
         target = self._fall_target(analysis, fall_evidence)
+        upright_before = self.fall_upright_states.get(camera_id) or {}
+        upright_targets = self._upright_targets(analysis)
+        transition = self._fall_transition(target, upright_before, now, analysis, rules)
+        scene_suppressed = bool(target and target.get("normal_lying_zone"))
 
         fall_score_ok = fall_score >= fall_score_threshold
         pose_score_ok = pose_fall and pose_fall_score >= pose_fall_threshold
-        strong_candidate = bool(target) and fall_candidate and (fall_score_ok or pose_score_ok)
+        strong_visual_candidate = bool(target) and fall_candidate and (fall_score_ok or pose_score_ok)
         visual_candidate = bool(target) and fall_candidate
         previous = self.fall_tracks.get(camera_id) or {}
+        same_visual_target = bool(strong_visual_candidate and previous and self._same_fall_target(previous.get("target"), target))
+        transition_confirmed = bool(transition.get("confirmed")) or bool(previous.get("transition_confirmed") and same_visual_target)
+        strong_candidate = strong_visual_candidate and transition_confirmed and not scene_suppressed
         same_target = bool(strong_candidate and previous and self._same_fall_target(previous.get("target"), target))
 
         if strong_candidate:
@@ -395,6 +403,7 @@ class RuleEngine:
                     "alert_emitted": False,
                     "first_score": fall_score,
                     "max_score": max(fall_score, pose_fall_score),
+                    "transition_confirmed": transition_confirmed,
                 }
             else:
                 track = {
@@ -404,6 +413,7 @@ class RuleEngine:
                     "clear_count": 0,
                     "target": target,
                     "max_score": max(float(previous.get("max_score") or 0.0), fall_score, pose_fall_score),
+                    "transition_confirmed": transition_confirmed,
                 }
             duration = max(0.0, (now - track["started_at"]).total_seconds())
             track["duration_seconds"] = duration
@@ -411,13 +421,37 @@ class RuleEngine:
                 track["stage"] = "confirmed"
             elif track["confirm_count"] > 1:
                 track["stage"] = "confirming"
+            else:
+                track["stage"] = "suspect"
             emit_event = track["stage"] == "confirmed" and not bool(track.get("alert_emitted"))
             if emit_event:
                 track["alert_emitted"] = True
             self.fall_tracks[camera_id] = track
         else:
             track = {**previous} if previous else {}
-            if track.get("stage") in {"suspect", "confirming", "confirmed"}:
+            if scene_suppressed and visual_candidate:
+                track = {
+                    "stage": "normal_lying_zone",
+                    "started_at": now,
+                    "last_seen_at": now,
+                    "confirm_count": 0,
+                    "clear_count": 0,
+                    "target": target,
+                    "alert_emitted": False,
+                    "duration_seconds": 0.0,
+                }
+            elif strong_visual_candidate and not transition.get("confirmed"):
+                track = {
+                    "stage": "awaiting_transition",
+                    "started_at": now,
+                    "last_seen_at": now,
+                    "confirm_count": 0,
+                    "clear_count": 0,
+                    "target": target,
+                    "alert_emitted": False,
+                    "duration_seconds": 0.0,
+                }
+            elif track.get("stage") in {"suspect", "confirming", "confirmed"}:
                 track["clear_count"] = int(track.get("clear_count") or 0) + 1
                 if track["clear_count"] >= recover_frames:
                     track = {
@@ -455,6 +489,12 @@ class RuleEngine:
             emit_event = False
             self.fall_tracks[camera_id] = track
 
+        if upright_targets and not visual_candidate:
+            self.fall_upright_states[camera_id] = {
+                "observed_at": now,
+                "targets": upright_targets,
+            }
+
         duration_seconds = float(track.get("duration_seconds") or 0.0)
         stage = str(track.get("stage") or "clear")
         threshold = {
@@ -463,6 +503,9 @@ class RuleEngine:
             "confirm_frames": confirm_frames,
             "confirm_seconds": confirm_seconds,
             "recover_frames": recover_frames,
+            "transition_window_seconds": int(transition.get("window_seconds") or 20),
+            "min_vertical_drop": float(transition.get("min_vertical_drop") or 0.12),
+            "transition_motion_score": float(transition.get("motion_threshold") or 0.02),
         }
         observed = {
             "fall_score": fall_score,
@@ -472,6 +515,9 @@ class RuleEngine:
             "same_target": bool(same_target),
             "target": target,
             "evidence": fall_evidence,
+            "scene_suppressed": scene_suppressed,
+            "scene_zone": target.get("scene_zone_label") if target else None,
+            "transition": {**transition, "confirmed": transition_confirmed, "inherited": transition_confirmed and not bool(transition.get("confirmed"))},
         }
         return {
             "emit_event": bool(emit_event),
@@ -485,6 +531,9 @@ class RuleEngine:
                 "fall_clear_count": int(track.get("clear_count") or 0),
                 "fall_alert_emitted": bool(track.get("alert_emitted")),
                 "fall_target": target,
+                "fall_scene_suppressed": scene_suppressed,
+                "fall_transition_confirmed": transition_confirmed,
+                "fall_transition": {**transition, "confirmed": transition_confirmed, "inherited": transition_confirmed and not bool(transition.get("confirmed"))},
                 "fall_score": fall_score,
                 "pose_fall_score": pose_fall_score,
                 "fall_threshold": threshold,
@@ -515,7 +564,104 @@ class RuleEngine:
             "size": [round((x2 - x1) / width, 4), round((y2 - y1) / height, 4)],
             "source": best.get("source") or best.get("method") or "fall_candidate",
             "score": round(float(best.get("score") or best.get("fall_score") or best.get("confidence") or 0.0), 4),
+            "posture": best.get("posture"),
+            "normal_lying_zone": bool(best.get("normal_lying_zone")),
+            "scene_zone_id": best.get("scene_zone_id"),
+            "scene_zone_label": best.get("scene_zone_label"),
+            "scene_zone_label_zh": best.get("scene_zone_label_zh"),
+            "scene_zone_overlap": best.get("scene_zone_overlap"),
         }
+
+    def _upright_targets(self, analysis: Dict[str, Any]) -> list[Dict[str, Any]]:
+        width = max(1.0, float(analysis.get("image_width") or 640))
+        height = max(1.0, float(analysis.get("image_height") or 360))
+        targets = []
+        poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
+        for pose in poses:
+            posture = str(pose.get("posture") or "")
+            if posture not in {"standing_or_sitting", "seated_or_half_body", "upper_body"}:
+                continue
+            if pose.get("person_evidence_eligible") is False or not self._valid_bbox(pose.get("bbox")):
+                continue
+            targets.append(self._normalized_target(pose, width, height, posture=posture))
+        if targets:
+            return targets
+        people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
+        for person in people:
+            if person.get("fall_candidate") or person.get("presence_candidate") or not self._valid_bbox(person.get("bbox")):
+                continue
+            if float(person.get("aspect_ratio") or 0.0) > 1.25:
+                continue
+            targets.append(self._normalized_target(person, width, height, posture="person_upright"))
+        return targets
+
+    def _normalized_target(self, item: Dict[str, Any], width: float, height: float, *, posture: str) -> Dict[str, Any]:
+        bbox = [float(value) for value in item.get("bbox")]
+        x1, y1, x2, y2 = bbox
+        return {
+            "bbox": [round(value, 1) for value in bbox],
+            "center": [round(((x1 + x2) / 2.0) / width, 4), round(((y1 + y2) / 2.0) / height, 4)],
+            "bottom_y": round(y2 / height, 4),
+            "posture": posture,
+            "source": item.get("source") or "upright_history",
+            "score": round(float(item.get("confidence") or 0.0), 4),
+        }
+
+    def _fall_transition(
+        self,
+        target: Dict[str, Any] | None,
+        upright_state: Dict[str, Any],
+        now: datetime,
+        analysis: Dict[str, Any],
+        rules: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        window_seconds = max(5, int(rules.get("fall_transition_window_seconds") or 20))
+        min_vertical_drop = max(0.05, float(rules.get("fall_min_vertical_drop") or 0.12))
+        motion_threshold = max(0.01, float(rules.get("fall_transition_motion_score") or 0.02))
+        result = {
+            "confirmed": False,
+            "reason": "no_recent_upright",
+            "window_seconds": window_seconds,
+            "min_vertical_drop": min_vertical_drop,
+            "motion_threshold": motion_threshold,
+            "age_seconds": None,
+            "vertical_drop": None,
+            "horizontal_distance": None,
+            "motion_score": analysis.get("motion_score"),
+            "upright_target": None,
+        }
+        observed_at = upright_state.get("observed_at")
+        upright_targets = upright_state.get("targets") if isinstance(upright_state.get("targets"), list) else []
+        if target is None or not isinstance(observed_at, datetime) or not upright_targets:
+            return result
+        age_seconds = max(0.0, (now - observed_at).total_seconds())
+        result["age_seconds"] = round(age_seconds, 3)
+        if age_seconds > window_seconds:
+            result["reason"] = "upright_too_old"
+            return result
+        target_center = target.get("center")
+        if not isinstance(target_center, list) or len(target_center) != 2:
+            result["reason"] = "missing_target_center"
+            return result
+        best = min(
+            upright_targets,
+            key=lambda item: abs(float((item.get("center") or [0, 0])[0]) - float(target_center[0])),
+        )
+        upright_center = best.get("center") or [0, 0]
+        horizontal_distance = abs(float(upright_center[0]) - float(target_center[0]))
+        vertical_drop = float(target_center[1]) - float(upright_center[1])
+        motion_score = float(analysis.get("motion_score") or 0.0)
+        spatial_match = horizontal_distance <= 0.28
+        descent = vertical_drop >= min_vertical_drop
+        motion_ok = motion_score >= motion_threshold or vertical_drop >= min_vertical_drop * 1.5
+        result.update({
+            "confirmed": bool(spatial_match and descent and motion_ok),
+            "reason": "confirmed" if spatial_match and descent and motion_ok else "insufficient_descent",
+            "vertical_drop": round(vertical_drop, 4),
+            "horizontal_distance": round(horizontal_distance, 4),
+            "upright_target": best,
+        })
+        return result
 
     def _same_fall_target(self, previous: Any, current: Any) -> bool:
         if not isinstance(previous, dict) or not isinstance(current, dict):

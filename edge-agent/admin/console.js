@@ -890,7 +890,15 @@ function renderDetectionOverlay(snapshot) {
   const poses = shouldRenderPoseForMode(mode)
     ? snapshotPoses(snapshot).filter((pose) => mode !== "person" || pose.person_evidence_eligible !== false)
     : [];
-  const boxes = people.length
+  const sceneZones = mode === "fall"
+    ? (snapshot?.analysis?.scene_zones || []).filter((zone) => zone.stable && zone.zone_kind === "normal_lying_surface")
+    : [];
+  const sceneBoxes = sceneZones.map((zone) => ({
+    bbox: zone.bbox,
+    label: `自动识别${zone.label_zh || zone.label || "卧躺区域"} · ${zone.hits || 0} 帧稳定`,
+    kind: "scene",
+  }));
+  const personBoxes = people.length
     ? people.map((person, index) => {
         const [x1, y1, x2, y2] = person.bbox || [0, 0, 0, 0];
         const confidence = person.confidence ? ` · ${Math.round(person.confidence * 100)}%` : "";
@@ -904,6 +912,7 @@ function renderDetectionOverlay(snapshot) {
         return { bbox: [x1, y1, x2, y2], label: person.fall_candidate ? `${label} · 疑似跌倒` : label, kind: tracked ? "tracked" : kind };
       })
     : [];
+  const boxes = [...sceneBoxes, ...personBoxes];
   if (!snapshot || !rect || (!boxes.length && !poses.length)) {
     overlay.innerHTML = "";
     overlay.removeAttribute("style");
@@ -1071,11 +1080,13 @@ function algorithmPreviewMetaItems(mode, snapshot) {
     const fallScore = maxMetricScore([analysis.fall_score, analysis.pose_fall_score]);
     const fallRuntime = latestFallRuntime();
     const threshold = fallRuntime.threshold || analysis.thresholds || {};
+    const stableZones = (analysis.scene_zones || []).filter((zone) => zone.stable && zone.zone_kind === "normal_lying_surface");
+    const stage = fallStageInfo(fallRuntime.stage, { personCount: peopleCount });
     return [
       { label: "检测帧", value: capturedAt },
-      { label: "人数", value: String(peopleCount) },
-      { label: "骨架", value: String(poseCount) },
       { label: "倒地分数", value: fallScore === null ? "-" : `${Math.round(fallScore * 100)}%` },
+      { label: "自动场景", value: stableZones.length ? stableZones.map((zone) => zone.label_zh || zone.label).join("、") : "学习中" },
+      { label: "时序状态", value: stage.title },
       { label: "复核进度", value: `${fallRuntime.confirmFrames || 0}/${threshold.confirm_frames || 2} 帧` },
       { label: "持续时间", value: `${Math.round(fallRuntime.durationSeconds || 0)}/${threshold.confirm_seconds ?? 4} 秒` },
     ];
@@ -1499,6 +1510,9 @@ function latestFallRuntime() {
     durationSeconds: Number(stateData.fall_confirm_seconds || 0),
     clearFrames: Number(stateData.fall_clear_count || 0),
     alertEmitted: Boolean(stateData.fall_alert_emitted),
+    sceneSuppressed: Boolean(stateData.fall_scene_suppressed),
+    transitionConfirmed: Boolean(stateData.fall_transition_confirmed),
+    transition: stateData.fall_transition || {},
   };
 }
 
@@ -1513,6 +1527,16 @@ function fallStageInfo(stage, context = {}) {
       title: "疑似姿态观察",
       detail: "出现弱倒地线索，但未达到告警阈值",
       level: "watch",
+    },
+    awaiting_transition: {
+      title: "等待下降过程证据",
+      detail: "当前只有单帧卧姿，没有观察到此前站坐和快速下降过程",
+      level: "watch",
+    },
+    normal_lying_zone: {
+      title: "正常卧躺区域",
+      detail: "人体与自动识别的床或沙发重合，不进入跌倒告警",
+      level: "idle",
     },
     suspect: {
       title: "疑似跌倒，开始复核",
@@ -1542,7 +1566,7 @@ const previewAlgorithmCopy = {
   quality: "画面质量：亮度、对比度、运动变化。",
   person: "人形 / 无人：实时框选画面里的人像并显示置信度。",
   stillness: "久坐 / 静止：看时间窗和画面变化。",
-  fall: "跌倒检测：先捕捉疑似姿态，再按同一人体轨迹连续复核，确认后生成事件和证据包。",
+  fall: "跌倒检测：自动识别床和沙发，结合站坐、快速下降、低位持续和恢复过程确认。",
   meal: "用餐：结合时段、区域和姿态线索。",
   night: "夜间活动：结合时段和运动变化。",
   fire: "火灾：识别明火视觉线索，命中后触发应急联系人。",
@@ -1632,7 +1656,12 @@ function algorithmEvidenceLine(mode, snapshot) {
     return `真实指标：火灾分数 ${fmtNumber(analysis.fire_score || 0, 4)}，动态 ${fmtNumber(analysis.fire_temporal_score, 4)}，亮度 ${fmtNumber(analysis.brightness ?? snapshot.brightness, 1)}。`;
   }
   if (mode === "fall") {
-    return `真实指标：倒地候选 ${analysis.fall_candidate ? "需要复核" : "未出现"}，人数 ${snapshot.person_count ?? analysis.person_count ?? 0}。`;
+    const zones = (analysis.scene_zones || []).filter((zone) => zone.stable && zone.zone_kind === "normal_lying_surface");
+    const lyingPose = (analysis.poses || []).find((pose) => pose.normal_lying_zone);
+    if (lyingPose) {
+      return `真实指标：当前卧姿位于自动识别的${lyingPose.scene_zone_label_zh || "床/沙发"}区域，只保留观察记录，不进入跌倒告警。`;
+    }
+    return `真实指标：倒地候选 ${analysis.fall_candidate ? "需要时序复核" : "未出现"}，自动场景 ${zones.length ? zones.map((zone) => zone.label_zh || zone.label).join("、") : "学习中"}。`;
   }
   if (mode === "stillness") {
     const temporal = analysis.activity_temporal || analysis.activity?.temporal || {};

@@ -11,6 +11,7 @@ from .fire import FireAnalyzer
 from .person_yolo import PersonDetector
 from .pose_rtmpose import RtmposeAnalyzer
 from .quality import QualityAnalyzer
+from .scene_context import SceneContextTracker
 
 
 class VisionPipeline:
@@ -61,6 +62,7 @@ class VisionPipeline:
         }
         self._pose_cache: dict[str, Dict[str, Any]] = {}
         self._activity_history: dict[str, deque[Dict[str, Any]]] = {}
+        self.scene = SceneContextTracker()
         self.quality = QualityAnalyzer()
         self.person = PersonDetector(
             detector_backend=detector_backend,
@@ -99,6 +101,18 @@ class VisionPipeline:
         raw_people = list(person.get("people") or [])
         raw_pose = self.pose.analyze(frame, runtime_config)
         pose = self._pose_with_short_cache(raw_pose, runtime_config, quality)
+        scene_candidates = self._scene_objects_without_human_overlap(
+            list(person.get("scene_objects") or []),
+            raw_people,
+            list(pose.get("poses") or []),
+        )
+        scene = self.scene.update(scene_candidates, runtime_config)
+        raw_people, annotated_poses = self.scene.annotate(
+            raw_people,
+            list(pose.get("poses") or []),
+            list(scene.get("scene_zones") or []),
+        )
+        pose = self._pose_with_scene_context(pose, annotated_poses)
         person_poses = self._poses_for_person_evidence(pose.get("poses") or [])
         people = self._refine_people_with_pose(raw_people, person_poses, frame, runtime_config)
         if (
@@ -108,6 +122,7 @@ class VisionPipeline:
         ):
             people = [person for person in people if not person.get("presence_candidate")]
         self._update_person_result_after_pose_refine(person, people, pose.get("poses") or [])
+        self._update_person_scene_context(person, scene)
         fall = self.fall.analyze(self._people_for_fall_alerts(people, raw_people, runtime_config), runtime_config)
         pose_fall_candidate = bool(pose.get("pose_fall_candidate"))
         if pose_fall_candidate and not fall["fall_candidate"]:
@@ -146,6 +161,7 @@ class VisionPipeline:
             *fall.get("tags", []),
             *activity.get("tags", []),
             *fire.get("tags", []),
+            *(["scene_normal_lying_surface"] if scene.get("normal_lying_zones") else []),
         ])
 
         algorithm_results = {
@@ -182,6 +198,8 @@ class VisionPipeline:
             "pose_model_name": pose.get("pose_model_name") or "",
             "model_version": self.version,
             "pipeline_version": self.version,
+            "image_width": int(frame.shape[1]),
+            "image_height": int(frame.shape[0]),
             "brightness": quality["brightness"],
             "contrast": quality["contrast"],
             "black_screen": quality["black_screen"],
@@ -190,6 +208,10 @@ class VisionPipeline:
             "thresholds": thresholds,
             "person_count": person.get("person_count"),
             "people": people,
+            "scene_objects": scene.get("scene_objects") or [],
+            "scene_zones": scene.get("scene_zones") or [],
+            "normal_lying_zones": scene.get("normal_lying_zones") or [],
+            "scene_map_status": scene.get("scene_map_status") or "empty",
             "pose_count": pose.get("pose_count"),
             "poses": pose.get("poses") or [],
             "pose_skeleton_edges": pose.get("pose_skeleton_edges") or [],
@@ -393,6 +415,61 @@ class VisionPipeline:
     def _poses_for_person_evidence(self, poses: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
         return [pose for pose in poses if pose.get("person_evidence_eligible", True)]
 
+    def _scene_objects_without_human_overlap(
+        self,
+        scene_objects: list[Dict[str, Any]],
+        people: list[Dict[str, Any]],
+        poses: list[Dict[str, Any]],
+    ) -> list[Dict[str, Any]]:
+        human_boxes = [
+            item.get("bbox")
+            for item in [*people, *poses]
+            if self._valid_box(item.get("bbox"))
+        ]
+        filtered = []
+        for scene_object in scene_objects:
+            scene_box = scene_object.get("bbox")
+            if not self._valid_box(scene_box):
+                continue
+            overlap = max(
+                [self._box_intersection_ratio(scene_box, human_box) for human_box in human_boxes],
+                default=0.0,
+            )
+            if overlap < 0.55:
+                filtered.append(scene_object)
+        return filtered
+
+    def _box_intersection_ratio(self, base: Any, other: Any) -> float:
+        if not self._valid_box(base) or not self._valid_box(other):
+            return 0.0
+        ax1, ay1, ax2, ay2 = [float(value) for value in base]
+        bx1, by1, bx2, by2 = [float(value) for value in other]
+        intersection = max(0.0, min(ax2, bx2) - max(ax1, bx1)) * max(0.0, min(ay2, by2) - max(ay1, by1))
+        base_area = max(1.0, (ax2 - ax1) * (ay2 - ay1))
+        return intersection / base_area
+
+    def _pose_with_scene_context(self, pose: Dict[str, Any], poses: list[Dict[str, Any]]) -> Dict[str, Any]:
+        updated = {**pose, "poses": poses, "pose_count": len(poses)}
+        result = updated.get("result")
+        if result is not None:
+            result.data = {**result.data, "poses": poses, "pose_count": len(poses)}
+        return updated
+
+    def _update_person_scene_context(self, person: Dict[str, Any], scene: Dict[str, Any]) -> None:
+        person["scene_objects"] = scene.get("scene_objects") or []
+        person["scene_zones"] = scene.get("scene_zones") or []
+        person["normal_lying_zones"] = scene.get("normal_lying_zones") or []
+        person["scene_map_status"] = scene.get("scene_map_status") or "empty"
+        result = person.get("result")
+        if result is not None:
+            result.data = {
+                **result.data,
+                "scene_objects": person["scene_objects"],
+                "scene_zones": person["scene_zones"],
+                "normal_lying_zones": person["normal_lying_zones"],
+                "scene_map_status": person["scene_map_status"],
+            }
+
     def _people_for_fall_alerts(
         self,
         people: list[Dict[str, Any]],
@@ -448,6 +525,12 @@ class VisionPipeline:
                 "pose_validated": bool(overlaps_pose),
                 "pose_tracking_state": matching_pose.get("tracking_state") if matching_pose else person.get("pose_tracking_state"),
                 "pose_track_age_seconds": matching_pose.get("track_age_seconds") if matching_pose else person.get("pose_track_age_seconds"),
+                "normal_lying_zone": matching_pose.get("normal_lying_zone", person.get("normal_lying_zone", False)) if matching_pose else person.get("normal_lying_zone", False),
+                "scene_zone_id": matching_pose.get("scene_zone_id") if matching_pose else person.get("scene_zone_id"),
+                "scene_zone_label": matching_pose.get("scene_zone_label") if matching_pose else person.get("scene_zone_label"),
+                "scene_zone_label_zh": matching_pose.get("scene_zone_label_zh") if matching_pose else person.get("scene_zone_label_zh"),
+                "scene_zone_bbox": matching_pose.get("scene_zone_bbox") if matching_pose else person.get("scene_zone_bbox"),
+                "scene_zone_overlap": matching_pose.get("scene_zone_overlap") if matching_pose else person.get("scene_zone_overlap"),
             })
 
         for pose in poses:
@@ -538,6 +621,12 @@ class VisionPipeline:
             "frame_width": width,
             "frame_height": height,
             "fall_candidate": False,
+            "normal_lying_zone": bool(pose.get("normal_lying_zone")),
+            "scene_zone_id": pose.get("scene_zone_id"),
+            "scene_zone_label": pose.get("scene_zone_label"),
+            "scene_zone_label_zh": pose.get("scene_zone_label_zh"),
+            "scene_zone_bbox": pose.get("scene_zone_bbox"),
+            "scene_zone_overlap": pose.get("scene_zone_overlap"),
         }
 
     def _valid_box(self, bbox: Any) -> bool:

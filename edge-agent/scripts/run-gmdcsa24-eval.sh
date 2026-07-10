@@ -41,3 +41,15 @@ fi
   --pose-fall-min-confidence "${GOHOME_POSE_FALL_MIN_CONFIDENCE:-0.36}" \
   --pose-fall-min-visible-keypoints "${GOHOME_POSE_FALL_MIN_VISIBLE_KEYPOINTS:-8}" \
   --pose-fall-min-core-keypoints "${GOHOME_POSE_FALL_MIN_CORE_KEYPOINTS:-2}"
+
+"$PYTHON_BIN" scripts/eval-fall-sequences.py \
+  --samples-dir data/eval/samples/fall/gmdcsa24 \
+  --manifest data/eval/samples/fall/gmdcsa24/manifest.jsonl \
+  --detector-backend yolo \
+  --yolo-model "${GOHOME_YOLO_MODEL:-yolo11n.pt}" \
+  --yolo-confidence "${GOHOME_YOLO_CONFIDENCE:-0.20}" \
+  --yolo-imgsz "${GOHOME_YOLO_IMGSZ:-416}" \
+  --pose-fall-threshold "${GOHOME_POSE_FALL_THRESHOLD:-0.78}" \
+  --pose-fall-min-confidence "${GOHOME_POSE_FALL_MIN_CONFIDENCE:-0.36}" \
+  --pose-fall-min-visible-keypoints "${GOHOME_POSE_FALL_MIN_VISIBLE_KEYPOINTS:-8}" \
+  --pose-fall-min-core-keypoints "${GOHOME_POSE_FALL_MIN_CORE_KEYPOINTS:-2}"

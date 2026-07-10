@@ -6,6 +6,14 @@ from typing import Any, Dict
 from .base import AlgorithmResult, clamp
 
 
+SCENE_CLASS_LABELS = {
+    56: "chair",
+    57: "couch",
+    59: "bed",
+    60: "dining_table",
+}
+
+
 class PersonDetector:
     def __init__(
         self,
@@ -27,6 +35,7 @@ class PersonDetector:
         model_status = "basic"
         model_message = ""
         people: list[Dict[str, Any]] = []
+        scene_objects: list[Dict[str, Any]] = []
         self.yolo_confidence = float(config.get("yolo_confidence", self.yolo_confidence))
         self.yolo_imgsz = int(config.get("yolo_imgsz", self.yolo_imgsz))
 
@@ -38,7 +47,12 @@ class PersonDetector:
         elif self.detector_backend == "yolo":
             try:
                 presence_yolo_confidence = float(config.get("presence_yolo_confidence", 0.18))
-                raw_people = self._detect_people_with_yolo(frame, confidence=min(self.yolo_confidence, presence_yolo_confidence))
+                raw_people, scene_objects = self._detect_yolo_entities(
+                    frame,
+                    person_confidence=min(self.yolo_confidence, presence_yolo_confidence),
+                    scene_confidence=float(config.get("scene_object_confidence", 0.30)),
+                    scene_enabled=bool(config.get("scene_context_enabled", True)),
+                )
                 people = [person for person in raw_people if float(person.get("confidence") or 0.0) >= self.yolo_confidence]
                 if not people and config.get("presence_enhancement_enabled", True):
                     low_confidence_people = [
@@ -104,6 +118,7 @@ class PersonDetector:
                 "model_status": model_status,
                 "model_name": self.yolo_model_name if self.detector_backend == "yolo" else "",
                 "model_message": model_message,
+                "scene_objects": scene_objects,
             },
         )
         return {
@@ -115,6 +130,7 @@ class PersonDetector:
             "presence_enhanced": presence_enhanced,
             "presence_candidate_count": presence_candidate_count,
             "people": people,
+            "scene_objects": scene_objects,
             "tags": tags,
             "result": result,
         }
@@ -214,10 +230,38 @@ class PersonDetector:
         }
 
     def _detect_people_with_yolo(self, frame: Any, confidence: float | None = None) -> list[Dict[str, Any]]:
-        with self._yolo_lock:
-            return self._detect_people_with_yolo_locked(frame, confidence=confidence)
+        people, _ = self._detect_yolo_entities(
+            frame,
+            person_confidence=confidence,
+            scene_confidence=1.0,
+            scene_enabled=False,
+        )
+        return people
 
-    def _detect_people_with_yolo_locked(self, frame: Any, confidence: float | None = None) -> list[Dict[str, Any]]:
+    def _detect_yolo_entities(
+        self,
+        frame: Any,
+        *,
+        person_confidence: float | None = None,
+        scene_confidence: float = 0.22,
+        scene_enabled: bool = True,
+    ) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
+        with self._yolo_lock:
+            return self._detect_yolo_entities_locked(
+                frame,
+                person_confidence=person_confidence,
+                scene_confidence=scene_confidence,
+                scene_enabled=scene_enabled,
+            )
+
+    def _detect_yolo_entities_locked(
+        self,
+        frame: Any,
+        *,
+        person_confidence: float | None = None,
+        scene_confidence: float = 0.22,
+        scene_enabled: bool = True,
+    ) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
         if self._yolo_model is None:
             try:
                 from ultralytics import YOLO  # type: ignore
@@ -228,28 +272,32 @@ class PersonDetector:
                 ) from exc
             self._yolo_model = YOLO(self.yolo_model_name)
 
+        minimum_confidence = float(person_confidence if person_confidence is not None else self.yolo_confidence)
+        class_ids = [0, *SCENE_CLASS_LABELS] if scene_enabled else [0]
         results = self._yolo_model.predict(
             frame,
-            conf=max(0.05, min(0.9, float(confidence if confidence is not None else self.yolo_confidence))),
+            conf=max(0.05, min(0.9, min(minimum_confidence, scene_confidence) if scene_enabled else minimum_confidence)),
             imgsz=self.yolo_imgsz,
-            classes=[0],
+            classes=class_ids,
             device="cpu",
             verbose=False,
         )
         if not results:
-            return []
+            return [], []
 
         boxes = getattr(results[0], "boxes", None)
         if boxes is None or getattr(boxes, "cls", None) is None:
-            return []
+            return [], []
 
         people = []
+        scene_objects = []
         height, width = frame.shape[:2]
         for index, cls in enumerate(boxes.cls):
-            if int(cls) == 0:
-                xyxy = boxes.xyxy[index].tolist()
-                confidence = float(boxes.conf[index]) if getattr(boxes, "conf", None) is not None else None
-                x1, y1, x2, y2 = [float(value) for value in xyxy]
+            class_id = int(cls)
+            xyxy = boxes.xyxy[index].tolist()
+            confidence = float(boxes.conf[index]) if getattr(boxes, "conf", None) is not None else None
+            x1, y1, x2, y2 = [float(value) for value in xyxy]
+            if class_id == 0:
                 people.append(
                     self.person_box(
                         x1,
@@ -263,7 +311,49 @@ class PersonDetector:
                         label="人形命中",
                     )
                 )
-        return self._merge_people(people, max_count=3)
+            elif scene_enabled and class_id in SCENE_CLASS_LABELS and float(confidence or 0.0) >= scene_confidence:
+                scene_objects.append(
+                    self.object_box(
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        width,
+                        height,
+                        confidence=float(confidence or 0.0),
+                        class_id=class_id,
+                        label=SCENE_CLASS_LABELS[class_id],
+                    )
+                )
+        scene_objects.sort(key=lambda item: float(item.get("confidence") or 0.0), reverse=True)
+        return self._merge_people(people, max_count=3), scene_objects[:8]
+
+    def object_box(
+        self,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        width: int,
+        height: int,
+        *,
+        confidence: float,
+        class_id: int,
+        label: str,
+    ) -> Dict[str, Any]:
+        x1 = max(0.0, min(float(width - 1), x1))
+        y1 = max(0.0, min(float(height - 1), y1))
+        x2 = max(x1 + 1.0, min(float(width), x2))
+        y2 = max(y1 + 1.0, min(float(height), y2))
+        return {
+            "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
+            "confidence": round(confidence, 4),
+            "class_id": class_id,
+            "label": label,
+            "source": "yolo_scene",
+            "frame_width": width,
+            "frame_height": height,
+        }
 
     def _mark_presence_candidate(self, person: Dict[str, Any], *, source: str, method: str) -> Dict[str, Any]:
         raw_confidence = float(person.get("confidence") or 0.0)

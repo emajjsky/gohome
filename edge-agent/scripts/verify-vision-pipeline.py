@@ -15,6 +15,7 @@ from app.vision.fall import FallAnalyzer
 from app.vision.person_yolo import PersonDetector
 from app.vision.pipeline import VisionPipeline
 from app.vision.pose_rtmpose import RtmposeAnalyzer
+from app.vision.scene_context import SceneContextTracker
 
 
 def main() -> None:
@@ -70,6 +71,8 @@ def main() -> None:
     pose_fall_quality = verify_pose_fall_quality_gate()
     pose_retry = verify_pose_transient_retry()
     pose_posture = verify_pose_posture_direction()
+    scene_context = verify_scene_context_stabilizes_normal_lying_zone()
+    scene_human_filter = verify_scene_context_rejects_human_shaped_furniture()
 
     checks = {
         "black_screen": bool(black_result["black_screen"]),
@@ -103,6 +106,10 @@ def main() -> None:
         "pose_transient_retry_used": pose_retry["retried"],
         "pose_front_seated_posture": pose_posture["front_seated"],
         "pose_horizontal_fall_posture": pose_posture["horizontal_fall"],
+        "scene_status": scene_context["status"],
+        "scene_zone_count": scene_context["zone_count"],
+        "scene_normal_lying": scene_context["normal_lying"],
+        "scene_human_filter_count": scene_human_filter,
         "pose_result_status": fire_result.get("algorithm_results", {}).get("pose", {}).get("status"),
         "pipeline_version": fire_result.get("pipeline_version"),
         "algorithm_results": sorted((fire_result.get("algorithm_results") or {}).keys()),
@@ -148,6 +155,12 @@ def main() -> None:
         raise SystemExit("temporal daze candidate check failed")
     if checks["pose_det_frequency_without_tracking"] != 1:
         raise SystemExit("RTMPose without tracking must run person detection on every sampled pose frame")
+    if checks["scene_status"] != "stable" or checks["scene_zone_count"] != 1:
+        raise SystemExit("scene context should stabilize a repeated couch detection")
+    if not checks["scene_normal_lying"]:
+        raise SystemExit("lying pose overlapping a stable couch must be marked as normal lying zone")
+    if checks["scene_human_filter_count"] != 1:
+        raise SystemExit("scene context must reject furniture boxes mostly covered by a person")
     if checks["pose_det_frequency_with_tracking"] != 8:
         raise SystemExit("RTMPose tracking mode should preserve configured detector frequency")
     if checks["pose_fall_low_quality_eligible"]:
@@ -193,8 +206,53 @@ def synthetic_seated_half_body_frame() -> np.ndarray:
 
 def analyze_with_mocked_yolo_miss(frame: np.ndarray, config: dict | None = None) -> dict:
     detector = PersonDetector(detector_backend="yolo", yolo_confidence=0.35)
-    detector._detect_people_with_yolo = lambda frame, confidence=None: []  # type: ignore[method-assign]
+    detector._detect_yolo_entities = lambda frame, **kwargs: ([], [])  # type: ignore[method-assign]
     return detector.analyze(frame, config or {})
+
+
+def verify_scene_context_stabilizes_normal_lying_zone() -> dict:
+    tracker = SceneContextTracker()
+    config = {"camera_id": 9, "scene_stable_min_hits": 2}
+    objects = [{
+        "bbox": [80.0, 190.0, 560.0, 355.0],
+        "confidence": 0.72,
+        "class_id": 57,
+        "label": "couch",
+        "source": "yolo_scene",
+    }, {
+        "bbox": [300.0, 198.0, 550.0, 350.0],
+        "confidence": 0.61,
+        "class_id": 57,
+        "label": "couch",
+        "source": "yolo_scene",
+    }]
+    tracker.update(objects, config)
+    scene = tracker.update(objects, config)
+    _, poses = tracker.annotate(
+        [],
+        [{"bbox": [350.0, 200.0, 540.0, 350.0], "posture": "lying", "fall_candidate": True}],
+        scene["scene_zones"],
+    )
+    return {
+        "status": scene["scene_map_status"],
+        "zone_count": len(scene["normal_lying_zones"]),
+        "normal_lying": bool(poses and poses[0].get("normal_lying_zone")),
+    }
+
+
+def verify_scene_context_rejects_human_shaped_furniture() -> int:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+    )
+    scene_objects = [
+        {"bbox": [300.0, 190.0, 540.0, 350.0], "label": "couch", "confidence": 0.51},
+        {"bbox": [60.0, 180.0, 590.0, 355.0], "label": "couch", "confidence": 0.68},
+    ]
+    people = [{"bbox": [320.0, 195.0, 535.0, 350.0]}]
+    return len(pipeline._scene_objects_without_human_overlap(scene_objects, people, []))
 
 
 def synthetic_weak_fall_people() -> list[dict]:

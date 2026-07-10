@@ -222,6 +222,12 @@ class EdgeWorker:
                 "pose_detection_enabled": False,
                 "pose_runtime_reason": "worker_pose_not_required",
             }
+        if rules.get("fall_detection_enabled"):
+            return {
+                "pose_detection_enabled": True,
+                "pose_runtime_reason": "worker_pose_required_for_fall_sequence",
+                "worker_pose_interval_frames": 1,
+            }
         interval = max(2, int(rules.get("worker_pose_interval_frames") or 5))
         count = self.pose_frame_counts.get(camera_id, 0) + 1
         self.pose_frame_counts[camera_id] = count

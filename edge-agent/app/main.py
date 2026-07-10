@@ -1199,6 +1199,11 @@ app.add_middleware(
 )
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def empty_favicon() -> Response:
+    return Response(status_code=204)
+
+
 def admin_path_requires_auth(path: str) -> bool:
     if not path.startswith("/admin"):
         return False
