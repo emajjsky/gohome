@@ -1134,9 +1134,9 @@
             method: "PATCH",
             body: JSON.stringify(patch),
         }),
-        rules: () => request("/api/rules"),
-        rulesRuntime: () => request("/api/rules/runtime"),
-        updateRules: (rules) => request("/api/rules", {
+        rules: (familyId = "") => request(`/api/rules${familyId ? `?family_id=${encodeURIComponent(familyId)}` : ""}`),
+        rulesRuntime: (familyId = "") => request(`/api/rules/runtime${familyId ? `?family_id=${encodeURIComponent(familyId)}` : ""}`),
+        updateRules: (rules, familyId = "") => request(`/api/rules${familyId ? `?family_id=${encodeURIComponent(familyId)}` : ""}`, {
             method: "PUT",
             body: JSON.stringify(rules),
         }),

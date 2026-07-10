@@ -101,7 +101,17 @@ async function main() {
         "notification_enabled",
     ]) {
         assert.equal(defaultDb.rules[key], true, `${key} must be enabled by default`);
+        assert.equal(defaultDb.family_rules["1"][key], true, `${key} family default must be enabled`);
     }
+    const isolatedRestartDb = normalizeDb({
+        ...createDefaultDb(),
+        active_user_id: 2,
+        users: [
+            ...createDefaultDb().users,
+            { id: 2, email: "new-user@gohome.local", display_name: "新用户", created_at: new Date().toISOString() },
+        ],
+    });
+    assert.equal(isolatedRestartDb.family_members.some((member) => Number(member.user_id) === 2), false);
 
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-app-server-"));
     const app = createLocalAppServer({
@@ -216,6 +226,30 @@ async function main() {
         });
         assert.equal(phoneFamiliesAfterJoin.length, 1);
         assert.equal(String(phoneFamiliesAfterJoin[0].id), String(family.id));
+
+        const ownerRules = await requestJson(baseUrl, `/api/rules?family_id=${family.id}`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(ownerRules.can_edit, true);
+        assert.equal(ownerRules.fall_detection_enabled, true);
+        const memberRules = await requestJson(baseUrl, `/api/rules?family_id=${family.id}`, {
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.equal(memberRules.can_edit, false);
+        const joinedMembership = app.store.db.family_members.find((member) => (
+            String(member.family_id) === String(family.id)
+            && String(member.user_id) === String(phoneRegistered.user.id)
+        ));
+        joinedMembership.role = "owner";
+        const memberRulesUpdate = await fetch(`${baseUrl}/api/rules?family_id=${family.id}`, {
+            method: "PUT",
+            body: JSON.stringify({ fall_detection_enabled: false }),
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${phoneRegistered.token}`,
+            },
+        });
+        assert.equal(memberRulesUpdate.status, 403);
 
         const claimFamily = await requestJson(baseUrl, "/api/families", {
             method: "POST",
@@ -627,6 +661,17 @@ async function main() {
         assert.equal(String(created.event.camera_id), String(camera.id));
         assert.equal(String(created.event.payload.edge_camera_id), "11");
         assert.equal(created.event.media_asset_id, media.asset.id);
+        assert.equal(created.message.generated_by, "edge-event");
+        assert.equal(created.message.source_event_ids[0], created.event.id);
+        assert.equal(created.deliveries.length, 1);
+
+        const eventMessages = await requestJson(baseUrl, `/api/v1/app/messages?family_id=${family.id}&status=all`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.ok(eventMessages.some((message) => (
+            message.generated_by === "edge-event"
+            && message.source_event_ids.some((eventId) => String(eventId) === String(created.event.id))
+        )));
 
         const events = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false", {
             headers: { Authorization: `Bearer ${appSessionToken}` },
@@ -1032,7 +1077,7 @@ async function main() {
         assert.match(streamResponse.headers.get("content-type") || "", /multipart\/x-mixed-replace/);
         streamResponse.body.cancel();
 
-        const customizedRules = await requestJson(baseUrl, "/api/rules", {
+        const customizedRules = await requestJson(baseUrl, `/api/rules?family_id=${family.id}`, {
             method: "PUT",
             body: JSON.stringify({ activity_detection_enabled: false }),
             headers: { Authorization: `Bearer ${appSessionToken}` },
@@ -1064,9 +1109,11 @@ async function main() {
             && String(item.family_id) === String(claimFamily.id)
         )));
         assert.equal(seedBundle.tables.camera_secrets.length, 2);
-        assert.equal(seedBundle.tables.care_rules.length, 1);
-        assert.equal(seedBundle.tables.care_rules[0].rule_type, "edge_rules");
-        assert.equal(seedBundle.tables.care_rules[0].config.activity_detection_enabled, false);
+        assert.equal(seedBundle.tables.care_rules.length, seedBundle.tables.families.length);
+        const seededFamilyRules = seedBundle.tables.care_rules.find((item) => String(item.family_id) === String(family.id));
+        assert.ok(seededFamilyRules);
+        assert.equal(seededFamilyRules.rule_type, "edge_rules");
+        assert.equal(seededFamilyRules.config.activity_detection_enabled, false);
         assert.equal(seedBundle.tables.events.length, 2);
         const seededFallEvent = seedBundle.tables.events.find((event) => event.event_type === "fall_candidate");
         const seededStaleOfflineEvent = seedBundle.tables.events.find((event) => String(event.id) === String(staleOffline.event.id));
@@ -1113,8 +1160,9 @@ async function main() {
         assert.equal(String(restoredFallEvent.camera_id), String(camera.id));
         assert.equal(restoredDb.assets.length, 2);
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);
-        assert.equal(restoredDb.rules.activity_detection_enabled, false);
-        assert.equal(restoredDb.rules.fire_detection_enabled, true);
+        assert.equal(restoredDb.family_rules[String(family.id)].activity_detection_enabled, false);
+        assert.equal(restoredDb.family_rules[String(family.id)].fire_detection_enabled, true);
+        assert.equal(restoredDb.family_rules[String(claimFamily.id)].activity_detection_enabled, true);
         assert.equal(restoredDb.care_preferences[String(family.id)].image_model, "wan2.7-image");
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.delivery_time, "07:45");
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.message_focus, "先说明家里是否平稳，再给女儿一个适合打电话时聊的轻松话题。");

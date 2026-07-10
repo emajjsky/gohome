@@ -119,6 +119,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             id: family.id,
             name: family.name || "默认家庭",
             member_count: Number(metadataValue(family, "member_count", 1)) || 1,
+            created_by_user_id: metadataValue(family, "created_by_user_id", null),
             created_at: iso(family.created_at, db.created_at),
             updated_at: iso(family.updated_at, iso(family.created_at, db.created_at)),
         });
@@ -534,18 +535,24 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         });
     }
 
-    const edgeRules = (rowsByTable.care_rules || []).find((rule) => (
-        rule.rule_type === "edge_rules"
-        && rule.enabled !== false
-        && rule.config
-        && typeof rule.config === "object"
-    ));
-    if (edgeRules) {
-        db.rules = {
+    db.family_rules = {};
+    for (const edgeRules of rowsByTable.care_rules || []) {
+        if (
+            edgeRules.rule_type !== "edge_rules"
+            || edgeRules.enabled === false
+            || !edgeRules.family_id
+            || !edgeRules.config
+            || typeof edgeRules.config !== "object"
+        ) continue;
+        db.family_rules[String(edgeRules.family_id)] = {
             ...db.rules,
             ...edgeRules.config,
-            updated_at: iso(edgeRules.updated_at, db.rules?.updated_at || db.updated_at),
+            updated_at: iso(edgeRules.updated_at, edgeRules.config.updated_at || db.updated_at),
         };
+    }
+    const firstFamilyRules = Object.values(db.family_rules)[0];
+    if (firstFamilyRules) {
+        db.rules = { ...db.rules, ...firstFamilyRules };
     }
 
     return db;

@@ -345,6 +345,7 @@ function createDefaultDb() {
                 id: 1,
                 name: "默认家庭",
                 member_count: 1,
+                created_by_user_id: 1,
                 created_at: timestamp,
             },
         ],
@@ -371,6 +372,9 @@ function createDefaultDb() {
         events: [],
         heartbeats: [],
         rules: defaultRules(timestamp),
+        family_rules: {
+            1: defaultRules(timestamp),
+        },
         calendar_events: [],
         care_preferences: {},
         care_cards: [],
@@ -435,22 +439,22 @@ function normalizeDb(db) {
             updated_at: family.updated_at || family.created_at || db.created_at,
         }));
     }
-    const activeUser = db.users.find((item) => Number(item.id) === Number(db.active_user_id));
-    const activeUserIsNonAdmin = activeUser && activeUser.email !== "admin@gohome.local";
-    const activeUserHasFamily = activeUser
-        ? db.family_members.some((item) => String(item.status || "active") === "active" && Number(item.user_id) === Number(activeUser.id))
-        : false;
-    if (activeUserIsNonAdmin && !activeUserHasFamily && db.families.length) {
-        db.family_members.push(...db.families.map((family) => ({
-            id: `${family.id}:owner:${activeUser.id}`,
-            family_id: family.id,
-            user_id: activeUser.id,
-            role: "owner",
-            status: "active",
-            joined_at: family.created_at || db.created_at,
-            created_at: family.created_at || db.created_at,
-            updated_at: family.updated_at || family.created_at || db.created_at,
-        })));
+    for (const family of db.families) {
+        if (family.created_by_user_id) continue;
+        const owners = db.family_members.filter((item) => (
+            Number(item.family_id) === Number(family.id)
+            && String(item.status || "active") === "active"
+            && String(item.role || "member") === "owner"
+        ));
+        const nonAdminOwner = owners.find((item) => {
+            const user = db.users.find((candidate) => Number(candidate.id) === Number(item.user_id));
+            return user && user.email !== "admin@gohome.local";
+        });
+        const creator = nonAdminOwner || owners[0] || db.family_members.find((item) => (
+            Number(item.family_id) === Number(family.id)
+            && String(item.status || "active") === "active"
+        ));
+        family.created_by_user_id = creator?.user_id || null;
     }
     db.elder_profiles = db.elder_profiles && typeof db.elder_profiles === "object" ? db.elder_profiles : {};
     db.app_sessions = Array.isArray(db.app_sessions) ? db.app_sessions : [];
@@ -474,6 +478,13 @@ function normalizeDb(db) {
     db.events = Array.isArray(db.events) ? db.events : [];
     db.heartbeats = Array.isArray(db.heartbeats) ? db.heartbeats : [];
     db.rules = normalizeRules(db.rules || defaults.rules, defaults.rules);
+    db.family_rules = db.family_rules && typeof db.family_rules === "object" && !Array.isArray(db.family_rules)
+        ? db.family_rules
+        : {};
+    for (const family of db.families) {
+        const key = String(family.id);
+        db.family_rules[key] = normalizeRules(db.family_rules[key] || db.rules, db.rules);
+    }
     db.calendar_events = Array.isArray(db.calendar_events) ? db.calendar_events : [];
     db.care_preferences = db.care_preferences && typeof db.care_preferences === "object" ? db.care_preferences : {};
     db.care_cards = compactCareCards(Array.isArray(db.care_cards) ? db.care_cards : []);
@@ -992,6 +1003,20 @@ function createLocalAppServer(options = {}) {
         return familyIdsForUser(userId).has(Number(familyId));
     }
 
+    function familyMemberForUser(userId, familyId) {
+        return store.db.family_members.find((item) => (
+            Number(item.family_id) === Number(familyId)
+            && Number(item.user_id) === Number(userId)
+            && String(item.status || "active") === "active"
+        )) || null;
+    }
+
+    function userCanManageFamily(userId, familyId) {
+        const family = selectedFamily(familyId);
+        const member = familyMemberForUser(userId, familyId);
+        return Boolean(member && family && Number(family.created_by_user_id) === Number(userId));
+    }
+
     function requireFamilyAccess(req, res, familyId) {
         const user = activeAppUser(req);
         if (!selectedFamily(familyId)) {
@@ -1008,13 +1033,8 @@ function createLocalAppServer(options = {}) {
     function requireFamilyOwner(req, res, familyId) {
         if (!requireFamilyAccess(req, res, familyId)) return false;
         const user = activeAppUser(req);
-        const member = store.db.family_members.find((item) => (
-            Number(item.family_id) === Number(familyId)
-            && Number(item.user_id) === Number(user.id)
-            && String(item.status || "active") === "active"
-        ));
-        if (!member || !["owner", "admin"].includes(String(member.role || "member"))) {
-            writeError(res, 403, "只有家庭所有者可以解除盒子绑定。");
+        if (!userCanManageFamily(user.id, familyId)) {
+            writeError(res, 403, "只有家庭创建者可以修改这项配置。");
             return false;
         }
         return true;
@@ -1310,7 +1330,8 @@ function createLocalAppServer(options = {}) {
         });
         store.db.device_tokens.forEach((token) => {
             if (String(token.device_id || "") !== normalizedDeviceId) return;
-            token.family_id = null;
+            token.status = "revoked";
+            token.revoked_at = timestamp;
             token.updated_at = timestamp;
         });
 
@@ -1349,10 +1370,16 @@ function createLocalAppServer(options = {}) {
     function cleanupVerifyData(options = {}) {
         const dryRun = normalizeBool(options.dry_run || options.dryRun);
         const idText = (value) => String(value ?? "");
-        const verifyUsers = store.db.users.filter((user) => /^verify-[^@]+@gohome\.local$/i.test(String(user.email || "")));
+        const verifyUsers = store.db.users.filter((user) => (
+            /^verify-[^@]+@gohome\.local$/i.test(String(user.email || ""))
+            || /^流程自检/.test(String(user.display_name || ""))
+        ));
         const verifyUserIds = new Set(verifyUsers.map((user) => idText(user.id)));
         const verifyFamilies = store.db.families.filter((family) => /^流程自检-/.test(String(family.name || "")));
         const verifyFamilyIds = new Set(verifyFamilies.map((family) => idText(family.id)));
+        const verifyDeviceIds = new Set(store.db.device_bindings
+            .filter((binding) => verifyFamilyIds.has(idText(binding.family_id)) || /^verify-onboarding-/.test(String(binding.device_id || "")))
+            .map((binding) => idText(binding.device_id)));
         const verifyCameraIds = new Set(Object.values(store.db.cameras || {})
             .filter((camera) => verifyFamilyIds.has(idText(camera.family_id)))
             .map((camera) => idText(camera.id)));
@@ -1381,15 +1408,21 @@ function createLocalAppServer(options = {}) {
         countArray("family_members", (member) => verifyUserIds.has(idText(member.user_id)) || verifyFamilyIds.has(idText(member.family_id)));
         countArray("users", (user) => verifyUserIds.has(idText(user.id)));
         countArray("families", (family) => verifyFamilyIds.has(idText(family.id)));
-        countArray("device_bindings", (binding) => verifyFamilyIds.has(idText(binding.family_id)));
+        countArray("device_bindings", (binding) => (
+            verifyFamilyIds.has(idText(binding.family_id))
+            || verifyDeviceIds.has(idText(binding.device_id))
+        ));
         countArray("binding_codes", (code) => verifyFamilyIds.has(idText(code.family_id)));
-        countArray("device_tokens", (token) => verifyFamilyIds.has(idText(token.family_id)));
+        countArray("device_tokens", (token) => verifyFamilyIds.has(idText(token.family_id)) || verifyDeviceIds.has(idText(token.device_id)));
+        countArray("heartbeats", (heartbeat) => verifyDeviceIds.has(idText(heartbeat.device_id)));
+        countObject("devices", (device, key) => verifyDeviceIds.has(idText(device.device_id || device.id || key)));
         countObject("cameras", (camera) => verifyFamilyIds.has(idText(camera.family_id)));
         countArray("assets", (asset) => verifyFamilyIds.has(idText(asset.family_id)) || verifyCameraIds.has(idText(asset.camera_id)));
         countArray("events", (event) => verifyFamilyIds.has(idText(event.family_id)) || verifyCameraIds.has(idText(event.camera_id)));
         countArray("calendar_events", (event) => verifyFamilyIds.has(idText(event.family_id)));
         countObject("elder_profiles", (profile, key) => verifyFamilyIds.has(idText(profile.family_id)) || [...verifyFamilyIds].some((familyId) => String(key).startsWith(`${familyId}:`)));
         countObject("care_preferences", (preferences, key) => verifyFamilyIds.has(idText(preferences.family_id)) || verifyFamilyIds.has(idText(key)));
+        countObject("family_rules", (_rules, key) => verifyFamilyIds.has(idText(key)));
         countArray("care_cards", (card) => verifyFamilyIds.has(idText(card.family_id)));
         countArray("app_messages", (message) => verifyFamilyIds.has(idText(message.family_id)) || verifyUserIds.has(idText(message.user_id)));
         countArray("notification_deliveries", (delivery) => verifyFamilyIds.has(idText(delivery.family_id)) || verifyUserIds.has(idText(delivery.user_id)));
@@ -1563,8 +1596,9 @@ function createLocalAppServer(options = {}) {
         };
     }
 
-    function cameraConfigVersion() {
-        const cameras = appConfigCameras();
+    function cameraConfigVersion(familyId = null) {
+        const familyIds = familyId ? new Set([Number(familyId)]) : null;
+        const cameras = appConfigCameras(familyIds);
         const fingerprint = cameras
             .map((camera) => JSON.stringify({
                 id: camera.id,
@@ -1582,9 +1616,21 @@ function createLocalAppServer(options = {}) {
         return `camera-config-${crypto.createHash("sha1").update(fingerprint).digest("hex").slice(0, 12)}`;
     }
 
-    function currentRules() {
+    function fallbackRulesFamilyId() {
+        const binding = store.db.device_bindings.find((item) => String(item.status || "active") !== "revoked");
+        return normalizeNumber(binding?.family_id || store.db.families[0]?.id, null);
+    }
+
+    function currentRules(familyId = null) {
+        const resolvedFamilyId = normalizeNumber(familyId, fallbackRulesFamilyId());
         store.db.rules = normalizeRules(store.db.rules || defaultRules(), store.db.rules || defaultRules());
-        return store.db.rules;
+        store.db.family_rules = store.db.family_rules && typeof store.db.family_rules === "object"
+            ? store.db.family_rules
+            : {};
+        if (!resolvedFamilyId) return store.db.rules;
+        const key = String(resolvedFamilyId);
+        store.db.family_rules[key] = normalizeRules(store.db.family_rules[key] || store.db.rules, store.db.rules);
+        return store.db.family_rules[key];
     }
 
     function deviceVisionCapabilities(device = {}, cameras = []) {
@@ -1636,12 +1682,12 @@ function createLocalAppServer(options = {}) {
         };
     }
 
-    function rulesVersion() {
-        return `rules-${crypto.createHash("sha1").update(JSON.stringify(currentRules())).digest("hex").slice(0, 12)}`;
+    function rulesVersion(familyId = null) {
+        return `rules-${crypto.createHash("sha1").update(JSON.stringify(currentRules(familyId))).digest("hex").slice(0, 12)}`;
     }
 
-    function deviceConfigVersion() {
-        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion()}|${rulesVersion()}`).digest("hex").slice(0, 12)}`;
+    function deviceConfigVersion(familyId = null) {
+        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion(familyId)}|${rulesVersion(familyId)}`).digest("hex").slice(0, 12)}`;
     }
 
     function deviceCameraConfig(camera) {
@@ -1671,10 +1717,10 @@ function createLocalAppServer(options = {}) {
             ok: true,
             device_id: options.device_id || currentEdgeDeviceId(),
             generated_at: nowIso(),
-            config_version: deviceConfigVersion(),
+            config_version: deviceConfigVersion(familyId),
             cameras: appConfigCameras(familyIds).map(deviceCameraConfig),
-            rules: currentRules(),
-            rules_version: rulesVersion(),
+            rules: currentRules(familyId),
+            rules_version: rulesVersion(familyId),
         };
     }
 
@@ -4943,8 +4989,36 @@ function createLocalAppServer(options = {}) {
             return;
         }
         store.db.events.push(event);
+        let message = null;
+        let deliveries = [];
+        if (event.family_id) {
+            message = upsertAppMessage({
+                message_id: `edge-event-${event.idempotency_key}`,
+                family_id: event.family_id,
+                message_type: event.level === "critical" ? "alert" : "explain",
+                title: event.summary,
+                subtitle: `${event.room || event.camera_name || "家中"} · 守护提醒`,
+                body: String(event.payload?.rule?.reason || event.summary || "家庭盒子检测到一条需要查看的情况。"),
+                facts: [event.event_type, event.level],
+                actions: [{ key: "open_event", label: "查看事件", event_id: event.id }],
+                source_event_ids: [event.id],
+                generated_by: "edge-event",
+                status: "open",
+                priority: event.level === "critical" ? "high" : "normal",
+                created_at: event.occurred_at,
+            });
+            if (currentRules(event.family_id).notification_enabled) {
+                deliveries = queueNotificationDelivery(message);
+            }
+        }
         await store.save();
-        write(res, 200, { ok: true, event: publicEvent(event), media_asset: asset || null });
+        write(res, 200, {
+            ok: true,
+            event: publicEvent(event),
+            media_asset: asset || null,
+            message: message ? publicAppMessage(message) : null,
+            deliveries: deliveries.map(publicNotificationDelivery),
+        });
     }
 
     async function handleHeartbeat(req, res) {
@@ -5081,17 +5155,18 @@ function createLocalAppServer(options = {}) {
 
         ensureDeviceBindings();
         await store.save();
+        const deviceFamilyId = store.db.devices[deviceId]?.family_id || issuedToken?.family_id || null;
         write(res, 200, {
             ok: true,
             device_id: deviceId,
             received_at: receivedAt,
             reported_config_version: store.db.devices[deviceId].reported_config_version,
-            current_config_version: deviceConfigVersion(),
-            rules_version: rulesVersion(),
+            current_config_version: deviceConfigVersion(deviceFamilyId),
+            rules_version: rulesVersion(deviceFamilyId),
             updated_cameras: updatedCameras,
             config: deviceConfigPayload({
                 device_id: deviceId,
-                family_id: store.db.devices[deviceId]?.family_id || issuedToken?.family_id || null,
+                family_id: deviceFamilyId,
             }),
         });
     }
@@ -5277,10 +5352,12 @@ function createLocalAppServer(options = {}) {
                         id: store.nextId("family"),
                         name,
                         member_count: 1,
+                        created_by_user_id: user.id,
                         created_at: nowIso(),
                         updated_at: nowIso(),
                     };
                     store.db.families.push(family);
+                    store.db.family_rules[String(family.id)] = defaultRules(family.created_at);
                 }
                 ensureFamilyMember(family.id, user.id, "owner");
                 await store.save();
@@ -5576,12 +5653,13 @@ function createLocalAppServer(options = {}) {
                 const userFamilyIds = familyIdsForUser(activeAppUser(req).id);
                 const primaryBinding = store.db.device_bindings.find((item) => userFamilyIds.has(Number(item.family_id)) && item.status !== "revoked");
                 const device = primaryBinding ? (store.db.devices[String(primaryBinding.device_id)] || {}) : {};
+                const familyId = normalizeNumber(primaryBinding?.family_id || [...userFamilyIds][0], null);
                 write(res, 200, {
                     device_id: primaryBinding ? String(primaryBinding.device_id) : "",
                     server_time: nowIso(),
-                    config_version: deviceConfigVersion(),
+                    config_version: deviceConfigVersion(familyId),
                     cameras: appConfigCameras(userFamilyIds).map(publicCamera),
-                    rules_version: rulesVersion(),
+                    rules_version: rulesVersion(familyId),
                     applied_rule_version: device.applied_rule_version || "",
                     pending_commands: [],
                 });
@@ -5590,18 +5668,36 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && (pathname === "/api/rules" || pathname === "/api/v1/rules")) {
                 if (!requireApp(req, res)) return;
-                write(res, 200, currentRules());
+                const user = activeAppUser(req);
+                const userFamilies = familiesForUser(user.id);
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), normalizeNumber(userFamilies[0]?.id, null));
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                write(res, 200, {
+                    ...currentRules(familyId),
+                    family_id: familyId,
+                    can_edit: userCanManageFamily(user.id, familyId),
+                });
                 return;
             }
 
             if (req.method === "GET" && pathname === "/api/rules/runtime") {
                 if (!requireApp(req, res)) return;
-                const device = store.db.devices[currentEdgeDeviceId()] || Object.values(store.db.devices)[0] || {};
+                const user = activeAppUser(req);
+                const userFamilies = familiesForUser(user.id);
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), normalizeNumber(userFamilies[0]?.id, null));
+                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                const binding = store.db.device_bindings.find((item) => (
+                    Number(item.family_id) === Number(familyId)
+                    && String(item.status || "active") !== "revoked"
+                ));
+                const device = binding ? (store.db.devices[String(binding.device_id)] || {}) : {};
                 write(res, 200, {
                     worker_running: Boolean(device.worker_running),
                     last_rules_loaded_at: device.last_sync_at || device.last_seen_at || "",
-                    desired_rule_version: rulesVersion(),
+                    desired_rule_version: rulesVersion(familyId),
                     applied_rule_version: device.applied_rule_version || "",
+                    family_id: familyId,
+                    can_edit: userCanManageFamily(user.id, familyId),
                 });
                 return;
             }
@@ -5609,13 +5705,25 @@ function createLocalAppServer(options = {}) {
             if (req.method === "PUT" && (pathname === "/api/rules" || pathname === "/api/v1/rules")) {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
-                store.db.rules = normalizeRules({
-                    ...currentRules(),
+                const user = activeAppUser(req);
+                const userFamilies = familiesForUser(user.id);
+                const familyId = normalizeNumber(
+                    payload.family_id || url.searchParams.get("family_id"),
+                    normalizeNumber(userFamilies[0]?.id, null),
+                );
+                if (!familyId || !requireFamilyOwner(req, res, familyId)) return;
+                const baseRules = currentRules(familyId);
+                store.db.family_rules[String(familyId)] = normalizeRules({
+                    ...baseRules,
                     ...payload,
                     updated_at: nowIso(),
-                }, currentRules());
+                }, baseRules);
                 await store.save();
-                write(res, 200, currentRules());
+                write(res, 200, {
+                    ...currentRules(familyId),
+                    family_id: familyId,
+                    can_edit: userCanManageFamily(user.id, familyId),
+                });
                 return;
             }
 

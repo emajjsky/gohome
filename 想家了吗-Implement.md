@@ -10095,3 +10095,39 @@ UR Fall 序列：TP=8, FP=0, TN=10, FN=0, precision=1.0, recall=1.0
 - 云端 App 页面显示“已同步到家庭盒子 / 已生效”，期望规则版本与盒子已应用版本一致。
 - 树莓派本地数据库八项开关均为 `true`，配置同步与实时帧中继代理均正常运行。
 - 两路云端摄像头保持 `online / synced`，公网 MJPEG 请求均返回 `200`、`cloud_relay` 和有效首帧；事件接口保持可读。
+
+## 84. 2026-07-10 家庭级规则、生产事件闭环与公网验收
+
+家庭规则与权限：
+
+- 新增 `family_rules` 运行态，PostgreSQL 继续使用现有 `care_rules` 表，以每个家庭一条 `edge_rules` 记录持久化。
+- `/api/rules`、`/api/rules/runtime`、设备配置版本和规则版本均按家庭计算；盒子只收到自身绑定家庭的摄像头和规则。
+- 家庭记录持久化唯一 `created_by_user_id`；即使历史数据里存在多个 owner，也只有创建者可以修改规则或解绑盒子。
+- `PUT /api/rules` 增加家庭创建者权限校验；成员 GET 返回 `can_edit=false`，App 将全部规则输入和保存按钮切为只读。
+- 新家庭八项守护能力仍默认全部开启。
+- 删除 `normalizeDb()` 中把最后活跃无家庭账号自动加入所有现有家庭的旧兼容迁移，修复重启后的越权继承风险。
+
+解绑与清理：
+
+- 解绑设备时旧设备 token 改为 `revoked`，不再保留“无家庭但有效”的 token。
+- PostgreSQL 导出不再把无家庭 token 回落到默认家庭。
+- 验收数据清理补齐设备、绑定、token、心跳和家庭规则，解决 PostgreSQL 外键阻止清理的问题。
+
+真实算法事件闭环：
+
+- 新增 `edge-agent/scripts/emit-public-fall-validation.py`。
+- 在真实树莓派上使用 UR Fall `fall-01` 序列和当前生产参数运行 YOLO、RTMPose、自动场景图及跌倒时序状态机。
+- 前两帧保持 `clear`，随后进入 `awaiting_transition / suspect / confirming`，第 8 帧在持续约 5.2 秒后进入 `confirmed` 并生成 `fall_candidate`。
+- 本地事件 ID 为 `1870`，云端事件 ID 为 `128`；事件明确标记 `public_dataset_replay / test_event=true`。
+- 证据 JPEG 约 20KB，可通过鉴权播放；App 事件页可见，消息和通知投递记录均能关联该事件。
+- 上传队列最终为 `pending=0 / failed=0 / completed=158`。
+
+公网新用户验收：
+
+- 新增 `scripts/verify-cloud-onboarding.js` 和 `npm run verify:cloud-onboarding`。
+- 阿里云 PostgreSQL 环境通过 13 项：新账号隔离、创建家庭、老人资料、八项默认规则、成员只读、绑定临时盒子、摄像头配置下发、App 在线同步、家庭规则隔离、解绑、旧 token 失效和完整清理。
+- 验收使用临时家庭和设备，不解绑真实树莓派；结束后临时用户、家庭、设备、token、心跳和规则均已删除。
+- 最终真实家庭仍为“妈妈的家”，2 路摄像头 `online / synced`，规则全开且版本一致，公网 MJPEG 均返回 `cloud_relay`。
+- 本地闭环最终为 `37 passed / 0 warnings / 0 failed`；本地 JSON 明确作为开发副本，真实盒子以云端家庭规则为准。
+
+按用户决定，本轮不等待 24 小时观察报告。下一步进入 HTTPS 和 iOS 壳，不继续扩展无关 H5 页面。

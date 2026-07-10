@@ -3,6 +3,8 @@
         detectorBackend: "basic",
         device: null,
         capabilities: {},
+        familyId: "",
+        canEdit: true,
         saving: false,
         pendingSave: false,
         saveTimer: null,
@@ -142,7 +144,7 @@
         const supported = isCapabilityReady(inputId);
         const row = input.closest(".rule-row");
         const badge = $(item.badgeId);
-        input.disabled = false;
+        input.disabled = !state.canEdit;
         if (row) row.dataset.capability = supported ? "supported" : "pending";
         if (badge) badge.textContent = supported ? item.supportedText : `待启用 · ${item.unsupportedText}`;
     }
@@ -175,6 +177,8 @@
     }
 
     function applyRules(rules) {
+        state.familyId = String(rules.family_id || state.familyId || "");
+        state.canEdit = rules.can_edit !== false;
         $("captureInterval").value = String(coerceNumber(rules.capture_interval_seconds, 5));
         $("noMotionSeconds").value = String(coerceNumber(rules.no_motion_seconds, 300));
         $("noPersonSeconds").value = String(coerceNumber(rules.no_person_seconds, 300));
@@ -188,6 +192,23 @@
         if ($("fireDetectionEnabled")) $("fireDetectionEnabled").checked = Boolean(rules.fire_detection_enabled);
         $("notificationEnabled").checked = Boolean(rules.notification_enabled);
         enforceCapabilityChecks();
+    }
+
+    function applyEditPermission() {
+        const readonly = !state.canEdit;
+        document.querySelectorAll("[data-rule-input], #captureInterval, #noMotionSeconds, #noPersonSeconds").forEach((node) => {
+            node.disabled = readonly;
+        });
+        const saveButton = $("saveRulesButton");
+        if (saveButton) {
+            saveButton.disabled = readonly;
+            saveButton.textContent = readonly ? "仅家庭创建者可修改" : "保存规则";
+        }
+        if (readonly) {
+            setText("rulesStatusTitle", "当前为只读规则");
+            setText("rulesStatusText", "守护算法由家庭创建者统一配置，家庭成员可以查看当前设置。");
+            setSaveState("只读");
+        }
     }
 
     function hasUnsupportedEnabled(rules) {
@@ -222,7 +243,7 @@
         }
         let runtime = null;
         for (let index = 0; index < attempts; index += 1) {
-            runtime = await GoHomeEdge.rulesRuntime();
+            runtime = await GoHomeEdge.rulesRuntime(state.familyId);
             if (runtimeMatches(expectedUpdatedAt, runtime)) {
                 break;
             }
@@ -294,6 +315,10 @@
     }
 
     async function saveRules(immediate = false) {
+        if (!state.canEdit) {
+            applyEditPermission();
+            return;
+        }
         clearTimeout(state.saveTimer);
         if (state.saving) {
             state.pendingSave = true;
@@ -308,7 +333,7 @@
             try {
                 ["captureInterval", "noMotionSeconds", "noPersonSeconds"].forEach(clampInput);
                 enforceCapabilityChecks();
-                const saved = await GoHomeEdge.updateRules(readPayload());
+                const saved = await GoHomeEdge.updateRules(readPayload(), state.familyId);
                 const superseded = state.pendingSave;
                 state.latestSavedAt = saved.updated_at || null;
                 if (!superseded) {
@@ -346,8 +371,11 @@
             state.latestSavedAt = rules.updated_at || null;
             applyRules(rules);
             applyCapability();
-            const activeRules = await reconcileUnsupportedRules(rules);
-            await refreshRuntime(activeRules.updated_at || state.latestSavedAt, 2);
+            applyEditPermission();
+            const activeRules = state.canEdit ? await reconcileUnsupportedRules(rules) : rules;
+            if (state.canEdit) {
+                await refreshRuntime(activeRules.updated_at || state.latestSavedAt, 2);
+            }
         } catch (error) {
             setSaveState("离线", "bad");
             setText("rulesStatusTitle", "本机服务未连接");

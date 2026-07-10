@@ -158,6 +158,7 @@ function buildCloudSeedBundle(db, options = {}) {
         timezone: String(family.timezone || "Asia/Shanghai"),
         metadata: {
             member_count: numberOrNull(family.member_count),
+            created_by_user_id: nullableTextId(family.created_by_user_id),
         },
         created_at: iso(family.created_at, exportedAt),
         updated_at: iso(family.updated_at, iso(family.created_at, exportedAt)),
@@ -282,10 +283,10 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(code.updated_at, iso(code.created_at, exportedAt)),
     }));
 
-    const deviceTokens = toArray(db.device_tokens).map((token) => ({
+    const deviceTokens = toArray(db.device_tokens).filter((token) => token.family_id && token.device_id).map((token) => ({
         id: textId(token.id),
-        family_id: textId(token.family_id, fallbackFamilyId),
-        device_id: textId(token.device_id, fallbackDeviceId),
+        family_id: textId(token.family_id),
+        device_id: textId(token.device_id),
         token_hash: token.token_hash || sha256(token.token),
         status: String(token.status || "active"),
         note: String(token.note || ""),
@@ -580,18 +581,22 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(recommendation.updated_at, iso(recommendation.created_at, exportedAt)),
     }));
 
-    const careRules = fallbackFamilyId
-        ? [{
-            id: `${fallbackFamilyId}:edge_rules`,
-            family_id: fallbackFamilyId,
+    const familyRules = db.family_rules && typeof db.family_rules === "object" && !Array.isArray(db.family_rules)
+        ? db.family_rules
+        : {};
+    const careRules = families.map((family) => {
+        const config = familyRules[String(family.id)] || db.rules || {};
+        return {
+            id: `${family.id}:edge_rules`,
+            family_id: family.id,
             camera_id: null,
             rule_type: "edge_rules",
             enabled: true,
-            config: db.rules && typeof db.rules === "object" ? db.rules : {},
-            created_at: iso(db.created_at, exportedAt),
-            updated_at: iso(db.rules?.updated_at, exportedAt),
-        }]
-        : [];
+            config: config && typeof config === "object" ? config : {},
+            created_at: family.created_at || iso(db.created_at, exportedAt),
+            updated_at: iso(config?.updated_at, family.updated_at || exportedAt),
+        };
+    });
 
     const tables = {
         users,
