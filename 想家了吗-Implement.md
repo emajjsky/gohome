@@ -9789,3 +9789,39 @@ Git：
 - PostgreSQL 新增 `003_device_transfer.sql`，允许设备令牌在未绑定家庭时继续有效。
 - 自动化已覆盖绑定、解绑、旧家庭编号回传防恢复和新家庭重新认领。
 - 本地真实页面已验证：解绑后设备卡片消失、主按钮恢复为“绑定盒子”、盒子出现在可认领列表，页面无脚本报错。
+
+## 78. 2026-07-10 云端测试环境重置
+
+用户确认当前没有需要保留的重要业务数据后，云端按“保留设备身份、清空业务数据”的口径完成重置。
+
+重置前备份：
+
+- 数据库：`/opt/gohome/backups/db-before-device-transfer-20260710-102335.sql.gz`
+- 应用文件：`/opt/gohome/backups/app-before-device-transfer-20260710-102335.tar.gz`
+
+云端部署与迁移：
+
+- 已应用 `003_device_transfer.sql`。
+- `gohome-app.service` 为 `active`，存储仍为 PostgreSQL。
+- 云端真实 App 解绑验证成功：旧绑定撤销，2 路摄像头接入配置移除，盒子恢复为可认领。
+
+重置后数据：
+
+- `users=0`
+- `families=0`
+- `device_bindings=0`
+- `cameras=0`
+- `events=0`
+- `care_cards=0`
+- `app_messages=0`
+- `devices=1`
+
+保留设备：
+
+- `device_id=edge-042714be475b91da`
+- `serial_number=GH-475B91DA`
+- `family_id=null`
+- `status=online`
+- `claim_status=claimable`
+
+清空后连续观察设备 `last_seen_at` 仍在更新，证明 App 解绑和业务清理不会影响盒子的 Wi-Fi 与主动连云。下一次测试可直接从全新手机号注册开始，再依次创建家庭、填写老人资料、绑定盒子和配置摄像头。
