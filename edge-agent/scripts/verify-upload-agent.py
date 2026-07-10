@@ -69,6 +69,7 @@ def main() -> None:
             settings=settings,
             device_id_resolver=lambda: "edge-test",
             token_resolver=lambda: "",
+            remote_camera_id_resolver=lambda camera_id: camera_id + 100,
         )
         calls: list[dict] = []
 
@@ -94,6 +95,12 @@ def main() -> None:
             raise SystemExit(f"upload agent did not complete both jobs: result={result} summary={summary}")
         if [call["method"] for call in calls] != ["POST", "POST"]:
             raise SystemExit(f"unexpected upload calls: {calls}")
+        media_path = str(calls[0]["path"])
+        if "camera_id=101" not in media_path or "local_camera_id=1" not in media_path:
+            raise SystemExit(f"media upload did not map local camera id: {media_path}")
+        event_body = calls[1].get("json_body") or {}
+        if event_body.get("camera_id") != 101:
+            raise SystemExit(f"event upload did not use remote camera id: {event_body}")
         if completed[0]["payload"].get("upload_result") is None:
             raise SystemExit("completed jobs must retain upload_result")
 

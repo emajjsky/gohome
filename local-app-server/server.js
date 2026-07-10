@@ -4872,8 +4872,8 @@ function createLocalAppServer(options = {}) {
         const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
         const asset = {
             id: assetId,
-            family_id: issuedToken?.family_id || null,
-            device_id: issuedToken?.device_id || "",
+            family_id: issuedToken?.family_id || mappedCamera?.family_id || null,
+            device_id: issuedToken?.device_id || mappedCamera?.device_id || "",
             camera_id: cameraId,
             file_name: fileName,
             content_type: url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg",

@@ -568,7 +568,7 @@ async function main() {
         const imageBytes = Buffer.from("fake-jpeg-content");
         const media = await requestJson(
             baseUrl,
-            "/api/v1/device/media-assets/upload?file_name=test.jpg&snapshot_path=events/test.jpg&content_type=image/jpeg&edge_event_id=42",
+            `/api/v1/device/media-assets/upload?file_name=test.jpg&snapshot_path=events/test.jpg&content_type=image/jpeg&edge_event_id=42&camera_id=${camera.id}&local_camera_id=11`,
             {
                 method: "POST",
                 body: imageBytes,
@@ -580,6 +580,8 @@ async function main() {
         );
         assert.equal(media.ok, true);
         assert.equal(media.asset.snapshot_path, "events/test.jpg");
+        assert.equal(String(media.asset.family_id), String(family.id));
+        assert.equal(String(media.asset.device_id), String(camera.device_id));
 
         const eventPayload = {
             idempotency_key: "event:42",

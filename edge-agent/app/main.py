@@ -1111,6 +1111,7 @@ upload_agent = UploadAgent(
     settings=settings,
     device_id_resolver=current_device_id,
     token_resolver=read_local_device_token,
+    remote_camera_id_resolver=remote_camera_id_for_local_camera,
 )
 live_relay_agent = LiveRelayAgent(
     storage=storage,

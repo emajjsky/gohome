@@ -18,11 +18,13 @@ class UploadAgent:
         settings: Any,
         device_id_resolver: Callable[[], str],
         token_resolver: Callable[[], str],
+        remote_camera_id_resolver: Callable[[int], Any] | None = None,
     ) -> None:
         self.storage = storage
         self.settings = settings
         self.device_id_resolver = device_id_resolver
         self.token_resolver = token_resolver
+        self.remote_camera_id_resolver = remote_camera_id_resolver or (lambda camera_id: camera_id)
         self._stop = Event()
         self._wake = Event()
         self._thread: Thread | None = None
@@ -143,8 +145,7 @@ class UploadAgent:
             "snapshot_path": snapshot_path,
             "content_type": str(payload.get("content_type") or "image/jpeg"),
         }
-        camera_id = payload.get("app_camera_id") or payload.get("remote_camera_id") or payload.get("camera_id") or job.get("camera_id")
-        local_camera_id = payload.get("local_camera_id") or job.get("camera_id")
+        camera_id, local_camera_id = self._camera_ids(job, payload)
         if camera_id:
             params["camera_id"] = str(camera_id)
         if local_camera_id:
@@ -171,6 +172,7 @@ class UploadAgent:
     def _upload_event(self, job: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(job.get("payload") or {})
         event_id = int(payload.get("event_id") or job.get("event_id") or 0)
+        camera_id, local_camera_id = self._camera_ids(job, payload)
         media_job = self.storage.latest_completed_upload_job(event_id=event_id, job_type="media_upload") if event_id else None
         media_result = (media_job or {}).get("payload", {}).get("upload_result") if media_job else None
         event_payload = dict(payload.get("payload") or {})
@@ -178,6 +180,8 @@ class UploadAgent:
             "job_id": int(job["id"]),
             "edge_event_id": event_id or None,
             "edge_device_id": self.device_id_resolver(),
+            "local_camera_id": local_camera_id,
+            "app_camera_id": camera_id,
         }
         if media_result:
             event_payload["media_upload_result"] = media_result
@@ -187,7 +191,7 @@ class UploadAgent:
             "summary": str(payload.get("summary") or job.get("event_summary") or "回家事件"),
             "level": str(payload.get("level") or job.get("event_level") or "warning"),
             "room": str(payload.get("room") or ""),
-            "camera_id": payload.get("camera_id") or job.get("camera_id"),
+            "camera_id": camera_id,
             "snapshot_path": str(payload.get("snapshot_path") or job.get("snapshot_path") or ""),
             "occurred_at": str(payload.get("occurred_at") or ""),
             "payload": event_payload,
@@ -203,6 +207,15 @@ class UploadAgent:
             "event": response.get("event") or response,
             "media_asset": response.get("media_asset") or (media_result or {}).get("asset"),
         }
+
+    def _camera_ids(self, job: Dict[str, Any], payload: Dict[str, Any]) -> tuple[Any, Any]:
+        local_camera_id = payload.get("local_camera_id") or job.get("camera_id") or payload.get("camera_id")
+        remote_camera_id = payload.get("app_camera_id") or payload.get("remote_camera_id")
+        if remote_camera_id in (None, "") and local_camera_id not in (None, ""):
+            remote_camera_id = self.remote_camera_id_resolver(int(local_camera_id))
+        if remote_camera_id in (None, ""):
+            remote_camera_id = payload.get("camera_id") or job.get("camera_id")
+        return remote_camera_id, local_camera_id
 
     def _request_json(
         self,
