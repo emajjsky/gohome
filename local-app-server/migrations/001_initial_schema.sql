@@ -119,7 +119,7 @@ create table if not exists binding_codes (
 
 create table if not exists device_tokens (
     id text primary key default gen_random_uuid()::text,
-    family_id text references families(id) on delete set null,
+    family_id text not null references families(id) on delete cascade,
     device_id text not null references devices(device_id) on delete cascade,
     token_hash text not null,
     status text not null default 'active',
