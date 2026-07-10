@@ -263,6 +263,75 @@ async function main() {
         assert.equal(String(claimFamilyCamera.family_id), String(claimFamily.id));
         assert.equal(claimFamilyCamera.room, "厨房");
 
+        await requestJson(baseUrl, "/api/v1/device/heartbeat", {
+            method: "POST",
+            body: JSON.stringify({
+                device_id: "edge-transferable",
+                name: "可移交盒子",
+                status: "online",
+                metadata: { serial_number: "GH-TRANSFER1" },
+            }),
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+        });
+        const transferableClaim = await requestJson(baseUrl, "/api/device-claims/claim", {
+            method: "POST",
+            body: JSON.stringify({ family_id: claimFamily.id, claim_code: "GH-TRANSFER1" }),
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        const transferableCamera = await requestJson(baseUrl, "/api/cameras", {
+            method: "POST",
+            body: JSON.stringify({
+                family_id: claimFamily.id,
+                device_id: "edge-transferable",
+                name: "移交测试摄像头",
+                room: "客厅",
+                stream_url: "rtsp://192.168.1.30:554/stream1",
+                enabled: true,
+            }),
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.equal(transferableCamera.device_id, "edge-transferable");
+        const unboundTransferable = await requestJson(baseUrl, `/api/device-bindings/${transferableClaim.binding.id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.equal(unboundTransferable.ok, true);
+        assert.equal(unboundTransferable.binding.status, "revoked");
+        assert.equal(unboundTransferable.removed_camera_count, 1);
+
+        await requestJson(baseUrl, "/api/v1/device/heartbeat", {
+            method: "POST",
+            body: JSON.stringify({
+                device_id: "edge-transferable",
+                family_id: claimFamily.id,
+                status: "online",
+            }),
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+        });
+        const claimableAfterUnbind = await requestJson(baseUrl, "/api/device-claims/available", {
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.ok(claimableAfterUnbind.some((item) => item.device_id === "edge-transferable"));
+        const oldFamilyBindingsAfterUnbind = await requestJson(baseUrl, `/api/device-bindings?family_id=${claimFamily.id}`, {
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.equal(oldFamilyBindingsAfterUnbind.some((item) => (
+            item.device_id === "edge-transferable" && item.status !== "revoked"
+        )), false);
+
+        const transferFamily = await requestJson(baseUrl, "/api/families", {
+            method: "POST",
+            body: JSON.stringify({ name: "设备移交家庭" }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        const transferredDevice = await requestJson(baseUrl, "/api/device-claims/claim", {
+            method: "POST",
+            body: JSON.stringify({ family_id: transferFamily.id, claim_code: "GH-TRANSFER1" }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(String(transferredDevice.binding.family_id), String(transferFamily.id));
+        assert.equal(transferredDevice.binding.device_id, "edge-transferable");
+
         const blockedClaimFamilyCamera = await fetch(`${baseUrl}/api/cameras`, {
             method: "POST",
             body: JSON.stringify({
@@ -948,12 +1017,16 @@ async function main() {
         streamResponse.body.cancel();
 
         const seedBundle = buildCloudSeedBundle(app.store.db, { source: "verify-local-app-server" });
-        assert.equal(seedBundle.schema_version, "002_notifications");
+        assert.equal(seedBundle.schema_version, "003_device_transfer");
         assert.equal(seedBundle.tables.users.length, 3);
         assert.ok(seedBundle.tables.users.some((user) => user.email === phoneAccountEmail));
-        assert.equal(seedBundle.tables.families.length, 3);
-        assert.equal(seedBundle.tables.family_members.length, 4);
-        assert.equal(seedBundle.tables.elder_profiles.length, 3);
+        assert.ok(seedBundle.tables.families.some((item) => String(item.id) === String(transferFamily.id)));
+        assert.ok(seedBundle.tables.family_members.some((item) => (
+            String(item.family_id) === String(transferFamily.id)
+            && String(item.user_id) === String(registered.user.id)
+            && item.role === "owner"
+        )));
+        assert.ok(seedBundle.tables.elder_profiles.some((item) => String(item.family_id) === String(transferFamily.id)));
         const seededElderProfile = seedBundle.tables.elder_profiles.find((profile) => String(profile.family_id) === String(family.id));
         assert.equal(seededElderProfile.mobile_phone, "13800138000");
         assert.equal(seededElderProfile.home_phone, "057100000000");
@@ -991,7 +1064,12 @@ async function main() {
         const restoredDb = normalizeDb(createDbFromCloudRows(seedBundle.tables, createDefaultDb()));
         assert.equal(restoredDb.users.length, 3);
         assert.ok(restoredDb.users.some((user) => user.email === phoneAccountEmail));
-        assert.equal(restoredDb.families.length, 3);
+        assert.ok(restoredDb.families.some((item) => String(item.id) === String(transferFamily.id)));
+        assert.ok(restoredDb.device_bindings.some((item) => (
+            String(item.family_id) === String(transferFamily.id)
+            && item.device_id === "edge-transferable"
+            && item.status !== "revoked"
+        )));
         assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].mobile_phone, "13800138000");
         assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].home_phone, "057100000000");
         assert.equal(Object.values(restoredDb.cameras).length, 2);

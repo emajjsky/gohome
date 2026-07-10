@@ -961,6 +961,9 @@
             body: JSON.stringify(payload),
         }),
         deviceBindings: (familyId) => request(`/api/device-bindings?family_id=${encodeURIComponent(familyId)}`),
+        unbindDevice: (bindingId) => request(`/api/device-bindings/${encodeURIComponent(bindingId)}`, {
+            method: "DELETE",
+        }),
         claimableDevices: () => request("/api/device-claims/available"),
         claimDevice: (payload) => request("/api/device-claims/claim", {
             method: "POST",

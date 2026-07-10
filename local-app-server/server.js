@@ -994,6 +994,21 @@ function createLocalAppServer(options = {}) {
         return true;
     }
 
+    function requireFamilyOwner(req, res, familyId) {
+        if (!requireFamilyAccess(req, res, familyId)) return false;
+        const user = activeAppUser(req);
+        const member = store.db.family_members.find((item) => (
+            Number(item.family_id) === Number(familyId)
+            && Number(item.user_id) === Number(user.id)
+            && String(item.status || "active") === "active"
+        ));
+        if (!member || !["owner", "admin"].includes(String(member.role || "member"))) {
+            writeError(res, 403, "只有家庭所有者可以解除盒子绑定。");
+            return false;
+        }
+        return true;
+    }
+
     function publicFamily(family) {
         const activeMembers = store.db.family_members.filter((item) => (
             String(item.status || "active") === "active"
@@ -1169,6 +1184,14 @@ function createLocalAppServer(options = {}) {
         ));
     }
 
+    function deviceBoundToOtherFamily(deviceId, familyId) {
+        return store.db.device_bindings.some((item) => (
+            String(item.device_id || "") === String(deviceId || "")
+            && String(item.status || "active") !== "revoked"
+            && Number(item.family_id) !== Number(familyId)
+        ));
+    }
+
     function publicClaimableDevice(device) {
         const deviceId = String(device.device_id || device.id || "");
         const metadata = ensureDeviceMetadata(deviceId);
@@ -1247,12 +1270,69 @@ function createLocalAppServer(options = {}) {
             updated_at: nowIso(),
         };
         store.db.device_tokens.forEach((token) => {
-            if (String(token.device_id || "") === normalizedDeviceId && token.status === "active" && !token.family_id) {
+            if (String(token.device_id || "") === normalizedDeviceId && token.status === "active") {
                 token.family_id = normalizedFamilyId;
                 token.updated_at = nowIso();
             }
         });
         return binding;
+    }
+
+    function unbindDeviceFromFamily({ familyId, bindingId = "", deviceId = "" }) {
+        const normalizedFamilyId = normalizeNumber(familyId, null);
+        const binding = store.db.device_bindings.find((item) => (
+            Number(item.family_id) === Number(normalizedFamilyId)
+            && String(item.status || "active") !== "revoked"
+            && (!bindingId || String(item.id) === String(bindingId))
+            && (!deviceId || String(item.device_id) === String(deviceId))
+        ));
+        if (!binding) return null;
+
+        const normalizedDeviceId = String(binding.device_id || "").trim();
+        const timestamp = nowIso();
+        store.db.device_bindings.forEach((item) => {
+            if (String(item.device_id || "") !== normalizedDeviceId) return;
+            if (String(item.status || "active") === "revoked") return;
+            item.status = "revoked";
+            item.updated_at = timestamp;
+            item.unbound_at = timestamp;
+        });
+        store.db.device_tokens.forEach((token) => {
+            if (String(token.device_id || "") !== normalizedDeviceId) return;
+            token.family_id = null;
+            token.updated_at = timestamp;
+        });
+
+        const removedCameraIds = Object.values(store.db.cameras)
+            .filter((camera) => (
+                Number(camera.family_id) === Number(normalizedFamilyId)
+                && String(camera.device_id || "") === normalizedDeviceId
+            ))
+            .map((camera) => String(camera.id));
+        removedCameraIds.forEach((cameraId) => {
+            delete store.db.cameras[cameraId];
+        });
+
+        const existingDevice = store.db.devices[normalizedDeviceId] || {};
+        store.db.devices[normalizedDeviceId] = {
+            ...existingDevice,
+            id: normalizedDeviceId,
+            device_id: normalizedDeviceId,
+            family_id: null,
+            metadata: {
+                ...objectValue(existingDevice.metadata),
+                claim_status: "claimable",
+                claimed_by_family_id: null,
+                claimed_by_user_id: null,
+                unbound_at: timestamp,
+            },
+            updated_at: timestamp,
+        };
+        return {
+            binding,
+            device: store.db.devices[normalizedDeviceId],
+            removed_camera_count: removedCameraIds.length,
+        };
     }
 
     function cleanupVerifyData(options = {}) {
@@ -4870,7 +4950,7 @@ function createLocalAppServer(options = {}) {
             ...payload,
             id: deviceId,
             device_id: deviceId,
-            family_id: store.db.devices[deviceId]?.family_id || issuedToken?.family_id || payload.family_id || null,
+            family_id: store.db.devices[deviceId]?.family_id || issuedToken?.family_id || null,
             last_seen_at: nowIso(),
         };
         store.db.heartbeats.push({
@@ -4919,7 +4999,7 @@ function createLocalAppServer(options = {}) {
             ...existingDevice,
             id: deviceId,
             device_id: deviceId,
-            family_id: existingDevice.family_id || issuedToken?.family_id || payload.family_id || null,
+            family_id: existingDevice.family_id || issuedToken?.family_id || null,
             name: payload.device_name || existingDevice.name || "回家盒子",
             status: String(reportedStatus.status || payload.device_status || "online"),
             worker_running: payload.worker_running ?? existingDevice.worker_running ?? null,
@@ -5227,6 +5307,38 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
+            const deviceBindingMatch = pathname.match(/^\/api\/device-bindings\/([^/]+)$/);
+            if (deviceBindingMatch && req.method === "DELETE") {
+                if (!requireApp(req, res)) return;
+                const bindingId = decodeURIComponent(deviceBindingMatch[1]);
+                const binding = store.db.device_bindings.find((item) => (
+                    String(item.id) === bindingId
+                    && String(item.status || "active") !== "revoked"
+                ));
+                if (!binding) {
+                    writeError(res, 404, "没有找到可解除的盒子绑定。");
+                    return;
+                }
+                if (!requireFamilyOwner(req, res, binding.family_id)) return;
+                const result = unbindDeviceFromFamily({
+                    familyId: binding.family_id,
+                    bindingId,
+                });
+                if (!result) {
+                    writeError(res, 404, "盒子绑定已经解除。");
+                    return;
+                }
+                await store.save();
+                write(res, 200, {
+                    ok: true,
+                    binding: publicBinding(result.binding),
+                    device: publicClaimableDevice(result.device),
+                    removed_camera_count: result.removed_camera_count,
+                    next: "device_claim",
+                });
+                return;
+            }
+
             if (req.method === "GET" && pathname === "/api/device-claims/available") {
                 if (!requireApp(req, res)) return;
                 const devices = Object.values(store.db.devices)
@@ -5255,12 +5367,19 @@ function createLocalAppServer(options = {}) {
                 const candidates = Object.values(store.db.devices).filter((device) => {
                     const deviceId = String(device.device_id || device.id || "");
                     if (!deviceId) return false;
-                    if (deviceHasActiveBinding(deviceId) && Number(device.family_id) !== Number(familyId)) return false;
                     const serial = normalizeClaimCode(deviceSerial(device));
                     if (requestedSerial && requestedSerial !== serial) return false;
                     if (requestedDeviceId && requestedDeviceId !== normalizeClaimCode(deviceId)) return false;
                     return claimCodeMatchesDevice(device, claimCode);
                 });
+                const boundToOtherFamily = candidates.find((device) => {
+                    const deviceId = String(device.device_id || device.id || "");
+                    return deviceBoundToOtherFamily(deviceId, familyId);
+                });
+                if (boundToOtherFamily) {
+                    writeError(res, 409, "这台盒子已经绑定到其他家庭。请先在原家庭解绑，或联系服务方重置后再绑定。");
+                    return;
+                }
                 const device = candidates[0] || null;
                 if (!device) {
                     writeError(res, 404, "盒子绑定码无效，或这台盒子还没有连接到云端。");
@@ -5296,6 +5415,10 @@ function createLocalAppServer(options = {}) {
                     const device = Object.values(store.db.devices).find((item) => claimCodeMatchesDevice(item, claimCode));
                     if (!device) {
                         writeError(res, 404, "盒子绑定码无效，或这台盒子还没有连接到云端。");
+                        return;
+                    }
+                    if (deviceBoundToOtherFamily(device.device_id || device.id, familyId)) {
+                        writeError(res, 409, "这台盒子已经绑定到其他家庭。请先在原家庭解绑，或联系服务方重置后再绑定。");
                         return;
                     }
                     const binding = bindDeviceToFamily({

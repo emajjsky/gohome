@@ -601,7 +601,7 @@ function buildCloudSeedBundle(db, options = {}) {
     const counts = Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, rows.length]));
 
     return {
-        schema_version: "002_notifications",
+        schema_version: "003_device_transfer",
         exported_at: exportedAt,
         source: options.source || "local-app-server-json",
         counts,

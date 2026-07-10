@@ -185,12 +185,41 @@
                     </div>
                     <span class="px-2.5 py-1 rounded-full bg-[#edf6ee] text-[#2d7d5c] text-[10px] font-bold shrink-0">已绑定</span>
                 </div>
-                <a class="mt-3 h-10 rounded-2xl bg-primary text-on-primary font-sans text-[12px] font-bold flex items-center justify-center gap-2" href="${connectHref()}">
-                    <span class="material-symbols-outlined text-[18px]">nest_cam_indoor</span>
-                    继续配置摄像头
-                </a>
+                <div class="mt-3 grid grid-cols-[1fr_auto] gap-2">
+                    <a class="h-10 rounded-2xl bg-primary text-on-primary font-sans text-[12px] font-bold flex items-center justify-center gap-2" href="${connectHref()}">
+                        <span class="material-symbols-outlined text-[18px]">nest_cam_indoor</span>
+                        配置摄像头
+                    </a>
+                    <button type="button" class="binding-unbind-button h-10 rounded-2xl bg-[#f8ece9] px-4 font-sans text-[12px] font-bold text-[#9a4e43] flex items-center justify-center gap-1" data-binding-id="${binding.id}" data-device-name="${binding.device_name || "回家盒子"}">
+                        <span class="material-symbols-outlined text-[18px]">link_off</span>
+                        解绑
+                    </button>
+                </div>
             </article>
         `).join("");
+        list.querySelectorAll(".binding-unbind-button").forEach((button) => {
+            button.addEventListener("click", async () => {
+                const bindingId = button.getAttribute("data-binding-id") || "";
+                const deviceName = button.getAttribute("data-device-name") || "这台盒子";
+                const confirmed = window.confirm(`确认解除“${deviceName}”的家庭绑定吗？\n\n盒子不会掉网，但这个家庭下的摄像头接入配置会被移除。之后可用盒身码重新绑定。`);
+                if (!confirmed || !bindingId) return;
+                const oldHtml = button.innerHTML;
+                try {
+                    button.disabled = true;
+                    button.classList.add("opacity-60");
+                    button.innerHTML = `<span class="material-symbols-outlined text-[18px]">progress_activity</span>解绑中`;
+                    setFeedback("正在解除家庭绑定，盒子会保持联网。", "neutral");
+                    const result = await GoHomeEdge.unbindDevice(bindingId);
+                    await loadData();
+                    setFeedback(`已解除绑定，并移除 ${Number(result.removed_camera_count || 0)} 路摄像头配置。盒子现在可以重新认领。`, "success");
+                } catch (error) {
+                    setFeedback(error.message || "解绑失败。", "error");
+                    button.disabled = false;
+                    button.classList.remove("opacity-60");
+                    button.innerHTML = oldHtml;
+                }
+            });
+        });
     }
 
     function renderClaimableDevices() {
