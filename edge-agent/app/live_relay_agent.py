@@ -262,7 +262,10 @@ class LiveRelayAgent:
         return str(getattr(self.settings, "app_server_base_url", "") or "").strip().rstrip("/")
 
     def _device_token(self) -> str:
-        return str(getattr(self.settings, "device_api_token", "") or "").strip() or str(self.token_resolver() or "").strip()
+        issued_token = str(self.token_resolver() or "").strip()
+        if bool(getattr(self.settings, "require_issued_device_token", False)):
+            return issued_token
+        return issued_token or str(getattr(self.settings, "device_api_token", "") or "").strip()
 
     def _utc_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()

@@ -389,6 +389,16 @@ function createDefaultDb() {
     };
 }
 
+function createEmptyDb() {
+    const db = createDefaultDb();
+    db.active_user_id = null;
+    db.users = [];
+    db.families = [];
+    db.family_members = [];
+    db.family_rules = {};
+    return db;
+}
+
 class JsonStore {
     constructor(filePath) {
         this.kind = "json";
@@ -876,6 +886,12 @@ function createLocalAppServer(options = {}) {
     function isLocalBrowserRequest(req) {
         const rawHost = String(req.headers.host || "").split(":")[0].trim().toLowerCase();
         return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(rawHost);
+    }
+
+    function cloudDeviceClaimsEnabled() {
+        const configured = String(process.env.GOHOME_ALLOW_CLOUD_DEVICE_CLAIMS || "").trim().toLowerCase();
+        if (configured) return ["1", "true", "yes", "on"].includes(configured);
+        return process.env.NODE_ENV !== "production";
     }
 
     function issuedDeviceTokenFromRequest(req) {
@@ -5432,6 +5448,10 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && pathname === "/api/device-claims/available") {
                 if (!requireApp(req, res)) return;
+                if (!cloudDeviceClaimsEnabled()) {
+                    write(res, 200, []);
+                    return;
+                }
                 const devices = Object.values(store.db.devices)
                     .filter((device) => {
                         const deviceId = String(device.device_id || device.id || "");
@@ -5447,6 +5467,10 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "POST" && pathname === "/api/device-claims/claim") {
                 if (!requireApp(req, res)) return;
+                if (!cloudDeviceClaimsEnabled()) {
+                    writeError(res, 403, "请让手机和盒子连接同一 Wi-Fi，再通过局域网搜索完成绑定。");
+                    return;
+                }
                 const payload = await parseJsonBody(req);
                 const user = activeAppUser(req);
                 const userFamilies = familiesForUser(user.id);
@@ -5498,6 +5522,10 @@ function createLocalAppServer(options = {}) {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
                 if (payload.claim_code || payload.code || payload.serial_number || payload.serial) {
+                    if (!cloudDeviceClaimsEnabled()) {
+                        writeError(res, 403, "请通过局域网搜索盒子完成绑定。");
+                        return;
+                    }
                     const user = activeAppUser(req);
                     const userFamilies = familiesForUser(user.id);
                     const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
@@ -5755,11 +5783,11 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 400, "请先创建家庭。");
                     return;
                 }
-                if (!requireFamilyAccess(req, res, familyId)) return;
+                if (!requireFamilyOwner(req, res, familyId)) return;
                 const code = {
                     id: store.nextId("binding_code"),
                     family_id: Number(familyId),
-                    code: String(Math.floor(100000 + Math.random() * 900000)),
+                    code: crypto.randomBytes(8).toString("hex"),
                     status: "active",
                     note: String(payload.note || ""),
                     expires_at: new Date(Date.now() + Math.max(1, normalizeNumber(payload.expires_in_minutes, 10)) * 60000).toISOString(),
@@ -5782,6 +5810,10 @@ function createLocalAppServer(options = {}) {
                     return;
                 }
                 const deviceId = String(payload.device_id || currentEdgeDeviceId() || `edge-${crypto.randomBytes(6).toString("hex")}`);
+                if (deviceBoundToOtherFamily(deviceId, code.family_id)) {
+                    writeError(res, 409, "这台盒子已经绑定到其他家庭，请先由原家庭创建者解绑。");
+                    return;
+                }
                 const token = `dev_${crypto.randomBytes(18).toString("hex")}`;
                 const deviceTokenRecord = {
                     id: store.nextId("device_token"),
@@ -6610,10 +6642,11 @@ function localJsonDbPath(rootDir, dataDir) {
     return path.join(dataDir || path.join(rootDir, "data", "app-server"), "db.json");
 }
 
-function initialDbFromJsonFallback(filePath) {
-    return normalizeDb(fs.existsSync(filePath)
-        ? { ...createDefaultDb(), ...safeJsonParse(fs.readFileSync(filePath, "utf8"), {}) }
-        : createDefaultDb());
+function initialDbFromJsonFallback(filePath, { seedDefaultData = true } = {}) {
+    if (fs.existsSync(filePath)) {
+        return normalizeDb({ ...createDefaultDb(), ...safeJsonParse(fs.readFileSync(filePath, "utf8"), {}) });
+    }
+    return normalizeDb(seedDefaultData ? createDefaultDb() : createEmptyDb());
 }
 
 async function createLocalAppServerAsync(options = {}) {
@@ -6629,11 +6662,14 @@ async function createLocalAppServerAsync(options = {}) {
     const ssl = process.env.GOHOME_DATABASE_SSL === "1" || process.env.GOHOME_DATABASE_SSL === "true"
         ? { rejectUnauthorized: false }
         : null;
+    const seedDefaultData = !["0", "false", "no"].includes(
+        String(process.env.GOHOME_SEED_DEFAULT_DATA || "1").trim().toLowerCase(),
+    );
     const { createPostgresStore } = require("./postgres-store");
     const store = await createPostgresStore({
         databaseUrl,
         ssl,
-        initialDb: initialDbFromJsonFallback(localJsonDbPath(rootDir, dataDir)),
+        initialDb: initialDbFromJsonFallback(localJsonDbPath(rootDir, dataDir), { seedDefaultData }),
         normalizeDb,
     });
     return createLocalAppServer({ ...options, rootDir, dataDir, store });

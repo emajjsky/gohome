@@ -10177,3 +10177,44 @@ disk usage: 45% -> 24%
 - App 清理命令已实测下发、执行并回传 `completed=true`。
 - 数据库句柄通常为 0，短时事务结束后立即回落；worker、视频中继和配置同步持续运行。
 - 本地闭环 `37 passed / 0 warnings / 0 failed`，App 服务、配置同步、保留策略和现有边缘测试全部通过。
+
+## 86. 2026-07-11 腾讯云 HTTPS 空库部署
+
+- 腾讯云实例：Ubuntu 24.04，4 核 4GB；现有 `www.ai2shx.club` Next.js 服务继续使用 3000 端口。
+- GoHome 独立部署在 `/opt/gohome/app`，监听 `127.0.0.1:8788`，由 `gohome-app.service` 管理。
+- 新装 PostgreSQL 16，创建独立 `gohome` 数据库和角色；API 密钥从旧环境迁移，但业务数据未迁移。
+- Nginx 新增 `gohome.ai2shx.club` 独立站点，支持 MJPEG 长连接和关闭代理缓冲。
+- Let’s Encrypt 证书已签发并启用自动续期，证书当前有效期至 2026-10-09。
+- 新增 `GOHOME_SEED_DEFAULT_DATA=0`，生产空库不再生成旧演示管理员和默认家庭。
+- 空库确认：`users=0 / families=0 / cameras=0 / events=0 / assets=0 / care_cards=0`。
+- 树莓派云端地址已切换为 `https://gohome.ai2shx.club`，配置同步使用 HTTPS 且无错误。
+- 真实盒子已在腾讯云登记为 `claimable`，当前数据库保持 `devices=1 / bindings=0`。
+- `verify:cloud-onboarding` 在腾讯云通过 13 项并自动清理临时账号、家庭、设备、规则和 token。
+- 旧阿里云尚未停止，待真实用户页面完成摄像头和视频闭环后下线。
+
+## 87. 2026-07-11 局域网安全绑定实现
+
+已实现：
+
+- 生产环境增加 `GOHOME_ALLOW_CLOUD_DEVICE_CLAIMS=0`，全局待认领设备列表返回空数组，序列号/设备 ID 直接认领返回 403。
+- 云端一次性绑定凭证改为 16 位加密随机十六进制值，默认 5 分钟有效，使用后立即失效。
+- 绑定凭证只允许家庭创建者签发。
+- 云端 token 兑换增加跨家庭占用校验，设备仍绑定其他家庭时返回 409。
+- App 绑定页删除设备码输入和“云端发现”，改为“搜索并绑定盒子”。
+- H5 顶层导航到 `http://gohome.local:8711/pair`；盒子自动向 `https://gohome.ai2shx.club` 兑换 token，并回跳 App。
+- 盒子增加 `/api/lan/discovery` 和 `/pair`，校验固定云端回跳 origin 与启动后 15 分钟配对窗口。
+- 配置同步、实时视频中继和事件上传改为优先使用本地签发的 `device_token.txt`，不再被静态 bootstrap token 覆盖。
+- 生产盒子启用 `GOHOME_REQUIRE_ISSUED_DEVICE_TOKEN=1`；未绑定时配置同步、视频中继和上传代理保持未配置状态，避免空家庭同步和数据库外键错误。
+- 云端解绑后旧 token 保持撤销；再次局域网配对成功会安全覆盖盒子本地旧 token。
+
+本地验证：
+
+- JavaScript 与 Python 语法检查通过。
+- `npm test` 通过，新增高熵凭证、单次消费、跨家庭防抢绑和生产环境关闭全局认领断言。
+- `npm run verify:local-loop`：`37 passed / 0 warnings / 0 failed`。
+
+待实机验证：
+
+1. 部署腾讯云和树莓派，生产环境设置 `GOHOME_ALLOW_CLOUD_DEVICE_CLAIMS=0`。
+2. 重启盒子开启 15 分钟窗口，从空账号走注册、家庭、老人资料、局域网绑定和双摄像头配置。
+3. 验证规则、双路视频、事件、关怀卡和 App 解绑后重新绑定。

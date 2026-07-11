@@ -420,6 +420,7 @@ async function main() {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(bindingCode.status, "active");
+        assert.match(bindingCode.code, /^[a-f0-9]{16}$/);
 
         const exchanged = await requestJson(baseUrl, "/api/device/token/exchange", {
             method: "POST",
@@ -428,6 +429,25 @@ async function main() {
         });
         assert.equal(exchanged.ok, true);
         assert.ok(exchanged.device_token);
+
+        const reusedBindingCode = await fetch(`${baseUrl}/api/device/token/exchange`, {
+            method: "POST",
+            body: JSON.stringify({ code: bindingCode.code, device_id: "edge-test" }),
+            headers: { "Content-Type": "application/json" },
+        });
+        assert.equal(reusedBindingCode.status, 400);
+
+        const conflictingCode = await requestJson(baseUrl, "/api/device/binding-codes", {
+            method: "POST",
+            body: JSON.stringify({ family_id: transferFamily.id, expires_in_minutes: 10 }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        const conflictingExchange = await fetch(`${baseUrl}/api/device/token/exchange`, {
+            method: "POST",
+            body: JSON.stringify({ code: conflictingCode.code, device_id: "edge-test" }),
+            headers: { "Content-Type": "application/json" },
+        });
+        assert.equal(conflictingExchange.status, 409);
 
         const heartbeat = await requestJson(baseUrl, "/api/v1/device/heartbeat", {
             method: "POST",
@@ -1173,6 +1193,21 @@ async function main() {
         assert.ok(restoredDb.notification_deliveries.length >= 2);
         assert.ok(restoredDb.scheduler_runs.some((run) => run.status === "succeeded"));
         assert.equal(restoredDb.model_providers.length, 0);
+
+        process.env.GOHOME_ALLOW_CLOUD_DEVICE_CLAIMS = "0";
+        const hiddenClaimableDevices = await requestJson(baseUrl, "/api/device-claims/available", {
+            headers: { Authorization: `Bearer ${phoneRegistered.token}` },
+        });
+        assert.deepEqual(hiddenClaimableDevices, []);
+        const blockedCloudClaim = await fetch(`${baseUrl}/api/device-claims/claim`, {
+            method: "POST",
+            body: JSON.stringify({ family_id: claimFamily.id, claim_code: "GH-CLAIM001" }),
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${phoneRegistered.token}`,
+            },
+        });
+        assert.equal(blockedCloudClaim.status, 403);
 
         console.log(JSON.stringify({
             ok: true,

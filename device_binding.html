@@ -85,20 +85,21 @@
 </select>
 </div>
 <div>
-<label class="font-label-md text-label-md text-on-surface" for="bindingClaimInput">盒子码</label>
-<div class="mt-2 relative">
-<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">qr_code_2</span>
-<input id="bindingClaimInput" class="w-full rounded-2xl border border-outline-variant bg-surface-container-low py-3 pl-12 pr-4 font-body-lg text-body-lg text-on-surface placeholder:text-on-surface-variant outline-none focus:border-primary" placeholder="输入二维码内容、序列号或绑定码" autocomplete="off" autocapitalize="characters" spellcheck="false" type="text"/>
-</div>
-<p class="mt-2 font-body-md text-[12px] leading-5 text-on-surface-variant">正式产品扫盒身二维码；当前树莓派没有贴纸时，用云端临时码或设备序列号完成认领。</p>
-</div>
-<div>
 <label class="font-label-md text-label-md text-on-surface" for="bindingNoteInput">备注</label>
 <input id="bindingNoteInput" class="mt-2 w-full rounded-2xl border border-outline-variant bg-surface-container-low px-4 py-3 font-body-md text-body-md text-on-surface placeholder:text-on-surface-variant outline-none focus:border-primary" placeholder="例如 妈妈家的盒子" type="text"/>
 </div>
+<div class="rounded-2xl bg-surface-container-low px-4 py-4">
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined mt-0.5 text-primary">wifi_find</span>
+<div>
+<p class="font-sans text-[13px] font-bold text-on-surface">让手机和盒子连接同一个 Wi-Fi</p>
+<p class="mt-1 font-sans text-[12px] leading-5 text-on-surface-variant">盒子启动后的 15 分钟内可安全配对。搜索成功后由盒子直接向云端确认，不需要输入设备码。</p>
+</div>
+</div>
+</div>
 <button id="bindingSubmitBtn" class="w-full h-12 rounded-full bg-primary text-on-primary font-label-md text-label-md flex items-center justify-center gap-2 active:scale-[0.98] transition-all" type="submit">
-<span class="material-symbols-outlined text-[20px]">link</span>
-绑定盒子
+<span class="material-symbols-outlined text-[20px]">wifi_find</span>
+搜索并绑定盒子
 </button>
 <p id="bindingFeedback" class="min-h-[20px] font-sans text-[12px] leading-5 text-on-surface-variant"></p>
 </form>
@@ -111,11 +112,6 @@
 <span id="bindingListBadge" class="rounded-full bg-surface-container-low px-3 py-1 font-sans text-[11px] text-on-surface-variant">0 台</span>
 </div>
 <div id="bindingList" class="mt-3 space-y-3"></div>
-</div>
-<div class="mt-4 app-soft-card bg-white p-4">
-<p class="font-display text-[15px] font-bold text-on-surface">云端发现</p>
-<p class="mt-1 font-sans text-[12px] leading-5 text-on-surface-variant">只显示在线但尚未被家庭认领的盒子摘要，仍需要盒子码确认。</p>
-<div id="bindingClaimableList" class="mt-3 space-y-2"></div>
 </div>
 </section>
 <div class="mt-stack-lg text-center">

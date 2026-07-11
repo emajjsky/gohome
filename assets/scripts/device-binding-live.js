@@ -6,7 +6,6 @@
         device: null,
         bindings: [],
         bindingCodes: [],
-        claimable: [],
         authStatus: null,
         busy: false,
         tokenBusy: false,
@@ -52,8 +51,8 @@
         button.disabled = busy;
         button.classList.toggle("opacity-70", busy);
         const bound = hasActiveBinding();
-        const icon = bound ? "nest_cam_indoor" : "link";
-        const label = busy ? (bound ? "进入中..." : "绑定中...") : (bound ? "继续配置摄像头" : "绑定盒子");
+        const icon = bound ? "nest_cam_indoor" : "wifi_find";
+        const label = busy ? (bound ? "进入中..." : "正在搜索...") : (bound ? "继续配置摄像头" : "搜索并绑定盒子");
         button.innerHTML = `<span class="material-symbols-outlined text-[20px]">${icon}</span>${label}`;
     }
 
@@ -147,12 +146,7 @@
         button.dataset.mode = bound ? "continue" : "bind";
         button.innerHTML = bound
             ? `<span class="material-symbols-outlined text-[20px]">nest_cam_indoor</span>继续配置摄像头`
-            : `<span class="material-symbols-outlined text-[20px]">link</span>绑定盒子`;
-        const claimInput = $("bindingClaimInput");
-        if (claimInput) {
-            claimInput.required = !bound;
-            claimInput.placeholder = bound ? "已绑定，可直接继续" : "输入二维码内容、序列号或绑定码";
-        }
+            : `<span class="material-symbols-outlined text-[20px]">wifi_find</span>搜索并绑定盒子`;
     }
 
     function renderTokenCard() {
@@ -222,37 +216,6 @@
         });
     }
 
-    function renderClaimableDevices() {
-        const list = $("bindingClaimableList");
-        if (!list) return;
-        if (!state.claimable.length) {
-            list.innerHTML = `
-                <div class="rounded-2xl bg-surface-container-low px-4 py-3">
-                    <p class="font-sans text-[12px] leading-5 text-on-surface-variant">暂未发现可认领盒子。确认盒子已通电联网后，再输入盒身码绑定。</p>
-                </div>
-            `;
-            return;
-        }
-        list.innerHTML = state.claimable.map((device) => `
-            <button type="button" class="binding-claimable-row w-full rounded-2xl bg-surface-container-low px-4 py-3 text-left" data-serial="${device.serial_number || ""}">
-                <div class="flex items-center justify-between gap-3">
-                    <div class="min-w-0">
-                        <p class="font-sans text-[13px] font-bold text-on-surface">${device.name || "回家盒子"}</p>
-                        <p class="mt-1 break-all font-sans text-[12px] text-on-surface-variant">${device.serial_number || device.device_id || "待生成序列号"}</p>
-                    </div>
-                    <span class="rounded-full bg-[#edf6ee] px-2.5 py-1 font-sans text-[10px] font-bold text-[#2d7d5c]">在线</span>
-                </div>
-            </button>
-        `).join("");
-        list.querySelectorAll(".binding-claimable-row").forEach((button) => {
-            button.addEventListener("click", () => {
-                const serial = button.getAttribute("data-serial") || "";
-                if ($("bindingClaimInput") && serial) $("bindingClaimInput").value = serial;
-                setFeedback("已填入发现的盒子序列号，请确认后绑定。");
-            });
-        });
-    }
-
     async function loadBindings() {
         const familyId = Number($("bindingFamilySelect")?.value || preferredFamilyId());
         if (!familyId) {
@@ -277,14 +240,12 @@
     }
 
     async function loadData() {
-        const [families, device, claimable] = await Promise.all([
+        const [families, device] = await Promise.all([
             GoHomeEdge.myFamilies(),
             GoHomeEdge.device(),
-            GoHomeEdge.claimableDevices ? GoHomeEdge.claimableDevices().catch(() => []) : Promise.resolve([]),
         ]);
         state.families = families;
         state.device = device;
-        state.claimable = Array.isArray(claimable) ? claimable : [];
         state.authStatus = await GoHomeEdge.deviceAuthStatus().catch(() => null);
         setText("bindingDeviceText", device.device_id || "");
         setText("bindingDeviceName", device.device_name || "本机设备");
@@ -297,12 +258,10 @@
             syncSelectedFamilyParam("");
             syncFamilyLinks("");
             renderBindings();
-            renderClaimableDevices();
             return;
         }
         renderFamilyOptions();
         await loadBindings();
-        renderClaimableDevices();
     }
 
     async function bindCurrentDevice(event) {
@@ -320,30 +279,22 @@
             }, 160);
             return;
         }
-        const claimCode = $("bindingClaimInput")?.value.trim() || "";
-        if (!claimCode) {
-            setFeedback("请输入盒身二维码内容、序列号或绑定码。", "error");
-            return;
-        }
         try {
             setBusy(true);
-            setFeedback("");
-            await GoHomeEdge.claimDevice({
+            setFeedback("正在建立一次性安全配对，请不要切换 Wi-Fi。");
+            const bindingCode = await GoHomeEdge.createDeviceBindingCode({
                 family_id: familyId,
-                claim_code: claimCode,
-                device_name: state.device?.device_name || "回家盒子",
+                expires_in_minutes: 5,
                 note: $("bindingNoteInput")?.value.trim() || "",
             });
-            $("bindingNoteInput").value = "";
-            $("bindingClaimInput").value = "";
-            await loadBindings();
-            setFeedback("已绑定，正在进入摄像头接入。", "success");
-            setTimeout(() => {
-                window.location.href = connectHref();
-            }, 260);
+            const returnUrl = new URL(selfHref(familyId), window.location.origin);
+            returnUrl.searchParams.set("pair_return", "1");
+            const localPairUrl = new URL("http://gohome.local:8711/pair");
+            localPairUrl.searchParams.set("code", bindingCode.code);
+            localPairUrl.searchParams.set("return_url", returnUrl.toString());
+            window.location.href = localPairUrl.toString();
         } catch (error) {
-            setFeedback(error.message || "绑定失败。", "error");
-        } finally {
+            setFeedback(error.message || "没有找到可配对的盒子。", "error");
             setBusy(false);
         }
     }
@@ -423,6 +374,14 @@
             await GoHomeEdge.connect();
             await GoHomeEdge.currentUser();
             await loadData();
+            const params = new URLSearchParams(window.location.search);
+            const pairStatus = params.get("pair_status");
+            if (pairStatus === "success") {
+                setFeedback("盒子已安全绑定，正在进入摄像头配置。", "success");
+                window.setTimeout(() => { window.location.href = connectHref(); }, 500);
+            } else if (pairStatus) {
+                setFeedback(params.get("pair_message") || "盒子配对失败，请确认手机与盒子在同一 Wi-Fi。", "error");
+            }
         } catch (_error) {
             GoHomeEdge.clearAuthToken();
             redirectLogin();

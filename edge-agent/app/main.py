@@ -4,7 +4,9 @@ from typing import Any, Dict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import quote
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode, urlparse
+from urllib.request import Request as UrlRequest, urlopen
 from importlib.util import find_spec
 import ipaddress
 import json
@@ -90,6 +92,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 SETUP_NETWORK_PAGE = "/setup/network.html"
 SETUP_HOTSPOT_ORIGIN = "http://10.42.0.1"
 SETUP_HOTSPOT_NETWORK_PAGE = f"{SETUP_HOTSPOT_ORIGIN}{SETUP_NETWORK_PAGE}"
+EDGE_STARTED_AT = datetime.now(timezone.utc)
 
 
 def model_dump(model: Any) -> Dict[str, Any]:
@@ -401,6 +404,62 @@ def remote_camera_id_for_local_camera(local_camera_id: int) -> str | int:
 
 def write_local_device_token(token: str) -> None:
     local_device_token_path().write_text(token.strip(), encoding="utf-8")
+
+
+def pairing_window_open() -> bool:
+    elapsed = (datetime.now(timezone.utc) - EDGE_STARTED_AT).total_seconds()
+    return elapsed <= max(60, settings.lan_pairing_window_seconds)
+
+
+def validated_pair_return_url(raw_url: str) -> str:
+    return_url = str(raw_url or "").strip()
+    cloud_base = str(settings.app_server_base_url or "").strip().rstrip("/")
+    if not return_url or not cloud_base:
+        raise HTTPException(status_code=400, detail="Pairing return URL is missing")
+    target = urlparse(return_url)
+    allowed = urlparse(cloud_base)
+    if target.scheme != allowed.scheme or target.netloc != allowed.netloc:
+        raise HTTPException(status_code=400, detail="Pairing return URL is not allowed")
+    return return_url
+
+
+def cloud_pair_device(code: str) -> Dict[str, Any]:
+    identity = local_device_identity()
+    payload = json.dumps({
+        "code": code,
+        "device_id": identity["device_id"],
+        "device_name": identity["device_name"],
+        "device_type": identity["device_type"],
+        "note": "LAN pairing",
+        "metadata": {
+            "lan_ip": identity["lan_ip"],
+            "api_port": identity["api_port"],
+            "pairing_method": "lan",
+        },
+    }, ensure_ascii=False).encode("utf-8")
+    request = UrlRequest(
+        f"{settings.app_server_base_url}/api/device/token/exchange",
+        data=payload,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=12) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(detail).get("error") or json.loads(detail).get("detail") or detail
+        except json.JSONDecodeError:
+            pass
+        raise HTTPException(status_code=409 if exc.code == 409 else 400, detail=str(detail)) from exc
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail="盒子暂时无法连接云端，请检查网络后重试") from exc
+    token = str(result.get("device_token") or result.get("token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=502, detail="云端没有返回设备凭证")
+    write_local_device_token(token)
+    return result
 
 
 def require_device_access(user: Dict[str, Any]) -> str:
@@ -1957,6 +2016,43 @@ def device_auth_status(user: Dict[str, Any] = Depends(current_user)) -> Dict[str
         "local_token_saved": bool(read_local_device_token()),
         "token": token,
     }
+
+
+@app.get("/api/lan/discovery")
+def lan_discovery() -> Dict[str, Any]:
+    identity = local_device_identity()
+    return {
+        "product": "gohome-box",
+        "device_id": identity["device_id"],
+        "device_name": identity["device_name"],
+        "lan_ip": identity["lan_ip"],
+        "api_port": identity["api_port"],
+        "pairing_window_open": pairing_window_open(),
+    }
+
+
+@app.get("/pair")
+def pair_from_lan(code: str = Query(..., min_length=4, max_length=20), return_url: str = Query(...)) -> RedirectResponse:
+    target = validated_pair_return_url(return_url)
+    if not pairing_window_open():
+        query = urlencode({
+            "pair_status": "window_closed",
+            "pair_message": "盒子的安全配对时间已结束，请重启盒子后在 15 分钟内重试。",
+        })
+        separator = "&" if "?" in target else "?"
+        return RedirectResponse(f"{target}{separator}{query}", status_code=303)
+    try:
+        result = cloud_pair_device(code.strip())
+    except HTTPException as exc:
+        query = urlencode({"pair_status": "error", "pair_message": str(exc.detail)[:180]})
+        separator = "&" if "?" in target else "?"
+        return RedirectResponse(f"{target}{separator}{query}", status_code=303)
+    query = urlencode({
+        "pair_status": "success",
+        "paired_device_id": str(result.get("device_id") or current_device_id()),
+    })
+    separator = "&" if "?" in target else "?"
+    return RedirectResponse(f"{target}{separator}{query}", status_code=303)
 
 
 @app.get("/api/v1/devices/current")
