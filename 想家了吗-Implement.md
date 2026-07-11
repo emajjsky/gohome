@@ -10594,4 +10594,13 @@ SafetyIncident 与提醒：
 - 所有 edge `verify-*.py` 功能回归通过；Mac `verify-vision-runtime.py` 仅报告本地 `.venv` 含 Homebrew 路径，不属于算法失败，树莓派部署后使用 `.venv-pi` 单独验收。
 - `npm test` 通过。
 
-当前结论：现有样本够当前比赛版本做规则回归和演示，不够训练或替换骨架时序模型。下一步把本次规则修复部署树莓派，验证真实双摄运行和 Pi 运行环境；没有新困难场景前不继续扩充公开样本。
+树莓派部署：
+
+- 使用 `deploy-to-pi.sh` 同步代码，明确排除 `.venv*`、设备数据、日志和环境变量，没有覆盖盒子运行数据。
+- Pi `.venv-pi` 验证 Python aarch64、Torch CPU、Ultralytics、YOLO 模型、ONNX Runtime、RTMLib 和 2 个 RTMPose checkpoint 全部通过。
+- Pi 上 `verify-fall-rule-engine / verify-pose-factor-graph / verify-dataset-readiness-audit` 通过。
+- `gohome-edge-agent.service` 重启后 active；配置同步和实时中继 agent 均 running，无 last_error。
+- 两路摄像头 `online / synced`，观察覆盖率约 `0.836`，实时中继 `8 FPS`。
+- 腾讯云家庭状态保持 `observing`，`valid_camera_count=2 / camera_count=2`，说明算法代码更新未破坏 App、云同步和长期未见判断。
+
+当前结论：现有样本够当前比赛版本做规则回归和演示，不够训练或替换骨架时序模型。样本集暂时冻结；下一步优先观察真实运行事件、误报反馈和姿态片段统计，没有新困难场景前不继续扩充公开样本。
