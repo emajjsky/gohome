@@ -9,6 +9,7 @@ from pathlib import Path
 from .camera_agent import CameraError
 from .rule_engine import RuleEngine, RuleEvaluation
 from .vision.temporal import TemporalObservationEngine
+from .vision.pose_factor_graph import PoseFactorGraphEngine
 
 
 LIFE_OBSERVATION_TYPES = {"no_motion", "no_person"}
@@ -31,6 +32,7 @@ class EdgeWorker:
         history_cleanup_batch_size: int = 5000,
         completed_upload_retention_days: int = 7,
         temporal_engine: TemporalObservationEngine | None = None,
+        pose_factor_graph_engine: PoseFactorGraphEngine | None = None,
     ) -> None:
         self.storage = storage
         self.camera_agent = camera_agent
@@ -45,6 +47,7 @@ class EdgeWorker:
         self.history_cleanup_batch_size = max(100, int(history_cleanup_batch_size))
         self.completed_upload_retention_days = max(1, int(completed_upload_retention_days))
         self.temporal_engine = temporal_engine or TemporalObservationEngine()
+        self.pose_factor_graph_engine = pose_factor_graph_engine or PoseFactorGraphEngine()
         self.last_history_cleanup_at = time.monotonic()
         self.last_history_cleanup_result: Dict[str, Any] = {}
         self.last_error = ""
@@ -86,7 +89,7 @@ class EdgeWorker:
             interval = 5
             try:
                 if not self._runtime_reconciled:
-                    self.runtime_reconciliation = self.storage.reconcile_camera_runtime_state()
+                    self.runtime_reconciliation = self.storage.reconcile_camera_runtime_state(close_stale_open=True)
                     self.runtime_reconciliation["completed_at"] = datetime.now(timezone.utc).isoformat()
                     self._runtime_reconciled = True
                 rules = self.storage.get_rules()
@@ -123,6 +126,7 @@ class EdgeWorker:
             "rules": self.last_rules_snapshot,
             "history_cleanup": self.last_history_cleanup_result,
             "temporal_engine": self.temporal_engine.version,
+            "pose_factor_graph_engine": self.pose_factor_graph_engine.version,
             "runtime_reconciliation": self.runtime_reconciliation,
             "last_error": self.last_error,
         }
@@ -133,6 +137,7 @@ class EdgeWorker:
     def _reset_camera_runtime_memory(self, camera_id: int) -> None:
         camera_id = int(camera_id)
         self.temporal_engine.reset_camera(camera_id)
+        self.pose_factor_graph_engine.reset_camera(camera_id)
         self.rule_engine.reset_camera(camera_id)
         self.previous_frames.pop(camera_id, None)
         self.pose_frame_counts.pop(camera_id, None)
@@ -178,6 +183,7 @@ class EdgeWorker:
                 config=analysis_config,
             )
             temporal = self.temporal_engine.update(camera_id, analysis)
+            self.pose_factor_graph_engine.update(camera_id, analysis)
 
             relative_path = self.camera_agent.snapshot_relative_path(camera_id)
             self.camera_agent.save_frame(frame, relative_path)
@@ -193,6 +199,16 @@ class EdgeWorker:
                 analysis=analysis,
             )
             self.temporal_engine.attach_snapshot(camera_id, snapshot)
+            factor_graph = analysis.get("pose_factor_graph") if isinstance(analysis.get("pose_factor_graph"), dict) else {}
+            evidence_track = factor_graph.get("fast_fall_track")
+            if not isinstance(evidence_track, dict):
+                prolonged_tracks = factor_graph.get("prolonged_floor_lying_tracks") or []
+                evidence_track = prolonged_tracks[0] if prolonged_tracks else None
+            analysis["temporal_evidence_bundle"] = self.temporal_engine.evidence_bundle(
+                camera_id,
+                event_type="pose_safety_candidate",
+                track_id=str((evidence_track or {}).get("track_id") or "") or None,
+            )
             self._update_presence_session(camera, snapshot, temporal)
             self._persist_posture_episodes(camera, snapshot, temporal)
             self._enqueue_live_frame_upload(camera_id, snapshot)

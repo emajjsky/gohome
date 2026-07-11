@@ -83,6 +83,24 @@ def main() -> None:
         if storage.list_posture_episodes(status="open"):
             raise SystemExit("expired track must close active posture episode")
 
+        storage.upsert_posture_episode(
+            camera_id=camera_id,
+            track_id="restart-track",
+            posture="lying",
+            started_at="2026-07-11T10:05:00+00:00",
+            confirmed_at="2026-07-11T10:05:03+00:00",
+            last_seen_at="2026-07-11T10:05:04+00:00",
+            sample_count=2,
+            mean_confidence=0.82,
+            max_confidence=0.86,
+        )
+        reconciliation = storage.reconcile_camera_runtime_state(close_stale_open=True)
+        if reconciliation["stale_posture_episodes_closed"] != 1:
+            raise SystemExit("worker restart reconciliation must close stale posture episodes")
+        restart_episode = next(item for item in storage.list_posture_episodes(status="closed") if item["track_id"] == "restart-track")
+        if restart_episode["close_reason"] != "worker_restart":
+            raise SystemExit("stale posture episode must retain worker_restart close reason")
+
         print(json.dumps({"ok": True, "closed": [(item["posture"], item["close_reason"]) for item in storage.list_posture_episodes(status="closed")]}, ensure_ascii=False, indent=2))
 
 

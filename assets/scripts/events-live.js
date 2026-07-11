@@ -179,6 +179,7 @@
             return compactEventFacts(event) ? `${reason} ${compactEventFacts(event)}。` : reason;
         }
         if (event.type === "fall_candidate") return "建议先确认老人状态，再标记处理。";
+        if (event.type === "prolonged_floor_lying") return "请立即联系老人或查看实时画面，确认是否需要紧急协助。";
         if (event.type === "camera_offline") return "家庭盒子暂时没有拿到这路画面，会继续重试。";
         if (event.type === "black_screen") return "建议打开截图，看是否遮挡或背光。";
         return "适合现在看一眼。";
@@ -200,6 +201,9 @@
         }
         if (event.type === "fall_candidate") {
             return `${event.camera_name || event.room || "摄像头"} 出现疑似跌倒姿态`;
+        }
+        if (event.type === "prolonged_floor_lying") {
+            return `${event.camera_name || event.room || "摄像头"} 检测到长时间倒地`;
         }
         return cleanReason(event, event.summary) || GoHomeEdge.eventLabel(event.type);
     }

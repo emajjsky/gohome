@@ -35,6 +35,10 @@ def main() -> None:
         raise SystemExit("nearby detections must keep the same track id")
     if second["people"][0].get("track_id") != track_id:
         raise SystemExit("analysis person must be annotated with track id")
+    engine.attach_snapshot(1, {"id": 12, "image_path": "snapshots/camera-1/12.jpg"})
+    bundle = engine.evidence_bundle(1, event_type="fall_candidate", track_id=track_id)
+    if bundle["snapshots"][-1]["snapshot_id"] != 12 or bundle["track_id"] != track_id:
+        raise SystemExit("temporal evidence bundle must preserve representative snapshot and track")
 
     third = analysis(
         {"bbox": [115, 64, 235, 334], "confidence": 0.89},

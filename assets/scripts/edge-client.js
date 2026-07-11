@@ -781,6 +781,7 @@
             no_motion: "motion_sensor_idle",
             no_person: "person_off",
             fall_candidate: "personal_injury",
+            prolonged_floor_lying: "airline_seat_flat",
         };
         return icons[type] || "notifications_active";
     }
@@ -792,6 +793,7 @@
             no_motion: "长时间无变化",
             no_person: "长时间无人",
             fall_candidate: "疑似跌倒",
+            prolonged_floor_lying: "长时间倒地",
         };
         return labels[type] || "提醒";
     }

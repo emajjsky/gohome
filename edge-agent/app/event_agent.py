@@ -73,4 +73,4 @@ class EventAgent:
     def _should_notify(self, event_type: str, level: str) -> bool:
         if level != "critical":
             return False
-        return event_type in {"fall_candidate", "fire_candidate", "camera_offline"}
+        return event_type in {"fall_candidate", "prolonged_floor_lying", "fire_candidate", "camera_offline"}

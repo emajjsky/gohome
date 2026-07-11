@@ -11,7 +11,7 @@ def utc_now() -> datetime:
 
 
 def event_category(event_type: str) -> str:
-    if event_type in {"fall_candidate", "fire_candidate"}:
+    if event_type in {"fall_candidate", "prolonged_floor_lying", "fire_candidate"}:
         return "safety_alert"
     if event_type in {"black_screen", "camera_offline"}:
         return "device_alert"
@@ -57,6 +57,7 @@ class RuleEngine:
         self.fall_tracks: Dict[int, Dict[str, Any]] = {}
         self.fall_upright_states: Dict[int, Dict[str, Any]] = {}
         self.fire_confirm_counts: Dict[int, int] = {}
+        self.prolonged_floor_tracks: Dict[int, set[str]] = {}
 
     def reset_camera(self, camera_id: int) -> None:
         camera_id = int(camera_id)
@@ -65,6 +66,7 @@ class RuleEngine:
         self.fall_tracks.pop(camera_id, None)
         self.fall_upright_states.pop(camera_id, None)
         self.fire_confirm_counts.pop(camera_id, None)
+        self.prolonged_floor_tracks.pop(camera_id, None)
 
     def evaluate_snapshot(
         self,
@@ -167,6 +169,44 @@ class RuleEngine:
                             "poses": analysis.get("poses", []),
                         },
                         "threshold": fall_runtime["threshold"],
+                    },
+                )
+            )
+
+        factor_graph = analysis.get("pose_factor_graph") if isinstance(analysis.get("pose_factor_graph"), dict) else {}
+        prolonged_tracks = factor_graph.get("prolonged_floor_lying_tracks") if isinstance(factor_graph.get("prolonged_floor_lying_tracks"), list) else []
+        current_prolonged_ids = {str(item.get("track_id") or "") for item in prolonged_tracks if item.get("track_id")}
+        previous_prolonged_ids = self.prolonged_floor_tracks.get(camera_id, set())
+        new_prolonged_tracks = [item for item in prolonged_tracks if str(item.get("track_id") or "") not in previous_prolonged_ids]
+        self.prolonged_floor_tracks[camera_id] = current_prolonged_ids
+        state["prolonged_floor_lying_tracks"] = sorted(current_prolonged_ids)
+        if rules.get("fall_detection_enabled") and new_prolonged_tracks:
+            target = max(new_prolonged_tracks, key=lambda item: float(item.get("lying_duration_seconds") or 0.0))
+            duration_seconds = float(target.get("lying_duration_seconds") or 0.0)
+            state["activity_state"] = "prolonged_floor_lying"
+            candidates.append(
+                self._candidate(
+                    event_type="prolonged_floor_lying",
+                    summary=f"{camera.get('name', '摄像头')} 检测到非床或沙发区域持续躺卧。",
+                    level="critical",
+                    snapshot_id=snapshot_id,
+                    analysis=analysis,
+                    rule={
+                        "id": "prolonged_floor_lying",
+                        "label": "长时间倒地提醒",
+                        "reason": "同一人体在非床或沙发区域连续保持躺卧姿态超过 3 分钟，且尚未检测到恢复。",
+                        "observed": {
+                            "track_id": target.get("track_id"),
+                            "posture": target.get("posture"),
+                            "posture_confidence": target.get("posture_confidence"),
+                            "lying_duration_seconds": duration_seconds,
+                            "scene_zone": target.get("scene_zone_label"),
+                            "factor_graph": target,
+                        },
+                        "threshold": {
+                            "lying_duration_seconds": 180,
+                            "normal_lying_zone": False,
+                        },
                     },
                 )
             )
@@ -384,6 +424,9 @@ class RuleEngine:
         recover_frames = max(2, int(rules.get("fall_recover_frames") or 2))
         fall_evidence = self._fall_evidence(analysis)
         target = self._fall_target(analysis, fall_evidence)
+        factor_graph = analysis.get("pose_factor_graph") if isinstance(analysis.get("pose_factor_graph"), dict) else {}
+        graph_candidate = bool(factor_graph.get("fast_fall_candidate"))
+        graph_score = float(factor_graph.get("fast_fall_score") or 0.0)
         upright_before = self.fall_upright_states.get(camera_id) or {}
         upright_targets = self._upright_targets(analysis)
         transition = self._fall_transition(target, upright_before, now, analysis, rules)
@@ -391,11 +434,17 @@ class RuleEngine:
 
         fall_score_ok = fall_score >= fall_score_threshold
         pose_score_ok = pose_fall and pose_fall_score >= pose_fall_threshold
-        strong_visual_candidate = bool(target) and fall_candidate and (fall_score_ok or pose_score_ok)
-        visual_candidate = bool(target) and fall_candidate
+        strong_visual_candidate = bool(target) and (
+            (fall_candidate and (fall_score_ok or pose_score_ok)) or graph_candidate
+        )
+        visual_candidate = bool(target) and (fall_candidate or graph_candidate)
         previous = self.fall_tracks.get(camera_id) or {}
         same_visual_target = bool(strong_visual_candidate and previous and self._same_fall_target(previous.get("target"), target))
-        transition_confirmed = bool(transition.get("confirmed")) or bool(previous.get("transition_confirmed") and same_visual_target)
+        transition_confirmed = (
+            bool(transition.get("confirmed"))
+            or graph_candidate
+            or bool(previous.get("transition_confirmed") and same_visual_target)
+        )
         strong_candidate = strong_visual_candidate and transition_confirmed and not scene_suppressed
         same_target = bool(strong_candidate and previous and self._same_fall_target(previous.get("target"), target))
 
@@ -410,7 +459,7 @@ class RuleEngine:
                     "target": target,
                     "alert_emitted": False,
                     "first_score": fall_score,
-                    "max_score": max(fall_score, pose_fall_score),
+                    "max_score": max(fall_score, pose_fall_score, graph_score),
                     "transition_confirmed": transition_confirmed,
                 }
             else:
@@ -420,7 +469,7 @@ class RuleEngine:
                     "confirm_count": int(previous.get("confirm_count") or 0) + 1,
                     "clear_count": 0,
                     "target": target,
-                    "max_score": max(float(previous.get("max_score") or 0.0), fall_score, pose_fall_score),
+                    "max_score": max(float(previous.get("max_score") or 0.0), fall_score, pose_fall_score, graph_score),
                     "transition_confirmed": transition_confirmed,
                 }
             duration = max(0.0, (now - track["started_at"]).total_seconds())
@@ -518,6 +567,7 @@ class RuleEngine:
         observed = {
             "fall_score": fall_score,
             "pose_fall_score": pose_fall_score,
+            "pose_factor_graph_score": graph_score,
             "confirm_frames": int(track.get("confirm_count") or 0),
             "duration_seconds": round(duration_seconds, 3),
             "same_target": bool(same_target),
@@ -544,12 +594,17 @@ class RuleEngine:
                 "fall_transition": {**transition, "confirmed": transition_confirmed, "inherited": transition_confirmed and not bool(transition.get("confirmed"))},
                 "fall_score": fall_score,
                 "pose_fall_score": pose_fall_score,
+                "pose_factor_graph_score": graph_score,
                 "fall_threshold": threshold,
             },
         }
 
     def _fall_target(self, analysis: Dict[str, Any], fall_evidence: Dict[str, Any]) -> Dict[str, Any] | None:
         candidates = []
+        factor_graph = analysis.get("pose_factor_graph") if isinstance(analysis.get("pose_factor_graph"), dict) else {}
+        graph_target = factor_graph.get("fast_fall_track")
+        if isinstance(graph_target, dict) and self._valid_bbox(graph_target.get("bbox")):
+            candidates.append({**graph_target, "source": "pose_factor_graph", "score": graph_target.get("fast_fall_score")})
         for key in ("single_low_body", "floor_cluster"):
             item = fall_evidence.get(key)
             if isinstance(item, dict) and self._valid_bbox(item.get("bbox")):
@@ -571,6 +626,7 @@ class RuleEngine:
             "center": [round(((x1 + x2) / 2.0) / width, 4), round(((y1 + y2) / 2.0) / height, 4)],
             "size": [round((x2 - x1) / width, 4), round((y2 - y1) / height, 4)],
             "source": best.get("source") or best.get("method") or "fall_candidate",
+            "track_id": best.get("track_id"),
             "score": round(float(best.get("score") or best.get("fall_score") or best.get("confidence") or 0.0), 4),
             "posture": best.get("posture"),
             "normal_lying_zone": bool(best.get("normal_lying_zone")),
@@ -684,7 +740,8 @@ class RuleEngine:
         dx = float(prev_center[0]) - float(curr_center[0])
         dy = float(prev_center[1]) - float(curr_center[1])
         distance = math.sqrt(dx * dx + dy * dy)
-        return distance <= 0.22 or self._bbox_overlap(previous.get("bbox"), current.get("bbox")) >= 0.20
+        same_track = bool(previous.get("track_id") and previous.get("track_id") == current.get("track_id"))
+        return same_track or distance <= 0.22 or self._bbox_overlap(previous.get("bbox"), current.get("bbox")) >= 0.20
 
     def _valid_bbox(self, bbox: Any) -> bool:
         if not isinstance(bbox, list) or len(bbox) != 4:
@@ -729,6 +786,7 @@ def build_event_evidence(
         "no_motion": ["quality", "activity"],
         "no_person": ["person", "pose"],
         "fall_candidate": ["person", "pose", "fall"],
+        "prolonged_floor_lying": ["person", "pose", "fall"],
         "fire_candidate": ["quality", "fire"],
         "camera_offline": [],
     }.get(event_type, ["quality", "person", "pose", "activity", "fall", "fire"])
@@ -751,6 +809,8 @@ def build_event_evidence(
             for key in relevant_algorithms
             if key in algorithm_results
         },
+        "pose_factor_graph": analysis.get("pose_factor_graph") or {},
+        "temporal_evidence_bundle": analysis.get("temporal_evidence_bundle") or {},
         "metrics": {
             "brightness": analysis.get("brightness"),
             "contrast": analysis.get("contrast"),
@@ -782,6 +842,9 @@ def build_event_evidence(
                     "bbox": person.get("bbox"),
                     "confidence": person.get("confidence"),
                     "source": person.get("source"),
+                    "track_id": person.get("track_id"),
+                    "posture": person.get("posture"),
+                    "posture_confidence": person.get("posture_confidence"),
                     "fall_candidate": bool(person.get("fall_candidate")),
                     "presence_candidate": bool(person.get("presence_candidate")),
                 }
@@ -791,6 +854,10 @@ def build_event_evidence(
                 {
                     "confidence": pose.get("confidence"),
                     "bbox": pose.get("bbox"),
+                    "track_id": pose.get("track_id"),
+                    "posture": pose.get("posture"),
+                    "posture_confidence": pose.get("posture_confidence"),
+                    "posture_factors": pose.get("posture_factors") or {},
                     "fall_score": pose.get("fall_score"),
                     "action_hints": pose.get("action_hints") or [],
                     "keypoint_count": len(pose.get("keypoints") or []),

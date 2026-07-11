@@ -70,6 +70,9 @@
         if (event.type === "fall_candidate") {
             return "系统看到的是人体框比例和位置变化，不等于已经确认跌倒。它的意义是提醒你尽快确认。";
         }
+        if (event.type === "prolonged_floor_lying") {
+            return "系统连续看到同一人在非床或沙发区域保持躺卧超过 3 分钟，请尽快确认老人状态。";
+        }
         if (event.type === "black_screen") {
             return "系统检测到画面亮度和对比度异常，可能是遮挡、黑屏或强背光。";
         }
@@ -111,6 +114,9 @@
         }
         if (event.type === "fall_candidate") {
             return `${event.camera_name || event.room || "摄像头"} 出现疑似跌倒姿态`;
+        }
+        if (event.type === "prolonged_floor_lying") {
+            return `${event.camera_name || event.room || "摄像头"} 检测到长时间倒地`;
         }
         return cleanReason(event, event.summary) || GoHomeEdge.eventLabel(event.type);
     }

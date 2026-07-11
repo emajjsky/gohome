@@ -98,6 +98,7 @@ class TemporalObservationEngine:
             "person_count": len(assigned),
             "track_ids": current_track_ids,
             "postures": sorted({str(item.get("posture") or "unknown") for item in assigned}),
+            "tracks": [self._history_track(item) for item in assigned],
             "motion_score": analysis.get("motion_score"),
             "fall_candidate": bool(analysis.get("fall_candidate")),
             "fire_candidate": bool(analysis.get("fire_event_candidate") or analysis.get("fire_candidate")),
@@ -127,6 +128,39 @@ class TemporalObservationEngine:
             return
         history[-1]["snapshot_id"] = snapshot.get("id")
         history[-1]["snapshot_path"] = str(snapshot.get("image_path") or "")
+
+    def evidence_bundle(
+        self,
+        camera_id: int,
+        *,
+        event_type: str,
+        track_id: str | None = None,
+        limit: int = 3,
+    ) -> Dict[str, Any]:
+        history = list(self._histories.get(int(camera_id), ()))
+        if track_id:
+            history = [item for item in history if str(track_id) in (item.get("track_ids") or [])]
+        snapshots = [item for item in history if item.get("snapshot_id")]
+        selected = self._representative_samples(snapshots, max(1, min(3, int(limit))))
+        return {
+            "schema_version": "temporal-evidence-bundle-v1",
+            "event_type": str(event_type),
+            "track_id": str(track_id or ""),
+            "window_started_at": history[0].get("observed_at") if history else None,
+            "window_ended_at": history[-1].get("observed_at") if history else None,
+            "sample_count": len(history),
+            "posture_sequence": self._posture_sequence(history, track_id),
+            "snapshots": [
+                {
+                    "snapshot_id": item.get("snapshot_id"),
+                    "snapshot_path": item.get("snapshot_path") or "",
+                    "observed_at": item.get("observed_at"),
+                    "postures": item.get("postures") or [],
+                    "motion_score": item.get("motion_score"),
+                }
+                for item in selected
+            ],
+        }
 
     def recent_history(self, camera_id: int, limit: int | None = None) -> list[Dict[str, Any]]:
         items = list(self._histories.get(int(camera_id), ()))
@@ -276,6 +310,40 @@ class TemporalObservationEngine:
             "posture_confidence": round(float(track.get("posture_confidence") or 0.0), 4),
             "sample_count": int(track.get("sample_count") or 0),
         }
+
+    def _history_track(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "track_id": str(item.get("track_id") or ""),
+            "bbox": [round(float(value), 1) for value in item.get("bbox") or []],
+            "posture": str(item.get("posture") or "unknown"),
+            "posture_confidence": round(float(item.get("posture_confidence") or 0.0), 4),
+            "normal_lying_zone": bool(item.get("normal_lying_zone")),
+            "scene_zone_id": item.get("scene_zone_id"),
+            "scene_zone_label": item.get("scene_zone_label"),
+        }
+
+    def _representative_samples(self, items: list[Dict[str, Any]], limit: int) -> list[Dict[str, Any]]:
+        if len(items) <= limit:
+            return items
+        if limit == 1:
+            return [items[-1]]
+        indices = {0, len(items) - 1}
+        if limit >= 3:
+            indices.add(len(items) // 2)
+        return [items[index] for index in sorted(indices)][:limit]
+
+    def _posture_sequence(self, history: list[Dict[str, Any]], track_id: str | None) -> list[Dict[str, Any]]:
+        sequence: list[Dict[str, Any]] = []
+        previous = None
+        for observation in history:
+            tracks = observation.get("tracks") if isinstance(observation.get("tracks"), list) else []
+            track = next((item for item in tracks if not track_id or item.get("track_id") == track_id), None)
+            posture = str((track or {}).get("posture") or "unknown")
+            if posture == previous:
+                continue
+            sequence.append({"observed_at": observation.get("observed_at"), "posture": posture})
+            previous = posture
+        return sequence
 
     def _update_posture_states(
         self,

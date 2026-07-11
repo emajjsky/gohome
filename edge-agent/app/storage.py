@@ -3117,7 +3117,7 @@ class Storage:
             "posture_episodes_closed": int(posture_cursor.rowcount or 0),
         }
 
-    def reconcile_camera_runtime_state(self) -> Dict[str, int]:
+    def reconcile_camera_runtime_state(self, *, close_stale_open: bool = False) -> Dict[str, int]:
         timestamp = now_iso()
         with self.connect() as conn:
             observation_cursor = conn.execute(
@@ -3153,10 +3153,50 @@ class Storage:
                 """,
                 (timestamp, timestamp, timestamp),
             )
+            stale_observation_count = 0
+            stale_presence_count = 0
+            stale_posture_count = 0
+            if close_stale_open:
+                stale_observation_cursor = conn.execute(
+                    """
+                    UPDATE observation_logs
+                    SET status = 'closed', ended_at = ?,
+                        duration_seconds = MAX(0, CAST(strftime('%s', ?) - strftime('%s', started_at) AS INTEGER)),
+                        updated_at = ?
+                    WHERE status = 'open'
+                    """,
+                    (timestamp, timestamp, timestamp),
+                )
+                stale_presence_cursor = conn.execute(
+                    """
+                    UPDATE presence_sessions
+                    SET status = 'closed', ended_at = ?,
+                        duration_seconds = MAX(0, CAST(strftime('%s', ?) - strftime('%s', started_at) AS INTEGER)),
+                        close_reason = 'worker_restart', updated_at = ?
+                    WHERE status = 'open'
+                    """,
+                    (timestamp, timestamp, timestamp),
+                )
+                stale_posture_cursor = conn.execute(
+                    """
+                    UPDATE posture_episodes
+                    SET status = 'closed', ended_at = ?,
+                        duration_seconds = MAX(0, CAST(strftime('%s', ?) - strftime('%s', started_at) AS INTEGER)),
+                        close_reason = 'worker_restart', updated_at = ?
+                    WHERE status = 'open'
+                    """,
+                    (timestamp, timestamp, timestamp),
+                )
+                stale_observation_count = int(stale_observation_cursor.rowcount or 0)
+                stale_presence_count = int(stale_presence_cursor.rowcount or 0)
+                stale_posture_count = int(stale_posture_cursor.rowcount or 0)
         return {
             "orphan_observation_logs_closed": int(observation_cursor.rowcount or 0),
             "orphan_presence_sessions_closed": int(presence_cursor.rowcount or 0),
             "orphan_posture_episodes_closed": int(posture_cursor.rowcount or 0),
+            "stale_observation_logs_closed": stale_observation_count,
+            "stale_presence_sessions_closed": stale_presence_count,
+            "stale_posture_episodes_closed": stale_posture_count,
         }
 
     def create_snapshot(
