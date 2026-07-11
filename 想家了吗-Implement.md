@@ -10550,4 +10550,12 @@ SafetyIncident 与提醒：
 - Chrome 390x844 验证守护、暂停设置和视觉感知页面，三页 `scrollWidth === clientWidth`，无横向溢出。
 - 自动检查确认页面不再引用数据集占位图，不包含 `[object Object]`，定时暂停图标不再溢出。
 
-当前边界：本轮尚未同步腾讯云。下一步部署腾讯云并验证 HTTPS 登录、家庭创建者权限、双路云中继与设置持久化；通过后再进入阶段 7 数据集与时序模型评估。
+腾讯云部署与验证：
+
+- 实现文件同步到 `/opt/gohome/app`，服务端脚本语法检查通过，`gohome-app.service` 重启后为 active，`/health` 返回 PostgreSQL store。
+- `https://gohome.ai2shx.club` 已发布新的守护、外出暂停和视觉感知页面，Nginx 返回 200。
+- 家庭创建者账号线上验证 `away -> active` 成功，最终恢复 `mode=active`；家庭状态为 `observing`，`valid_camera_count=2`。
+- Chrome 390x844 线上实测守护页两张视频均为真实 `640x360` 帧，`scrollWidth === clientWidth`，active incident 为 0，页面无脚本错误。
+- 线上视觉页源码不再引用 `elderly-alone.jpg`，公开样本不能作为实时画面回退。
+
+当前边界：阶段 6 已完成本地与腾讯云闭环。下一步进入阶段 7 数据集扩充、困难负样本标注和骨架时序模型评估；在替换现有可解释状态机前必须先达到序列级回归指标。
