@@ -15,12 +15,15 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - path: GoHomeShell/Sources
+    resources:
+      - path: GoHomeShell/Resources
     info:
       path: GoHomeShell/Config/Info.plist
     settings:
       base:
         PRODUCT_NAME: GoHomeShell
         INFOPLIST_FILE: GoHomeShell/Config/Info.plist
+        CODE_SIGN_ENTITLEMENTS: GoHomeShell/Config/GoHomeShell.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
         DEVELOPMENT_ASSET_PATHS: ""

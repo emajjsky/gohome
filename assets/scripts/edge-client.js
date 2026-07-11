@@ -748,6 +748,12 @@
         }
     }
 
+    async function openNativeExternalURL(url) {
+        const target = String(url || "").trim();
+        if (!target || !nativeBridgeAvailable()) return null;
+        return callNativeBridge("openExternalURL", { url: target });
+    }
+
     function fmtTime(value) {
         if (!value) return "-";
         const date = new Date(value);
@@ -826,6 +832,7 @@
         resolveNativeBridgeResult,
         requestNativePushRegistration,
         consumeNativeLaunchPayload,
+        openNativeExternalURL,
         device: () => request("/api/device"),
         register: async (payload) => {
             const data = await request("/api/auth/register", {

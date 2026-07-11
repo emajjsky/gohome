@@ -24,7 +24,7 @@ struct GoHomeShellView: View {
 
     var body: some View {
         GoHomeShellWebView()
-            .ignoresSafeArea()
             .environmentObject(runtime)
+            .background(Color(red: 0.984, green: 0.976, blue: 0.973))
     }
 }

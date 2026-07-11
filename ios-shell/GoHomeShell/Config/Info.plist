@@ -36,16 +36,36 @@
 	<key>GoHomePushEnabled</key>
 	<false/>
 	<key>GoHomeWebAppURL</key>
-	<string>http://192.168.1.4:8711/ui/app-shell.html?app=1</string>
+	<string>https://gohome.ai2shx.club/index.html?app=1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>gohome.local</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_gohome._tcp</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>GoHome needs LAN access to open the local edge-agent web app.</string>
+	<string>用于发现并安全绑定与手机连接同一 Wi-Fi 的回家守护盒子。</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>用于计算你与老人家庭的大致距离，并生成回家提醒。</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>weixin</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

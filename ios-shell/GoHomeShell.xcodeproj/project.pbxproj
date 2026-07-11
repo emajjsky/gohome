@@ -10,6 +10,7 @@
 		AA0000000000000000000101 /* GoHomeShellApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000201 /* GoHomeShellApp.swift */; };
 		AA0000000000000000000102 /* GoHomeShellRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000202 /* GoHomeShellRuntime.swift */; };
 		AA0000000000000000000103 /* GoHomeShellWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000203 /* GoHomeShellWebView.swift */; };
+		AA0000000000000000000104 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000207 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -18,6 +19,7 @@
 		AA0000000000000000000203 /* GoHomeShellWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoHomeShellWebView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000204 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA0000000000000000000206 /* GoHomeShell.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GoHomeShell.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000207 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -44,6 +46,7 @@
 			children = (
 				AA0000000000000000000403 /* Sources */,
 				AA0000000000000000000404 /* Config */,
+				AA0000000000000000000406 /* Resources */,
 			);
 			path = GoHomeShell;
 			sourceTree = "<group>";
@@ -72,6 +75,14 @@
 				AA0000000000000000000206 /* GoHomeShell.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000406 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000207 /* Assets.xcassets */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -132,6 +143,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA0000000000000000000104 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -195,6 +207,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = GoHomeShell/Config/GoHomeShell.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
@@ -222,6 +235,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = GoHomeShell/Config/GoHomeShell.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";

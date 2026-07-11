@@ -1,5 +1,5 @@
 import SwiftUI
-import WebKit
+@preconcurrency import WebKit
 
 struct GoHomeShellWebView: UIViewRepresentable {
     @EnvironmentObject private var runtime: GoHomeShellRuntime
@@ -14,12 +14,20 @@ struct GoHomeShellWebView: UIViewRepresentable {
 
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = contentController
+        configuration.websiteDataStore = .default()
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.applicationNameForUserAgent = "GoHomeIOS/0.1"
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
-        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.uiDelegate = context.coordinator
+        webView.scrollView.contentInsetAdjustmentBehavior = .automatic
+        webView.allowsBackForwardNavigationGestures = true
+        webView.scrollView.keyboardDismissMode = .interactive
+        webView.isOpaque = false
+        webView.backgroundColor = UIColor(red: 0.984, green: 0.976, blue: 0.973, alpha: 1)
+        webView.scrollView.backgroundColor = webView.backgroundColor
         context.coordinator.attach(webView)
         webView.load(cacheBypassingRequest(for: ShellConfig.webAppURL))
         return webView
@@ -39,7 +47,7 @@ struct GoHomeShellWebView: UIViewRepresentable {
         return request
     }
 
-    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
         private weak var webView: WKWebView?
         private let runtime: GoHomeShellRuntime
 
@@ -62,7 +70,8 @@ struct GoHomeShellWebView: UIViewRepresentable {
             }
             Task { @MainActor in
                 do {
-                    let result = try await call(method: method)
+                let callPayload = payload["payload"] as? [String: Any] ?? [:]
+                let result = try await call(method: method, payload: callPayload)
                     respond(requestID: requestID, result: result, error: nil)
                 } catch {
                     respond(requestID: requestID, result: nil, error: error.localizedDescription)
@@ -70,15 +79,58 @@ struct GoHomeShellWebView: UIViewRepresentable {
             }
         }
 
-        private func call(method: String) async throws -> Any? {
+        private func call(method: String, payload: [String: Any]) async throws -> Any? {
             switch method {
             case "registerForPush":
                 return try await runtime.registerForPush()
             case "consumeLaunchPayload":
                 return runtime.consumeLaunchPayload()
+            case "openExternalURL":
+                return try await runtime.openExternalURL(String(payload["url"] as? String ?? ""))
             default:
                 throw BridgeError.unsupportedMethod
             }
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            guard let url = navigationAction.request.url, let scheme = url.scheme?.lowercased() else {
+                decisionHandler(.cancel)
+                return
+            }
+            if ["tel", "sms", "weixin"].contains(scheme) {
+                Task { @MainActor in _ = try? await runtime.openExternalURL(url.absoluteString) }
+                decisionHandler(.cancel)
+                return
+            }
+            if ["http", "https"].contains(scheme) {
+                let host = url.host?.lowercased() ?? ""
+                let cloudHost = ShellConfig.webAppURL.host?.lowercased() ?? ""
+                if host == cloudHost || host == "gohome.local" || host.hasSuffix(".local") {
+                    decisionHandler(.allow)
+                    return
+                }
+            }
+            decisionHandler(.cancel)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
+                webView.load(URLRequest(url: url))
+            }
+            return nil
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            webView.reload()
         }
 
         private func respond(requestID: String, result: Any?, error: String?) {

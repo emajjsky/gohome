@@ -30,6 +30,7 @@ final class GoHomeShellRuntime: ObservableObject {
             "url": url.absoluteString,
             "next": next,
         ]
+        navigate(to: next)
     }
 
     func handleNotificationResponse(userInfo: [AnyHashable: Any]) {
@@ -41,6 +42,7 @@ final class GoHomeShellRuntime: ObservableObject {
         payload["camera_id"] = gohome["camera_id"]
         payload["open_deep_link"] = openDeepLink
         pendingLaunchPayload = payload
+        navigate(to: payload["next"] as? String ?? "")
     }
 
     func updatePushToken(_ data: Data) {
@@ -78,6 +80,27 @@ final class GoHomeShellRuntime: ObservableObject {
         let payload = pendingLaunchPayload
         pendingLaunchPayload = nil
         return payload
+    }
+
+    func openExternalURL(_ rawURL: String) async throws -> [String: Any] {
+        let value = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: value), let scheme = url.scheme?.lowercased() else {
+            throw GoHomeShellError.invalidExternalURL
+        }
+        guard ["tel", "sms", "weixin"].contains(scheme) else {
+            throw GoHomeShellError.externalURLNotAllowed
+        }
+        guard await UIApplication.shared.open(url) else {
+            throw GoHomeShellError.externalAppUnavailable
+        }
+        return ["opened": true, "scheme": scheme]
+    }
+
+    private func navigate(to path: String) {
+        let value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, let target = URL(string: value, relativeTo: ShellConfig.webAppURL)?.absoluteURL else { return }
+        guard target.host?.lowercased() == ShellConfig.webAppURL.host?.lowercased() else { return }
+        webAppURL = target
     }
 
     private func pushRegistrationPayload() -> [String: Any] {
@@ -119,6 +142,9 @@ enum GoHomeShellError: LocalizedError {
     case pushUnavailableForDemo
     case pushPermissionDenied
     case pushTokenUnavailable
+    case invalidExternalURL
+    case externalURLNotAllowed
+    case externalAppUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -128,14 +154,20 @@ enum GoHomeShellError: LocalizedError {
             return "Push permission was denied"
         case .pushTokenUnavailable:
             return "APNs device token is still unavailable"
+        case .invalidExternalURL:
+            return "无法识别要打开的链接"
+        case .externalURLNotAllowed:
+            return "该外部链接不允许从 App 打开"
+        case .externalAppUnavailable:
+            return "手机上没有安装对应应用，或系统暂时无法打开"
         }
     }
 }
 
 enum ShellConfig {
     static let webAppURL: URL = {
-        let raw = Bundle.main.object(forInfoDictionaryKey: "GoHomeWebAppURL") as? String ?? "http://127.0.0.1:8711/ui/app-shell.html?app=1"
-        return URL(string: raw) ?? URL(string: "http://127.0.0.1:8711/ui/app-shell.html?app=1")!
+        let raw = Bundle.main.object(forInfoDictionaryKey: "GoHomeWebAppURL") as? String ?? "https://gohome.ai2shx.club/index.html?app=1"
+        return URL(string: raw) ?? URL(string: "https://gohome.ai2shx.club/index.html?app=1")!
     }()
 
     static let pushEnvironment: String = {

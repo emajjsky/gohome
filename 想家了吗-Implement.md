@@ -10226,3 +10226,23 @@ disk usage: 45% -> 24%
 1. 部署腾讯云和树莓派，生产环境设置 `GOHOME_ALLOW_CLOUD_DEVICE_CLAIMS=0`。
 2. 重启盒子开启 15 分钟窗口，从空账号走注册、家庭、老人资料、局域网绑定和双摄像头配置。
 3. 验证规则、双路视频、事件、关怀卡和 App 解绑后重新绑定。
+
+## 88. 2026-07-11 iOS 壳第一阶段
+
+已完成：
+
+- 现有 `GoHomeShell.xcodeproj` 默认入口由局域网开发地址改为 `https://gohome.ai2shx.club/index.html?app=1`。
+- SwiftUI 不再让 WebView 覆盖系统安全区；iPhone 16 Pro 模拟器已确认 Dynamic Island 和 Home Indicator 留白正确。
+- WKWebView 使用持久化数据存储，支持登录态保存、侧滑返回、内联视频、新窗口接管和 Web 内容进程恢复。
+- 导航白名单限制为腾讯云产品域名和 `.local` 盒子；电话、短信和微信 scheme 交由系统打开。
+- H5 原生桥增加 `openExternalURL`，陪伴页“发消息”在 iOS 壳中打开微信，电话继续使用 `tel:`。
+- 增加本地网络、Bonjour、定位权限文案和 `_gohome._tcp` 服务声明。
+- 树莓派部署 Avahi `_gohome._tcp:8711` 广播；Mac `dns-sd` 已发现“回家守护盒子 - gohome”。
+- 新增 1024px AppIcon：深绿家庭轮廓与暖色爱心，并在 iPhone 16 Pro 模拟器主屏验证显示正常。
+- 干净 DerivedData 构建通过，未出现 Swift 编译或 asset catalog 警告；本地后端回归继续通过。
+
+待真机：
+
+1. 选择真实 Apple 开发团队和 iPhone，完成自动签名安装。
+2. 验证本地网络授权、`gohome.local` 绑定、双路视频、拨号、微信和定位。
+3. 确认 Apple Developer/APNs capability 后启用 `GoHomePushEnabled` 并上传真机 push token。

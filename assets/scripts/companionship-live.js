@@ -263,7 +263,12 @@
             if (action.key === "wechat") {
                 event.preventDefault();
                 event.stopImmediatePropagation();
-                setFeedback("本地网页不直接跳微信，iOS App 内会接入微信跳转。");
+                if (window.GoHomeEdge?.nativeBridgeAvailable?.()) {
+                    window.GoHomeEdge.openNativeExternalURL?.("weixin://")
+                        .catch((error) => setFeedback(error.message || "暂时无法打开微信。"));
+                    return;
+                }
+                setFeedback("请在 iOS App 中使用微信联系。 ");
             }
         }, true);
     }
