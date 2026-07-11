@@ -60,6 +60,8 @@ class EdgeWorker:
         self.last_rules_loaded_at: str | None = None
         self.last_rules_snapshot: Dict[str, Any] = {}
         self._known_camera_ids: set[int] = set()
+        self.runtime_reconciliation: Dict[str, Any] = {}
+        self._runtime_reconciled = False
 
     @property
     def is_running(self) -> bool:
@@ -83,6 +85,10 @@ class EdgeWorker:
         while not self._stop.is_set():
             interval = 5
             try:
+                if not self._runtime_reconciled:
+                    self.runtime_reconciliation = self.storage.reconcile_camera_runtime_state()
+                    self.runtime_reconciliation["completed_at"] = datetime.now(timezone.utc).isoformat()
+                    self._runtime_reconciled = True
                 rules = self.storage.get_rules()
                 self.last_loop_started_at = datetime.now(timezone.utc).isoformat()
                 self.last_rules_loaded_at = rules.get("updated_at")
@@ -90,7 +96,7 @@ class EdgeWorker:
                 cameras = self.storage.list_cameras(include_secret=True)
                 current_camera_ids = {int(camera["id"]) for camera in cameras}
                 for removed_camera_id in self._known_camera_ids - current_camera_ids:
-                    self.temporal_engine.reset_camera(removed_camera_id)
+                    self._reset_camera_runtime_memory(removed_camera_id)
                 self._known_camera_ids = current_camera_ids
                 for camera in cameras:
                     if self._stop.is_set():
@@ -98,7 +104,7 @@ class EdgeWorker:
                     if not camera.get("enabled"):
                         camera_id = int(camera["id"])
                         self.storage.close_camera_runtime_state(camera_id, reason="camera_disabled")
-                        self.temporal_engine.reset_camera(camera_id)
+                        self._reset_camera_runtime_memory(camera_id)
                         continue
                     self.process_camera(camera, rules)
                 self._prune_history_if_due()
@@ -117,11 +123,21 @@ class EdgeWorker:
             "rules": self.last_rules_snapshot,
             "history_cleanup": self.last_history_cleanup_result,
             "temporal_engine": self.temporal_engine.version,
+            "runtime_reconciliation": self.runtime_reconciliation,
             "last_error": self.last_error,
         }
 
     def request_rules_reload(self) -> None:
         self._wake.set()
+
+    def _reset_camera_runtime_memory(self, camera_id: int) -> None:
+        camera_id = int(camera_id)
+        self.temporal_engine.reset_camera(camera_id)
+        self.rule_engine.reset_camera(camera_id)
+        self.previous_frames.pop(camera_id, None)
+        self.pose_frame_counts.pop(camera_id, None)
+        self.latest_evaluations.pop(camera_id, None)
+        self.last_live_upload_at.pop(camera_id, None)
 
     def _prune_history_if_due(self) -> None:
         if self.snapshot_dir is None:
@@ -218,7 +234,7 @@ class EdgeWorker:
         except CameraError as exc:
             self.storage.update_camera_status(camera_id, "offline", str(exc))
             self.storage.close_presence_session(camera_id=camera_id, reason="camera_offline")
-            self.temporal_engine.reset_camera(camera_id)
+            self._reset_camera_runtime_memory(camera_id)
             evaluation = self.rule_engine.evaluate_camera_error(camera, rules, str(exc))
             evaluation_dict = evaluation.to_dict()
             persisted_evaluation = self.storage.create_rule_evaluation(
@@ -239,7 +255,7 @@ class EdgeWorker:
         except Exception as exc:
             self.storage.update_camera_status(camera_id, "error", str(exc))
             self.storage.close_presence_session(camera_id=camera_id, reason="camera_error")
-            self.temporal_engine.reset_camera(camera_id)
+            self._reset_camera_runtime_memory(camera_id)
             return {"ok": False, "error": str(exc)}
 
     def _update_presence_session(

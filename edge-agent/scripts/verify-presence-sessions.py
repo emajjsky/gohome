@@ -55,7 +55,35 @@ def main() -> None:
         if not any(item["close_reason"] == "camera_deleted" for item in closed):
             raise SystemExit(f"deleting camera must close runtime state: {closed}")
 
-        print(json.dumps({"ok": True, "closed_sessions": len(closed)}, ensure_ascii=False, indent=2))
+        orphan_camera = storage.create_camera({
+            "name": "历史孤儿摄像头",
+            "room": "书房",
+            "stream_url": "rtsp://192.168.1.12/live",
+            "enabled": True,
+        })
+        orphan_id = int(orphan_camera["id"])
+        storage.upsert_presence_session(
+            camera_id=orphan_id,
+            observed_at="2026-07-11T12:00:00+00:00",
+            person_count=1,
+        )
+        storage.upsert_observation_log(
+            camera_id=orphan_id,
+            observation_type="no_person",
+            summary="历史观察片段",
+            evaluated_at="2026-07-11T12:00:00+00:00",
+            snapshot_id=None,
+            detection_result_id=None,
+            rule_evaluation_id=None,
+            event_candidate_id=None,
+        )
+        with storage.connect() as conn:
+            conn.execute("DELETE FROM cameras WHERE id = ?", (orphan_id,))
+        reconciliation = storage.reconcile_camera_runtime_state()
+        if reconciliation["orphan_presence_sessions_closed"] != 1 or reconciliation["orphan_observation_logs_closed"] != 1:
+            raise SystemExit(f"orphan runtime state was not reconciled: {reconciliation}")
+
+        print(json.dumps({"ok": True, "closed_sessions": len(closed), "reconciliation": reconciliation}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

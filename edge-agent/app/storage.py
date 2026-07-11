@@ -2912,6 +2912,36 @@ class Storage:
             "presence_sessions_closed": int(presence_cursor.rowcount or 0),
         }
 
+    def reconcile_camera_runtime_state(self) -> Dict[str, int]:
+        timestamp = now_iso()
+        with self.connect() as conn:
+            observation_cursor = conn.execute(
+                """
+                UPDATE observation_logs
+                SET status = 'closed', ended_at = ?,
+                    duration_seconds = MAX(0, CAST(strftime('%s', ?) - strftime('%s', started_at) AS INTEGER)),
+                    updated_at = ?
+                WHERE status = 'open'
+                  AND NOT EXISTS (SELECT 1 FROM cameras c WHERE c.id = observation_logs.camera_id)
+                """,
+                (timestamp, timestamp, timestamp),
+            )
+            presence_cursor = conn.execute(
+                """
+                UPDATE presence_sessions
+                SET status = 'closed', ended_at = ?,
+                    duration_seconds = MAX(0, CAST(strftime('%s', ?) - strftime('%s', started_at) AS INTEGER)),
+                    close_reason = 'camera_missing', updated_at = ?
+                WHERE status = 'open'
+                  AND NOT EXISTS (SELECT 1 FROM cameras c WHERE c.id = presence_sessions.camera_id)
+                """,
+                (timestamp, timestamp, timestamp),
+            )
+        return {
+            "orphan_observation_logs_closed": int(observation_cursor.rowcount or 0),
+            "orphan_presence_sessions_closed": int(presence_cursor.rowcount or 0),
+        }
+
     def create_snapshot(
         self,
         camera_id: int,

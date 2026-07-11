@@ -58,6 +58,14 @@ class RuleEngine:
         self.fall_upright_states: Dict[int, Dict[str, Any]] = {}
         self.fire_confirm_counts: Dict[int, int] = {}
 
+    def reset_camera(self, camera_id: int) -> None:
+        camera_id = int(camera_id)
+        self.last_motion_at.pop(camera_id, None)
+        self.last_person_seen_at.pop(camera_id, None)
+        self.fall_tracks.pop(camera_id, None)
+        self.fall_upright_states.pop(camera_id, None)
+        self.fire_confirm_counts.pop(camera_id, None)
+
     def evaluate_snapshot(
         self,
         camera: Dict[str, Any],
