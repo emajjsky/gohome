@@ -685,7 +685,7 @@ async function main() {
         const imageBytes = Buffer.from("fake-jpeg-content");
         const media = await requestJson(
             baseUrl,
-            `/api/v1/device/media-assets/upload?file_name=test.jpg&snapshot_path=events/test.jpg&content_type=image/jpeg&edge_event_id=42&camera_id=${camera.id}&local_camera_id=11`,
+            `/api/v1/device/media-assets/upload?file_name=test.jpg&snapshot_path=events/test.jpg&content_type=image/jpeg&edge_event_id=42&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence`,
             {
                 method: "POST",
                 body: imageBytes,
@@ -1190,6 +1190,8 @@ async function main() {
         assert.ok(seededStaleOfflineEvent);
         assert.equal(seededFallEvent.camera_id, String(camera.id));
         assert.equal(seedBundle.tables.media_assets.length, 2);
+        const seededEventAsset = seedBundle.tables.media_assets.find((asset) => asset.snapshot_path === "events/test.jpg");
+        assert.equal(seededEventAsset.metadata.purpose, "event_evidence");
         assert.equal(seedBundle.tables.care_preferences.length, 1);
         assert.equal(seedBundle.tables.care_preferences[0].image_model, "wan2.7-image");
         assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.delivery_time, "07:45");
@@ -1228,6 +1230,8 @@ async function main() {
         assert.equal(restoredFallEvent.summary, "疑似跌倒");
         assert.equal(String(restoredFallEvent.camera_id), String(camera.id));
         assert.equal(restoredDb.assets.length, 2);
+        const restoredEventAsset = restoredDb.assets.find((asset) => asset.snapshot_path === "events/test.jpg");
+        assert.equal(restoredEventAsset.purpose, "event_evidence");
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);
         assert.equal(restoredDb.family_rules[String(family.id)].activity_detection_enabled, false);
         assert.equal(restoredDb.family_rules[String(family.id)].fire_detection_enabled, true);

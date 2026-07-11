@@ -406,6 +406,9 @@ function buildCloudSeedBundle(db, options = {}) {
         size_bytes: numberOrNull(asset.size || asset.size_bytes) || 0,
         metadata: {
             url: asset.url || "",
+            purpose: String(asset.purpose || ""),
+            local_camera_id: nullableTextId(asset.local_camera_id),
+            captured_at: iso(asset.captured_at),
         },
         created_at: iso(asset.created_at, exportedAt),
         updated_at: iso(asset.updated_at, iso(asset.created_at, exportedAt)),
