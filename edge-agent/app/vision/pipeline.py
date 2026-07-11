@@ -272,7 +272,7 @@ class VisionPipeline:
             "pose_present": bool(poses),
             "pose_fresh": any((pose.get("tracking_state") or "fresh") == "fresh" for pose in poses),
             "hand_near_face": "hand_near_face" in current_hints,
-            "seated_or_upper_body": any(posture in {"seated_or_half_body", "upper_body", "standing_or_sitting"} for posture in postures) or "seated_or_upper_body" in current_hints,
+            "seated_or_upper_body": any(posture in {"sitting", "seated_or_half_body", "upper_body"} for posture in postures) or "seated_or_upper_body" in current_hints,
             "lying": any(posture == "lying" for posture in postures),
             "motion_score": motion,
             "low_motion": motion is not None and motion <= low_motion_threshold,

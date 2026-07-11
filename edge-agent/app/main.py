@@ -3075,6 +3075,12 @@ def list_presence_sessions(limit: int = 50, status: str | None = None) -> list[D
     return storage.list_presence_sessions(limit=max(1, min(limit, 500)), status=normalized_status)
 
 
+@app.get("/api/posture-episodes")
+def list_posture_episodes(limit: int = 100, status: str | None = None) -> list[Dict[str, Any]]:
+    normalized_status = (status or "").strip().lower() or None
+    return storage.list_posture_episodes(limit=max(1, min(limit, 1000)), status=normalized_status)
+
+
 @app.get("/api/upload-jobs")
 def list_upload_jobs(
     limit: int = 50,

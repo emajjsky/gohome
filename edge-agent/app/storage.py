@@ -393,6 +393,32 @@ class Storage:
                     FOREIGN KEY(representative_snapshot_id) REFERENCES snapshots(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS posture_episodes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    camera_id INTEGER NOT NULL,
+                    track_id TEXT NOT NULL,
+                    posture TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    started_at TEXT NOT NULL,
+                    confirmed_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    duration_seconds INTEGER NOT NULL DEFAULT 0,
+                    sample_count INTEGER NOT NULL DEFAULT 1,
+                    mean_confidence REAL NOT NULL DEFAULT 0,
+                    max_confidence REAL NOT NULL DEFAULT 0,
+                    normal_lying_zone INTEGER NOT NULL DEFAULT 0,
+                    scene_zone_id TEXT,
+                    scene_zone_label TEXT,
+                    representative_snapshot_id INTEGER,
+                    close_reason TEXT NOT NULL DEFAULT '',
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(camera_id) REFERENCES cameras(id),
+                    FOREIGN KEY(representative_snapshot_id) REFERENCES snapshots(id)
+                );
+
                 CREATE TABLE IF NOT EXISTS device_sync_states (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     device_id TEXT NOT NULL UNIQUE,
@@ -716,6 +742,10 @@ class Storage:
                 CREATE INDEX IF NOT EXISTS idx_detection_results_snapshot_id ON detection_results(snapshot_id);
                 CREATE INDEX IF NOT EXISTS idx_presence_sessions_camera_status
                     ON presence_sessions(camera_id, status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_posture_episodes_camera_status
+                    ON posture_episodes(camera_id, status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_posture_episodes_track_status
+                    ON posture_episodes(camera_id, track_id, status, updated_at);
                 """
             )
 
@@ -849,6 +879,10 @@ class Storage:
                   )
                   AND s.id NOT IN (
                       SELECT representative_snapshot_id FROM presence_sessions
+                      WHERE representative_snapshot_id IS NOT NULL AND status = 'open'
+                  )
+                  AND s.id NOT IN (
+                      SELECT representative_snapshot_id FROM posture_episodes
                       WHERE representative_snapshot_id IS NOT NULL AND status = 'open'
                   )
                   AND s.id NOT IN (
@@ -2884,6 +2918,166 @@ class Storage:
             ).fetchall()
         return [item for row in rows if (item := self._presence_session_to_dict(row)) is not None]
 
+    def _posture_episode_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
+        if row is None:
+            return None
+        data = dict(row)
+        data["normal_lying_zone"] = bool(data.get("normal_lying_zone"))
+        data["payload"] = json.loads(data.pop("payload_json", "{}") or "{}")
+        return data
+
+    def upsert_posture_episode(
+        self,
+        *,
+        camera_id: int,
+        track_id: str,
+        posture: str,
+        started_at: str,
+        confirmed_at: str,
+        last_seen_at: str,
+        sample_count: int,
+        mean_confidence: float,
+        max_confidence: float,
+        normal_lying_zone: bool = False,
+        scene_zone_id: Any = None,
+        scene_zone_label: Any = None,
+        snapshot_id: Optional[int] = None,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        timestamp = now_iso()
+        clean_track_id = str(track_id or "").strip()
+        clean_posture = str(posture or "unknown").strip()
+        if not clean_track_id:
+            raise ValueError("track_id is required")
+        start_time = str(started_at or "").strip() or timestamp
+        confirm_time = str(confirmed_at or "").strip() or start_time
+        seen_time = str(last_seen_at or "").strip() or timestamp
+        duration_seconds = max(0, int((datetime.fromisoformat(seen_time) - datetime.fromisoformat(start_time)).total_seconds()))
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE posture_episodes
+                SET status = 'closed', ended_at = ?,
+                    duration_seconds = MAX(0, CAST(strftime('%s', ?) - strftime('%s', started_at) AS INTEGER)),
+                    close_reason = 'posture_changed', updated_at = ?
+                WHERE camera_id = ? AND track_id = ? AND status = 'open' AND posture != ?
+                """,
+                (seen_time, seen_time, timestamp, int(camera_id), clean_track_id, clean_posture),
+            )
+            row = conn.execute(
+                """
+                SELECT * FROM posture_episodes
+                WHERE camera_id = ? AND track_id = ? AND posture = ? AND status = 'open'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (int(camera_id), clean_track_id, clean_posture),
+            ).fetchone()
+            if row is None:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO posture_episodes (
+                        camera_id, track_id, posture, status, started_at, confirmed_at,
+                        last_seen_at, ended_at, duration_seconds, sample_count,
+                        mean_confidence, max_confidence, normal_lying_zone,
+                        scene_zone_id, scene_zone_label, representative_snapshot_id,
+                        close_reason, payload_json, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, 'open', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
+                    """,
+                    (
+                        int(camera_id), clean_track_id, clean_posture, start_time, confirm_time,
+                        seen_time, duration_seconds, max(1, int(sample_count)),
+                        float(mean_confidence or 0.0), float(max_confidence or 0.0),
+                        1 if normal_lying_zone else 0,
+                        str(scene_zone_id) if scene_zone_id not in (None, "") else None,
+                        str(scene_zone_label) if scene_zone_label not in (None, "") else None,
+                        int(snapshot_id) if snapshot_id else None,
+                        json.dumps(payload or {}, ensure_ascii=False), timestamp, timestamp,
+                    ),
+                )
+                episode_id = int(cursor.lastrowid)
+            else:
+                episode_id = int(row["id"])
+                conn.execute(
+                    """
+                    UPDATE posture_episodes
+                    SET last_seen_at = ?, duration_seconds = ?, sample_count = ?,
+                        mean_confidence = ?, max_confidence = ?, normal_lying_zone = ?,
+                        scene_zone_id = ?, scene_zone_label = ?,
+                        representative_snapshot_id = COALESCE(?, representative_snapshot_id),
+                        payload_json = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        seen_time, duration_seconds, max(1, int(sample_count)),
+                        float(mean_confidence or 0.0), float(max_confidence or 0.0),
+                        1 if normal_lying_zone else 0,
+                        str(scene_zone_id) if scene_zone_id not in (None, "") else None,
+                        str(scene_zone_label) if scene_zone_label not in (None, "") else None,
+                        int(snapshot_id) if snapshot_id else None,
+                        json.dumps(payload or {}, ensure_ascii=False), timestamp, episode_id,
+                    ),
+                )
+            updated = conn.execute("SELECT * FROM posture_episodes WHERE id = ?", (episode_id,)).fetchone()
+        episode = self._posture_episode_to_dict(updated)
+        if episode is None:
+            raise RuntimeError("Posture episode was not persisted")
+        return episode
+
+    def close_posture_episode(
+        self,
+        *,
+        camera_id: int,
+        track_id: Optional[str] = None,
+        posture: Optional[str] = None,
+        ended_at: Optional[str] = None,
+        reason: str = "track_expired",
+    ) -> int:
+        timestamp = now_iso()
+        end_time = str(ended_at or "").strip() or timestamp
+        clauses = ["camera_id = ?", "status = 'open'"]
+        params: list[Any] = [int(camera_id)]
+        if track_id:
+            clauses.append("track_id = ?")
+            params.append(str(track_id))
+        if posture:
+            clauses.append("posture = ?")
+            params.append(str(posture))
+        params = [end_time, end_time, str(reason or ""), timestamp, *params]
+        with self.connect() as conn:
+            cursor = conn.execute(
+                f"""
+                UPDATE posture_episodes
+                SET status = 'closed', ended_at = ?,
+                    duration_seconds = MAX(0, CAST(strftime('%s', ?) - strftime('%s', started_at) AS INTEGER)),
+                    close_reason = ?, updated_at = ?
+                WHERE {' AND '.join(clauses)}
+                """,
+                tuple(params),
+            )
+        return int(cursor.rowcount or 0)
+
+    def list_posture_episodes(self, *, limit: int = 100, status: Optional[str] = None) -> list[Dict[str, Any]]:
+        where = ""
+        params: list[Any] = []
+        if status:
+            where = "WHERE pe.status = ?"
+            params.append(str(status))
+        params.append(max(1, min(int(limit), 1000)))
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT pe.*, c.name AS camera_name, c.room AS camera_room
+                FROM posture_episodes pe
+                LEFT JOIN cameras c ON c.id = pe.camera_id
+                {where}
+                ORDER BY pe.updated_at DESC, pe.id DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [item for row in rows if (item := self._posture_episode_to_dict(row)) is not None]
+
     def close_camera_runtime_state(self, camera_id: int, *, reason: str) -> Dict[str, int]:
         timestamp = now_iso()
         with self.connect() as conn:
@@ -2907,9 +3101,20 @@ class Storage:
                 """,
                 (timestamp, timestamp, str(reason or ""), timestamp, int(camera_id)),
             )
+            posture_cursor = conn.execute(
+                """
+                UPDATE posture_episodes
+                SET status = 'closed', ended_at = ?,
+                    duration_seconds = MAX(0, CAST(strftime('%s', ?) - strftime('%s', started_at) AS INTEGER)),
+                    close_reason = ?, updated_at = ?
+                WHERE camera_id = ? AND status = 'open'
+                """,
+                (timestamp, timestamp, str(reason or ""), timestamp, int(camera_id)),
+            )
         return {
             "observation_logs_closed": int(observation_cursor.rowcount or 0),
             "presence_sessions_closed": int(presence_cursor.rowcount or 0),
+            "posture_episodes_closed": int(posture_cursor.rowcount or 0),
         }
 
     def reconcile_camera_runtime_state(self) -> Dict[str, int]:
@@ -2937,9 +3142,21 @@ class Storage:
                 """,
                 (timestamp, timestamp, timestamp),
             )
+            posture_cursor = conn.execute(
+                """
+                UPDATE posture_episodes
+                SET status = 'closed', ended_at = ?,
+                    duration_seconds = MAX(0, CAST(strftime('%s', ?) - strftime('%s', started_at) AS INTEGER)),
+                    close_reason = 'camera_missing', updated_at = ?
+                WHERE status = 'open'
+                  AND NOT EXISTS (SELECT 1 FROM cameras c WHERE c.id = posture_episodes.camera_id)
+                """,
+                (timestamp, timestamp, timestamp),
+            )
         return {
             "orphan_observation_logs_closed": int(observation_cursor.rowcount or 0),
             "orphan_presence_sessions_closed": int(presence_cursor.rowcount or 0),
+            "orphan_posture_episodes_closed": int(posture_cursor.rowcount or 0),
         }
 
     def create_snapshot(

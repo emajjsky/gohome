@@ -20,14 +20,21 @@ class TemporalObservationEngine:
         track_ttl_seconds: float = 20.0,
         min_iou: float = 0.12,
         max_center_distance: float = 0.24,
+        posture_min_duration_seconds: float = 3.0,
+        posture_min_samples: int = 2,
+        posture_min_confidence: float = 0.40,
     ) -> None:
         self.history_size = max(8, int(history_size))
         self.track_ttl_seconds = max(2.0, float(track_ttl_seconds))
         self.min_iou = max(0.0, min(1.0, float(min_iou)))
         self.max_center_distance = max(0.01, float(max_center_distance))
+        self.posture_min_duration_seconds = max(0.0, float(posture_min_duration_seconds))
+        self.posture_min_samples = max(1, int(posture_min_samples))
+        self.posture_min_confidence = max(0.0, min(1.0, float(posture_min_confidence)))
         self._histories: dict[int, deque[Dict[str, Any]]] = {}
         self._tracks: dict[int, dict[str, Dict[str, Any]]] = {}
         self._next_track_ids: dict[int, int] = {}
+        self._posture_states: dict[int, dict[str, Dict[str, Any]]] = {}
 
     def update(
         self,
@@ -46,7 +53,8 @@ class TemporalObservationEngine:
         poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
         detections = self._detections(people, poses)
         tracks = self._tracks.setdefault(camera_id, {})
-        self._expire_tracks(tracks, now_mono)
+        expired_track_ids = self._expire_tracks(tracks, now_mono)
+        episode_closures = self._close_expired_postures(camera_id, expired_track_ids, timestamp)
 
         unmatched_track_ids = set(tracks)
         assigned: list[Dict[str, Any]] = []
@@ -73,12 +81,15 @@ class TemporalObservationEngine:
                 "confidence": float(detection.get("confidence") or 0.0),
                 "source": str(detection.get("source") or "person"),
                 "posture": str(detection.get("posture") or "unknown"),
+                "posture_confidence": float(detection.get("posture_confidence") or 0.0),
                 "sample_count": int(track.get("sample_count") or 0) + 1,
             })
             unmatched_track_ids.discard(track_id)
             assigned.append({**detection, "track_id": track_id})
 
         self._annotate_analysis(people, poses, assigned, frame_width, frame_height)
+        episode_updates, switched_closures = self._update_posture_states(camera_id, assigned, timestamp, now_mono)
+        episode_closures.extend(switched_closures)
         active_tracks = [self._public_track(item) for item in tracks.values() if now_mono - float(item.get("last_seen_monotonic") or 0.0) <= self.track_ttl_seconds]
         current_track_ids = [str(item["track_id"]) for item in assigned]
         observation = {
@@ -104,6 +115,8 @@ class TemporalObservationEngine:
             "active_tracks": sorted(active_tracks, key=lambda item: item["track_id"]),
             "history_sample_count": len(history),
             "history_capacity": self.history_size,
+            "posture_episode_updates": episode_updates,
+            "posture_episode_closures": episode_closures,
         }
         analysis["temporal_observation"] = result
         return result
@@ -126,30 +139,56 @@ class TemporalObservationEngine:
         self._histories.pop(camera_id, None)
         self._tracks.pop(camera_id, None)
         self._next_track_ids.pop(camera_id, None)
+        self._posture_states.pop(camera_id, None)
 
     def _detections(self, people: list[Dict[str, Any]], poses: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
-        detections = [self._detection(item, "person") for item in people if self._valid_bbox(item.get("bbox"))]
-        detections = [item for item in detections if item is not None]
+        detections = []
+        for person in people:
+            if not self._valid_bbox(person.get("bbox")):
+                continue
+            matching_pose = self._best_overlapping_pose(person.get("bbox"), poses)
+            item = self._detection(person, "person", posture_source=matching_pose)
+            if item is not None:
+                detections.append(item)
         for pose in poses:
             if not self._valid_bbox(pose.get("bbox")):
                 continue
             if any(self._iou(pose.get("bbox"), item.get("bbox")) >= 0.35 for item in detections):
                 continue
-            item = self._detection(pose, "pose")
+            item = self._detection(pose, "pose", posture_source=pose)
             if item is not None:
                 detections.append(item)
         return detections
 
-    def _detection(self, item: Dict[str, Any], source: str) -> Dict[str, Any] | None:
+    def _detection(
+        self,
+        item: Dict[str, Any],
+        source: str,
+        *,
+        posture_source: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any] | None:
         if not self._valid_bbox(item.get("bbox")):
             return None
+        posture_item = posture_source if isinstance(posture_source, dict) else item
         return {
             "bbox": [float(value) for value in item["bbox"]],
             "confidence": float(item.get("confidence") or item.get("score") or item.get("pose_confidence") or 0.0),
-            "posture": str(item.get("posture") or "unknown"),
+            "posture": str(posture_item.get("posture") or "unknown"),
+            "posture_confidence": float(posture_item.get("posture_confidence") or posture_item.get("confidence") or 0.0),
+            "normal_lying_zone": bool(posture_item.get("normal_lying_zone") or item.get("normal_lying_zone")),
+            "scene_zone_id": posture_item.get("scene_zone_id") or item.get("scene_zone_id"),
+            "scene_zone_label": posture_item.get("scene_zone_label") or item.get("scene_zone_label"),
             "source": source,
             "source_item": item,
+            "pose_item": posture_source,
         }
+
+    def _best_overlapping_pose(self, bbox: Any, poses: list[Dict[str, Any]]) -> Dict[str, Any] | None:
+        candidates = [pose for pose in poses if self._valid_bbox(pose.get("bbox"))]
+        if not candidates:
+            return None
+        best = max(candidates, key=lambda pose: self._iou(bbox, pose.get("bbox")))
+        return best if self._iou(bbox, best.get("bbox")) >= 0.20 else None
 
     def _match_track(
         self,
@@ -186,6 +225,9 @@ class TemporalObservationEngine:
             source_item = detection.get("source_item")
             if isinstance(source_item, dict):
                 source_item["track_id"] = detection["track_id"]
+            pose_item = detection.get("pose_item")
+            if isinstance(pose_item, dict):
+                pose_item["track_id"] = detection["track_id"]
         for pose in poses:
             if pose.get("track_id") or not self._valid_bbox(pose.get("bbox")):
                 continue
@@ -212,10 +254,16 @@ class TemporalObservationEngine:
         self._next_track_ids[camera_id] = value
         return f"c{camera_id}-p{value}"
 
-    def _expire_tracks(self, tracks: dict[str, Dict[str, Any]], now_mono: float) -> None:
-        expired = [track_id for track_id, item in tracks.items() if now_mono - float(item.get("last_seen_monotonic") or 0.0) > self.track_ttl_seconds]
+    def _expire_tracks(self, tracks: dict[str, Dict[str, Any]], now_mono: float) -> list[str]:
+        expired = [
+            track_id
+            for track_id, item in tracks.items()
+            if item.get("last_seen_monotonic") is not None
+            and now_mono - float(item["last_seen_monotonic"]) > self.track_ttl_seconds
+        ]
         for track_id in expired:
             tracks.pop(track_id, None)
+        return expired
 
     def _public_track(self, track: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -225,8 +273,114 @@ class TemporalObservationEngine:
             "bbox": track.get("bbox"),
             "confidence": round(float(track.get("confidence") or 0.0), 4),
             "posture": str(track.get("posture") or "unknown"),
+            "posture_confidence": round(float(track.get("posture_confidence") or 0.0), 4),
             "sample_count": int(track.get("sample_count") or 0),
         }
+
+    def _update_posture_states(
+        self,
+        camera_id: int,
+        assigned: list[Dict[str, Any]],
+        observed_at: str,
+        monotonic_at: float,
+    ) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
+        states = self._posture_states.setdefault(int(camera_id), {})
+        updates: list[Dict[str, Any]] = []
+        closures: list[Dict[str, Any]] = []
+        for item in assigned:
+            track_id = str(item.get("track_id") or "")
+            posture = str(item.get("posture") or "unknown")
+            confidence = float(item.get("posture_confidence") or 0.0)
+            if not track_id or posture == "unknown" or confidence < self.posture_min_confidence:
+                continue
+            state = states.setdefault(track_id, {})
+            if state.get("active_posture") == posture:
+                state["active_last_seen_at"] = observed_at
+                state["active_sample_count"] = int(state.get("active_sample_count") or 0) + 1
+                state["active_confidence_sum"] = float(state.get("active_confidence_sum") or 0.0) + confidence
+                state["active_max_confidence"] = max(float(state.get("active_max_confidence") or 0.0), confidence)
+                updates.append(self._episode_payload(camera_id, track_id, state, item, observed_at))
+                continue
+
+            if state.get("candidate_posture") != posture:
+                state["candidate_posture"] = posture
+                state["candidate_started_at"] = observed_at
+                state["candidate_started_monotonic"] = monotonic_at
+                state["candidate_sample_count"] = 1
+                state["candidate_confidence_sum"] = confidence
+                state["candidate_max_confidence"] = confidence
+            else:
+                state["candidate_sample_count"] = int(state.get("candidate_sample_count") or 0) + 1
+                state["candidate_confidence_sum"] = float(state.get("candidate_confidence_sum") or 0.0) + confidence
+                state["candidate_max_confidence"] = max(float(state.get("candidate_max_confidence") or 0.0), confidence)
+
+            candidate_started_monotonic = state.get("candidate_started_monotonic")
+            duration = max(
+                0.0,
+                monotonic_at - float(monotonic_at if candidate_started_monotonic is None else candidate_started_monotonic),
+            )
+            stable = int(state.get("candidate_sample_count") or 0) >= self.posture_min_samples and duration >= self.posture_min_duration_seconds
+            if not stable:
+                continue
+            if state.get("active_posture"):
+                closures.append({
+                    "camera_id": int(camera_id),
+                    "track_id": track_id,
+                    "posture": state["active_posture"],
+                    "ended_at": observed_at,
+                    "reason": "posture_changed",
+                })
+            state.update({
+                "active_posture": posture,
+                "active_started_at": state["candidate_started_at"],
+                "active_confirmed_at": observed_at,
+                "active_last_seen_at": observed_at,
+                "active_sample_count": int(state["candidate_sample_count"]),
+                "active_confidence_sum": float(state["candidate_confidence_sum"]),
+                "active_max_confidence": float(state["candidate_max_confidence"]),
+                "candidate_posture": "",
+            })
+            updates.append(self._episode_payload(camera_id, track_id, state, item, observed_at))
+        return updates, closures
+
+    def _episode_payload(
+        self,
+        camera_id: int,
+        track_id: str,
+        state: Dict[str, Any],
+        item: Dict[str, Any],
+        observed_at: str,
+    ) -> Dict[str, Any]:
+        sample_count = max(1, int(state.get("active_sample_count") or 1))
+        return {
+            "camera_id": int(camera_id),
+            "track_id": track_id,
+            "posture": str(state.get("active_posture") or "unknown"),
+            "started_at": state.get("active_started_at") or observed_at,
+            "confirmed_at": state.get("active_confirmed_at") or observed_at,
+            "last_seen_at": observed_at,
+            "sample_count": sample_count,
+            "mean_confidence": round(float(state.get("active_confidence_sum") or 0.0) / sample_count, 4),
+            "max_confidence": round(float(state.get("active_max_confidence") or 0.0), 4),
+            "normal_lying_zone": bool(item.get("normal_lying_zone")),
+            "scene_zone_id": item.get("scene_zone_id"),
+            "scene_zone_label": item.get("scene_zone_label"),
+        }
+
+    def _close_expired_postures(self, camera_id: int, track_ids: list[str], ended_at: str) -> list[Dict[str, Any]]:
+        states = self._posture_states.setdefault(int(camera_id), {})
+        closures = []
+        for track_id in track_ids:
+            state = states.pop(track_id, None) or {}
+            if state.get("active_posture"):
+                closures.append({
+                    "camera_id": int(camera_id),
+                    "track_id": track_id,
+                    "posture": state["active_posture"],
+                    "ended_at": ended_at,
+                    "reason": "track_expired",
+                })
+        return closures
 
     def _valid_bbox(self, bbox: Any) -> bool:
         if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:

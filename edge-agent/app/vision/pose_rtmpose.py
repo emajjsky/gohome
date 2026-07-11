@@ -4,6 +4,7 @@ from threading import RLock
 from typing import Any, Dict
 
 from .base import AlgorithmResult
+from .posture import PostureClassifier
 
 
 KEYPOINT_NAMES = [
@@ -90,6 +91,7 @@ class RtmposeAnalyzer:
         self._pose_tracker: Any = None
         self._load_error = ""
         self._model_lock = RLock()
+        self.posture_classifier = PostureClassifier()
 
     @property
     def model_name(self) -> str:
@@ -298,7 +300,8 @@ class RtmposeAnalyzer:
             if len(visible) < 4:
                 continue
             confidence = self._pose_confidence(keypoint_payload)
-            posture = self._estimate_posture(keypoint_payload)
+            posture_result = self.posture_classifier.classify(keypoint_payload)
+            posture = posture_result["label"]
             fall_score = self._estimate_fall_score(keypoint_payload, posture, frame_width, frame_height)
             action_hints = self._action_hints(keypoint_payload, posture, fall_score >= self.fall_threshold)
             poses.append(
@@ -306,6 +309,10 @@ class RtmposeAnalyzer:
                     "keypoints": keypoint_payload,
                     "confidence": confidence,
                     "posture": posture,
+                    "posture_confidence": posture_result["confidence"],
+                    "posture_legacy": posture_result["legacy_label"],
+                    "posture_factors": posture_result["factors"],
+                    "posture_classifier_version": posture_result["classifier_version"],
                     "bbox": self._bbox_from_keypoints(visible, frame_width, frame_height),
                     "fall_score": fall_score,
                     "model_status": "ready",
@@ -371,47 +378,7 @@ class RtmposeAnalyzer:
         ]
 
     def _estimate_posture(self, keypoints: list[Dict[str, Any]]) -> str:
-        by_name = {point["name"]: point for point in keypoints if point.get("visible")}
-        left_shoulder = by_name.get("left_shoulder")
-        right_shoulder = by_name.get("right_shoulder")
-        left_hip = by_name.get("left_hip")
-        right_hip = by_name.get("right_hip")
-        shoulders = [point for point in [left_shoulder, right_shoulder] if point]
-        hips = [point for point in [left_hip, right_hip] if point]
-        knees = [point for point in [by_name.get("left_knee"), by_name.get("right_knee")] if point]
-        ankles = [point for point in [by_name.get("left_ankle"), by_name.get("right_ankle")] if point]
-        torso = [*shoulders, *hips]
-        visible_points = list(by_name.values())
-        if shoulders and (knees or ankles) and len(visible_points) >= 5:
-            all_xs = [float(point["x"]) for point in visible_points]
-            all_ys = [float(point["y"]) for point in visible_points]
-            body_width = max(all_xs) - min(all_xs)
-            body_height = max(all_ys) - min(all_ys)
-            if body_width >= max(96.0, body_height * 2.15):
-                return "lying"
-        if len(torso) < 2:
-            return "upper_body"
-
-        xs = [float(point["x"]) for point in torso]
-        ys = [float(point["y"]) for point in torso]
-        width = max(xs) - min(xs)
-        height = max(ys) - min(ys)
-        if shoulders and hips:
-            mid_shoulder = self._midpoint(shoulders)
-            mid_hip = self._midpoint(hips)
-            torso_dx = abs(mid_hip[0] - mid_shoulder[0])
-            torso_dy = abs(mid_hip[1] - mid_shoulder[1])
-            if torso_dy <= max(26.0, torso_dx * 0.72) and width >= height * 0.95:
-                return "lying"
-        elif width > height * 1.45:
-            return "lying"
-        if knees and not ankles:
-            return "seated_or_half_body"
-        if shoulders and not hips:
-            return "upper_body"
-        if height < 72:
-            return "low_body"
-        return "standing_or_sitting"
+        return str(self.posture_classifier.classify(keypoints)["label"])
 
     def _estimate_fall_score(
         self,
@@ -430,10 +397,15 @@ class RtmposeAnalyzer:
         center_y = (float(bbox[1]) + float(bbox[3])) / 2.0
         score_by_posture = {
             "lying": 0.82,
-            "low_body": 0.48,
-            "seated_or_half_body": 0.22,
+            "squatting": 0.36,
+            "bending": 0.24,
+            "sitting": 0.18,
+            "standing": 0.08,
             "upper_body": 0.08,
-            "standing_or_sitting": 0.10,
+            "unknown": 0.05,
+            "low_body": 0.36,
+            "seated_or_half_body": 0.18,
+            "standing_or_sitting": 0.08,
         }
         score = score_by_posture.get(posture, 0.0)
         if aspect >= 1.35:
@@ -450,7 +422,7 @@ class RtmposeAnalyzer:
             hints.append("fall_candidate")
         if posture == "lying":
             hints.append("lying")
-        if posture in {"seated_or_half_body", "upper_body"}:
+        if posture in {"sitting", "seated_or_half_body", "upper_body"}:
             hints.append("seated_or_upper_body")
 
         by_name = {point["name"]: point for point in keypoints if point.get("visible")}

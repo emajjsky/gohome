@@ -587,7 +587,10 @@ class RuleEngine:
         poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
         for pose in poses:
             posture = str(pose.get("posture") or "")
-            if posture not in {"standing_or_sitting", "seated_or_half_body", "upper_body"}:
+            if posture not in {
+                "standing", "sitting", "squatting", "bending", "upper_body",
+                "standing_or_sitting", "seated_or_half_body", "low_body",
+            }:
                 continue
             if pose.get("person_evidence_eligible") is False or not self._valid_bbox(pose.get("bbox")):
                 continue

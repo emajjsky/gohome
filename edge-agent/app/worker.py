@@ -194,6 +194,7 @@ class EdgeWorker:
             )
             self.temporal_engine.attach_snapshot(camera_id, snapshot)
             self._update_presence_session(camera, snapshot, temporal)
+            self._persist_posture_episodes(camera, snapshot, temporal)
             self._enqueue_live_frame_upload(camera_id, snapshot)
             self.storage.update_camera_status(camera_id, "online")
 
@@ -233,7 +234,7 @@ class EdgeWorker:
 
         except CameraError as exc:
             self.storage.update_camera_status(camera_id, "offline", str(exc))
-            self.storage.close_presence_session(camera_id=camera_id, reason="camera_offline")
+            self.storage.close_camera_runtime_state(camera_id, reason="camera_offline")
             self._reset_camera_runtime_memory(camera_id)
             evaluation = self.rule_engine.evaluate_camera_error(camera, rules, str(exc))
             evaluation_dict = evaluation.to_dict()
@@ -254,7 +255,7 @@ class EdgeWorker:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:
             self.storage.update_camera_status(camera_id, "error", str(exc))
-            self.storage.close_presence_session(camera_id=camera_id, reason="camera_error")
+            self.storage.close_camera_runtime_state(camera_id, reason="camera_error")
             self._reset_camera_runtime_memory(camera_id)
             return {"ok": False, "error": str(exc)}
 
@@ -284,6 +285,39 @@ class EdgeWorker:
             ended_at=observed_at,
             reason="person_not_visible",
         )
+
+    def _persist_posture_episodes(
+        self,
+        camera: Dict[str, Any],
+        snapshot: Dict[str, Any],
+        temporal: Dict[str, Any],
+    ) -> None:
+        camera_id = int(camera["id"])
+        for closure in temporal.get("posture_episode_closures") or []:
+            self.storage.close_posture_episode(
+                camera_id=camera_id,
+                track_id=str(closure.get("track_id") or "") or None,
+                posture=str(closure.get("posture") or "") or None,
+                ended_at=str(closure.get("ended_at") or "") or None,
+                reason=str(closure.get("reason") or "track_expired"),
+            )
+        for episode in temporal.get("posture_episode_updates") or []:
+            self.storage.upsert_posture_episode(
+                camera_id=camera_id,
+                track_id=str(episode.get("track_id") or ""),
+                posture=str(episode.get("posture") or "unknown"),
+                started_at=str(episode.get("started_at") or snapshot.get("captured_at") or ""),
+                confirmed_at=str(episode.get("confirmed_at") or snapshot.get("captured_at") or ""),
+                last_seen_at=str(episode.get("last_seen_at") or snapshot.get("captured_at") or ""),
+                sample_count=int(episode.get("sample_count") or 1),
+                mean_confidence=float(episode.get("mean_confidence") or 0.0),
+                max_confidence=float(episode.get("max_confidence") or 0.0),
+                normal_lying_zone=bool(episode.get("normal_lying_zone")),
+                scene_zone_id=episode.get("scene_zone_id"),
+                scene_zone_label=episode.get("scene_zone_label"),
+                snapshot_id=int(snapshot["id"]),
+                payload={"schema_version": "gohome-posture-episode-v1"},
+            )
 
     def _enqueue_live_frame_upload(self, camera_id: int, snapshot: Dict[str, Any]) -> None:
         if not self.live_frame_upload_enabled:

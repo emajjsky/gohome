@@ -169,8 +169,8 @@ def main() -> None:
         raise SystemExit("valid pose must remain eligible as fall evidence")
     if checks["pose_transient_retry_count"] != 2 or not checks["pose_transient_retry_used"]:
         raise SystemExit("RTMPose transient NoneType failure should retry exactly once")
-    if checks["pose_front_seated_posture"] == "lying":
-        raise SystemExit("front-facing seated torso must not be classified as lying")
+    if checks["pose_front_seated_posture"] != "sitting":
+        raise SystemExit("front-facing seated skeleton must be classified as sitting")
     if checks["pose_horizontal_fall_posture"] != "lying":
         raise SystemExit("horizontal shoulder-to-hip direction should remain a lying pose")
     if checks["pose_result_status"] != "disabled":
