@@ -10468,3 +10468,44 @@ App 与运维：
 - 复核结果尚未形成独立 `SafetyIncident` 生命周期，也未实现每分钟提醒直到 App 确认；这属于阶段 5。
 
 下一步：进入 Plan 14.19 阶段 5，实现家庭级 `FamilyPresenceState`、12 小时长期未见、设备离线抑制和同一事故持续提醒投递。
+
+## 94. 2026-07-11 FamilyPresenceState、长期未见与 SafetyIncident
+
+边缘存在上报：
+
+- SQLite 新增 `camera_presence_status()` 聚合查询，不新增逐帧业务表。
+- 每路摄像头随 10 秒配置同步上报最近观测、历史最后见人、近一小时观察样本、人物样本、预期样本和覆盖率。
+- 覆盖率按实际样本数除以规则采样间隔推导的预期样本数，上限为 1；查询使用 `julianday` 正确处理 ISO 时区时间。
+
+家庭存在状态：
+
+- 云端摄像头 metadata 持久化 presence，家庭 metadata 持久化 `FamilyPresenceState`。
+- 有效观察要求至少一台启用摄像头，且全部启用摄像头 `online / synced`、报告不超过 120 秒、近一小时覆盖率至少 0.50。
+- 家庭最后见人时间取所有摄像头最大值，任一路见人立即重置未见时长。
+- 摄像头离线、同步异常、报告过期或覆盖不足时状态为 `suspended`，不创建长期未见事件。
+- 家庭关怀配置 metadata 支持 `presence_monitoring.mode=away/travel/hospital/paused`、`enabled=false` 或 `paused_until`，状态为 `paused` 时不计时。
+- 默认阈值为 43200 秒；达标后只创建一条家庭级 `long_absence`，再次见人后自动解决为 `person_seen_again`。
+
+SafetyIncident 与提醒：
+
+- 新建 `fall_candidate / prolonged_floor_lying / fire_candidate / long_absence` 自动带 incident ID、active 状态、开始时间和提醒计数。
+- 不回填历史事件，避免部署时把旧未确认事件批量转成提醒洪峰。
+- 初始事件消息作为第一次告知；事故满 1 分钟后，调度器按 `event_id + minute bucket` 创建幂等提醒消息和投递记录。
+- 同一分钟重复调度不会增加 reminder_count 或重复消息。
+- App 标记已处理或误报后，incident 立即变为 acknowledged 并停止提醒；长期未见重新见人时变为 resolved。
+
+验证：
+
+- 边缘同步测试验证 presence 字段、人物样本和最后见人时间。
+- 云端测试使用 60 秒阈值验证 long_absence 创建、同分钟提醒去重、见人自动解决、travel 暂停抑制和事件确认停止提醒。
+- 本地 App 服务测试通过，完整产品闭环继续为 `37 passed / 0 warnings / 0 failed`。
+- 真实树莓派两路覆盖率均为 `0.8194`；最近人物样本分别正常上报，配置同步无错误。
+- 腾讯云家庭状态为 `observing / coverage_valid`，`valid_camera_count=2`，默认阈值 43200 秒；未生成误报 long_absence。
+- 部署后历史 `incident-reminder` 数为 0，证明旧事件未被批量迁移；实时中继恢复两路 8 FPS 且无错误。
+
+当前边界：
+
+- 外出/旅行/住院暂停能力已支持后端配置契约，统一前端设置入口将在阶段 6 合并页面时提供。
+- APNs 尚未接入，持续提醒当前写入 App 消息和 notification delivery 模拟记录；iOS 系统通知需真机 token 和 Apple capability。
+
+下一步：进入 Plan 14.19 阶段 6，合并视觉感知管理页面，并在普通 App 展示家庭存在状态、观察覆盖与暂停守护设置。

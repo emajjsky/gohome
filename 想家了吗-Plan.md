@@ -2844,9 +2844,15 @@ P1 用户端：
 
 阶段 5：家庭级长期未见和持续提醒
 
-- 云端维护 FamilyPresenceState。
-- 增加 12 小时 long_absence 规则。
-- 紧急事件每分钟提醒，App 确认后停止。
+- 已完成：盒子按摄像头上报 `last_observed_at / last_person_seen_at / observed_samples / person_samples / observation_coverage`。
+- 已完成：云端将存在状态持久化到摄像头和家庭 metadata，只有全部启用摄像头在线、同步、报告新鲜且覆盖率至少 50% 时进入有效观察。
+- 已完成：默认 12 小时未见生成家庭级 `long_absence`；任一路见人自动解决，摄像头离线和覆盖不足暂停计时。
+- 已完成：支持 `away / travel / hospital / paused / paused_until` 抑制，不把已知外出状态当异常。
+- 已完成：新安全事件统一带 `incident_id / status / started_at / reminder_count`，不把历史事件批量迁移为持续提醒。
+- 已完成：首次事件通知后满 1 分钟开始按分钟时间桶生成提醒，App 确认后 incident 进入 acknowledged 并停止后续提醒。
+- 已完成：真实双摄像头覆盖率均为 `0.8194`，家庭状态为 observing，最近见人后未误触发 long_absence；部署后历史 incident reminder 为 0。
+
+阶段 5 状态：已完成并部署树莓派与腾讯云。APNs 未接入前，每分钟提醒形成 App 消息和模拟投递记录；真正系统推送待 iOS/APNs 阶段完成。下一步进入阶段 6，合并统一视觉感知管理页面和家庭存在状态展示。
 
 阶段 6：统一视觉感知页面
 
