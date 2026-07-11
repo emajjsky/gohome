@@ -511,6 +511,13 @@ function buildCloudSeedBundle(db, options = {}) {
         created_at: iso(message.created_at, exportedAt),
         updated_at: iso(message.updated_at, iso(message.created_at, exportedAt)),
     })).filter((message) => message.message_id && message.family_id && message.idempotency_key);
+    const exportedMessageIdByReference = new Map();
+    for (const message of appMessages) {
+        const rowId = textId(message.id);
+        if (!rowId) continue;
+        exportedMessageIdByReference.set(rowId, rowId);
+        if (message.message_id) exportedMessageIdByReference.set(String(message.message_id), rowId);
+    }
 
     const appPushTokens = toArray(db.app_push_tokens).map((token) => ({
         id: textId(token.id),
@@ -529,11 +536,13 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(token.updated_at, iso(token.created_at, exportedAt)),
     })).filter((token) => token.family_id && token.app_install_id && token.push_token_hash);
 
-    const notificationDeliveries = toArray(db.notification_deliveries).map((delivery) => ({
+    const notificationDeliveries = toArray(db.notification_deliveries)
+        .filter((delivery) => !delivery.message_id || exportedMessageIdByReference.has(String(delivery.message_id)))
+        .map((delivery) => ({
         id: textId(delivery.id),
         family_id: textId(delivery.family_id, fallbackFamilyId),
         user_id: nullableTextId(delivery.user_id),
-        message_id: nullableTextId(delivery.message_id),
+        message_id: delivery.message_id ? exportedMessageIdByReference.get(String(delivery.message_id)) || null : null,
         channel: String(delivery.channel || "app_push"),
         provider: String(delivery.provider || "app_message"),
         target_type: String(delivery.target_type || "family"),
