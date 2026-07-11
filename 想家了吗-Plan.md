@@ -2832,8 +2832,15 @@ P1 用户端：
 
 阶段 4：云端图片复核
 
-- 新增 verification job、严格 JSON 校验、超时、重试和审计。
-- 使用当前 Qwen 配置进行图片复核；wan2.7 不参与证据判断。
+- 已完成：复用 `model_generation_jobs` 持久化 `purpose=vision_event_verification` 的独立复核任务，事件 payload 保存用户可见复核状态。
+- 已完成：边缘事件先入库和通知，再异步调用 Qwen；模型失败不撤销、不阻塞边缘告警。
+- 已完成：输入包含一张事件证据图、边缘规则、指标、姿态因子图和时序摘要；API Key 不进入任务请求或事件数据。
+- 已完成：严格校验 `person_count / posture / surface / emergency / confidence / reason / suggested_event_type`，额外字段、缺字段、非法枚举和越界数值均拒绝。
+- 已完成：30 秒默认超时、最多 3 次重试、`5s / 30s / 120s` 退避、响应和错误审计。
+- 已完成：App 事件列表和详情显示待复核、已确认、未确认、证据不足、重试中和复核失败状态；用户仍需人工确认事件。
+- 已完成：真实 `Qwen/Qwen3.5-27B` 使用 UR Fall 公开图片返回 `lying / floor / emergency=true / confidence=0.92`，生产验证任务一次成功。
+
+阶段 4 状态：已完成并部署腾讯云。当前为单张事件证据图 + 多帧结构化摘要复核；另外两张代表快照尚未上传。下一步进入阶段 5，建立家庭级长期未见状态和 SafetyIncident 持续提醒。
 
 阶段 5：家庭级长期未见和持续提醒
 

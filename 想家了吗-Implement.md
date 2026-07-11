@@ -10422,3 +10422,49 @@ disk usage: 45% -> 24%
 - 当前证据包已准备好，但尚未发送给 Qwen 多模态接口；云端复核状态、严格 JSON 校验、超时和重试属于阶段 4。
 
 下一步：进入 Plan 14.19 阶段 4，实现云端图片复核任务、严格 JSON 结果、超时重试和事件复核状态，不改变边缘端离线可告警能力。
+
+## 93. 2026-07-11 云端视觉复核任务与 Qwen 实测
+
+本轮完成 Plan 14.19 阶段 4，不改变边缘跌倒、长时间倒地和火灾事件的离线可告警能力。
+
+任务与事件状态：
+
+- 复用已有 PostgreSQL `model_generation_jobs`，新增 `purpose=vision_event_verification` 任务契约；metadata 保存事件、媒体、尝试次数、最大次数和下次重试时间。
+- `fall_candidate / prolonged_floor_lying / fire_candidate` 在事件图片存在且模型已配置时自动创建任务。
+- 设备事件先完成事件、App 消息和通知投递入库，再通过后台任务异步复核；模型请求不在设备上传请求的关键路径上。
+- 事件 `payload.verification` 状态覆盖 `pending / verifying / retrying / confirmed / rejected / uncertain / failed / unavailable`。
+- `confirmed` 表示图片支持边缘提醒，`rejected` 表示图片暂未看到明确紧急线索，`uncertain` 表示证据不足；三种状态均不自动删除、确认或隐藏原始事件。
+
+模型输入与输出：
+
+- 输入包含当前事件证据图片、事件类型、房间、边缘规则、指标、flags、`PoseFactorGraph` 和 `temporal_evidence_bundle`。
+- 图片以请求时内存构造的 data URL 发送，任务表不保存图片 base64，不保存 API Key。
+- 严格 JSON 字段为 `person_count / posture / surface / emergency / confidence / reason / suggested_event_type`。
+- 姿态、表面和事件类型使用固定枚举；额外字段、缺字段、非法枚举、非布尔 emergency、人数或置信度越界全部视为失败并重试。
+- 默认请求超时 30 秒，最多 3 次，退避为 5 秒、30 秒和 120 秒；最终失败后事件继续以边缘判断展示。
+- `wan2.7-image` 未参与安全事件复核。
+
+App 与运维：
+
+- 事件列表显示“云端正在复核证据”“支持这条提醒”“暂未看到明确紧急线索”或“证据不足”。
+- 事件详情对 pending/retrying 状态最多轮询 10 次，不刷新整页、不影响用户确认和误报操作。
+- 新增运维状态和手动执行接口 `/api/v1/internal/vision-verifications/status` 与 `/run`，仅 ops 权限可访问。
+- ops 模型能力列表新增 `vision-event-verification`，普通用户不能查看或修改模型 Base URL、Key 和提示词。
+
+验证：
+
+- 模拟模型第一次返回额外字段时被严格拒绝，任务进入 `retrying`；第二次返回合法 JSON 后进入 `confirmed`，尝试次数为 2。
+- 模拟任务验证图片以 `image_url` 传入、结构化上下文包含姿态因子、任务请求不含 API Key、任务 metadata 可通过 PostgreSQL 导出和恢复。
+- 新增 `verify-vision-verification-live.js`，使用 UR Fall 公开样本调用真实 `Qwen/Qwen3.5-27B`。
+- 真实模型一次成功：`person_count=1 / posture=lying / surface=floor / emergency=true / confidence=0.92 / suggested_event_type=fall_candidate`。
+- 腾讯云生产探针任务一次成功；测试事件、测试媒体和对应复核任务已清理，且导出层已统一排除验证事件关联 job。
+- `npm test` 通过；完整本地产品闭环继续为 `37 passed / 0 warnings / 0 failed`。
+- 腾讯云 `gohome-app.service` 保持 active，`/health` 返回 200，部署后无新增服务错误。
+
+当前边界：
+
+- 当前模型实际收到一张事件当前截图和多帧结构化摘要。时序证据包记录的开始、转折、当前最多 3 张快照中，只有事件当前截图已上传到云端；多图上传尚未完成。
+- 单图视觉复核不能证明跌倒过程或 3 分钟持续时间，相关时间事实仍以盒子时序状态机为准。
+- 复核结果尚未形成独立 `SafetyIncident` 生命周期，也未实现每分钟提醒直到 App 确认；这属于阶段 5。
+
+下一步：进入 Plan 14.19 阶段 5，实现家庭级 `FamilyPresenceState`、12 小时长期未见、设备离线抑制和同一事故持续提醒投递。
