@@ -458,13 +458,12 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         });
     }
 
-    const appMessageReferenceById = new Map(db.app_messages.map((message) => [String(message.id), message.message_id || message.id]));
     for (const delivery of rowsByTable.notification_deliveries || []) {
         db.notification_deliveries.push({
             id: delivery.id,
             family_id: delivery.family_id,
             user_id: delivery.user_id || "",
-            message_id: appMessageReferenceById.get(String(delivery.message_id || "")) || delivery.message_id || "",
+            message_id: delivery.message_id || "",
             channel: delivery.channel || "app_push",
             provider: delivery.provider || "app_message",
             target_type: delivery.target_type || "family",

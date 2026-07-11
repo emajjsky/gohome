@@ -1204,6 +1204,10 @@ async function main() {
         assert.equal(seedBundle.tables.app_push_tokens.length, 1);
         assert.equal(seedBundle.tables.app_push_tokens[0].push_token_hash.length, 64);
         assert.ok(seedBundle.tables.notification_deliveries.length >= 2);
+        assert.ok(seedBundle.tables.notification_deliveries.every((delivery) => (
+            !delivery.message_id
+            || seedBundle.tables.app_messages.some((message) => message.message_id === delivery.message_id)
+        )));
         assert.ok(seedBundle.tables.scheduler_runs.some((run) => run.status === "succeeded"));
         assert.equal(seedBundle.tables.model_providers.length, 0);
         assertSeedBundleMatchesSchema(seedBundle);
