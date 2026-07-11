@@ -67,6 +67,13 @@ def main() -> None:
     if not second_eval.state.get("fall_transition_confirmed"):
         raise SystemExit("formal fall must retain confirmed standing-to-low transition evidence")
 
+    history_engine = RuleEngine()
+    history_engine.evaluate_snapshot(camera, {"id": 1100}, make_upright_analysis(), rules)
+    history_engine.evaluate_snapshot(camera, {"id": 1101}, make_bending_analysis(), rules)
+    history_first = history_engine.evaluate_snapshot(camera, {"id": 1102}, make_analysis(fall_score=0.88), rules)
+    if not history_first.state.get("fall_transition_confirmed") or history_first.state.get("fall_stage") != "suspect":
+        raise SystemExit("bending transition frames must not overwrite the recent standing/sitting baseline")
+
     clear_eval = engine.evaluate_snapshot(camera, {"id": 1003}, make_analysis(fall_candidate=False, fall_score=0.0), rules)
     if clear_eval.state["fall_stage"] != "confirmed":
         raise SystemExit("first clear frame keeps incident open until recovery threshold")
@@ -113,6 +120,7 @@ def main() -> None:
                 "scene_stage": scene_second.state["fall_stage"],
                 "scene_suppressed": scene_second.state["fall_scene_suppressed"],
                 "fall_pose_interval": fall_pose_runtime["worker_pose_interval_frames"],
+                "history_baseline_stage": history_first.state["fall_stage"],
             },
             ensure_ascii=False,
             indent=2,
@@ -240,6 +248,16 @@ def make_upright_analysis() -> dict:
         },
         "tags": ["person_detected", "pose_detected"],
     }
+
+
+def make_bending_analysis() -> dict:
+    analysis = make_upright_analysis()
+    analysis["people"][0]["bbox"] = [105, 90, 225, 285]
+    analysis["people"][0]["aspect_ratio"] = 0.62
+    analysis["poses"][0]["bbox"] = [105, 90, 225, 285]
+    analysis["poses"][0]["posture"] = "bending"
+    analysis["motion_score"] = 0.06
+    return analysis
 
 
 if __name__ == "__main__":

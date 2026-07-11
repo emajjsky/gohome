@@ -30,6 +30,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--retries", type=int, default=2)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-download", action="store_true")
+    parser.add_argument(
+        "--temporal-samples",
+        type=int,
+        default=0,
+        help="When greater than zero, sample this many ordered frames per video for temporal evaluation.",
+    )
     return parser.parse_args()
 
 
@@ -118,6 +124,16 @@ def write_sample(video_path: Path, target: Path, seconds: float, force: bool) ->
     return frame_index
 
 
+def temporal_times(duration: float, sample_count: int) -> list[float]:
+    count = max(2, int(sample_count))
+    start = min(0.15, max(0.0, duration * 0.02))
+    end = max(start, duration - min(0.15, duration * 0.02))
+    if end <= start:
+        return [max(0.0, duration * index / max(1, count - 1)) for index in range(count)]
+    step = (end - start) / (count - 1)
+    return [start + step * index for index in range(count)]
+
+
 def entry(
     *,
     target: Path,
@@ -176,9 +192,21 @@ def main() -> None:
         video_path = raw_root / "Fall" / filename
         download_file(source_url(subject, "Fall", filename), video_path, args)
         start, end = fall_interval(row)
-        times = [(max(0.15, start * 0.45), False, "pre_fall"), (start + (end - start) * 0.58, True, "fallen"), (max(start, end - 0.18), True, "fallen_end")]
+        duration = float(row.get("Length (seconds)") or max(end, 5))
+        if args.temporal_samples > 0:
+            times = [
+                (
+                    seconds,
+                    seconds >= start,
+                    "pre_fall" if seconds < start else ("falling" if seconds < end else "fallen"),
+                )
+                for seconds in temporal_times(duration, args.temporal_samples)
+            ]
+        else:
+            times = [(max(0.15, start * 0.45), False, "pre_fall"), (start + (end - start) * 0.58, True, "fallen"), (max(start, end - 0.18), True, "fallen_end")]
         for index, (seconds, expected, note) in enumerate(times):
-            target = samples_dir / f"fall-{sequence_id}-{index + 1}-{'pos' if expected else 'neg'}.jpg"
+            profile = "dense-" if args.temporal_samples > 0 else ""
+            target = samples_dir / f"fall-{sequence_id}-{profile}{index + 1:02d}-{'pos' if expected else 'neg'}.jpg"
             frame_index = write_sample(video_path, target, seconds, args.force)
             entries.append(entry(target=target, samples_dir=args.samples_dir.resolve(), expected=expected, subject=subject, category="Fall", filename=filename, seconds=seconds, frame_index=frame_index, description=f"{note}: {row.get('Description', '')}"))
 
@@ -190,8 +218,10 @@ def main() -> None:
         video_path = raw_root / "ADL" / filename
         download_file(source_url(subject, "ADL", filename), video_path, args)
         duration = float(row.get("Length (seconds)") or 5)
-        for index, seconds in enumerate((duration * 0.45, max(0.2, duration - 0.25))):
-            target = samples_dir / f"adl-{sequence_id}-{index + 1}-neg.jpg"
+        times = temporal_times(duration, args.temporal_samples) if args.temporal_samples > 0 else (duration * 0.45, max(0.2, duration - 0.25))
+        for index, seconds in enumerate(times):
+            profile = "dense-" if args.temporal_samples > 0 else ""
+            target = samples_dir / f"adl-{sequence_id}-{profile}{index + 1:02d}-neg.jpg"
             frame_index = write_sample(video_path, target, seconds, args.force)
             entries.append(entry(target=target, samples_dir=args.samples_dir.resolve(), expected=False, subject=subject, category="ADL", filename=filename, seconds=seconds, frame_index=frame_index, description=row.get("Description", "")))
 

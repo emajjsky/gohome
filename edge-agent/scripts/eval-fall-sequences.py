@@ -127,6 +127,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         scene_suppressed_frames = 0
         transition_frames = 0
         errors = []
+        frame_diagnostics = []
         started = time.perf_counter()
         for frame_index, entry in enumerate(ordered, start=1):
             path = Path(str(entry.get("file") or ""))
@@ -156,6 +157,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             scene_suppressed_frames += int(bool(evaluation.state.get("fall_scene_suppressed")))
             transition_frames += int(bool(evaluation.state.get("fall_transition_confirmed")))
             predicted = predicted or any(candidate.event_type == "fall_candidate" for candidate in evaluation.candidates)
+            target = evaluation.state.get("fall_target") if isinstance(evaluation.state.get("fall_target"), dict) else None
+            transition = evaluation.state.get("fall_transition") if isinstance(evaluation.state.get("fall_transition"), dict) else {}
+            frame_diagnostics.append({
+                "file": str(entry.get("file") or ""),
+                "expected_fall": expected_fall(entry),
+                "stage": stage,
+                "person_count": int(analysis.get("person_count") or 0),
+                "pose_count": int(analysis.get("pose_count") or len(analysis.get("poses") or [])),
+                "fall_candidate": bool(analysis.get("fall_candidate")),
+                "pose_fall_candidate": bool(analysis.get("pose_fall_candidate")),
+                "fall_score": round(float(analysis.get("fall_score") or 0.0), 4),
+                "pose_fall_score": round(float(analysis.get("pose_fall_score") or 0.0), 4),
+                "target": target,
+                "transition_confirmed": bool(evaluation.state.get("fall_transition_confirmed")),
+                "vertical_drop": transition.get("vertical_drop"),
+                "motion_score": analysis.get("motion_score"),
+                "scene_suppressed": bool(evaluation.state.get("fall_scene_suppressed")),
+                "candidate_types": [candidate.event_type for candidate in evaluation.candidates],
+            })
             previous_frame = frame
         if errors:
             metrics["errors"] += len(errors)
@@ -175,6 +195,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "stages": stages,
             "scene_suppressed_frames": scene_suppressed_frames,
             "transition_frames": transition_frames,
+            "frame_diagnostics": frame_diagnostics,
             "errors": errors,
             "latency_ms": int((time.perf_counter() - started) * 1000),
         })

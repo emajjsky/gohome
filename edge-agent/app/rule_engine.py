@@ -547,10 +547,7 @@ class RuleEngine:
             self.fall_tracks[camera_id] = track
 
         if upright_targets and not visual_candidate:
-            self.fall_upright_states[camera_id] = {
-                "observed_at": now,
-                "targets": upright_targets,
-            }
+            self._record_upright_targets(camera_id, now, upright_targets, rules)
 
         duration_seconds = float(track.get("duration_seconds") or 0.0)
         stage = str(track.get("stage") or "clear")
@@ -644,8 +641,8 @@ class RuleEngine:
         for pose in poses:
             posture = str(pose.get("posture") or "")
             if posture not in {
-                "standing", "sitting", "squatting", "bending", "upper_body",
-                "standing_or_sitting", "seated_or_half_body", "low_body",
+                "standing", "sitting",
+                "standing_or_sitting", "seated_or_half_body",
             }:
                 continue
             if pose.get("person_evidence_eligible") is False or not self._valid_bbox(pose.get("bbox")):
@@ -661,6 +658,32 @@ class RuleEngine:
                 continue
             targets.append(self._normalized_target(person, width, height, posture="person_upright"))
         return targets
+
+    def _record_upright_targets(
+        self,
+        camera_id: int,
+        now: datetime,
+        targets: list[Dict[str, Any]],
+        rules: Dict[str, Any],
+    ) -> None:
+        window_seconds = max(5, int(rules.get("fall_transition_window_seconds") or 20))
+        previous = self.fall_upright_states.get(camera_id) or {}
+        fallback_observed_at = previous.get("observed_at")
+        history = previous.get("targets") if isinstance(previous.get("targets"), list) else []
+        retained = []
+        for item in history:
+            observed_at = item.get("_observed_at") if isinstance(item, dict) else None
+            if not isinstance(observed_at, datetime):
+                observed_at = fallback_observed_at
+            if not isinstance(observed_at, datetime):
+                continue
+            if max(0.0, (now - observed_at).total_seconds()) <= window_seconds:
+                retained.append({**item, "_observed_at": observed_at})
+        retained.extend({**target, "_observed_at": now} for target in targets)
+        self.fall_upright_states[camera_id] = {
+            "observed_at": now,
+            "targets": retained[-24:],
+        }
 
     def _normalized_target(self, item: Dict[str, Any], width: float, height: float, *, posture: str) -> Dict[str, Any]:
         bbox = [float(value) for value in item.get("bbox")]
@@ -697,36 +720,52 @@ class RuleEngine:
             "motion_score": analysis.get("motion_score"),
             "upright_target": None,
         }
-        observed_at = upright_state.get("observed_at")
         upright_targets = upright_state.get("targets") if isinstance(upright_state.get("targets"), list) else []
-        if target is None or not isinstance(observed_at, datetime) or not upright_targets:
+        fallback_observed_at = upright_state.get("observed_at")
+        if target is None or not upright_targets:
             return result
-        age_seconds = max(0.0, (now - observed_at).total_seconds())
-        result["age_seconds"] = round(age_seconds, 3)
-        if age_seconds > window_seconds:
+        recent_targets = []
+        for item in upright_targets:
+            if not isinstance(item, dict):
+                continue
+            observed_at = item.get("_observed_at")
+            if not isinstance(observed_at, datetime):
+                observed_at = fallback_observed_at
+            if not isinstance(observed_at, datetime):
+                continue
+            age_seconds = max(0.0, (now - observed_at).total_seconds())
+            if age_seconds <= window_seconds:
+                recent_targets.append((item, observed_at, age_seconds))
+        if not recent_targets:
             result["reason"] = "upright_too_old"
             return result
         target_center = target.get("center")
         if not isinstance(target_center, list) or len(target_center) != 2:
             result["reason"] = "missing_target_center"
             return result
-        best = min(
-            upright_targets,
-            key=lambda item: abs(float((item.get("center") or [0, 0])[0]) - float(target_center[0])),
+        spatial_candidates = [
+            item for item in recent_targets
+            if abs(float((item[0].get("center") or [0, 0])[0]) - float(target_center[0])) <= 0.28
+        ]
+        candidates = spatial_candidates or recent_targets
+        best, observed_at, age_seconds = max(
+            candidates,
+            key=lambda item: float(target_center[1]) - float((item[0].get("center") or [0, 0])[1]),
         )
+        result["age_seconds"] = round(age_seconds, 3)
         upright_center = best.get("center") or [0, 0]
         horizontal_distance = abs(float(upright_center[0]) - float(target_center[0]))
         vertical_drop = float(target_center[1]) - float(upright_center[1])
         motion_score = float(analysis.get("motion_score") or 0.0)
-        spatial_match = horizontal_distance <= 0.28
+        spatial_match = bool(spatial_candidates) and horizontal_distance <= 0.28
         descent = vertical_drop >= min_vertical_drop
         motion_ok = motion_score >= motion_threshold or vertical_drop >= min_vertical_drop * 1.5
         result.update({
             "confirmed": bool(spatial_match and descent and motion_ok),
-            "reason": "confirmed" if spatial_match and descent and motion_ok else "insufficient_descent",
+            "reason": "confirmed" if spatial_match and descent and motion_ok else ("target_too_far" if not spatial_match else "insufficient_descent"),
             "vertical_drop": round(vertical_drop, 4),
             "horizontal_distance": round(horizontal_distance, 4),
-            "upright_target": best,
+            "upright_target": {key: value for key, value in best.items() if key != "_observed_at"},
         })
         return result
 

@@ -29,6 +29,18 @@ if [[ ! -f data/eval/samples/fall/gmdcsa24/manifest.jsonl ]]; then
   exit 1
 fi
 
+TEMPORAL_SAMPLES="${GOHOME_GMDCSA_TEMPORAL_SAMPLES:-12}"
+DENSE_SAMPLES_DIR="data/eval/samples/fall/gmdcsa24_dense"
+SEQUENCE_SAMPLES_DIR="data/eval/samples/fall/gmdcsa24"
+if [[ "$TEMPORAL_SAMPLES" -gt 0 ]]; then
+  "$PYTHON_BIN" scripts/import-gmdcsa24-sample.py \
+    --subject "${GOHOME_GMDCSA_SUBJECT:-1}" \
+    --no-download \
+    --temporal-samples "$TEMPORAL_SAMPLES" \
+    --samples-dir "$DENSE_SAMPLES_DIR"
+  SEQUENCE_SAMPLES_DIR="$DENSE_SAMPLES_DIR"
+fi
+
 "$PYTHON_BIN" scripts/eval-fall.py \
   --use-pose \
   --samples-dir data/eval/samples/fall/gmdcsa24 \
@@ -43,8 +55,8 @@ fi
   --pose-fall-min-core-keypoints "${GOHOME_POSE_FALL_MIN_CORE_KEYPOINTS:-2}"
 
 "$PYTHON_BIN" scripts/eval-fall-sequences.py \
-  --samples-dir data/eval/samples/fall/gmdcsa24 \
-  --manifest data/eval/samples/fall/gmdcsa24/manifest.jsonl \
+  --samples-dir "$SEQUENCE_SAMPLES_DIR" \
+  --manifest "$SEQUENCE_SAMPLES_DIR/manifest.jsonl" \
   --detector-backend yolo \
   --yolo-model "${GOHOME_YOLO_MODEL:-yolo11n.pt}" \
   --yolo-confidence "${GOHOME_YOLO_CONFIDENCE:-0.20}" \
