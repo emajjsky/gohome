@@ -1,29 +1,32 @@
 (function () {
     const $ = (id) => document.getElementById(id);
-    const CAMERA_STALE_MS = 3 * 60 * 1000;
     const state = {
+        familyId: null,
         cameras: [],
-        selectedCameraId: null,
         streamControllers: new Map(),
-        streamState: "idle",
-        cameraGridSignature: "",
+        cameraSignature: "",
+        inFlight: false,
     };
 
-    function setText(id, value) {
-        const node = $(id);
-        if (node) node.textContent = value;
-    }
-
-    function cameraDomId(prefix, camera) {
-        return `${prefix}-${String(camera?.id || "unknown").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-    }
-
-    function cameraLabel(camera) {
-        return [camera?.room, camera?.name]
-            .filter(Boolean)
-            .filter((value, itemIndex, values) => values.indexOf(value) === itemIndex)
-            .join(" · ") || "摄像头";
-    }
+    const safetyTypes = new Set(["fall_candidate", "prolonged_floor_lying", "fire_candidate", "long_absence"]);
+    const postureLabels = {
+        standing: "站立",
+        sitting: "坐姿",
+        squatting: "蹲姿",
+        bending: "弯腰",
+        lying: "躺姿",
+        fallen: "疑似跌倒",
+        walking: "走动",
+        upper_body: "上半身入镜",
+        low_body: "低位姿态",
+        unknown: "持续识别中",
+    };
+    const eventLabels = {
+        fall_candidate: "疑似跌倒",
+        prolonged_floor_lying: "长时间倒地",
+        fire_candidate: "疑似烟火",
+        long_absence: "长时间未见到老人",
+    };
 
     function escapeHtml(value) {
         return String(value ?? "")
@@ -34,458 +37,253 @@
             .replace(/'/g, "&#39;");
     }
 
+    function setText(id, value) {
+        const node = $(id);
+        if (node) node.textContent = value;
+    }
+
     function pageHref(path) {
         return window.GoHomeEdge?.pageHref?.(path) || path;
     }
 
-    function cameraSuffix(camera) {
-        return camera?.id ? `?camera_id=${encodeURIComponent(camera.id)}` : "";
+    function domId(prefix, cameraId) {
+        return `${prefix}-${String(cameraId).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
     }
 
-    function cameraSeenAt(camera) {
-        return Date.parse(camera?.edge_reported_at || camera?.last_seen_at || camera?.updated_at || "");
+    function cameraLabel(camera) {
+        return camera.name || camera.room || "摄像头";
     }
 
-    function cameraStaleMinutes(camera) {
-        const seenAt = cameraSeenAt(camera);
-        if (!Number.isFinite(seenAt)) return null;
-        return Math.max(1, Math.round((Date.now() - seenAt) / 60000));
+    function relativeTime(value, empty = "尚未记录") {
+        const timestamp = Date.parse(value || "");
+        if (!Number.isFinite(timestamp)) return empty;
+        const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+        if (seconds < 60) return "刚刚";
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟前`;
+        if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时前`;
+        return `${Math.floor(seconds / 86400)}天前`;
     }
 
-    function effectiveStatus(camera) {
-        const status = String(camera?.status || "").toLowerCase();
-        if (status === "online") {
-            const seenAt = cameraSeenAt(camera);
-            if (Number.isFinite(seenAt) && Date.now() - seenAt > CAMERA_STALE_MS) return "stale";
+    function coverageLabel(presence) {
+        const value = Number(presence?.observation_coverage);
+        return Number.isFinite(value) ? `${Math.round(value * 100)}%` : "待统计";
+    }
+
+    function postureFromEvaluation(evaluation) {
+        const event = evaluation?.candidates?.[0] || null;
+        const candidates = [
+            evaluation?.analysis?.posture,
+            evaluation?.analysis?.pose_factor_graph?.posture,
+            event?.payload?.verification?.result?.posture,
+            event?.payload?.evidence?.posture,
+            event?.payload?.evidence?.pose_factor_graph?.posture,
+        ];
+        const posture = candidates.find(Boolean);
+        return postureLabels[String(posture || "unknown")] || "持续识别中";
+    }
+
+    function presenceCopy(presence) {
+        const mode = String(presence?.monitoring?.mode || "active");
+        if (presence?.status === "paused") {
+            const labels = { away: "临时外出", travel: "旅行中", hospital: "住院陪护", paused: "已暂停", paused_until: "定时暂停" };
+            return {
+                eyebrow: "无人提醒已暂停",
+                title: labels[mode] || "守护已暂停",
+                text: "摄像头仍可查看，但暂停判断长时间无人。恢复正常守护后会重新累计。",
+                tone: "paused",
+            };
         }
-        return status;
-    }
-
-    function statusLabel(camera) {
-        const status = effectiveStatus(camera);
-        if (status === "online") return "在线";
-        if (status === "stale") return "未同步";
-        if (status === "offline") return "离线";
-        if (status === "disabled") return "未启用";
-        return "待同步";
-    }
-
-    function statusTone(camera) {
-        const status = effectiveStatus(camera);
-        if (status === "online") return "good";
-        if (status === "offline" || status === "stale") return "warn";
-        return "muted";
-    }
-
-    function statusText(camera) {
-        if (!camera) return "等待接入摄像头";
-        const status = effectiveStatus(camera);
-        if (status === "online") return "家庭盒子在线，正在返回画面";
-        if (status === "stale") {
-            const minutes = cameraStaleMinutes(camera);
-            return minutes ? `家庭盒子已 ${minutes} 分钟未同步这路画面` : "家庭盒子长时间未同步这路画面";
+        if (presence?.status === "long_absence") {
+            return {
+                eyebrow: "需要尽快确认",
+                title: "较长时间没有看到老人",
+                text: "所有有效摄像头持续未检测到人，请联系家里确认情况。",
+                tone: "alert",
+            };
         }
-        if (status === "offline") return camera.last_error || "家庭盒子暂未回传画面";
-        if (!camera.has_stream_config) return "还缺少 RTSP / 摄像头接入信息";
-        return "等待家庭盒子同步配置并完成本地接入";
-    }
-
-    function snapshotMessage(snapshot) {
-        const tags = snapshot.tags || [];
-        if (tags.includes("black_screen")) return "画面疑似黑屏或遮挡，建议打开详情确认一下";
-        if (tags.includes("fall_candidate")) return "检测到疑似跌倒姿态，建议立即确认";
-        if (snapshot.person_count !== null && snapshot.person_count !== undefined) {
-            return snapshot.person_count > 0
-                ? `当前画面检测到 ${snapshot.person_count} 个人，未发现高优先级异常`
-                : "当前画面暂未检测到人，持续观察中";
+        if (presence?.status === "suspended") {
+            return {
+                eyebrow: "观察条件不足",
+                title: "部分画面没有持续同步",
+                text: "无人判断已自动暂停，避免因摄像头离线或覆盖不足造成误报。",
+                tone: "warn",
+            };
         }
-        return "家庭盒子正在检测画面变化";
+        return {
+            eyebrow: "家庭观察正常",
+            title: presence?.last_person_seen_at ? "刚刚在家中看到人" : "正在建立观察记录",
+            text: presence?.last_person_seen_at
+                ? `最近一次在 ${relativeTime(presence.last_person_seen_at)} 检测到人物，当前没有长时间无人提醒。`
+                : "摄像头已进入有效观察，检测到人物后会开始记录。",
+            tone: "good",
+        };
     }
 
-    function statusTitle(snapshot) {
-        const tags = snapshot.tags || [];
-        if (tags.includes("black_screen") || tags.includes("fall_candidate")) return "需要确认";
-        return "暂无异常";
+    function renderPresence(presence, device) {
+        const copy = presenceCopy(presence);
+        const hero = $("familyPresenceHero");
+        if (hero) hero.dataset.tone = copy.tone;
+        setText("familyPresenceEyebrow", copy.eyebrow);
+        setText("edgeStatusTitle", copy.title);
+        setText("edgeStatusText", copy.text);
+        setText("familyPresenceCameraCount", `${presence?.valid_camera_count || 0}/${presence?.camera_count || state.cameras.length}`);
+        setText("familyPresenceLastSeen", relativeTime(presence?.last_person_seen_at, "未见到"));
+        const cameraPresence = Array.isArray(presence?.cameras) ? presence.cameras : [];
+        const coverageValues = cameraPresence
+            .map((item) => Number(item.presence?.observation_coverage))
+            .filter(Number.isFinite);
+        const average = coverageValues.length ? coverageValues.reduce((sum, value) => sum + value, 0) / coverageValues.length : null;
+        setText("familyPresenceCoverage", Number.isFinite(average) ? `${Math.round(average * 100)}%` : "待统计");
+        setText("edgeDeviceStatus", device?.worker_running ? "家庭盒子在线" : "家庭盒子待连接");
+        setText("edgeDetector", device?.worker_running ? "视觉感知运行中" : "等待视觉服务");
     }
 
-    function evaluationSummary(evaluation) {
-        if (!evaluation) return "等待家庭盒子回传检测状态。";
-        const candidates = Array.isArray(evaluation.candidates) ? evaluation.candidates : [];
-        if (candidates.length) return `${candidates.length} 条候选需要核对。`;
-        return evaluation.explanation || "摄像头在线，最近没有命中需要家属确认的规则。";
-    }
-
-    function applyEvaluationStatus(camera, evaluation) {
-        const evalState = evaluation?.state || {};
-        const cameraState = effectiveStatus(camera) === "stale"
-            ? "stale"
-            : String(evalState.camera_state || evalState.camera_status || camera?.status || "").toLowerCase();
-        const candidates = Array.isArray(evaluation?.candidates) ? evaluation.candidates : [];
-        const online = cameraState === "online";
-        setText("edgeStatusTitle", candidates.length ? "需要确认" : (online ? "暂无异常" : (cameraState === "stale" ? "盒子未同步" : "等待检测状态")));
-        setText("edgeStatusText", evaluationSummary(evaluation));
-        setText("edgeUpdateTime", evaluation?.evaluated_at ? `${GoHomeEdge.fmtTime(evaluation.evaluated_at)} 同步` : "等待同步");
-        setText("edgeMainMessage", evaluationSummary(evaluation));
-        setText("edgeFact", candidates.length ? `${candidates.length} 条候选` : (online ? "未命中规则" : "等待检测"));
-        setText("edgeFeeling", online ? "家里平稳" : statusLabel(camera));
-        setText("edgeNext", candidates.length ? "去确认" : "继续观察");
-        setText("edgeBrightness", online ? "检测在线" : "等待亮度");
-        setPillTone("edgeFeeling", candidates.length ? "warn" : (online ? "good" : "muted"));
-        setPillTone("edgeNext", candidates.length ? "warn" : "muted");
-    }
-
-    function applyStreamState(camera, nextState) {
-        state.streamState = nextState;
-        if (nextState === "playing") {
-            setText("edgeStatusTitle", "实时画面已返回");
-            setText("edgeStatusText", "家庭盒子已经返回实时画面。");
-            setText("edgeUpdateTime", "实时画面");
-            setText("edgeStreamLabel", "实时画面已返回");
-            setText("edgeMainMessage", "实时画面已返回。");
-            setText("edgeFact", "画面在线");
-            setText("edgeFeeling", "继续观察");
-            setText("edgeNext", "无待处理");
-            setText("edgeBrightness", "实时帧");
-            setPillTone("edgeFeeling", "good");
-            setPillTone("edgeNext", "muted");
-            return;
-        }
-        if (nextState === "snapshot") {
-            setText("edgeStatusTitle", "实时画面已返回");
-            setText("edgeStatusText", "家庭盒子正在通过云端返回实时画面。");
-            setText("edgeUpdateTime", "实时画面");
-            setText("edgeStreamLabel", "实时画面已返回");
-            setText("edgeMainMessage", "实时画面已返回。");
-            setText("edgeFact", "画面在线");
-            setText("edgeFeeling", "继续观察");
-            setText("edgeNext", "无待处理");
-            setText("edgeBrightness", "实时帧");
-            setPillTone("edgeFeeling", "good");
-            setPillTone("edgeNext", "muted");
-            return;
-        }
-        if (nextState === "waiting") {
-            setText("edgeStatusTitle", "等待实时画面");
-            setText("edgeStatusText", "家庭盒子在线，正在等待可显示的视频帧。");
-            setText("edgeUpdateTime", "等待实时画面");
-            setText("edgeStreamLabel", "等待实时画面");
-            setText("edgeMainMessage", "家庭盒子在线，正在等待可显示的视频帧。");
-            return;
-        }
-        if (nextState === "loading") {
-            setText("edgeStatusTitle", "正在连接画面");
-            setText("edgeStatusText", "正在请求家庭盒子实时画面。");
-            setText("edgeUpdateTime", "连接中");
-            setText("edgeStreamLabel", "连接中");
-            setText("edgeMainMessage", "正在请求实时画面...");
-            return;
-        }
-        if (nextState === "error") {
-            setText("edgeStatusTitle", camera?.status === "online" ? "预览暂不可用" : "摄像头离线");
-            setText("edgeStatusText", camera?.status === "online" ? "还没有拿到最新预览，盒子会继续上传。" : "摄像头当前不在线。");
-            setText("edgeUpdateTime", "等待预览");
-            setText("edgeStreamLabel", "等待预览");
-            setText("edgeMainMessage", "还没有拿到最新预览，盒子会继续上传。");
-        }
-    }
-
-    function setPillTone(id, tone) {
-        const node = $(id);
-        if (!node) return;
-        node.className = `app-mini-pill ${tone}`;
-    }
-
-    function preferredCamera(cameras) {
-        return [...cameras].sort((a, b) => {
-            const score = (camera) => (
-                (camera.enabled !== false ? 100 : 0) +
-                (effectiveStatus(camera) === "online" ? 30 : 0)
-            );
-            return score(b) - score(a) || Number(b.id) - Number(a.id);
-        })[0] || null;
-    }
-
-    function requestedCameraId() {
-        const value = new URLSearchParams(window.location.search).get("camera_id");
-        return value ? Number(value) : null;
-    }
-
-    function selectedCamera() {
-        return state.cameras.find((camera) => Number(camera.id) === Number(state.selectedCameraId)) || null;
-    }
-
-    function syncSelectedCameraParam(cameraId) {
-        const url = new URL(window.location.href);
-        if (cameraId) {
-            url.searchParams.set("camera_id", String(cameraId));
-        } else {
-            url.searchParams.delete("camera_id");
-        }
-        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-    }
-
-    function syncNavLinks() {
-        const camera = selectedCamera();
-        const suffix = camera?.id ? `?camera_id=${encodeURIComponent(camera.id)}` : "";
-        const watchHref = pageHref(`watch.html${suffix}`);
-        const detectionHref = pageHref(`detection.html${suffix}`);
-        const eventsHref = pageHref(`events.html${suffix}`);
-        const camerasHref = pageHref("cameras.html");
-        const watchTop = $("edgeMonitorWatchTopLink");
-        const watchPreview = $("edgeMonitorWatchPreviewLink");
-        const detectionLink = $("edgeMonitorDetectionLink");
-        const eventsLink = $("edgeMonitorEventsLink");
-        const eventsNavLink = $("edgeMonitorNavEventsLink");
-        const deviceLink = $("edgeMonitorDeviceLink");
-        if (watchTop) watchTop.href = watchHref;
-        if (watchPreview) watchPreview.href = watchHref;
-        if (detectionLink) detectionLink.href = detectionHref;
-        if (eventsLink) eventsLink.href = eventsHref;
-        if (eventsNavLink) eventsNavLink.href = eventsHref;
-        if (deviceLink) deviceLink.href = camerasHref;
-    }
-
-    function emptyCameraGrid() {
-        return `
-            <div class="gohome-panel gohome-empty-state">
-                <span class="material-symbols-outlined">linked_camera</span>
-                <h3 id="edgeCameraRoom">还没有接入摄像头</h3>
-                <p id="edgeUpdateTime">App 提交配置后，家庭盒子会自动同步。</p>
-                <p id="edgeMainMessage">先在设备管理里添加摄像头接入信息。</p>
-                <div class="flex flex-wrap gap-2 mt-4">
-                    <span id="edgeFact" class="app-mini-pill muted">未接入</span>
-                    <span id="edgeFeeling" class="app-mini-pill muted">待接入</span>
-                    <span id="edgeNext" class="app-mini-pill warn">添加摄像头</span>
-                    <span id="edgeBrightness" class="app-mini-pill muted">等待画面</span>
-                </div>
-                <div class="grid grid-cols-2 gap-2 mt-5">
-                    <a class="gohome-pill-button primary inline-flex items-center justify-center" href="${pageHref("connect.html")}">添加摄像头</a>
-                    <a class="gohome-pill-button soft inline-flex items-center justify-center" href="${pageHref("cameras.html")}">设备管理</a>
-                </div>
-            </div>
-        `;
-    }
-
-    function cameraCard(camera, index, active) {
-        const suffix = cameraSuffix(camera);
-        const watchHref = pageHref(`watch.html${suffix}`);
-        const tone = statusTone(camera);
-        const imageId = active ? "edgeSnapshotImage" : cameraDomId("edgeSnapshotImage", camera);
-        const streamLabelId = active ? "edgeStreamLabel" : cameraDomId("edgeStreamLabel", camera);
-        const cameraTitle = cameraLabel(camera);
-        const activeAttrs = active
-            ? {
-                previewId: "edgeMonitorWatchPreviewLink",
-                roomId: "edgeCameraRoom",
-                updateId: "edgeUpdateTime",
-                messageId: "edgeMainMessage",
-                factId: "edgeFact",
-                feelingId: "edgeFeeling",
-                nextId: "edgeNext",
-                brightnessId: "edgeBrightness",
-            }
-            : {};
-        return `
-            <article class="gohome-camera-card">
-                <a ${activeAttrs.previewId ? `id="${activeAttrs.previewId}"` : ""} href="${watchHref}" class="gohome-camera-live">
-                    <img id="${imageId}" alt="${escapeHtml(cameraTitle)}"/>
-                    <span class="gohome-live-badge">最新</span>
-                    ${active ? `<span class="gohome-camera-current">当前</span>` : ""}
-                    <p id="${streamLabelId}" class="gohome-stream-label">等待画面帧</p>
-                </a>
-                <div class="gohome-camera-copy">
-                    <div class="flex items-start justify-between gap-3">
-                        <div class="min-w-0">
-                            <h4 ${activeAttrs.roomId ? `id="${activeAttrs.roomId}"` : ""}>${escapeHtml(cameraTitle)}</h4>
-                            <p ${activeAttrs.updateId ? `id="${activeAttrs.updateId}"` : ""}>${escapeHtml(statusText(camera))}</p>
-                        </div>
-                        <span class="app-mini-pill ${tone}">${statusLabel(camera)}</span>
-                    </div>
-                    <p ${activeAttrs.messageId ? `id="${activeAttrs.messageId}"` : ""}>${escapeHtml(statusText(camera))}</p>
-                    <div class="flex flex-wrap gap-2">
-                        <span ${activeAttrs.factId ? `id="${activeAttrs.factId}"` : ""} class="app-mini-pill muted">等待检测</span>
-                        <span ${activeAttrs.feelingId ? `id="${activeAttrs.feelingId}"` : ""} class="app-mini-pill ${tone}">${statusLabel(camera)}</span>
-                        <span ${activeAttrs.nextId ? `id="${activeAttrs.nextId}"` : ""} class="app-mini-pill muted">继续观察</span>
-                        <span ${activeAttrs.brightnessId ? `id="${activeAttrs.brightnessId}"` : ""} class="app-mini-pill muted">等待亮度</span>
-                    </div>
-                    <a class="gohome-camera-action" href="${watchHref}">看画面</a>
-                </div>
-            </article>
-        `;
-    }
-
-    function renderCameraGrid(camera) {
+    function cameraStructure(cameras) {
         const grid = $("edgeMonitorCameraGrid");
         if (!grid) return;
-        const signature = JSON.stringify({
-            selected: camera?.id || null,
-            cameras: state.cameras.map((item) => ({
-                id: item.id,
-                name: item.name || "",
-                room: item.room || "",
-                status: item.status || "",
-                effective_status: effectiveStatus(item),
-                enabled: item.enabled !== false,
-                has_stream_config: Boolean(item.has_stream_config),
-            })),
-        });
-        if (state.cameraGridSignature === signature) return;
-        state.cameraGridSignature = signature;
+        const signature = cameras.map((camera) => `${camera.id}:${camera.name || ""}:${camera.room || ""}`).join("|");
+        if (signature === state.cameraSignature) return;
+        state.cameraSignature = signature;
         state.streamControllers.forEach((controller) => controller.dispose());
         state.streamControllers.clear();
-        if (!state.cameras.length) {
-            grid.innerHTML = emptyCameraGrid();
+        if (!cameras.length) {
+            grid.innerHTML = `
+                <div class="gohome-panel gohome-empty-state">
+                    <span class="material-symbols-outlined">linked_camera</span>
+                    <h3>还没有接入摄像头</h3>
+                    <p>完成家庭盒子绑定后，在设备管理中添加摄像头。</p>
+                    <a class="gohome-camera-action mt-4" href="${pageHref("cameras.html")}">进入设备管理</a>
+                </div>`;
             return;
         }
-        grid.innerHTML = state.cameras
-            .map((item, index) => cameraCard(item, index, Number(item.id) === Number(camera?.id)))
-            .join("");
+        grid.innerHTML = cameras.map((camera) => `
+            <article class="gohome-camera-card gohome-observation-card">
+                <a href="${pageHref(`watch.html?camera_id=${encodeURIComponent(camera.id)}`)}" class="gohome-camera-live">
+                    <img id="${domId("monitorStream", camera.id)}" alt="${escapeHtml(cameraLabel(camera))}实时画面"/>
+                    <span class="gohome-live-badge">实时</span>
+                    <p id="${domId("streamState", camera.id)}" class="gohome-stream-label">正在连接画面</p>
+                </a>
+                <div class="gohome-camera-copy">
+                    <div class="gohome-camera-title-row">
+                        <div><h4>${escapeHtml(cameraLabel(camera))}</h4><p id="${domId("cameraSeen", camera.id)}">正在同步观察记录</p></div>
+                        <span id="${domId("cameraStatus", camera.id)}" class="app-mini-pill muted">同步中</span>
+                    </div>
+                    <div class="gohome-observation-facts">
+                        <span><small>当前姿态</small><strong id="${domId("cameraPosture", camera.id)}">识别中</strong></span>
+                        <span><small>观察覆盖</small><strong id="${domId("cameraCoverage", camera.id)}">待统计</strong></span>
+                        <span><small>最近见到人</small><strong id="${domId("cameraPersonSeen", camera.id)}">尚未记录</strong></span>
+                    </div>
+                </div>
+            </article>`).join("");
     }
 
-    function updateCardStreamLabel(camera, nextState) {
-        const label = $(cameraDomId("edgeStreamLabel", camera));
-        if (!label) return;
-        if (nextState === "playing") label.textContent = "实时画面已返回";
-        else if (nextState === "snapshot") label.textContent = "实时画面已返回";
-        else if (nextState === "waiting") label.textContent = "等待实时画面";
-        else if (nextState === "error") label.textContent = "等待预览";
-        else if (nextState === "loading") label.textContent = "正在连接画面";
-        else label.textContent = "等待画面帧";
-    }
-
-    function disposeRemovedStreams(activeCameraIds) {
-        for (const [cameraId, controller] of state.streamControllers.entries()) {
-            if (!activeCameraIds.has(Number(cameraId))) {
-                controller.dispose();
-                state.streamControllers.delete(cameraId);
-            }
-        }
-    }
-
-    function attachMonitorStreams(cameras, selected) {
-        const activeIds = new Set(cameras.map((camera) => Number(camera.id)));
-        disposeRemovedStreams(activeIds);
+    function attachStreams(cameras) {
         cameras.forEach((camera) => {
-            const imageId = Number(camera.id) === Number(selected?.id)
-                ? "edgeSnapshotImage"
-                : cameraDomId("edgeSnapshotImage", camera);
-            const image = $(imageId);
+            if (state.streamControllers.has(Number(camera.id))) return;
+            const image = $(domId("monitorStream", camera.id));
             if (!image) return;
-            const existing = state.streamControllers.get(Number(camera.id));
-            if (existing) {
-                return;
-            }
             const controller = GoHomeEdge.createManagedVideoStream(image, {
                 cameraId: camera.id,
                 scene: "monitor",
                 snapshotRefreshMs: 3000,
                 onStateChange(nextState) {
-                    if (Number(camera.id) === Number(selected?.id)) {
-                        applyStreamState(camera, nextState);
-                    } else {
-                        updateCardStreamLabel(camera, nextState);
-                    }
+                    const labels = {
+                        playing: "实时画面已连接",
+                        snapshot: "实时画面已连接",
+                        waiting: "等待家庭盒子画面",
+                        loading: "正在连接画面",
+                        error: "画面暂不可用",
+                    };
+                    setText(domId("streamState", camera.id), labels[nextState] || "等待画面");
                 },
             });
             state.streamControllers.set(Number(camera.id), controller);
         });
     }
 
-    async function render() {
-        if (!window.GoHomeEdge) return;
+    function updateCamera(camera, presenceCamera, evaluation) {
+        const online = presenceCamera?.observation_valid === true;
+        const status = $(domId("cameraStatus", camera.id));
+        if (status) {
+            const reasonLabels = {
+                camera_offline: "摄像头离线",
+                config_not_synced: "配置同步中",
+                report_stale: "数据已超时",
+                coverage_insufficient: "覆盖不足",
+            };
+            status.textContent = online ? "有效观察" : (reasonLabels[presenceCamera?.observation_reason] || "暂未观察");
+            status.className = `app-mini-pill ${online ? "good" : "warn"}`;
+        }
+        setText(domId("cameraSeen", camera.id), online ? "画面与检测记录正在持续回传" : "当前不参与长时间无人判断");
+        setText(domId("cameraCoverage", camera.id), coverageLabel(presenceCamera?.presence || camera.presence));
+        setText(domId("cameraPersonSeen", camera.id), relativeTime(presenceCamera?.presence?.last_person_seen_at || camera.presence?.last_person_seen_at));
+        setText(domId("cameraPosture", camera.id), postureFromEvaluation(evaluation));
+    }
+
+    function renderIncidents(events) {
+        const list = $("activeIncidentList");
+        const incidents = (Array.isArray(events) ? events : [])
+            .filter((event) => safetyTypes.has(String(event.event_type || event.type || ""))
+                && !event.acknowledged
+                && event.payload?.incident?.status === "active")
+            .slice(0, 4);
+        setText("activeIncidentCount", `${incidents.length} 条`);
+        if (!list) return;
+        if (!incidents.length) {
+            list.innerHTML = `<div class="gohome-incident-empty"><span class="material-symbols-outlined">verified</span><div><strong>暂无待确认事件</strong><p>家庭盒子会继续在本地观察。</p></div></div>`;
+            return;
+        }
+        list.innerHTML = incidents.map((event) => `
+            <article class="gohome-incident-row ${event.level === "critical" ? "critical" : ""}">
+                <span class="material-symbols-outlined">${event.event_type === "fire_candidate" ? "local_fire_department" : "warning"}</span>
+                <div><strong>${escapeHtml(eventLabels[event.event_type] || event.summary || "安全提醒")}</strong><p>${escapeHtml(event.room || event.camera_name || "家里")} · ${relativeTime(event.occurred_at || event.created_at)}</p></div>
+                <span class="app-mini-pill warn">待确认</span>
+            </article>`).join("");
+    }
+
+    async function refresh() {
+        if (!window.GoHomeEdge || state.inFlight) return;
+        state.inFlight = true;
         try {
+            GoHomeEdge.bootstrapLaunchState?.();
             await GoHomeEdge.connect();
-            const [device, cameras] = await Promise.all([GoHomeEdge.appDevice(), GoHomeEdge.appCameras()]);
-            state.cameras = cameras.filter((item) => item.enabled !== false);
-            const requested = requestedCameraId();
-            state.selectedCameraId = state.cameras.some((item) => Number(item.id) === Number(requested))
-                ? requested
-                : (preferredCamera(state.cameras)?.id || null);
-            syncSelectedCameraParam(state.selectedCameraId);
-            const camera = selectedCamera();
-            renderCameraGrid(camera);
-            syncNavLinks();
-
-            setText("edgeDeviceStatus", device.worker_running ? "服务在线" : "服务暂停");
-            setText("edgeDetector", device.detector_backend === "yolo" ? "视觉检测中" : "基础检测中");
-
-            if (!camera) {
-                setText("edgeStatusTitle", "还没有摄像头");
-                setText("edgeStatusText", "先在设备管理里添加摄像头接入信息。");
-                setText("edgeMainMessage", "还没有接入摄像头");
-                setText("edgeFact", "接入摄像头后查看检测细节。");
-                setText("edgeFeeling", "待接入");
-                setText("edgeNext", "添加摄像头");
-                setText("edgeBrightness", "等待画面");
-                setPillTone("edgeFeeling", "muted");
-                setPillTone("edgeNext", "warn");
-                return;
-            }
-
-            attachMonitorStreams(state.cameras, camera);
-            const snapshot = await GoHomeEdge.appLatestSnapshot(camera.id, { allowMissing: true });
-            if (snapshot?.available === false) {
-                setText("edgeCameraRoom", cameraLabel(camera));
-                const evaluation = await GoHomeEdge.appLatestEvaluation(camera.id).catch(() => null);
-                if (state.streamState === "playing") {
-                    applyStreamState(camera, "playing");
-                    if (evaluation) applyEvaluationStatus(camera, evaluation);
-                } else {
-                    applyStreamState(camera, "waiting");
-                    if (evaluation) {
-                        applyEvaluationStatus(camera, evaluation);
-                    } else {
-                        setText("edgeFact", "等待检测摘要");
-                        setText("edgeFeeling", "继续观察");
-                        setText("edgeNext", "等待下一轮");
-                        setText("edgeBrightness", "等待亮度");
-                        setPillTone("edgeFeeling", "muted");
-                        setPillTone("edgeNext", "muted");
-                    }
-                }
-                return;
-            }
-
-            setText("edgeCameraRoom", cameraLabel(camera));
-            setText("edgeUpdateTime", `${GoHomeEdge.fmtTime(snapshot.captured_at)} 更新`);
-            setText("edgeMainMessage", snapshotMessage(snapshot));
-            setText("edgeStatusTitle", statusTitle(snapshot));
-            setText("edgeStatusText", effectiveStatus(camera) === "online" ? "家庭盒子正在运行并回传状态。" : statusText(camera));
-            setText("edgeFact", snapshot.person_count === null || snapshot.person_count === undefined ? "画面正常" : `${snapshot.person_count} 人`);
-            setText("edgeFeeling", (snapshot.tags || []).length ? "需要看一眼" : "家里平稳");
-            setText("edgeNext", (snapshot.tags || []).includes("fall_candidate") ? "立即联系" : "继续观察");
-            setText("edgeBrightness", `原始亮度 ${Number(snapshot.brightness || 0).toFixed(0)}`);
-            setPillTone("edgeFeeling", (snapshot.tags || []).length ? "warn" : "good");
-            setPillTone("edgeNext", (snapshot.tags || []).includes("fall_candidate") ? "warn" : "muted");
-
-            const statusIcon = $("edgeStatusIcon");
-            if (statusIcon) {
-                const alertTone = (snapshot.tags || []).includes("black_screen") || (snapshot.tags || []).includes("fall_candidate");
-                statusIcon.className = `app-story-icon ${alertTone ? "warn" : "good"} shrink-0`;
-            }
+            const families = await GoHomeEdge.myFamilies();
+            const requestedFamilyId = Number(new URLSearchParams(window.location.search).get("family_id"));
+            const family = families.find((item) => Number(item.id) === requestedFamilyId) || families[0];
+            if (!family) return;
+            state.familyId = family.id;
+            const [device, cameras, presence, events] = await Promise.all([
+                GoHomeEdge.appDevice().catch(() => null),
+                GoHomeEdge.appCameras().catch(() => []),
+                GoHomeEdge.v1PresenceState(family.id),
+                GoHomeEdge.appEvents("limit=50").catch(() => []),
+            ]);
+            state.cameras = cameras.filter((camera) => camera.enabled !== false);
+            cameraStructure(state.cameras);
+            attachStreams(state.cameras);
+            renderPresence(presence, device);
+            const evaluations = await Promise.all(state.cameras.map((camera) => GoHomeEdge.appLatestEvaluation(camera.id).catch(() => null)));
+            state.cameras.forEach((camera, index) => {
+                const presenceCamera = presence.cameras?.find((item) => Number(item.id) === Number(camera.id));
+                updateCamera(camera, presenceCamera, evaluations[index]);
+            });
+            renderIncidents(events);
         } catch (error) {
-            syncNavLinks();
             if (error?.status === 401) {
                 GoHomeEdge.clearAuthToken();
                 window.location.href = GoHomeEdge.loginHref(GoHomeEdge.currentPagePath());
                 return;
             }
-            setText("edgeDeviceStatus", "未连接");
-            setText("edgeDetector", "等待服务");
-            setText("edgeStatusTitle", "本地服务未连接");
-            setText("edgeStatusText", "启动本地服务后，这里会自动读取家庭盒子回传状态。");
-            setText("edgeMainMessage", error.message || "本地服务未连接");
-            setText("edgeFact", "连接服务后查看检测细节。");
-            setText("edgeFeeling", "未连接");
-            setText("edgeNext", "启动服务");
-            setPillTone("edgeFeeling", "warn");
-            setPillTone("edgeNext", "muted");
+            setText("edgeStatusTitle", "暂时无法读取家庭状态");
+            setText("edgeStatusText", error.message || "请稍后重试。");
+        } finally {
+            state.inFlight = false;
         }
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-        render();
-        setInterval(render, 8000);
+        refresh();
+        window.setInterval(refresh, 10000);
     });
 
     window.addEventListener("beforeunload", () => {

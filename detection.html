@@ -2,8 +2,8 @@
 <html lang="zh-CN">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>检测说明 - 回家</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>视觉感知 - 回家</title>
 
 <link rel="icon" href="data:,"/>
 <link href="assets/styles/tailwind.css" rel="stylesheet">
@@ -22,7 +22,7 @@
         <a id="detectionBackWatchLink" href="monitor.html?app=1" class="app-topbar-side" title="返回守护">
             <span class="material-symbols-outlined">arrow_back</span>
         </a>
-        <div class="app-topbar-title">检测说明</div>
+        <div class="app-topbar-title">视觉感知</div>
         <button id="detectionRefreshButton" class="app-topbar-side" type="button" title="刷新检测">
             <span class="material-symbols-outlined text-[20px]">refresh</span>
         </button>
@@ -32,7 +32,7 @@
         <section class="app-panel p-6 flex flex-col gap-5">
             <div class="flex items-start justify-between gap-4">
                 <div class="min-w-0">
-                    <p class="font-sans text-[11px] font-semibold text-primary tracking-[0.14em]">VISION</p>
+                    <p class="font-sans text-[11px] font-semibold text-primary">家庭盒子 · 实时分析</p>
                     <h1 id="detectionTitle" class="font-display text-[26px] leading-[1.14] font-bold text-on-surface tracking-[-0.02em] mt-1">正在读取检测结果</h1>
                     <p id="detectionSubtitle" class="font-sans text-[13px] text-on-surface-variant leading-[1.8] mt-2 max-w-[270px]">用于解释本轮画面为什么会生成事件，不是规则配置页。</p>
                 </div>
@@ -40,7 +40,7 @@
             </div>
 
             <div id="detectionStage" class="app-detection-stage">
-                <img id="detectionSnapshotImage" src="assets/images/elderly-alone.jpg" alt="最新检测截图">
+                <img id="detectionSnapshotImage" alt="家庭盒子最新检测画面">
                 <div id="detectionOverlay" class="app-detection-overlay" aria-hidden="true"></div>
                 <div class="app-detection-shade"></div>
                 <div class="absolute top-3 left-3 right-3 flex items-start justify-between gap-3">
@@ -75,15 +75,11 @@
                 </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-3">
-                <button id="detectionCaptureButton" class="app-btn-primary font-sans text-[13px] font-bold flex items-center justify-center gap-2" type="button">
+            <div>
+                <button id="detectionCaptureButton" class="app-btn-primary w-full font-sans text-[13px] font-bold flex items-center justify-center gap-2" type="button">
                     <span class="material-symbols-outlined text-[18px]">photo_camera</span>
                     抓取一帧
                 </button>
-                <a id="detectionPrimaryEventsLink" href="events.html?app=1" class="app-btn-secondary font-sans text-[13px] font-bold flex items-center justify-center gap-2">
-                    <span class="material-symbols-outlined text-[18px]">history</span>
-                    查看事件
-                </a>
             </div>
         </section>
 
@@ -96,10 +92,28 @@
                 <span id="detectionCameraCount" class="app-section-badge shrink-0">加载中</span>
             </div>
             <div id="detectionCameraList" class="app-camera-list"></div>
-            <a href="connect.html?app=1" class="app-btn-secondary h-11 text-on-surface font-sans text-[13px] font-bold flex items-center justify-center gap-2">
-                <span class="material-symbols-outlined text-[18px]">add_circle</span>
-                    管理摄像头
-            </a>
+        </section>
+
+        <section class="app-panel p-5 flex flex-col gap-4">
+            <div class="flex items-center justify-between gap-3">
+                <div>
+                    <h2 class="font-display text-[18px] font-bold text-on-surface">本轮感知结果</h2>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">汇总人形、姿态、场景和火灾检测，不代表最终告警结论。</p>
+                </div>
+                <span id="visionPipelineBadge" class="app-mini-pill muted">分析中</span>
+            </div>
+            <div class="app-kpi-grid">
+                <div class="app-kpi"><p>人物姿态</p><p id="visionPosture">-</p></div>
+                <div class="app-kpi"><p>跟踪目标</p><p id="visionTrack">-</p></div>
+                <div class="app-kpi"><p>所在区域</p><p id="visionZone">-</p></div>
+                <div class="app-kpi"><p>姿态持续</p><p id="visionDuration">-</p></div>
+                <div class="app-kpi"><p>烟火状态</p><p id="visionFire">-</p></div>
+                <div class="app-kpi"><p>火灾分数</p><p id="visionFireScore">-</p></div>
+            </div>
+            <div class="app-capability-row">
+                <div><strong>姿态因子图</strong><span id="visionPoseFactors">等待骨架、人体框、地面关系和时序因子。</span></div>
+                <em id="visionPoseBadge" class="app-mini-pill muted not-italic">等待</em>
+            </div>
         </section>
 
         <section class="app-panel p-5 flex flex-col gap-4">
@@ -125,10 +139,21 @@
                     <p id="detectionEvalTime" class="font-display text-[15px] font-bold text-on-surface mt-1">-</p>
                 </div>
             </div>
-            <a id="detectionSecondaryEventsLink" href="events.html?app=1" class="app-btn-secondary h-11 text-on-surface font-sans text-[13px] font-bold flex items-center justify-center gap-2">
-                <span class="material-symbols-outlined text-[18px]">history</span>
-                查看事件记录
-            </a>
+        </section>
+
+        <section class="app-panel p-5 flex flex-col gap-4">
+            <div class="flex items-center justify-between gap-3">
+                <div>
+                    <h2 class="font-display text-[18px] font-bold text-on-surface">云端视觉复核</h2>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">仅在跌倒、长时间倒地或烟火候选出现时异步调用。</p>
+                </div>
+                <span id="visionCloudBadge" class="app-mini-pill muted">无需复核</span>
+            </div>
+            <p id="visionCloudSummary" class="font-sans text-[13px] text-on-surface-variant leading-relaxed">当前没有需要提交云端模型复核的候选事件。</p>
+            <div class="grid grid-cols-2 gap-3">
+                <div class="app-kpi"><p>模型判断</p><p id="visionCloudPosture">-</p></div>
+                <div class="app-kpi"><p>复核置信度</p><p id="visionCloudConfidence">-</p></div>
+            </div>
         </section>
 
         <section class="app-panel p-5 flex flex-col gap-4">
@@ -165,34 +190,23 @@
                     </div>
                     <em id="detectionFallBadge" class="app-mini-pill muted not-italic">待启用</em>
                 </div>
+                <div class="app-capability-row">
+                    <div>
+                        <strong>姿态与动作时序</strong>
+                        <span id="detectionPoseCapability">骨架姿态、区域关系和持续时间共同判断。</span>
+                    </div>
+                    <em id="detectionPoseBadge" class="app-mini-pill muted not-italic">检测中</em>
+                </div>
+                <div class="app-capability-row">
+                    <div>
+                        <strong>烟火候选</strong>
+                        <span id="detectionFireCapability">颜色、纹理、运动和连续帧共同判断。</span>
+                    </div>
+                    <em id="detectionFireBadge" class="app-mini-pill muted not-italic">检测中</em>
+                </div>
             </div>
         </section>
     </main>
-
-    <nav class="app-bottom-nav">
-        <div class="app-bottom-nav-inner flex justify-between items-center">
-            <a href="index.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">home</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">首页</span>
-            </a>
-            <a id="detectionNavMonitorLink" href="monitor.html?app=1" class="flex flex-col items-center gap-1.5 text-primary">
-                <div class="app-nav-pill active"><span class="material-symbols-outlined fill text-[22px]">nest_cam_indoor</span></div>
-                <span class="font-sans text-[11px] font-bold tracking-wide">守护</span>
-            </a>
-            <a id="detectionNavEventsLink" href="events.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">history</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">事件</span>
-            </a>
-            <a href="companionship.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">diversity_1</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">陪伴</span>
-            </a>
-            <a href="privacy.html?app=1" class="flex flex-col items-center gap-1.5 text-outline hover:text-primary transition-colors group">
-                <div class="app-nav-pill"><span class="material-symbols-outlined text-[22px]">person</span></div>
-                <span class="font-sans text-[11px] font-semibold tracking-wide">我的</span>
-            </a>
-        </div>
-    </nav>
     <div id="detectionToast" class="app-toast" role="status" aria-live="polite"></div>
     <script src="assets/scripts/edge-client.js?v=20260709-cloud-stream-1"></script>
     <script src="assets/scripts/detection-live.js?v=20260709-state-1"></script>

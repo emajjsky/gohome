@@ -939,6 +939,13 @@
                 method: "PUT",
                 body: JSON.stringify(payload),
             }),
+        v1PresenceState: (familyId) =>
+            request(`/api/v1/families/${encodeURIComponent(familyId)}/presence-state`),
+        v1UpdatePresenceMonitoring: (familyId, payload = {}) =>
+            request(`/api/v1/families/${encodeURIComponent(familyId)}/presence-monitoring`, {
+                method: "PUT",
+                body: JSON.stringify(payload),
+            }),
         v1OpsServiceConfig: () => request("/api/v1/ops/service-config"),
         v1GenerateMessages: (payload = {}) => request("/api/v1/internal/messages/generate", {
             method: "POST",

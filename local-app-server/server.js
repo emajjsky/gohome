@@ -2011,6 +2011,20 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function normalizePresenceMonitoring(value = {}) {
+        const source = value && typeof value === "object" ? value : {};
+        const allowedModes = new Set(["active", "away", "travel", "hospital", "paused", "paused_until"]);
+        const mode = allowedModes.has(String(source.mode || "")) ? String(source.mode) : "active";
+        const parsedPausedUntil = Date.parse(source.paused_until || "");
+        return {
+            enabled: "enabled" in source ? normalizeBool(source.enabled) : true,
+            mode,
+            paused_until: Number.isFinite(parsedPausedUntil) ? new Date(parsedPausedUntil).toISOString() : "",
+            reason: String(source.reason || "").trim().slice(0, 120),
+            updated_at: String(source.updated_at || nowIso()),
+        };
+    }
+
     function defaultCarePreferences(familyId) {
         return {
             family_id: Number(familyId),
@@ -2426,9 +2440,33 @@ function createLocalAppServer(options = {}) {
         return Math.max(60, normalizeNumber(process.env.GOHOME_LONG_ABSENCE_SECONDS, 12 * 60 * 60));
     }
 
+    function cameraPresenceObservationState(camera, now = Date.now(), options = {}) {
+        const minCoverage = options.min_coverage ?? Math.max(0.1, Math.min(1, normalizeNumber(process.env.GOHOME_PRESENCE_MIN_COVERAGE, 0.5)));
+        const maxReportAgeMs = options.max_report_age_ms ?? Math.max(30000, normalizeNumber(process.env.GOHOME_PRESENCE_REPORT_MAX_AGE_SECONDS, 120) * 1000);
+        const reportedAt = camera.presence?.reported_at || camera.edge_reported_at || "";
+        const reportAgeMs = now - Date.parse(reportedAt);
+        const online = camera.status === "online";
+        const synced = camera.sync_status === "synced";
+        const fresh = Number.isFinite(reportAgeMs) && reportAgeMs <= maxReportAgeMs;
+        const coverage = Number(camera.presence?.observation_coverage || 0);
+        const coverageValid = coverage >= minCoverage;
+        const valid = online && synced && fresh && coverageValid;
+        let reason = "valid";
+        if (!online) reason = "camera_offline";
+        else if (!synced) reason = "config_not_synced";
+        else if (!fresh) reason = "report_stale";
+        else if (!coverageValid) reason = "coverage_insufficient";
+        return {
+            valid,
+            reason,
+            report_age_seconds: Number.isFinite(reportAgeMs) ? Math.max(0, Math.floor(reportAgeMs / 1000)) : null,
+            observation_coverage: coverage,
+        };
+    }
+
     function familyPresenceState(family) {
         const now = Date.now();
-        const monitoring = carePreferences(family.id).metadata?.presence_monitoring || {};
+        const monitoring = normalizePresenceMonitoring(carePreferences(family.id).metadata?.presence_monitoring || {});
         const pauseMode = String(monitoring.mode || "active");
         const pausedUntil = Date.parse(monitoring.paused_until || "");
         const paused = monitoring.enabled === false
@@ -2437,15 +2475,9 @@ function createLocalAppServer(options = {}) {
         const cameras = Object.values(store.db.cameras).filter((camera) => (
             Number(camera.family_id) === Number(family.id) && camera.enabled !== false
         ));
-        const minCoverage = Math.max(0.1, Math.min(1, normalizeNumber(process.env.GOHOME_PRESENCE_MIN_COVERAGE, 0.5)));
-        const maxReportAgeMs = Math.max(30000, normalizeNumber(process.env.GOHOME_PRESENCE_REPORT_MAX_AGE_SECONDS, 120) * 1000);
-        const valid = !paused && cameras.length > 0 && cameras.every((camera) => {
-            const reportAge = now - Date.parse(camera.presence?.reported_at || camera.edge_reported_at || "");
-            return camera.status === "online"
-                && camera.sync_status === "synced"
-                && Number.isFinite(reportAge) && reportAge <= maxReportAgeMs
-                && Number(camera.presence?.observation_coverage || 0) >= minCoverage;
-        });
+        const cameraObservationStates = cameras.map((camera) => cameraPresenceObservationState(camera, now));
+        const validCameraCount = cameraObservationStates.filter((item) => item.valid).length;
+        const valid = !paused && cameras.length > 0 && validCameraCount === cameras.length;
         const previous = family.presence_state && typeof family.presence_state === "object" ? family.presence_state : {};
         const seenTimes = cameras
             .map((camera) => Date.parse(camera.presence?.last_person_seen_at || ""))
@@ -2458,14 +2490,17 @@ function createLocalAppServer(options = {}) {
             family_id: family.id,
             status: paused ? "paused" : (valid ? (absenceSeconds >= familyPresenceThresholdSeconds() ? "long_absence" : "observing") : "suspended"),
             camera_count: cameras.length,
-            valid_camera_count: valid ? cameras.length : 0,
+            valid_camera_count: validCameraCount,
             last_person_seen_at: lastPersonSeenMs ? new Date(lastPersonSeenMs).toISOString() : null,
             absence_started_at: Number.isFinite(absenceStartedMs) ? new Date(absenceStartedMs).toISOString() : null,
             absence_seconds: absenceSeconds,
             threshold_seconds: familyPresenceThresholdSeconds(),
             eligible_since: eligibleSince,
-            reason: paused ? `presence_monitoring_${pauseMode}` : (valid ? "coverage_valid" : "camera_offline_or_coverage_insufficient"),
+            reason: paused
+                ? `presence_monitoring_${pauseMode}`
+                : (valid ? "coverage_valid" : (cameraObservationStates.find((item) => !item.valid)?.reason || "camera_unavailable")),
             monitoring: {
+                enabled: monitoring.enabled,
                 mode: pauseMode,
                 paused_until: monitoring.paused_until || "",
                 reason: String(monitoring.reason || ""),
@@ -6755,6 +6790,10 @@ function createLocalAppServer(options = {}) {
                 if (!requireFamilyAccess(req, res, familyId)) return;
                 const payload = await parseJsonBody(req);
                 const existing = carePreferences(familyId);
+                if (payload.metadata?.presence_monitoring && !userCanManageFamily(activeAppUser(req).id, familyId)) {
+                    writeError(res, 403, "只有家庭创建者可以修改外出与暂停守护设置。");
+                    return;
+                }
                 const nextMetadata = payload.metadata && typeof payload.metadata === "object"
                     ? normalizeCareMetadata({ ...(existing.metadata || {}), ...payload.metadata })
                     : normalizeCareMetadata(existing.metadata || {});
@@ -6774,6 +6813,71 @@ function createLocalAppServer(options = {}) {
                 });
                 await store.save();
                 write(res, 200, store.db.care_preferences[String(familyId)]);
+                return;
+            }
+
+            const presenceStateMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/presence-state$/);
+            if (presenceStateMatch && req.method === "GET") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(presenceStateMatch[1]);
+                if (!requireFamilyAccess(req, res, familyId)) return;
+                const family = selectedFamily(familyId);
+                const state = familyPresenceState(family);
+                const user = activeAppUser(req);
+                const cameras = Object.values(store.db.cameras)
+                    .filter((camera) => Number(camera.family_id) === familyId && camera.enabled !== false)
+                    .map((camera) => {
+                        const observation = cameraPresenceObservationState(camera);
+                        return {
+                            id: camera.id,
+                            name: camera.name || "",
+                            room: camera.room || "",
+                            status: camera.status || "",
+                            sync_status: camera.sync_status || "",
+                            edge_reported_at: camera.edge_reported_at || null,
+                            presence: camera.presence || null,
+                            observation_valid: observation.valid,
+                            observation_reason: observation.reason,
+                            report_age_seconds: observation.report_age_seconds,
+                        };
+                    });
+                write(res, 200, {
+                    ...state,
+                    can_edit: userCanManageFamily(user.id, familyId),
+                    cameras,
+                });
+                return;
+            }
+
+            const presenceMonitoringMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/presence-monitoring$/);
+            if (presenceMonitoringMatch && req.method === "PUT") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(presenceMonitoringMatch[1]);
+                if (!requireFamilyOwner(req, res, familyId)) return;
+                const payload = await parseJsonBody(req);
+                const existing = carePreferences(familyId);
+                const monitoring = normalizePresenceMonitoring({
+                    ...(existing.metadata?.presence_monitoring || {}),
+                    ...payload,
+                    updated_at: nowIso(),
+                });
+                if (monitoring.mode === "active") monitoring.paused_until = "";
+                store.db.care_preferences[String(familyId)] = publicCarePreferences({
+                    ...existing,
+                    metadata: normalizeCareMetadata({
+                        ...(existing.metadata || {}),
+                        presence_monitoring: monitoring,
+                    }),
+                    updated_at: nowIso(),
+                });
+                const family = selectedFamily(familyId);
+                const state = familyPresenceState(family);
+                await store.save();
+                write(res, 200, {
+                    ...state,
+                    can_edit: true,
+                    monitoring,
+                });
                 return;
             }
 

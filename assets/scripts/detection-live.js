@@ -5,6 +5,7 @@
         detectorBackend: "basic",
         capabilities: {},
         latestSnapshot: null,
+        latestEvaluation: null,
         streamCameraId: null,
         streamController: null,
         refreshInFlight: false,
@@ -44,6 +45,7 @@
             fall_candidate: boolValue(raw.fall_candidate),
             activity_candidate: boolValue(raw.activity_candidate, true),
             fire_candidate: boolValue(raw.fire_candidate, true),
+            pose_detection: boolValue(raw.pose_detection),
             backend: normalizedBackend,
             backend_label: raw.backend_label || backendLabel(normalizedBackend),
         };
@@ -79,6 +81,131 @@
         return `${Math.floor(value / 3600)}小时`;
     }
 
+    function postureLabel(value) {
+        const labels = {
+            standing: "站立",
+            sitting: "坐姿",
+            squatting: "蹲姿",
+            bending: "弯腰",
+            walking: "走动",
+            lying: "躺姿",
+            fallen: "疑似跌倒",
+            upper_body: "上半身入镜",
+            low_body: "低位姿态",
+            unknown: "未确定",
+        };
+        return labels[String(value || "unknown")] || String(value || "未确定");
+    }
+
+    function firstValue(values, fallback = null) {
+        return values.find((value) => value !== null && value !== undefined && value !== "") ?? fallback;
+    }
+
+    function renderVisionSummary(snapshot = state.latestSnapshot, evaluation = state.latestEvaluation) {
+        const analysis = snapshot?.analysis || {};
+        const candidate = evaluation?.candidates?.[0] || null;
+        const evidence = candidate?.payload?.evidence || evaluation?.analysis || {};
+        const factorGraph = firstValue([
+            analysis.pose_factor_graph,
+            evidence.pose_factor_graph,
+            candidate?.payload?.pose_factor_graph,
+        ], {}) || {};
+        const pose = firstValue([
+            factorGraph.posture,
+            factorGraph.current_posture,
+            analysis.posture,
+            evidence.posture,
+            evidence.target?.posture,
+            analysis.poses?.[0]?.posture,
+        ], "unknown");
+        const trackId = firstValue([
+            factorGraph.track_id,
+            evidence.target?.track_id,
+            analysis.poses?.[0]?.track_id,
+            analysis.people?.[0]?.track_id,
+        ]);
+        const zone = firstValue([
+            factorGraph.scene_zone_label_zh,
+            factorGraph.scene_zone_label,
+            evidence.target?.scene_zone_label_zh,
+            evidence.target?.scene_zone_label,
+            analysis.poses?.[0]?.scene_zone_label_zh,
+            analysis.poses?.[0]?.scene_zone_label,
+            analysis.people?.[0]?.scene_zone_label_zh,
+            analysis.people?.[0]?.scene_zone_label,
+        ]);
+        const duration = firstValue([
+            factorGraph.duration_seconds,
+            factorGraph.posture_duration_seconds,
+            factorGraph.stable_seconds,
+            evidence.metrics?.duration_seconds,
+            evidence.metrics?.posture_duration_seconds,
+        ]);
+        const fireScore = firstValue([
+            analysis.fire_score,
+            analysis.fire?.score,
+            evidence.metrics?.fire_score,
+            evidence.fire_score,
+        ]);
+        const fireCandidate = Boolean(
+            analysis.fire_event_candidate
+            || analysis.fire_candidate
+            || candidate?.event_type === "fire_candidate"
+            || candidate?.type === "fire_candidate"
+        );
+        const personCount = firstValue([snapshot?.person_count, analysis.person_count], 0);
+        const factorCount = [
+            factorGraph.pose_confidence,
+            factorGraph.ground_relation,
+            factorGraph.body_ratio,
+            factorGraph.temporal_stability,
+            factorGraph.scene_zone_overlap,
+        ].filter((value) => value !== null && value !== undefined).length;
+
+        setText("visionPosture", postureLabel(pose));
+        setText("visionTrack", trackId !== null && trackId !== undefined ? `#${trackId}` : (Number(personCount) > 0 ? "跟踪中" : "未见到人"));
+        setText("visionZone", zone || "自动识别中");
+        setText("visionDuration", duration !== null && duration !== undefined ? fmtDuration(duration) : "待累计");
+        setText("visionFire", fireCandidate ? "发现候选" : "未见异常");
+        setText("visionFireScore", fireScore !== null && fireScore !== undefined ? fmtNumber(fireScore, 3) : "待采样");
+        setText("visionPoseFactors", Number(personCount) > 0
+            ? `已关联 ${factorCount || "多"} 项姿态与场景因子，持续时长由时序模块累计。`
+            : "当前画面未形成稳定人物轨迹，等待下一轮人物观测。");
+        const poseBadge = $("visionPoseBadge");
+        if (poseBadge) {
+            poseBadge.textContent = Number(personCount) > 0 ? "已关联" : "等待人物";
+            poseBadge.className = `app-mini-pill ${Number(personCount) > 0 ? "good" : "muted"} not-italic`;
+        }
+        const pipelineBadge = $("visionPipelineBadge");
+        if (pipelineBadge) {
+            pipelineBadge.textContent = fireCandidate ? "发现候选" : "管线运行中";
+            pipelineBadge.className = `app-mini-pill ${fireCandidate ? "warn" : "good"}`;
+        }
+
+        const verification = candidate?.payload?.verification || null;
+        const verificationResult = verification?.result || null;
+        const verificationStatus = String(verification?.status || "");
+        const cloudBadge = $("visionCloudBadge");
+        const statusLabels = {
+            pending: "等待复核",
+            verifying: "复核中",
+            retrying: "等待重试",
+            confirmed: "已确认",
+            rejected: "已排除",
+            uncertain: "结果不确定",
+            failed: "复核失败",
+            unavailable: "模型不可用",
+        };
+        if (cloudBadge) {
+            cloudBadge.textContent = statusLabels[verificationStatus] || "无需复核";
+            cloudBadge.className = `app-mini-pill ${["confirmed", "uncertain"].includes(verificationStatus) ? "warn" : (verificationStatus === "rejected" ? "good" : "muted")}`;
+        }
+        setText("visionCloudSummary", verificationResult?.reason
+            || (verificationStatus ? "候选事件已进入异步云端视觉复核，边缘告警不会等待模型返回。" : "当前没有需要提交云端模型复核的候选事件。"));
+        setText("visionCloudPosture", verificationResult ? postureLabel(verificationResult.posture) : "-");
+        setText("visionCloudConfidence", verificationResult?.confidence !== undefined ? `${Math.round(Number(verificationResult.confidence) * 100)}%` : "-");
+    }
+
     function metricLabel(key) {
         const labels = {
             no_person_seconds: "连续无人",
@@ -87,6 +214,16 @@
             brightness: "亮度",
             contrast: "对比度",
             people: "人体框",
+            poses: "姿态",
+            fall_score: "跌倒综合分",
+            pose_fall_score: "姿态跌倒分",
+            confirm_frames: "连续确认帧",
+            duration_seconds: "持续时间",
+            same_target: "同一轨迹",
+            target: "目标",
+            evidence: "证据",
+            confirm_seconds: "确认时长",
+            recover_frames: "恢复帧",
         };
         return labels[key] || key;
     }
@@ -94,6 +231,14 @@
     function metricValue(key, value) {
         if (value === null || value === undefined || value === "") return "-";
         if (key === "people" && Array.isArray(value)) return `${value.length} 个人体框`;
+        if (key === "poses" && Array.isArray(value)) return `${value.length} 个姿态`;
+        if (Array.isArray(value)) return `${value.length} 项`;
+        if (typeof value === "boolean") return value ? "是" : "否";
+        if (typeof value === "object") {
+            if (value.track_id !== undefined) return `轨迹 #${value.track_id}`;
+            if (value.posture) return postureLabel(value.posture);
+            return "已记录";
+        }
         if (key.endsWith("_seconds")) return fmtDuration(value);
         if (key === "motion_score") return fmtMotion(value);
         if (key === "brightness" || key === "contrast") return fmtNumber(value, 0);
@@ -104,7 +249,10 @@
     function summarizeMetrics(metrics) {
         const entries = Object.entries(metrics || {}).filter(([, value]) => value !== null && value !== undefined && value !== "");
         if (!entries.length) return "";
-        return entries.map(([key, value]) => `${metricLabel(key)} ${metricValue(key, value)}`).join("，");
+        return entries
+            .map(([key, value]) => `${metricLabel(key)} ${metricValue(key, value)}`)
+            .slice(0, 8)
+            .join("，");
     }
 
     function matchedRules(evaluation) {
@@ -288,6 +436,8 @@
         state.capabilities = normalizeCapabilities(device.vision_capabilities || {}, state.detectorBackend);
         const personReady = state.capabilities.person_detection || state.capabilities.no_person_detection;
         const fallReady = state.capabilities.fall_candidate;
+        const poseReady = state.capabilities.pose_detection;
+        const fireReady = state.capabilities.fire_candidate;
         const label = state.capabilities.backend_label || backendLabel(state.detectorBackend);
         setText("detectionStatusBadge", device.worker_running ? "盒子在线" : "盒子暂停");
         setText("detectionBackend", label);
@@ -298,6 +448,10 @@
         $("detectionPersonBadge").className = `app-mini-pill ${personReady ? "good" : "muted"} not-italic`;
         $("detectionFallBadge").textContent = fallReady ? "可用" : "需模型";
         $("detectionFallBadge").className = `app-mini-pill ${fallReady ? "good" : "muted"} not-italic`;
+        $("detectionPoseBadge").textContent = poseReady ? "可用" : "等待上报";
+        $("detectionPoseBadge").className = `app-mini-pill ${poseReady ? "good" : "muted"} not-italic`;
+        $("detectionFireBadge").textContent = fireReady ? "可用" : "未启用";
+        $("detectionFireBadge").className = `app-mini-pill ${fireReady ? "good" : "muted"} not-italic`;
     }
 
     function renderCameraList() {
@@ -377,6 +531,7 @@
         }
 
         renderDetectionOverlay(snapshot);
+        renderVisionSummary(snapshot, state.latestEvaluation);
     }
 
     function renderEmptySnapshot() {
@@ -391,6 +546,7 @@
         setText("detectionBoxes", "-");
         setText("detectionBrightness", "-");
         setText("detectionMotion", "-");
+        renderVisionSummary(null, state.latestEvaluation);
     }
 
     async function attachStream(cameraId) {
@@ -437,13 +593,16 @@
     }
 
     function renderEvaluation(evaluation) {
+        state.latestEvaluation = evaluation;
         const candidates = Array.isArray(evaluation?.candidates) ? evaluation.candidates : [];
         const evalState = evaluation?.state || {};
         const hasCandidates = candidates.length > 0;
+        const evaluatedAt = Date.parse(evaluation?.evaluated_at || "");
+        const historical = Number.isFinite(evaluatedAt) && Date.now() - evaluatedAt > 10 * 60 * 1000;
         const cameraState = String(evalState.camera_state || evalState.camera_status || "").toLowerCase();
         const badge = $("detectionRuleBadge");
-        badge.textContent = hasCandidates ? `${candidates.length} 个候选` : (cameraState === "online" ? "未命中规则" : "等待规则");
-        badge.className = `app-mini-pill ${hasCandidates ? "warn" : (cameraState === "online" ? "good" : "muted")}`;
+        badge.textContent = hasCandidates ? (historical ? `${candidates.length} 条历史候选` : `${candidates.length} 个候选`) : (cameraState === "online" ? "未命中规则" : "等待规则");
+        badge.className = `app-mini-pill ${hasCandidates && !historical ? "warn" : (cameraState === "online" ? "good" : "muted")}`;
         setText(
             "detectionRuleSummary",
             evaluationSummary(evaluation)
@@ -451,9 +610,11 @@
         setText("detectionNoPerson", fmtDuration(evalState.no_person_seconds));
         setText("detectionNoMotion", fmtDuration(evalState.no_motion_seconds));
         setText("detectionEvalTime", GoHomeEdge.fmtTime(evaluation?.evaluated_at));
+        renderVisionSummary(state.latestSnapshot, evaluation);
     }
 
     function renderEmptyEvaluation() {
+        state.latestEvaluation = null;
         const badge = $("detectionRuleBadge");
         badge.textContent = "等待规则";
         badge.className = "app-mini-pill muted";
@@ -461,6 +622,7 @@
         setText("detectionNoPerson", "-");
         setText("detectionNoMotion", "-");
         setText("detectionEvalTime", "-");
+        renderVisionSummary(state.latestSnapshot, null);
     }
 
     async function loadEvaluation(cameraId) {
@@ -472,10 +634,12 @@
     function renderEvaluationHeader(evaluation) {
         const cameraState = String(evaluation?.state?.camera_state || evaluation?.state?.camera_status || "").toLowerCase();
         const candidates = Array.isArray(evaluation?.candidates) ? evaluation.candidates : [];
+        const evaluatedAt = Date.parse(evaluation?.evaluated_at || "");
+        const historical = Number.isFinite(evaluatedAt) && Date.now() - evaluatedAt > 10 * 60 * 1000;
         if (candidates.length) {
-            setText("detectionTitle", "命中需要确认的候选");
+            setText("detectionTitle", historical ? "最近一次候选记录" : "命中需要确认的候选");
             setText("detectionSubtitle", evaluationSummary(evaluation));
-            setText("detectionStatusBadge", "需要确认");
+            setText("detectionStatusBadge", historical ? "历史记录" : "需要确认");
             return;
         }
         if (cameraState === "online") {
@@ -524,6 +688,7 @@
     async function refreshAll() {
         if (!window.GoHomeEdge) return;
         try {
+            GoHomeEdge.bootstrapLaunchState?.();
             await GoHomeEdge.connect();
             const [device, cameras] = await Promise.all([GoHomeEdge.appDevice(), GoHomeEdge.appCameras()]);
             renderDevice(device);

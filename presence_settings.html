@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+<title>外出与暂停守护 - 回家</title>
+<link rel="icon" href="data:,"/>
+<link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
+<link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260711-presence-1"/>
+</head>
+<body class="gohome-app-shell-page gohome-page-presence-settings">
+<main class="gohome-presence-settings-page">
+<header class="gohome-settings-topbar">
+<a class="gohome-round-icon" href="privacy.html?app=1" aria-label="返回我的"><span class="material-symbols-outlined">arrow_back</span></a>
+<div><h1>外出与暂停守护</h1><p>避免离家期间产生长时间无人误报</p></div>
+<span></span>
+</header>
+<section class="gohome-presence-settings-intro">
+<span class="material-symbols-outlined">shield_with_heart</span>
+<div><h2 id="presenceSettingsTitle">正在读取守护状态</h2><p id="presenceSettingsText">摄像头画面不会关闭，只调整长时间无人提醒。</p></div>
+</section>
+<form id="presenceSettingsForm" class="gohome-mode-list">
+<label class="gohome-mode-row">
+<input type="radio" name="mode" value="active"/>
+<span class="material-symbols-outlined">home</span>
+<div><strong>正常守护</strong><p>持续观察家中是否有人，并在长时间无人时提醒。</p></div>
+<i></i>
+</label>
+<label class="gohome-mode-row">
+<input type="radio" name="mode" value="away"/>
+<span class="material-symbols-outlined">directions_walk</span>
+<div><strong>临时外出</strong><p>短时间离家，手动恢复后重新开始观察。</p></div>
+<i></i>
+</label>
+<label class="gohome-mode-row">
+<input type="radio" name="mode" value="travel"/>
+<span class="material-symbols-outlined">luggage</span>
+<div><strong>旅行</strong><p>家中一段时间无人，不触发长时间无人提醒。</p></div>
+<i></i>
+</label>
+<label class="gohome-mode-row">
+<input type="radio" name="mode" value="hospital"/>
+<span class="material-symbols-outlined">local_hospital</span>
+<div><strong>住院或陪护</strong><p>因就医暂时离家，保留画面查看并暂停无人提醒。</p></div>
+<i></i>
+</label>
+<label class="gohome-mode-row">
+<input type="radio" name="mode" value="paused_until"/>
+<span class="material-symbols-outlined">schedule</span>
+<div><strong>暂停到指定时间</strong><p>到期后自动恢复正常守护。</p></div>
+<i></i>
+</label>
+<div id="pausedUntilField" class="gohome-paused-until hidden">
+<label for="pausedUntil">自动恢复时间</label>
+<input id="pausedUntil" type="datetime-local"/>
+</div>
+<p id="presencePermissionHint" class="gohome-permission-hint hidden">只有家庭创建者可以修改此设置。</p>
+<button id="presenceSaveButton" class="gohome-primary-action" type="submit">保存守护状态</button>
+</form>
+</main>
+<script src="assets/scripts/edge-client.js?v=20260709-cloud-stream-1"></script>
+<script src="assets/scripts/presence-settings-live.js?v=20260711-presence-1"></script>
+</body>
+</html>

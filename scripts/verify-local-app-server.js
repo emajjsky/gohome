@@ -237,6 +237,38 @@ async function main() {
             headers: { Authorization: `Bearer ${phoneRegistered.token}` },
         });
         assert.equal(memberRules.can_edit, false);
+
+        const initialPresence = await requestJson(baseUrl, `/api/v1/families/${family.id}/presence-state`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(initialPresence.can_edit, true);
+        assert.equal(initialPresence.monitoring.mode, "active");
+
+        const pausedPresence = await requestJson(baseUrl, `/api/v1/families/${family.id}/presence-monitoring`, {
+            method: "PUT",
+            body: JSON.stringify({ mode: "travel", reason: "测试旅行模式" }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(pausedPresence.status, "paused");
+        assert.equal(pausedPresence.monitoring.mode, "travel");
+
+        const memberPresenceUpdate = await fetch(`${baseUrl}/api/v1/families/${family.id}/presence-monitoring`, {
+            method: "PUT",
+            body: JSON.stringify({ mode: "active" }),
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${phoneRegistered.token}`,
+            },
+        });
+        assert.equal(memberPresenceUpdate.status, 403);
+
+        const resumedPresence = await requestJson(baseUrl, `/api/v1/families/${family.id}/presence-monitoring`, {
+            method: "PUT",
+            body: JSON.stringify({ mode: "active" }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(resumedPresence.monitoring.mode, "active");
+        assert.equal(resumedPresence.monitoring.paused_until, "");
         const joinedMembership = app.store.db.family_members.find((member) => (
             String(member.family_id) === String(family.id)
             && String(member.user_id) === String(phoneRegistered.user.id)

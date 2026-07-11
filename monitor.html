@@ -122,40 +122,57 @@
 <main class="flex-grow px-margin-page max-w-screen-md mx-auto w-full flex flex-col gap-stack-lg">
 <section class="gohome-page-lead">
 <p>家庭守护</p>
-<h2>实时状态</h2>
-<p>这里只展示家庭盒子同步回来的真实画面和检测状态。</p>
+<h2>家里此刻</h2>
+<p>画面、人物出现情况和安全事件均来自家庭盒子的真实检测。</p>
 </section>
-<section class="gohome-monitor-hero">
-<div class="flex items-start gap-3">
+<section id="familyPresenceHero" class="gohome-monitor-hero">
+<div class="gohome-presence-heading">
 <span id="edgeStatusIcon" class="app-story-icon good shrink-0">
-<span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;">health_and_safety</span>
+<span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;">home_health</span>
 </span>
 <div class="min-w-0 flex-1">
-<h2 id="edgeStatusTitle">正在同步</h2>
-<p id="edgeStatusText">正在读取家庭盒子回传状态</p>
+<p id="familyPresenceEyebrow" class="gohome-presence-eyebrow">正在同步家庭状态</p>
+<h2 id="edgeStatusTitle">观察中</h2>
+<p id="edgeStatusText">正在读取家庭盒子回传的人物观察记录。</p>
 </div>
+</div>
+<div class="gohome-presence-facts">
+<span><strong id="familyPresenceCameraCount">--</strong>有效画面</span>
+<span><strong id="familyPresenceLastSeen">--</strong>最近见到人</span>
+<span><strong id="familyPresenceCoverage">--</strong>观察覆盖</span>
 </div>
 <div class="flex flex-wrap gap-2">
-<span id="edgeDeviceStatus" class="app-mini-pill muted">连接中</span>
-<span id="edgeDetector" class="app-mini-pill muted">检测中</span>
+<span id="edgeDeviceStatus" class="app-mini-pill muted">盒子连接中</span>
+<span id="edgeDetector" class="app-mini-pill muted">视觉感知中</span>
 </div>
 </section>
 <section class="flex flex-col gap-gutter-card">
 <div class="gohome-monitor-tools">
 <div>
-<h3>摄像头画面</h3>
-<p>点开画面可进入单路实时查看。</p>
+<h3>家中画面</h3>
+<p>每路画面独立显示观察状态，点开可全屏查看。</p>
 </div>
-<a id="edgeMonitorDeviceLink" class="gohome-text-link" href="cameras.html">
-<span class="material-symbols-outlined text-[18px]">linked_camera</span>
-设备
-</a>
 </div>
 <div id="edgeMonitorCameraGrid" class="gohome-camera-grid">
 <div class="gohome-panel gohome-empty-state">
 <span class="material-symbols-outlined">linked_camera</span>
 <h3>正在读取摄像头</h3>
 <p>正在读取家庭盒子同步回来的真实摄像头状态。</p>
+</div>
+</div>
+</section>
+<section class="gohome-incident-section">
+<div class="gohome-monitor-tools">
+<div>
+<h3>待确认提醒</h3>
+<p>只显示当前仍需要家属处理的安全事件。</p>
+</div>
+<span id="activeIncidentCount" class="app-mini-pill muted">0 条</span>
+</div>
+<div id="activeIncidentList" class="gohome-incident-list">
+<div class="gohome-incident-empty">
+<span class="material-symbols-outlined">verified</span>
+<div><strong>暂无待确认事件</strong><p>家庭盒子会继续在本地观察。</p></div>
 </div>
 </div>
 </section>
@@ -223,6 +240,6 @@
 </script>
 <script src="assets/scripts/edge-client.js?v=20260709-cloud-stream-1"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260709-family-flow-1"></script>
-<script src="assets/scripts/monitor-live.js?v=20260709-cloud-stream-1"></script>
+<script src="assets/scripts/monitor-live.js?v=20260711-presence-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
 </body></html>
