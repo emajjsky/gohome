@@ -10505,7 +10505,49 @@ SafetyIncident 与提醒：
 
 当前边界：
 
-- 外出/旅行/住院暂停能力已支持后端配置契约，统一前端设置入口将在阶段 6 合并页面时提供。
 - APNs 尚未接入，持续提醒当前写入 App 消息和 notification delivery 模拟记录；iOS 系统通知需真机 token 和 Apple capability。
 
 下一步：进入 Plan 14.19 阶段 6，合并视觉感知管理页面，并在普通 App 展示家庭存在状态、观察覆盖与暂停守护设置。
+
+## 95. 2026-07-11 统一视觉感知页面与家庭存在交互
+
+家庭存在 API：
+
+- 新增 `GET /api/v1/families/:id/presence-state`，返回家庭存在状态、有效摄像头数量、最后见人时间、长期未见阈值、暂停模式和每路摄像头观察状态。
+- 每路摄像头统一计算 `observation_valid / observation_reason / report_age_seconds`；离线、配置未同步、报告超过 120 秒或覆盖率低于 50% 分别返回明确原因。
+- `valid_camera_count` 改为真实有效摄像头数量，不再因任一路无效而把所有摄像头都显示为无效。
+- 新增 `PUT /api/v1/families/:id/presence-monitoring`，只有家庭创建者可以修改 `active / away / travel / hospital / paused / paused_until`。
+- 通用 care preferences 接口检测到普通成员修改 `presence_monitoring` 时返回 403，避免权限绕过。
+
+普通 App 守护页：
+
+- 重构 `monitor.html + monitor-live.js`，首页状态改为家庭级“家里此刻”，展示有效画面、最近见到人和平均观察覆盖。
+- 双路摄像头使用紧凑两列布局，每路显示真实视频、名称、观察有效性、当前姿态、覆盖率和最后见人时间。
+- 10 秒数据轮询只更新文字与状态，不销毁或重建视频节点，避免画面周期性等待第一帧。
+- 待确认提醒只展示 `payload.incident.status=active` 的 SafetyIncident，历史未确认事件不再冒充正在持续的紧急事故。
+- 家庭状态与单路卡片共用服务端有效性结果，不再出现家庭提示覆盖不足、单路却显示有效观察的矛盾。
+
+外出与暂停守护：
+
+- 新增 `presence_settings.html` 和 `presence-settings-live.js`，并只在“我的”保留一个入口。
+- 支持正常守护、临时外出、旅行、住院或陪护、暂停到指定时间；定时暂停要求恢复时间晚于当前时间。
+- 页面展示明确选中态；受邀成员可查看当前模式但所有输入和保存按钮保持只读。
+- 页面和守护页均使用 `viewport-fit=cover` 与统一安全区变量，390px 视口无横向溢出。
+
+统一视觉感知研发页：
+
+- `detection.html` 从“检测说明”升级为“视觉感知”，同页保留摄像头切换、真实视频流、人体框、抓帧和规则证据。
+- 新增当前姿态、track、自动场景区域、姿态持续时间、火灾状态与分数、姿态因子图和云端视觉复核摘要。
+- 历史候选超过 10 分钟后明确标记为“历史记录”，不再显示为当前需要确认。
+- 规则证据对象和数组经过结构化摘要，不再把 `[object Object]` 暴露到页面。
+- 删除 `assets/images/elderly-alone.jpg` 默认画面引用；没有实时帧或真实抓拍时显示空状态，公开数据集不能进入摄像头画面。
+- 普通守护页不提供工程模型详情入口，内部 YOLO、姿态、时序和云端复核继续保持代码模块边界。
+
+验证：
+
+- `npm test` 通过，家庭创建者修改、普通成员 403、暂停与恢复状态均有服务端回归。
+- `npm run verify:local-loop` 为 `37 passed / 0 warnings / 0 failed`。
+- Chrome 390x844 验证守护、暂停设置和视觉感知页面，三页 `scrollWidth === clientWidth`，无横向溢出。
+- 自动检查确认页面不再引用数据集占位图，不包含 `[object Object]`，定时暂停图标不再溢出。
+
+当前边界：本轮尚未同步腾讯云。下一步部署腾讯云并验证 HTTPS 登录、家庭创建者权限、双路云中继与设置持久化；通过后再进入阶段 7 数据集与时序模型评估。
