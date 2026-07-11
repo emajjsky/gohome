@@ -10314,3 +10314,39 @@ disk usage: 45% -> 24%
 - 管理台最终合并为一个视觉感知页面，内部代码仍保持三层模块边界。
 
 下一步状态：等待用户确认 PRD、Plan、Implement 后，按 Plan 14.19 阶段 1 开始实现。
+
+## 90. 2026-07-11 统一视觉感知阶段 1 与测试证据隔离
+
+本轮已完成 Plan 14.19 阶段 1，未开始姿态细分类、云端图片复核和 12 小时家庭级未见老人。
+
+核心实现：
+
+- 新增 `vision/temporal.py` 和 `TemporalObservationEngine`，使用人框 IoU 与归一化中心距离为同一摄像头的人体分配稳定 `c{camera}-p{sequence}` track ID。
+- 每路摄像头保留最多 48 条结构化时序观察，不在新模块中复制原始大帧。历史中包含人数、track、姿态、运动、安全候选和代表快照引用。
+- SQLite 新增 `presence_sessions`，有人时合并同一片段，无人、摄像头离线、停用或删除时关闭。
+- worker 新增启动对账，自动关闭已不存在摄像头的历史开放 observation/presence 片段。
+- 摄像头生命周期清理统一重置时序轨迹、previous frame、pose 计数、最新评估、直播上传计时和跌倒/火灾规则状态。
+- `no_person / no_motion` 不再先写 `event_candidates` 再标记 aggregated，而是直接更新合并观察日志。
+
+数据集画面根因与修复：
+
+- 旧的公开样本验收会把数据集帧保存为真实摄像头事件证据。
+- 云端中继在暂时没有 live frame 时，旧逻辑会无区分选取该摄像头最新 asset，导致公开样本进入 App 实时画面。
+- 媒体上传现在明确标记 `live_preview / event_evidence / validation_evidence`，并通过 PostgreSQL `metadata` 跨重启保留分类。
+- 摄像头预览仅允许实时内存帧或 `live_preview`；事件证据只在事件详情使用。
+- `test_event=true` 的事件不进入用户事件、评估状态、推送、关怀摘要或正式数据迁移。腾讯云旧测试事件和资产已在持久化时清理。
+- 同时修复旧测试消息被过滤后、通知投递仍引用已删消息导致的 PostgreSQL 外键失败。
+
+验证结果：
+
+- Mac 本地：`npm test` 通过，本地闭环 `37 passed / 0 warnings / 0 failed`。
+- 新增回归：`verify-temporal-observation-engine.py / verify-presence-sessions.py / verify-observation-logs.py` 通过。
+- 树莓派：新增回归、视觉流水线、跌倒状态机、火灾去重和上传队列全部通过。
+- 真实盒子启动后历史孤儿观察片段从 6 条开放状态清理为 0。
+- 真实运行观察 15 秒，`no_person` 与 `no_motion` 候选增长均为 0；上传队列 `pending=0 / failed=0`。
+- 腾讯云重启并跨调度周期后无新的 scheduler 外键错误。
+- 公网两路 MJPEG 均返回 `cloud_relay`，帧来源为 `live`，未返回 `asset` 或公开数据集证据。
+
+运行状态：两路公网实时中继已恢复。盒子 worker 观察期间曾记录 `192.168.1.5:554` 短时路由不可达，后续 live relay 已恢复两路上传；该类网络波动不转换为长时间未见老人。
+
+下一步：按 Plan 14.19 阶段 2 实现 `standing / sitting / squatting / bending / lying / upper_body / unknown` 细分类和姿态片段状态机。
