@@ -173,7 +173,12 @@
 
     function actionText(event) {
         const rule = event?.payload?.rule || {};
+        const verification = event?.payload?.verification || {};
         if (event.acknowledged) return "已处理，可以作为记录查看。";
+        if (verification.status === "confirmed") return `云端视觉复核支持这条提醒。${verification.result?.reason || "请尽快确认老人状态。"}`;
+        if (verification.status === "rejected") return `云端暂未看到明确紧急线索。${verification.result?.reason || "建议结合实时画面确认。"}`;
+        if (verification.status === "uncertain") return "云端证据不足，建议人工查看截图和实时画面。";
+        if (["pending", "verifying", "retrying"].includes(verification.status)) return "云端正在复核证据，边缘提醒已经生效。";
         if (rule.reason) {
             const reason = cleanReason(event, rule.reason);
             return compactEventFacts(event) ? `${reason} ${compactEventFacts(event)}。` : reason;

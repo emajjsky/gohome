@@ -11,6 +11,7 @@ process.env.GOHOME_CARE_MODEL_CALLS = "0";
 process.env.GOHOME_CARE_IMAGE_CALLS = "0";
 process.env.GOHOME_WEATHER_PROVIDER = "none";
 process.env.GOHOME_SEARCH_PROVIDER = "none";
+process.env.GOHOME_VISION_VERIFICATION_ENABLED = "0";
 
 const { createDefaultDb, createLocalAppServer, normalizeDb } = require("../local-app-server/server");
 const { createDbFromCloudRows, TABLE_ORDER } = require("../local-app-server/postgres-store");
@@ -734,6 +735,131 @@ async function main() {
         assert.equal(created.message.source_event_ids[0], created.event.id);
         assert.equal(created.deliveries.length, 1);
 
+        const originalVerificationEnv = {
+            GOHOME_VISION_VERIFICATION_ENABLED: process.env.GOHOME_VISION_VERIFICATION_ENABLED,
+            GOHOME_MULTIMODAL_BASE_URL: process.env.GOHOME_MULTIMODAL_BASE_URL,
+            GOHOME_MULTIMODAL_API_KEY: process.env.GOHOME_MULTIMODAL_API_KEY,
+            GOHOME_MULTIMODAL_MODEL: process.env.GOHOME_MULTIMODAL_MODEL,
+        };
+        let verificationRequestCount = 0;
+        const mockVerificationServer = http.createServer(async (req, res) => {
+            verificationRequestCount += 1;
+            assert.equal(req.method, "POST");
+            assert.equal(req.url, "/v1/chat/completions");
+            assert.equal(req.headers.authorization, "Bearer mock-vision-key");
+            const body = await new Promise((resolve) => {
+                const chunks = [];
+                req.on("data", (chunk) => chunks.push(chunk));
+                req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+            });
+            const requestPayload = JSON.parse(body);
+            const userContent = requestPayload.messages[1].content;
+            assert.equal(requestPayload.model, "mock-vision-model");
+            assert.ok(Array.isArray(userContent));
+            assert.match(userContent[0].text, /pose_factor_graph/);
+            assert.match(userContent[1].image_url.url, /^data:image\/jpeg;base64,/);
+            const parsed = verificationRequestCount === 1
+                ? {
+                    person_count: 1,
+                    posture: "fallen",
+                    surface: "floor",
+                    emergency: true,
+                    confidence: 0.93,
+                    reason: "画面中一人位于地面低位。",
+                    suggested_event_type: "fall_candidate",
+                    unexpected: "strict contract must reject this field",
+                }
+                : {
+                    person_count: 1,
+                    posture: "fallen",
+                    surface: "floor",
+                    emergency: true,
+                    confidence: 0.93,
+                    reason: "画面中一人横卧在地面区域，支持边缘端跌倒候选。",
+                    suggested_event_type: "fall_candidate",
+                };
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+                id: `mock-vision-${verificationRequestCount}`,
+                model: "mock-vision-model",
+                choices: [{ message: { content: JSON.stringify(parsed) } }],
+                usage: { total_tokens: 80 },
+            }));
+        });
+        const mockVerificationBaseUrl = await listen(mockVerificationServer);
+        try {
+            process.env.GOHOME_VISION_VERIFICATION_ENABLED = "1";
+            process.env.GOHOME_MULTIMODAL_BASE_URL = `${mockVerificationBaseUrl}/v1/chat/completions`;
+            process.env.GOHOME_MULTIMODAL_API_KEY = "mock-vision-key";
+            process.env.GOHOME_MULTIMODAL_MODEL = "mock-vision-model";
+            const verificationMedia = await requestJson(
+                baseUrl,
+                `/api/v1/device/media-assets/upload?file_name=verification.jpg&snapshot_path=events/verification.jpg&content_type=image/jpeg&edge_event_id=43&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence`,
+                {
+                    method: "POST",
+                    body: Buffer.from("mock-verification-jpeg"),
+                    headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
+                },
+            );
+            const verificationEvent = await requestJson(baseUrl, "/api/v1/device/events", {
+                method: "POST",
+                body: JSON.stringify({
+                    idempotency_key: "event:43",
+                    edge_event_id: "43",
+                    event_type: "fall_candidate",
+                    summary: "视觉复核测试事件",
+                    level: "critical",
+                    room: "客厅",
+                    camera_id: 11,
+                    snapshot_path: "events/verification.jpg",
+                    payload: {
+                        rule: { reason: "边缘端检测到站立后快速下降。" },
+                        evidence: {
+                            metrics: { fall_score: 0.88 },
+                            pose_factor_graph: { fast_fall_candidate: true, fast_fall_score: 0.91 },
+                            temporal_evidence_bundle: { track_id: "c11-p1", posture_sequence: ["standing", "lying"] },
+                        },
+                        edge_upload: { edge_event_id: 43, edge_device_id: "edge-test" },
+                    },
+                }),
+                headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+            });
+            assert.equal(verificationEvent.event.media_asset_id, verificationMedia.asset.id);
+            assert.equal(verificationEvent.verification.status, "pending");
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            const retryingEvent = await requestJson(baseUrl, `/api/v1/events/${verificationEvent.event.id}`, {
+                headers: { Authorization: `Bearer ${appSessionToken}` },
+            });
+            assert.equal(retryingEvent.payload.verification.status, "retrying");
+            assert.match(retryingEvent.payload.verification.error, /strict JSON contract/);
+            const retryRun = await requestJson(baseUrl, "/api/v1/internal/vision-verifications/run", {
+                method: "POST",
+                body: JSON.stringify({ force: true, limit: 1 }),
+            });
+            assert.equal(retryRun.succeeded, 1);
+            const verifiedEvent = await requestJson(baseUrl, `/api/v1/events/${verificationEvent.event.id}`, {
+                headers: { Authorization: `Bearer ${appSessionToken}` },
+            });
+            assert.equal(verifiedEvent.payload.verification.status, "confirmed");
+            assert.equal(verifiedEvent.payload.verification.result.posture, "fallen");
+            assert.equal(verifiedEvent.payload.verification.result.surface, "floor");
+            assert.equal(verifiedEvent.payload.verification.attempt_count, 2);
+            const verificationJob = app.store.db.model_generation_jobs.find((job) => (
+                job.purpose === "vision_event_verification"
+                && String(job.metadata?.event_id) === String(verificationEvent.event.id)
+            ));
+            assert.ok(verificationJob);
+            assert.equal(verificationJob.output_status, "succeeded");
+            assert.equal(verificationJob.metadata.attempt_count, 2);
+            assert.equal("api_key" in verificationJob.request_payload, false);
+        } finally {
+            for (const [key, value] of Object.entries(originalVerificationEnv)) {
+                if (value === undefined) delete process.env[key];
+                else process.env[key] = value;
+            }
+            mockVerificationServer.close();
+        }
+
         const eventMessages = await requestJson(baseUrl, `/api/v1/app/messages?family_id=${family.id}&status=all`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
@@ -745,8 +871,8 @@ async function main() {
         const events = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false", {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        assert.equal(events.length, 1);
-        assert.equal(events[0].type, "fall_candidate");
+        assert.equal(events.length, 2);
+        assert.ok(events.every((event) => event.type === "fall_candidate"));
 
         const blockedDefaultFamilyBindings = await fetch(`${baseUrl}/api/device-bindings?family_id=1`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
@@ -771,12 +897,12 @@ async function main() {
         assert.equal(evaluation.candidates.length, 1);
         assert.equal(evaluation.state.latest_event_type, "fall_candidate");
 
-        const detail = await requestJson(baseUrl, `/api/app/events/${events[0].id}`, {
+        const detail = await requestJson(baseUrl, `/api/app/events/${created.event.id}`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(detail.payload.rule.observed.confirm_frames, 2);
 
-        const patched = await requestJson(baseUrl, `/api/app/events/${events[0].id}`, {
+        const patched = await requestJson(baseUrl, `/api/app/events/${created.event.id}`, {
             method: "PATCH",
             body: JSON.stringify({ acknowledged: true, resolution: "handled" }),
             headers: { Authorization: `Bearer ${appSessionToken}` },
@@ -928,6 +1054,7 @@ async function main() {
         assert.equal(opsConfig.secret_policy.database, "no_plain_secret");
         assert.ok(Array.isArray(opsConfig.env_files));
         assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "multimodal-language"));
+        assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "vision-event-verification"));
         assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "care-card-image" && capability.aspect_ratio === "1:1"));
         for (const capability of opsConfig.model_capabilities) {
             assert.equal("base_url" in capability, false);
@@ -1183,13 +1310,13 @@ async function main() {
         assert.ok(seededFamilyRules);
         assert.equal(seededFamilyRules.rule_type, "edge_rules");
         assert.equal(seededFamilyRules.config.activity_detection_enabled, false);
-        assert.equal(seedBundle.tables.events.length, 2);
+        assert.equal(seedBundle.tables.events.length, 3);
         const seededFallEvent = seedBundle.tables.events.find((event) => event.event_type === "fall_candidate");
         const seededStaleOfflineEvent = seedBundle.tables.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(seededFallEvent);
         assert.ok(seededStaleOfflineEvent);
         assert.equal(seededFallEvent.camera_id, String(camera.id));
-        assert.equal(seedBundle.tables.media_assets.length, 2);
+        assert.equal(seedBundle.tables.media_assets.length, 3);
         const seededEventAsset = seedBundle.tables.media_assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(seededEventAsset.metadata.purpose, "event_evidence");
         assert.equal(seedBundle.tables.care_preferences.length, 1);
@@ -1226,14 +1353,14 @@ async function main() {
         assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].home_phone, "057100000000");
         assert.equal(Object.values(restoredDb.cameras).length, 2);
         assert.equal(String(restoredDb.cameras[String(claimFamilyCamera.id)].family_id), String(claimFamily.id));
-        assert.equal(restoredDb.events.length, 2);
+        assert.equal(restoredDb.events.length, 3);
         const restoredFallEvent = restoredDb.events.find((event) => event.event_type === "fall_candidate");
         const restoredStaleOfflineEvent = restoredDb.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(restoredFallEvent);
         assert.ok(restoredStaleOfflineEvent);
         assert.equal(restoredFallEvent.summary, "疑似跌倒");
         assert.equal(String(restoredFallEvent.camera_id), String(camera.id));
-        assert.equal(restoredDb.assets.length, 2);
+        assert.equal(restoredDb.assets.length, 3);
         const restoredEventAsset = restoredDb.assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(restoredEventAsset.purpose, "event_evidence");
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);
@@ -1249,6 +1376,9 @@ async function main() {
         assert.equal(restoredDb.app_push_tokens.length, 1);
         assert.ok(restoredDb.notification_deliveries.length >= 2);
         assert.ok(restoredDb.scheduler_runs.some((run) => run.status === "succeeded"));
+        const restoredVerificationJob = restoredDb.model_generation_jobs.find((job) => job.purpose === "vision_event_verification");
+        assert.ok(restoredVerificationJob);
+        assert.equal(restoredVerificationJob.metadata.attempt_count, 2);
         assert.equal(restoredDb.model_providers.length, 0);
 
         process.env.GOHOME_ALLOW_CLOUD_DEVICE_CLAIMS = "0";

@@ -570,22 +570,24 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(run.updated_at, iso(run.created_at, exportedAt)),
     })).filter((run) => run.id);
 
-    const modelGenerationJobs = toArray(db.model_generation_jobs).map((job) => ({
-        id: textId(job.id),
-        family_id: nullableTextId(job.family_id || fallbackFamilyId),
-        provider_id: nullableTextId(job.provider_id),
-        purpose: String(job.purpose || "care_text"),
-        model: String(job.model || ""),
-        prompt_version: String(job.prompt_version || ""),
-        input_hash: String(job.input_hash || ""),
-        output_status: String(job.output_status || job.status || "pending"),
-        request_payload: job.request_payload && typeof job.request_payload === "object" ? job.request_payload : {},
-        response_payload: job.response_payload && typeof job.response_payload === "object" ? job.response_payload : {},
-        error_message: String(job.error_message || job.error || ""),
-        metadata: job.metadata && typeof job.metadata === "object" ? job.metadata : {},
-        created_at: iso(job.created_at, exportedAt),
-        updated_at: iso(job.updated_at, iso(job.created_at, exportedAt)),
-    }));
+    const modelGenerationJobs = toArray(db.model_generation_jobs)
+        .filter((job) => !validationEventIds.has(textId(job.metadata?.event_id)))
+        .map((job) => ({
+            id: textId(job.id),
+            family_id: nullableTextId(job.family_id || fallbackFamilyId),
+            provider_id: nullableTextId(job.provider_id),
+            purpose: String(job.purpose || "care_text"),
+            model: String(job.model || ""),
+            prompt_version: String(job.prompt_version || ""),
+            input_hash: String(job.input_hash || ""),
+            output_status: String(job.output_status || job.status || "pending"),
+            request_payload: job.request_payload && typeof job.request_payload === "object" ? job.request_payload : {},
+            response_payload: job.response_payload && typeof job.response_payload === "object" ? job.response_payload : {},
+            error_message: String(job.error_message || job.error || ""),
+            metadata: job.metadata && typeof job.metadata === "object" ? job.metadata : {},
+            created_at: iso(job.created_at, exportedAt),
+            updated_at: iso(job.updated_at, iso(job.created_at, exportedAt)),
+        }));
 
     const contentRecommendations = toArray(db.content_recommendations).map((recommendation) => ({
         id: textId(recommendation.id),

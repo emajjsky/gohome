@@ -514,6 +514,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             request_payload: job.request_payload || {},
             response_payload: job.response_payload || {},
             error_message: job.error_message || "",
+            metadata: job.metadata || {},
             created_at: iso(job.created_at, db.created_at),
             updated_at: iso(job.updated_at, iso(job.created_at, db.created_at)),
         });

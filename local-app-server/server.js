@@ -547,6 +547,7 @@ function createLocalAppServer(options = {}) {
     const liveFrameCache = new Map();
     const liveFrameSequence = new Map();
     let schedulerRunning = false;
+    let visionVerificationRunning = false;
     const LIVE_FRAME_TTL_MS = 10000;
 
     ensureDir(mediaDir);
@@ -568,6 +569,22 @@ function createLocalAppServer(options = {}) {
         "suggested_actions 最多 3 条，优先给打电话、发消息、准备节日问候；普通关怀不要引导去看监控。",
         "tone 只能使用 warm、calm、alert、seasonal、memory 中的一个。",
         "image_brief 用一句话描述画面场景，不要包含监控、危险证据、真实老人肖像。",
+    ].join("\n");
+
+    const defaultVisionVerificationPrompt = [
+        "你是家庭守护事件的视觉复核模型，只根据输入图片和结构化边缘证据判断当前画面。",
+        "你不能根据单张图片诊断疾病，也不能声称已经确认真实事故；你只负责复核画面是否支持边缘候选。",
+        "必须只输出一个 JSON 对象，不要输出 Markdown、解释前缀或额外字段。",
+        "JSON 必须包含 person_count、posture、surface、emergency、confidence、reason、suggested_event_type。",
+        "person_count 是 0 到 20 的整数。",
+        "posture 只能是 standing、sitting、squatting、bending、lying、fallen、unknown。",
+        "surface 只能是 floor、bed、sofa、chair、unknown。",
+        "emergency 是布尔值；只有画面明显支持需要家属立即确认的跌倒、长时间倒地或火灾线索时才为 true。",
+        "confidence 是 0 到 1 的数字，表示本次视觉判断把握度。",
+        "reason 使用不超过 120 个中文字符描述可见事实，不得编造持续时间、身份、疾病或画面外情况。",
+        "suggested_event_type 只能是 fall_candidate、prolonged_floor_lying、fire_candidate、none、uncertain。",
+        "如果图片模糊、遮挡、无人或不足以判断，使用 unknown/uncertain，不能强行确认。",
+        "床或沙发上的正常躺卧通常不应判为紧急；持续时长以结构化边缘证据为准，不从单图猜测。",
     ].join("\n");
 
     const defaultCareImagePrompt = [
@@ -612,6 +629,16 @@ function createLocalAppServer(options = {}) {
             model: envFirst(["GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"]),
             prompt: envFirst(["GOHOME_CARE_CARD_PROMPT"], defaultCareTextPrompt),
             prompt_source: process.env.GOHOME_CARE_CARD_PROMPT ? "env" : "default",
+        };
+    }
+
+    function visionVerificationRuntimeConfig() {
+        const multimodal = multimodalRuntimeConfig();
+        return {
+            ...multimodal,
+            capability_id: "vision-event-verification",
+            prompt: envFirst(["GOHOME_VISION_VERIFICATION_PROMPT"], defaultVisionVerificationPrompt),
+            prompt_source: process.env.GOHOME_VISION_VERIFICATION_PROMPT ? "env" : "default",
         };
     }
 
@@ -664,6 +691,21 @@ function createLocalAppServer(options = {}) {
         return !["0", "false", "off", "disabled"].includes(value);
     }
 
+    function visionVerificationEnabled() {
+        const value = String(process.env.GOHOME_VISION_VERIFICATION_ENABLED || "1").trim().toLowerCase();
+        return !["0", "false", "off", "disabled"].includes(value);
+    }
+
+    function visionVerificationTimeoutMs() {
+        const value = Number(process.env.GOHOME_VISION_VERIFICATION_TIMEOUT_MS || 30000);
+        return Number.isFinite(value) && value >= 5000 ? value : 30000;
+    }
+
+    function visionVerificationMaxAttempts() {
+        const value = Number(process.env.GOHOME_VISION_VERIFICATION_MAX_ATTEMPTS || 3);
+        return Number.isFinite(value) ? Math.max(1, Math.min(5, Math.round(value))) : 3;
+    }
+
     function careImageCallsEnabled() {
         const value = String(process.env.GOHOME_CARE_IMAGE_CALLS || process.env.GOHOME_CARE_MODEL_CALLS || "1").trim().toLowerCase();
         return !["0", "false", "off", "disabled"].includes(value);
@@ -704,6 +746,7 @@ function createLocalAppServer(options = {}) {
 
     function modelCapabilities() {
         const multimodal = multimodalRuntimeConfig();
+        const verification = visionVerificationRuntimeConfig();
         const image = imageRuntimeConfig();
         const weather = weatherRuntimeConfig();
         const contentSearch = contentSearchRuntimeConfig();
@@ -728,6 +771,25 @@ function createLocalAppServer(options = {}) {
                     prompt: ["GOHOME_CARE_CARD_PROMPT"],
                 },
                 output_contract: "CareCard JSON: title/body/facts/actions/tone/image_brief",
+            },
+            {
+                capability_id: "vision-event-verification",
+                name: "守护事件视觉复核",
+                type: "multimodal_language",
+                scope: "safety_event_evidence",
+                configured: Boolean(verification.base_url && verification.api_key && verification.model),
+                enabled: Boolean(visionVerificationEnabled() && verification.base_url && verification.api_key && verification.model),
+                base_url_set: Boolean(verification.base_url),
+                api_key_set: Boolean(verification.api_key),
+                model: verification.model,
+                purpose_label: "跌倒、长时间倒地和火灾事件图片复核",
+                prompt: verification.prompt,
+                prompt_source: verification.prompt_source,
+                env_keys: {
+                    enabled: ["GOHOME_VISION_VERIFICATION_ENABLED"],
+                    prompt: ["GOHOME_VISION_VERIFICATION_PROMPT"],
+                },
+                output_contract: "VisionVerification JSON: person_count/posture/surface/emergency/confidence/reason/suggested_event_type",
             },
             {
                 capability_id: "care-card-image",
@@ -2812,6 +2874,314 @@ function createLocalAppServer(options = {}) {
             };
         } finally {
             clearTimeout(timeout);
+        }
+    }
+
+    const VISION_VERIFICATION_EVENT_TYPES = new Set([
+        "fall_candidate",
+        "prolonged_floor_lying",
+        "fire_candidate",
+    ]);
+
+    function sanitizeVisionVerification(value) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+        const required = ["person_count", "posture", "surface", "emergency", "confidence", "reason", "suggested_event_type"];
+        const allowed = new Set(required);
+        if (required.some((key) => !(key in value))) return null;
+        if (Object.keys(value).some((key) => !allowed.has(key))) return null;
+        const personCount = Number(value.person_count);
+        const confidence = Number(value.confidence);
+        const postures = new Set(["standing", "sitting", "squatting", "bending", "lying", "fallen", "unknown"]);
+        const surfaces = new Set(["floor", "bed", "sofa", "chair", "unknown"]);
+        const eventTypes = new Set(["fall_candidate", "prolonged_floor_lying", "fire_candidate", "none", "uncertain"]);
+        const posture = String(value.posture || "").trim();
+        const surface = String(value.surface || "").trim();
+        const suggestedEventType = String(value.suggested_event_type || "").trim();
+        const reason = String(value.reason || "").replace(/\s+/g, " ").trim();
+        if (!Number.isInteger(personCount) || personCount < 0 || personCount > 20) return null;
+        if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return null;
+        if (typeof value.emergency !== "boolean") return null;
+        if (!postures.has(posture) || !surfaces.has(surface) || !eventTypes.has(suggestedEventType)) return null;
+        if (!reason || reason.length > 240) return null;
+        return {
+            person_count: personCount,
+            posture,
+            surface,
+            emergency: value.emergency,
+            confidence: Number(confidence.toFixed(4)),
+            reason,
+            suggested_event_type: suggestedEventType,
+        };
+    }
+
+    function visionVerificationContext(event) {
+        const evidence = event.payload?.evidence || {};
+        return {
+            event: {
+                event_type: event.event_type,
+                summary: event.summary,
+                level: event.level,
+                room: event.room || event.camera_name || "",
+                occurred_at: event.occurred_at,
+            },
+            edge_rule: event.payload?.rule || evidence.rule || {},
+            metrics: evidence.metrics || {},
+            flags: evidence.flags || {},
+            pose_factor_graph: evidence.pose_factor_graph || event.payload?.pose_factor_graph || {},
+            temporal_evidence_bundle: evidence.temporal_evidence_bundle || event.payload?.temporal_evidence_bundle || {},
+        };
+    }
+
+    function verificationAssetPath(asset) {
+        const relativePath = String(asset?.relative_path || "").replace(/^[/\\]+/, "");
+        if (!relativePath) return "";
+        const target = path.resolve(mediaDir, relativePath);
+        const root = `${path.resolve(mediaDir)}${path.sep}`;
+        return target.startsWith(root) ? target : "";
+    }
+
+    async function callVisionVerificationModel(event, asset) {
+        const runtime = visionVerificationRuntimeConfig();
+        if (!visionVerificationEnabled()) throw new Error("vision verification disabled");
+        if (!runtime.base_url || !runtime.api_key || !runtime.model) throw new Error("vision verification model is not configured");
+        const assetPath = verificationAssetPath(asset);
+        if (!assetPath || !fs.existsSync(assetPath)) throw new Error("event evidence image is unavailable");
+        const imageBytes = fs.readFileSync(assetPath);
+        if (!imageBytes.length) throw new Error("event evidence image is empty");
+        if (imageBytes.length > 8 * 1024 * 1024) throw new Error("event evidence image exceeds 8MB");
+        const contentType = String(asset.content_type || "image/jpeg").split(";")[0].trim() || "image/jpeg";
+        const context = visionVerificationContext(event);
+        const requestPayload = {
+            model: runtime.model,
+            messages: [
+                { role: "system", content: runtime.prompt },
+                {
+                    role: "user",
+                    content: [
+                        {
+                            type: "text",
+                            text: [
+                                "请复核这条家庭守护事件。严格按系统约定只输出 JSON。",
+                                JSON.stringify(context),
+                            ].join("\n\n"),
+                        },
+                        {
+                            type: "image_url",
+                            image_url: { url: `data:${contentType};base64,${imageBytes.toString("base64")}` },
+                        },
+                    ],
+                },
+            ],
+            temperature: 0.1,
+            max_tokens: 900,
+            response_format: { type: "json_object" },
+            enable_thinking: false,
+            thinking_budget: 64,
+        };
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), visionVerificationTimeoutMs());
+        try {
+            const response = await fetch(runtime.base_url, {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${runtime.api_key}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(requestPayload),
+                signal: controller.signal,
+            });
+            const responseText = await response.text();
+            const responsePayload = safeJsonParse(responseText, null);
+            if (!response.ok) {
+                const detail = responsePayload?.error?.message || responsePayload?.message || responseText.slice(0, 200);
+                throw new Error(`vision verification failed: ${response.status} ${detail}`);
+            }
+            const content = responsePayload?.choices?.[0]?.message?.content
+                || responsePayload?.output_text
+                || responsePayload?.text
+                || "";
+            const verification = sanitizeVisionVerification(extractJsonObject(content));
+            if (!verification) {
+                const error = new Error("vision verification response violates strict JSON contract");
+                error.response_payload = {
+                    id: responsePayload?.id || "",
+                    model: responsePayload?.model || runtime.model,
+                    content_preview: String(content || responseText || "").slice(0, 1200),
+                };
+                throw error;
+            }
+            return {
+                verification,
+                response_payload: {
+                    id: responsePayload?.id || "",
+                    model: responsePayload?.model || runtime.model,
+                    usage: responsePayload?.usage || {},
+                    parsed: verification,
+                },
+            };
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    function verificationDecision(result) {
+        if (result.emergency) return { status: "confirmed", decision: "confirm" };
+        if (result.confidence >= 0.75 && result.suggested_event_type === "none") {
+            return { status: "rejected", decision: "downgrade" };
+        }
+        return { status: "uncertain", decision: "manual_review" };
+    }
+
+    function verificationJobForEvent(eventId) {
+        return store.db.model_generation_jobs.find((job) => (
+            job.purpose === "vision_event_verification"
+            && String(job.metadata?.event_id || "") === String(eventId)
+        ));
+    }
+
+    function queueVisionVerification(event, asset) {
+        const validationProbe = Boolean(event.payload?.validation?.vision_verification_probe);
+        if (!VISION_VERIFICATION_EVENT_TYPES.has(event.event_type) || (isValidationEvent(event) && !validationProbe)) return null;
+        event.payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+        if (!asset?.id || !verificationAssetPath(asset)) {
+            event.payload.verification = {
+                status: "unavailable",
+                reason: "missing_event_evidence",
+                updated_at: nowIso(),
+            };
+            return null;
+        }
+        const runtime = visionVerificationRuntimeConfig();
+        if (!visionVerificationEnabled() || !runtime.base_url || !runtime.api_key || !runtime.model) {
+            event.payload.verification = {
+                status: "unavailable",
+                reason: "model_not_configured",
+                updated_at: nowIso(),
+            };
+            return null;
+        }
+        const existing = verificationJobForEvent(event.id);
+        if (existing) return existing;
+        const context = visionVerificationContext(event);
+        const job = modelJob({
+            family_id: event.family_id,
+            purpose: "vision_event_verification",
+            model: runtime.model,
+            prompt_version: `vision-verification:${runtime.prompt_source}:v1`,
+            input_hash: sha256(JSON.stringify({ context, asset_id: asset.id })),
+            output_status: "pending",
+            request_payload: {
+                capability_id: runtime.capability_id,
+                event_id: event.id,
+                asset_id: asset.id,
+                context,
+            },
+            metadata: {
+                event_id: String(event.id),
+                asset_id: String(asset.id),
+                attempt_count: 0,
+                max_attempts: visionVerificationMaxAttempts(),
+                next_attempt_at: nowIso(),
+            },
+        });
+        store.db.model_generation_jobs.push(job);
+        event.payload.verification = {
+            status: "pending",
+            job_id: job.id,
+            attempt_count: 0,
+            model: runtime.model,
+            updated_at: nowIso(),
+        };
+        return job;
+    }
+
+    async function processVisionVerificationJobs(options = {}) {
+        if (visionVerificationRunning) return { ok: true, skipped: "already_running", processed: 0 };
+        visionVerificationRunning = true;
+        const limit = Math.max(1, Math.min(10, normalizeNumber(options.limit, 3)));
+        const force = normalizeBool(options.force);
+        const result = { ok: true, processed: 0, succeeded: 0, retrying: 0, failed: 0, skipped: 0 };
+        try {
+            const now = Date.now();
+            const jobs = store.db.model_generation_jobs
+                .filter((job) => job.purpose === "vision_event_verification")
+                .filter((job) => ["pending", "retrying", "verifying"].includes(job.output_status))
+                .filter((job) => force || !job.metadata?.next_attempt_at || Date.parse(job.metadata.next_attempt_at) <= now)
+                .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
+                .slice(0, limit);
+            for (const job of jobs) {
+                const event = store.db.events.find((item) => String(item.id) === String(job.metadata?.event_id || job.request_payload?.event_id));
+                const asset = store.db.assets.find((item) => String(item.id) === String(job.metadata?.asset_id || job.request_payload?.asset_id));
+                if (!event || !asset) {
+                    updateModelJob(job, { output_status: "failed", error_message: "event or evidence asset not found" });
+                    result.failed += 1;
+                    result.processed += 1;
+                    continue;
+                }
+                const attempts = Number(job.metadata?.attempt_count || 0) + 1;
+                job.metadata = { ...job.metadata, attempt_count: attempts, started_at: nowIso() };
+                updateModelJob(job, { output_status: "verifying", error_message: "" });
+                event.payload.verification = {
+                    ...(event.payload.verification || {}),
+                    status: "verifying",
+                    job_id: job.id,
+                    attempt_count: attempts,
+                    updated_at: nowIso(),
+                };
+                await store.save();
+                try {
+                    const response = await callVisionVerificationModel(event, asset);
+                    const decision = verificationDecision(response.verification);
+                    updateModelJob(job, {
+                        output_status: "succeeded",
+                        response_payload: response.response_payload,
+                        error_message: "",
+                    });
+                    job.metadata = { ...job.metadata, completed_at: nowIso(), next_attempt_at: "" };
+                    event.payload.verification = {
+                        status: decision.status,
+                        decision: decision.decision,
+                        job_id: job.id,
+                        attempt_count: attempts,
+                        model: job.model,
+                        result: response.verification,
+                        verified_at: nowIso(),
+                        updated_at: nowIso(),
+                    };
+                    event.updated_at = nowIso();
+                    result.succeeded += 1;
+                } catch (error) {
+                    const maxAttempts = Number(job.metadata?.max_attempts || visionVerificationMaxAttempts());
+                    const exhausted = attempts >= maxAttempts;
+                    const delaySeconds = [5, 30, 120, 300][Math.min(attempts - 1, 3)];
+                    updateModelJob(job, {
+                        output_status: exhausted ? "failed" : "retrying",
+                        response_payload: error.response_payload || {},
+                        error_message: String(error.message || error).slice(0, 500),
+                    });
+                    job.metadata = {
+                        ...job.metadata,
+                        next_attempt_at: exhausted ? "" : new Date(Date.now() + delaySeconds * 1000).toISOString(),
+                        completed_at: exhausted ? nowIso() : "",
+                    };
+                    event.payload.verification = {
+                        ...(event.payload.verification || {}),
+                        status: exhausted ? "failed" : "retrying",
+                        job_id: job.id,
+                        attempt_count: attempts,
+                        next_attempt_at: job.metadata.next_attempt_at,
+                        error: String(error.message || error).slice(0, 240),
+                        updated_at: nowIso(),
+                    };
+                    if (exhausted) result.failed += 1;
+                    else result.retrying += 1;
+                }
+                result.processed += 1;
+                await store.save();
+            }
+            return result;
+        } finally {
+            visionVerificationRunning = false;
         }
     }
 
@@ -5015,13 +5385,21 @@ function createLocalAppServer(options = {}) {
                 deliveries = queueNotificationDelivery(message);
             }
         }
+        const verificationJob = queueVisionVerification(event, asset);
         await store.save();
+        if (verificationJob) {
+            setImmediate(() => {
+                processVisionVerificationJobs({ limit: 1 })
+                    .catch((error) => console.error(`vision verification failed: ${error.message || error}`));
+            });
+        }
         write(res, 200, {
             ok: true,
             event: publicEvent(event),
             media_asset: asset || null,
             message: message ? publicAppMessage(message) : null,
             deliveries: deliveries.map(publicNotificationDelivery),
+            verification: event.payload?.verification || null,
         });
     }
 
@@ -6326,6 +6704,45 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
+            if (req.method === "GET" && pathname === "/api/v1/internal/vision-verifications/status") {
+                if (!requireOps(req, res)) return;
+                const jobs = store.db.model_generation_jobs
+                    .filter((job) => job.purpose === "vision_event_verification")
+                    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+                write(res, 200, {
+                    ok: true,
+                    enabled: visionVerificationEnabled(),
+                    configured: Boolean(visionVerificationRuntimeConfig().base_url && visionVerificationRuntimeConfig().api_key && visionVerificationRuntimeConfig().model),
+                    running: visionVerificationRunning,
+                    counts: jobs.reduce((counts, job) => {
+                        counts[job.output_status] = Number(counts[job.output_status] || 0) + 1;
+                        return counts;
+                    }, {}),
+                    latest_jobs: jobs.slice(0, 20).map((job) => ({
+                        id: job.id,
+                        event_id: job.metadata?.event_id || "",
+                        output_status: job.output_status,
+                        model: job.model,
+                        attempt_count: Number(job.metadata?.attempt_count || 0),
+                        error_message: job.error_message || "",
+                        created_at: job.created_at,
+                        updated_at: job.updated_at,
+                    })),
+                });
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/internal/vision-verifications/run") {
+                if (!requireOps(req, res)) return;
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const result = await processVisionVerificationJobs({
+                    limit: payload.limit || url.searchParams.get("limit") || 3,
+                    force: "force" in payload ? payload.force : url.searchParams.get("force"),
+                });
+                write(res, 200, result);
+                return;
+            }
+
             if (req.method === "POST" && pathname === "/api/v1/internal/messages/generate") {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req).catch(() => ({}));
@@ -6600,6 +7017,7 @@ function createLocalAppServer(options = {}) {
 
     const server = http.createServer(route);
     let schedulerTimer = null;
+    let visionVerificationTimer = null;
     if (normalizeBool(process.env.GOHOME_SCHEDULER_ENABLED)) {
         const intervalMs = Math.max(60000, normalizeNumber(process.env.GOHOME_SCHEDULER_INTERVAL_MS, 60000));
         schedulerTimer = setInterval(() => {
@@ -6611,6 +7029,23 @@ function createLocalAppServer(options = {}) {
         }, intervalMs);
         schedulerTimer.unref?.();
         server.on("close", () => clearInterval(schedulerTimer));
+    }
+    if (visionVerificationEnabled()) {
+        const intervalMs = Math.max(5000, normalizeNumber(process.env.GOHOME_VISION_VERIFICATION_INTERVAL_MS, 10000));
+        visionVerificationTimer = setInterval(() => {
+            processVisionVerificationJobs({ limit: 3 })
+                .catch((error) => console.error(`vision verification failed: ${error.message || error}`));
+        }, intervalMs);
+        visionVerificationTimer.unref?.();
+        const initialTimer = setTimeout(() => {
+            processVisionVerificationJobs({ limit: 3 })
+                .catch((error) => console.error(`vision verification failed: ${error.message || error}`));
+        }, 1000);
+        initialTimer.unref?.();
+        server.on("close", () => {
+            clearInterval(visionVerificationTimer);
+            clearTimeout(initialTimer);
+        });
     }
     return { server, store, dataDir, appToken, deviceToken };
 }

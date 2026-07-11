@@ -1,6 +1,8 @@
 (function () {
     const $ = (id) => document.getElementById(id);
     const EVENT_UPDATES_KEY = "gohome.eventUpdates";
+    let verificationPollCount = 0;
+    let verificationPollTimer = null;
 
     function setText(id, value) {
         const node = $(id);
@@ -54,6 +56,21 @@
         if (!event?.acknowledged) return "需要确认";
         if (event.resolution === "false_positive") return "已标记误报";
         return "已确认安全";
+    }
+
+    function verificationText(event) {
+        const verification = event?.payload?.verification || {};
+        const status = String(verification.status || "");
+        const result = verification.result || {};
+        if (!status) return "";
+        if (status === "pending" || status === "verifying") return "云端正在复核事件证据";
+        if (status === "retrying") return "云端复核暂时失败，系统正在自动重试";
+        if (status === "confirmed") return `云端视觉复核支持这条提醒：${result.reason || "建议立即确认老人状态"}`;
+        if (status === "rejected") return `云端视觉复核暂未看到明确紧急线索：${result.reason || "仍建议结合实时画面确认"}`;
+        if (status === "uncertain") return `云端视觉证据不足，需要人工确认：${result.reason || "请查看截图和实时画面"}`;
+        if (status === "failed") return "云端复核未完成，当前提醒仍以家庭盒子的边缘判断为准";
+        if (status === "unavailable") return "当前没有可用的云端复核结果，提醒仍以家庭盒子判断为准";
+        return "";
     }
 
     function syncActionState(event) {
@@ -200,6 +217,8 @@
         if (observed) parts.push(`当前观测：${observed}`);
         if (threshold) parts.push(`规则阈值：${threshold}`);
         if (state) parts.push(`评估状态：${state}`);
+        const verification = verificationText({ payload });
+        if (verification) parts.push(verification);
         if (!parts.length) return `原始亮度：${Number(payload?.brightness || 0).toFixed(0)}。`;
         return `${parts.join("。")}。`;
     }
@@ -219,10 +238,17 @@
         setText("edgeDetailRoom", event.room || event.camera_name || "家庭摄像头");
         setText("edgeDetailDuration", durationText(event, payload, rule));
         setText("edgeDetailDurationHint", durationHint(event, payload, rule));
-        setText("edgeDetailNote", cleanReason(event, rule.reason) || detailNote(event));
+        const verification = verificationText(event);
+        setText("edgeDetailNote", verification || cleanReason(event, rule.reason) || detailNote(event));
         setText("edgeDetailFact", factText(event, payload, rule));
         setText("edgeDetailFactSub", factSubText(payload, rule));
         syncActionState(event);
+        const verificationStatus = String(payload?.verification?.status || "");
+        if (["pending", "verifying", "retrying"].includes(verificationStatus) && verificationPollCount < 10) {
+            clearTimeout(verificationPollTimer);
+            verificationPollCount += 1;
+            verificationPollTimer = setTimeout(() => render(), 3000);
+        }
     }
 
     async function markEvent(patch) {
