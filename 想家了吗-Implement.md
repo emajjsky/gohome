@@ -10247,3 +10247,70 @@ disk usage: 45% -> 24%
 1. 选择真实 Apple 开发团队和 iPhone，完成自动签名安装。
 2. 验证本地网络授权、`gohome.local` 绑定、双路视频、拨号、微信和定位。
 3. 确认 Apple Developer/APNs capability 后启用 `GoHomePushEnabled` 并上传真机 push token。
+
+## 89. 2026-07-11 统一视觉感知算法审计与方案验证
+
+本节只记录审计和设计结论，算法实现尚未开始。用户确认三份文档后再进入代码修改。
+
+审计范围：
+
+- 边缘采集：`camera_agent.py`
+- worker 调度与落盘：`worker.py`
+- 视觉流水线：`vision/pipeline.py`
+- 人形与场景：`vision/person_yolo.py`
+- 姿态：`vision/pose_rtmpose.py`
+- 活动、跌倒、火灾：`vision/activity.py / fall.py / fire.py`
+- 自动场景：`vision/scene_context.py`
+- 时序规则：`rule_engine.py`
+- 事件、上传与存储：`event_agent.py / upload_agent.py / storage.py`
+- 云端事件、模型、调度和通知：`local-app-server/server.js`
+- App 事件列表、详情与确认：`events-live.js / event-detail-live.js`
+
+确认可复用能力：
+
+- 双路摄像头、实时流和算法抽帧已经解耦。
+- YOLO 人形和家具、RTMPose 骨架、画面质量、活动、跌倒、火灾已由同一 VisionPipeline 编排。
+- 已有自动床/沙发区域、姿态质量门控、站坐到下降的跌倒时序、恢复状态和事件去重。
+- 已有事件截图、上传队列、幂等事件上传、云端消息和 App 确认/误报反馈链。
+
+确认的主要缺口：
+
+1. 当前 worker 以 5 秒间隔逐路处理，每轮都保存 JPEG、snapshot、detection_result 和 rule_evaluation。
+2. 当前姿态只能粗分 lying、standing_or_sitting、seated_or_half_body、upper_body、low_body，不能满足站坐蹲躺独立片段。
+3. 当前没有跨帧稳定 person track ID，姿态缓存主要按摄像头组织。
+4. 当前 no_person 是单摄像头边缘状态，不是家庭级跨摄像头 12 小时未见老人。
+5. 当前事件生命周期只有 acknowledged/resolution，不能表示云端复核中、已确认、已拒绝和降级。
+6. 当前通知幂等到事件级，调度器重复扫描时不会形成每分钟提醒记录。
+7. 旧摄像头 observation log 可能继续保持 open，需要随摄像头停用或删除关闭。
+
+真实数据审计：
+
+- 当前盒子规则：两路摄像头、5 秒采样、八项守护能力开启。
+- 审计时数据库约有 `snapshots=29569 / detection_results=29567 / rule_evaluations=29806 / event_candidates=15809`。
+- `no_person` aggregated 候选约 13216 条，说明按采样生成候选的数据粒度过细。
+- 当前仍存在属于旧摄像头的开放 no_person observation，最长超过 57 小时，验证了摄像头生命周期清理缺口。
+- 盒子进程约 38% CPU、温度约 56℃、系统可用内存约 6.3GB；当前阶段不需要先购买 AI HAT+。
+
+模型配置与能力探测：
+
+- 腾讯云配置 `Qwen/Qwen3.5-27B + SiliconFlow chat/completions`，Key 已配置。
+- 使用公开跌倒证据图实际发送 `image_url` 请求，HTTP 200；模型返回 `person_count=1 / posture=lying / emergency=false / confidence=0.95`。
+- 结果证明该配置具备图片理解能力，也证明单帧只能判断姿态，不能代替边缘端的跌倒时序和持续时间。
+- `wan2.7-image` 与阿里云 Key 已配置，继续仅用于关怀卡生图。
+
+回归验证：
+
+- `verify-vision-pipeline.py` 通过：人形、姿态缓存、姿态质量、活动、火灾、自动场景均正常。
+- `verify-fall-rule-engine.py` 通过：低分视觉候选、无下降等待、确认、恢复、床/沙发抑制和跌倒全帧姿态采样均正常。
+- `verify-alert-dedupe.py` 通过：事件去重和火灾 1800 秒频控正常。
+
+最终技术决策：
+
+- 不推倒现有 YOLO、RTMPose、自动场景和跌倒状态机。
+- 新增统一人体轨迹、姿态片段、姿态因子图、家庭存在状态和云端复核层。
+- 把“每帧记录”改成“内存时序 + 状态片段 + 代表证据”。
+- 快速跌倒/强火灾由边缘端先进入 verifying 事件；云端模型负责复核和解释，不成为网络单点故障。
+- 普通姿态不进入事件列表，只进入时段和每日活动摘要。
+- 管理台最终合并为一个视觉感知页面，内部代码仍保持三层模块边界。
+
+下一步状态：等待用户确认 PRD、Plan、Implement 后，按 Plan 14.19 阶段 1 开始实现。
