@@ -57,6 +57,10 @@ class Settings:
         self.live_relay_quality = int(os.getenv("GOHOME_LIVE_RELAY_QUALITY", "55"))
         self.live_relay_drop_stale_frames = int(os.getenv("GOHOME_LIVE_RELAY_DROP_STALE_FRAMES", "4"))
         self.live_relay_request_timeout_seconds = float(os.getenv("GOHOME_LIVE_RELAY_REQUEST_TIMEOUT_SECONDS", "2"))
+        self.history_retention_hours = int(os.getenv("GOHOME_HISTORY_RETENTION_HOURS", "24"))
+        self.history_cleanup_interval_seconds = float(os.getenv("GOHOME_HISTORY_CLEANUP_INTERVAL_SECONDS", "3600"))
+        self.history_cleanup_batch_size = int(os.getenv("GOHOME_HISTORY_CLEANUP_BATCH_SIZE", "5000"))
+        self.completed_upload_retention_days = int(os.getenv("GOHOME_COMPLETED_UPLOAD_RETENTION_DAYS", "7"))
 
         self.host = os.getenv("GOHOME_AGENT_HOST", "0.0.0.0")
         self.port = int(os.getenv("GOHOME_AGENT_PORT", "8711"))

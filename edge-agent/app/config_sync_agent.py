@@ -156,6 +156,7 @@ class ConfigSyncAgent:
         rules_result = self._apply_rules(config.get("rules") or {}, str(config.get("rules_version") or ""))
         if rules_result.get("applied"):
             state["rules_version"] = rules_result.get("rules_version") or ""
+        maintenance_result = self._apply_maintenance(config.get("maintenance") or {}, state)
         self._save_state(state)
 
         return {
@@ -164,7 +165,47 @@ class ConfigSyncAgent:
             "deleted": deleted,
             "camera_reports": reports,
             "rules": rules_result,
+            "maintenance": maintenance_result,
         }
+
+    def _apply_maintenance(self, command: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+        command_id = str(command.get("command_id") or "").strip()
+        command_type = str(command.get("type") or "").strip()
+        if not command_id or command_type != "cleanup_runtime_history":
+            return {"applied": False, "reason": "no_command"}
+        if str(state.get("maintenance_command_id") or "") == command_id:
+            return {
+                **dict(state.get("maintenance_result") or {}),
+                "applied": False,
+                "completed": True,
+                "reason": "already_completed",
+                "command_id": command_id,
+            }
+        try:
+            result = self.storage.prune_runtime_history(
+                snapshot_dir=self.settings.snapshot_dir,
+                retention_hours=int(command.get("retention_hours") or self.settings.history_retention_hours),
+                completed_upload_retention_days=self.settings.completed_upload_retention_days,
+                batch_size=self.settings.history_cleanup_batch_size,
+            )
+            completed = not bool(result.get("has_more"))
+            if completed:
+                state["maintenance_command_id"] = command_id
+            maintenance_result = {
+                "applied": True,
+                "completed": completed,
+                "command_id": command_id,
+                **result,
+            }
+            state["maintenance_result"] = maintenance_result
+            return maintenance_result
+        except Exception as exc:
+            return {
+                "applied": False,
+                "completed": False,
+                "command_id": command_id,
+                "error": str(exc),
+            }
 
     def _apply_rules(self, rules: Dict[str, Any], rules_version: str = "") -> Dict[str, Any]:
         if not rules:
@@ -264,6 +305,7 @@ class ConfigSyncAgent:
                 "deleted": apply_result.get("deleted", 0),
             },
             "runtime": runtime,
+            "maintenance": apply_result.get("maintenance") or {},
             "cameras": apply_result.get("camera_reports") or [],
         }
 

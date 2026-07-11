@@ -94,6 +94,25 @@
 </button>
 </div>
 </section>
+<section id="deviceStoragePanel" class="gohome-panel-soft p-4 flex flex-col gap-3">
+<div class="flex items-start justify-between gap-3">
+<div class="min-w-0">
+<p class="text-[12px] font-bold text-primary">盒子存储</p>
+<h3 id="deviceStorageTitle" class="mt-1 text-[18px] font-bold text-on-surface">正在读取存储状态</h3>
+<p id="deviceStorageDetail" class="mt-1 text-[13px] leading-relaxed text-on-surface-variant">普通分析记录自动保留 24 小时，告警事件和证据不会被自动删除。</p>
+</div>
+<span class="material-symbols-outlined w-11 h-11 rounded-[18px] bg-surface-container-low text-primary flex items-center justify-center shrink-0">storage</span>
+</div>
+<div class="h-2 overflow-hidden rounded-full bg-surface-container-low">
+<div id="deviceStorageBar" class="h-full rounded-full bg-primary transition-all" style="width:0%"></div>
+</div>
+<div class="gohome-device-actions">
+<button id="deviceCleanupButton" data-action="cleanup" class="gohome-pill-button soft inline-flex items-center justify-center gap-1">
+<span class="material-symbols-outlined text-[19px]">cleaning_services</span>
+立即清理
+</button>
+</div>
+</section>
 <!-- Device Grid -->
 <section id="cameraDeviceGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-gutter-card">
 <div class="gohome-panel gohome-empty-state md:col-span-2 lg:col-span-3">
@@ -167,7 +186,7 @@
     });
   })();
 </script>
-<script src="assets/scripts/edge-client.js?v=20260709-cloud-stream-1"></script>
-<script src="assets/scripts/stitch-app-data.js?v=20260709-family-flow-1"></script>
+<script src="assets/scripts/edge-client.js?v=20260711-storage-cleanup-1"></script>
+<script src="assets/scripts/stitch-app-data.js?v=20260711-storage-cleanup-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
 </body></html>

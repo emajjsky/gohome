@@ -1713,6 +1713,7 @@ function createLocalAppServer(options = {}) {
     function deviceConfigPayload(options = {}) {
         const familyId = normalizeNumber(options.family_id ?? options.familyId, null);
         const familyIds = familyId ? new Set([familyId]) : new Set();
+        const device = store.db.devices[String(options.device_id || currentEdgeDeviceId())] || {};
         return {
             ok: true,
             device_id: options.device_id || currentEdgeDeviceId(),
@@ -1721,6 +1722,7 @@ function createLocalAppServer(options = {}) {
             cameras: appConfigCameras(familyIds).map(deviceCameraConfig),
             rules: currentRules(familyId),
             rules_version: rulesVersion(familyId),
+            maintenance: objectValue(objectValue(device.metadata).maintenance_command),
         };
     }
 
@@ -5100,6 +5102,7 @@ function createLocalAppServer(options = {}) {
             yolo_model: yoloModel || existingDevice.yolo_model || "",
             yolo_imgsz: yoloImgsz ?? existingDevice.yolo_imgsz ?? null,
             runtime,
+            maintenance: payload.maintenance || existingDevice.maintenance || {},
             metadata: {
                 ...objectValue(existingDevice.metadata),
                 serial_number: objectValue(existingDevice.metadata).serial_number || deviceSerial({ ...existingDevice, device_id: deviceId }),
@@ -5848,6 +5851,7 @@ function createLocalAppServer(options = {}) {
                 const binding = store.db.device_bindings.find((item) => userFamilyIds.has(Number(item.family_id)) && item.status !== "revoked");
                 const device = binding ? (store.db.devices[String(binding.device_id)] || {}) : {};
                 const cameras = appConfigCameras(userFamilyIds);
+                const familyId = normalizeNumber(binding?.family_id, null);
                 write(res, 200, {
                     device_id: binding ? String(binding.device_id) : "",
                     name: binding ? (device.name || binding.device_name || "回家盒子") : "未连接家庭盒子",
@@ -5857,7 +5861,42 @@ function createLocalAppServer(options = {}) {
                     yolo_imgsz: device.yolo_imgsz || null,
                     vision_capabilities: deviceVisionCapabilities(device, cameras),
                     upload_agent: { configured: Boolean(binding), app_server_base_url: Boolean(binding) },
+                    family_id: familyId,
+                    can_manage: familyId ? userCanManageFamily(activeAppUser(req).id, familyId) : false,
+                    storage: objectValue(objectValue(device.runtime).storage),
+                    maintenance: objectValue(device.maintenance),
                 });
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/devices/current/cleanup") {
+                if (!requireApp(req, res)) return;
+                const user = activeAppUser(req);
+                const userFamilyIds = familyIdsForUser(user.id);
+                const binding = store.db.device_bindings.find((item) => (
+                    userFamilyIds.has(Number(item.family_id)) && item.status !== "revoked"
+                ));
+                const familyId = normalizeNumber(binding?.family_id, null);
+                if (!binding || !familyId || !requireFamilyOwner(req, res, familyId)) return;
+                const deviceId = String(binding.device_id || "");
+                const device = store.db.devices[deviceId] || {};
+                const command = {
+                    command_id: stableId("cleanup-"),
+                    type: "cleanup_runtime_history",
+                    retention_hours: 24,
+                    requested_at: nowIso(),
+                    requested_by_user_id: user.id,
+                };
+                store.db.devices[deviceId] = {
+                    ...device,
+                    metadata: {
+                        ...objectValue(device.metadata),
+                        maintenance_command: command,
+                    },
+                    updated_at: nowIso(),
+                };
+                await store.save();
+                write(res, 202, { ok: true, command });
                 return;
             }
 

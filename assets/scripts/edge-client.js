@@ -865,6 +865,7 @@
         v1VideoProfiles: () => request("/api/v1/video/profiles"),
         v1Devices: (familyId) => request(`/api/v1/devices?family_id=${encodeURIComponent(familyId)}`),
         v1CurrentDeviceSyncState: () => request("/api/v1/devices/current/sync-state"),
+        cleanupCurrentDevice: () => request("/api/v1/devices/current/cleanup", { method: "POST" }),
         appDevice: () => withDeviceAccessFallback(
             () => request("/api/app/device"),
             () => request("/api/device")

@@ -10131,3 +10131,49 @@ UR Fall 序列：TP=8, FP=0, TN=10, FN=0, precision=1.0, recall=1.0
 - 本地闭环最终为 `37 passed / 0 warnings / 0 failed`；本地 JSON 明确作为开发副本，真实盒子以云端家庭规则为准。
 
 按用户决定，本轮不等待 24 小时观察报告。下一步进入 HTTPS 和 iOS 壳，不继续扩展无关 H5 页面。
+
+## 85. 2026-07-11 SQLite 稳定性、自动保留和 App 清理闭环
+
+运行观察发现：
+
+- 云端连续约 13 小时无重启、5xx、调度失败和数据库异常。
+- 盒子连续约 14 小时无自动重启，双路中继、配置同步和上传队列正常，观察期没有新增真实误报。
+- 盒子 `agent.db` 达到 4.9GB，快照目录达到 9.7GB，数据目录约 15GB。
+- Python 的 SQLite 连接上下文只提交事务但不关闭连接，进程数据库句柄在 50-100 个间波动。
+
+实现：
+
+- `Storage.connect()` 改为显式关闭的上下文管理器，连接设置 30 秒超时和 `busy_timeout`。
+- 初始化启用 WAL、`synchronous=NORMAL` 及清理所需索引。
+- 新增 `prune_runtime_history()`，按依赖顺序清理候选、规则评估、检测结果和快照。
+- 新增 `cleanup-runtime-history.py` 与 `verify-runtime-retention.py`。
+- worker 每小时分批自动清理，默认普通数据保留 24 小时；异常被记录但不结束工作线程。
+- 配置同步支持 `cleanup_runtime_history` 维护命令，执行结果回传云端。
+- 云端新增 `POST /api/v1/devices/current/cleanup`，仅家庭创建者可调用。
+- `GET /api/app/device` 返回存储容量、保留时长、维护结果和管理权限。
+- App 摄像头与盒子管理页新增存储状态、容量进度和“立即清理”按钮。
+
+实机清理结果：
+
+```text
+event_candidates deleted: 102815
+rule_evaluations deleted: 145886
+detection_results deleted: 138183
+snapshots deleted: 138182
+snapshot files deleted: 138182
+events retained: 1870
+SQLite integrity_check: ok
+agent.db: 4.9GB -> 1.2GB
+snapshots: 9.7GB -> 2.0GB
+disk usage: 45% -> 24%
+```
+
+清理后验证：
+
+- 两路摄像头继续 `online / synced`。
+- 两路公网 MJPEG 均返回 `200 / cloud_relay`，5 秒分别收到约 460KB 和 433KB。
+- 上传队列 `pending=0 / failed=0 / completed=158`。
+- 八项守护规则保持全开，事件 1870 条完整保留。
+- App 清理命令已实测下发、执行并回传 `completed=true`。
+- 数据库句柄通常为 0，短时事务结束后立即回落；worker、视频中继和配置同步持续运行。
+- 本地闭环 `37 passed / 0 warnings / 0 failed`，App 服务、配置同步、保留策略和现有边缘测试全部通过。

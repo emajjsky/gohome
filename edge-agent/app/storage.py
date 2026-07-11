@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Iterator, Optional
 import json
 import sqlite3
+import shutil
 
 
 def now_iso() -> str:
@@ -36,13 +38,21 @@ class Storage:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
 
-    def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
-        return conn
+        conn.execute("PRAGMA busy_timeout = 30000")
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def init_schema(self) -> None:
         with self.connect() as conn:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS cameras (
@@ -666,6 +676,216 @@ class Storage:
                     """,
                     (now_iso(),),
                 )
+            conn.executescript(
+                """
+                CREATE INDEX IF NOT EXISTS idx_snapshots_captured_at ON snapshots(captured_at, id);
+                CREATE INDEX IF NOT EXISTS idx_detection_results_created_at ON detection_results(created_at, id);
+                CREATE INDEX IF NOT EXISTS idx_rule_evaluations_created_at ON rule_evaluations(created_at, id);
+                CREATE INDEX IF NOT EXISTS idx_event_candidates_created_at ON event_candidates(created_at, id);
+                CREATE INDEX IF NOT EXISTS idx_upload_jobs_completed_at ON upload_jobs(status, completed_at, id);
+                CREATE INDEX IF NOT EXISTS idx_events_snapshot_id ON events(snapshot_id);
+                CREATE INDEX IF NOT EXISTS idx_events_detection_result_id ON events(detection_result_id);
+                CREATE INDEX IF NOT EXISTS idx_events_rule_evaluation_id ON events(rule_evaluation_id);
+                CREATE INDEX IF NOT EXISTS idx_events_candidate_id ON events(candidate_id);
+                CREATE INDEX IF NOT EXISTS idx_event_candidates_detection_result_id
+                    ON event_candidates(detection_result_id);
+                CREATE INDEX IF NOT EXISTS idx_event_candidates_rule_evaluation_id
+                    ON event_candidates(rule_evaluation_id);
+                CREATE INDEX IF NOT EXISTS idx_rule_evaluations_detection_result_id
+                    ON rule_evaluations(detection_result_id);
+                CREATE INDEX IF NOT EXISTS idx_rule_evaluations_snapshot_id ON rule_evaluations(snapshot_id);
+                CREATE INDEX IF NOT EXISTS idx_detection_results_snapshot_id ON detection_results(snapshot_id);
+                """
+            )
+
+    def prune_runtime_history(
+        self,
+        *,
+        snapshot_dir: Path,
+        retention_hours: int = 24,
+        completed_upload_retention_days: int = 7,
+        batch_size: int = 5000,
+    ) -> Dict[str, Any]:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, int(retention_hours)))).isoformat()
+        upload_cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=max(1, int(completed_upload_retention_days)))
+        ).isoformat()
+        limit = max(100, min(int(batch_size), 20000))
+        removed_paths: list[str] = []
+        deleted: Dict[str, int] = {}
+
+        with self.connect() as conn:
+            conn.execute("PRAGMA foreign_keys = OFF")
+
+            deleted["upload_jobs"] = conn.execute(
+                """
+                DELETE FROM upload_jobs
+                WHERE id IN (
+                    SELECT id FROM upload_jobs
+                    WHERE status = 'completed'
+                      AND COALESCE(completed_at, updated_at, created_at) < ?
+                    ORDER BY id
+                    LIMIT ?
+                )
+                """,
+                (upload_cutoff, limit),
+            ).rowcount
+
+            deleted["event_candidates"] = conn.execute(
+                """
+                DELETE FROM event_candidates
+                WHERE id IN (
+                    SELECT ec.id
+                    FROM event_candidates ec
+                    WHERE ec.created_at < ?
+                      AND ec.id NOT IN (SELECT candidate_id FROM events WHERE candidate_id IS NOT NULL)
+                      AND ec.id NOT IN (
+                          SELECT last_event_candidate_id FROM observation_logs
+                          WHERE last_event_candidate_id IS NOT NULL
+                      )
+                      AND ec.id NOT IN (
+                          SELECT MAX(latest.id) FROM event_candidates latest
+                          GROUP BY latest.camera_id, latest.event_type
+                      )
+                    ORDER BY ec.id
+                    LIMIT ?
+                )
+                """,
+                (cutoff, limit),
+            ).rowcount
+
+            deleted["rule_evaluations"] = conn.execute(
+                """
+                DELETE FROM rule_evaluations
+                WHERE id IN (
+                    SELECT re.id
+                    FROM rule_evaluations re
+                    WHERE re.created_at < ?
+                      AND re.id NOT IN (
+                          SELECT rule_evaluation_id FROM events WHERE rule_evaluation_id IS NOT NULL
+                      )
+                      AND re.id NOT IN (
+                          SELECT rule_evaluation_id FROM event_candidates WHERE rule_evaluation_id IS NOT NULL
+                      )
+                      AND re.id NOT IN (
+                          SELECT last_rule_evaluation_id FROM observation_logs
+                          WHERE last_rule_evaluation_id IS NOT NULL
+                      )
+                      AND re.id NOT IN (
+                          SELECT MAX(latest.id) FROM rule_evaluations latest GROUP BY latest.camera_id
+                      )
+                    ORDER BY re.id
+                    LIMIT ?
+                )
+                """,
+                (cutoff, limit),
+            ).rowcount
+
+            deleted["detection_results"] = conn.execute(
+                """
+                DELETE FROM detection_results
+                WHERE id IN (
+                    SELECT dr.id
+                    FROM detection_results dr
+                    WHERE dr.created_at < ?
+                      AND dr.id NOT IN (
+                          SELECT detection_result_id FROM events WHERE detection_result_id IS NOT NULL
+                      )
+                      AND dr.id NOT IN (
+                          SELECT detection_result_id FROM event_candidates WHERE detection_result_id IS NOT NULL
+                      )
+                      AND dr.id NOT IN (
+                          SELECT detection_result_id FROM rule_evaluations WHERE detection_result_id IS NOT NULL
+                      )
+                      AND dr.id NOT IN (
+                          SELECT last_detection_result_id FROM observation_logs
+                          WHERE last_detection_result_id IS NOT NULL
+                      )
+                      AND dr.id NOT IN (
+                          SELECT MAX(latest.id) FROM detection_results latest GROUP BY latest.camera_id
+                      )
+                    ORDER BY dr.id
+                    LIMIT ?
+                )
+                """,
+                (cutoff, limit),
+            ).rowcount
+
+            snapshot_rows = conn.execute(
+                """
+                SELECT s.id, s.image_path
+                FROM snapshots s
+                WHERE s.captured_at < ?
+                  AND s.id NOT IN (SELECT snapshot_id FROM events WHERE snapshot_id IS NOT NULL)
+                  AND s.id NOT IN (
+                      SELECT snapshot_id FROM detection_results WHERE snapshot_id IS NOT NULL
+                  )
+                  AND s.id NOT IN (
+                      SELECT snapshot_id FROM rule_evaluations WHERE snapshot_id IS NOT NULL
+                  )
+                  AND s.id NOT IN (
+                      SELECT last_snapshot_id FROM observation_logs WHERE last_snapshot_id IS NOT NULL
+                  )
+                  AND s.id NOT IN (
+                      SELECT snapshot_id FROM upload_jobs
+                      WHERE snapshot_id IS NOT NULL AND status != 'completed'
+                  )
+                  AND s.id NOT IN (
+                      SELECT snapshot_id FROM media_assets WHERE snapshot_id IS NOT NULL
+                  )
+                  AND s.id NOT IN (
+                      SELECT MAX(latest.id) FROM snapshots latest GROUP BY latest.camera_id
+                  )
+                ORDER BY s.id
+                LIMIT ?
+                """,
+                (cutoff, limit),
+            ).fetchall()
+            snapshot_ids = [int(row["id"]) for row in snapshot_rows]
+            removed_paths = [str(row["image_path"] or "") for row in snapshot_rows]
+            if snapshot_ids:
+                placeholders = ",".join("?" for _ in snapshot_ids)
+                deleted["snapshots"] = conn.execute(
+                    f"DELETE FROM snapshots WHERE id IN ({placeholders})",
+                    snapshot_ids,
+                ).rowcount
+            else:
+                deleted["snapshots"] = 0
+
+        snapshot_root = snapshot_dir.resolve()
+        deleted_files = 0
+        skipped_files = 0
+        for relative_path in removed_paths:
+            if not relative_path:
+                continue
+            candidate = (snapshot_root / relative_path).resolve()
+            if snapshot_root not in candidate.parents:
+                skipped_files += 1
+                continue
+            try:
+                candidate.unlink(missing_ok=True)
+                deleted_files += 1
+            except OSError:
+                skipped_files += 1
+
+        return {
+            "cutoff": cutoff,
+            "deleted": deleted,
+            "deleted_snapshot_files": deleted_files,
+            "skipped_snapshot_files": skipped_files,
+            "has_more": any(count >= limit for count in deleted.values()),
+        }
+
+    def runtime_storage_status(self, snapshot_dir: Path, *, retention_hours: int = 24) -> Dict[str, Any]:
+        disk = shutil.disk_usage(self.db_path.parent)
+        return {
+            "database_bytes": self.db_path.stat().st_size if self.db_path.exists() else 0,
+            "disk_total_bytes": disk.total,
+            "disk_used_bytes": disk.used,
+            "disk_free_bytes": disk.free,
+            "retention_hours": max(1, int(retention_hours)),
+            "snapshot_dir": str(snapshot_dir),
+        }
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}

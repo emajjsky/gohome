@@ -1123,6 +1123,11 @@ worker = EdgeWorker(
     ),
     live_frame_upload_interval_seconds=settings.live_frame_upload_interval_seconds,
     remote_camera_id_resolver=remote_camera_id_for_local_camera,
+    snapshot_dir=settings.snapshot_dir,
+    history_retention_hours=settings.history_retention_hours,
+    history_cleanup_interval_seconds=settings.history_cleanup_interval_seconds,
+    history_cleanup_batch_size=settings.history_cleanup_batch_size,
+    completed_upload_retention_days=settings.completed_upload_retention_days,
 )
 video_distribution_service = VideoDistributionService(
     storage=storage,
@@ -1162,6 +1167,13 @@ config_sync_agent = ConfigSyncAgent(
         "pose_backend": settings.pose_backend,
         "vision_capabilities": vision_runtime_capabilities(),
         "worker": worker.runtime_status(),
+        "storage": {
+            **storage.runtime_storage_status(
+                settings.snapshot_dir,
+                retention_hours=settings.history_retention_hours,
+            ),
+            "last_cleanup": worker.last_history_cleanup_result,
+        },
     },
 )
 package_service = PackageService(storage=storage, settings=settings, object_storage=object_storage_service)

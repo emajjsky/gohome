@@ -4,6 +4,7 @@ from threading import Event, Thread
 from typing import Any, Callable, Dict
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .camera_agent import CameraError
 from .rule_engine import RuleEngine, RuleEvaluation
@@ -23,6 +24,11 @@ class EdgeWorker:
         live_frame_upload_enabled: bool = False,
         live_frame_upload_interval_seconds: float = 12.0,
         remote_camera_id_resolver: Callable[[int], Any] | None = None,
+        snapshot_dir: Path | None = None,
+        history_retention_hours: int = 24,
+        history_cleanup_interval_seconds: float = 3600,
+        history_cleanup_batch_size: int = 5000,
+        completed_upload_retention_days: int = 7,
     ) -> None:
         self.storage = storage
         self.camera_agent = camera_agent
@@ -31,6 +37,14 @@ class EdgeWorker:
         self.live_frame_upload_enabled = live_frame_upload_enabled
         self.live_frame_upload_interval_seconds = max(1.0, float(live_frame_upload_interval_seconds or 12.0))
         self.remote_camera_id_resolver = remote_camera_id_resolver or (lambda camera_id: camera_id)
+        self.snapshot_dir = snapshot_dir
+        self.history_retention_hours = max(1, int(history_retention_hours))
+        self.history_cleanup_interval_seconds = max(60.0, float(history_cleanup_interval_seconds))
+        self.history_cleanup_batch_size = max(100, int(history_cleanup_batch_size))
+        self.completed_upload_retention_days = max(1, int(completed_upload_retention_days))
+        self.last_history_cleanup_at = time.monotonic()
+        self.last_history_cleanup_result: Dict[str, Any] = {}
+        self.last_error = ""
         self.last_live_upload_at: Dict[int, float] = {}
         self._stop = Event()
         self._wake = Event()
@@ -63,18 +77,24 @@ class EdgeWorker:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            rules = self.storage.get_rules()
-            self.last_loop_started_at = datetime.now(timezone.utc).isoformat()
-            self.last_rules_loaded_at = rules.get("updated_at")
-            self.last_rules_snapshot = {**rules}
-            cameras = self.storage.list_cameras(include_secret=True)
-            for camera in cameras:
-                if self._stop.is_set():
-                    break
-                if not camera.get("enabled"):
-                    continue
-                self.process_camera(camera, rules)
-            interval = max(1, int(rules["capture_interval_seconds"]))
+            interval = 5
+            try:
+                rules = self.storage.get_rules()
+                self.last_loop_started_at = datetime.now(timezone.utc).isoformat()
+                self.last_rules_loaded_at = rules.get("updated_at")
+                self.last_rules_snapshot = {**rules}
+                cameras = self.storage.list_cameras(include_secret=True)
+                for camera in cameras:
+                    if self._stop.is_set():
+                        break
+                    if not camera.get("enabled"):
+                        continue
+                    self.process_camera(camera, rules)
+                self._prune_history_if_due()
+                interval = max(1, int(rules["capture_interval_seconds"]))
+                self.last_error = ""
+            except Exception as exc:
+                self.last_error = str(exc)
             self._wake.wait(interval)
             self._wake.clear()
 
@@ -84,10 +104,34 @@ class EdgeWorker:
             "last_loop_started_at": self.last_loop_started_at,
             "last_rules_loaded_at": self.last_rules_loaded_at,
             "rules": self.last_rules_snapshot,
+            "history_cleanup": self.last_history_cleanup_result,
+            "last_error": self.last_error,
         }
 
     def request_rules_reload(self) -> None:
         self._wake.set()
+
+    def _prune_history_if_due(self) -> None:
+        if self.snapshot_dir is None:
+            return
+        now = time.monotonic()
+        if now - self.last_history_cleanup_at < self.history_cleanup_interval_seconds:
+            return
+        self.last_history_cleanup_at = now
+        try:
+            self.last_history_cleanup_result = self.storage.prune_runtime_history(
+                snapshot_dir=self.snapshot_dir,
+                retention_hours=self.history_retention_hours,
+                completed_upload_retention_days=self.completed_upload_retention_days,
+                batch_size=self.history_cleanup_batch_size,
+            )
+            self.last_history_cleanup_result["completed_at"] = datetime.now(timezone.utc).isoformat()
+            self.last_history_cleanup_result["error"] = ""
+        except Exception as exc:
+            self.last_history_cleanup_result = {
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "error": str(exc),
+            }
 
     def process_camera(self, camera: Dict[str, Any], rules: Dict[str, Any]) -> Dict[str, Any]:
         camera_id = int(camera["id"])

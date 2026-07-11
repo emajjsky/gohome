@@ -811,8 +811,40 @@
         </div>`;
   }
 
+  function formatBytes(value) {
+    const bytes = Number(value || 0);
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 GB";
+    return `${(bytes / 1024 / 1024 / 1024).toFixed(bytes >= 10 * 1024 ** 3 ? 0 : 1)} GB`;
+  }
+
+  async function renderDeviceStorage() {
+    const device = await GoHomeEdge.appDevice();
+    const storage = device?.storage || {};
+    const total = Number(storage.disk_total_bytes || 0);
+    const used = Number(storage.disk_used_bytes || 0);
+    const percent = total > 0 ? Math.min(100, Math.max(0, used / total * 100)) : 0;
+    const title = $("#deviceStorageTitle");
+    const detail = $("#deviceStorageDetail");
+    const bar = $("#deviceStorageBar");
+    const button = $("#deviceCleanupButton");
+    if (title) title.textContent = total ? `${formatBytes(used)} / ${formatBytes(total)}` : "等待盒子回传存储状态";
+    if (detail) {
+      const db = formatBytes(storage.database_bytes || 0);
+      const last = device?.maintenance || storage.last_cleanup || {};
+      detail.textContent = total
+        ? `数据库 ${db}，剩余 ${formatBytes(storage.disk_free_bytes)}。普通分析保留 ${storage.retention_hours || 24} 小时，事件证据保留。${last.completed ? " 最近一次清理已完成。" : ""}`
+        : "盒子在线后会回传容量。普通分析保留 24 小时，事件证据不会自动删除。";
+    }
+    if (bar) bar.style.width = `${percent}%`;
+    if (button) {
+      button.hidden = !device?.can_manage;
+      button.disabled = !total;
+    }
+  }
+
   function wireCameras() {
     renderCameras().catch((error) => toast(error.message || "读取摄像头失败", "error"));
+    renderDeviceStorage().catch(() => null);
     const main = $("main");
     main?.addEventListener("click", async (event) => {
       const button = event.target.closest("button[data-action]");
@@ -840,6 +872,12 @@
         } else if (button.dataset.action === "sync") {
           const result = await GoHomeEdge.testCamera(id);
           toast(result.message || "已提交给家庭盒子");
+        } else if (button.dataset.action === "cleanup") {
+          button.disabled = true;
+          await GoHomeEdge.cleanupCurrentDevice();
+          toast("已提交清理，盒子会在后台分批处理");
+          window.setTimeout(() => renderDeviceStorage().catch(() => null), 12000);
+          return;
         }
         await renderCameras();
       } catch (error) {
