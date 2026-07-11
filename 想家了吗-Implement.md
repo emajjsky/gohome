@@ -10190,7 +10190,15 @@ disk usage: 45% -> 24%
 - 树莓派云端地址已切换为 `https://gohome.ai2shx.club`，配置同步使用 HTTPS 且无错误。
 - 真实盒子已在腾讯云登记为 `claimable`，当前数据库保持 `devices=1 / bindings=0`。
 - `verify:cloud-onboarding` 在腾讯云通过 13 项并自动清理临时账号、家庭、设备、规则和 token。
-- 旧阿里云尚未停止，待真实用户页面完成摄像头和视频闭环后下线。
+- 真实用户已完成局域网绑定和两路摄像头配置；阿里云 `gohome-app.service` 已停止并禁用，旧目录和数据库暂时保留。
+
+最终云端事件验收：
+
+- 使用 UR Fall 公开序列通过生产 YOLO、RTMPose、自动场景和跌倒时序状态机生成本地事件 `1871`。
+- 事件截图上传成功，上传队列最终为 `pending=0 / failed=0 / completed=160`。
+- 腾讯云生成 1 条 `fall_candidate` 高危测试事件、2 个媒体资产、2 条 App 消息/通知投递记录。
+- 事件摘要为“算法闭环验收：公开样本命中疑似跌倒”，载荷明确包含 `test_event` 和 `public_dataset_replay`，未冒充家庭真实告警。
+- 两路摄像头继续保持 `online / synced`，配置同步与实时帧中继无错误。
 
 ## 87. 2026-07-11 局域网安全绑定实现
 
