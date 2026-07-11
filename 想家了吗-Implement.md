@@ -10350,3 +10350,43 @@ disk usage: 45% -> 24%
 运行状态：两路公网实时中继已恢复。盒子 worker 观察期间曾记录 `192.168.1.5:554` 短时路由不可达，后续 live relay 已恢复两路上传；该类网络波动不转换为长时间未见老人。
 
 下一步：按 Plan 14.19 阶段 2 实现 `standing / sitting / squatting / bending / lying / upper_body / unknown` 细分类和姿态片段状态机。
+
+## 91. 2026-07-11 姿态细分类与 PostureEpisode
+
+本轮完成 Plan 14.19 阶段 2，不改变阶段 1 的媒体隔离、人体轨迹和观察片段边界。
+
+姿态分类：
+
+- 新增 `vision/posture.py` 和 `PostureClassifier`。
+- 可解释因子包含躯干相对竖直方向、整体宽高比、膝关节角度、髋膝竖直距离、髋踝紧凑度和膝髋水平展开比。
+- 输出新标签 `standing / sitting / squatting / bending / lying / upper_body / unknown`。
+- 每组 pose 新增 `posture_confidence / posture_factors / posture_classifier_version / posture_legacy`。
+- 旧的 `standing_or_sitting / seated_or_half_body / low_body` 继续在跌倒分数、活动提示和站坐基线中兼容，不因标签迁移破坏旧数据。
+- 蹲姿在弯膝和紧凑度之外要求膝间距相对髋间距明显增大，修复正面坐姿被错分为蹲姿。
+
+姿态片段：
+
+- `TemporalObservationEngine` 会将人框与最佳重叠骨架合并，把姿态和姿态置信度写入同一 track。
+- 候选姿态需要置信度至少 0.40、最少 2 个样本且持续 3 秒才稳定。
+- 短暂标签变化不立即关闭已稳定片段；新标签达标后才以 `posture_changed` 关闭原片段。
+- track 超过 TTL 未见时以 `track_expired` 关闭；摄像头停用、删除、离线和历史孤儿状态使用统一运行态清理。
+- SQLite 新增 `posture_episodes`，存储 camera、track、posture、起止时间、确认时间、样本数、平均/最高置信度、场景区域、代表快照和关闭原因。
+- 新增本地研发查询接口 `/api/posture-episodes`；普通 App 尚不展示原始姿态片段。
+
+验证：
+
+- `verify-posture-classifier.py`：站、坐、蹲、弯腰、躺、上半身和未知样本通过。
+- `verify-posture-episodes.py`：3 秒前不开片段、稳定后开启、抖动不切换、稳定切换和 track 过期关闭通过。
+- 原视觉流水线、跌倒状态机、火灾去重、上传队列、配置同步、保留策略和 App 服务回归全部通过。
+- 真实树莓派检测到 `sitting` 片段，也检测到 `lying + couch-1 + normal_lying_zone=true` 片段，沙发卧躺未生成跌倒事件。
+- UR Fall 单帧：`TP=29 / FP=0 / FN=3`；时序：`TP=8 / FP=0 / FN=0`。
+- GMDCSA24 单帧：`TP=6 / FP=4 / FN=2`；时序：`TP=2 / FP=0 / FN=2`。数值与改造前一致，说明新姿态标签未降低既有跌倒回归结果。
+- 公网两路 MJPEG 仍为 `cloud_relay / live`，上传队列无 pending 或 failed。
+
+当前边界：
+
+- 这是可解释几何 baseline，不是已训练的医疗动作识别模型。
+- 多人交叉、长时间遮挡或大幅移动仍可能产生 track ID 切换，后续数据集需单独评估 ID switch。
+- 普通姿态片段仅用于活动摘要和安全时序，不直接生成用户告警。
+
+下一步：进入 Plan 14.19 阶段 3，实现姿态因子图、快速跌倒证据束和 180 秒非床/沙发地面卧躺事件。
