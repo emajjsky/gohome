@@ -159,6 +159,7 @@ function buildCloudSeedBundle(db, options = {}) {
         metadata: {
             member_count: numberOrNull(family.member_count),
             created_by_user_id: nullableTextId(family.created_by_user_id),
+            presence_state: family.presence_state && typeof family.presence_state === "object" ? family.presence_state : {},
         },
         created_at: iso(family.created_at, exportedAt),
         updated_at: iso(family.updated_at, iso(family.created_at, exportedAt)),
@@ -311,7 +312,9 @@ function buildCloudSeedBundle(db, options = {}) {
         last_error: String(camera.last_error || ""),
         last_seen_at: iso(camera.last_seen_at),
         edge_reported_at: iso(camera.edge_reported_at),
-        metadata: {},
+        metadata: {
+            presence: camera.presence && typeof camera.presence === "object" ? camera.presence : {},
+        },
         created_at: iso(camera.created_at, exportedAt),
         updated_at: iso(camera.updated_at, iso(camera.created_at, exportedAt)),
     }));

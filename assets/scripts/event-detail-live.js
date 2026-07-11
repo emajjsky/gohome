@@ -90,6 +90,9 @@
         if (event.type === "prolonged_floor_lying") {
             return "系统连续看到同一人在非床或沙发区域保持躺卧超过 3 分钟，请尽快确认老人状态。";
         }
+        if (event.type === "long_absence") {
+            return "所有参与守护的摄像头在线且观察覆盖达标，但长时间没有检测到老人，请先联系确认是否外出。";
+        }
         if (event.type === "black_screen") {
             return "系统检测到画面亮度和对比度异常，可能是遮挡、黑屏或强背光。";
         }
@@ -135,6 +138,7 @@
         if (event.type === "prolonged_floor_lying") {
             return `${event.camera_name || event.room || "摄像头"} 检测到长时间倒地`;
         }
+        if (event.type === "long_absence") return "家中长时间没有检测到老人";
         return cleanReason(event, event.summary) || GoHomeEdge.eventLabel(event.type);
     }
 

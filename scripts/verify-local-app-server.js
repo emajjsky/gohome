@@ -860,6 +860,70 @@ async function main() {
             mockVerificationServer.close();
         }
 
+        const originalAbsenceThreshold = process.env.GOHOME_LONG_ABSENCE_SECONDS;
+        try {
+            process.env.GOHOME_LONG_ABSENCE_SECONDS = "60";
+            const cloudCamera = app.store.db.cameras[String(camera.id)];
+            cloudCamera.status = "online";
+            cloudCamera.sync_status = "synced";
+            cloudCamera.edge_reported_at = new Date().toISOString();
+            cloudCamera.presence = {
+                reported_at: new Date().toISOString(),
+                last_observed_at: new Date().toISOString(),
+                last_person_seen_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+                observation_coverage: 1,
+                observed_samples: 720,
+                expected_samples: 720,
+            };
+            created.event.payload.incident.started_at = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+            const verifiedSafetyEvent = app.store.db.events.find((event) => event.summary === "视觉复核测试事件");
+            verifiedSafetyEvent.payload.incident.started_at = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+            const absenceRun = await requestJson(baseUrl, "/api/v1/internal/scheduler/run", {
+                method: "POST",
+                body: JSON.stringify({ family_id: family.id, force: true }),
+            });
+            assert.equal(absenceRun.result.long_absence_events_created, 1);
+            assert.ok(absenceRun.result.incident_reminders_created >= 2);
+            const longAbsenceEvent = app.store.db.events.find((event) => event.event_type === "long_absence");
+            assert.ok(longAbsenceEvent);
+            assert.equal(longAbsenceEvent.payload.incident.status, "active");
+            const sameMinuteRun = await requestJson(baseUrl, "/api/v1/internal/scheduler/run", {
+                method: "POST",
+                body: JSON.stringify({ family_id: family.id, force: true }),
+            });
+            assert.equal(sameMinuteRun.result.incident_reminders_created, 0);
+            cloudCamera.presence.last_person_seen_at = new Date().toISOString();
+            cloudCamera.presence.reported_at = new Date().toISOString();
+            await requestJson(baseUrl, "/api/v1/internal/scheduler/run", {
+                method: "POST",
+                body: JSON.stringify({ family_id: family.id, force: true }),
+            });
+            assert.equal(longAbsenceEvent.acknowledged, true);
+            assert.equal(longAbsenceEvent.resolution, "person_seen_again");
+            assert.equal(longAbsenceEvent.payload.incident.status, "resolved");
+            await requestJson(baseUrl, `/api/v1/families/${family.id}/care-preferences`, {
+                method: "PUT",
+                body: JSON.stringify({ metadata: { presence_monitoring: { mode: "travel", reason: "短期外出" } } }),
+                headers: { Authorization: `Bearer ${appSessionToken}` },
+            });
+            cloudCamera.presence.last_person_seen_at = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+            await requestJson(baseUrl, "/api/v1/internal/scheduler/run", {
+                method: "POST",
+                body: JSON.stringify({ family_id: family.id, force: true }),
+            });
+            const storedFamily = app.store.db.families.find((item) => String(item.id) === String(family.id));
+            assert.equal(storedFamily.presence_state.status, "paused");
+            assert.equal(app.store.db.events.filter((event) => event.event_type === "long_absence").length, 1);
+            await requestJson(baseUrl, `/api/v1/families/${family.id}/care-preferences`, {
+                method: "PUT",
+                body: JSON.stringify({ metadata: { presence_monitoring: { mode: "active" } } }),
+                headers: { Authorization: `Bearer ${appSessionToken}` },
+            });
+        } finally {
+            if (originalAbsenceThreshold === undefined) delete process.env.GOHOME_LONG_ABSENCE_SECONDS;
+            else process.env.GOHOME_LONG_ABSENCE_SECONDS = originalAbsenceThreshold;
+        }
+
         const eventMessages = await requestJson(baseUrl, `/api/v1/app/messages?family_id=${family.id}&status=all`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
@@ -909,6 +973,7 @@ async function main() {
         });
         assert.equal(patched.acknowledged, true);
         assert.equal(patched.resolution, "handled");
+        assert.equal(patched.payload.incident.status, "acknowledged");
 
         const carePreferences = await requestJson(baseUrl, `/api/v1/families/${family.id}/care-preferences`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
@@ -1310,7 +1375,7 @@ async function main() {
         assert.ok(seededFamilyRules);
         assert.equal(seededFamilyRules.rule_type, "edge_rules");
         assert.equal(seededFamilyRules.config.activity_detection_enabled, false);
-        assert.equal(seedBundle.tables.events.length, 3);
+        assert.equal(seedBundle.tables.events.length, 4);
         const seededFallEvent = seedBundle.tables.events.find((event) => event.event_type === "fall_candidate");
         const seededStaleOfflineEvent = seedBundle.tables.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(seededFallEvent);
@@ -1353,7 +1418,7 @@ async function main() {
         assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].home_phone, "057100000000");
         assert.equal(Object.values(restoredDb.cameras).length, 2);
         assert.equal(String(restoredDb.cameras[String(claimFamilyCamera.id)].family_id), String(claimFamily.id));
-        assert.equal(restoredDb.events.length, 3);
+        assert.equal(restoredDb.events.length, 4);
         const restoredFallEvent = restoredDb.events.find((event) => event.event_type === "fall_candidate");
         const restoredStaleOfflineEvent = restoredDb.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(restoredFallEvent);

@@ -79,6 +79,19 @@ def main() -> None:
             raise SystemExit(f"unexpected created camera: {cameras[0]}")
         if reports[-1]["cameras"][0]["sync_status"] != "synced":
             raise SystemExit(f"sync report did not mark camera synced: {reports[-1]}")
+        if "presence" not in reports[-1]["cameras"][0]:
+            raise SystemExit("sync report must include camera presence status")
+        storage.create_snapshot(
+            camera_id=int(cameras[0]["id"]),
+            image_path="presence-test.jpg",
+            width=640,
+            height=360,
+            brightness=90,
+            motion_score=0.02,
+            tags=["person"],
+            person_count=1,
+            analysis={"person_count": 1},
+        )
 
         config_holder["payload"] = {
             **config_holder["payload"],
@@ -94,6 +107,9 @@ def main() -> None:
         cameras = storage.list_cameras(include_secret=True)
         if updated["applied"] != 1 or len(cameras) != 1 or cameras[0]["room"] != "卧室":
             raise SystemExit(f"camera was not updated in place: result={updated} cameras={cameras}")
+        presence = reports[-1]["cameras"][0]["presence"]
+        if not presence.get("last_person_seen_at") or presence.get("person_samples") != 1:
+            raise SystemExit(f"presence report did not include person observation: {presence}")
 
         config_holder["payload"] = {
             "ok": True,

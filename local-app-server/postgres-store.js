@@ -120,6 +120,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             name: family.name || "默认家庭",
             member_count: Number(metadataValue(family, "member_count", 1)) || 1,
             created_by_user_id: metadataValue(family, "created_by_user_id", null),
+            presence_state: metadataValue(family, "presence_state", {}),
             created_at: iso(family.created_at, db.created_at),
             updated_at: iso(family.updated_at, iso(family.created_at, db.created_at)),
         });
@@ -295,6 +296,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             last_error: camera.last_error || "",
             last_seen_at: iso(camera.last_seen_at),
             edge_reported_at: iso(camera.edge_reported_at),
+            presence: metadataValue(camera, "presence", {}),
             created_at: iso(camera.created_at, db.created_at),
             updated_at: iso(camera.updated_at, iso(camera.created_at, db.created_at)),
         };

@@ -2366,6 +2366,168 @@ function createLocalAppServer(options = {}) {
         });
     }
 
+    const SAFETY_INCIDENT_TYPES = new Set([
+        "fall_candidate",
+        "prolonged_floor_lying",
+        "fire_candidate",
+        "long_absence",
+    ]);
+
+    function ensureSafetyIncident(event) {
+        if (!SAFETY_INCIDENT_TYPES.has(event.event_type)) return null;
+        event.payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+        const existing = event.payload.incident && typeof event.payload.incident === "object" ? event.payload.incident : {};
+        event.payload.incident = {
+            incident_id: existing.incident_id || `incident-${event.idempotency_key || event.id}`,
+            status: event.acknowledged ? "acknowledged" : (existing.status || "active"),
+            started_at: existing.started_at || event.occurred_at || event.created_at || nowIso(),
+            acknowledged_at: existing.acknowledged_at || "",
+            resolved_at: existing.resolved_at || "",
+            last_reminder_bucket: existing.last_reminder_bucket || "",
+            reminder_count: Number(existing.reminder_count || 0),
+        };
+        return event.payload.incident;
+    }
+
+    function incidentMinuteBucket(date = new Date()) {
+        return date.toISOString().slice(0, 16);
+    }
+
+    function createIncidentReminderMessage(event, bucket = incidentMinuteBucket()) {
+        const incident = ensureSafetyIncident(event);
+        if (!incident || event.acknowledged || incident.status !== "active") return null;
+        if (incident.last_reminder_bucket === bucket) return null;
+        const incidentAgeMs = Date.now() - Date.parse(incident.started_at || event.occurred_at || "");
+        if (!Number.isFinite(incidentAgeMs) || incidentAgeMs < 60000) return null;
+        const message = upsertAppMessage({
+            message_id: `incident-reminder-${event.id}-${bucket}`,
+            idempotency_key: `incident-reminder:${event.id}:${bucket}`,
+            family_id: event.family_id,
+            event_id: event.id,
+            message_type: "alert",
+            title: event.summary || "家里有紧急提醒待确认",
+            subtitle: `${event.room || event.camera_name || "家里"} · 尚未确认收到`,
+            body: event.event_type === "long_absence"
+                ? "所有守护摄像头持续未检测到老人，请尽快联系家里确认情况。"
+                : "这条安全提醒尚未确认收到，请尽快查看事件并联系老人。",
+            facts: [event.event_type, `提醒 ${incident.reminder_count + 1} 次`],
+            actions: [{ key: "open_event", label: "立即确认", event_id: event.id }],
+            source_event_ids: [event.id],
+            source: [{ type: "safety_incident", id: incident.incident_id }],
+            priority: "high",
+            generated_by: "incident-reminder",
+        });
+        incident.last_reminder_bucket = bucket;
+        incident.reminder_count += 1;
+        return message;
+    }
+
+    function familyPresenceThresholdSeconds() {
+        return Math.max(60, normalizeNumber(process.env.GOHOME_LONG_ABSENCE_SECONDS, 12 * 60 * 60));
+    }
+
+    function familyPresenceState(family) {
+        const now = Date.now();
+        const monitoring = carePreferences(family.id).metadata?.presence_monitoring || {};
+        const pauseMode = String(monitoring.mode || "active");
+        const pausedUntil = Date.parse(monitoring.paused_until || "");
+        const paused = monitoring.enabled === false
+            || ["away", "travel", "hospital", "paused"].includes(pauseMode)
+            || (Number.isFinite(pausedUntil) && pausedUntil > now);
+        const cameras = Object.values(store.db.cameras).filter((camera) => (
+            Number(camera.family_id) === Number(family.id) && camera.enabled !== false
+        ));
+        const minCoverage = Math.max(0.1, Math.min(1, normalizeNumber(process.env.GOHOME_PRESENCE_MIN_COVERAGE, 0.5)));
+        const maxReportAgeMs = Math.max(30000, normalizeNumber(process.env.GOHOME_PRESENCE_REPORT_MAX_AGE_SECONDS, 120) * 1000);
+        const valid = !paused && cameras.length > 0 && cameras.every((camera) => {
+            const reportAge = now - Date.parse(camera.presence?.reported_at || camera.edge_reported_at || "");
+            return camera.status === "online"
+                && camera.sync_status === "synced"
+                && Number.isFinite(reportAge) && reportAge <= maxReportAgeMs
+                && Number(camera.presence?.observation_coverage || 0) >= minCoverage;
+        });
+        const previous = family.presence_state && typeof family.presence_state === "object" ? family.presence_state : {};
+        const seenTimes = cameras
+            .map((camera) => Date.parse(camera.presence?.last_person_seen_at || ""))
+            .filter(Number.isFinite);
+        const lastPersonSeenMs = seenTimes.length ? Math.max(...seenTimes) : null;
+        const eligibleSince = valid ? (previous.eligible_since || nowIso()) : "";
+        const absenceStartedMs = lastPersonSeenMs ?? Date.parse(eligibleSince || "");
+        const absenceSeconds = valid && Number.isFinite(absenceStartedMs) ? Math.max(0, Math.floor((now - absenceStartedMs) / 1000)) : null;
+        const state = {
+            family_id: family.id,
+            status: paused ? "paused" : (valid ? (absenceSeconds >= familyPresenceThresholdSeconds() ? "long_absence" : "observing") : "suspended"),
+            camera_count: cameras.length,
+            valid_camera_count: valid ? cameras.length : 0,
+            last_person_seen_at: lastPersonSeenMs ? new Date(lastPersonSeenMs).toISOString() : null,
+            absence_started_at: Number.isFinite(absenceStartedMs) ? new Date(absenceStartedMs).toISOString() : null,
+            absence_seconds: absenceSeconds,
+            threshold_seconds: familyPresenceThresholdSeconds(),
+            eligible_since: eligibleSince,
+            reason: paused ? `presence_monitoring_${pauseMode}` : (valid ? "coverage_valid" : "camera_offline_or_coverage_insufficient"),
+            monitoring: {
+                mode: pauseMode,
+                paused_until: monitoring.paused_until || "",
+                reason: String(monitoring.reason || ""),
+            },
+            updated_at: nowIso(),
+        };
+        family.presence_state = state;
+        return state;
+    }
+
+    function reconcileLongAbsenceEvent(family, state) {
+        const active = store.db.events.find((event) => (
+            Number(event.family_id) === Number(family.id)
+            && event.event_type === "long_absence"
+            && !event.acknowledged
+        ));
+        if (state.status !== "long_absence") {
+            if (active && state.last_person_seen_at) {
+                active.acknowledged = true;
+                active.resolution = "person_seen_again";
+                const incident = ensureSafetyIncident(active);
+                incident.status = "resolved";
+                incident.resolved_at = nowIso();
+                active.updated_at = nowIso();
+            }
+            return null;
+        }
+        if (active) return active;
+        const event = {
+            id: store.nextId("event"),
+            family_id: family.id,
+            idempotency_key: `long-absence:${family.id}:${String(state.absence_started_at || state.eligible_since || nowIso()).slice(0, 13)}`,
+            edge_event_id: null,
+            event_type: "long_absence",
+            summary: "长时间没有在家中看到老人",
+            level: "critical",
+            room: "全屋守护",
+            camera_id: null,
+            camera_name: "全屋摄像头",
+            snapshot_path: "",
+            media_asset_id: null,
+            occurred_at: nowIso(),
+            acknowledged: false,
+            resolution: "",
+            payload: {
+                rule: {
+                    id: "long_absence",
+                    label: "长时间未见老人",
+                    reason: "所有参与守护的摄像头在线且观察覆盖达标，但连续超过设定时长没有可信人体数据。",
+                    observed: state,
+                    threshold: { absence_seconds: state.threshold_seconds },
+                },
+                family_presence_state: state,
+            },
+            created_at: nowIso(),
+            updated_at: nowIso(),
+        };
+        ensureSafetyIncident(event);
+        store.db.events.push(event);
+        return event;
+    }
+
     async function runNotificationScheduler(options = {}) {
         if (schedulerRunning && !options.allow_concurrent) {
             const result = {
@@ -2374,6 +2536,8 @@ function createLocalAppServer(options = {}) {
                 app_messages_created: 0,
                 notification_deliveries_created: 0,
                 event_alerts_created: 0,
+                incident_reminders_created: 0,
+                long_absence_events_created: 0,
                 skipped: [{ reason: "scheduler_already_running" }],
             };
             return {
@@ -2423,6 +2587,8 @@ function createLocalAppServer(options = {}) {
             app_messages_created: 0,
             notification_deliveries_created: 0,
             event_alerts_created: 0,
+            incident_reminders_created: 0,
+            long_absence_events_created: 0,
             skipped: [],
         };
         try {
@@ -2434,6 +2600,26 @@ function createLocalAppServer(options = {}) {
                 result.families_checked += 1;
                 const preferences = carePreferences(family.id);
                 const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
+                const presenceState = familyPresenceState(family);
+                const beforePresenceEvents = store.db.events.length;
+                const absenceEvent = reconcileLongAbsenceEvent(family, presenceState);
+                const createdAbsence = Math.max(0, store.db.events.length - beforePresenceEvents);
+                result.long_absence_events_created += createdAbsence;
+                if (absenceEvent && createdAbsence) {
+                    queueNotificationDelivery(createEventAlertMessage(absenceEvent));
+                }
+                const safetyEvents = store.db.events.filter((event) => (
+                    Number(event.family_id) === Number(family.id)
+                    && SAFETY_INCIDENT_TYPES.has(event.event_type)
+                    && !event.acknowledged
+                    && event.payload?.incident?.status === "active"
+                ));
+                for (const event of safetyEvents) {
+                    const beforeMessages = store.db.app_messages.length;
+                    const reminder = createIncidentReminderMessage(event);
+                    if (reminder) queueNotificationDelivery(reminder);
+                    result.incident_reminders_created += Math.max(0, store.db.app_messages.length - beforeMessages);
+                }
                 if (!schedule.enabled) {
                     result.skipped.push({ family_id: family.id, reason: "schedule_disabled" });
                     continue;
@@ -5362,6 +5548,7 @@ function createLocalAppServer(options = {}) {
             write(res, 200, { ok: true, event: publicEvent(existing), media_asset: asset || null, duplicate: true });
             return;
         }
+        ensureSafetyIncident(event);
         store.db.events.push(event);
         let message = null;
         let deliveries = [];
@@ -5511,6 +5698,7 @@ function createLocalAppServer(options = {}) {
             const resolvedFamilyId = existing.family_id || issuedToken?.family_id || store.db.devices[deviceId]?.family_id || null;
             if (!resolvedFamilyId && !isAppConfiguredCamera(existing)) continue;
             const reportLocalCameraId = report.local_camera_id ?? existing.local_camera_id ?? (!isAppConfiguredCamera(existing) ? rawCameraId : null);
+            const presence = report.presence && typeof report.presence === "object" ? report.presence : (existing.presence || {});
             const camera = {
                 ...existing,
                 id: existing.id || rawCameraId,
@@ -5529,6 +5717,16 @@ function createLocalAppServer(options = {}) {
                 last_error: String(report.last_error || ""),
                 last_seen_at: report.last_seen_at || (String(report.status || "").toLowerCase() === "online" ? receivedAt : existing.last_seen_at || null),
                 edge_reported_at: receivedAt,
+                presence: {
+                    last_observed_at: presence.last_observed_at || null,
+                    last_person_seen_at: presence.last_person_seen_at || null,
+                    observation_window_minutes: normalizeNumber(presence.observation_window_minutes, 60),
+                    observed_samples: normalizeNumber(presence.observed_samples, 0),
+                    person_samples: normalizeNumber(presence.person_samples, 0),
+                    expected_samples: normalizeNumber(presence.expected_samples, 0),
+                    observation_coverage: Math.max(0, Math.min(1, normalizeNumber(presence.observation_coverage, 0))),
+                    reported_at: receivedAt,
+                },
                 created_at: existing.created_at || receivedAt,
                 updated_at: existing.updated_at || receivedAt,
             };
@@ -6513,6 +6711,11 @@ function createLocalAppServer(options = {}) {
                 const patch = await parseJsonBody(req);
                 if ("acknowledged" in patch) event.acknowledged = normalizeBool(patch.acknowledged);
                 if ("resolution" in patch) event.resolution = String(patch.resolution || "");
+                const incident = ensureSafetyIncident(event);
+                if (incident && event.acknowledged) {
+                    incident.status = "acknowledged";
+                    incident.acknowledged_at = nowIso();
+                }
                 event.updated_at = nowIso();
                 await store.save();
                 write(res, 200, publicEvent(event));

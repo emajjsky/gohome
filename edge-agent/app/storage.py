@@ -3250,6 +3250,41 @@ class Storage:
                 ).fetchone()
         return self._snapshot_to_dict(row) if row else None
 
+    def camera_presence_status(
+        self,
+        camera_id: int,
+        *,
+        window_minutes: int = 60,
+        expected_interval_seconds: int = 5,
+    ) -> Dict[str, Any]:
+        window_seconds = max(60, int(window_minutes) * 60)
+        expected_samples = max(1, window_seconds // max(1, int(expected_interval_seconds)))
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(captured_at) AS last_observed_at,
+                       COUNT(*) AS observed_samples,
+                       SUM(CASE WHEN person_count > 0 THEN 1 ELSE 0 END) AS person_samples
+                FROM snapshots
+                WHERE camera_id = ? AND julianday(captured_at) >= julianday('now', ?)
+                """,
+                (int(camera_id), f"-{window_seconds} seconds"),
+            ).fetchone()
+            historical = conn.execute(
+                "SELECT MAX(captured_at) AS last_person_seen_at FROM snapshots WHERE camera_id = ? AND person_count > 0",
+                (int(camera_id),),
+            ).fetchone()
+        observed_samples = int(row["observed_samples"] or 0)
+        return {
+            "last_observed_at": row["last_observed_at"],
+            "last_person_seen_at": historical["last_person_seen_at"],
+            "observation_window_minutes": max(1, int(window_minutes)),
+            "observed_samples": observed_samples,
+            "person_samples": int(row["person_samples"] or 0),
+            "expected_samples": expected_samples,
+            "observation_coverage": round(min(1.0, observed_samples / expected_samples), 4),
+        }
+
     def get_snapshot_by_path(self, image_path: str) -> Optional[Dict[str, Any]]:
         clean_path = str(image_path or "").strip().lstrip("/")
         if not clean_path:

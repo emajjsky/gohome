@@ -287,6 +287,10 @@ class ConfigSyncAgent:
             "sync_status": "synced" if not last_error else "edge_error",
             "last_error": last_error,
             "action": action,
+            "presence": self.storage.camera_presence_status(
+                int(local_camera["id"]),
+                expected_interval_seconds=int(self.storage.get_rules().get("capture_interval_seconds") or 5),
+            ),
         }
 
     def _build_report(self, config: Dict[str, Any], apply_result: Dict[str, Any]) -> Dict[str, Any]:

@@ -782,6 +782,7 @@
             no_person: "person_off",
             fall_candidate: "personal_injury",
             prolonged_floor_lying: "airline_seat_flat",
+            long_absence: "person_alert",
         };
         return icons[type] || "notifications_active";
     }
@@ -794,6 +795,7 @@
             no_person: "长时间无人",
             fall_candidate: "疑似跌倒",
             prolonged_floor_lying: "长时间倒地",
+            long_absence: "长时间未见",
         };
         return labels[type] || "提醒";
     }
