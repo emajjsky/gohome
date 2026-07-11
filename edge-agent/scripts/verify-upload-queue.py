@@ -57,6 +57,9 @@ def main() -> None:
         job_types = sorted(job["job_type"] for job in jobs)
         if job_types != ["event_upload", "media_upload"]:
             raise SystemExit(f"unexpected job types: {job_types}")
+        media_job = next(job for job in jobs if job["job_type"] == "media_upload")
+        if media_job["payload"].get("purpose") != "event_evidence":
+            raise SystemExit(f"event evidence purpose missing: {media_job}")
         if summary["pending"] != 2 or summary["pending_critical"] != 2:
             raise SystemExit(f"unexpected upload summary: {summary}")
         deduped = storage.enqueue_event_upload_jobs(event)

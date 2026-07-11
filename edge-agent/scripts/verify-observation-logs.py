@@ -104,8 +104,8 @@ def main() -> None:
             raise SystemExit(f"life observation should not emit formal events: {event_agent.events}")
         if active_candidates:
             raise SystemExit(f"life observation candidates should be hidden from active alerts: {active_candidates}")
-        if len(aggregated_candidates) != 2:
-            raise SystemExit(f"expected two aggregated candidates, got {len(aggregated_candidates)}")
+        if aggregated_candidates:
+            raise SystemExit(f"life observations must not create per-sample candidates: {aggregated_candidates}")
         if upload_summary["pending"] != 0:
             raise SystemExit(f"life observation should not enqueue uploads: {upload_summary}")
 
@@ -129,7 +129,7 @@ def main() -> None:
                     "ok": True,
                     "open_logs_after_recovery": len(storage.list_observation_logs(status="open")),
                     "closed_logs": len(closed_logs),
-                    "aggregated_candidates": len(aggregated_candidates),
+                    "aggregated_candidates": 0,
                     "formal_events": len(event_agent.events),
                     "upload_pending": upload_summary["pending"],
                 },

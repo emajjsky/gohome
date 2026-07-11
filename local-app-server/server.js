@@ -3975,6 +3975,7 @@ function createLocalAppServer(options = {}) {
         const activeCameraIds = new Set(cameras.filter((camera) => camera.enabled !== false).map((camera) => Number(camera.id)));
         const recentCutoff = Date.now() - 24 * 60 * 60 * 1000;
         const recentEvents = store.db.events.filter((event) => {
+            if (isValidationEvent(event)) return false;
             const timestamp = Date.parse(event.occurred_at || event.created_at || "");
             if (!Number.isFinite(timestamp) || timestamp < recentCutoff) return false;
             const eventCamera = store.db.cameras[String(event.camera_id)] || {};
@@ -4321,7 +4322,13 @@ function createLocalAppServer(options = {}) {
         return Number.isFinite(eventTime) && Number.isFinite(seenTime) && seenTime >= eventTime;
     }
 
+    function isValidationEvent(event = {}) {
+        const validation = event.payload?.validation;
+        return Boolean(validation && typeof validation === "object" && validation.test_event);
+    }
+
     function isUserVisibleEvent(event = {}, familyIds = null) {
+        if (isValidationEvent(event)) return false;
         const activeCameraIds = new Set(appConfigCameras(familyIds).filter((camera) => camera.enabled !== false).map((camera) => Number(camera.id)));
         if (activeCameraIds.size && !activeCameraIds.has(Number(event.camera_id))) return false;
         if (isStaleCameraOfflineEvent(event)) return false;
@@ -4420,10 +4427,19 @@ function createLocalAppServer(options = {}) {
             .sort((a, b) => String(b.occurred_at || b.created_at).localeCompare(String(a.occurred_at || a.created_at)))[0] || null;
     }
 
-    function latestCameraAsset(cameraId = null) {
+    function isValidationAsset(asset) {
+        const purpose = String(asset?.purpose || "").toLowerCase();
+        if (purpose.startsWith("validation") || purpose.startsWith("test")) return true;
+        return store.db.events.some((event) => Number(event.media_asset_id) === Number(asset?.id) && isValidationEvent(event));
+    }
+
+    function latestCameraAsset(cameraId = null, options = {}) {
         const targetCameraId = cameraId === null ? null : Number(cameraId);
+        const purposes = new Set((options.purposes || []).map((item) => String(item).toLowerCase()));
         return [...store.db.assets]
             .filter((asset) => asset.relative_path && (targetCameraId === null || Number(asset.camera_id) === targetCameraId))
+            .filter((asset) => !isValidationAsset(asset))
+            .filter((asset) => !purposes.size || purposes.has(String(asset.purpose || "").toLowerCase()))
             .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0] || null;
     }
 
@@ -4477,56 +4493,25 @@ function createLocalAppServer(options = {}) {
     }
 
     function latestCameraSnapshotPayload(cameraId) {
-        const event = latestMediaEvent(cameraId);
-        const asset = eventAsset(event);
-        if (!event || !asset) {
-            const latestAsset = latestCameraAsset(cameraId);
-            if (latestAsset) {
-                return {
-                    available: true,
-                    id: null,
-                    asset_id: latestAsset.id,
-                    camera_id: latestAsset.camera_id || Number(cameraId),
-                    image_url: latestAsset.snapshot_path,
-                    snapshot_path: latestAsset.snapshot_path,
-                    captured_at: latestAsset.captured_at || latestAsset.created_at,
-                    width: latestAsset.width || null,
-                    height: latestAsset.height || null,
-                    brightness: latestAsset.brightness ?? null,
-                    motion_score: latestAsset.motion_score ?? null,
-                    person_count: latestAsset.person_count ?? null,
-                    tags: [],
-                    analysis: {
-                        event_type: "latest_frame",
-                        summary: "家庭盒子最新回传画面",
-                    },
-                };
-            }
-            return { available: false };
-        }
-        const evidence = event.payload?.evidence || {};
-        const metrics = evidence.metrics || {};
-        const flags = evidence.flags || {};
-        const tags = Array.isArray(evidence.tags) ? evidence.tags : [];
+        const asset = latestCameraAsset(cameraId, { purposes: ["live_preview"] });
+        if (!asset) return { available: false };
         return {
             available: true,
-            id: event.id,
-            camera_id: event.camera_id,
+            id: null,
+            asset_id: asset.id,
+            camera_id: asset.camera_id || Number(cameraId),
             image_url: asset.snapshot_path,
             snapshot_path: asset.snapshot_path,
-            captured_at: event.occurred_at || asset.created_at,
-            width: metrics.frame_width || null,
-            height: metrics.frame_height || null,
-            brightness: metrics.brightness ?? null,
-            motion_score: metrics.motion_score ?? null,
-            person_count: metrics.person_count ?? null,
-            tags,
+            captured_at: asset.captured_at || asset.created_at,
+            width: asset.width || null,
+            height: asset.height || null,
+            brightness: asset.brightness ?? null,
+            motion_score: asset.motion_score ?? null,
+            person_count: asset.person_count ?? null,
+            tags: [],
             analysis: {
-                ...flags,
-                ...(evidence.algorithms || {}),
-                event_type: event.event_type,
-                summary: event.summary,
-                rule: event.payload?.rule || evidence.rule || {},
+                event_type: "latest_frame",
+                summary: "家庭盒子最新实时预览",
             },
         };
     }
@@ -4536,6 +4521,7 @@ function createLocalAppServer(options = {}) {
         const camera = store.db.cameras[String(targetCameraId)] || {};
         const event = [...store.db.events]
             .filter((item) => Number(item.camera_id) === targetCameraId)
+            .filter((item) => !isValidationEvent(item))
             .filter((item) => !isStaleCameraOfflineEvent(item))
             .sort((a, b) => String(b.occurred_at || b.created_at).localeCompare(String(a.occurred_at || a.created_at)))[0];
         if (!event) {
@@ -4619,7 +4605,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function writeLatestFrameImage(res, cameraId) {
-        const asset = latestCameraAsset(cameraId);
+        const asset = latestCameraAsset(cameraId, { purposes: ["live_preview"] });
         const filePath = assetAbsolutePath(asset);
         if (!asset || !filePath || !fs.existsSync(filePath)) return false;
 
@@ -4659,7 +4645,7 @@ function createLocalAppServer(options = {}) {
             };
         }
 
-        const asset = latestCameraAsset(cameraId);
+        const asset = latestCameraAsset(cameraId, { purposes: ["live_preview"] });
         const filePath = assetAbsolutePath(asset);
         if (!asset || !filePath || !fs.existsSync(filePath)) return null;
         let stat;
@@ -5009,7 +4995,7 @@ function createLocalAppServer(options = {}) {
         store.db.events.push(event);
         let message = null;
         let deliveries = [];
-        if (event.family_id) {
+        if (event.family_id && !isValidationEvent(event)) {
             message = upsertAppMessage({
                 message_id: `edge-event-${event.idempotency_key}`,
                 family_id: event.family_id,

@@ -374,6 +374,25 @@ class Storage:
                     FOREIGN KEY(last_event_candidate_id) REFERENCES event_candidates(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS presence_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    camera_id INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    started_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    duration_seconds INTEGER NOT NULL DEFAULT 0,
+                    sample_count INTEGER NOT NULL DEFAULT 1,
+                    max_person_count INTEGER NOT NULL DEFAULT 1,
+                    representative_snapshot_id INTEGER,
+                    close_reason TEXT NOT NULL DEFAULT '',
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(camera_id) REFERENCES cameras(id),
+                    FOREIGN KEY(representative_snapshot_id) REFERENCES snapshots(id)
+                );
+
                 CREATE TABLE IF NOT EXISTS device_sync_states (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     device_id TEXT NOT NULL UNIQUE,
@@ -695,6 +714,8 @@ class Storage:
                     ON rule_evaluations(detection_result_id);
                 CREATE INDEX IF NOT EXISTS idx_rule_evaluations_snapshot_id ON rule_evaluations(snapshot_id);
                 CREATE INDEX IF NOT EXISTS idx_detection_results_snapshot_id ON detection_results(snapshot_id);
+                CREATE INDEX IF NOT EXISTS idx_presence_sessions_camera_status
+                    ON presence_sessions(camera_id, status, updated_at);
                 """
             )
 
@@ -825,6 +846,10 @@ class Storage:
                   )
                   AND s.id NOT IN (
                       SELECT last_snapshot_id FROM observation_logs WHERE last_snapshot_id IS NOT NULL
+                  )
+                  AND s.id NOT IN (
+                      SELECT representative_snapshot_id FROM presence_sessions
+                      WHERE representative_snapshot_id IS NOT NULL AND status = 'open'
                   )
                   AND s.id NOT IN (
                       SELECT snapshot_id FROM upload_jobs
@@ -2238,9 +2263,12 @@ class Storage:
                     camera_id,
                 ),
             )
+        if current.get("enabled") and not next_values.get("enabled", True):
+            self.close_camera_runtime_state(camera_id, reason="camera_disabled")
         return self.get_camera(camera_id)
 
     def delete_camera(self, camera_id: int) -> bool:
+        self.close_camera_runtime_state(camera_id, reason="camera_deleted")
         with self.connect() as conn:
             cursor = conn.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
         return cursor.rowcount > 0
@@ -2718,6 +2746,171 @@ class Storage:
                 tuple(params),
             ).fetchall()
         return [log for row in rows if (log := self._observation_log_to_dict(row)) is not None]
+
+    def _presence_session_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
+        if row is None:
+            return None
+        data = dict(row)
+        data["payload"] = json.loads(data.pop("payload_json", "{}") or "{}")
+        return data
+
+    def upsert_presence_session(
+        self,
+        *,
+        camera_id: int,
+        observed_at: str,
+        person_count: int,
+        snapshot_id: Optional[int] = None,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        timestamp = now_iso()
+        seen_at = str(observed_at or "").strip() or timestamp
+        count = max(1, int(person_count or 1))
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM presence_sessions
+                WHERE camera_id = ? AND status = 'open'
+                ORDER BY started_at DESC, id DESC
+                LIMIT 1
+                """,
+                (int(camera_id),),
+            ).fetchone()
+            if row is None:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO presence_sessions (
+                        camera_id, status, started_at, last_seen_at, ended_at,
+                        duration_seconds, sample_count, max_person_count,
+                        representative_snapshot_id, close_reason, payload_json,
+                        created_at, updated_at
+                    )
+                    VALUES (?, 'open', ?, ?, NULL, 0, 1, ?, ?, '', ?, ?, ?)
+                    """,
+                    (
+                        int(camera_id),
+                        seen_at,
+                        seen_at,
+                        count,
+                        int(snapshot_id) if snapshot_id else None,
+                        json.dumps(payload or {}, ensure_ascii=False),
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                session_id = int(cursor.lastrowid)
+            else:
+                started_at = datetime.fromisoformat(str(row["started_at"]))
+                last_seen_at = datetime.fromisoformat(seen_at)
+                duration_seconds = max(0, int((last_seen_at - started_at).total_seconds()))
+                session_id = int(row["id"])
+                conn.execute(
+                    """
+                    UPDATE presence_sessions
+                    SET last_seen_at = ?, duration_seconds = ?, sample_count = sample_count + 1,
+                        max_person_count = MAX(max_person_count, ?),
+                        representative_snapshot_id = COALESCE(?, representative_snapshot_id),
+                        payload_json = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        seen_at,
+                        duration_seconds,
+                        count,
+                        int(snapshot_id) if snapshot_id else None,
+                        json.dumps(payload or {}, ensure_ascii=False),
+                        timestamp,
+                        session_id,
+                    ),
+                )
+            updated = conn.execute("SELECT * FROM presence_sessions WHERE id = ?", (session_id,)).fetchone()
+        session = self._presence_session_to_dict(updated)
+        if session is None:
+            raise RuntimeError("Presence session was not persisted")
+        return session
+
+    def close_presence_session(
+        self,
+        *,
+        camera_id: int,
+        ended_at: Optional[str] = None,
+        reason: str = "person_not_visible",
+    ) -> Optional[Dict[str, Any]]:
+        timestamp = now_iso()
+        end_time = str(ended_at or "").strip() or timestamp
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM presence_sessions
+                WHERE camera_id = ? AND status = 'open'
+                ORDER BY started_at DESC, id DESC
+                LIMIT 1
+                """,
+                (int(camera_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            started_at = datetime.fromisoformat(str(row["started_at"]))
+            ended = datetime.fromisoformat(end_time)
+            duration_seconds = max(0, int((ended - started_at).total_seconds()))
+            conn.execute(
+                """
+                UPDATE presence_sessions
+                SET status = 'closed', ended_at = ?, duration_seconds = ?,
+                    close_reason = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (end_time, duration_seconds, str(reason or ""), timestamp, int(row["id"])),
+            )
+            updated = conn.execute("SELECT * FROM presence_sessions WHERE id = ?", (int(row["id"]),)).fetchone()
+        return self._presence_session_to_dict(updated)
+
+    def list_presence_sessions(self, *, limit: int = 50, status: Optional[str] = None) -> list[Dict[str, Any]]:
+        where = ""
+        params: list[Any] = []
+        if status:
+            where = "WHERE status = ?"
+            params.append(str(status))
+        params.append(max(1, min(int(limit), 500)))
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM presence_sessions
+                {where}
+                ORDER BY updated_at DESC, id DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [item for row in rows if (item := self._presence_session_to_dict(row)) is not None]
+
+    def close_camera_runtime_state(self, camera_id: int, *, reason: str) -> Dict[str, int]:
+        timestamp = now_iso()
+        with self.connect() as conn:
+            observation_cursor = conn.execute(
+                """
+                UPDATE observation_logs
+                SET status = 'closed', ended_at = ?,
+                    duration_seconds = MAX(0, CAST(strftime('%s', ?) - strftime('%s', started_at) AS INTEGER)),
+                    updated_at = ?
+                WHERE camera_id = ? AND status = 'open'
+                """,
+                (timestamp, timestamp, timestamp, int(camera_id)),
+            )
+            presence_cursor = conn.execute(
+                """
+                UPDATE presence_sessions
+                SET status = 'closed', ended_at = ?,
+                    duration_seconds = MAX(0, CAST(strftime('%s', ?) - strftime('%s', started_at) AS INTEGER)),
+                    close_reason = ?, updated_at = ?
+                WHERE camera_id = ? AND status = 'open'
+                """,
+                (timestamp, timestamp, str(reason or ""), timestamp, int(camera_id)),
+            )
+        return {
+            "observation_logs_closed": int(observation_cursor.rowcount or 0),
+            "presence_sessions_closed": int(presence_cursor.rowcount or 0),
+        }
 
     def create_snapshot(
         self,
@@ -3392,6 +3585,8 @@ class Storage:
             "occurred_at": event.get("occurred_at"),
             "payload": event.get("payload") or {},
         }
+        validation = base_payload["payload"].get("validation") if isinstance(base_payload["payload"], dict) else {}
+        evidence_purpose = "validation_evidence" if isinstance(validation, dict) and validation.get("test_event") else "event_evidence"
         jobs = [
             self.enqueue_upload_job(
                 job_type="event_upload",
@@ -3422,6 +3617,7 @@ class Storage:
                         **base_payload,
                         "target": "object_storage",
                         "content_type": "image/jpeg",
+                        "purpose": evidence_purpose,
                     },
                 )
             )

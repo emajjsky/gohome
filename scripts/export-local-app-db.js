@@ -378,7 +378,20 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(source.updated_at, iso(source.created_at, exportedAt)),
     }));
 
-    const mediaAssets = toArray(db.assets).map((asset) => ({
+    const sourceEvents = toArray(db.events);
+    const validationEvents = sourceEvents.filter((event) => Boolean(event.payload?.validation?.test_event));
+    const validationEventIds = new Set(validationEvents.map((event) => textId(event.id)).filter(Boolean));
+    const validationAssetIds = new Set(validationEvents.map((event) => textId(event.media_asset_id)).filter(Boolean));
+
+    const mediaAssets = toArray(db.assets)
+        .filter((asset) => {
+            const purpose = String(asset.purpose || "").toLowerCase();
+            return !purpose.startsWith("validation")
+                && !purpose.startsWith("test")
+                && purpose !== "live_preview"
+                && !validationAssetIds.has(textId(asset.id));
+        })
+        .map((asset) => ({
         id: textId(asset.id),
         family_id: nullableTextId(asset.family_id || fallbackFamilyId),
         device_id: nullableTextId(asset.device_id || fallbackDeviceId),
@@ -398,7 +411,7 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(asset.updated_at, iso(asset.created_at, exportedAt)),
     }));
 
-    const events = toArray(db.events).map((event) => ({
+    const events = sourceEvents.filter((event) => !validationEventIds.has(textId(event.id))).map((event) => ({
         id: textId(event.id),
         family_id: nullableTextId(event.family_id || fallbackFamilyId),
         device_id: nullableTextId(event.device_id || event.payload?.edge_upload?.edge_device_id || fallbackDeviceId),
@@ -465,7 +478,11 @@ function buildCloudSeedBundle(db, options = {}) {
         `daily:${card.family_id}:${card.elder_id}:${card.card_date}:${card.card_type}`,
     ]);
 
-    const appMessages = toArray(db.app_messages).map((message) => ({
+    const appMessages = toArray(db.app_messages).filter((message) => {
+        const eventId = textId(message.event_id);
+        const sourceEventIds = Array.isArray(message.source_event_ids) ? message.source_event_ids.map(textId) : [];
+        return !validationEventIds.has(eventId) && !sourceEventIds.some((id) => validationEventIds.has(id));
+    }).map((message) => ({
         id: textId(message.id),
         message_id: String(message.message_id || message.id || ""),
         family_id: textId(message.family_id, fallbackFamilyId),

@@ -531,6 +531,55 @@ async function main() {
         assert.equal(syncedCamera.sync_status, "synced");
         assert.ok(syncedCamera.last_seen_at);
 
+        const validationMedia = await requestJson(
+            baseUrl,
+            `/api/v1/device/media-assets/upload?camera_id=${camera.id}&local_camera_id=11&edge_event_id=validation-1&purpose=validation_evidence&snapshot_path=validation.jpg&content_type=image/jpeg`,
+            {
+                method: "POST",
+                body: Buffer.from("validation-frame"),
+                headers: { Authorization: `Bearer ${exchanged.device_token}`, "Content-Type": "image/jpeg" },
+            },
+        );
+        assert.equal(validationMedia.asset.purpose, "validation_evidence");
+        await requestJson(baseUrl, "/api/v1/device/events", {
+            method: "POST",
+            body: JSON.stringify({
+                idempotency_key: "event:validation-1",
+                edge_event_id: "validation-1",
+                event_type: "fall_candidate",
+                summary: "公开数据集验证",
+                level: "critical",
+                room: "客厅",
+                camera_id: camera.id,
+                snapshot_path: "validation.jpg",
+                payload: { validation: { test_event: true, mode: "public_dataset_replay" } },
+            }),
+            headers: { Authorization: `Bearer ${exchanged.device_token}` },
+        });
+        const snapshotWithoutLivePreview = await requestJson(baseUrl, `/api/app/cameras/${camera.id}/snapshot/latest`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(snapshotWithoutLivePreview.available, false, "validation evidence must never become camera preview");
+        const visibleEventsAfterValidation = await requestJson(baseUrl, "/api/app/events?limit=20", {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(visibleEventsAfterValidation.some((item) => item.payload?.validation?.test_event), false);
+
+        await requestJson(
+            baseUrl,
+            `/api/v1/device/media-assets/upload?camera_id=${camera.id}&local_camera_id=11&purpose=live_preview&snapshot_path=live-preview.jpg&content_type=image/jpeg`,
+            {
+                method: "POST",
+                body: Buffer.from("live-preview-frame"),
+                headers: { Authorization: `Bearer ${exchanged.device_token}`, "Content-Type": "image/jpeg" },
+            },
+        );
+        const snapshotWithLivePreview = await requestJson(baseUrl, `/api/app/cameras/${camera.id}/snapshot/latest`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(snapshotWithLivePreview.available, true);
+        assert.equal(snapshotWithLivePreview.snapshot_path, "live-preview.jpg");
+
         const staleOffline = await requestJson(baseUrl, "/api/v1/device/events", {
             method: "POST",
             body: JSON.stringify({
@@ -714,7 +763,7 @@ async function main() {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(snapshot.available, true);
-        assert.equal(snapshot.snapshot_path, "events/test.jpg");
+        assert.equal(snapshot.snapshot_path, "live-preview.jpg");
 
         const evaluation = await requestJson(baseUrl, `/api/app/cameras/${camera.id}/evaluation/latest`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .camera_agent import CameraError
 from .rule_engine import RuleEngine, RuleEvaluation
+from .vision.temporal import TemporalObservationEngine
 
 
 LIFE_OBSERVATION_TYPES = {"no_motion", "no_person"}
@@ -29,6 +30,7 @@ class EdgeWorker:
         history_cleanup_interval_seconds: float = 3600,
         history_cleanup_batch_size: int = 5000,
         completed_upload_retention_days: int = 7,
+        temporal_engine: TemporalObservationEngine | None = None,
     ) -> None:
         self.storage = storage
         self.camera_agent = camera_agent
@@ -42,6 +44,7 @@ class EdgeWorker:
         self.history_cleanup_interval_seconds = max(60.0, float(history_cleanup_interval_seconds))
         self.history_cleanup_batch_size = max(100, int(history_cleanup_batch_size))
         self.completed_upload_retention_days = max(1, int(completed_upload_retention_days))
+        self.temporal_engine = temporal_engine or TemporalObservationEngine()
         self.last_history_cleanup_at = time.monotonic()
         self.last_history_cleanup_result: Dict[str, Any] = {}
         self.last_error = ""
@@ -56,6 +59,7 @@ class EdgeWorker:
         self.last_loop_started_at: str | None = None
         self.last_rules_loaded_at: str | None = None
         self.last_rules_snapshot: Dict[str, Any] = {}
+        self._known_camera_ids: set[int] = set()
 
     @property
     def is_running(self) -> bool:
@@ -84,10 +88,17 @@ class EdgeWorker:
                 self.last_rules_loaded_at = rules.get("updated_at")
                 self.last_rules_snapshot = {**rules}
                 cameras = self.storage.list_cameras(include_secret=True)
+                current_camera_ids = {int(camera["id"]) for camera in cameras}
+                for removed_camera_id in self._known_camera_ids - current_camera_ids:
+                    self.temporal_engine.reset_camera(removed_camera_id)
+                self._known_camera_ids = current_camera_ids
                 for camera in cameras:
                     if self._stop.is_set():
                         break
                     if not camera.get("enabled"):
+                        camera_id = int(camera["id"])
+                        self.storage.close_camera_runtime_state(camera_id, reason="camera_disabled")
+                        self.temporal_engine.reset_camera(camera_id)
                         continue
                     self.process_camera(camera, rules)
                 self._prune_history_if_due()
@@ -105,6 +116,7 @@ class EdgeWorker:
             "last_rules_loaded_at": self.last_rules_loaded_at,
             "rules": self.last_rules_snapshot,
             "history_cleanup": self.last_history_cleanup_result,
+            "temporal_engine": self.temporal_engine.version,
             "last_error": self.last_error,
         }
 
@@ -149,6 +161,7 @@ class EdgeWorker:
                 previous_frame=self.previous_frames.get(camera_id),
                 config=analysis_config,
             )
+            temporal = self.temporal_engine.update(camera_id, analysis)
 
             relative_path = self.camera_agent.snapshot_relative_path(camera_id)
             self.camera_agent.save_frame(frame, relative_path)
@@ -163,6 +176,8 @@ class EdgeWorker:
                 person_count=analysis.get("person_count"),
                 analysis=analysis,
             )
+            self.temporal_engine.attach_snapshot(camera_id, snapshot)
+            self._update_presence_session(camera, snapshot, temporal)
             self._enqueue_live_frame_upload(camera_id, snapshot)
             self.storage.update_camera_status(camera_id, "online")
 
@@ -202,6 +217,8 @@ class EdgeWorker:
 
         except CameraError as exc:
             self.storage.update_camera_status(camera_id, "offline", str(exc))
+            self.storage.close_presence_session(camera_id=camera_id, reason="camera_offline")
+            self.temporal_engine.reset_camera(camera_id)
             evaluation = self.rule_engine.evaluate_camera_error(camera, rules, str(exc))
             evaluation_dict = evaluation.to_dict()
             persisted_evaluation = self.storage.create_rule_evaluation(
@@ -221,7 +238,36 @@ class EdgeWorker:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:
             self.storage.update_camera_status(camera_id, "error", str(exc))
+            self.storage.close_presence_session(camera_id=camera_id, reason="camera_error")
+            self.temporal_engine.reset_camera(camera_id)
             return {"ok": False, "error": str(exc)}
+
+    def _update_presence_session(
+        self,
+        camera: Dict[str, Any],
+        snapshot: Dict[str, Any],
+        temporal: Dict[str, Any],
+    ) -> None:
+        camera_id = int(camera["id"])
+        observed_at = str(snapshot.get("captured_at") or snapshot.get("created_at") or "")
+        if temporal.get("person_present"):
+            self.storage.upsert_presence_session(
+                camera_id=camera_id,
+                observed_at=observed_at,
+                person_count=int(temporal.get("person_count") or 1),
+                snapshot_id=int(snapshot["id"]),
+                payload={
+                    "schema_version": "gohome-presence-session-v1",
+                    "track_ids": temporal.get("current_track_ids") or [],
+                    "active_tracks": temporal.get("active_tracks") or [],
+                },
+            )
+            return
+        self.storage.close_presence_session(
+            camera_id=camera_id,
+            ended_at=observed_at,
+            reason="person_not_visible",
+        )
 
     def _enqueue_live_frame_upload(self, camera_id: int, snapshot: Dict[str, Any]) -> None:
         if not self.live_frame_upload_enabled:
@@ -303,6 +349,19 @@ class EdgeWorker:
                     "rule_evaluation_id": rule_evaluation_id,
                 },
             }
+            if candidate.event_type in LIFE_OBSERVATION_TYPES:
+                self.storage.upsert_observation_log(
+                    camera_id=int(camera["id"]),
+                    observation_type=candidate.event_type,
+                    summary=candidate.summary,
+                    evaluated_at=evaluation.evaluated_at,
+                    snapshot_id=candidate.snapshot_id,
+                    detection_result_id=detection_result_id,
+                    rule_evaluation_id=rule_evaluation_id,
+                    event_candidate_id=None,
+                    payload=payload,
+                )
+                continue
             candidate_dict = candidate.to_dict()
             candidate_dict["payload"] = payload
             persisted_candidate = self.storage.create_event_candidate(
@@ -313,20 +372,6 @@ class EdgeWorker:
                 evaluated_at=evaluation.evaluated_at,
             )
             payload["data_chain"]["event_candidate_id"] = int(persisted_candidate["id"])
-            if candidate.event_type in LIFE_OBSERVATION_TYPES:
-                self.storage.upsert_observation_log(
-                    camera_id=int(camera["id"]),
-                    observation_type=candidate.event_type,
-                    summary=candidate.summary,
-                    evaluated_at=evaluation.evaluated_at,
-                    snapshot_id=candidate.snapshot_id,
-                    detection_result_id=detection_result_id,
-                    rule_evaluation_id=rule_evaluation_id,
-                    event_candidate_id=int(persisted_candidate["id"]),
-                    payload=payload,
-                )
-                self.storage.update_event_candidate_status(int(persisted_candidate["id"]), "aggregated")
-                continue
             self.event_agent.emit(
                 event_type=candidate.event_type,
                 summary=candidate.summary,
