@@ -10237,6 +10237,7 @@ disk usage: 45% -> 24%
 - 导航白名单限制为腾讯云产品域名和 `.local` 盒子；电话、短信和微信 scheme 交由系统打开。
 - H5 原生桥增加 `openExternalURL`，陪伴页“发消息”在 iOS 壳中打开微信，电话继续使用 `tel:`。
 - 增加本地网络、Bonjour、定位权限文案和 `_gohome._tcp` 服务声明。
+- 第一阶段不提前声明 APNs entitlement，避免真机安装被尚未配置的推送 capability 阻塞；确认 Apple Developer 推送权限后再开启。
 - 树莓派部署 Avahi `_gohome._tcp:8711` 广播；Mac `dns-sd` 已发现“回家守护盒子 - gohome”。
 - 新增 1024px AppIcon：深绿家庭轮廓与暖色爱心，并在 iPhone 16 Pro 模拟器主屏验证显示正常。
 - 干净 DerivedData 构建通过，未出现 Swift 编译或 asset catalog 警告；本地后端回归继续通过。
