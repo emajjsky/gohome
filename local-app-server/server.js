@@ -2653,6 +2653,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function createIncidentReminderMessage(event, bucket = incidentMinuteBucket()) {
+        if (isValidationEvent(event)) return null;
         const incident = ensureSafetyIncident(event);
         if (!incident || event.acknowledged || !INCIDENT_REMINDER_STATUSES.has(incident.status)) return null;
         if (incident.last_reminder_bucket === bucket) return null;

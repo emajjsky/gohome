@@ -1049,6 +1049,10 @@ async function main() {
                     acknowledged: event.acknowledged,
                 }))),
             );
+            const validationEventIds = new Set(app.store.db.events.filter((event) => event.payload?.validation?.test_event).map((event) => String(event.id)));
+            assert.ok(app.store.db.app_messages.every((message) => (
+                !(message.source_event_ids || []).some((eventId) => validationEventIds.has(String(eventId)))
+            )));
             const longAbsenceEvent = app.store.db.events.find((event) => event.event_type === "long_absence");
             assert.ok(longAbsenceEvent);
             assert.equal(longAbsenceEvent.payload.incident.status, "confirmed");
