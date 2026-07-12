@@ -2996,3 +2996,15 @@ P1 用户端：
 - 已将宠物默认置信度从 0.25 提升到 0.40，清理现场固定物体造成的单帧 dog=0.2819 错误状态。
 
 阶段 16 状态：已完成并部署。下一步应加强正式事件的证据保留和事故恢复闭环，优先核对跌倒报警每分钟提醒、App 确认停止提醒、恢复后自动结束三者在真实事件中的一致性；宠物现场校准等待真实猫狗条件。
+
+#### R. 阶段 17：可信姿态恢复与提醒归档（已完成）
+
+- 已确认原缺口：盒子 RuleEngine 会进入 recovered，但此前没有把恢复状态上传云端。
+- 已增加本地最近未解决事故查询、edge recovery 持久化和 `event_state_upload` 幂等任务。
+- 已限定只有 recovered + person visible + standing/sitting/squatting + confidence>=0.45 才能提交恢复。
+- 已增加云端设备事件 state 接口，校验设备归属、事件类型、状态、resolution 和姿态证据。
+- 已把同 incident 关联事件统一置为 resolved/acknowledged，归档开放消息，追加 edge_recovery transition。
+- 已验证人物消失、无姿态、0.44 低置信站姿均不会恢复；0.82 站姿只创建一个恢复任务。
+- 已完成真实腾讯云状态契约探针：弱证据 400，强证据 200，incident=resolved；重启后测试事件未进入 PostgreSQL。
+
+阶段 17 状态：已完成。后端提醒闭环已具备，但 iOS 真机 APNs 到达、通知点击进入正确事件、App 前后台确认同步仍需在 iOS 壳阶段验收。

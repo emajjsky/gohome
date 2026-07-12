@@ -10884,3 +10884,32 @@ App：
 - 树莓派和腾讯云服务均为 active，本地与云端健康检查正常，部署后无 warning/error。
 
 当前边界：三图复核已经证明云端模型能理解跌倒过程，但正式现场报警仍需真实人体安全演练才能验收通知到达、每分钟提醒、App 确认和恢复结束。不得通过制造危险跌倒来测试，应使用安全模拟动作或公开序列探针验证算法。
+
+## 106. 2026-07-12 可信姿态恢复与 SafetyIncident 自动结束
+
+盒子：
+
+- Storage 新增 `latest_unresolved_event()`，只查同摄像头未 acknowledged 且没有 resolution 的 fall_candidate/prolonged_floor_lying。
+- `resolve_event_from_edge()` 在本地事件 payload 保存 person_upright_again、resolved_at 和 recovery_evidence。
+- `enqueue_event_state_upload()` 创建 priority=8 的 `event_state_upload`，幂等键包含 event/state/resolution，断网后可重试。
+- Worker 的恢复判定要求 RuleEngine fall_stage=recovered、person_state=visible，并存在 standing/sitting/squatting 姿态，置信度至少 0.45。
+- 无骨架、人物离场、0.44 站姿不会修改事件；0.82 站姿写入一次恢复任务，后续帧不会重复排队。
+
+云端：
+
+- 新增 `POST /api/v1/device/events/{edge_event_id}/state`，当前只接受 resolved + person_upright_again。
+- 接口校验事件属于当前设备、事件类型是 fall_candidate/prolonged_floor_lying，且证据姿态和置信度达标。
+- 同一 incident 的所有关联事件统一 acknowledged=true、resolution=person_upright_again、incident.status=resolved。
+- 事件 payload 保存 edge_recovery 证据，主事件 transitions 追加 source=edge_recovery；所有关联提醒通过 archiveIncidentMessages 归档。
+- 已有 App 确认和 edge false-positive 路径保持不变。
+
+验证：
+
+- `verify-observation-logs.py` 覆盖无姿态、低置信姿态、可信站姿和重复帧幂等。
+- `verify-upload-agent.py` 覆盖 event_state_upload 请求契约和完成状态。
+- `verify-local-app-server.js` 覆盖弱恢复 400、强恢复 resolved、多次提交单 transition、已有开放提醒归档和验证事件无开放消息。
+- 视觉流水线、跌倒规则、长时间倒地和 npm 全量回归通过。
+- 腾讯云隐藏生产契约事件：standing=0.44 返回 400；standing=0.82 返回 200，resolution=person_upright_again、incident=resolved、transition=edge_recovery。
+- 云端重启后 PostgreSQL 中该测试 edge_event_id 数量为 0；树莓派和腾讯云均 active，近 5 分钟无 warning/error。
+
+当前边界：服务端能够按分钟创建并归档提醒投递，但尚未做 iOS 真机 APNs 到达验收。自动恢复采用保守策略，若老人离开画面或姿态模型暂时失效，系统宁可继续提醒，也不会未经证据自动宣布安全。
