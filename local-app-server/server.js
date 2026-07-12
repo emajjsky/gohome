@@ -585,6 +585,7 @@ function createLocalAppServer(options = {}) {
         "suggested_event_type 只能是 fall_candidate、prolonged_floor_lying、fire_candidate、none、uncertain。",
         "如果图片模糊、遮挡、无人或不足以判断，使用 unknown/uncertain，不能强行确认。",
         "床或沙发上的正常躺卧通常不应判为紧急；持续时长以结构化边缘证据为准，不从单图猜测。",
+        "必须区分人物与猫狗。猫狗不计入 person_count，宠物在地面、床或沙发上不能当作人物躺倒或跌倒证据。",
     ].join("\n");
 
     const defaultCareImagePrompt = [
@@ -3348,6 +3349,7 @@ function createLocalAppServer(options = {}) {
             edge_rule: event.payload?.rule || evidence.rule || {},
             metrics: evidence.metrics || {},
             flags: evidence.flags || {},
+            objects: evidence.objects || {},
             pose_factor_graph: evidence.pose_factor_graph || event.payload?.pose_factor_graph || {},
             temporal_evidence_bundle: evidence.temporal_evidence_bundle || event.payload?.temporal_evidence_bundle || {},
         };

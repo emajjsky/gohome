@@ -818,6 +818,7 @@ def build_event_evidence(
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
+    pets = analysis.get("pets") if isinstance(analysis.get("pets"), list) else []
     poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
     algorithm_results = analysis.get("algorithm_results") if isinstance(analysis.get("algorithm_results"), dict) else {}
     relevant_algorithms = {
@@ -855,6 +856,7 @@ def build_event_evidence(
             "contrast": analysis.get("contrast"),
             "motion_score": analysis.get("motion_score"),
             "person_count": analysis.get("person_count"),
+            "pet_count": analysis.get("pet_count", len(pets)),
             "pose_count": analysis.get("pose_count"),
             "fall_score": analysis.get("fall_score"),
             "pose_fall_score": analysis.get("pose_fall_score"),
@@ -888,6 +890,19 @@ def build_event_evidence(
                     "presence_candidate": bool(person.get("presence_candidate")),
                 }
                 for person in people[:3]
+            ],
+            "pets": [
+                {
+                    "type": pet.get("type") or pet.get("label"),
+                    "label_zh": pet.get("label_zh"),
+                    "bbox": pet.get("bbox"),
+                    "confidence": pet.get("confidence"),
+                    "scene_zone_label": pet.get("scene_zone_label"),
+                    "scene_zone_label_zh": pet.get("scene_zone_label_zh"),
+                    "person_evidence_eligible": False,
+                    "fall_evidence_eligible": False,
+                }
+                for pet in pets[:6]
             ],
             "poses": [
                 {

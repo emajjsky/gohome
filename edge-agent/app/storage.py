@@ -2354,6 +2354,7 @@ class Storage:
         analysis: Dict[str, Any],
     ) -> Dict[str, Any]:
         people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
+        pets = analysis.get("pets") if isinstance(analysis.get("pets"), list) else []
         objects = [
             {
                 "category": "person",
@@ -2362,10 +2363,23 @@ class Storage:
                 "fall_candidate": bool(person.get("fall_candidate")),
             }
             for person in people
+        ] + [
+            {
+                "category": pet.get("type") or pet.get("label") or "pet",
+                "label_zh": pet.get("label_zh"),
+                "confidence": pet.get("confidence"),
+                "bbox": pet.get("bbox"),
+                "scene_zone_label": pet.get("scene_zone_label"),
+                "scene_zone_label_zh": pet.get("scene_zone_label_zh"),
+                "person_evidence_eligible": False,
+                "fall_evidence_eligible": False,
+            }
+            for pet in pets
         ]
         quality_flags = list(analysis.get("tags") or [])
         raw_confidence_summary = {
             "person_confidences": [person.get("confidence") for person in people if person.get("confidence") is not None],
+            "pet_confidences": [pet.get("confidence") for pet in pets if pet.get("confidence") is not None],
             "motion_score": analysis.get("motion_score"),
             "brightness": analysis.get("brightness"),
             "contrast": analysis.get("contrast"),

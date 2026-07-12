@@ -99,6 +99,7 @@ class VisionPipeline:
         quality = self.quality.analyze(frame, previous_frame, runtime_config)
         person = self.person.analyze(frame, runtime_config)
         raw_people = list(person.get("people") or [])
+        raw_pets = list(person.get("pets") or [])
         raw_pose = self.pose.analyze(frame, runtime_config)
         pose = self._pose_with_short_cache(raw_pose, runtime_config, quality)
         scene_candidates = self._scene_objects_without_human_overlap(
@@ -113,6 +114,13 @@ class VisionPipeline:
             list(scene.get("scene_zones") or []),
             runtime_config,
         )
+        pets, suppressed_pets = self._suppress_pet_display_content(
+            raw_pets,
+            list(scene.get("scene_zones") or []),
+            runtime_config,
+        )
+        screen_content_suppressed.extend(suppressed_pets)
+        pets = self._annotate_pets_with_scene(pets, list(scene.get("scene_zones") or []))
         raw_people, annotated_poses = self.scene.annotate(
             raw_people,
             filtered_poses,
@@ -137,6 +145,7 @@ class VisionPipeline:
         ):
             people = [person for person in people if not person.get("presence_candidate")]
         self._update_person_result_after_pose_refine(person, people, pose.get("poses") or [])
+        self._update_pet_result(person, pets)
         self._update_person_scene_context(person, scene)
         fall = self.fall.analyze(self._people_for_fall_alerts(people, raw_people, runtime_config), runtime_config)
         pose_fall_candidate = bool(pose.get("pose_fall_candidate"))
@@ -176,6 +185,7 @@ class VisionPipeline:
             *fall.get("tags", []),
             *activity.get("tags", []),
             *fire.get("tags", []),
+            *(["pet_detected"] if pets else []),
             *(["scene_normal_lying_surface"] if scene.get("normal_lying_zones") else []),
         ])
 
@@ -223,6 +233,9 @@ class VisionPipeline:
             "thresholds": thresholds,
             "person_count": person.get("person_count"),
             "people": people,
+            "pet_count": len(pets),
+            "pets": pets,
+            "pet_types": sorted({str(pet.get("type") or "") for pet in pets if pet.get("type")}),
             "scene_objects": scene.get("scene_objects") or [],
             "scene_zones": scene.get("scene_zones") or [],
             "normal_lying_zones": scene.get("normal_lying_zones") or [],
@@ -673,6 +686,91 @@ class VisionPipeline:
             [item for item in poses if keep(item, "pose")],
             suppressed,
         )
+
+    def _suppress_pet_display_content(
+        self,
+        pets: list[Dict[str, Any]],
+        scene_zones: list[Dict[str, Any]],
+        config: Dict[str, Any],
+    ) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
+        if not config.get("screen_content_suppression_enabled", True):
+            return pets, []
+        display_zones = [
+            zone for zone in scene_zones
+            if zone.get("stable") and str(zone.get("label") or "") == "tv" and self._valid_box(zone.get("bbox"))
+        ]
+        if not display_zones:
+            return pets, []
+        min_containment = float(config.get("screen_content_min_containment") or 0.86)
+        max_area_ratio = float(config.get("screen_content_max_area_ratio") or 0.90)
+        kept: list[Dict[str, Any]] = []
+        suppressed: list[Dict[str, Any]] = []
+        for pet in pets:
+            pet_box = pet.get("bbox")
+            matched_zone = next((
+                zone for zone in display_zones
+                if self._box_intersection_ratio(pet_box, zone.get("bbox")) >= min_containment
+                and self._box_area(pet_box) / max(1.0, self._box_area(zone.get("bbox"))) <= max_area_ratio
+            ), None)
+            if matched_zone is None:
+                kept.append(pet)
+                continue
+            suppressed.append({
+                "kind": "pet",
+                "type": pet.get("type"),
+                "bbox": pet_box,
+                "confidence": pet.get("confidence"),
+                "scene_zone_id": matched_zone.get("id"),
+                "scene_zone_label": "tv",
+                "scene_zone_label_zh": matched_zone.get("label_zh") or "电视",
+                "reason": "inside_stable_display_surface",
+            })
+        return kept, suppressed
+
+    def _annotate_pets_with_scene(
+        self,
+        pets: list[Dict[str, Any]],
+        scene_zones: list[Dict[str, Any]],
+    ) -> list[Dict[str, Any]]:
+        stable_zones = [zone for zone in scene_zones if zone.get("stable") and self._valid_box(zone.get("bbox"))]
+        annotated = []
+        for pet in pets:
+            pet_box = pet.get("bbox")
+            candidates = [
+                (self._box_intersection_ratio(pet_box, zone.get("bbox")), zone)
+                for zone in stable_zones
+            ]
+            overlap, zone = max(candidates, key=lambda item: item[0], default=(0.0, None))
+            if zone is None or overlap < 0.12:
+                annotated.append(pet)
+                continue
+            annotated.append({
+                **pet,
+                "scene_zone_id": zone.get("id"),
+                "scene_zone_label": zone.get("label"),
+                "scene_zone_label_zh": zone.get("label_zh"),
+                "scene_zone_bbox": zone.get("bbox"),
+                "scene_zone_overlap": round(overlap, 4),
+            })
+        return annotated
+
+    def _update_pet_result(self, person: Dict[str, Any], pets: list[Dict[str, Any]]) -> None:
+        person["pets"] = pets
+        person["pet_count"] = len(pets)
+        person["pet_types"] = sorted({str(pet.get("type") or "") for pet in pets if pet.get("type")})
+        person["tags"] = self._dedupe_tags([
+            *(tag for tag in (person.get("tags") or []) if tag != "pet_detected"),
+            *(["pet_detected"] if pets else []),
+        ])
+        result = person.get("result")
+        if result is not None:
+            result.tags = person["tags"]
+            result.data = {
+                **result.data,
+                "pets": pets,
+                "pet_count": len(pets),
+                "pet_types": person["pet_types"],
+            }
 
     def _update_person_scene_context(self, person: Dict[str, Any], scene: Dict[str, Any]) -> None:
         person["scene_objects"] = scene.get("scene_objects") or []

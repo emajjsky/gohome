@@ -777,6 +777,11 @@ function snapshotPeople(snapshot) {
   return Array.isArray(people) ? people : [];
 }
 
+function snapshotPets(snapshot) {
+  const pets = snapshot?.analysis?.pets;
+  return Array.isArray(pets) ? pets : [];
+}
+
 function snapshotPoses(snapshot) {
   const poses = snapshot?.analysis?.poses;
   return Array.isArray(poses)
@@ -819,6 +824,7 @@ function tagLabel(tag) {
     low_motion: "低变化",
     person_detected: "有人",
     person_presence_candidate: "人体存在候选",
+    pet_detected: "检测到宠物",
     pose_detected: "骨架确认",
     pose_tracked: "骨架跟踪",
     pose_validated_person: "骨架确认人形",
@@ -985,6 +991,7 @@ function renderDetectionOverlay(snapshot) {
   const rect = imageFitRect(snapshot);
   const mode = state.previewAlgorithm || "quality";
   const people = overlayPeopleForMode(snapshot, mode);
+  const pets = mode === "unified" ? snapshotPets(snapshot) : [];
   const poses = shouldRenderPoseForMode(mode) ? snapshotPoses(snapshot) : [];
   const fallRuntime = latestFallRuntime();
   const fallActive = ["suspect", "confirming", "confirmed"].includes(fallRuntime.stage);
@@ -1019,7 +1026,12 @@ function renderDetectionOverlay(snapshot) {
         return { bbox: [x1, y1, x2, y2], label: matchesFallTarget ? `${label} · 跌倒过程复核` : label, kind: tracked ? "tracked" : kind };
       })
     : [];
-  const boxes = [...sceneBoxes, ...personBoxes];
+  const petBoxes = pets.map((pet) => ({
+    bbox: pet.bbox,
+    label: `${pet.label_zh || (pet.type === "dog" ? "狗" : "猫")}${pet.confidence ? ` · ${Math.round(Number(pet.confidence) * 100)}%` : ""}${pet.scene_zone_label_zh ? ` · ${pet.scene_zone_label_zh}` : ""}`,
+    kind: "pet",
+  }));
+  const boxes = [...sceneBoxes, ...petBoxes, ...personBoxes];
   if (!snapshot || !rect) {
     overlay.innerHTML = "";
     overlay.removeAttribute("style");
@@ -1099,6 +1111,7 @@ function renderPerceptionTargetList(snapshot) {
   const analysis = snapshot.analysis || {};
   const poses = snapshotPoses(snapshot);
   const people = snapshotPeople(snapshot);
+  const pets = snapshotPets(snapshot);
   const scenes = unifiedSceneTargets(snapshot);
   const fallRuntime = latestFallRuntime();
   const fallActive = ["suspect", "confirming", "confirmed"].includes(fallRuntime.stage);
@@ -1119,6 +1132,18 @@ function renderPerceptionTargetList(snapshot) {
       </div>
     `);
   }
+  for (const pet of pets) {
+    const label = pet.label_zh || (pet.type === "dog" ? "狗" : "猫");
+    const confidence = pet.confidence ? `置信 ${Math.round(Number(pet.confidence) * 100)}%` : "";
+    const sceneText = pet.scene_zone_label_zh || "";
+    rows.push(`
+      <div class="perception-target-row pet-target">
+        <span class="perception-target-icon" aria-hidden="true">宠</span>
+        <div><strong>${escapeHtml(label)}</strong><span>${escapeHtml([sceneText, confidence].filter(Boolean).join(" · ") || "宠物活动")}</span></div>
+        <em>独立识别</em>
+      </div>
+    `);
+  }
   for (const scene of scenes.slice(0, 6)) {
     rows.push(`
       <div class="perception-target-row scene-target">
@@ -1129,7 +1154,7 @@ function renderPerceptionTargetList(snapshot) {
     `);
   }
   if (!rows.length) {
-    rows.push('<div class="empty-state">当前画面没有识别到人物或场景目标。</div>');
+    rows.push('<div class="empty-state">当前画面没有识别到人物、宠物或场景目标。</div>');
   }
   target.innerHTML = rows.join("");
   const sceneStatus = String(analysis.scene_map_status || "empty");
@@ -1150,7 +1175,9 @@ function renderSnapshot(snapshot) {
   setText("snapshotBrightness", fmtNumber(analysis.brightness ?? snapshot.brightness, 1));
   setText("snapshotContrast", fmtNumber(analysis.contrast, 1));
   setText("snapshotMotion", analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4));
-  setText("snapshotPeople", snapshot.person_count ?? analysis.person_count ?? "-");
+  const personCount = snapshot.person_count ?? analysis.person_count ?? "-";
+  const petCount = analysis.pet_count ?? snapshotPets(snapshot).length;
+  setText("snapshotPeople", petCount ? `${personCount} / 宠${petCount}` : personCount);
   setText("snapshotPoseCount", analysis.pose_count ?? snapshotPoses(snapshot).length);
   setText("snapshotSceneCount", unifiedSceneTargets(snapshot).length);
   setText("snapshotFireState", analysis.fire_event_candidate ? "事件候选" : analysis.fire_candidate ? "线索复核" : "正常");
@@ -1174,6 +1201,7 @@ function renderDetectionSummary(snapshot) {
   }
   const analysis = snapshot?.analysis || {};
   const people = snapshotPeople(snapshot);
+  const pets = snapshotPets(snapshot);
   const fallCandidate = Boolean(analysis.fall_candidate);
   const blackScreen = Boolean(analysis.black_screen);
   const backend = analysis.detector_backend || state.detectorBackend || "basic";
@@ -1184,7 +1212,9 @@ function renderDetectionSummary(snapshot) {
       ? "画面异常"
       : people.length
         ? "检测到人"
-        : backend === "demo"
+        : pets.length
+          ? `检测到 ${pets.length} 只宠物`
+          : backend === "demo"
           ? "演示检测"
           : "画面正常";
   const previewTitle = previewSummaryTitle(baseTitle, { analysis, people, blackScreen, fallCandidate });
@@ -1195,6 +1225,7 @@ function renderDetectionSummary(snapshot) {
     `对比度 ${fmtNumber(analysis.contrast, 1)}`,
     `变化 ${analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4)}`,
     `人数 ${personCount}`,
+    ...(pets.length ? [`宠物 ${pets.length}`] : []),
   ];
   target.innerHTML = `<span class="status-pill ${levelClass}">${escapeHtml(title)}</span><p>${escapeHtml(details.join(" · "))}</p>`;
 }
@@ -1367,6 +1398,7 @@ function algorithmHitState(snapshot) {
   const mode = state.previewAlgorithm || "quality";
   const analysis = snapshot?.analysis || {};
   const people = snapshotPeople(snapshot);
+  const pets = snapshotPets(snapshot);
   const presenceCount = presenceCandidateCount(snapshot);
   const poses = snapshotPoses(snapshot);
   const result = analysis.algorithm_results?.[selectedAlgorithmKey(mode)] || {};
@@ -1387,16 +1419,16 @@ function algorithmHitState(snapshot) {
     const fallCandidate = ["suspect", "confirming", "confirmed"].includes(fallRuntime.stage);
     const fireCandidate = Boolean(analysis.fire_candidate || analysis.fire_event_candidate);
     const cameraAbnormal = Boolean(analysis.black_screen);
-    hit = personCount > 0 || poses.length > 0;
+    hit = personCount > 0 || poses.length > 0 || pets.length > 0;
     level = fallCandidate || fireCandidate || cameraAbnormal ? "critical" : hit ? "hit" : "idle";
     title = fallCandidate
       ? fallStageInfo(fallRuntime.stage, { personCount }).title
-      : fireCandidate ? "火灾线索复核中" : cameraAbnormal ? "摄像头画面异常" : hit ? `检测到 ${personCount || poses.length} 人` : "当前画面无人";
+      : fireCandidate ? "火灾线索复核中" : cameraAbnormal ? "摄像头画面异常" : personCount > 0 || poses.length > 0 ? `检测到 ${personCount || poses.length} 人` : pets.length ? `当前未看到人，检测到 ${pets.length} 只宠物` : "当前画面无人";
     const postureSummary = [...new Set(poses.map((pose) => postureLabel(pose.posture)).filter(Boolean))].join("、");
     const sceneSummary = [...new Set(unifiedSceneTargets(snapshot).map(sceneLabel).filter(Boolean))].join("、");
     detail = [postureSummary ? `姿态 ${postureSummary}` : "姿态待识别", sceneSummary ? `场景 ${sceneSummary}` : "场景学习中"].join(" · ");
-    scoreLabel = "当前人物";
-    score = `${personCount || poses.length || 0} 人 / ${poses.length} 组骨架`;
+    scoreLabel = "当前目标";
+    score = `${personCount || poses.length || 0} 人 / ${pets.length} 只宠物`;
   } else if (mode === "person") {
     scoreLabel = poses.length ? "骨架置信" : "人形置信";
     hit = personCount > 0 || poses.length > 0;

@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.detect_agent import DetectAgent
+from app.rule_engine import build_event_evidence
 from app.vision.fall import FallAnalyzer
 from app.vision.person_yolo import PersonDetector
 from app.vision.pipeline import VisionPipeline
@@ -77,6 +78,7 @@ def main() -> None:
     scene_human_filter = verify_scene_context_rejects_human_shaped_furniture()
     display_suppression = verify_display_content_suppression()
     scene_merge = verify_scene_context_survives_pose_merge()
+    pet_isolation = verify_pet_detection_isolated_from_people_and_fall(normal)
 
     checks = {
         "black_screen": bool(black_result["black_screen"]),
@@ -125,6 +127,11 @@ def main() -> None:
         "display_real_people_retained": display_suppression["real_people_retained"],
         "scene_merge_normal_lying": scene_merge["normal_lying_zone"],
         "scene_merge_label": scene_merge["scene_zone_label"],
+        "pet_count": pet_isolation["pet_count"],
+        "pet_person_count": pet_isolation["person_count"],
+        "pet_fall_candidate": pet_isolation["fall_candidate"],
+        "pet_event_evidence_count": pet_isolation["event_evidence_count"],
+        "pet_screen_suppressed": pet_isolation["screen_suppressed"],
         "pose_result_status": fire_result.get("algorithm_results", {}).get("pose", {}).get("status"),
         "pipeline_version": fire_result.get("pipeline_version"),
         "algorithm_results": sorted((fire_result.get("algorithm_results") or {}).keys()),
@@ -182,6 +189,14 @@ def main() -> None:
         raise SystemExit("a real person extending outside the TV zone must remain visible")
     if not checks["scene_merge_normal_lying"] or checks["scene_merge_label"] != "couch":
         raise SystemExit("pose refinement must not erase a person box already matched to a couch or bed")
+    if checks["pet_count"] != 1 or checks["pet_person_count"] != 0:
+        raise SystemExit("cat/dog detections must remain independent from person_count")
+    if checks["pet_fall_candidate"]:
+        raise SystemExit("cat/dog detections must never enter fall analysis")
+    if checks["pet_event_evidence_count"] != 1:
+        raise SystemExit("event evidence must preserve independent pet metadata")
+    if checks["pet_screen_suppressed"] != 1:
+        raise SystemExit("pets displayed inside a stable TV zone must be suppressed")
     if checks["pose_det_frequency_with_tracking"] != 8:
         raise SystemExit("RTMPose tracking mode should preserve configured detector frequency")
     if checks["pose_fall_low_quality_eligible"]:
@@ -312,6 +327,51 @@ def verify_display_content_suppression() -> dict:
         "suppressed_poses": len([item for item in suppressed if item.get("kind") == "pose"]),
         "real_people_retained": len(people),
         "remaining_poses": len(poses),
+    }
+
+
+def verify_pet_detection_isolated_from_people_and_fall(frame: np.ndarray) -> dict:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="yolo",
+    )
+    pet = pipeline.person.pet_box(
+        120.0,
+        190.0,
+        260.0,
+        330.0,
+        frame.shape[1],
+        frame.shape[0],
+        confidence=0.84,
+        class_id=15,
+        pet_type="cat",
+        label_zh="猫",
+    )
+    pipeline.person._detect_yolo_entities = lambda current_frame, **kwargs: ([], [pet], [])  # type: ignore[method-assign]
+    analysis = pipeline.analyze(frame, config={"pet_detection_enabled": True})
+    evidence = build_event_evidence(
+        event_type="no_person",
+        summary="未检测到人物",
+        level="warning",
+        analysis=analysis,
+        rule={"rule_type": "no_person"},
+    )
+    tv_zone = [{
+        "id": "tv-pet",
+        "bbox": [80.0, 120.0, 300.0, 350.0],
+        "label": "tv",
+        "label_zh": "电视",
+        "stable": True,
+    }]
+    _, suppressed = pipeline._suppress_pet_display_content([pet], tv_zone, {})
+    return {
+        "pet_count": analysis.get("pet_count"),
+        "person_count": analysis.get("person_count"),
+        "fall_candidate": bool(analysis.get("fall_candidate")),
+        "event_evidence_count": len(evidence.get("objects", {}).get("pets") or []),
+        "screen_suppressed": len(suppressed),
     }
 
 
