@@ -6379,6 +6379,7 @@ function createLocalAppServer(options = {}) {
             writeError(res, 404, "not found");
             return;
         }
+        const stat = fs.statSync(filePath);
         const ext = path.extname(filePath).toLowerCase();
         const types = {
             ".html": "text/html; charset=utf-8",
@@ -6391,11 +6392,34 @@ function createLocalAppServer(options = {}) {
             ".jpeg": "image/jpeg",
             ".svg": "image/svg+xml",
             ".ico": "image/x-icon",
+            ".woff2": "font/woff2",
+            ".woff": "font/woff",
+            ".ttf": "font/ttf",
         };
-        write(res, 200, fs.readFileSync(filePath), {
+        const etag = `W/\"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}\"`;
+        const versionedAsset = [".css", ".js"].includes(ext) && url.searchParams.has("v");
+        const cacheControl = [".html", ".json", ".webmanifest"].includes(ext)
+            ? "no-cache"
+            : versionedAsset || [".woff2", ".woff", ".ttf"].includes(ext)
+                ? "public, max-age=31536000, immutable"
+                : [".png", ".jpg", ".jpeg", ".svg", ".ico"].includes(ext)
+                    ? "public, max-age=604800, stale-while-revalidate=86400"
+                    : "public, max-age=300, stale-while-revalidate=60";
+        const headers = {
             "Content-Type": types[ext] || "application/octet-stream",
-            "Cache-Control": "no-cache",
-        });
+            "Cache-Control": cacheControl,
+            "ETag": etag,
+            "Last-Modified": stat.mtime.toUTCString(),
+        };
+        if (String(req.headers["if-none-match"] || "") === etag) {
+            res.writeHead(304, {
+                "Access-Control-Allow-Origin": "*",
+                ...headers,
+            });
+            res.end();
+            return;
+        }
+        write(res, 200, fs.readFileSync(filePath), headers);
     }
 
     async function route(req, res) {
