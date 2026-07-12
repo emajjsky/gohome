@@ -10755,3 +10755,33 @@ SafetyIncident 与提醒：
 - 腾讯云 `gohome-app` 已同步新复核提示和 evidence objects 上下文，服务重启后 active；生产未配置自定义视觉提示词，因此使用本次更新的默认提示。
 
 当前边界：App 尚未收到实时宠物状态，只有安全事件证据和研发管理页已打通。下一步需要在真实猫狗画面上验证置信度、电视抑制、家具遮挡和双摄性能，再把最近宠物活动时间与类型加入设备状态同步和普通 App 家庭状态；本阶段不做宠物身份、健康、情绪或宠物告警。
+
+## 102. 2026-07-12 盒子事件日志与云端 SafetyIncident 对账
+
+事件数据链：
+
+- 腾讯云新增 `GET /api/v1/device/event-log`，使用已签发设备令牌过滤当前盒子的事件，返回 `edge_event_id / cloud event_id / incident / verification / resolution / acknowledged`。
+- 树莓派 `UploadAgent` 新增事件日志读取；`GET /api/event-log` 按本地 Event ID 聚合本地事件、event/media upload job 和云端事件。
+- 云端收到本地事件后以 `edge_event_id` 回连，上传状态依次为 local_only、pending、uploading、failed 或 cloud_received；联网恢复后沿用原幂等任务，不创建第二条事件。
+
+管理页面：
+
+- 新增 `/admin/events.html` 和主导航“事件日志”。页面只展示正式 Event，不展示普通姿态、PresenceSession、PostureEpisode、observation log 或未晋级候选。
+- 每条记录展示盒子触发、证据上传、云端接收和模型/incident 状态四段链路，并显示本地/云端 ID、摄像头、时间、规则证据、模型原因和技术日志。
+- 支持按状态和类型筛选、自动刷新、查看本地证据；云端 incident 为最终状态，盒子后台没有“标记已处理/已收到”操作。
+
+误报反馈：
+
+- 云端新增 `POST /api/v1/device/events/{edge_event_id}/feedback`，当前只接受 `false_positive`，并校验事件属于当前设备。
+- 误报会给关联事件写入 `manual_feedback.source=edge_admin`，将同 incident 事件统一转为 rejected，记录 transition，归档开放消息和持续提醒，原始事件与截图不删除。
+- 盒子新增 `POST /api/events/{local_event_id}/false-positive`；只有云端成功后才更新本地 resolution，避免本地已排除、云端仍告警的状态分叉。
+
+验证与部署：
+
+- `verify-local-app-server.js` 覆盖设备事件日志、edge ID 映射、confirmed 状态和误报后 rejected 状态。
+- `verify-upload-agent.py` 覆盖云端日志读取和误报提交；`npm test`、Python 编译、JavaScript 语法、视觉流水线和跌倒规则回归全部通过。
+- 使用模拟真实结构的三类事件完成 Chrome headless 1440x1000 和 390x844 页面检查；桌面四段链路完整，移动端无首屏侧栏阻塞。
+- 真实树莓派聚合返回 cloud_ok=true；本地 `#1877` 对应云端 `#7`。历史本地 `false_positive` 已通过新接口同步，云端结果为 `resolution=false_positive / incident=rejected`。
+- `gohome-edge-agent` 和腾讯云 `gohome-app` 部署后均为 active。
+
+当前边界：盒子事件日志是研发与运维入口，不替代普通 App 事件页。App 后续应读取同一 SafetyIncident 时间线和多摄像头证据；不得根据盒子本地 acknowledged 字段另建用户事故状态。
