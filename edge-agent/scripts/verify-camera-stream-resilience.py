@@ -49,7 +49,8 @@ def main() -> None:
     black = np.zeros((48, 64, 3), dtype=np.uint8)
     captures = [
         FakeCapture([normal, None]),
-        FakeCapture([black, recovered, recovered]),
+        FakeCapture([black, black, black, black, black]),
+        FakeCapture([recovered, recovered]),
     ]
     opens = {"count": 0}
     agent = CameraAgent(Path("/tmp/gohome-stream-test"))
@@ -70,22 +71,26 @@ def main() -> None:
             max_height=48,
             drop_stale_frames=0,
         )
-        first = decode_part(next(stream))
-        second = decode_part(next(stream))
-        third = decode_part(next(stream))
+        frames = [decode_part(next(stream)) for _ in range(7)]
         stream.close()
     finally:
         camera_module.time.sleep = original_sleep
 
-    if opens["count"] < 2:
-        raise SystemExit("stream did not reopen capture after a read failure")
-    if float(first.mean()) < 80:
+    if opens["count"] < 3:
+        raise SystemExit("stream did not reopen capture after read failure and sustained black frames")
+    if float(frames[0].mean()) < 80:
         raise SystemExit("first valid frame was not emitted")
-    if float(second.mean()) < 80:
-        raise SystemExit("transient black frame should retain the last valid frame")
-    if float(third.mean()) < 120:
+    if any(float(frame.mean()) < 80 for frame in frames[1:6]):
+        raise SystemExit("black decoder frames must never replace the last valid preview frame")
+    if float(frames[-1].mean()) < 120:
         raise SystemExit("stream did not recover to the next valid frame")
-    print({"ok": True, "capture_opens": opens["count"], "transient_black_retained": True, "recovered": True})
+    print({
+        "ok": True,
+        "capture_opens": opens["count"],
+        "black_frames_suppressed": 5,
+        "sustained_black_reconnected": True,
+        "recovered": True,
+    })
 
 
 if __name__ == "__main__":

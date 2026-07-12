@@ -26,6 +26,7 @@ const state = {
   liveAnalysisErrorShown: false,
   candidateRecords: [],
   observationLogs: [],
+  cloudVerifications: null,
   toastTimer: null,
 };
 
@@ -778,7 +779,9 @@ function snapshotPeople(snapshot) {
 
 function snapshotPoses(snapshot) {
   const poses = snapshot?.analysis?.poses;
-  return Array.isArray(poses) ? poses : [];
+  return Array.isArray(poses)
+    ? poses.filter((pose) => pose?.person_evidence_eligible !== false && !pose?.rejection_stage)
+    : [];
 }
 
 function snapshotPoseEdges(snapshot) {
@@ -982,9 +985,7 @@ function renderDetectionOverlay(snapshot) {
   const rect = imageFitRect(snapshot);
   const mode = state.previewAlgorithm || "quality";
   const people = overlayPeopleForMode(snapshot, mode);
-  const poses = shouldRenderPoseForMode(mode)
-    ? snapshotPoses(snapshot).filter((pose) => mode !== "person" || pose.person_evidence_eligible !== false)
-    : [];
+  const poses = shouldRenderPoseForMode(mode) ? snapshotPoses(snapshot) : [];
   const fallRuntime = latestFallRuntime();
   const fallActive = ["suspect", "confirming", "confirmed"].includes(fallRuntime.stage);
   const sceneTargets = mode === "unified"
@@ -2373,6 +2374,85 @@ function renderObservationPanel(logs = state.observationLogs) {
   }).join("");
 }
 
+function verificationStatusLabel(status) {
+  const labels = {
+    pending: "等待复核",
+    verifying: "复核中",
+    retrying: "等待重试",
+    confirmed: "已确认",
+    rejected: "已排除",
+    uncertain: "需人工确认",
+    failed: "复核失败",
+    unavailable: "不可用",
+  };
+  return labels[String(status || "")] || status || "未知";
+}
+
+function verificationResultPills(record) {
+  const verification = record?.verification || {};
+  const result = verification.result || record?.job?.response_payload?.parsed || {};
+  const pills = [];
+  if (result.person_count !== undefined) pills.push(`人数 ${result.person_count}`);
+  const postureLabels = { standing: "站立", sitting: "坐姿", squatting: "蹲姿", bending: "弯腰", lying: "躺姿", fallen: "倒地", unknown: "未识别" };
+  const surfaceLabels = { floor: "地面", bed: "床", sofa: "沙发", chair: "椅子", unknown: "未知" };
+  if (result.posture) pills.push(`姿态 ${postureLabels[result.posture] || result.posture}`);
+  if (result.surface) pills.push(`位置 ${surfaceLabels[result.surface] || result.surface}`);
+  if (result.confidence !== undefined) pills.push(`置信 ${Math.round(Number(result.confidence) * 100)}%`);
+  if (verification.attempt_count || record?.job?.attempt_count) {
+    pills.push(`尝试 ${verification.attempt_count || record.job.attempt_count} 次`);
+  }
+  return pills.slice(0, 5);
+}
+
+function renderCloudVerifications(payload = state.cloudVerifications) {
+  const list = $("verificationList");
+  if (!list) return;
+  if (!payload?.ok) {
+    setText("verificationPanelStatus", payload?.configured === false ? "云端未配置" : "连接失败");
+    list.innerHTML = `<div class="empty-state">${escapeHtml(payload?.reason || "暂时无法读取云端复核日志。")}</div>`;
+    return;
+  }
+  setText("verificationPanelStatus", payload.enabled && payload.configured ? "模型已连接" : "模型未启用");
+  const records = Array.isArray(payload.records) ? payload.records : [];
+  if (!records.length) {
+    list.innerHTML = '<div class="empty-state">当前没有需要云端模型复核的安全事件。</div>';
+    return;
+  }
+  list.innerHTML = records.map((record) => {
+    const verification = record.verification || {};
+    const result = verification.result || record.job?.response_payload?.parsed || {};
+    const error = verification.error || record.job?.error_message || "";
+    const unavailableReasons = {
+      missing_event_evidence: "事件缺少可供模型复核的截图证据。",
+      model_not_configured: "云端视觉复核模型尚未配置。",
+    };
+    const reason = result.reason
+      || error
+      || unavailableReasons[verification.reason]
+      || (verification.status === "pending" ? "事件证据已上传，等待模型处理。" : "模型任务已记录。" );
+    const pills = verificationResultPills(record);
+    const status = verification.status || record.job?.output_status;
+    return `
+      <article class="candidate-card verification-card ${status === "confirmed" ? "verified" : status === "failed" ? "verification-failed" : ""}">
+        <div class="candidate-card-head">
+          <strong>${escapeHtml(record.summary || eventTypeLabel(record.event_type))}</strong>
+          <span>${escapeHtml(verificationStatusLabel(status))}</span>
+        </div>
+        <p>${escapeHtml([record.room, fmtTime(record.updated_at || record.occurred_at), record.job?.model].filter(Boolean).join(" · "))}</p>
+        <p>${escapeHtml(reason)}</p>
+        ${pills.length ? `<div class="candidate-evidence">${pills.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+      </article>
+    `;
+  }).join("");
+}
+
+async function loadCloudVerifications() {
+  if (!$("verificationList")) return;
+  const payload = await api("/api/cloud-verifications?limit=12");
+  state.cloudVerifications = payload;
+  renderCloudVerifications(payload);
+}
+
 async function loadObservationLogs() {
   const list = $("observationList");
   if (!list) return;
@@ -2491,6 +2571,7 @@ async function refreshAll() {
     await loadCandidates().catch(() => null);
     await loadObservationLogs().catch(() => null);
     await loadUploadQueueSummary().catch(() => null);
+    await loadCloudVerifications().catch(() => null);
   } catch (error) {
     showToast(userSafeError(error.message || "无法连接 edge-agent"));
   }
@@ -2642,6 +2723,7 @@ document.addEventListener("DOMContentLoaded", () => {
       loadCandidates().catch(() => null);
       loadObservationLogs().catch(() => null);
       loadUploadQueueSummary().catch(() => null);
+      loadCloudVerifications().catch(() => null);
     }
   }, 6000);
 });

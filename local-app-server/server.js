@@ -5625,6 +5625,65 @@ function createLocalAppServer(options = {}) {
         });
     }
 
+    function deviceVisionVerificationStatus(req, res, url) {
+        if (!requireDevice(req, res)) return;
+        const issuedToken = issuedDeviceTokenFromRequest(req);
+        const deviceId = String(issuedToken?.device_id || currentEdgeDeviceId() || "");
+        const familyId = normalizeNumber(issuedToken?.family_id, null);
+        const limit = Math.max(1, Math.min(50, normalizeNumber(url.searchParams.get("limit"), 12)));
+        const deviceEvents = store.db.events
+            .filter((event) => {
+                const camera = store.db.cameras[String(event.camera_id || "")] || {};
+                const edgeDeviceId = String(event.payload?.edge_upload?.edge_device_id || camera.device_id || "");
+                if (deviceId && edgeDeviceId) return edgeDeviceId === deviceId;
+                if (familyId) return Number(event.family_id || camera.family_id) === Number(familyId);
+                return false;
+            })
+            .filter((event) => event.payload?.verification)
+            .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")))
+            .slice(0, limit);
+        const records = deviceEvents.map((event) => {
+            const verification = event.payload?.verification || {};
+            const job = verification.job_id
+                ? store.db.model_generation_jobs.find((item) => String(item.id) === String(verification.job_id))
+                : verificationJobForEvent(event.id);
+            return {
+                event_id: event.id,
+                edge_event_id: event.edge_event_id || event.payload?.edge_upload?.edge_event_id || "",
+                event_type: event.event_type,
+                summary: event.summary,
+                level: event.level,
+                room: event.room || event.camera_name || "",
+                occurred_at: event.occurred_at,
+                updated_at: event.updated_at,
+                verification,
+                job: job ? {
+                    id: job.id,
+                    output_status: job.output_status,
+                    model: job.model,
+                    attempt_count: Number(job.metadata?.attempt_count || 0),
+                    error_message: job.error_message || "",
+                    response_payload: job.response_payload || {},
+                    created_at: job.created_at,
+                    updated_at: job.updated_at,
+                } : null,
+            };
+        });
+        write(res, 200, {
+            ok: true,
+            device_id: deviceId,
+            enabled: visionVerificationEnabled(),
+            configured: Boolean(
+                visionVerificationRuntimeConfig().base_url
+                && visionVerificationRuntimeConfig().api_key
+                && visionVerificationRuntimeConfig().model
+            ),
+            running: visionVerificationRunning,
+            records,
+            generated_at: nowIso(),
+        });
+    }
+
     async function handleHeartbeat(req, res) {
         if (!requireDevice(req, res)) return;
         const payload = await parseJsonBody(req);
@@ -6707,6 +6766,11 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "POST" && pathname === "/api/v1/device/events") {
                 await handleDeviceEvent(req, res);
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/v1/device/vision-verifications") {
+                deviceVisionVerificationStatus(req, res, url);
                 return;
             }
 

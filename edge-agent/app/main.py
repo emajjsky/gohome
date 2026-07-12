@@ -1293,6 +1293,7 @@ def admin_api_requires_auth(path: str) -> bool:
         "/api/notify",
         "/api/observation-logs",
         "/api/upload-jobs",
+        "/api/cloud-verifications",
         "/snapshots",
     )
     return any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected_prefixes)
@@ -3097,6 +3098,19 @@ def list_upload_jobs(
 @app.get("/api/upload-jobs/summary")
 def upload_jobs_summary() -> Dict[str, Any]:
     return storage.upload_queue_summary()
+
+
+@app.get("/api/cloud-verifications")
+def cloud_verification_status(limit: int = 12) -> Dict[str, Any]:
+    try:
+        return upload_agent.vision_verification_status(limit=max(1, min(limit, 50)))
+    except Exception as exc:
+        return {
+            "ok": False,
+            "configured": upload_agent.status().get("configured", False),
+            "reason": str(exc),
+            "records": [],
+        }
 
 
 @app.get("/api/events/{event_id}")

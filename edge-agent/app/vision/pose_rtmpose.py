@@ -109,24 +109,35 @@ class RtmposeAnalyzer:
 
             try:
                 keypoints, scores, inference_retried = self._infer_pose(frame)
-                poses = self._extract_poses(keypoints, scores, frame)
+                raw_poses = self._extract_poses(keypoints, scores, frame)
             except Exception as exc:
                 return self._disabled_result(f"RTMPose 推理失败：{exc}", status="error")
 
         threshold = float(config.get("pose_fall_threshold", self.fall_threshold))
-        raw_pose_fall_score = max([float(pose.get("fall_score") or 0.0) for pose in poses], default=0.0)
+        raw_pose_fall_score = max([float(pose.get("fall_score") or 0.0) for pose in raw_poses], default=0.0)
         rejected_fall_candidates = 0
-        for pose in poses:
+        poses: list[Dict[str, Any]] = []
+        rejected_poses: list[Dict[str, Any]] = []
+        for pose in raw_poses:
             quality = self._fall_evidence_quality(pose, config)
             pose["raw_fall_score"] = pose.get("fall_score")
             pose["fall_evidence_eligible"] = quality["eligible"]
             pose["person_evidence_eligible"] = quality["eligible"]
             pose["fall_quality"] = quality
-            if float(pose.get("fall_score") or 0.0) >= threshold and not quality["eligible"]:
-                rejected_fall_candidates += 1
+            if not quality["eligible"]:
+                if float(pose.get("fall_score") or 0.0) >= threshold:
+                    rejected_fall_candidates += 1
                 pose["action_hints"] = [
                     hint for hint in pose.get("action_hints", []) if hint != "fall_candidate"
                 ]
+                rejected_poses.append({
+                    **pose,
+                    "fall_score": 0.0,
+                    "rejection_stage": "pose_quality",
+                    "rejection_reasons": list(quality.get("reasons") or []),
+                })
+                continue
+            poses.append(pose)
 
         pose_count = len(poses)
         tags: list[str] = []
@@ -177,7 +188,9 @@ class RtmposeAnalyzer:
             tags=tags,
             data={
                 "pose_count": pose_count,
+                "raw_pose_count": len(raw_poses),
                 "poses": poses,
+                "rejected_poses": rejected_poses,
                 "pose_skeleton_edges": SKELETON_EDGES,
                 "pose_action_hints": action_hints,
                 "pose_fall_score": round(pose_fall_score, 4),
@@ -193,7 +206,9 @@ class RtmposeAnalyzer:
         )
         return {
             "pose_count": pose_count,
+            "raw_pose_count": len(raw_poses),
             "poses": poses,
+            "rejected_poses": rejected_poses,
             "pose_skeleton_edges": SKELETON_EDGES,
             "pose_action_hints": action_hints,
             "pose_fall_score": round(pose_fall_score, 4),

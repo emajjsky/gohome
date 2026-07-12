@@ -5787,6 +5787,14 @@ body.admin-web-page .candidate-card.done {
   opacity: .78;
 }
 
+body.admin-web-page .verification-card.verified {
+  border-left-color: #178f55;
+}
+
+body.admin-web-page .verification-card.verification-failed {
+  border-left-color: #c34747;
+}
+
 body.admin-web-page .candidate-card-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

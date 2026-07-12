@@ -68,6 +68,20 @@ class UploadAgent:
             "last_result": self.last_result,
         }
 
+    def vision_verification_status(self, *, limit: int = 12) -> Dict[str, Any]:
+        configured, reason = self._configured()
+        if not configured:
+            return {
+                "ok": False,
+                "configured": False,
+                "reason": reason,
+                "records": [],
+            }
+        return self._request_json(
+            "GET",
+            f"/api/v1/device/vision-verifications?{urlencode({'limit': max(1, min(int(limit), 50))})}",
+        )
+
     def process_once(self, *, max_jobs: int | None = None) -> Dict[str, Any]:
         configured, reason = self._configured()
         if not configured:

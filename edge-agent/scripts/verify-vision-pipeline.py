@@ -69,6 +69,8 @@ def main() -> None:
     activity_temporal_result = verify_activity_temporal_candidates()
     pose_runtime_config = verify_pose_runtime_config()
     pose_fall_quality = verify_pose_fall_quality_gate()
+    pose_candidate_partition = verify_pose_candidate_partition()
+    pose_human_consistency = verify_pose_human_consistency_gate()
     pose_retry = verify_pose_transient_retry()
     pose_posture = verify_pose_posture_direction()
     scene_context = verify_scene_context_stabilizes_normal_lying_zone()
@@ -104,6 +106,12 @@ def main() -> None:
         "pose_det_frequency_with_tracking": pose_runtime_config["with_tracking"],
         "pose_fall_low_quality_eligible": pose_fall_quality["low_quality_eligible"],
         "pose_fall_valid_quality_eligible": pose_fall_quality["valid_quality_eligible"],
+        "pose_low_quality_visible_count": pose_candidate_partition["visible_count"],
+        "pose_low_quality_rejected_count": pose_candidate_partition["rejected_count"],
+        "pose_furniture_hallucination_count": pose_human_consistency["furniture_count"],
+        "pose_furniture_rejected_count": pose_human_consistency["furniture_rejected"],
+        "pose_real_lying_retained_count": pose_human_consistency["real_lying_retained"],
+        "pose_occluded_seated_retained_count": pose_human_consistency["occluded_seated_retained"],
         "pose_transient_retry_count": pose_retry["call_count"],
         "pose_transient_retry_used": pose_retry["retried"],
         "pose_front_seated_posture": pose_posture["front_seated"],
@@ -180,6 +188,14 @@ def main() -> None:
         raise SystemExit("low-confidence sofa-like skeleton must not become fall evidence")
     if not checks["pose_fall_valid_quality_eligible"]:
         raise SystemExit("valid pose must remain eligible as fall evidence")
+    if checks["pose_low_quality_visible_count"] != 0 or checks["pose_low_quality_rejected_count"] != 1:
+        raise SystemExit("low-quality sofa-like skeleton must remain diagnostic-only")
+    if checks["pose_furniture_hallucination_count"] != 0 or checks["pose_furniture_rejected_count"] != 1:
+        raise SystemExit("wide unmatched skeleton on stable furniture must be rejected")
+    if checks["pose_real_lying_retained_count"] != 1:
+        raise SystemExit("a genuine lying person matched by YOLO must remain visible")
+    if checks["pose_occluded_seated_retained_count"] != 1:
+        raise SystemExit("a coherent high-confidence occluded seated pose must remain visible")
     if checks["pose_transient_retry_count"] != 2 or not checks["pose_transient_retry_used"]:
         raise SystemExit("RTMPose transient NoneType failure should retry exactly once")
     if checks["pose_front_seated_posture"] != "sitting":
@@ -506,6 +522,99 @@ def verify_pose_fall_quality_gate() -> dict:
     return {
         "low_quality_eligible": low_quality["eligible"],
         "valid_quality_eligible": valid_quality["eligible"],
+    }
+
+
+def verify_pose_candidate_partition() -> dict:
+    analyzer = RtmposeAnalyzer(enabled=True)
+    low_quality_pose = synthetic_pose_candidate(
+        bbox=[99.3, 147.2, 544.8, 271.2],
+        confidence=0.329,
+        posture="lying",
+        body_aspect=3.375,
+    )
+    analyzer._ensure_ready = lambda: (True, "ready")  # type: ignore[method-assign]
+    analyzer._infer_pose = lambda frame: (None, None, False)  # type: ignore[method-assign]
+    analyzer._extract_poses = lambda keypoints, scores, frame: [low_quality_pose]  # type: ignore[method-assign]
+    result = analyzer.analyze(np.zeros((360, 640, 3), dtype=np.uint8), {})
+    return {
+        "visible_count": int(result.get("pose_count") or 0),
+        "rejected_count": len(result.get("rejected_poses") or []),
+    }
+
+
+def verify_pose_human_consistency_gate() -> dict:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+    )
+    furniture = [{
+        "id": "couch-1",
+        "bbox": [204.4, 200.3, 570.1, 350.2],
+        "label": "couch",
+        "stable": True,
+    }]
+    sofa_pose = synthetic_pose_candidate(
+        bbox=[99.3, 147.2, 544.8, 271.2],
+        confidence=0.44,
+        posture="lying",
+        body_aspect=3.375,
+    )
+    kept, rejected = pipeline._filter_pose_human_consistency([sofa_pose], [], furniture, {})
+    real_lying, _ = pipeline._filter_pose_human_consistency(
+        [sofa_pose],
+        [{"bbox": [115.0, 140.0, 540.0, 286.0], "confidence": 0.81}],
+        furniture,
+        {},
+    )
+    seated_pose = synthetic_pose_candidate(
+        bbox=[320.0, 105.0, 465.0, 338.0],
+        confidence=0.61,
+        posture="sitting",
+        body_aspect=0.62,
+    )
+    occluded_seated, _ = pipeline._filter_pose_human_consistency([seated_pose], [], furniture, {})
+    return {
+        "furniture_count": len(kept),
+        "furniture_rejected": len(rejected),
+        "real_lying_retained": len(real_lying),
+        "occluded_seated_retained": len(occluded_seated),
+    }
+
+
+def synthetic_pose_candidate(
+    *,
+    bbox: list[float],
+    confidence: float,
+    posture: str,
+    body_aspect: float,
+) -> dict:
+    names = [
+        "nose",
+        "left_eye",
+        "right_eye",
+        "left_shoulder",
+        "right_shoulder",
+        "left_hip",
+        "right_hip",
+        "left_knee",
+        "right_knee",
+        "left_ankle",
+        "right_ankle",
+    ]
+    return {
+        "bbox": bbox,
+        "confidence": confidence,
+        "posture": posture,
+        "posture_factors": {"body_aspect": body_aspect},
+        "fall_score": 0.90 if posture == "lying" else 0.18,
+        "action_hints": ["fall_candidate", "lying"] if posture == "lying" else ["seated_or_upper_body"],
+        "keypoints": [
+            {"name": name, "confidence": confidence, "visible": True, "x": 0.0, "y": 0.0}
+            for name in names
+        ],
     }
 
 

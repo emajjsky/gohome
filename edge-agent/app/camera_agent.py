@@ -309,7 +309,20 @@ class CameraAgent:
                     black_frame_streak += 1
                     if black_frame_streak == 1:
                         logger.warning("camera %s emitted a near-black frame; holding last valid preview frame", camera.get("id"))
-                    display_frame = last_good_frame if last_good_frame is not None and black_frame_streak < black_confirm_frames else frame
+                    if last_good_frame is None:
+                        if black_frame_streak >= black_confirm_frames:
+                            logger.warning("camera %s remained near-black; reopening capture before publishing video", camera.get("id"))
+                            cap.release()
+                            cap = None
+                            black_frame_streak = 0
+                        time.sleep(0.08)
+                        continue
+                    display_frame = last_good_frame
+                    if black_frame_streak >= black_confirm_frames:
+                        logger.warning("camera %s remained near-black; preserving preview and reopening capture", camera.get("id"))
+                        cap.release()
+                        cap = None
+                        black_frame_streak = 0
                 else:
                     if black_frame_streak:
                         logger.info("camera %s recovered from %s near-black frame(s)", camera.get("id"), black_frame_streak)

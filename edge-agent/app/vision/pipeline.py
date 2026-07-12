@@ -104,7 +104,7 @@ class VisionPipeline:
         scene_candidates = self._scene_objects_without_human_overlap(
             list(person.get("scene_objects") or []),
             raw_people,
-            list(pose.get("poses") or []),
+            self._poses_for_person_evidence(list(pose.get("poses") or [])),
         )
         scene = self.scene.update(scene_candidates, runtime_config)
         raw_people, filtered_poses, screen_content_suppressed = self._suppress_display_content(
@@ -118,6 +118,15 @@ class VisionPipeline:
             filtered_poses,
             list(scene.get("scene_zones") or []),
         )
+        annotated_poses, consistency_rejected = self._filter_pose_human_consistency(
+            annotated_poses,
+            raw_people,
+            list(scene.get("scene_zones") or []),
+            runtime_config,
+        )
+        if consistency_rejected:
+            pose["rejected_poses"] = [*(pose.get("rejected_poses") or []), *consistency_rejected]
+            self._synchronize_pose_cache_after_consistency(annotated_poses, runtime_config)
         pose = self._pose_with_scene_context(pose, annotated_poses, runtime_config)
         person_poses = self._poses_for_person_evidence(pose.get("poses") or [])
         people = self._refine_people_with_pose(raw_people, person_poses, frame, runtime_config)
@@ -221,6 +230,8 @@ class VisionPipeline:
             "screen_content_suppressed": screen_content_suppressed,
             "pose_count": pose.get("pose_count"),
             "poses": pose.get("poses") or [],
+            "rejected_pose_count": len(pose.get("rejected_poses") or []),
+            "rejected_poses": pose.get("rejected_poses") or [],
             "pose_skeleton_edges": pose.get("pose_skeleton_edges") or [],
             "pose_action_hints": pose.get("pose_action_hints") or [],
             "pose_tracking_state": pose.get("pose_tracking_state") or "disabled",
@@ -422,6 +433,103 @@ class VisionPipeline:
     def _poses_for_person_evidence(self, poses: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
         return [pose for pose in poses if pose.get("person_evidence_eligible", True)]
 
+    def _synchronize_pose_cache_after_consistency(
+        self,
+        poses: list[Dict[str, Any]],
+        config: Dict[str, Any],
+    ) -> None:
+        camera_key = str(config.get("camera_id") or "__default__")
+        if not poses:
+            self._pose_cache.pop(camera_key, None)
+            return
+        cached = self._pose_cache.get(camera_key)
+        if cached is not None:
+            cached["poses"] = deepcopy(poses)
+
+    def _filter_pose_human_consistency(
+        self,
+        poses: list[Dict[str, Any]],
+        people: list[Dict[str, Any]],
+        scene_zones: list[Dict[str, Any]],
+        config: Dict[str, Any],
+    ) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
+        """Reject furniture-shaped pose hallucinations without weakening real occluded people."""
+        if not config.get("pose_human_consistency_enabled", True):
+            return poses, []
+
+        furniture_labels = {"couch", "bed", "chair", "dining table"}
+        stable_furniture = [
+            zone
+            for zone in scene_zones
+            if zone.get("stable")
+            and str(zone.get("label") or "") in furniture_labels
+            and self._valid_box(zone.get("bbox"))
+        ]
+        max_unmatched_confidence = float(config.get("pose_furniture_max_unmatched_confidence") or 0.48)
+        min_furniture_overlap = float(config.get("pose_furniture_min_overlap") or 0.40)
+        min_wide_aspect = float(config.get("pose_furniture_min_wide_aspect") or 2.40)
+        min_person_overlap = float(config.get("pose_human_yolo_min_overlap") or 0.18)
+        accepted: list[Dict[str, Any]] = []
+        rejected: list[Dict[str, Any]] = []
+
+        for pose in poses:
+            bbox = pose.get("bbox")
+            if not self._valid_box(bbox):
+                rejected.append(self._rejected_pose(pose, "invalid_pose_bbox"))
+                continue
+            matched_person = any(
+                self._box_overlap_ratio(bbox, person.get("bbox")) >= min_person_overlap
+                and self._boxes_share_center(bbox, person.get("bbox"))
+                for person in people
+                if not person.get("presence_candidate") and self._valid_box(person.get("bbox"))
+            )
+            confidence = float(pose.get("confidence") or 0.0)
+            factors = pose.get("posture_factors") or {}
+            aspect = float(factors.get("body_aspect") or 0.0)
+            if aspect <= 0.0:
+                x1, y1, x2, y2 = [float(value) for value in bbox]
+                aspect = (x2 - x1) / max(1.0, y2 - y1)
+            furniture_overlap = max(
+                [self._box_intersection_ratio(bbox, zone.get("bbox")) for zone in stable_furniture],
+                default=0.0,
+            )
+            furniture_hallucination = (
+                not matched_person
+                and confidence < max_unmatched_confidence
+                and aspect >= min_wide_aspect
+                and furniture_overlap >= min_furniture_overlap
+            )
+            if furniture_hallucination:
+                rejected.append(self._rejected_pose(
+                    pose,
+                    "furniture_pose_hallucination",
+                    furniture_overlap=round(furniture_overlap, 4),
+                    body_aspect=round(aspect, 4),
+                    yolo_person_matched=False,
+                ))
+                continue
+            accepted.append({
+                **pose,
+                "human_consistency": {
+                    "yolo_person_matched": matched_person,
+                    "furniture_overlap": round(furniture_overlap, 4),
+                    "body_aspect": round(aspect, 4),
+                },
+            })
+        return accepted, rejected
+
+    def _rejected_pose(self, pose: Dict[str, Any], reason: str, **details: Any) -> Dict[str, Any]:
+        return {
+            **pose,
+            "fall_score": 0.0,
+            "fall_evidence_eligible": False,
+            "person_evidence_eligible": False,
+            "action_hints": [hint for hint in pose.get("action_hints", []) if hint != "fall_candidate"],
+            "rejection_stage": "human_consistency",
+            "rejection_reasons": [reason],
+            "rejection_details": details,
+        }
+
     def _scene_objects_without_human_overlap(
         self,
         scene_objects: list[Dict[str, Any]],
@@ -474,7 +582,13 @@ class VisionPipeline:
             and "fall_candidate" in (item.get("action_hints") or [])
             for item in poses
         )
-        tags = [tag for tag in (pose.get("tags") or []) if tag not in {"pose_fall_candidate", "pose_low_body"}]
+        tags = [
+            tag
+            for tag in (pose.get("tags") or [])
+            if tag not in {"pose_detected", "pose_fall_candidate", "pose_low_body"}
+        ]
+        if poses:
+            tags.append("pose_detected")
         if any(str(item.get("posture") or "") in {"lying", "low_body"} for item in poses):
             tags.append("pose_low_body")
         if fall_candidate:
@@ -495,11 +609,17 @@ class VisionPipeline:
             if str(pose.get("pose_model_status") or "") not in {"disabled", "unavailable"}:
                 result.status = "visible" if poses else "not_visible"
             result.score = max([float(item.get("confidence") or 0.0) for item in poses], default=None)
+            result.summary = (
+                f"RTMPose 检测到 {len(poses)} 组可信骨架。"
+                if poses
+                else "RTMPose 已运行，当前帧未检测到可信人体骨架。"
+            )
             result.tags = updated["tags"]
             result.data = {
                 **result.data,
                 "poses": poses,
                 "pose_count": len(poses),
+                "rejected_poses": updated.get("rejected_poses") or [],
                 "pose_fall_score": fall_score,
                 "pose_fall_candidate": fall_candidate,
             }

@@ -85,15 +85,22 @@ def main() -> None:
                 if not media_result.get("asset"):
                     raise AssertionError("event upload must include completed media result")
                 return {"event": {"id": 8801, "type": body.get("event_type")}, "media_asset": media_result["asset"]}
+            if path.startswith("/api/v1/device/vision-verifications?"):
+                return {
+                    "ok": True,
+                    "configured": True,
+                    "records": [{"event_id": 8801, "verification": {"status": "confirmed"}}],
+                }
             raise AssertionError(f"unexpected upload path: {path}")
 
         agent._request_json = fake_request  # type: ignore[method-assign]
         result = agent.process_once(max_jobs=2)
         summary = storage.upload_queue_summary()
         completed = storage.list_upload_jobs(status="completed", limit=10)
+        verification_status = agent.vision_verification_status(limit=6)
         if result["completed"] != 2 or summary["completed"] != 2:
             raise SystemExit(f"upload agent did not complete both jobs: result={result} summary={summary}")
-        if [call["method"] for call in calls] != ["POST", "POST"]:
+        if [call["method"] for call in calls] != ["POST", "POST", "GET"]:
             raise SystemExit(f"unexpected upload calls: {calls}")
         media_path = str(calls[0]["path"])
         if "camera_id=101" not in media_path or "local_camera_id=1" not in media_path:
@@ -103,6 +110,8 @@ def main() -> None:
             raise SystemExit(f"event upload did not use remote camera id: {event_body}")
         if completed[0]["payload"].get("upload_result") is None:
             raise SystemExit("completed jobs must retain upload_result")
+        if verification_status.get("records", [{}])[0].get("verification", {}).get("status") != "confirmed":
+            raise SystemExit(f"cloud verification status was not returned: {verification_status}")
 
         print(
             json.dumps(

@@ -884,6 +884,17 @@ async function main() {
             assert.equal(verificationJob.output_status, "succeeded");
             assert.equal(verificationJob.metadata.attempt_count, 2);
             assert.equal("api_key" in verificationJob.request_payload, false);
+            const deviceVerificationStatus = await requestJson(baseUrl, "/api/v1/device/vision-verifications?limit=5", {
+                headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+            });
+            assert.equal(deviceVerificationStatus.ok, true);
+            assert.equal(deviceVerificationStatus.configured, true);
+            assert.ok(deviceVerificationStatus.records.some((record) => (
+                String(record.event_id) === String(verificationEvent.event.id)
+                && record.verification.status === "confirmed"
+                && record.job.output_status === "succeeded"
+                && record.verification.result.confidence === 0.93
+            )));
         } finally {
             for (const [key, value] of Object.entries(originalVerificationEnv)) {
                 if (value === undefined) delete process.env[key];
