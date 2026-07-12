@@ -5,6 +5,9 @@ import UserNotifications
 @MainActor
 final class GoHomeShellRuntime: ObservableObject {
     @Published private(set) var webAppURL: URL = ShellConfig.webAppURL
+    @Published private(set) var hasPresentedWebContent = false
+    @Published private(set) var webLoadError: String?
+    @Published private(set) var webReloadID = UUID()
 
     private let center = UNUserNotificationCenter.current()
     private let defaults = UserDefaults.standard
@@ -12,6 +15,25 @@ final class GoHomeShellRuntime: ObservableObject {
     private let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
     private var pushToken = ""
     private var pendingLaunchPayload: [String: Any]?
+
+    func markWebContentLoading() {
+        webLoadError = nil
+    }
+
+    func markWebContentReady() {
+        hasPresentedWebContent = true
+        webLoadError = nil
+    }
+
+    func markWebContentFailed() {
+        guard !hasPresentedWebContent else { return }
+        webLoadError = "暂时无法连接服务，请检查网络后重试"
+    }
+
+    func retryWebContent() {
+        webLoadError = nil
+        webReloadID = UUID()
+    }
 
     var appInstallID: String {
         if let existing = defaults.string(forKey: installIDKey), !existing.isEmpty {

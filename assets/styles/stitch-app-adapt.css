@@ -79,6 +79,31 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* WKWebView repaints large blur layers while scrolling. The native shell
+   already provides visual separation, so use opaque surfaces on iOS. */
+body.gohome-ios-webview {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif !important;
+  text-rendering: auto;
+}
+
+body.gohome-ios-webview *,
+body.gohome-ios-webview *::before,
+body.gohome-ios-webview *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body.gohome-ios-webview button,
+body.gohome-ios-webview a {
+  transition-duration: 120ms !important;
+}
+
+body.gohome-ios-webview nav.fixed.bottom-0,
+body.gohome-ios-webview .app-bottom-nav,
+body.gohome-ios-webview .app-bottom-nav-inner {
+  background-color: rgba(248, 249, 245, 0.98) !important;
+}
+
 body.gohome-setup-mode nav.fixed.bottom-0 {
   display: none !important;
 }

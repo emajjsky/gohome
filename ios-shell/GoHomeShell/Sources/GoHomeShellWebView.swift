@@ -29,27 +29,19 @@ struct GoHomeShellWebView: UIViewRepresentable {
         webView.backgroundColor = UIColor(red: 0.984, green: 0.976, blue: 0.973, alpha: 1)
         webView.scrollView.backgroundColor = webView.backgroundColor
         context.coordinator.attach(webView)
-        webView.load(cacheBypassingRequest(for: ShellConfig.webAppURL))
+        context.coordinator.load(ShellConfig.webAppURL, reloadID: runtime.webReloadID)
         return webView
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        let current = webView.url?.absoluteString ?? ""
-        let target = runtime.webAppURL.absoluteString
-        guard current != target else { return }
-        webView.load(cacheBypassingRequest(for: runtime.webAppURL))
-    }
-
-    private func cacheBypassingRequest(for url: URL) -> URLRequest {
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
-        return request
+        context.coordinator.load(runtime.webAppURL, reloadID: runtime.webReloadID)
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
         private weak var webView: WKWebView?
         private let runtime: GoHomeShellRuntime
+        private var lastRequestedURL: URL?
+        private var lastReloadID: UUID?
 
         init(runtime: GoHomeShellRuntime) {
             self.runtime = runtime
@@ -57,6 +49,43 @@ struct GoHomeShellWebView: UIViewRepresentable {
 
         func attach(_ webView: WKWebView) {
             self.webView = webView
+        }
+
+        func load(_ url: URL, reloadID: UUID) {
+            guard lastRequestedURL != url || lastReloadID != reloadID else { return }
+            lastRequestedURL = url
+            lastReloadID = reloadID
+            var request = URLRequest(url: url, cachePolicy: .reloadRevalidatingCacheData, timeoutInterval: 30)
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            webView?.load(request)
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            Task { @MainActor in
+                runtime.markWebContentLoading()
+            }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            Task { @MainActor in
+                runtime.markWebContentReady()
+            }
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            didFailProvisionalNavigation navigation: WKNavigation!,
+            withError error: Error
+        ) {
+            Task { @MainActor in
+                runtime.markWebContentFailed()
+            }
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            Task { @MainActor in
+                runtime.markWebContentFailed()
+            }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {

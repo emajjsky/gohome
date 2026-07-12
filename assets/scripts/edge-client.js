@@ -3,6 +3,7 @@
     const EDGE_KEY = "gohome.edgeApiBase";
     const AUTH_TOKEN_KEY = "gohome.authToken";
     const APP_SHELL_KEY = "gohome.appShellMode";
+    const HEALTH_CACHE_KEY = "gohome.apiHealth";
     const playbackSessionCache = new Map();
     const nativeBridgeRequests = new Map();
 
@@ -16,7 +17,7 @@
     }
 
     function defaultBase() {
-        if (window.location.protocol.startsWith("http") && window.location.port === "8711") {
+        if (window.location.protocol.startsWith("http")) {
             return "";
         }
         return DEFAULT_EDGE_BASE;
@@ -212,20 +213,30 @@
     async function connect() {
         const candidates = [];
         const requested = requestedBase();
-        const isLocalAppOrigin = window.location.protocol.startsWith("http")
-            && ["127.0.0.1", "localhost", "::1"].includes(window.location.hostname)
-            && window.location.port === "8788";
-        if (isLocalAppOrigin) candidates.push("");
-        if (requested) candidates.push(requested);
-        if (window.location.protocol.startsWith("http")) candidates.push("");
-        candidates.push(defaultBase());
-        if (window.location.hostname && window.location.hostname !== "127.0.0.1") {
-            candidates.push(`http://${window.location.hostname}:8711`);
+        const isWebOrigin = window.location.protocol.startsWith("http");
+
+        // The product App always talks to its same-origin cloud API. A stale
+        // LAN edge address must never delay or hijack normal cloud navigation.
+        if (isWebOrigin) {
+            candidates.push("");
+        } else {
+            if (requested) candidates.push(requested);
+            candidates.push(defaultBase());
         }
 
         const unique = [...new Set(candidates.map(normalizeBase))];
         for (const base of unique) {
             try {
+                let cached = null;
+                try {
+                    cached = JSON.parse(sessionStorage.getItem(HEALTH_CACHE_KEY) || "null");
+                } catch (_error) {
+                    sessionStorage.removeItem(HEALTH_CACHE_KEY);
+                }
+                if (cached?.base === base && Date.now() - Number(cached.checked_at || 0) < 60_000) {
+                    GoHomeEdge.apiBase = base;
+                    return { ok: true, cached: true };
+                }
                 const controller = new AbortController();
                 const timer = setTimeout(() => controller.abort(), 1800);
                 const response = await fetch(`${base}/health`, { signal: controller.signal });
@@ -233,7 +244,10 @@
                 if (response.ok) {
                     const payload = await response.json();
                     GoHomeEdge.apiBase = base;
-                    if (base) localStorage.setItem(EDGE_KEY, base);
+                    sessionStorage.setItem(HEALTH_CACHE_KEY, JSON.stringify({
+                        base,
+                        checked_at: Date.now(),
+                    }));
                     return payload;
                 }
             } catch (_error) {

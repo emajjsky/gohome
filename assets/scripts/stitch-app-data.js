@@ -48,6 +48,9 @@
   function compactStitchAppChrome() {
     const current = page();
     document.body.classList.add(`gohome-page-${pageSlug(current)}`);
+    if (/GoHomeIOS/i.test(navigator.userAgent)) {
+      document.body.classList.add("gohome-ios-webview");
+    }
     if (!shellPages.has(current)) return;
 
     document.body.classList.add("gohome-app-shell-page");
