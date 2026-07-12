@@ -1094,6 +1094,8 @@ async function main() {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(detail.payload.rule.observed.confirm_frames, 2);
+        assert.ok(detail.updated_at);
+        assert.ok(Array.isArray(detail.payload.incident.transitions));
 
         const patched = await requestJson(baseUrl, `/api/app/events/${created.event.id}`, {
             method: "PATCH",

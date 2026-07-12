@@ -53,6 +53,9 @@
     }
 
     function statusText(event) {
+        const incidentStatus = String(event?.payload?.incident?.status || "");
+        if (incidentStatus === "rejected") return "已排除";
+        if (incidentStatus === "resolved") return "已恢复";
         if (!event?.acknowledged) return "需要确认";
         if (event.resolution === "false_positive") return "已标记误报";
         return "已确认安全";
@@ -76,7 +79,8 @@
     function syncActionState(event) {
         const handled = $("edgeMarkHandled");
         const falsePositive = $("edgeMarkFalsePositive");
-        const locked = Boolean(event?.acknowledged);
+        const incidentStatus = String(event?.payload?.incident?.status || "");
+        const locked = Boolean(event?.acknowledged) || ["rejected", "resolved"].includes(incidentStatus);
         if (handled) handled.disabled = locked;
         if (falsePositive) falsePositive.disabled = locked;
         if (handled) handled.classList.toggle("opacity-60", locked);
@@ -227,6 +231,104 @@
         return `${parts.join("。")}。`;
     }
 
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
+    }
+
+    function timelineTime(value) {
+        if (!value) return "";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "";
+        return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function transitionCopy(transition) {
+        const status = String(transition?.status || "");
+        const source = String(transition?.source || "");
+        if (source === "app_user" || status === "acknowledged") {
+            return { icon: "task_alt", title: "你已确认收到", detail: "这条提醒已停止重复推送。", tone: "" };
+        }
+        if (source === "edge_admin" || (status === "rejected" && transition?.resolution === "false_positive")) {
+            return { icon: "rule", title: "已核对为算法误报", detail: "记录和证据保留，用于后续校准。", tone: "" };
+        }
+        if (source === "presence_recovery" || status === "resolved") {
+            return { icon: "person_check", title: "家中状态已经恢复", detail: "摄像头重新检测到老人，本次提醒自动结束。", tone: "" };
+        }
+        if (source === "vision_verification") {
+            if (status === "confirmed") {
+                return { icon: "verified", title: "云端模型支持异常判断", detail: "请结合截图或电话尽快确认老人状态。", tone: "warning" };
+            }
+            if (status === "rejected") {
+                return { icon: "fact_check", title: "云端模型未发现明确异常", detail: "原始记录仍然保留，供你核对。", tone: "" };
+            }
+            if (status === "uncertain") {
+                return { icon: "help", title: "云端证据不足", detail: "模型无法明确判断，需要人工确认。", tone: "warning" };
+            }
+            return { icon: "cloud_sync", title: "云端正在复核", detail: "系统正在检查事件截图和边缘检测依据。", tone: "" };
+        }
+        if (["active", "verifying", "confirmed"].includes(status)) {
+            return { icon: "notifications_active", title: "守护提醒已建立", detail: "系统将持续跟踪，直到收到处理结果。", tone: "warning" };
+        }
+        return null;
+    }
+
+    function timelineItem(item) {
+        const detail = item.detail ? `<p>${escapeHtml(item.detail)}</p>` : "";
+        const time = item.at ? `<time datetime="${escapeHtml(item.at)}">${escapeHtml(timelineTime(item.at))}</time>` : "";
+        return `<div class="timeline-item ${escapeHtml(item.tone || "")}">
+            <div class="timeline-icon"><span class="material-symbols-outlined">${escapeHtml(item.icon)}</span></div>
+            <div class="timeline-copy">
+                <div class="timeline-head"><strong>${escapeHtml(item.title)}</strong>${time}</div>
+                ${detail}
+            </div>
+        </div>`;
+    }
+
+    function renderTimeline(event) {
+        const node = $("edgeDetailTimeline");
+        if (!node) return;
+        const payload = event?.payload || {};
+        const incident = payload.incident || {};
+        const cameraCount = new Set((incident.source_camera_ids || []).map(String).filter(Boolean)).size;
+        const items = [{
+            icon: "sensors",
+            title: "家庭盒子发现异常",
+            detail: `${event.camera_name || event.room || "摄像头"}记录了${GoHomeEdge.eventLabel(event.type)}。`,
+            at: event.occurred_at,
+            tone: event.level === "critical" ? "warning" : "",
+        }];
+        if (cameraCount > 1) {
+            items.push({
+                icon: "videocam",
+                title: `${cameraCount} 路摄像头提供了佐证`,
+                detail: "同一时间窗口的画面已合并为一条守护事件。",
+                at: incident.started_at || event.occurred_at,
+                tone: "",
+            });
+        }
+        const transitions = Array.isArray(incident.transitions) ? incident.transitions : [];
+        for (const transition of transitions) {
+            const copy = transitionCopy(transition);
+            if (!copy) continue;
+            items.push({ ...copy, at: transition.at || event.created_at });
+        }
+        const verification = payload.verification || {};
+        if (verification.status && !transitions.some((item) => item.source === "vision_verification")) {
+            const copy = transitionCopy({ status: verification.status, source: "vision_verification" });
+            if (copy) items.push({ ...copy, at: verification.updated_at || event.created_at });
+        }
+        if (event.acknowledged && !transitions.some((item) => item.source === "app_user" || item.status === "acknowledged")) {
+            const copy = transitionCopy({ status: "acknowledged", source: "app_user" });
+            items.push({ ...copy, at: event.updated_at || event.created_at });
+        }
+        node.innerHTML = items.map(timelineItem).join("");
+    }
+
     async function applyEvent(event) {
         const payload = event.payload || {};
         const rule = payload.rule || {};
@@ -246,6 +348,7 @@
         setText("edgeDetailNote", verification || cleanReason(event, rule.reason) || detailNote(event));
         setText("edgeDetailFact", factText(event, payload, rule));
         setText("edgeDetailFactSub", factSubText(payload, rule));
+        renderTimeline(event);
         syncActionState(event);
         const verificationStatus = String(payload?.verification?.status || "");
         if (["pending", "verifying", "retrying"].includes(verificationStatus) && verificationPollCount < 10) {

@@ -191,6 +191,81 @@
     line-height: 1.65;
   }
   .evidence p + p { margin-top: 10px; }
+  .timeline h3 {
+    margin: 0 0 4px;
+    font-size: 18px;
+  }
+  .timeline-intro {
+    margin: 0 0 14px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .timeline-list {
+    display: grid;
+    gap: 0;
+  }
+  .timeline-item {
+    position: relative;
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 10px;
+    min-width: 0;
+    padding-bottom: 16px;
+  }
+  .timeline-item:last-child { padding-bottom: 0; }
+  .timeline-item:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    top: 27px;
+    bottom: 1px;
+    left: 13px;
+    width: 2px;
+    background: var(--line);
+  }
+  .timeline-icon {
+    position: relative;
+    z-index: 1;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--primary-soft);
+    color: var(--primary-strong);
+  }
+  .timeline-icon .material-symbols-outlined {
+    font-size: 17px;
+    font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 20;
+  }
+  .timeline-item.warning .timeline-icon {
+    background: var(--warn-soft);
+    color: #93000a;
+  }
+  .timeline-copy { min-width: 0; padding-top: 2px; }
+  .timeline-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .timeline-head strong {
+    min-width: 0;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  .timeline-head time {
+    flex: none;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .timeline-copy p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
   .bottom-actions {
     position: fixed;
     left: 50%;
@@ -285,6 +360,17 @@
     <p id="edgeDetailFact">正在读取检测事实。</p>
     <p id="edgeDetailFactSub">如果这条事件由规则触发，这里会显示当前观测和规则阈值。</p>
   </section>
+
+  <section class="panel timeline" aria-labelledby="edgeDetailTimelineTitle">
+    <h3 id="edgeDetailTimelineTitle">处理进度</h3>
+    <p class="timeline-intro">这里按顺序记录家庭盒子、云端复核和你的处理结果。</p>
+    <div id="edgeDetailTimeline" class="timeline-list" aria-live="polite">
+      <div class="timeline-item">
+        <div class="timeline-icon"><span class="material-symbols-outlined">sensors</span></div>
+        <div class="timeline-copy"><div class="timeline-head"><strong>正在读取事件记录</strong></div></div>
+      </div>
+    </div>
+  </section>
 </main>
 
 <div class="bottom-actions">
@@ -293,7 +379,7 @@
 </div>
 
 <script src="assets/scripts/edge-client.js?v=20260709-cloud-stream-1"></script>
-<script src="assets/scripts/event-detail-live.js?v=20260708-product-flow-2"></script>
+<script src="assets/scripts/event-detail-live.js?v=20260712-incident-timeline-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-2"></script>
 </body>
 </html>

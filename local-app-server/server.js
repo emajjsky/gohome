@@ -1821,6 +1821,7 @@ function createLocalAppServer(options = {}) {
             camera_name: camera.name || event.camera_name || "",
             occurred_at: event.occurred_at,
             created_at: event.created_at,
+            updated_at: event.updated_at || event.created_at,
             acknowledged: Boolean(event.acknowledged),
             resolution: event.resolution || "",
             snapshot_path: event.snapshot_path || asset?.snapshot_path || "",
