@@ -876,6 +876,16 @@ async function main() {
             assert.equal(verifiedEvent.payload.verification.result.posture, "fallen");
             assert.equal(verifiedEvent.payload.verification.result.surface, "floor");
             assert.equal(verifiedEvent.payload.verification.attempt_count, 2);
+            assert.equal(verifiedEvent.payload.incident.status, "confirmed");
+            const verificationOutcomeMessage = app.store.db.app_messages.find((message) => (
+                message.generated_by === "vision-verification-orchestrator"
+                && String(message.event_id) === String(verificationEvent.event.id)
+                && message.metadata?.verification_status === "confirmed"
+            ));
+            assert.ok(verificationOutcomeMessage);
+            assert.ok(app.store.db.notification_deliveries.some((delivery) => (
+                String(delivery.message_id) === String(verificationOutcomeMessage.message_id)
+            )));
             const verificationJob = app.store.db.model_generation_jobs.find((job) => (
                 job.purpose === "vision_event_verification"
                 && String(job.metadata?.event_id) === String(verificationEvent.event.id)
@@ -903,6 +913,44 @@ async function main() {
             mockVerificationServer.close();
         }
 
+        const secondCamera = await requestJson(baseUrl, "/api/cameras", {
+            method: "POST",
+            body: JSON.stringify({
+                name: "走廊摄像头",
+                room: "走廊",
+                stream_url: "demo:hallway",
+                enabled: true,
+            }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        const correlatedEvent = await requestJson(baseUrl, "/api/v1/device/events", {
+            method: "POST",
+            body: JSON.stringify({
+                idempotency_key: "event:42-hallway",
+                edge_event_id: "42-hallway",
+                event_type: "fall_candidate",
+                summary: "走廊摄像头同时看到疑似跌倒",
+                level: "critical",
+                room: "走廊",
+                camera_id: secondCamera.id,
+                occurred_at: "2026-07-05T10:00:15.000Z",
+                payload: {
+                    rule: { reason: "相邻摄像头在同一时间窗口命中相同事故。" },
+                    edge_upload: { edge_event_id: "42-hallway", edge_device_id: "edge-test" },
+                },
+            }),
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+        });
+        assert.equal(correlatedEvent.message, null);
+        assert.equal(correlatedEvent.deliveries.length, 0);
+        assert.equal(correlatedEvent.event.payload.incident.incident_id, created.event.payload.incident.incident_id);
+        assert.equal(String(correlatedEvent.event.payload.incident.primary_event_id), String(created.event.id));
+        assert.equal(correlatedEvent.event.payload.incident.source_camera_ids.length, 2);
+        await requestJson(baseUrl, `/api/cameras/${secondCamera.id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+
         const originalAbsenceThreshold = process.env.GOHOME_LONG_ABSENCE_SECONDS;
         try {
             process.env.GOHOME_LONG_ABSENCE_SECONDS = "60";
@@ -926,10 +974,18 @@ async function main() {
                 body: JSON.stringify({ family_id: family.id, force: true }),
             });
             assert.equal(absenceRun.result.long_absence_events_created, 1);
-            assert.ok(absenceRun.result.incident_reminders_created >= 2);
+            assert.ok(
+                absenceRun.result.incident_reminders_created >= 2,
+                JSON.stringify(app.store.db.events.map((event) => ({
+                    summary: event.summary,
+                    status: event.payload?.incident?.status,
+                    primary_event_id: event.payload?.incident?.primary_event_id,
+                    acknowledged: event.acknowledged,
+                }))),
+            );
             const longAbsenceEvent = app.store.db.events.find((event) => event.event_type === "long_absence");
             assert.ok(longAbsenceEvent);
-            assert.equal(longAbsenceEvent.payload.incident.status, "active");
+            assert.equal(longAbsenceEvent.payload.incident.status, "confirmed");
             const sameMinuteRun = await requestJson(baseUrl, "/api/v1/internal/scheduler/run", {
                 method: "POST",
                 body: JSON.stringify({ family_id: family.id, force: true }),
@@ -1017,6 +1073,12 @@ async function main() {
         assert.equal(patched.acknowledged, true);
         assert.equal(patched.resolution, "handled");
         assert.equal(patched.payload.incident.status, "acknowledged");
+        const linkedCorrelatedEvent = app.store.db.events.find((event) => String(event.id) === String(correlatedEvent.event.id));
+        assert.equal(linkedCorrelatedEvent.acknowledged, true);
+        assert.equal(linkedCorrelatedEvent.payload.incident.status, "acknowledged");
+        assert.ok(app.store.db.app_messages
+            .filter((message) => (message.source_event_ids || []).some((eventId) => String(eventId) === String(created.event.id)))
+            .every((message) => message.status === "archived"));
 
         const carePreferences = await requestJson(baseUrl, `/api/v1/families/${family.id}/care-preferences`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
@@ -1418,7 +1480,7 @@ async function main() {
         assert.ok(seededFamilyRules);
         assert.equal(seededFamilyRules.rule_type, "edge_rules");
         assert.equal(seededFamilyRules.config.activity_detection_enabled, false);
-        assert.equal(seedBundle.tables.events.length, 4);
+        assert.equal(seedBundle.tables.events.length, 5);
         const seededFallEvent = seedBundle.tables.events.find((event) => event.event_type === "fall_candidate");
         const seededStaleOfflineEvent = seedBundle.tables.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(seededFallEvent);
@@ -1461,7 +1523,7 @@ async function main() {
         assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].home_phone, "057100000000");
         assert.equal(Object.values(restoredDb.cameras).length, 2);
         assert.equal(String(restoredDb.cameras[String(claimFamilyCamera.id)].family_id), String(claimFamily.id));
-        assert.equal(restoredDb.events.length, 4);
+        assert.equal(restoredDb.events.length, 5);
         const restoredFallEvent = restoredDb.events.find((event) => event.event_type === "fall_candidate");
         const restoredStaleOfflineEvent = restoredDb.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(restoredFallEvent);

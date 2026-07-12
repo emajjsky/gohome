@@ -2387,20 +2387,219 @@ function createLocalAppServer(options = {}) {
         "long_absence",
     ]);
 
+    const INCIDENT_REMINDER_STATUSES = new Set(["active", "verifying", "confirmed", "uncertain"]);
+
+    function incidentCorrelationWindowMs() {
+        return Math.max(5000, normalizeNumber(process.env.GOHOME_INCIDENT_CORRELATION_WINDOW_SECONDS, 45) * 1000);
+    }
+
+    function incidentEvents(incidentId) {
+        const cleanId = String(incidentId || "");
+        if (!cleanId) return [];
+        return store.db.events.filter((item) => String(item.payload?.incident?.incident_id || "") === cleanId);
+    }
+
+    function incidentPrimaryEvent(event) {
+        const incident = event?.payload?.incident || {};
+        const primaryId = incident.primary_event_id || event?.id;
+        return store.db.events.find((item) => String(item.id) === String(primaryId)) || event;
+    }
+
+    function appendIncidentTransition(event, status, source, details = {}) {
+        const incident = ensureSafetyIncident(event);
+        if (!incident) return null;
+        const transitions = Array.isArray(incident.transitions) ? incident.transitions : [];
+        const previous = transitions[transitions.length - 1];
+        if (previous?.status === status && previous?.source === source) return incident;
+        transitions.push({
+            status,
+            source,
+            at: nowIso(),
+            ...details,
+        });
+        incident.transitions = transitions.slice(-24);
+        incident.status = status;
+        return incident;
+    }
+
+    function correlateSafetyIncident(event) {
+        if (!SAFETY_INCIDENT_TYPES.has(event.event_type) || event.event_type === "long_absence" || isValidationEvent(event)) return null;
+        const occurredAt = Date.parse(event.occurred_at || event.created_at || nowIso());
+        const match = store.db.events
+            .filter((item) => (
+                Number(item.family_id) === Number(event.family_id)
+                && item.event_type === event.event_type
+                && !isValidationEvent(item)
+                && !item.acknowledged
+                && !["rejected", "resolved", "acknowledged"].includes(String(item.payload?.incident?.status || ""))
+            ))
+            .filter((item) => {
+                const existingAt = Date.parse(item.occurred_at || item.created_at || "");
+                return Number.isFinite(existingAt) && Number.isFinite(occurredAt)
+                    && Math.abs(occurredAt - existingAt) <= incidentCorrelationWindowMs();
+            })
+            .sort((a, b) => Date.parse(a.occurred_at || a.created_at || "") - Date.parse(b.occurred_at || b.created_at || ""))[0];
+        if (!match) return null;
+        const primary = incidentPrimaryEvent(match);
+        const primaryIncident = ensureSafetyIncident(primary);
+        event.payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+        event.payload.incident = {
+            ...primaryIncident,
+            incident_id: primaryIncident.incident_id,
+            primary_event_id: primary.id,
+            source_event_ids: [...new Set([...(primaryIncident.source_event_ids || [primary.id]), event.id])],
+            source_camera_ids: [...new Set([...(primaryIncident.source_camera_ids || [primary.camera_id]), event.camera_id].filter(Boolean))],
+        };
+        primaryIncident.source_event_ids = event.payload.incident.source_event_ids;
+        primaryIncident.source_camera_ids = event.payload.incident.source_camera_ids;
+        primary.updated_at = nowIso();
+        return primary;
+    }
+
     function ensureSafetyIncident(event) {
         if (!SAFETY_INCIDENT_TYPES.has(event.event_type)) return null;
         event.payload = event.payload && typeof event.payload === "object" ? event.payload : {};
         const existing = event.payload.incident && typeof event.payload.incident === "object" ? event.payload.incident : {};
+        const defaultStatus = VISION_VERIFICATION_EVENT_TYPES.has(event.event_type) ? "verifying" : "confirmed";
         event.payload.incident = {
             incident_id: existing.incident_id || `incident-${event.idempotency_key || event.id}`,
-            status: event.acknowledged ? "acknowledged" : (existing.status || "active"),
+            primary_event_id: existing.primary_event_id || event.id,
+            status: event.acknowledged ? "acknowledged" : (existing.status || defaultStatus),
             started_at: existing.started_at || event.occurred_at || event.created_at || nowIso(),
             acknowledged_at: existing.acknowledged_at || "",
             resolved_at: existing.resolved_at || "",
             last_reminder_bucket: existing.last_reminder_bucket || "",
             reminder_count: Number(existing.reminder_count || 0),
+            source_event_ids: [...new Set([...(existing.source_event_ids || []), event.id])],
+            source_camera_ids: [...new Set([...(existing.source_camera_ids || []), event.camera_id].filter(Boolean))],
+            transitions: Array.isArray(existing.transitions) ? existing.transitions.slice(-24) : [],
         };
         return event.payload.incident;
+    }
+
+    function archiveIncidentMessages(incidentId, options = {}) {
+        const eventIds = new Set(incidentEvents(incidentId).map((event) => String(event.id)));
+        for (const message of store.db.app_messages) {
+            const sources = Array.isArray(message.source_event_ids) ? message.source_event_ids.map(String) : [];
+            const incidentSource = (message.source || []).some((item) => (
+                item?.type === "safety_incident" && String(item.id || "") === String(incidentId)
+            ));
+            if (!incidentSource && !sources.some((id) => eventIds.has(id))) continue;
+            if (options.except_message_id && String(message.message_id || message.id) === String(options.except_message_id)) continue;
+            message.status = "archived";
+            message.updated_at = nowIso();
+        }
+    }
+
+    function createVerificationOutcomeMessage(event, status, verification = {}) {
+        const primary = incidentPrimaryEvent(event);
+        if (isValidationEvent(primary)) return null;
+        const incident = ensureSafetyIncident(primary);
+        if (!incident || !primary.family_id) return null;
+        const result = verification.result || {};
+        const copies = {
+            confirmed: {
+                title: primary.summary || "家中异常已经确认",
+                subtitle: `${primary.room || primary.camera_name || "家里"} · 云端复核确认`,
+                body: result.reason || "云端视觉模型支持边缘端异常判断，请尽快查看并联系老人。",
+                priority: "high",
+                message_type: "alert",
+            },
+            rejected: {
+                title: "刚才的异常已经排除",
+                subtitle: `${primary.room || primary.camera_name || "家里"} · 云端复核完成`,
+                body: result.reason || "云端复核未发现需要告警的异常，原始记录仍会保留用于追溯。",
+                priority: "normal",
+                message_type: "explain",
+            },
+            uncertain: {
+                title: "这条异常需要你确认",
+                subtitle: `${primary.room || primary.camera_name || "家里"} · 云端无法明确判断`,
+                body: result.reason || verification.error || "云端复核证据不足，请查看事件截图并联系老人确认。",
+                priority: "high",
+                message_type: "alert",
+            },
+        };
+        const copy = copies[status];
+        if (!copy) return null;
+        const messageId = `incident-verification-${incident.incident_id}-${status}`;
+        return upsertAppMessage({
+            message_id: messageId,
+            idempotency_key: messageId,
+            family_id: primary.family_id,
+            event_id: primary.id,
+            message_type: copy.message_type,
+            title: copy.title,
+            subtitle: copy.subtitle,
+            body: copy.body,
+            facts: [primary.event_type, status, result.confidence !== undefined ? `置信度 ${Math.round(Number(result.confidence) * 100)}%` : ""].filter(Boolean),
+            actions: [{ key: "open_event", label: status === "rejected" ? "查看记录" : "查看事件", event_id: primary.id }],
+            source_event_ids: incident.source_event_ids || [primary.id],
+            source: [{ type: "safety_incident", id: incident.incident_id }],
+            priority: copy.priority,
+            generated_by: "vision-verification-orchestrator",
+            metadata: { verification_status: status, model: verification.model || "" },
+        });
+    }
+
+    function aggregateIncidentVerification(event) {
+        const incident = ensureSafetyIncident(event);
+        if (!incident) return "confirmed";
+        const statuses = incidentEvents(incident.incident_id)
+            .map((item) => String(item.payload?.verification?.status || ""))
+            .filter(Boolean);
+        if (statuses.includes("confirmed")) return "confirmed";
+        if (statuses.some((status) => ["uncertain", "failed", "unavailable"].includes(status))) return "uncertain";
+        if (statuses.some((status) => ["pending", "verifying", "retrying"].includes(status))) return "verifying";
+        if (statuses.length && statuses.every((status) => status === "rejected")) return "rejected";
+        return incident.status || "verifying";
+    }
+
+    function applyIncidentVerificationOutcome(event) {
+        const primary = incidentPrimaryEvent(event);
+        const primaryIncident = ensureSafetyIncident(primary);
+        if (!primaryIncident) return { status: "not_applicable", message: null, deliveries: [] };
+        const nextStatus = aggregateIncidentVerification(primary);
+        const previousStatus = primaryIncident.status;
+        for (const linked of incidentEvents(primaryIncident.incident_id)) {
+            const incident = ensureSafetyIncident(linked);
+            incident.status = nextStatus;
+            incident.primary_event_id = primary.id;
+            incident.source_event_ids = primaryIncident.source_event_ids;
+            incident.source_camera_ids = primaryIncident.source_camera_ids;
+            linked.updated_at = nowIso();
+        }
+        appendIncidentTransition(primary, nextStatus, "vision_verification", {
+            event_id: event.id,
+            verification_status: event.payload?.verification?.status || "",
+        });
+        if (nextStatus === "rejected") {
+            primary.resolution = "vision_rejected";
+            archiveIncidentMessages(primaryIncident.incident_id);
+        }
+        if (nextStatus === previousStatus || nextStatus === "verifying") {
+            return { status: nextStatus, message: null, deliveries: [] };
+        }
+        const message = createVerificationOutcomeMessage(primary, nextStatus, event.payload?.verification || {});
+        const deliveries = message ? queueNotificationDelivery(message) : [];
+        return { status: nextStatus, message, deliveries };
+    }
+
+    function acknowledgeSafetyIncident(event, resolution = "handled") {
+        const incident = ensureSafetyIncident(event);
+        if (!incident) return [event];
+        const linkedEvents = incidentEvents(incident.incident_id);
+        for (const linked of linkedEvents) {
+            linked.acknowledged = true;
+            linked.resolution = resolution || linked.resolution || "handled";
+            const linkedIncident = ensureSafetyIncident(linked);
+            linkedIncident.status = "acknowledged";
+            linkedIncident.acknowledged_at = nowIso();
+            linked.updated_at = nowIso();
+        }
+        appendIncidentTransition(incidentPrimaryEvent(event), "acknowledged", "app_user", { resolution });
+        archiveIncidentMessages(incident.incident_id);
+        return linkedEvents;
     }
 
     function incidentMinuteBucket(date = new Date()) {
@@ -2409,7 +2608,7 @@ function createLocalAppServer(options = {}) {
 
     function createIncidentReminderMessage(event, bucket = incidentMinuteBucket()) {
         const incident = ensureSafetyIncident(event);
-        if (!incident || event.acknowledged || incident.status !== "active") return null;
+        if (!incident || event.acknowledged || !INCIDENT_REMINDER_STATUSES.has(incident.status)) return null;
         if (incident.last_reminder_bucket === bucket) return null;
         const incidentAgeMs = Date.now() - Date.parse(incident.started_at || event.occurred_at || "");
         if (!Number.isFinite(incidentAgeMs) || incidentAgeMs < 60000) return null;
@@ -2647,7 +2846,8 @@ function createLocalAppServer(options = {}) {
                     Number(event.family_id) === Number(family.id)
                     && SAFETY_INCIDENT_TYPES.has(event.event_type)
                     && !event.acknowledged
-                    && event.payload?.incident?.status === "active"
+                    && INCIDENT_REMINDER_STATUSES.has(event.payload?.incident?.status)
+                    && String(event.payload?.incident?.primary_event_id || event.id) === String(event.id)
                 ));
                 for (const event of safetyEvents) {
                     const beforeMessages = store.db.app_messages.length;
@@ -3370,6 +3570,12 @@ function createLocalAppServer(options = {}) {
                         updated_at: nowIso(),
                     };
                     event.updated_at = nowIso();
+                    const orchestration = applyIncidentVerificationOutcome(event);
+                    job.metadata = {
+                        ...job.metadata,
+                        orchestration_status: orchestration.status,
+                        orchestration_message_id: orchestration.message?.message_id || "",
+                    };
                     result.succeeded += 1;
                 } catch (error) {
                     const maxAttempts = Number(job.metadata?.max_attempts || visionVerificationMaxAttempts());
@@ -3394,6 +3600,7 @@ function createLocalAppServer(options = {}) {
                         error: String(error.message || error).slice(0, 240),
                         updated_at: nowIso(),
                     };
+                    if (exhausted) applyIncidentVerificationOutcome(event);
                     if (exhausted) result.failed += 1;
                     else result.retrying += 1;
                 }
@@ -4943,6 +5150,12 @@ function createLocalAppServer(options = {}) {
         }
         if (options.userVisible) {
             events = events.filter((event) => isUserVisibleEvent(event, options.familyIds));
+            if (cameraId === null) {
+                events = events.filter((event) => (
+                    !event.payload?.incident
+                    || String(event.payload.incident.primary_event_id || event.id) === String(event.id)
+                ));
+            }
         }
         if (acknowledged !== null) {
             const expected = normalizeBool(acknowledged);
@@ -5583,11 +5796,12 @@ function createLocalAppServer(options = {}) {
             write(res, 200, { ok: true, event: publicEvent(existing), media_asset: asset || null, duplicate: true });
             return;
         }
+        const correlatedPrimary = correlateSafetyIncident(event);
         ensureSafetyIncident(event);
         store.db.events.push(event);
         let message = null;
         let deliveries = [];
-        if (event.family_id && !isValidationEvent(event)) {
+        if (event.family_id && !isValidationEvent(event) && !correlatedPrimary) {
             message = upsertAppMessage({
                 message_id: `edge-event-${event.idempotency_key}`,
                 family_id: event.family_id,
@@ -5601,6 +5815,10 @@ function createLocalAppServer(options = {}) {
                 generated_by: "edge-event",
                 status: "open",
                 priority: event.level === "critical" ? "high" : "normal",
+                metadata: {
+                    incident_id: event.payload?.incident?.incident_id || "",
+                    incident_status: event.payload?.incident?.status || "",
+                },
                 created_at: event.occurred_at,
             });
             if (currentRules(event.family_id).notification_enabled) {
@@ -5608,6 +5826,9 @@ function createLocalAppServer(options = {}) {
             }
         }
         const verificationJob = queueVisionVerification(event, asset);
+        if (!verificationJob && event.payload?.verification) {
+            applyIncidentVerificationOutcome(event);
+        }
         await store.save();
         if (verificationJob) {
             setImmediate(() => {
@@ -5656,12 +5877,15 @@ function createLocalAppServer(options = {}) {
                 room: event.room || event.camera_name || "",
                 occurred_at: event.occurred_at,
                 updated_at: event.updated_at,
+                incident: event.payload?.incident || null,
                 verification,
                 job: job ? {
                     id: job.id,
                     output_status: job.output_status,
                     model: job.model,
                     attempt_count: Number(job.metadata?.attempt_count || 0),
+                    orchestration_status: job.metadata?.orchestration_status || "",
+                    orchestration_message_id: job.metadata?.orchestration_message_id || "",
                     error_message: job.error_message || "",
                     response_payload: job.response_payload || {},
                     created_at: job.created_at,
@@ -6812,8 +7036,7 @@ function createLocalAppServer(options = {}) {
                 if ("resolution" in patch) event.resolution = String(patch.resolution || "");
                 const incident = ensureSafetyIncident(event);
                 if (incident && event.acknowledged) {
-                    incident.status = "acknowledged";
-                    incident.acknowledged_at = nowIso();
+                    acknowledgeSafetyIncident(event, event.resolution || "handled");
                 }
                 event.updated_at = nowIso();
                 await store.save();
