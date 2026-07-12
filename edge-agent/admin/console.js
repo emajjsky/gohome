@@ -10,7 +10,7 @@ const state = {
   cameras: [],
   selectedCameraId: null,
   cameraMode: "lan",
-  previewAlgorithm: "quality",
+  previewAlgorithm: "unified",
   maxCameras: 3,
   detectorBackend: "basic",
   latestSnapshot: null,
@@ -826,6 +826,12 @@ function algorithmVisibleTags(snapshot, mode = state.previewAlgorithm || "qualit
     ]),
   ];
   const allowlist = {
+    unified: [
+      "black_screen", "low_motion", "person_detected", "no_person_detected", "person_presence_candidate",
+      "pose_detected", "pose_tracked", "pose_validated_person", "pose_low_body", "pose_fall_candidate",
+      "pose_hand_near_face", "fall_candidate", "fire_candidate", "meal_candidate", "stillness_candidate",
+      "daze_candidate",
+    ],
     quality: ["black_screen", "low_motion"],
     person: ["person_detected", "no_person_detected", "person_presence_candidate", "pose_detected", "pose_tracked", "pose_validated_person"],
     stillness: ["stillness_candidate", "daze_candidate", "low_motion", "person_detected", "pose_detected", "pose_tracked"],
@@ -842,6 +848,12 @@ function algorithmVisibleTags(snapshot, mode = state.previewAlgorithm || "qualit
 function algorithmNormalTagLabel(mode = state.previewAlgorithm || "quality", snapshot = state.latestSnapshot) {
   const analysis = snapshot?.analysis || {};
   if (!snapshot) return "-";
+  if (mode === "unified") {
+    if (analysis.black_screen) return "画面异常";
+    if (analysis.fire_candidate || analysis.fire_event_candidate) return "火灾线索复核中";
+    if (analysis.fall_candidate || analysis.pose_fall_candidate) return "跌倒线索复核中";
+    return Number(snapshot.person_count ?? analysis.person_count ?? 0) > 0 ? "人物活动正常" : "当前无人";
+  }
   if (mode === "person") return Number(snapshot.person_count ?? analysis.person_count ?? 0) > 0 ? "有人" : "无人";
   if (mode === "fall") return "未出现跌倒候选";
   if (mode === "meal") return "未形成用餐候选";
@@ -853,8 +865,9 @@ function algorithmNormalTagLabel(mode = state.previewAlgorithm || "quality", sna
 }
 
 function overlayPeopleForMode(snapshot, mode = state.previewAlgorithm || "quality") {
-  if (!["person", "fall", "meal", "stillness", "night"].includes(mode)) return [];
+  if (!["unified", "person", "fall", "meal", "stillness", "night"].includes(mode)) return [];
   const people = snapshotPeople(snapshot);
+  if (mode === "unified") return people;
   if (mode === "fall") {
     return people.filter((person) => person.fall_candidate || String(person.source || "").startsWith("fall_") || String(person.method || "").includes("fall"));
   }
@@ -863,7 +876,74 @@ function overlayPeopleForMode(snapshot, mode = state.previewAlgorithm || "qualit
 }
 
 function shouldRenderPoseForMode(mode = state.previewAlgorithm || "quality") {
-  return ["person", "fall", "meal", "stillness"].includes(mode);
+  return ["unified", "person", "fall", "meal", "stillness"].includes(mode);
+}
+
+const postureLabels = {
+  standing: "站姿",
+  sitting: "坐姿",
+  lying: "躺姿",
+  squatting: "蹲姿",
+  low_body: "低位姿态",
+  seated_or_half_body: "坐姿/半身",
+  upper_body: "上半身",
+  unknown: "姿态识别中",
+};
+
+const sceneLabels = {
+  bed: "床",
+  couch: "沙发",
+  chair: "椅子",
+  dining_table: "餐桌",
+  tv: "电视",
+};
+
+function postureLabel(value) {
+  const key = String(value || "unknown");
+  return postureLabels[key] || key;
+}
+
+function sceneLabel(item) {
+  const key = String(item?.label || "");
+  return item?.label_zh || sceneLabels[key] || key || "场景目标";
+}
+
+function bboxIou(first, second) {
+  if (!Array.isArray(first) || !Array.isArray(second) || first.length < 4 || second.length < 4) return 0;
+  const [ax1, ay1, ax2, ay2] = first.map(Number);
+  const [bx1, by1, bx2, by2] = second.map(Number);
+  const intersection = Math.max(0, Math.min(ax2, bx2) - Math.max(ax1, bx1)) * Math.max(0, Math.min(ay2, by2) - Math.max(ay1, by1));
+  const union = Math.max(1, (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - intersection);
+  return intersection / union;
+}
+
+function matchingPose(person, poses) {
+  const trackId = String(person?.track_id || "");
+  if (trackId) {
+    const tracked = poses.find((pose) => String(pose?.track_id || "") === trackId);
+    if (tracked) return tracked;
+  }
+  let best = null;
+  let bestOverlap = 0;
+  for (const pose of poses) {
+    const overlap = bboxIou(person?.bbox, pose?.bbox);
+    if (overlap > bestOverlap) {
+      best = pose;
+      bestOverlap = overlap;
+    }
+  }
+  return bestOverlap >= 0.12 ? best : null;
+}
+
+function unifiedSceneTargets(snapshot) {
+  const analysis = snapshot?.analysis || {};
+  const zones = (analysis.scene_zones || []).filter((zone) => zone?.stable && Array.isArray(zone?.bbox));
+  const objects = (analysis.scene_objects || []).filter((item) => Array.isArray(item?.bbox));
+  const transient = objects.filter((item) => !zones.some((zone) => zone.label === item.label && bboxIou(zone.bbox, item.bbox) >= 0.35));
+  return [
+    ...zones.map((zone) => ({ ...zone, stable: true })),
+    ...transient.map((item) => ({ ...item, stable: false })),
+  ];
 }
 
 function imageFitRect(snapshot) {
@@ -890,12 +970,16 @@ function renderDetectionOverlay(snapshot) {
   const poses = shouldRenderPoseForMode(mode)
     ? snapshotPoses(snapshot).filter((pose) => mode !== "person" || pose.person_evidence_eligible !== false)
     : [];
-  const sceneZones = mode === "fall"
-    ? (snapshot?.analysis?.scene_zones || []).filter((zone) => zone.stable && zone.zone_kind === "normal_lying_surface")
-    : [];
-  const sceneBoxes = sceneZones.map((zone) => ({
-    bbox: zone.bbox,
-    label: `自动识别${zone.label_zh || zone.label || "卧躺区域"} · ${zone.hits || 0} 帧稳定`,
+  const sceneTargets = mode === "unified"
+    ? unifiedSceneTargets(snapshot)
+    : mode === "fall"
+      ? (snapshot?.analysis?.scene_zones || []).filter((zone) => zone.stable && zone.zone_kind === "normal_lying_surface")
+      : [];
+  const sceneBoxes = sceneTargets.map((item) => ({
+    bbox: item.bbox,
+    label: item.stable
+      ? `${sceneLabel(item)} · 场景已学习`
+      : `${sceneLabel(item)}${item.confidence ? ` · ${Math.round(Number(item.confidence) * 100)}%` : ""}`,
     kind: "scene",
   }));
   const personBoxes = people.length
@@ -907,13 +991,17 @@ function renderDetectionOverlay(snapshot) {
         const poseValidated = Boolean(person.pose_validated || person.source === "pose_person");
         const tracked = person.pose_tracking_state === "cached";
         const kind = presence && !poseValidated ? "presence" : person.fall_candidate ? "fall" : "person";
-        const prefix = tracked ? "骨架跟踪" : poseValidated ? "骨架确认" : presence ? "存在候选" : mode === "person" ? "人形识别" : mode === "fall" ? "跌倒证据" : "人像";
-        const label = `${prefix} ${index + 1}${confidence}${candidateScore}`;
+        const pose = matchingPose(person, poses);
+        const posture = pose ? ` · ${postureLabel(pose.posture)}` : "";
+        const trackId = person.track_id || pose?.track_id;
+        const identity = trackId ? `人物 ${String(trackId).split("-").pop()}` : `人物 ${index + 1}`;
+        const prefix = presence && !poseValidated ? "人体候选" : identity;
+        const label = `${prefix}${posture}${confidence}${candidateScore}`;
         return { bbox: [x1, y1, x2, y2], label: person.fall_candidate ? `${label} · 疑似跌倒` : label, kind: tracked ? "tracked" : kind };
       })
     : [];
   const boxes = [...sceneBoxes, ...personBoxes];
-  if (!snapshot || !rect || (!boxes.length && !poses.length)) {
+  if (!snapshot || !rect) {
     overlay.innerHTML = "";
     overlay.removeAttribute("style");
     return;
@@ -937,7 +1025,15 @@ function renderDetectionOverlay(snapshot) {
       </div>
     `;
   }).join("");
-  overlay.innerHTML = `${poseMarkup}${boxMarkup}`;
+  const analysis = snapshot?.analysis || {};
+  const alerts = [];
+  if (analysis.black_screen) alerts.push({ level: "critical", text: "摄像头画面异常" });
+  if (analysis.fire_event_candidate || analysis.fire_candidate) alerts.push({ level: "critical", text: analysis.fire_event_candidate ? "火灾事件候选" : "火灾线索复核中" });
+  if (analysis.fall_candidate || analysis.pose_fall_candidate) alerts.push({ level: "critical", text: "跌倒线索复核中" });
+  const alertMarkup = alerts.length
+    ? `<div class="perception-frame-alerts">${alerts.map((alert) => `<span class="${escapeHtml(alert.level)}">${escapeHtml(alert.text)}</span>`).join("")}</div>`
+    : '<div class="perception-frame-alerts"><span class="normal">安全状态正常</span></div>';
+  overlay.innerHTML = `${poseMarkup}${boxMarkup}${alertMarkup}`;
 }
 
 function renderPoseSkeleton(snapshot, rect) {
@@ -973,6 +1069,51 @@ function renderPoseSkeleton(snapshot, rect) {
   `;
 }
 
+function renderPerceptionTargetList(snapshot) {
+  const target = $("perceptionTargetList");
+  if (!target) return;
+  if (!snapshot) {
+    target.innerHTML = '<div class="empty-state">等待人物、姿态与场景目标。</div>';
+    setText("sceneMapStatus", "场景学习中");
+    return;
+  }
+  const analysis = snapshot.analysis || {};
+  const poses = snapshotPoses(snapshot);
+  const people = snapshotPeople(snapshot);
+  const scenes = unifiedSceneTargets(snapshot);
+  const rows = [];
+  for (const [index, person] of people.entries()) {
+    const pose = matchingPose(person, poses);
+    const trackId = person.track_id || pose?.track_id;
+    const identity = trackId ? `人物 ${String(trackId).split("-").pop()}` : `人物 ${index + 1}`;
+    const confidence = person.confidence || pose?.confidence;
+    const stateText = pose ? postureLabel(pose.posture) : isPresenceCandidate(person) ? "人体候选" : "姿态识别中";
+    const sceneText = pose?.scene_zone_label_zh || person.scene_zone_label_zh || "";
+    rows.push(`
+      <div class="perception-target-row person-target">
+        <span class="perception-target-icon" aria-hidden="true">人</span>
+        <div><strong>${escapeHtml(identity)} · ${escapeHtml(stateText)}</strong><span>${escapeHtml([sceneText, confidence ? `置信 ${Math.round(Number(confidence) * 100)}%` : ""].filter(Boolean).join(" · ") || "持续跟踪当前人物")}</span></div>
+        <em>${person.fall_candidate || pose?.fall_candidate ? "需复核" : "跟踪中"}</em>
+      </div>
+    `);
+  }
+  for (const scene of scenes.slice(0, 6)) {
+    rows.push(`
+      <div class="perception-target-row scene-target">
+        <span class="perception-target-icon" aria-hidden="true">景</span>
+        <div><strong>${escapeHtml(sceneLabel(scene))}</strong><span>${scene.stable ? `已稳定学习 · ${escapeHtml(String(scene.hits || 0))} 帧` : `当前帧识别${scene.confidence ? ` · ${Math.round(Number(scene.confidence) * 100)}%` : ""}`}</span></div>
+        <em>${scene.stable ? "场景" : "目标"}</em>
+      </div>
+    `);
+  }
+  if (!rows.length) {
+    rows.push('<div class="empty-state">当前画面没有识别到人物或场景目标。</div>');
+  }
+  target.innerHTML = rows.join("");
+  const sceneStatus = String(analysis.scene_map_status || "empty");
+  setText("sceneMapStatus", sceneStatus === "stable" ? "场景已学习" : sceneStatus === "learning" ? "场景学习中" : "等待场景目标");
+}
+
 function renderSnapshot(snapshot) {
   state.latestSnapshot = snapshot;
   const analysis = snapshot?.analysis || {};
@@ -988,13 +1129,16 @@ function renderSnapshot(snapshot) {
   setText("snapshotContrast", fmtNumber(analysis.contrast, 1));
   setText("snapshotMotion", analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4));
   setText("snapshotPeople", snapshot.person_count ?? analysis.person_count ?? "-");
+  setText("snapshotPoseCount", analysis.pose_count ?? snapshotPoses(snapshot).length);
+  setText("snapshotSceneCount", unifiedSceneTargets(snapshot).length);
+  setText("snapshotFireState", analysis.fire_event_candidate ? "事件候选" : analysis.fire_candidate ? "线索复核" : "正常");
+  setText("snapshotQualityState", analysis.black_screen ? "异常" : "正常");
   const visibleTags = algorithmVisibleTags(snapshot);
   setText("snapshotTags", visibleTags.length ? visibleTags.map(tagLabel).join("，") : algorithmNormalTagLabel(state.previewAlgorithm, snapshot));
   renderDetectionSummary(snapshot);
   renderDetectionOverlay(snapshot);
+  renderPerceptionTargetList(snapshot);
   renderAlgorithmHitStrip(snapshot);
-  renderAlgorithmDemo(snapshot);
-  renderAlgorithmPreviewMeta(snapshot);
 }
 
 function renderDetectionSummary(snapshot) {
@@ -1003,7 +1147,7 @@ function renderDetectionSummary(snapshot) {
   if (pageName === "algorithms") {
     const stateInfo = algorithmHitState(snapshot);
     const levelClass = stateInfo.level === "critical" ? "bad" : stateInfo.level === "idle" ? "muted" : stateInfo.level;
-    target.innerHTML = `<span class="status-pill ${escapeHtml(levelClass)}">本算法状态</span><p><strong>${escapeHtml(stateInfo.title)}</strong> · ${escapeHtml(stateInfo.detail)}</p>`;
+    target.innerHTML = `<span class="status-pill ${escapeHtml(levelClass)}">统一感知</span><p><strong>${escapeHtml(stateInfo.title)}</strong> · ${escapeHtml(stateInfo.detail)}</p>`;
     return;
   }
   const analysis = snapshot?.analysis || {};
@@ -1216,7 +1360,19 @@ function algorithmHitState(snapshot) {
 
   if (!snapshot) return { hit, level, title, detail, score, scoreLabel, model: backendLabel(snapshot), latency: "-" };
 
-  if (mode === "person") {
+  if (mode === "unified") {
+    const fallCandidate = Boolean(analysis.fall_candidate || analysis.pose_fall_candidate);
+    const fireCandidate = Boolean(analysis.fire_candidate || analysis.fire_event_candidate);
+    const cameraAbnormal = Boolean(analysis.black_screen);
+    hit = personCount > 0 || poses.length > 0;
+    level = fallCandidate || fireCandidate || cameraAbnormal ? "critical" : hit ? "hit" : "idle";
+    title = fallCandidate ? "跌倒线索复核中" : fireCandidate ? "火灾线索复核中" : cameraAbnormal ? "摄像头画面异常" : hit ? `检测到 ${personCount || poses.length} 人` : "当前画面无人";
+    const postureSummary = [...new Set(poses.map((pose) => postureLabel(pose.posture)).filter(Boolean))].join("、");
+    const sceneSummary = [...new Set(unifiedSceneTargets(snapshot).map(sceneLabel).filter(Boolean))].join("、");
+    detail = [postureSummary ? `姿态 ${postureSummary}` : "姿态待识别", sceneSummary ? `场景 ${sceneSummary}` : "场景学习中"].join(" · ");
+    scoreLabel = "当前人物";
+    score = `${personCount || poses.length || 0} 人 / ${poses.length} 组骨架`;
+  } else if (mode === "person") {
     scoreLabel = poses.length ? "骨架置信" : "人形置信";
     hit = personCount > 0 || poses.length > 0;
     level = hit ? presenceCount && presenceCount === personCount ? "watch" : "hit" : "idle";
@@ -1320,7 +1476,7 @@ function renderAlgorithmHitStrip(snapshot = state.latestSnapshot) {
   }
   target.innerHTML = `
     <div class="algorithm-hit-card primary">
-      <span>本算法状态</span>
+      <span>安全状态</span>
       <strong>${escapeHtml(stateInfo.title)}</strong>
       <small>${escapeHtml(stateInfo.detail)}</small>
     </div>
@@ -1342,12 +1498,11 @@ function renderEmptySnapshot() {
   if ($("snapshotImage")) $("snapshotImage").removeAttribute("src");
   if ($("snapshotEmpty")) $("snapshotEmpty").style.display = "grid";
   if ($("detectionOverlay")) $("detectionOverlay").innerHTML = "";
-  for (const id of ["snapshotTime", "streamFrameTime", "snapshotBrightness", "snapshotContrast", "snapshotMotion", "snapshotPeople", "snapshotTags"]) {
+  for (const id of ["snapshotTime", "streamFrameTime", "snapshotBrightness", "snapshotContrast", "snapshotMotion", "snapshotPeople", "snapshotTags", "snapshotPoseCount", "snapshotSceneCount", "snapshotFireState", "snapshotQualityState"]) {
     setText(id, "-");
   }
+  renderPerceptionTargetList(null);
   renderAlgorithmHitStrip(null);
-  renderAlgorithmDemo(null);
-  renderAlgorithmPreviewMeta(null);
 }
 
 function renderCameraTestResult(level, title, message) {
@@ -1376,6 +1531,7 @@ async function loadSnapshot(cameraId) {
 
 function liveAnalysisDelay() {
   const mode = state.previewAlgorithm || "person";
+  if (mode === "unified") return 7000;
   if (["fall", "meal", "stillness"].includes(mode)) return 9000;
   if (mode === "person" || mode === "night") return 7000;
   if (mode === "fire") return 5200;
@@ -1849,7 +2005,7 @@ function renderAlgorithmDemo(snapshot = state.latestSnapshot) {
 }
 
 function updatePreviewAlgorithmInfo() {
-  const value = $("previewAlgorithm")?.value || "quality";
+  const value = $("previewAlgorithm")?.value || (pageName === "algorithms" ? "unified" : state.previewAlgorithm || "quality");
   state.previewAlgorithm = value;
   setText("previewModeInfo", previewAlgorithmCopy[value] || previewAlgorithmCopy.quality);
   renderAlgorithmHitStrip(state.latestSnapshot);
@@ -1985,6 +2141,15 @@ function evidencePills(candidate) {
 
 function algorithmRecordScope(mode = state.previewAlgorithm || "quality") {
   const scopes = {
+    unified: {
+      candidateTypes: ["fall_candidate", "fire_candidate", "black_screen", "camera_offline", "no_person", "no_motion"],
+      observationTypes: ["no_person", "no_motion"],
+      candidateTitle: "最近安全记录",
+      observationTitle: "最近生活观察",
+      observationSubtitle: "统一时间线",
+      candidateEmpty: "当前没有需要处理的安全记录。",
+      observationEmpty: "当前没有持续无人或低活动观察。",
+    },
     quality: {
       candidateTypes: ["black_screen"],
       observationTypes: ["no_motion"],

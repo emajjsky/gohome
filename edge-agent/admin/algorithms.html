@@ -78,18 +78,10 @@
           <div class="algorithm-stage-toolbar">
             <div class="preview-picker">
               <label>摄像头<select id="cameraSelect"></select></label>
-              <label>预览算法
-                <select id="previewAlgorithm">
-                  <option value="quality">画面质量</option>
-                  <option value="person">人形 / 无人</option>
-                  <option value="stillness">久坐 / 静止</option>
-                  <option value="fall">跌倒检测</option>
-                  <option value="meal">用餐</option>
-                  <option value="night">夜间活动</option>
-                  <option value="fire">火灾</option>
-                  <option value="camera">摄像头异常</option>
-                </select>
-              </label>
+              <div class="unified-mode-indicator" aria-label="当前分析模式">
+                <span class="unified-mode-glyph" aria-hidden="true">全</span>
+                <div><span>分析模式</span><strong>统一实时感知</strong></div>
+              </div>
             </div>
             <button id="captureSelected" class="secondary-button icon-command" type="button" title="抓取当前检测帧">
               <span class="material-symbols-outlined" data-icon="◎">photo_camera</span>
@@ -116,11 +108,11 @@
               </div>
               <div id="algorithmHitStrip" class="algorithm-hit-strip" aria-live="polite">
                 <div class="algorithm-hit-card primary">
-                  <span>本算法状态</span>
+                  <span>安全状态</span>
                   <strong>等待检测</strong>
                 </div>
                 <div class="algorithm-hit-card">
-                  <span>本算法指标</span>
+                  <span>当前人物</span>
                   <strong>-</strong>
                 </div>
                 <div class="algorithm-hit-card">
@@ -131,36 +123,36 @@
             </section>
 
             <aside class="algorithm-evidence-rail" aria-label="算法证据">
-              <article id="algorithmDemo" class="algorithm-demo-card" aria-label="算法动效示意"></article>
-              <div class="analysis-grid">
-                <div>
-                  <span>当前算法</span>
-                  <strong id="previewModeInfo">画面质量：亮度、对比度、运动变化。</strong>
-                </div>
-                <div id="detectionSummary" class="detection-summary plain">
-                  <span class="status-pill muted">等待检测</span>
-                  <p>检测结果会随后台最新帧刷新。</p>
-                </div>
+              <div class="unified-perception-head">
+                <div><span>当前感知</span><strong>画面中的全部目标与状态</strong></div>
+                <span id="sceneMapStatus" class="status-pill muted">场景学习中</span>
+              </div>
+              <div id="detectionSummary" class="detection-summary plain">
+                <span class="status-pill muted">等待检测</span>
+                <p>检测结果会随后台最新帧刷新。</p>
+              </div>
+              <div id="perceptionTargetList" class="perception-target-list" aria-live="polite">
+                <div class="empty-state">等待人物、姿态与场景目标。</div>
               </div>
               <div class="preview-meta">
-                <div><span>截图</span><strong id="snapshotTime">-</strong></div>
-                <div><span>亮度</span><strong id="snapshotBrightness">-</strong></div>
-                <div><span>对比度</span><strong id="snapshotContrast">-</strong></div>
-                <div><span>变化</span><strong id="snapshotMotion">-</strong></div>
-                <div><span>人数</span><strong id="snapshotPeople">-</strong></div>
-                <div><span>标签</span><strong id="snapshotTags">-</strong></div>
+                <div><span>检测帧</span><strong id="snapshotTime">-</strong></div>
+                <div><span>人物</span><strong id="snapshotPeople">-</strong></div>
+                <div><span>姿态</span><strong id="snapshotPoseCount">-</strong></div>
+                <div><span>场景目标</span><strong id="snapshotSceneCount">-</strong></div>
+                <div><span>火灾状态</span><strong id="snapshotFireState">-</strong></div>
+                <div><span>画面状态</span><strong id="snapshotQualityState">-</strong></div>
               </div>
               <section class="algorithm-candidate-panel" aria-label="最近命中">
                 <div class="compact-section-head">
-                  <strong id="candidatePanelTitle">相关后台记录</strong>
+                  <strong id="candidatePanelTitle">最近安全记录</strong>
                   <span id="uploadQueueSummary">后台留证记录</span>
                 </div>
                 <div id="candidateList" class="candidate-list compact" aria-live="polite"></div>
               </section>
               <section class="algorithm-candidate-panel observation-panel" aria-label="生活观察">
                 <div class="compact-section-head">
-                  <strong id="observationPanelTitle">相关生活观察</strong>
-                  <span id="observationPanelSubtitle">按当前算法筛选</span>
+                  <strong id="observationPanelTitle">最近生活观察</strong>
+                  <span id="observationPanelSubtitle">统一时间线</span>
                 </div>
                 <div id="observationList" class="candidate-list observation-list compact" aria-live="polite"></div>
               </section>
@@ -171,6 +163,6 @@
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/admin/console.js?v=20260705-lowlatency-1"></script>
+  <script src="/admin/console.js?v=20260712-unified-perception-1"></script>
 </body>
 </html>

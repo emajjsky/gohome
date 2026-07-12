@@ -4991,6 +4991,254 @@ body.admin-web-page .empty-state.compact {
   }
 }
 
+/* 2026-07-12 unified perception console: one real frame, all detections. */
+body.admin-web-page .algorithm-stage-toolbar .preview-picker {
+  grid-template-columns: minmax(240px, 1fr) minmax(210px, .62fr);
+}
+
+body.admin-web-page .unified-mode-indicator {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid oklch(88% 0.006 255);
+  border-radius: 8px;
+  padding: 7px 11px;
+  background: oklch(97.8% 0.004 160);
+}
+
+body.admin-web-page .unified-mode-indicator > span {
+  color: oklch(45% 0.11 155);
+  font-size: 13px;
+}
+
+body.admin-web-page .unified-mode-glyph {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  flex: 0 0 27px;
+  place-items: center;
+  border-radius: 7px;
+  background: oklch(91.5% 0.04 155);
+  font-weight: 850;
+}
+
+body.admin-web-page .unified-mode-indicator div {
+  min-width: 0;
+}
+
+body.admin-web-page .unified-mode-indicator div span,
+body.admin-web-page .unified-perception-head div span {
+  display: block;
+  color: oklch(52% 0.006 255);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1.2;
+}
+
+body.admin-web-page .unified-mode-indicator strong,
+body.admin-web-page .unified-perception-head strong {
+  display: block;
+  margin-top: 2px;
+  color: oklch(20% 0.006 255);
+  font-size: 14px;
+  font-weight: 820;
+  line-height: 1.25;
+}
+
+body.admin-web-page .algorithm-theater {
+  grid-template-columns: minmax(620px, 1fr) minmax(320px, 360px);
+  gap: 12px;
+}
+
+body.admin-web-page .algorithm-evidence-rail {
+  grid-template-rows: auto auto minmax(120px, auto) auto minmax(0, 1fr) minmax(0, .8fr);
+  gap: 8px;
+  max-height: calc(100dvh - 150px);
+  overflow: hidden;
+}
+
+body.admin-web-page .unified-perception-head {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid oklch(90% 0.004 255);
+  padding: 0 0 9px;
+}
+
+body.admin-web-page .algorithm-evidence-rail .detection-summary {
+  border: 0;
+  border-radius: 0;
+  padding: 2px 0 8px;
+  background: transparent;
+}
+
+body.admin-web-page .algorithm-evidence-rail .detection-summary p {
+  margin-top: 6px;
+  line-height: 1.45;
+}
+
+body.admin-web-page .perception-target-list {
+  max-height: 242px;
+  overflow: auto;
+  border-block: 1px solid oklch(91% 0.004 255);
+}
+
+body.admin-web-page .perception-target-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  padding: 9px 2px;
+  border-bottom: 1px solid oklch(93% 0.003 255);
+}
+
+body.admin-web-page .perception-target-row:last-child {
+  border-bottom: 0;
+}
+
+body.admin-web-page .perception-target-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: oklch(94% 0.025 155);
+  color: oklch(42% 0.12 155);
+  font-size: 17px;
+}
+
+body.admin-web-page .scene-target .perception-target-icon {
+  background: oklch(94% 0.018 225);
+  color: oklch(42% 0.09 225);
+}
+
+body.admin-web-page .perception-target-row div {
+  min-width: 0;
+}
+
+body.admin-web-page .perception-target-row strong,
+body.admin-web-page .perception-target-row span:not(.material-symbols-outlined) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.admin-web-page .perception-target-row strong {
+  color: oklch(22% 0.006 255);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+body.admin-web-page .perception-target-row div span {
+  margin-top: 2px;
+  color: oklch(52% 0.006 255);
+  font-size: 11px;
+}
+
+body.admin-web-page .perception-target-row em {
+  color: oklch(45% 0.05 155);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+body.admin-web-page .algorithm-evidence-rail .preview-meta {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+body.admin-web-page .algorithm-evidence-rail .preview-meta div {
+  min-height: 50px;
+  padding: 8px 9px;
+}
+
+body.admin-web-page .algorithm-evidence-rail .candidate-list.compact,
+body.admin-web-page .algorithm-evidence-rail .observation-list.compact {
+  max-height: 250px;
+  overflow: auto;
+}
+
+body.admin-web-page .detection-box.scene {
+  border-width: 1.5px;
+  background: oklch(62% 0.09 215 / .055);
+}
+
+body.admin-web-page .perception-frame-alerts {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+body.admin-web-page .perception-frame-alerts span {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid oklch(100% 0 0 / .2);
+  border-radius: 6px;
+  padding: 0 8px;
+  background: oklch(24% 0.04 155 / .84);
+  color: white;
+  box-shadow: 0 4px 14px oklch(12% 0.02 255 / .22);
+  font-size: 11px;
+  font-weight: 820;
+  backdrop-filter: blur(8px);
+}
+
+body.admin-web-page .perception-frame-alerts span.critical {
+  background: oklch(42% 0.15 25 / .9);
+}
+
+@media (max-width: 1280px) {
+  body.admin-web-page .algorithm-theater {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.admin-web-page .algorithm-evidence-rail {
+    grid-template-columns: minmax(260px, .7fr) minmax(340px, 1.3fr);
+    grid-template-rows: auto auto auto;
+  }
+
+  body.admin-web-page .unified-perception-head,
+  body.admin-web-page .detection-summary,
+  body.admin-web-page .perception-target-list {
+    grid-column: 1;
+  }
+
+  body.admin-web-page .algorithm-evidence-rail .preview-meta,
+  body.admin-web-page .algorithm-evidence-rail .algorithm-candidate-panel {
+    grid-column: 2;
+  }
+
+  body.admin-web-page .algorithm-evidence-rail .preview-meta {
+    grid-row: 1;
+  }
+}
+
+@media (max-width: 760px) {
+  body.admin-web-page .algorithm-stage-toolbar .preview-picker,
+  body.admin-web-page .algorithm-evidence-rail {
+    grid-template-columns: 1fr;
+  }
+
+  body.admin-web-page .algorithm-evidence-rail > * {
+    grid-column: 1 !important;
+    grid-row: auto !important;
+  }
+
+  body.admin-web-page .algorithm-evidence-rail .preview-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 /* 2026-07-02 layout pass: home video-first, algorithms demo-over-live. */
 body.admin-web-page .admin-sidebar-status {
   display: grid;
@@ -5845,5 +6093,87 @@ body.admin-web-page .algorithm-evidence-rail .candidate-card-head strong {
 
   body.admin-web-page .admin-sidebar-controls .secondary-button {
     width: 100%;
+  }
+}
+
+/* Final cascade for the unified perception layout. */
+body.admin-web-page .algorithm-stage-toolbar .preview-picker {
+  grid-template-columns: minmax(240px, 1fr) minmax(210px, .62fr);
+}
+
+body.admin-web-page .algorithm-theater {
+  grid-template-columns: minmax(620px, 1fr) minmax(320px, 360px);
+  gap: 12px;
+}
+
+body.admin-web-page .algorithm-evidence-rail {
+  grid-template-rows: auto auto minmax(120px, auto) auto minmax(0, 1fr) minmax(0, .8fr);
+  gap: 8px;
+  max-height: calc(100dvh - 150px);
+  overflow: hidden;
+}
+
+body.admin-web-page .algorithm-evidence-rail .detection-summary {
+  border: 0;
+  border-radius: 0;
+  padding: 2px 0 8px;
+  background: transparent;
+}
+
+body.admin-web-page .algorithm-evidence-rail .preview-meta {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+body.admin-web-page .algorithm-evidence-rail .preview-meta div {
+  min-height: 50px;
+  padding: 8px 9px;
+}
+
+@media (max-width: 1280px) {
+  body.admin-web-page .algorithm-theater {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body.admin-web-page .algorithm-evidence-rail {
+    grid-template-columns: minmax(260px, .7fr) minmax(340px, 1.3fr);
+    grid-template-rows: auto auto auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  body.admin-web-page .unified-perception-head,
+  body.admin-web-page .detection-summary,
+  body.admin-web-page .perception-target-list {
+    grid-column: 1;
+  }
+
+  body.admin-web-page .algorithm-evidence-rail .preview-meta,
+  body.admin-web-page .algorithm-evidence-rail .algorithm-candidate-panel {
+    grid-column: 2;
+  }
+
+  body.admin-web-page .algorithm-evidence-rail .preview-meta {
+    grid-row: 1;
+  }
+}
+
+@media (max-width: 760px) {
+  body.admin-web-page .algorithm-stage-toolbar .preview-picker,
+  body.admin-web-page .algorithm-evidence-rail {
+    grid-template-columns: 1fr;
+  }
+
+  body.admin-web-page .algorithm-evidence-rail > * {
+    grid-column: 1 !important;
+    grid-row: auto !important;
+  }
+
+  body.admin-web-page .algorithm-evidence-rail .preview-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.admin-web-page .algorithm-evidence-rail .candidate-list.compact,
+  body.admin-web-page .algorithm-evidence-rail .observation-list.compact {
+    max-height: 320px;
   }
 }

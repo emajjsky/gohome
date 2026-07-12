@@ -11,6 +11,7 @@ SCENE_CLASS_LABELS = {
     57: "couch",
     59: "bed",
     60: "dining_table",
+    62: "tv",
 }
 
 

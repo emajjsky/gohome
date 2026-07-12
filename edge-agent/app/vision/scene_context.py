@@ -10,6 +10,7 @@ SCENE_LABELS_ZH = {
     "couch": "沙发",
     "chair": "椅子",
     "dining_table": "餐桌",
+    "tv": "电视",
 }
 
 

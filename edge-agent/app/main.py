@@ -2953,8 +2953,8 @@ async def capture_camera(camera_id: int) -> Dict[str, Any]:
 @app.post("/api/cameras/{camera_id}/analysis/live")
 async def live_camera_analysis(camera_id: int, algorithm: str = Query(default="person")) -> Dict[str, Any]:
     normalized_algorithm = str(algorithm or "person").strip().lower()
-    pose_enabled = normalized_algorithm in {"person", "fall", "meal", "stillness"}
-    reuse_cached_pose = normalized_algorithm in {"person", "night"}
+    pose_enabled = normalized_algorithm in {"unified", "person", "fall", "meal", "stillness"}
+    reuse_cached_pose = normalized_algorithm in {"unified", "person", "night"}
     result = await run_in_threadpool(
         capture_and_store,
         camera_id,
