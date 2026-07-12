@@ -140,37 +140,6 @@
         .pb-safe { padding-bottom: env(safe-area-inset-bottom, 24px); }
     </style>
 
-<script id="gohome-stitch-route-links">
-  (() => {
-    const routes = {
-      "首页": "index.html",
-      "守护": "monitor.html",
-      "消息": "events.html",
-      "陪伴": "companionship.html",
-      "我的": "privacy.html",
-      "实时画面": "watch.html",
-      "事件列表": "events.html",
-      "规则设置": "rules.html",
-      "家庭成员": "family_members.html",
-      "通知设置": "notifications.html",
-      "隐私与数据": "privacy_data.html",
-      "添加摄像头": "connect.html",
-      "设备管理": "cameras.html"
-    };
-    document.addEventListener("click", (event) => {
-      const item = event.target.closest("a, button");
-      if (!item) return;
-      if (item.hasAttribute("onclick")) return;
-      const href = item.getAttribute("href");
-      if (href && href !== "#") return;
-      const text = (item.innerText || item.textContent || "").replace(/\s+/g, "").trim();
-      const route = routes[text];
-      if (!route) return;
-      event.preventDefault();
-      window.location.href = route;
-    });
-  })();
-</script>
 <script src="assets/scripts/edge-client.js?v=20260709-cloud-stream-1"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260709-family-flow-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-cachefix-1"></script>
