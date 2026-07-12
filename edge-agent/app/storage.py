@@ -3987,6 +3987,50 @@ class Storage:
                         "target": "object_storage",
                         "content_type": "image/jpeg",
                         "purpose": evidence_purpose,
+                        "evidence_frame_role": "current",
+                    },
+                )
+            )
+        evidence = base_payload["payload"].get("evidence") if isinstance(base_payload["payload"], dict) else {}
+        temporal_bundle = evidence.get("temporal_evidence_bundle") if isinstance(evidence, dict) else {}
+        temporal_snapshots = temporal_bundle.get("snapshots") if isinstance(temporal_bundle, dict) else []
+        unique_frames: list[Dict[str, Any]] = []
+        seen_snapshot_ids = {snapshot_id} if snapshot_id else set()
+        for item in temporal_snapshots if isinstance(temporal_snapshots, list) else []:
+            if not isinstance(item, dict):
+                continue
+            frame_snapshot_id = item.get("snapshot_id")
+            frame_snapshot_path = str(item.get("snapshot_path") or "").strip().lstrip("/")
+            if not frame_snapshot_id or not frame_snapshot_path or int(frame_snapshot_id) in seen_snapshot_ids:
+                continue
+            seen_snapshot_ids.add(int(frame_snapshot_id))
+            unique_frames.append({
+                "snapshot_id": int(frame_snapshot_id),
+                "snapshot_path": frame_snapshot_path,
+                "observed_at": str(item.get("observed_at") or ""),
+                "postures": item.get("postures") if isinstance(item.get("postures"), list) else [],
+            })
+        for index, frame in enumerate(unique_frames[:2]):
+            role = "before" if index == 0 else "transition"
+            jobs.append(
+                self.enqueue_upload_job(
+                    job_type="media_upload",
+                    object_type="event_keyframe",
+                    idempotency_key=f"snapshot:{frame['snapshot_id']}:event:{event_id}:keyframe",
+                    priority=4,
+                    event_id=event_id,
+                    snapshot_id=int(frame["snapshot_id"]),
+                    camera_id=camera_id,
+                    payload={
+                        **base_payload,
+                        "snapshot_id": int(frame["snapshot_id"]),
+                        "snapshot_path": frame["snapshot_path"],
+                        "captured_at": frame["observed_at"],
+                        "target": "object_storage",
+                        "content_type": "image/jpeg",
+                        "purpose": f"{evidence_purpose}_keyframe",
+                        "evidence_frame_role": role,
+                        "postures": frame["postures"],
                     },
                 )
             )
@@ -4135,6 +4179,24 @@ class Storage:
                 (int(event_id), str(job_type or "").strip()),
             ).fetchone()
         return self._upload_job_to_dict(row)
+
+    def completed_upload_jobs(
+        self,
+        *,
+        event_id: int,
+        job_type: str,
+    ) -> list[Dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM upload_jobs
+                WHERE event_id = ? AND job_type = ? AND status = 'completed'
+                ORDER BY priority ASC, completed_at ASC, id ASC
+                """,
+                (int(event_id), str(job_type or "").strip()),
+            ).fetchall()
+        return [job for row in rows if (job := self._upload_job_to_dict(row)) is not None]
 
     def upload_queue_summary(self) -> Dict[str, Any]:
         with self.connect() as conn:

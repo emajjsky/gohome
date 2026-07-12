@@ -1810,6 +1810,19 @@ function createLocalAppServer(options = {}) {
         const asset = event.media_asset_id
             ? store.db.assets.find((item) => Number(item.id) === Number(event.media_asset_id))
             : null;
+        const evidenceMedia = (event.payload?.evidence_media_assets || [])
+            .map((entry) => {
+                const evidenceAsset = store.db.assets.find((item) => Number(item.id) === Number(entry?.asset_id || entry?.id));
+                if (!evidenceAsset) return null;
+                return {
+                    asset_id: evidenceAsset.id,
+                    role: entry.role || evidenceAsset.evidence_frame_role || "evidence",
+                    captured_at: entry.captured_at || evidenceAsset.captured_at || evidenceAsset.created_at || "",
+                    postures: Array.isArray(entry.postures) ? entry.postures : [],
+                };
+            })
+            .filter(Boolean)
+            .slice(0, 3);
         return {
             id: event.id,
             type: event.event_type,
@@ -1827,6 +1840,7 @@ function createLocalAppServer(options = {}) {
             snapshot_path: event.snapshot_path || asset?.snapshot_path || "",
             snapshot_url: event.snapshot_path || asset?.snapshot_path || "",
             media_asset_id: asset?.id || null,
+            evidence_media: evidenceMedia,
             payload: event.payload || {},
         };
     }
@@ -3397,6 +3411,12 @@ function createLocalAppServer(options = {}) {
             objects: evidence.objects || {},
             pose_factor_graph: evidence.pose_factor_graph || event.payload?.pose_factor_graph || {},
             temporal_evidence_bundle: evidence.temporal_evidence_bundle || event.payload?.temporal_evidence_bundle || {},
+            evidence_frames: (event.payload?.evidence_media_assets || []).map((item) => ({
+                asset_id: item.asset_id || item.id || null,
+                role: item.role || "evidence",
+                captured_at: item.captured_at || "",
+                postures: Array.isArray(item.postures) ? item.postures : [],
+            })),
         };
     }
 
@@ -3408,16 +3428,46 @@ function createLocalAppServer(options = {}) {
         return target.startsWith(root) ? target : "";
     }
 
-    async function callVisionVerificationModel(event, asset) {
+    function visionEvidenceAssets(event, primaryAsset = null) {
+        const roleOrder = { before: 0, transition: 1, current: 2, evidence: 3 };
+        const ids = [];
+        for (const item of event.payload?.evidence_media_assets || []) {
+            const assetId = normalizeNumber(item?.asset_id || item?.id, null);
+            if (assetId !== null && !ids.includes(assetId)) ids.push(assetId);
+        }
+        if (primaryAsset?.id && !ids.includes(Number(primaryAsset.id))) ids.push(Number(primaryAsset.id));
+        return ids
+            .map((id) => store.db.assets.find((item) => Number(item.id) === Number(id)))
+            .filter((item) => item && verificationAssetPath(item))
+            .sort((a, b) => {
+                const roleDifference = (roleOrder[String(a.evidence_frame_role || "evidence")] ?? 3)
+                    - (roleOrder[String(b.evidence_frame_role || "evidence")] ?? 3);
+                if (roleDifference) return roleDifference;
+                return String(a.captured_at || a.created_at || "").localeCompare(String(b.captured_at || b.created_at || ""));
+            })
+            .slice(0, 3);
+    }
+
+    async function callVisionVerificationModel(event, assets) {
         const runtime = visionVerificationRuntimeConfig();
         if (!visionVerificationEnabled()) throw new Error("vision verification disabled");
         if (!runtime.base_url || !runtime.api_key || !runtime.model) throw new Error("vision verification model is not configured");
-        const assetPath = verificationAssetPath(asset);
-        if (!assetPath || !fs.existsSync(assetPath)) throw new Error("event evidence image is unavailable");
-        const imageBytes = fs.readFileSync(assetPath);
-        if (!imageBytes.length) throw new Error("event evidence image is empty");
-        if (imageBytes.length > 8 * 1024 * 1024) throw new Error("event evidence image exceeds 8MB");
-        const contentType = String(asset.content_type || "image/jpeg").split(";")[0].trim() || "image/jpeg";
+        const evidenceAssets = Array.isArray(assets) ? assets.slice(0, 3) : [assets].filter(Boolean);
+        if (!evidenceAssets.length) throw new Error("event evidence image is unavailable");
+        const images = evidenceAssets.map((asset) => {
+            const assetPath = verificationAssetPath(asset);
+            if (!assetPath || !fs.existsSync(assetPath)) throw new Error("event evidence image is unavailable");
+            const imageBytes = fs.readFileSync(assetPath);
+            if (!imageBytes.length) throw new Error("event evidence image is empty");
+            if (imageBytes.length > 8 * 1024 * 1024) throw new Error("event evidence image exceeds 8MB");
+            return {
+                bytes: imageBytes,
+                content_type: String(asset.content_type || "image/jpeg").split(";")[0].trim() || "image/jpeg",
+            };
+        });
+        if (images.reduce((total, item) => total + item.bytes.length, 0) > 18 * 1024 * 1024) {
+            throw new Error("event evidence sequence exceeds 18MB");
+        }
         const context = visionVerificationContext(event);
         const requestPayload = {
             model: runtime.model,
@@ -3429,14 +3479,14 @@ function createLocalAppServer(options = {}) {
                         {
                             type: "text",
                             text: [
-                                "请复核这条家庭守护事件。严格按系统约定只输出 JSON。",
+                                `请按时间顺序复核这条家庭守护事件的 ${images.length} 张证据图。严格按系统约定只输出 JSON。`,
                                 JSON.stringify(context),
                             ].join("\n\n"),
                         },
-                        {
+                        ...images.map((image) => ({
                             type: "image_url",
-                            image_url: { url: `data:${contentType};base64,${imageBytes.toString("base64")}` },
-                        },
+                            image_url: { url: `data:${image.content_type};base64,${image.bytes.toString("base64")}` },
+                        })),
                     ],
                 },
             ],
@@ -3511,7 +3561,8 @@ function createLocalAppServer(options = {}) {
         const validationProbe = Boolean(event.payload?.validation?.vision_verification_probe);
         if (!VISION_VERIFICATION_EVENT_TYPES.has(event.event_type) || (isValidationEvent(event) && !validationProbe)) return null;
         event.payload = event.payload && typeof event.payload === "object" ? event.payload : {};
-        if (!asset?.id || !verificationAssetPath(asset)) {
+        const assets = visionEvidenceAssets(event, asset);
+        if (!assets.length) {
             event.payload.verification = {
                 status: "unavailable",
                 reason: "missing_event_evidence",
@@ -3519,6 +3570,7 @@ function createLocalAppServer(options = {}) {
             };
             return null;
         }
+        const primaryAsset = asset || assets[assets.length - 1];
         const runtime = visionVerificationRuntimeConfig();
         if (!visionVerificationEnabled() || !runtime.base_url || !runtime.api_key || !runtime.model) {
             event.payload.verification = {
@@ -3536,17 +3588,20 @@ function createLocalAppServer(options = {}) {
             purpose: "vision_event_verification",
             model: runtime.model,
             prompt_version: `vision-verification:${runtime.prompt_source}:v1`,
-            input_hash: sha256(JSON.stringify({ context, asset_id: asset.id })),
+            input_hash: sha256(JSON.stringify({ context, asset_ids: assets.map((item) => item.id) })),
             output_status: "pending",
             request_payload: {
                 capability_id: runtime.capability_id,
                 event_id: event.id,
-                asset_id: asset.id,
+                asset_id: primaryAsset.id,
+                asset_ids: assets.map((item) => item.id),
                 context,
             },
             metadata: {
                 event_id: String(event.id),
-                asset_id: String(asset.id),
+                asset_id: String(primaryAsset.id),
+                asset_ids: assets.map((item) => String(item.id)),
+                evidence_frame_count: assets.length,
                 attempt_count: 0,
                 max_attempts: visionVerificationMaxAttempts(),
                 next_attempt_at: nowIso(),
@@ -3579,8 +3634,13 @@ function createLocalAppServer(options = {}) {
                 .slice(0, limit);
             for (const job of jobs) {
                 const event = store.db.events.find((item) => String(item.id) === String(job.metadata?.event_id || job.request_payload?.event_id));
-                const asset = store.db.assets.find((item) => String(item.id) === String(job.metadata?.asset_id || job.request_payload?.asset_id));
-                if (!event || !asset) {
+                const assetIds = Array.isArray(job.metadata?.asset_ids)
+                    ? job.metadata.asset_ids
+                    : (Array.isArray(job.request_payload?.asset_ids) ? job.request_payload.asset_ids : [job.metadata?.asset_id || job.request_payload?.asset_id]);
+                const assets = assetIds
+                    .map((id) => store.db.assets.find((item) => String(item.id) === String(id)))
+                    .filter(Boolean);
+                if (!event || !assets.length) {
                     updateModelJob(job, { output_status: "failed", error_message: "event or evidence asset not found" });
                     result.failed += 1;
                     result.processed += 1;
@@ -3598,7 +3658,7 @@ function createLocalAppServer(options = {}) {
                 };
                 await store.save();
                 try {
-                    const response = await callVisionVerificationModel(event, asset);
+                    const response = await callVisionVerificationModel(event, assets);
                     const decision = verificationDecision(response.verification);
                     updateModelJob(job, {
                         output_status: "succeeded",
@@ -5793,6 +5853,7 @@ function createLocalAppServer(options = {}) {
             relative_path: relativePath,
             edge_event_id: url.searchParams.get("edge_event_id") || "",
             purpose: url.searchParams.get("purpose") || "",
+            evidence_frame_role: url.searchParams.get("evidence_frame_role") || "",
             local_camera_id: normalizeNumber(localCameraId, null),
             captured_at: url.searchParams.get("captured_at") || nowIso(),
             size: content.length,
@@ -5807,13 +5868,40 @@ function createLocalAppServer(options = {}) {
 
     async function handleDeviceEvent(req, res) {
         if (!requireDevice(req, res)) return;
+        const issuedToken = issuedDeviceTokenFromRequest(req);
         const payload = await parseJsonBody(req);
         const camera = upsertCamera(payload);
         const edgeEventId = payload.payload?.edge_upload?.edge_event_id || payload.edge_event_id || "";
         const mediaFromPayload = payload.media_upload_result?.asset || payload.payload?.media_upload_result?.asset || null;
+        const deviceAsset = (item) => Boolean(
+            item
+            && (!issuedToken?.device_id || String(item.device_id || "") === String(issuedToken.device_id))
+            && (!edgeEventId || String(item.edge_event_id || "") === String(edgeEventId))
+        );
         const asset = mediaFromPayload?.id
-            ? store.db.assets.find((item) => Number(item.id) === Number(mediaFromPayload.id))
-            : [...store.db.assets].reverse().find((item) => String(item.edge_event_id || "") === String(edgeEventId || ""));
+            ? store.db.assets.find((item) => Number(item.id) === Number(mediaFromPayload.id) && deviceAsset(item))
+            : [...store.db.assets].reverse().find((item) => deviceAsset(item));
+        const requestedEvidenceAssets = Array.isArray(payload.payload?.evidence_media_assets)
+            ? payload.payload.evidence_media_assets
+            : [];
+        const evidenceMediaAssets = requestedEvidenceAssets
+            .map((entry) => {
+                const requestedAssetId = normalizeNumber(entry?.asset?.id || entry?.asset_id || entry?.id, null);
+                const matched = requestedAssetId === null
+                    ? null
+                    : store.db.assets.find((item) => Number(item.id) === requestedAssetId && deviceAsset(item));
+                if (!matched) return null;
+                return {
+                    asset_id: matched.id,
+                    role: String(entry.role || matched.evidence_frame_role || "evidence"),
+                    captured_at: String(entry.captured_at || matched.captured_at || ""),
+                    snapshot_id: normalizeNumber(entry.snapshot_id, null),
+                    postures: Array.isArray(entry.postures) ? entry.postures.map(String).slice(0, 8) : [],
+                };
+            })
+            .filter(Boolean)
+            .filter((entry, index, items) => items.findIndex((item) => Number(item.asset_id) === Number(entry.asset_id)) === index)
+            .slice(0, 3);
         const event = {
             id: store.nextId("event"),
             family_id: camera?.family_id || store.db.devices[String(camera?.device_id || "")]?.family_id || null,
@@ -5832,6 +5920,7 @@ function createLocalAppServer(options = {}) {
             resolution: "",
             payload: {
                 ...(payload.payload || {}),
+                evidence_media_assets: evidenceMediaAssets,
                 edge_camera_id: payload.camera_id || null,
                 app_camera_id: camera?.id || payload.camera_id || null,
             },

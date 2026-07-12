@@ -66,7 +66,9 @@
         const status = String(verification.status || "");
         const result = verification.result || {};
         if (!status) return "";
-        if (status === "pending" || status === "verifying") return "云端正在复核事件证据";
+        const frameCount = Array.isArray(event?.evidence_media) ? event.evidence_media.length : 0;
+        const evidenceLabel = frameCount > 1 ? `${frameCount} 张关键帧` : "事件证据";
+        if (status === "pending" || status === "verifying") return `云端正在复核${evidenceLabel}`;
         if (status === "retrying") return "云端复核暂时失败，系统正在自动重试";
         if (status === "confirmed") return `云端视觉复核支持这条提醒：${result.reason || "建议立即确认老人状态"}`;
         if (status === "rejected") return `云端视觉复核暂未看到明确紧急线索：${result.reason || "仍建议结合实时画面确认"}`;
@@ -329,6 +331,48 @@
         node.innerHTML = items.map(timelineItem).join("");
     }
 
+    function evidenceRoleLabel(role) {
+        const labels = {
+            before: "事发前",
+            transition: "姿态变化",
+            current: "当前画面",
+        };
+        return labels[String(role || "")] || "证据画面";
+    }
+
+    async function renderEvidenceFrames(event) {
+        const strip = $("edgeEvidenceStrip");
+        const node = $("edgeEvidenceFrames");
+        const count = $("edgeEvidenceFrameCount");
+        if (!strip || !node) return;
+        const frames = Array.isArray(event?.evidence_media) ? event.evidence_media.filter((item) => item?.asset_id) : [];
+        if (frames.length <= 1) {
+            strip.classList.remove("visible");
+            node.innerHTML = "";
+            return;
+        }
+        const rendered = await Promise.all(frames.map(async (frame) => {
+            try {
+                const source = await GoHomeEdge.v1VideoAssetPlaybackUrl(frame.asset_id);
+                return `<div class="evidence-frame">
+                    <img src="${escapeHtml(source)}" alt="${escapeHtml(evidenceRoleLabel(frame.role))}"/>
+                    <span>${escapeHtml(evidenceRoleLabel(frame.role))}</span>
+                </div>`;
+            } catch (_error) {
+                return "";
+            }
+        }));
+        const available = rendered.filter(Boolean);
+        if (available.length <= 1) {
+            strip.classList.remove("visible");
+            node.innerHTML = "";
+            return;
+        }
+        node.innerHTML = available.join("");
+        if (count) count.textContent = `${available.length} 张 · 按发生顺序`;
+        strip.classList.add("visible");
+    }
+
     async function applyEvent(event) {
         const payload = event.payload || {};
         const rule = payload.rule || {};
@@ -349,6 +393,7 @@
         setText("edgeDetailFact", factText(event, payload, rule));
         setText("edgeDetailFactSub", factSubText(payload, rule));
         renderTimeline(event);
+        await renderEvidenceFrames(event);
         syncActionState(event);
         const verificationStatus = String(payload?.verification?.status || "");
         if (["pending", "verifying", "retrying"].includes(verificationStatus) && verificationPollCount < 10) {

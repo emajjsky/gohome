@@ -809,7 +809,10 @@ async function main() {
             assert.equal(requestPayload.model, "mock-vision-model");
             assert.ok(Array.isArray(userContent));
             assert.match(userContent[0].text, /pose_factor_graph/);
-            assert.match(userContent[1].image_url.url, /^data:image\/jpeg;base64,/);
+            assert.match(userContent[0].text, /evidence_frames/);
+            const imageContent = userContent.filter((item) => item.type === "image_url");
+            assert.equal(imageContent.length, 3);
+            assert.ok(imageContent.every((item) => /^data:image\/jpeg;base64,/.test(item.image_url.url)));
             const parsed = verificationRequestCount === 1
                 ? {
                     person_count: 1,
@@ -846,10 +849,28 @@ async function main() {
             process.env.GOHOME_MULTIMODAL_MODEL = "mock-vision-model";
             const verificationMedia = await requestJson(
                 baseUrl,
-                `/api/v1/device/media-assets/upload?file_name=verification.jpg&snapshot_path=events/verification.jpg&content_type=image/jpeg&edge_event_id=43&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence`,
+                `/api/v1/device/media-assets/upload?file_name=verification.jpg&snapshot_path=events/verification.jpg&content_type=image/jpeg&edge_event_id=43&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence&evidence_frame_role=current&captured_at=2026-07-05T10%3A00%3A03.000Z`,
                 {
                     method: "POST",
                     body: Buffer.from("mock-verification-jpeg"),
+                    headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
+                },
+            );
+            const verificationBeforeMedia = await requestJson(
+                baseUrl,
+                `/api/v1/device/media-assets/upload?file_name=verification-before.jpg&snapshot_path=events/verification-before.jpg&content_type=image/jpeg&edge_event_id=43&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence_keyframe&evidence_frame_role=before&captured_at=2026-07-05T10%3A00%3A01.000Z`,
+                {
+                    method: "POST",
+                    body: Buffer.from("mock-verification-before-jpeg"),
+                    headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
+                },
+            );
+            const verificationTransitionMedia = await requestJson(
+                baseUrl,
+                `/api/v1/device/media-assets/upload?file_name=verification-transition.jpg&snapshot_path=events/verification-transition.jpg&content_type=image/jpeg&edge_event_id=43&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence_keyframe&evidence_frame_role=transition&captured_at=2026-07-05T10%3A00%3A02.000Z`,
+                {
+                    method: "POST",
+                    body: Buffer.from("mock-verification-transition-jpeg"),
                     headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
                 },
             );
@@ -871,12 +892,21 @@ async function main() {
                             pose_factor_graph: { fast_fall_candidate: true, fast_fall_score: 0.91 },
                             temporal_evidence_bundle: { track_id: "c11-p1", posture_sequence: ["standing", "lying"] },
                         },
+                        evidence_media_assets: [
+                            { asset: verificationBeforeMedia.asset, role: "before", captured_at: "2026-07-05T10:00:01.000Z", postures: ["standing"] },
+                            { asset: verificationTransitionMedia.asset, role: "transition", captured_at: "2026-07-05T10:00:02.000Z", postures: ["bending"] },
+                            { asset: verificationMedia.asset, role: "current", captured_at: "2026-07-05T10:00:03.000Z", postures: ["lying"] },
+                        ],
+                        media_upload_result: { asset: verificationMedia.asset },
                         edge_upload: { edge_event_id: 43, edge_device_id: "edge-test" },
                     },
                 }),
                 headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
             });
             assert.equal(verificationEvent.event.media_asset_id, verificationMedia.asset.id);
+            assert.equal(verificationEvent.event.payload.evidence_media_assets.length, 3);
+            assert.equal(verificationEvent.event.evidence_media.length, 3);
+            assert.deepEqual(verificationEvent.event.evidence_media.map((item) => item.role), ["before", "transition", "current"]);
             assert.equal(verificationEvent.verification.status, "pending");
             await new Promise((resolve) => setTimeout(resolve, 100));
             const retryingEvent = await requestJson(baseUrl, `/api/v1/events/${verificationEvent.event.id}`, {
@@ -913,6 +943,12 @@ async function main() {
             assert.ok(verificationJob);
             assert.equal(verificationJob.output_status, "succeeded");
             assert.equal(verificationJob.metadata.attempt_count, 2);
+            assert.equal(verificationJob.metadata.evidence_frame_count, 3);
+            assert.deepEqual(verificationJob.request_payload.asset_ids, [
+                verificationBeforeMedia.asset.id,
+                verificationTransitionMedia.asset.id,
+                verificationMedia.asset.id,
+            ]);
             assert.equal("api_key" in verificationJob.request_payload, false);
             const deviceVerificationStatus = await requestJson(baseUrl, "/api/v1/device/vision-verifications?limit=5", {
                 headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
@@ -1535,7 +1571,7 @@ async function main() {
         assert.ok(seededFallEvent);
         assert.ok(seededStaleOfflineEvent);
         assert.equal(seededFallEvent.camera_id, String(camera.id));
-        assert.equal(seedBundle.tables.media_assets.length, 3);
+        assert.equal(seedBundle.tables.media_assets.length, 5);
         const seededEventAsset = seedBundle.tables.media_assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(seededEventAsset.metadata.purpose, "event_evidence");
         assert.equal(seedBundle.tables.care_preferences.length, 1);
@@ -1579,7 +1615,7 @@ async function main() {
         assert.ok(restoredStaleOfflineEvent);
         assert.equal(restoredFallEvent.summary, "疑似跌倒");
         assert.equal(String(restoredFallEvent.camera_id), String(camera.id));
-        assert.equal(restoredDb.assets.length, 3);
+        assert.equal(restoredDb.assets.length, 5);
         const restoredEventAsset = restoredDb.assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(restoredEventAsset.purpose, "event_evidence");
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);

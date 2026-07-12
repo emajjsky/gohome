@@ -196,6 +196,8 @@ class UploadAgent:
             params["captured_at"] = str(payload["captured_at"])
         if payload.get("purpose"):
             params["purpose"] = str(payload["purpose"])
+        if payload.get("evidence_frame_role"):
+            params["evidence_frame_role"] = str(payload["evidence_frame_role"])
         response = self._request_json(
             "POST",
             f"/api/v1/device/media-assets/upload?{urlencode(params)}",
@@ -213,8 +215,29 @@ class UploadAgent:
         payload = dict(job.get("payload") or {})
         event_id = int(payload.get("event_id") or job.get("event_id") or 0)
         camera_id, local_camera_id = self._camera_ids(job, payload)
-        media_job = self.storage.latest_completed_upload_job(event_id=event_id, job_type="media_upload") if event_id else None
-        media_result = (media_job or {}).get("payload", {}).get("upload_result") if media_job else None
+        media_jobs = self.storage.completed_upload_jobs(event_id=event_id, job_type="media_upload") if event_id else []
+        primary_job = next(
+            (
+                item for item in media_jobs
+                if str(item.get("payload", {}).get("evidence_frame_role") or "") == "current"
+            ),
+            media_jobs[-1] if media_jobs else None,
+        )
+        media_result = (primary_job or {}).get("payload", {}).get("upload_result") if primary_job else None
+        evidence_media_assets = []
+        for media_job in media_jobs:
+            media_payload = media_job.get("payload") or {}
+            upload_result = media_payload.get("upload_result") or {}
+            asset = upload_result.get("asset") if isinstance(upload_result, dict) else None
+            if not isinstance(asset, dict) or not asset.get("id"):
+                continue
+            evidence_media_assets.append({
+                "asset": asset,
+                "role": str(media_payload.get("evidence_frame_role") or "evidence"),
+                "captured_at": str(media_payload.get("captured_at") or ""),
+                "snapshot_id": media_payload.get("snapshot_id"),
+                "postures": media_payload.get("postures") if isinstance(media_payload.get("postures"), list) else [],
+            })
         event_payload = dict(payload.get("payload") or {})
         event_payload["edge_upload"] = {
             "job_id": int(job["id"]),
@@ -225,6 +248,8 @@ class UploadAgent:
         }
         if media_result:
             event_payload["media_upload_result"] = media_result
+        if evidence_media_assets:
+            event_payload["evidence_media_assets"] = evidence_media_assets
         request_payload = {
             "idempotency_key": str(job.get("idempotency_key") or f"event:{event_id}"),
             "event_type": str(payload.get("event_type") or job.get("event_type") or "event"),
