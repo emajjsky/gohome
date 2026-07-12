@@ -10785,3 +10785,35 @@ SafetyIncident 与提醒：
 - `gohome-edge-agent` 和腾讯云 `gohome-app` 部署后均为 active。
 
 当前边界：盒子事件日志是研发与运维入口，不替代普通 App 事件页。App 后续应读取同一 SafetyIncident 时间线和多摄像头证据；不得根据盒子本地 acknowledged 字段另建用户事故状态。
+
+## 103. 2026-07-12 宠物活动状态上报与 App 守护展示
+
+盒子持久化：
+
+- cameras 表新增 `last_pet_seen_at / last_pet_count / pet_types_json`，通过 `_ensure_column` 兼容现有树莓派数据库。
+- `create_snapshot()` 只在 analysis 的 `pet_count > 0` 时更新摄像头宠物状态；空帧不会抹掉最近活动，也不会修改人物字段。
+- `camera_presence_status()` 返回宠物最近时间、数量和类型；原 `last_person_seen_at / person_samples / observation_coverage` 计算保持不变。
+
+云端 presence：
+
+- 设备同步接收并规范化每路 `last_pet_seen_at / last_pet_count / pet_types`。
+- `familyPresenceState()` 聚合家庭最近宠物活动，默认 `GOHOME_PET_ACTIVITY_RECENT_SECONDS=21600`，输出 `last_pet_seen_at / pet_types / pet_activity_recent`。
+- absence 起点、持续秒数和 long_absence 仍只读取人物时间；宠物活动不参与有效观察判断，也不解决长期未见事件。
+
+App 守护页：
+
+- 家庭状态增加“宠物活动”事实，每路摄像头增加宠物活动行。
+- 最近宠物时间晚于人物时间且仍在近期窗口时，标题显示“暂未看到老人，检测到猫/狗活动”；正文明确宠物不会重置老人未见计时。
+- long_absence 状态下若有近期宠物活动，补充宠物事实但继续要求联系老人。
+- 待确认事件兼容新 incident 状态 `verifying / confirmed / uncertain`，不再只识别历史 `active`。
+
+验证与部署：
+
+- `verify-config-sync-agent.py` 创建一张人物快照和一张 `person_count=0 / pet_count=1 / cat` 快照，验证人物样本仍为 1，同时宠物状态正确上报。
+- `verify-local-app-server.js` 验证宠物字段进入云端和家庭状态，并断言宠物活动后 `absence_seconds` 仍按两分钟前的人物时间计算。
+- `npm test`、视觉流水线、跌倒规则、Python 编译和 JavaScript 语法均通过。
+- 树莓派 camera 23/24 当前 coverage 均约 `0.8417`，最近人物数据正常；宠物字段均为 null/0/[]，没有用测试数据污染真实设备。
+- 腾讯云 PostgreSQL 两路 cameras metadata 均已收到宠物空状态，服务与盒子均为 active。
+- 线上 `monitor.html`、`monitor-live.js` 和样式已更新，并提升到 `20260712-pet-presence-1` 静态资源版本，避免浏览器继续使用旧缓存。
+
+当前边界：代码闭环已完成，但尚未用真实猫狗入镜验证家庭环境置信度。下一步应在当前双摄环境做真实猫、狗、电视宠物画面、家具遮挡和跨摄像头重复命中测试；没有真实命中前不宣称宠物识别已完成现场验收。
