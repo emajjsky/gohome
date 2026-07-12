@@ -1008,6 +1008,19 @@ async function main() {
             headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "application/json" },
         });
         assert.equal(weakRecovery.status, 400);
+        app.store.db.app_messages.push({
+            id: "validation-recovery-open-message",
+            message_id: "validation-recovery-open-message",
+            family_id: family.id,
+            event_id: recoveryValidation.event.id,
+            message_type: "alert",
+            title: "恢复前待处理提醒",
+            source_event_ids: [recoveryValidation.event.id],
+            source: [{ type: "safety_incident", id: recoveryValidation.event.payload.incident.incident_id }],
+            status: "open",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        });
         const recoveredValidation = await requestJson(baseUrl, "/api/v1/device/events/recovery-validation-1/state", {
             method: "POST",
             body: JSON.stringify({
@@ -1022,6 +1035,7 @@ async function main() {
         assert.equal(recoveredValidation.event.resolution, "person_upright_again");
         assert.equal(recoveredValidation.event.payload.incident.status, "resolved");
         assert.ok(recoveredValidation.event.payload.incident.transitions.some((item) => item.source === "edge_recovery"));
+        assert.equal(app.store.db.app_messages.find((message) => message.message_id === "validation-recovery-open-message").status, "archived");
         const repeatedRecovery = await requestJson(baseUrl, "/api/v1/device/events/recovery-validation-1/state", {
             method: "POST",
             body: JSON.stringify({
@@ -1035,6 +1049,7 @@ async function main() {
         assert.equal(repeatedRecovery.event.payload.incident.transitions.filter((item) => item.source === "edge_recovery").length, 1);
         assert.ok(app.store.db.app_messages.every((message) => (
             !(message.source_event_ids || []).some((eventId) => String(eventId) === String(recoveryValidation.event.id))
+            || message.status === "archived"
         )));
 
         const secondCamera = await requestJson(baseUrl, "/api/cameras", {
@@ -1110,6 +1125,7 @@ async function main() {
             const validationEventIds = new Set(app.store.db.events.filter((event) => event.payload?.validation?.test_event).map((event) => String(event.id)));
             assert.ok(app.store.db.app_messages.every((message) => (
                 !(message.source_event_ids || []).some((eventId) => validationEventIds.has(String(eventId)))
+                || message.status === "archived"
             )));
             const longAbsenceEvent = app.store.db.events.find((event) => event.event_type === "long_absence");
             assert.ok(longAbsenceEvent);
