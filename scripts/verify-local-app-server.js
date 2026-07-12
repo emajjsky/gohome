@@ -905,6 +905,16 @@ async function main() {
                 && record.job.output_status === "succeeded"
                 && record.verification.result.confidence === 0.93
             )));
+            const deviceEventLog = await requestJson(baseUrl, "/api/v1/device/event-log?limit=20", {
+                headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+            });
+            assert.equal(deviceEventLog.ok, true);
+            assert.ok(deviceEventLog.records.some((record) => (
+                String(record.event_id) === String(verificationEvent.event.id)
+                && String(record.edge_event_id) === "43"
+                && record.incident.status === "confirmed"
+                && record.verification.status === "confirmed"
+            )));
         } finally {
             for (const [key, value] of Object.entries(originalVerificationEnv)) {
                 if (value === undefined) delete process.env[key];

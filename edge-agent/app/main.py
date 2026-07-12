@@ -1288,6 +1288,7 @@ def admin_api_requires_auth(path: str) -> bool:
         "/api/cameras",
         "/api/events",
         "/api/event-candidates",
+        "/api/event-log",
         "/api/summary",
         "/api/rules",
         "/api/notify",
@@ -3056,6 +3057,56 @@ def latest_camera_evaluation(camera_id: int) -> Dict[str, Any]:
 @app.get("/api/events")
 def list_events(limit: int = 50, acknowledged: bool | None = None) -> list[Dict[str, Any]]:
     return storage.list_events(limit=max(1, min(limit, 200)), acknowledged=acknowledged)
+
+
+@app.get("/api/event-log")
+def event_log(limit: int = 80) -> Dict[str, Any]:
+    resolved_limit = max(1, min(limit, 200))
+    events = storage.list_events(limit=resolved_limit)
+    jobs = storage.list_upload_jobs(limit=min(500, resolved_limit * 4))
+    jobs_by_event: Dict[int, list[Dict[str, Any]]] = {}
+    for job in jobs:
+        if job.get("event_id"):
+            jobs_by_event.setdefault(int(job["event_id"]), []).append(job)
+    cloud_error = ""
+    try:
+        cloud_payload = upload_agent.event_log_status(limit=resolved_limit)
+    except Exception as exc:
+        cloud_payload = {"ok": False, "records": []}
+        cloud_error = str(exc)
+    cloud_records = cloud_payload.get("records") if isinstance(cloud_payload.get("records"), list) else []
+    cloud_by_edge_id = {
+        str(record.get("edge_event_id")): record
+        for record in cloud_records
+        if record.get("edge_event_id") not in (None, "")
+    }
+    rows = []
+    for event in events:
+        event_jobs = jobs_by_event.get(int(event["id"]), [])
+        event_upload = next((job for job in event_jobs if job.get("job_type") == "event_upload"), None)
+        media_upload = next((job for job in event_jobs if job.get("job_type") == "media_upload"), None)
+        cloud = cloud_by_edge_id.get(str(event["id"]))
+        if cloud:
+            sync_status = "cloud_received"
+        elif event_upload:
+            sync_status = str(event_upload.get("status") or "pending")
+        else:
+            sync_status = "local_only"
+        rows.append({
+            "local_event": event,
+            "sync": {
+                "status": sync_status,
+                "event_upload": event_upload,
+                "media_upload": media_upload,
+            },
+            "cloud_event": cloud,
+        })
+    return {
+        "ok": True,
+        "cloud_ok": bool(cloud_payload.get("ok")),
+        "cloud_error": cloud_error or str(cloud_payload.get("reason") or ""),
+        "records": rows,
+    }
 
 
 @app.get("/api/event-candidates")

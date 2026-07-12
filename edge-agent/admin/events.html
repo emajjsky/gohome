@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>事件日志 - 回家</title>
+  <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
+  <link rel="stylesheet" href="/admin/styles.css?v=20260712-event-log-1">
+</head>
+<body data-page="events" class="admin-web-page">
+  <a class="skip-link" href="#main">跳到内容</a>
+  <div class="admin-web-frame">
+    <aside class="admin-sidebar" aria-label="管理导航">
+      <div class="admin-brand">
+        <span class="material-symbols-outlined" data-icon="⌂">home_iot_device</span>
+        <div><small>回家盒子</small><strong>开发管理台</strong></div>
+      </div>
+      <nav class="admin-nav">
+        <a href="/admin/index.html"><span class="material-symbols-outlined" data-icon="↗">monitoring</span>首页</a>
+        <a href="/admin/cameras.html"><span class="material-symbols-outlined" data-icon="□">linked_camera</span>摄像头配置</a>
+        <a href="/admin/algorithms.html"><span class="material-symbols-outlined" data-icon="≡">tune</span>视觉算法</a>
+        <a class="active" href="/admin/events.html"><span class="material-symbols-outlined" data-icon="!">receipt_long</span>事件日志</a>
+      </nav>
+      <section class="admin-sidebar-controls" aria-label="服务状态">
+        <span id="workerBadge" class="status-pill muted">检查中</span>
+      </section>
+      <div class="admin-sidebar-note">
+        <span>状态口径</span>
+        <strong>云端事件为最终状态</strong>
+      </div>
+      <section class="admin-sidebar-session" aria-label="登录操作">
+        <div class="admin-session-slot"></div>
+      </section>
+    </aside>
+
+    <main id="main" class="admin-web-main event-log-main">
+      <header class="event-log-header">
+        <div>
+          <span class="section-kicker">安全事件链路</span>
+          <h1>事件日志</h1>
+          <p>核对盒子触发、证据上传、云端复核与 App 处理状态。</p>
+        </div>
+        <button id="refreshEventLog" class="secondary-button icon-command" type="button">
+          <span class="material-symbols-outlined" data-icon="↻">refresh</span>刷新
+        </button>
+      </header>
+
+      <section class="event-log-overview" aria-label="事件概览">
+        <div><span>全部事件</span><strong id="eventLogTotal">-</strong></div>
+        <div><span>需要关注</span><strong id="eventLogAttention">-</strong></div>
+        <div><span>云端已接收</span><strong id="eventLogSynced">-</strong></div>
+        <div><span>同步异常</span><strong id="eventLogFailed">-</strong></div>
+      </section>
+
+      <section class="event-log-toolbar" aria-label="事件筛选">
+        <label>状态
+          <select id="eventLogStatusFilter">
+            <option value="all">全部状态</option>
+            <option value="attention">需要关注</option>
+            <option value="verifying">复核中</option>
+            <option value="confirmed">已确认风险</option>
+            <option value="rejected">已排除</option>
+            <option value="closed">已处理 / 已恢复</option>
+            <option value="sync_error">同步异常</option>
+          </select>
+        </label>
+        <label>类型
+          <select id="eventLogTypeFilter">
+            <option value="all">全部类型</option>
+            <option value="fall_candidate">跌倒</option>
+            <option value="prolonged_floor_lying">长时间倒地</option>
+            <option value="fire_candidate">火灾</option>
+            <option value="black_screen">画面异常</option>
+            <option value="camera_offline">摄像头离线</option>
+            <option value="no_person">长时间无人</option>
+          </select>
+        </label>
+        <span id="eventLogCloudStatus" class="status-pill muted">读取云端状态</span>
+      </section>
+
+      <section id="eventTimeline" class="event-timeline" aria-live="polite">
+        <div class="empty-state">正在读取事件日志。</div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/admin/console.js?v=20260712-event-log-1"></script>
+</body>
+</html>

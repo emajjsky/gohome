@@ -82,6 +82,20 @@ class UploadAgent:
             f"/api/v1/device/vision-verifications?{urlencode({'limit': max(1, min(int(limit), 50))})}",
         )
 
+    def event_log_status(self, *, limit: int = 80) -> Dict[str, Any]:
+        configured, reason = self._configured()
+        if not configured:
+            return {
+                "ok": False,
+                "configured": False,
+                "reason": reason,
+                "records": [],
+            }
+        return self._request_json(
+            "GET",
+            f"/api/v1/device/event-log?{urlencode({'limit': max(1, min(int(limit), 200))})}",
+        )
+
     def process_once(self, *, max_jobs: int | None = None) -> Dict[str, Any]:
         configured, reason = self._configured()
         if not configured:

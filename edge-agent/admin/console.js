@@ -27,6 +27,9 @@ const state = {
   candidateRecords: [],
   observationLogs: [],
   cloudVerifications: null,
+  eventLogRecords: [],
+  eventLogStatusFilter: "all",
+  eventLogTypeFilter: "all",
   toastTimer: null,
 };
 
@@ -2145,6 +2148,137 @@ function eventCategoryLabel(category, type) {
   return labels[value] || "系统记录";
 }
 
+function eventLogLifecycle(record) {
+  const local = record?.local_event || {};
+  const cloud = record?.cloud_event || null;
+  const incidentStatus = String(cloud?.incident?.status || "");
+  const verificationStatus = String(cloud?.verification?.status || "");
+  const syncStatus = String(record?.sync?.status || "local_only");
+  if (syncStatus === "failed") return { key: "sync_error", label: "同步异常", tone: "bad" };
+  if (!cloud && ["pending", "uploading", "local_only"].includes(syncStatus)) {
+    return { key: "verifying", label: syncStatus === "uploading" ? "正在上传" : "等待上传", tone: "watch" };
+  }
+  if (["acknowledged", "resolved"].includes(incidentStatus)) {
+    return { key: "closed", label: incidentStatus === "resolved" ? "已恢复" : "App 已确认", tone: "muted" };
+  }
+  if (incidentStatus === "confirmed" || verificationStatus === "confirmed") return { key: "confirmed", label: "已确认风险", tone: "bad" };
+  if (incidentStatus === "rejected" || verificationStatus === "rejected") return { key: "rejected", label: "已排除", tone: "muted" };
+  if (incidentStatus === "uncertain" || verificationStatus === "uncertain" || verificationStatus === "failed") {
+    return { key: "attention", label: "需 App 确认", tone: "watch" };
+  }
+  if (incidentStatus === "verifying" || ["pending", "verifying", "retrying"].includes(verificationStatus)) {
+    return { key: "verifying", label: verificationStatus === "retrying" ? "等待模型重试" : "云端复核中", tone: "watch" };
+  }
+  if (cloud?.acknowledged) return { key: "closed", label: "App 已处理", tone: "muted" };
+  if (local.acknowledged) return { key: "closed", label: "本地历史已处理", tone: "muted" };
+  return { key: "synced", label: cloud ? "云端已接收" : "本地已记录", tone: "" };
+}
+
+function eventLogSyncStage(record) {
+  const eventJob = record?.sync?.event_upload || null;
+  const mediaJob = record?.sync?.media_upload || null;
+  const statuses = [eventJob?.status, mediaJob?.status].filter(Boolean);
+  if (statuses.includes("failed")) return { label: "上传失败", state: "failed" };
+  if (statuses.includes("uploading")) return { label: "正在上传", state: "active" };
+  if (statuses.includes("pending")) return { label: "等待上传", state: "pending" };
+  if (statuses.length && statuses.every((status) => status === "completed")) return { label: "证据已上传", state: "done" };
+  return { label: "无需附件", state: "done" };
+}
+
+function eventLogVerificationReason(record) {
+  const verification = record?.cloud_event?.verification || {};
+  const result = verification.result || {};
+  return result.reason || verification.error || "";
+}
+
+function eventLogStage(label, detail, stateName) {
+  return `<div class="event-chain-stage ${escapeHtml(stateName || "pending")}"><span></span><div><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></div></div>`;
+}
+
+function renderEventLog() {
+  const target = $("eventTimeline");
+  if (!target) return;
+  const records = state.eventLogRecords || [];
+  const lifecycles = records.map((record) => eventLogLifecycle(record));
+  setText("eventLogTotal", records.length);
+  setText("eventLogAttention", lifecycles.filter((item) => ["confirmed", "attention"].includes(item.key)).length);
+  setText("eventLogSynced", records.filter((record) => Boolean(record.cloud_event)).length);
+  setText("eventLogFailed", lifecycles.filter((item) => item.key === "sync_error").length);
+  const filtered = records.filter((record) => {
+    const local = record.local_event || {};
+    const lifecycle = eventLogLifecycle(record);
+    const statusMatch = state.eventLogStatusFilter === "all"
+      || lifecycle.key === state.eventLogStatusFilter
+      || (state.eventLogStatusFilter === "attention" && ["confirmed", "attention"].includes(lifecycle.key));
+    const typeMatch = state.eventLogTypeFilter === "all" || local.type === state.eventLogTypeFilter;
+    return statusMatch && typeMatch;
+  });
+  if (!filtered.length) {
+    target.innerHTML = '<div class="empty-state">当前筛选条件下没有正式安全事件。</div>';
+    return;
+  }
+  target.innerHTML = filtered.map((record) => {
+    const local = record.local_event || {};
+    const cloud = record.cloud_event || null;
+    const lifecycle = eventLogLifecycle(record);
+    const syncStage = eventLogSyncStage(record);
+    const evidence = local.payload?.evidence || {};
+    const pills = evidencePills({ event_type: local.type, payload: local.payload || {} });
+    if (Number(evidence.metrics?.pet_count || 0) > 0) pills.push(`宠物 ${Number(evidence.metrics.pet_count)} 只`);
+    const cloudStage = cloud ? { label: "云端已接收", state: "done" } : { label: "等待云端入库", state: syncStage.state === "failed" ? "failed" : "pending" };
+    const resultReason = eventLogVerificationReason(record);
+    const incidentId = cloud?.incident?.incident_id || "";
+    const uploadError = record.sync?.event_upload?.last_error || record.sync?.media_upload?.last_error || "";
+    return `
+      <article class="event-log-card ${escapeHtml(lifecycle.tone || "")}">
+        <header>
+          <div>
+            <span class="event-type-mark">${escapeHtml(eventTypeLabel(local.type))}</span>
+            <h2>${escapeHtml(local.summary || eventTypeLabel(local.type))}</h2>
+            <p>${escapeHtml([local.camera_name || local.room || "盒子", fmtTime(local.occurred_at), `本地 #${local.id}`, cloud?.event_id ? `云端 #${cloud.event_id}` : ""].filter(Boolean).join(" · "))}</p>
+          </div>
+          <span class="status-pill ${escapeHtml(lifecycle.tone || "")}">${escapeHtml(lifecycle.label)}</span>
+        </header>
+        <div class="event-chain">
+          ${eventLogStage("盒子已触发", "规则形成正式事件", "done")}
+          ${eventLogStage(syncStage.label, uploadError || (local.snapshot_url ? "事件与截图证据" : "事件结构化数据"), syncStage.state)}
+          ${eventLogStage(cloudStage.label, cloud ? "edge_event_id 已匹配" : "保持本地事件等待同步", cloudStage.state)}
+          ${eventLogStage(lifecycle.label, resultReason || (incidentId ? `事故 ${incidentId}` : "等待后续状态"), ["confirmed", "attention"].includes(lifecycle.key) ? "failed" : ["rejected", "closed", "synced"].includes(lifecycle.key) ? "done" : "active")}
+        </div>
+        ${pills.length ? `<div class="candidate-evidence">${pills.slice(0, 6).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+        <footer>
+          <span>${incidentId ? `Incident ${escapeHtml(incidentId)}` : "云端状态会自动回写到此处"}</span>
+          ${local.snapshot_url ? `<button class="ghost-button" type="button" data-event-log-action="snapshot" data-url="${escapeHtml(local.snapshot_url)}">查看证据</button>` : ""}
+        </footer>
+        <details class="event-log-details">
+          <summary>查看技术日志</summary>
+          <dl>
+            <div><dt>事件类型</dt><dd>${escapeHtml(local.type || "-")}</dd></div>
+            <div><dt>本地候选</dt><dd>${escapeHtml(local.candidate_status || "-")}</dd></div>
+            <div><dt>事件上传</dt><dd>${escapeHtml(record.sync?.event_upload?.status || "-")}</dd></div>
+            <div><dt>证据上传</dt><dd>${escapeHtml(record.sync?.media_upload?.status || "-")}</dd></div>
+            <div><dt>模型状态</dt><dd>${escapeHtml(cloud?.verification?.status || "无需复核")}</dd></div>
+            <div><dt>App 处理</dt><dd>${escapeHtml(cloud?.acknowledged ? "已处理" : "未处理")}</dd></div>
+          </dl>
+        </details>
+      </article>
+    `;
+  }).join("");
+}
+
+async function loadEventLog() {
+  if (!$("eventTimeline")) return;
+  const payload = await api("/api/event-log?limit=120");
+  state.eventLogRecords = Array.isArray(payload.records) ? payload.records : [];
+  const cloudStatus = $("eventLogCloudStatus");
+  if (cloudStatus) {
+    cloudStatus.textContent = payload.cloud_ok ? "云端状态已同步" : "云端暂不可用";
+    cloudStatus.className = `status-pill ${payload.cloud_ok ? "" : "watch"}`;
+    cloudStatus.title = payload.cloud_error || "";
+  }
+  renderEventLog();
+}
+
 function evidencePills(candidate) {
   const evidence = candidate?.payload?.evidence || {};
   const metrics = evidence.metrics || {};
@@ -2604,6 +2738,7 @@ async function refreshAll() {
     await loadObservationLogs().catch(() => null);
     await loadUploadQueueSummary().catch(() => null);
     await loadCloudVerifications().catch(() => null);
+    await loadEventLog().catch(() => null);
   } catch (error) {
     showToast(userSafeError(error.message || "无法连接 edge-agent"));
   }
@@ -2611,6 +2746,20 @@ async function refreshAll() {
 
 function bindEvents() {
   on("refreshAll", "click", refreshAll);
+  on("refreshEventLog", "click", (event) => {
+    setBusy(event.currentTarget, true);
+    loadEventLog()
+      .catch((error) => showToast(userSafeError(error.message)))
+      .finally(() => setBusy(event.currentTarget, false));
+  });
+  on("eventLogStatusFilter", "change", (event) => {
+    state.eventLogStatusFilter = event.currentTarget.value;
+    renderEventLog();
+  });
+  on("eventLogTypeFilter", "change", (event) => {
+    state.eventLogTypeFilter = event.currentTarget.value;
+    renderEventLog();
+  });
   on("captureSelected", "click", (event) => captureSelected(event.currentTarget).catch((error) => showToast(userSafeError(error.message))));
   on("saveRules", "click", (event) => saveRules(event.currentTarget).catch((error) => showToast(userSafeError(error.message))));
   on("refreshWifiNetworks", "click", (event) => {
@@ -2734,6 +2883,16 @@ function bindEvents() {
       }
     });
   }
+  const eventTimeline = $("eventTimeline");
+  if (eventTimeline) {
+    eventTimeline.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-event-log-action]");
+      if (!button) return;
+      if (button.dataset.eventLogAction === "snapshot") {
+        window.open(`${button.dataset.url}?t=${Date.now()}`, "_blank", "noopener");
+      }
+    });
+  }
   window.addEventListener("resize", () => renderDetectionOverlay(state.latestSnapshot));
 }
 
@@ -2757,5 +2916,6 @@ document.addEventListener("DOMContentLoaded", () => {
       loadUploadQueueSummary().catch(() => null);
       loadCloudVerifications().catch(() => null);
     }
+    if (pageName === "events") loadEventLog().catch(() => null);
   }, 6000);
 });

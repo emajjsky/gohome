@@ -5910,6 +5910,41 @@ function createLocalAppServer(options = {}) {
         });
     }
 
+    function deviceEventLog(req, res, url) {
+        if (!requireDevice(req, res)) return;
+        const issuedToken = issuedDeviceTokenFromRequest(req);
+        const deviceId = String(issuedToken?.device_id || currentEdgeDeviceId() || "");
+        const familyId = normalizeNumber(issuedToken?.family_id, null);
+        const limit = Math.max(1, Math.min(200, normalizeNumber(url.searchParams.get("limit"), 80)));
+        const records = store.db.events
+            .filter((event) => {
+                const camera = store.db.cameras[String(event.camera_id || "")] || {};
+                const edgeDeviceId = String(event.payload?.edge_upload?.edge_device_id || camera.device_id || "");
+                if (deviceId && edgeDeviceId) return edgeDeviceId === deviceId;
+                if (familyId) return Number(event.family_id || camera.family_id) === Number(familyId);
+                return false;
+            })
+            .sort((a, b) => String(b.occurred_at || b.created_at || "").localeCompare(String(a.occurred_at || a.created_at || "")))
+            .slice(0, limit)
+            .map((event) => ({
+                event_id: event.id,
+                edge_event_id: event.edge_event_id || event.payload?.edge_upload?.edge_event_id || "",
+                event_type: event.event_type,
+                summary: event.summary,
+                level: event.level,
+                room: event.room || event.camera_name || "",
+                camera_id: event.camera_id,
+                occurred_at: event.occurred_at,
+                updated_at: event.updated_at,
+                acknowledged: Boolean(event.acknowledged),
+                resolution: event.resolution || "",
+                incident: event.payload?.incident || null,
+                verification: event.payload?.verification || null,
+                media_asset_id: event.media_asset_id || null,
+            }));
+        write(res, 200, { ok: true, device_id: deviceId, records });
+    }
+
     async function handleHeartbeat(req, res) {
         if (!requireDevice(req, res)) return;
         const payload = await parseJsonBody(req);
@@ -6997,6 +7032,11 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && pathname === "/api/v1/device/vision-verifications") {
                 deviceVisionVerificationStatus(req, res, url);
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/v1/device/event-log") {
+                deviceEventLog(req, res, url);
                 return;
             }
 
