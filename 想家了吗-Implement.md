@@ -10817,3 +10817,28 @@ App 守护页：
 - 线上 `monitor.html`、`monitor-live.js` 和样式已更新，并提升到 `20260712-pet-presence-1` 静态资源版本，避免浏览器继续使用旧缓存。
 
 当前边界：代码闭环已完成，但尚未用真实猫狗入镜验证家庭环境置信度。下一步应在当前双摄环境做真实猫、狗、电视宠物画面、家具遮挡和跨摄像头重复命中测试；没有真实命中前不宣称宠物识别已完成现场验收。
+
+## 104. 2026-07-12 App 事件详情统一 SafetyIncident 时间线
+
+前端：
+
+- `event_detail.html` 新增紧凑的“处理进度”区域，不新增独立页面或跨模块跳转。
+- `event-detail-live.js` 从 `payload.incident.source_camera_ids / transitions` 和 `payload.verification` 生成真实时间线。
+- 首项固定来自当前事件的盒子检测事实；多摄像头佐证只在来源摄像头大于 1 时显示；模型、恢复和用户操作只在对应数据存在时显示。
+- 终态映射为 rejected=已排除、resolved=已恢复，并锁定重复处置按钮；confirmed 仍保留用户确认入口。
+- 所有动态文案经过 HTML 转义，长文本保持在移动端容器内。
+
+服务端与测试：
+
+- `publicEvent()` 增加 `updated_at`，未改变现有事件、incident、verification 和媒体字段结构。
+- `verify-local-app-server.js` 增加详情更新时间和 incident transitions 契约断言。
+- `npm test`、`node --check` 和 `git diff --check` 通过。
+- 使用 Chrome 以 390x844 渲染包含双摄佐证和云端确认的事件，时间线共 4 项，`scrollWidth=viewportWidth=390`，控制台无错误。
+
+部署：
+
+- 本地 8788 服务重启后健康检查正常，真实历史事件接口可兼容没有 SafetyIncident 的旧记录。
+- 腾讯云仅同步 `event_detail.html / event-detail-live.js / server.js`，没有覆盖环境变量、PostgreSQL 数据或其他项目。
+- `gohome-app` 重启后 active，`https://gohome.ai2shx.club/health` 返回 `store=postgres`，线上静态资源版本为 `20260712-incident-timeline-1`，近 5 分钟无 warning/error。
+
+当前边界：App 时间线已复用统一事故状态，但当前云端只上传事件主截图；跌倒过程的多帧关键证据仍主要保存在盒子结构化时序包。后续若增加多图证据，应沿用同一 incident，不新增第二套告警生命周期。
