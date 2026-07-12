@@ -135,18 +135,39 @@ def main() -> None:
                 }
             if path == f"/api/v1/device/events/{event['id']}/feedback":
                 return {"ok": True, "event": {"edge_event_id": str(event["id"]), "resolution": "false_positive"}}
+            if path == f"/api/v1/device/events/{event['id']}/state":
+                body = kwargs.get("json_body") or {}
+                if body.get("state") != "resolved" or body.get("resolution") != "person_upright_again":
+                    raise AssertionError(f"invalid event recovery payload: {body}")
+                return {"ok": True, "event": {"edge_event_id": str(event["id"]), "resolution": "person_upright_again"}}
             raise AssertionError(f"unexpected upload path: {path}")
 
         agent._request_json = fake_request  # type: ignore[method-assign]
         result = agent.process_once(max_jobs=3)
         summary = storage.upload_queue_summary()
         completed = storage.list_upload_jobs(status="completed", limit=10)
+        resolved_event = storage.resolve_event_from_edge(
+            int(event["id"]),
+            resolution="person_upright_again",
+            resolved_at="2026-07-12T10:05:00+00:00",
+            evidence={"posture": "standing", "confidence": 0.82},
+        )
+        storage.enqueue_event_state_upload(
+            resolved_event,
+            state="resolved",
+            resolution="person_upright_again",
+            observed_at="2026-07-12T10:05:00+00:00",
+            evidence={"posture": "standing", "confidence": 0.82},
+        )
+        recovery_result = agent.process_once(max_jobs=1)
         verification_status = agent.vision_verification_status(limit=6)
         event_log_status = agent.event_log_status(limit=20)
         feedback_status = agent.submit_event_feedback(event["id"], resolution="false_positive")
         if result["completed"] != 3 or summary["completed"] != 3:
             raise SystemExit(f"upload agent did not complete all jobs: result={result} summary={summary}")
-        if [call["method"] for call in calls] != ["POST", "POST", "POST", "GET", "GET", "POST"]:
+        if recovery_result["completed"] != 1:
+            raise SystemExit(f"event recovery upload did not complete: {recovery_result}")
+        if [call["method"] for call in calls] != ["POST", "POST", "POST", "POST", "GET", "GET", "POST"]:
             raise SystemExit(f"unexpected upload calls: {calls}")
         media_paths = [str(call["path"]) for call in calls[:2]]
         if not all("camera_id=101" in path and "local_camera_id=1" in path for path in media_paths):

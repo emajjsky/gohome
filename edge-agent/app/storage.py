@@ -4332,6 +4332,89 @@ class Storage:
             )
         return self.get_event(event_id)
 
+    def latest_unresolved_event(
+        self,
+        *,
+        camera_id: int,
+        event_types: list[str],
+    ) -> Optional[Dict[str, Any]]:
+        clean_types = [str(item or "").strip() for item in event_types if str(item or "").strip()]
+        if not clean_types:
+            return None
+        placeholders = ",".join("?" for _ in clean_types)
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT e.*, c.name AS camera_name, s.image_path AS snapshot_path,
+                       ec.status AS candidate_status
+                FROM events e
+                LEFT JOIN cameras c ON c.id = e.camera_id
+                LEFT JOIN snapshots s ON s.id = e.snapshot_id
+                LEFT JOIN event_candidates ec ON ec.id = e.candidate_id
+                WHERE e.camera_id = ?
+                  AND e.type IN ({placeholders})
+                  AND e.acknowledged = 0
+                  AND COALESCE(json_extract(e.payload, '$.resolution'), '') = ''
+                ORDER BY e.occurred_at DESC, e.id DESC
+                LIMIT 1
+                """,
+                (int(camera_id), *clean_types),
+            ).fetchone()
+        return self._event_to_dict(row) if row else None
+
+    def resolve_event_from_edge(
+        self,
+        event_id: int,
+        *,
+        resolution: str,
+        resolved_at: str,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        current = self.get_event(int(event_id))
+        if current is None:
+            return None
+        payload = current.get("payload") or {}
+        if payload.get("resolution"):
+            return current
+        payload["resolution"] = str(resolution or "").strip()
+        payload["resolved_at"] = str(resolved_at or now_iso())
+        payload["recovery_evidence"] = evidence or {}
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE events SET payload = ? WHERE id = ?",
+                (json.dumps(payload, ensure_ascii=False), int(event_id)),
+            )
+        return self.get_event(int(event_id))
+
+    def enqueue_event_state_upload(
+        self,
+        event: Dict[str, Any],
+        *,
+        state: str,
+        resolution: str,
+        observed_at: str,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        event_id = int(event["id"])
+        return self.enqueue_upload_job(
+            job_type="event_state_upload",
+            object_type="event_state",
+            idempotency_key=f"event-state:{event_id}:{state}:{resolution}",
+            priority=8,
+            event_id=event_id,
+            camera_id=int(event["camera_id"]) if event.get("camera_id") else None,
+            payload={
+                "schema_version": "gohome-event-state-v1",
+                "event_id": event_id,
+                "event_type": event.get("type"),
+                "camera_id": event.get("camera_id"),
+                "state": str(state or ""),
+                "resolution": str(resolution or ""),
+                "observed_at": str(observed_at or now_iso()),
+                "evidence": evidence or {},
+            },
+        )
+
     def create_notification_delivery(
         self,
         *,

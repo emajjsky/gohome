@@ -979,6 +979,64 @@ async function main() {
             mockVerificationServer.close();
         }
 
+        const recoveryValidation = await requestJson(baseUrl, "/api/v1/device/events", {
+            method: "POST",
+            body: JSON.stringify({
+                idempotency_key: "validation:event-recovery",
+                edge_event_id: "recovery-validation-1",
+                event_type: "fall_candidate",
+                summary: "恢复状态验证",
+                level: "critical",
+                room: "客厅",
+                camera_id: 11,
+                occurred_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+                payload: {
+                    validation: { test_event: true, mode: "event_recovery_contract" },
+                    edge_upload: { edge_event_id: "recovery-validation-1", edge_device_id: "edge-test" },
+                },
+            }),
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+        });
+        const weakRecovery = await fetch(`${baseUrl}/api/v1/device/events/recovery-validation-1/state`, {
+            method: "POST",
+            body: JSON.stringify({
+                state: "resolved",
+                resolution: "person_upright_again",
+                observed_at: new Date().toISOString(),
+                evidence: { posture: "standing", confidence: 0.44 },
+            }),
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "application/json" },
+        });
+        assert.equal(weakRecovery.status, 400);
+        const recoveredValidation = await requestJson(baseUrl, "/api/v1/device/events/recovery-validation-1/state", {
+            method: "POST",
+            body: JSON.stringify({
+                state: "resolved",
+                resolution: "person_upright_again",
+                observed_at: "2026-07-12T10:05:00.000Z",
+                evidence: { posture: "standing", confidence: 0.82, track_id: "c11-p1", bbox: [10, 20, 60, 180] },
+            }),
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+        });
+        assert.equal(recoveredValidation.event.acknowledged, true);
+        assert.equal(recoveredValidation.event.resolution, "person_upright_again");
+        assert.equal(recoveredValidation.event.payload.incident.status, "resolved");
+        assert.ok(recoveredValidation.event.payload.incident.transitions.some((item) => item.source === "edge_recovery"));
+        const repeatedRecovery = await requestJson(baseUrl, "/api/v1/device/events/recovery-validation-1/state", {
+            method: "POST",
+            body: JSON.stringify({
+                state: "resolved",
+                resolution: "person_upright_again",
+                observed_at: "2026-07-12T10:05:00.000Z",
+                evidence: { posture: "standing", confidence: 0.82, track_id: "c11-p1" },
+            }),
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+        });
+        assert.equal(repeatedRecovery.event.payload.incident.transitions.filter((item) => item.source === "edge_recovery").length, 1);
+        assert.ok(app.store.db.app_messages.every((message) => (
+            !(message.source_event_ids || []).some((eventId) => String(eventId) === String(recoveryValidation.event.id))
+        )));
+
         const secondCamera = await requestJson(baseUrl, "/api/cameras", {
             method: "POST",
             body: JSON.stringify({

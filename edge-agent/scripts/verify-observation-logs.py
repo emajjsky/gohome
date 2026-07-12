@@ -123,6 +123,49 @@ def main() -> None:
         if len(closed_logs) != 1:
             raise SystemExit(f"expected one closed observation log, got {len(closed_logs)}")
 
+        fall_event = storage.create_event(
+            event_type="fall_candidate",
+            summary="客厅摄像头检测到疑似跌倒",
+            level="critical",
+            camera_id=int(camera["id"]),
+            room="客厅",
+            snapshot_id=int(snapshot["id"]),
+            payload={"evidence": {"schema_version": "gohome-event-evidence-v1"}},
+        )
+        recovered_evaluation = RuleEvaluation(
+            camera_id=int(camera["id"]),
+            snapshot_id=int(snapshot["id"]),
+            evaluated_at=(start + timedelta(seconds=780)).isoformat(),
+            candidates=[],
+            state={"person_state": "visible", "motion_state": "moving", "fall_stage": "recovered"},
+        )
+        worker._close_recovered_observations(camera, recovered_evaluation, {"poses": []})
+        if storage.get_event(int(fall_event["id"]))["payload"].get("resolution"):
+            raise SystemExit("missing pose must not resolve a fall incident")
+        worker._close_recovered_observations(
+            camera,
+            recovered_evaluation,
+            {"poses": [{"posture": "standing", "posture_confidence": 0.44, "track_id": "c1-p1"}]},
+        )
+        if storage.get_event(int(fall_event["id"]))["payload"].get("resolution"):
+            raise SystemExit("weak upright pose must not resolve a fall incident")
+        worker._close_recovered_observations(
+            camera,
+            recovered_evaluation,
+            {"poses": [{"posture": "standing", "posture_confidence": 0.82, "track_id": "c1-p1"}]},
+        )
+        resolved_fall = storage.get_event(int(fall_event["id"]))
+        recovery_jobs = storage.list_upload_jobs(job_type="event_state_upload", limit=10)
+        if resolved_fall["payload"].get("resolution") != "person_upright_again" or len(recovery_jobs) != 1:
+            raise SystemExit(f"credible upright pose must enqueue one recovery upload: event={resolved_fall} jobs={recovery_jobs}")
+        worker._close_recovered_observations(
+            camera,
+            recovered_evaluation,
+            {"poses": [{"posture": "standing", "posture_confidence": 0.82, "track_id": "c1-p1"}]},
+        )
+        if len(storage.list_upload_jobs(job_type="event_state_upload", limit=10)) != 1:
+            raise SystemExit("repeated recovery frames must remain idempotent")
+
         print(
             json.dumps(
                 {
@@ -132,6 +175,8 @@ def main() -> None:
                     "aggregated_candidates": 0,
                     "formal_events": len(event_agent.events),
                     "upload_pending": upload_summary["pending"],
+                    "fall_recovery": resolved_fall["payload"].get("resolution"),
+                    "recovery_jobs": len(recovery_jobs),
                 },
                 ensure_ascii=False,
                 indent=2,

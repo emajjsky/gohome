@@ -164,6 +164,8 @@ class UploadAgent:
             return self._upload_media(job)
         if job_type == "event_upload":
             return self._upload_event(job)
+        if job_type == "event_state_upload":
+            return self._upload_event_state(job)
         raise ValueError(f"Unsupported upload job type: {job_type}")
 
     def _upload_media(self, job: Dict[str, Any]) -> Dict[str, Any]:
@@ -271,6 +273,27 @@ class UploadAgent:
             "target": "app_server_event",
             "event": response.get("event") or response,
             "media_asset": response.get("media_asset") or (media_result or {}).get("asset"),
+        }
+
+    def _upload_event_state(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(job.get("payload") or {})
+        event_id = int(payload.get("event_id") or job.get("event_id") or 0)
+        if not event_id:
+            raise ValueError("event state upload has no event_id")
+        response = self._request_json(
+            "POST",
+            f"/api/v1/device/events/{event_id}/state",
+            json_body={
+                "state": str(payload.get("state") or ""),
+                "resolution": str(payload.get("resolution") or ""),
+                "observed_at": str(payload.get("observed_at") or ""),
+                "evidence": payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {},
+            },
+        )
+        return {
+            "uploaded": True,
+            "target": "app_server_event_state",
+            "event": response.get("event") or response,
         }
 
     def _camera_ids(self, job: Dict[str, Any], payload: Dict[str, Any]) -> tuple[Any, Any]:

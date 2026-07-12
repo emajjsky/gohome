@@ -6107,6 +6107,75 @@ function createLocalAppServer(options = {}) {
         write(res, 200, { ok: true, event: publicEvent(event) });
     }
 
+    async function handleDeviceEventState(req, res, edgeEventId) {
+        if (!requireDevice(req, res)) return;
+        const issuedToken = issuedDeviceTokenFromRequest(req);
+        const deviceId = String(issuedToken?.device_id || currentEdgeDeviceId() || "");
+        const familyId = normalizeNumber(issuedToken?.family_id, null);
+        const payload = await parseJsonBody(req);
+        const state = String(payload.state || "");
+        const resolution = String(payload.resolution || "");
+        const evidence = payload.evidence && typeof payload.evidence === "object" ? payload.evidence : {};
+        if (state !== "resolved" || resolution !== "person_upright_again") {
+            writeError(res, 400, "unsupported event state transition");
+            return;
+        }
+        const posture = String(evidence.posture || "");
+        const confidence = Number(evidence.confidence || 0);
+        if (!["standing", "sitting", "squatting"].includes(posture) || !Number.isFinite(confidence) || confidence < 0.45) {
+            writeError(res, 400, "credible upright recovery evidence is required");
+            return;
+        }
+        const event = store.db.events.find((item) => {
+            if (String(item.edge_event_id || item.payload?.edge_upload?.edge_event_id || "") !== String(edgeEventId || "")) return false;
+            const camera = store.db.cameras[String(item.camera_id || "")] || {};
+            const edgeDeviceId = String(item.payload?.edge_upload?.edge_device_id || camera.device_id || "");
+            if (deviceId && edgeDeviceId) return edgeDeviceId === deviceId;
+            if (familyId) return Number(item.family_id || camera.family_id) === Number(familyId);
+            return false;
+        });
+        if (!event) {
+            writeError(res, 404, "event not found");
+            return;
+        }
+        if (!["fall_candidate", "prolonged_floor_lying"].includes(event.event_type)) {
+            writeError(res, 400, "event type does not support posture recovery");
+            return;
+        }
+        const incident = ensureSafetyIncident(event);
+        const linkedEvents = incident ? incidentEvents(incident.incident_id) : [event];
+        const resolvedAt = String(payload.observed_at || nowIso());
+        for (const linked of linkedEvents) {
+            linked.acknowledged = true;
+            linked.resolution = resolution;
+            linked.payload = linked.payload && typeof linked.payload === "object" ? linked.payload : {};
+            linked.payload.edge_recovery = {
+                observed_at: resolvedAt,
+                evidence: {
+                    posture,
+                    confidence: Number(confidence.toFixed(4)),
+                    track_id: String(evidence.track_id || ""),
+                    bbox: Array.isArray(evidence.bbox) ? evidence.bbox.slice(0, 4) : [],
+                },
+            };
+            const linkedIncident = ensureSafetyIncident(linked);
+            linkedIncident.status = "resolved";
+            linkedIncident.resolved_at = resolvedAt;
+            linked.updated_at = nowIso();
+        }
+        if (incident) {
+            appendIncidentTransition(incidentPrimaryEvent(event), "resolved", "edge_recovery", {
+                resolution,
+                observed_at: resolvedAt,
+                posture,
+                confidence: Number(confidence.toFixed(4)),
+            });
+            archiveIncidentMessages(incident.incident_id);
+        }
+        await store.save();
+        write(res, 200, { ok: true, event: publicEvent(event) });
+    }
+
     async function handleHeartbeat(req, res) {
         if (!requireDevice(req, res)) return;
         const payload = await parseJsonBody(req);
@@ -7208,6 +7277,12 @@ function createLocalAppServer(options = {}) {
             const deviceEventFeedbackMatch = pathname.match(/^\/api\/v1\/device\/events\/([^/]+)\/feedback$/);
             if (deviceEventFeedbackMatch && req.method === "POST") {
                 await handleDeviceEventFeedback(req, res, decodeURIComponent(deviceEventFeedbackMatch[1]));
+                return;
+            }
+
+            const deviceEventStateMatch = pathname.match(/^\/api\/v1\/device\/events\/([^/]+)\/state$/);
+            if (deviceEventStateMatch && req.method === "POST") {
+                await handleDeviceEventState(req, res, decodeURIComponent(deviceEventStateMatch[1]));
                 return;
             }
 

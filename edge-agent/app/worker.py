@@ -232,7 +232,7 @@ class EdgeWorker:
                 rule_set_version=str(rules.get("updated_at") or ""),
             )
             self.latest_evaluations[camera_id] = persisted_evaluation
-            self._close_recovered_observations(camera, evaluation)
+            self._close_recovered_observations(camera, evaluation, analysis)
             self._emit_candidates(
                 camera,
                 evaluation=evaluation,
@@ -450,7 +450,12 @@ class EdgeWorker:
                 payload=payload,
             )
 
-    def _close_recovered_observations(self, camera: Dict[str, Any], evaluation: RuleEvaluation) -> None:
+    def _close_recovered_observations(
+        self,
+        camera: Dict[str, Any],
+        evaluation: RuleEvaluation,
+        analysis: Dict[str, Any] | None = None,
+    ) -> None:
         state = evaluation.state or {}
         camera_id = int(camera["id"])
         evaluated_at = evaluation.evaluated_at
@@ -466,3 +471,52 @@ class EdgeWorker:
                 observation_type="no_person",
                 ended_at=evaluated_at,
             )
+        recovery = self._credible_fall_recovery(state, analysis or {})
+        if not recovery:
+            return
+        event = self.storage.latest_unresolved_event(
+            camera_id=camera_id,
+            event_types=["fall_candidate", "prolonged_floor_lying"],
+        )
+        if not event:
+            return
+        resolved = self.storage.resolve_event_from_edge(
+            int(event["id"]),
+            resolution="person_upright_again",
+            resolved_at=evaluated_at,
+            evidence=recovery,
+        )
+        if resolved:
+            self.storage.enqueue_event_state_upload(
+                resolved,
+                state="resolved",
+                resolution="person_upright_again",
+                observed_at=evaluated_at,
+                evidence=recovery,
+            )
+
+    def _credible_fall_recovery(self, state: Dict[str, Any], analysis: Dict[str, Any]) -> Dict[str, Any] | None:
+        if str(state.get("fall_stage") or "") != "recovered" or state.get("person_state") != "visible":
+            return None
+        candidates = []
+        for item in [*(analysis.get("poses") or []), *(analysis.get("people") or [])]:
+            if not isinstance(item, dict):
+                continue
+            posture = str(item.get("posture") or "").strip().lower()
+            confidence = float(item.get("posture_confidence") or item.get("confidence") or 0.0)
+            if posture not in {"standing", "sitting", "squatting"} or confidence < 0.45:
+                continue
+            candidates.append({
+                "posture": posture,
+                "confidence": round(confidence, 4),
+                "track_id": str(item.get("track_id") or ""),
+                "bbox": item.get("bbox") if isinstance(item.get("bbox"), list) else [],
+            })
+        if not candidates:
+            return None
+        best = max(candidates, key=lambda item: item["confidence"])
+        return {
+            "schema_version": "gohome-fall-recovery-v1",
+            "reason": "credible_upright_posture",
+            **best,
+        }
