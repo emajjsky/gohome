@@ -10649,7 +10649,7 @@ SafetyIncident 与提醒：
 视频流恢复：
 
 - `CameraAgent.mjpeg_frames()` 不再因一次 `read/retrieve` 失败结束 HTTP 视频连接，而是释放并重新打开 RTSP capture。
-- 近黑帧首次出现时保持上一有效画面；连续达到约 1 秒后才作为真实黑屏输出，因此不会掩盖摄像头遮挡或真实断黑。
+- 近黑帧始终不覆盖上一有效预览；连续达到确认帧数后主动释放并重开 RTSP。正式黑屏或遮挡仍由独立 worker 的质量分析产生事件，不依赖 MJPEG 预览是否保持最后有效帧。
 - 管理页在视频请求仍然失败时使用 `0.8s` 起步、最大 `8s` 的指数退避自动重连。
 - 新增 `verify-camera-stream-resilience.py`，验证读取失败后重开、短暂黑帧保持和后续有效帧恢复。
 
@@ -10660,3 +10660,33 @@ SafetyIncident 与提醒：
 - UR Fall 保持 `TP=8 / FP=0 / TN=10 / FN=0`；GMDCSA24 保持 `TP=3 / FP=0 / TN=5 / FN=1`。
 - 真实 Pi 连续 5 轮页面采样均为 `black_screen=false`、亮度约 `129`、`fall_stage=clear`、视频 `640x360`、控制台错误 `0`。
 - 本地误报事件 `#1877` 已通过事件接口标记为 `false_positive`；活跃候选查询新增 JSON resolution 过滤，不再把误报显示为最近安全记录。
+
+## 99. 2026-07-12 姿态人体一致性、云端复核反馈与黑屏恢复
+
+姿态误检根因与修复：
+
+- 空沙发场景中 RTMPose 产生了 `confidence=0.329 / body_aspect=3.375` 的横向假骨架；原管线已经标记 `person_evidence_eligible=false`，但仍把候选放入 `analysis.poses`，导致缓存、计数和前端继续绘制。
+- `RtmposeAnalyzer` 现在只把通过姿态质量门的候选写入 `poses`；低置信、关键点不足或核心点不足的候选写入 `rejected_poses`，跌倒分清零并记录拒绝阶段和原因。
+- `VisionPipeline` 增加第二层人体一致性门：结合真实 YOLO 人框、稳定家具区域、骨架置信度、人体宽高比和家具重叠，拒绝无人物对应的超宽家具骨架。
+- 拒绝骨架会同步从短时缓存清除，不进入活动时序、人物补全、跌倒规则和页面；前端 `snapshotPoses()` 仍做防御性过滤，旧数据也不会绘制。
+- 回归覆盖空沙发假骨架、真实 YOLO 对应躺姿和无 YOLO 但高置信遮挡坐姿。UR Fall 保持 `TP=8 / FP=0 / TN=10 / FN=0`，GMDCSA24 保持 `TP=3 / FP=0 / TN=5 / FN=1`。
+
+云端模型复核反馈：
+
+- 腾讯云新增 `GET /api/v1/device/vision-verifications`，按盒子设备令牌和设备 ID 过滤事件，只返回该设备的复核状态、结果、模型、重试次数和脱敏错误。
+- 树莓派新增 `/api/cloud-verifications` 代理；本地管理台“云端模型复核”面板展示 pending、verifying、retrying、confirmed、rejected、uncertain、failed 和 unavailable。
+- 真实空沙发截图完成 Qwen 复核：`person_count=0`、`posture=unknown`、`surface=sofa`、`emergency=false`、`confidence=0.95`、`suggested_event_type=none`，云端决策为 `rejected / downgrade`。
+- 首次真实调用暴露视觉复核独立 30 秒超时，生产环境已设置 `GOHOME_VISION_VERIFICATION_TIMEOUT_MS=120000`；任务随后一次成功。API Key 不进入接口、页面或日志。
+
+视频黑屏恢复：
+
+- MJPEG 连续读取到近黑解码帧时始终输出上一有效帧；达到确认帧数后主动重开 capture，避免黑图进入浏览器。
+- 启动阶段尚无有效帧时不发布黑图，先重连等待有效帧。
+- `verify-camera-stream-resilience.py` 覆盖一次读取失败、连续 5 张黑帧、第二次重连和恢复帧，确认黑帧全部被抑制。
+
+实机验收：
+
+- 树莓派 camera 23 连续 20 条分析均为 `person_count=0 / pose_count=0 / fall_candidate=false / black_screen=false`，假骨架只在诊断拒绝列表中。
+- Chrome 实机页面为 `0 人 / 0 组骨架`，骨架 SVG 线条数为 0，云端复核显示“已排除”和 95% 置信度，控制台错误为 0。
+- 连续 15 秒浏览器像素采样平均亮度为 `122.8-125.4`，视频保持 `640x360`，未出现黑帧。
+- 树莓派 `gohome-edge-agent` 与腾讯云 `gohome-app` 均为 active，部署后日志无新增 error、read failed 或 near-black 记录。
