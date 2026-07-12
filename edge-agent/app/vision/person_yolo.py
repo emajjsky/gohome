@@ -57,7 +57,7 @@ class PersonDetector:
                 detected = self._detect_yolo_entities(
                     frame,
                     person_confidence=min(self.yolo_confidence, presence_yolo_confidence),
-                    pet_confidence=float(config.get("pet_yolo_confidence", 0.25)),
+                    pet_confidence=float(config.get("pet_yolo_confidence", 0.40)),
                     pet_enabled=bool(config.get("pet_detection_enabled", True)),
                     scene_confidence=float(config.get("scene_object_confidence", 0.30)),
                     scene_enabled=bool(config.get("scene_context_enabled", True)),

@@ -132,6 +132,7 @@ def main() -> None:
         "pet_fall_candidate": pet_isolation["fall_candidate"],
         "pet_event_evidence_count": pet_isolation["event_evidence_count"],
         "pet_screen_suppressed": pet_isolation["screen_suppressed"],
+        "pet_default_confidence": pet_isolation["default_confidence"],
         "pose_result_status": fire_result.get("algorithm_results", {}).get("pose", {}).get("status"),
         "pipeline_version": fire_result.get("pipeline_version"),
         "algorithm_results": sorted((fire_result.get("algorithm_results") or {}).keys()),
@@ -197,6 +198,8 @@ def main() -> None:
         raise SystemExit("event evidence must preserve independent pet metadata")
     if checks["pet_screen_suppressed"] != 1:
         raise SystemExit("pets displayed inside a stable TV zone must be suppressed")
+    if checks["pet_default_confidence"] != 0.40:
+        raise SystemExit("pet detections must use an independent conservative confidence threshold")
     if checks["pose_det_frequency_with_tracking"] != 8:
         raise SystemExit("RTMPose tracking mode should preserve configured detector frequency")
     if checks["pose_fall_low_quality_eligible"]:
@@ -349,7 +352,13 @@ def verify_pet_detection_isolated_from_people_and_fall(frame: np.ndarray) -> dic
         pet_type="cat",
         label_zh="猫",
     )
-    pipeline.person._detect_yolo_entities = lambda current_frame, **kwargs: ([], [pet], [])  # type: ignore[method-assign]
+    detector_config = {}
+
+    def detect_pet(current_frame, **kwargs):
+        detector_config.update(kwargs)
+        return [], [pet], []
+
+    pipeline.person._detect_yolo_entities = detect_pet  # type: ignore[method-assign]
     analysis = pipeline.analyze(frame, config={"pet_detection_enabled": True})
     evidence = build_event_evidence(
         event_type="no_person",
@@ -372,6 +381,7 @@ def verify_pet_detection_isolated_from_people_and_fall(frame: np.ndarray) -> dic
         "fall_candidate": bool(analysis.get("fall_candidate")),
         "event_evidence_count": len(evidence.get("objects", {}).get("pets") or []),
         "screen_suppressed": len(suppressed),
+        "default_confidence": detector_config.get("pet_confidence"),
     }
 
 
