@@ -10913,3 +10913,36 @@ App：
 - 云端重启后 PostgreSQL 中该测试 edge_event_id 数量为 0；树莓派和腾讯云均 active，近 5 分钟无 warning/error。
 
 当前边界：服务端能够按分钟创建并归档提醒投递，但尚未做 iOS 真机 APNs 到达验收。自动恢复采用保守策略，若老人离开画面或姿态模型暂时失效，系统宁可继续提醒，也不会未经证据自动宣布安全。
+
+## 107. 2026-07-12 iOS 真机启动、性能修复与生产目录清理
+
+iOS 真机：
+
+- macOS 26.5.2、Xcode 26.6 和 iOS 26.5 平台组件已安装，真实 iPhone 完成配对、开发者信任、签名构建和安装。
+- App Bundle ID 为 `com.gohome.family`，显示名为“回家”，真实加载 `https://gohome.ai2shx.club/index.html?app=1`。
+- 原生壳新增品牌启动状态、失败重试和网页完成后的淡出切换；WKWebView 避免初始化阶段重复加载同一 URL。
+
+性能：
+
+- 修复 HTTPS App 每页错误探测 `127.0.0.1:8711` 的旧逻辑，云端统一使用同源 API，健康检查在会话内短时复用。
+- 静态服务按 HTML、版本化脚本样式、字体和图片分别设置缓存；增加 ETag、Last-Modified 和 304，字体不再每页重复下载。
+- iOS WebView 使用系统中文字体并关闭高开销背景模糊，保留布局、视频和真实业务功能。
+- API 客户端增加按账号隔离的 sessionStorage 缓存。用户、家庭、老人资料和关怀设置缓存 5 分钟，天气和热点缓存 10 分钟，设备和摄像头缓存 10 秒，事件和消息缓存 3 秒，实时快照不缓存；POST/PUT/PATCH/DELETE 成功后清空缓存。
+
+清理：
+
+- 删除零引用的 `connect-live.js / family-live.js / login-live.js` 和 29 张零引用图片，共删除 32 个文件、772 行旧代码。
+- 删除 16 个 HTML 中重复维护的内联路由表，只保留 `stitch-app-routes.js` 公共导航，共减少 506 行重复代码。
+- 树莓派 `run.sh` 不再把 8 个算法演示视频作为生产启动条件；重启后两路摄像头在线、规则同步正常、云端转发保持 8 FPS。
+- 清理 Pi 上 `.env.local.backup-*`、旧源码、测试日志、测试 PID 和临时验证文件，未触碰正式 `.env/.env.local`、数据库、模型和运行日志。
+- `deploy-to-pi.sh` 排除评估、样本导入和 QA 回归脚本，并在部署后清理旧 QA 文件；Pi 正式 scripts 目录只保留运行、安装、配网、维护和 `verify-vision-runtime.py`。
+- 腾讯云 `/opt/gohome/app/scripts` 只保留 PostgreSQL migration 和 export 工具，App 与 nginx 均保持 active。
+
+验证：
+
+- API 缓存命中与写操作失效使用独立 Node 探针验证。
+- `npm test` 和本地完整闭环均通过，闭环结果为 37 passed / 0 warnings / 0 failed。
+- 腾讯云首页、守护、事件、陪伴、我的和登录页均只加载公共导航；云端健康检查返回 PostgreSQL store。
+- 树莓派 vision preflight 全部通过，服务、配置同步、双摄像头和 live relay 正常。
+
+当前边界：`app-shell.html` 仍被盒子 public pilot 服务引用，`detection.html` 仍由实时画面页引用，纪念模式页面仍是完整互链。它们不是零引用垃圾文件，必须先迁移服务入口和产品导航后再删除。APNs 仍未开启，因此本轮不修改原生推送 entitlement，也不需要重新安装 App。
