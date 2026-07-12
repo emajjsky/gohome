@@ -4,6 +4,7 @@
     const AUTH_TOKEN_KEY = "gohome.authToken";
     const APP_SHELL_KEY = "gohome.appShellMode";
     const HEALTH_CACHE_KEY = "gohome.apiHealth";
+    const API_CACHE_PREFIX = "gohome.apiCache.";
     const playbackSessionCache = new Map();
     const nativeBridgeRequests = new Map();
 
@@ -25,6 +26,43 @@
 
     function getAuthToken() {
         return localStorage.getItem(AUTH_TOKEN_KEY) || cookieValue("gohome_app_session") || "";
+    }
+
+    function clearApiCache() {
+        for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+            const key = sessionStorage.key(index) || "";
+            if (key.startsWith(API_CACHE_PREFIX)) sessionStorage.removeItem(key);
+        }
+    }
+
+    function apiCacheKey(path) {
+        const tokenScope = getAuthToken().slice(-12) || "guest";
+        return `${API_CACHE_PREFIX}${tokenScope}.${path}`;
+    }
+
+    function cachedApiValue(path, ttlMs) {
+        if (!(ttlMs > 0)) return undefined;
+        const key = apiCacheKey(path);
+        try {
+            const entry = JSON.parse(sessionStorage.getItem(key) || "null");
+            if (entry && Number(entry.expires_at || 0) > Date.now()) return entry.value;
+        } catch (_error) {
+            // Invalid session data is disposable.
+        }
+        sessionStorage.removeItem(key);
+        return undefined;
+    }
+
+    function storeApiValue(path, ttlMs, value) {
+        if (!(ttlMs > 0)) return;
+        try {
+            sessionStorage.setItem(apiCacheKey(path), JSON.stringify({
+                expires_at: Date.now() + ttlMs,
+                value,
+            }));
+        } catch (_error) {
+            // Storage pressure must not break the live request path.
+        }
     }
 
     function cookieValue(name) {
@@ -50,6 +88,7 @@
     }
 
     function setAuthToken(token) {
+        clearApiCache();
         if (!token) {
             localStorage.removeItem(AUTH_TOKEN_KEY);
             clearAuthCookie();
@@ -64,6 +103,7 @@
 
     function clearAuthToken() {
         const token = getAuthToken();
+        clearApiCache();
         localStorage.removeItem(AUTH_TOKEN_KEY);
         clearAuthCookie();
         playbackSessionCache.clear();
@@ -195,10 +235,16 @@
     }
 
     async function request(path, options = {}) {
+        const { cacheTtlMs = 0, headers = {}, ...fetchOptions } = options;
+        const method = String(fetchOptions.method || "GET").toUpperCase();
+        if (method === "GET") {
+            const cached = cachedApiValue(path, cacheTtlMs);
+            if (cached !== undefined) return cached;
+        }
         const base = GoHomeEdge.apiBase;
         const response = await fetch(`${base}${path}`, {
-            headers: buildHeaders(options.headers || {}),
-            ...options,
+            ...fetchOptions,
+            headers: buildHeaders(headers),
         });
         const text = await response.text();
         const data = text ? JSON.parse(text) : null;
@@ -207,6 +253,8 @@
             error.status = response.status;
             throw error;
         }
+        if (method === "GET") storeApiValue(path, cacheTtlMs, data);
+        else clearApiCache();
         return data;
     }
 
@@ -885,15 +933,15 @@
             return data;
         },
         v1CurrentUser: () => request("/api/v1/identity/me"),
-        currentUser: () => request("/api/users/me"),
+        currentUser: () => request("/api/users/me", { cacheTtlMs: 300_000 }),
         v1CurrentDevice: () => request("/api/v1/devices/current"),
         v1VideoProfiles: () => request("/api/v1/video/profiles"),
         v1Devices: (familyId) => request(`/api/v1/devices?family_id=${encodeURIComponent(familyId)}`),
         v1CurrentDeviceSyncState: () => request("/api/v1/devices/current/sync-state"),
         cleanupCurrentDevice: () => request("/api/v1/devices/current/cleanup", { method: "POST" }),
         appDevice: () => withDeviceAccessFallback(
-            () => request("/api/app/device"),
-            () => request("/api/device")
+            () => request("/api/app/device", { cacheTtlMs: 10_000 }),
+            () => request("/api/device", { cacheTtlMs: 10_000 })
         ),
         v1CreateHousehold: (payload) => request("/api/v1/households", {
             method: "POST",
@@ -901,7 +949,7 @@
         }),
         v1Households: () => request("/api/v1/households/mine"),
         v1ElderProfile: (familyId, elderId = "elder_primary") =>
-            request(`/api/v1/families/${encodeURIComponent(familyId)}/elders/${encodeURIComponent(elderId)}/profile`),
+            request(`/api/v1/families/${encodeURIComponent(familyId)}/elders/${encodeURIComponent(elderId)}/profile`, { cacheTtlMs: 300_000 }),
         v1UpsertElderProfile: (familyId, elderId = "elder_primary", payload = {}) =>
             request(`/api/v1/families/${encodeURIComponent(familyId)}/elders/${encodeURIComponent(elderId)}/profile`, {
                 method: "PUT",
@@ -921,7 +969,7 @@
             if (params.elder_id) query.set("elder_id", params.elder_id);
             if (params.city) query.set("city", params.city);
             const suffix = query.toString() ? `?${query.toString()}` : "";
-            return request(`/api/v1/families/${encodeURIComponent(familyId)}/weather-signals${suffix}`);
+            return request(`/api/v1/families/${encodeURIComponent(familyId)}/weather-signals${suffix}`, { cacheTtlMs: 600_000 });
         },
         v1ContentRecommendations: (familyId, params = {}) => {
             const query = new URLSearchParams();
@@ -929,25 +977,25 @@
             if (params.city) query.set("city", params.city);
             if (params.district) query.set("district", params.district);
             const suffix = query.toString() ? `?${query.toString()}` : "";
-            return request(`/api/v1/families/${encodeURIComponent(familyId)}/content-recommendations${suffix}`);
+            return request(`/api/v1/families/${encodeURIComponent(familyId)}/content-recommendations${suffix}`, { cacheTtlMs: 600_000 });
         },
         v1CareCardToday: (familyId = "") => {
             const suffix = familyId ? `?family_id=${encodeURIComponent(familyId)}` : "";
-            return request(`/api/v1/app/care-cards/today${suffix}`);
+            return request(`/api/v1/app/care-cards/today${suffix}`, { cacheTtlMs: 300_000 });
         },
         v1CareCards: (params = {}) => {
             const query = new URLSearchParams();
             if (params.family_id) query.set("family_id", String(params.family_id));
             if (params.limit) query.set("limit", String(params.limit));
             const suffix = query.toString() ? `?${query.toString()}` : "";
-            return request(`/api/v1/app/care-cards${suffix}`);
+            return request(`/api/v1/app/care-cards${suffix}`, { cacheTtlMs: 300_000 });
         },
         v1GenerateCareCard: (payload = {}) => request("/api/v1/internal/care-cards/generate", {
             method: "POST",
             body: JSON.stringify(payload),
         }),
         v1CarePreferences: (familyId) =>
-            request(`/api/v1/families/${encodeURIComponent(familyId)}/care-preferences`),
+            request(`/api/v1/families/${encodeURIComponent(familyId)}/care-preferences`, { cacheTtlMs: 300_000 }),
         v1UpdateCarePreferences: (familyId, payload = {}) =>
             request(`/api/v1/families/${encodeURIComponent(familyId)}/care-preferences`, {
                 method: "PUT",
@@ -971,7 +1019,7 @@
             if (params.limit) query.set("limit", String(params.limit));
             if (params.status) query.set("status", String(params.status));
             const suffix = query.toString() ? `?${query.toString()}` : "";
-            return request(`/api/v1/app/messages${suffix}`);
+            return request(`/api/v1/app/messages${suffix}`, { cacheTtlMs: 3_000 });
         },
         v1AppMessage: (messageId, familyId = "") =>
             request(`/api/v1/app/messages/${encodeURIComponent(messageId)}${familyId ? `?family_id=${encodeURIComponent(familyId)}` : ""}`),
@@ -988,12 +1036,12 @@
             method: "POST",
             body: JSON.stringify(payload),
         }),
-        myFamilies: () => request("/api/families/mine"),
+        myFamilies: () => request("/api/families/mine", { cacheTtlMs: 300_000 }),
         bindDevice: (payload) => request("/api/device-bindings", {
             method: "POST",
             body: JSON.stringify(payload),
         }),
-        deviceBindings: (familyId) => request(`/api/device-bindings?family_id=${encodeURIComponent(familyId)}`),
+        deviceBindings: (familyId) => request(`/api/device-bindings?family_id=${encodeURIComponent(familyId)}`, { cacheTtlMs: 30_000 }),
         unbindDevice: (bindingId) => request(`/api/device-bindings/${encodeURIComponent(bindingId)}`, {
             method: "DELETE",
         }),
@@ -1105,8 +1153,8 @@
             body: JSON.stringify(payload),
         }),
         appCameras: () => withDeviceAccessFallback(
-            () => request("/api/app/cameras"),
-            () => request("/api/cameras")
+            () => request("/api/app/cameras", { cacheTtlMs: 10_000 }),
+            () => request("/api/cameras", { cacheTtlMs: 10_000 })
         ),
         v1VideoMediaPlaybackUrl,
         cameras: () => request("/api/cameras"),
@@ -1138,8 +1186,8 @@
         ),
         capture: (cameraId) => request(`/api/cameras/${cameraId}/capture`, { method: "POST" }),
         appEvents: (params = "limit=30") => withDeviceAccessFallback(
-            () => request(`/api/app/events?${params}`),
-            () => request(`/api/events?${params}`)
+            () => request(`/api/app/events?${params}`, { cacheTtlMs: 3_000 }),
+            () => request(`/api/events?${params}`, { cacheTtlMs: 3_000 })
         ),
         v1Events: (params = "limit=30") => request(`/api/v1/events?${params}`),
         events: (params = "limit=30") => request(`/api/events?${params}`),
