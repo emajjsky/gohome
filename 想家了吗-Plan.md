@@ -2937,3 +2937,14 @@ P1 用户端：
 - 已通过服务端回归、PostgreSQL 数据导出恢复回归和腾讯云真实空沙发验证；验证事件从 verifying 自动转 rejected，状态迁移与任务编排日志均已保存，且测试事件不会生成用户消息。
 
 阶段 11 状态：云端事件编排核心已部署。下一步进入 iOS/APNs 前置工作：把 notification delivery 的 queued 记录接入真实 APNs provider，并在 App 事件详情中把 incident 时间线和多摄像头证据作为统一对象展示。
+
+#### M. 阶段 12：猫狗独立识别与安全隔离（已完成）
+
+- 已使用现有 YOLO11 COCO `cat / dog` 类别输出独立 `pets / pet_count / pet_types`，未引入新模型和额外推理进程。
+- 已保证猫狗不进入 `people`、RTMPose、活动时序、跌倒状态机、PresenceSession 或家庭 `last_person_seen_at`。
+- 已增加电视宠物画面抑制和稳定家具场景关联；统一管理页显示宠物框、中文类型、置信度和场景，不把宠物显示为人物。
+- 已把宠物写入 DetectionResult、事件 evidence 和云端视觉复核结构化上下文；默认模型提示明确区分人物和猫狗。
+- 已增加回归：单猫画面必须得到 `pet_count=1 / person_count=0 / fall_candidate=false`，事件证据保留宠物，电视中的宠物被过滤。
+- 已通过视觉 smoke、跌倒规则、服务端测试、UR Fall `8/0/10/0` 和 GMDCSA24 密集序列 `3/0/5/1`，并部署树莓派与腾讯云。
+
+阶段 12 状态：核心链路完成。下一步先做真实猫狗画面校准和双摄运行观察；确认误检与性能后，扩展盒子状态上报，在 App 守护页显示“未见老人 / 有宠物活动”，随后再进入 iOS/APNs 与 incident 详情适配。

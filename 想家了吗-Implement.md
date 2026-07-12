@@ -10725,3 +10725,33 @@ SafetyIncident 与提醒：
 - 腾讯云真实空沙发验证事件初始为 verifying，Qwen 返回 `person_count=0 / emergency=false / confidence=0.95 / suggested_event_type=none` 后自动转 rejected。
 - 云端任务记录 `orchestration_status=rejected`、状态迁移来源为 `vision_verification`；验证事件的 `orchestration_message_id` 为空，证明没有生成用户消息。
 - 腾讯云 `gohome-app.service` 保持 active，部署后无新增服务错误。
+
+## 101. 2026-07-12 猫狗独立识别与安全链路隔离
+
+边缘识别：
+
+- `person_yolo.py` 在现有 YOLO11 单次推理中增加 COCO `cat=15 / dog=16`，返回独立 `pets / pet_count / pet_types`；人物、宠物和家具仍由一次模型调用完成。
+- 宠物对象显式标记 `person_evidence_eligible=false / pose_eligible=false / fall_evidence_eligible=false`，不进入人物补全、RTMPose、活动历史、跌倒候选或 PresenceSession。
+- `pipeline.py` 对宠物单独执行稳定电视区域抑制，并关联沙发、床、椅子等稳定场景；输出宠物信息但不改变 `person_count`。
+
+持久化与云端：
+
+- DetectionResult 的 `objects` 和置信度摘要新增猫狗目标、边界框、场景关系和宠物置信度；完整 analysis 继续原样留存。
+- 事件 evidence 新增 `metrics.pet_count` 和 `objects.pets`，不把宠物写入人物或跌倒候选。
+- 云端视觉复核上下文新增完整 `objects`；默认 Qwen 提示明确猫狗不计入 `person_count`，宠物在地面、床或沙发上不能作为人物跌倒证据。
+
+研发管理页：
+
+- 统一真实画面新增独立宠物框和“猫/狗 + 置信度 + 场景”标签，目标列表使用“宠”类型，不与人物编号混排。
+- 无人物但有宠物时显示“当前未看到人，检测到 N 只宠物”，状态仍为正常感知，不显示安全告警。
+- 人数指标调整为“人 / 宠物”，原人物、骨架、场景、火灾和画面状态结构不变。
+
+验证与部署：
+
+- `verify-vision-pipeline.py` 新增单猫隔离、事件证据和电视宠物抑制回归，结果为 `pet_count=1 / person_count=0 / fall_candidate=false`。
+- `verify-fall-rule-engine.py`、完整视觉 smoke 和 `npm test` 通过。
+- UR Fall 序列保持 `TP=8 / FP=0 / TN=10 / FN=0`；GMDCSA24 密集序列保持 `TP=3 / FP=0 / TN=5 / FN=1`。
+- 代码部署到真实树莓派后 `gohome-edge-agent` active，双路实时中继继续运行；camera 23/24 最新落库均包含 `pet_count/pets`，当前空画面为 `person_count=0 / pet_count=0 / fall_candidate=false / model_status=ready`。
+- 腾讯云 `gohome-app` 已同步新复核提示和 evidence objects 上下文，服务重启后 active；生产未配置自定义视觉提示词，因此使用本次更新的默认提示。
+
+当前边界：App 尚未收到实时宠物状态，只有安全事件证据和研发管理页已打通。下一步需要在真实猫狗画面上验证置信度、电视抑制、家具遮挡和双摄性能，再把最近宠物活动时间与类型加入设备状态同步和普通 App 家庭状态；本阶段不做宠物身份、健康、情绪或宠物告警。
