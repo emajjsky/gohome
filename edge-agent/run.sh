@@ -30,18 +30,6 @@ PY
 load_env_file ".env.local"
 load_env_file ".env"
 
-require_file() {
-  local file_path="$1"
-  if [ ! -s "$file_path" ]; then
-    echo "required file missing or empty: $file_path" >&2
-    exit 1
-  fi
-}
-
-for demo_asset in quality person stillness fall meal night fire camera; do
-  require_file "admin/assets/algorithm-demos/${demo_asset}.webm"
-done
-
 select_python_bin() {
   if [ -n "${PYTHON_BIN:-}" ] && [ -x "$PYTHON_BIN" ]; then
     printf '%s\n' "$PYTHON_BIN"
