@@ -5160,6 +5160,12 @@ body.admin-web-page .event-log-main {
   color: var(--muted);
 }
 
+.event-log-header > button {
+  width: auto;
+  min-width: 108px;
+  flex: 0 0 auto;
+}
+
 .section-kicker {
   color: oklch(45% 0.11 155);
   font-size: 12px;
@@ -5419,6 +5425,38 @@ body.admin-web-page .event-log-main {
 }
 
 @media (max-width: 520px) {
+  body.admin-web-page[data-page="events"] .admin-web-frame {
+    gap: 10px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+  }
+
+  body.admin-web-page[data-page="events"] .admin-sidebar {
+    gap: 8px;
+  }
+
+  body.admin-web-page[data-page="events"] .admin-brand {
+    min-height: 58px;
+    padding: 10px 12px;
+  }
+
+  body.admin-web-page[data-page="events"] .admin-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 6px;
+  }
+
+  body.admin-web-page[data-page="events"] .admin-nav a {
+    min-height: 42px;
+    padding: 0 9px;
+    font-size: 13px;
+  }
+
+  body.admin-web-page[data-page="events"] .admin-sidebar-controls,
+  body.admin-web-page[data-page="events"] .admin-sidebar-note,
+  body.admin-web-page[data-page="events"] .admin-sidebar-session {
+    display: none;
+  }
+
   .event-log-header {
     align-items: flex-start;
   }
