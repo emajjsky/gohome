@@ -3172,6 +3172,19 @@ def get_event(event_id: int) -> Dict[str, Any]:
     return event
 
 
+@app.post("/api/events/{event_id}/false-positive")
+def mark_event_false_positive(event_id: int) -> Dict[str, Any]:
+    event = storage.get_event(event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    try:
+        cloud = upload_agent.submit_event_feedback(event_id, resolution="false_positive")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"云端误报反馈失败：{exc}") from exc
+    updated = storage.update_event(event_id, {"acknowledged": True, "resolution": "false_positive"})
+    return {"ok": True, "local_event": updated, "cloud_event": cloud.get("event") or cloud}
+
+
 @app.get("/api/events/{event_id}/server-payload")
 def get_event_server_payload(event_id: int) -> Dict[str, Any]:
     event = storage.get_event(event_id)

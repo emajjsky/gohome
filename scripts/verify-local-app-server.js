@@ -1089,6 +1089,23 @@ async function main() {
         assert.ok(app.store.db.app_messages
             .filter((message) => (message.source_event_ids || []).some((eventId) => String(eventId) === String(created.event.id)))
             .every((message) => message.status === "archived"));
+        const falsePositiveFeedback = await requestJson(baseUrl, "/api/v1/device/events/43/feedback", {
+            method: "POST",
+            body: JSON.stringify({ resolution: "false_positive" }),
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+        });
+        assert.equal(falsePositiveFeedback.ok, true);
+        assert.equal(falsePositiveFeedback.event.resolution, "false_positive");
+        assert.equal(falsePositiveFeedback.event.payload.incident.status, "rejected");
+        assert.equal(falsePositiveFeedback.event.payload.manual_feedback.source, "edge_admin");
+        const eventLogAfterFeedback = await requestJson(baseUrl, "/api/v1/device/event-log?limit=20", {
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+        });
+        assert.ok(eventLogAfterFeedback.records.some((record) => (
+            String(record.edge_event_id) === "43"
+            && record.incident.status === "rejected"
+            && record.resolution === "false_positive"
+        )));
 
         const carePreferences = await requestJson(baseUrl, `/api/v1/families/${family.id}/care-preferences`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },

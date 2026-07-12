@@ -2248,7 +2248,10 @@ function renderEventLog() {
         ${pills.length ? `<div class="candidate-evidence">${pills.slice(0, 6).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
         <footer>
           <span>${incidentId ? `Incident ${escapeHtml(incidentId)}` : "云端状态会自动回写到此处"}</span>
-          ${local.snapshot_url ? `<button class="ghost-button" type="button" data-event-log-action="snapshot" data-url="${escapeHtml(local.snapshot_url)}">查看证据</button>` : ""}
+          <div class="event-log-actions">
+            ${local.snapshot_url ? `<button class="ghost-button" type="button" data-event-log-action="snapshot" data-url="${escapeHtml(local.snapshot_url)}">查看证据</button>` : ""}
+            ${cloud && !["rejected", "closed"].includes(lifecycle.key) ? `<button class="ghost-button danger-text" type="button" data-event-log-action="false_positive" data-id="${local.id}">标记算法误报</button>` : ""}
+          </div>
         </footer>
         <details class="event-log-details">
           <summary>查看技术日志</summary>
@@ -2885,11 +2888,25 @@ function bindEvents() {
   }
   const eventTimeline = $("eventTimeline");
   if (eventTimeline) {
-    eventTimeline.addEventListener("click", (event) => {
+    eventTimeline.addEventListener("click", async (event) => {
       const button = event.target.closest("button[data-event-log-action]");
       if (!button) return;
       if (button.dataset.eventLogAction === "snapshot") {
         window.open(`${button.dataset.url}?t=${Date.now()}`, "_blank", "noopener");
+        return;
+      }
+      if (button.dataset.eventLogAction === "false_positive") {
+        if (!window.confirm("确认这是算法误报？该反馈会同步云端、关闭对应提醒，并保留完整证据用于后续优化。")) return;
+        setBusy(button, true);
+        try {
+          await api(`/api/events/${Number(button.dataset.id)}/false-positive`, { method: "POST" });
+          showToast("误报反馈已同步云端");
+          await loadEventLog();
+        } catch (error) {
+          showToast(userSafeError(error.message));
+        } finally {
+          setBusy(button, false);
+        }
       }
     });
   }

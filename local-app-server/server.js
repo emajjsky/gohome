@@ -2546,6 +2546,9 @@ function createLocalAppServer(options = {}) {
     function aggregateIncidentVerification(event) {
         const incident = ensureSafetyIncident(event);
         if (!incident) return "confirmed";
+        if (incidentEvents(incident.incident_id).some((item) => item.payload?.manual_feedback?.resolution === "false_positive")) {
+            return "rejected";
+        }
         const statuses = incidentEvents(incident.incident_id)
             .map((item) => String(item.payload?.verification?.status || ""))
             .filter(Boolean);
@@ -2600,6 +2603,33 @@ function createLocalAppServer(options = {}) {
         }
         appendIncidentTransition(incidentPrimaryEvent(event), "acknowledged", "app_user", { resolution });
         archiveIncidentMessages(incident.incident_id);
+        return linkedEvents;
+    }
+
+    function rejectSafetyIncidentAsFalsePositive(event) {
+        const incident = ensureSafetyIncident(event);
+        const linkedEvents = incident ? incidentEvents(incident.incident_id) : [event];
+        const timestamp = nowIso();
+        for (const linked of linkedEvents) {
+            linked.payload = linked.payload && typeof linked.payload === "object" ? linked.payload : {};
+            linked.payload.manual_feedback = {
+                resolution: "false_positive",
+                source: "edge_admin",
+                updated_at: timestamp,
+            };
+            linked.resolution = "false_positive";
+            linked.acknowledged = false;
+            const linkedIncident = ensureSafetyIncident(linked);
+            if (linkedIncident) {
+                linkedIncident.status = "rejected";
+                linkedIncident.resolved_at = timestamp;
+            }
+            linked.updated_at = timestamp;
+        }
+        if (incident) {
+            appendIncidentTransition(incidentPrimaryEvent(event), "rejected", "edge_admin", { resolution: "false_positive" });
+            archiveIncidentMessages(incident.incident_id);
+        }
         return linkedEvents;
     }
 
@@ -5945,6 +5975,33 @@ function createLocalAppServer(options = {}) {
         write(res, 200, { ok: true, device_id: deviceId, records });
     }
 
+    async function handleDeviceEventFeedback(req, res, edgeEventId) {
+        if (!requireDevice(req, res)) return;
+        const issuedToken = issuedDeviceTokenFromRequest(req);
+        const deviceId = String(issuedToken?.device_id || currentEdgeDeviceId() || "");
+        const familyId = normalizeNumber(issuedToken?.family_id, null);
+        const payload = await parseJsonBody(req);
+        if (String(payload.resolution || "") !== "false_positive") {
+            writeError(res, 400, "only false_positive feedback is supported");
+            return;
+        }
+        const event = store.db.events.find((item) => {
+            if (String(item.edge_event_id || item.payload?.edge_upload?.edge_event_id || "") !== String(edgeEventId || "")) return false;
+            const camera = store.db.cameras[String(item.camera_id || "")] || {};
+            const edgeDeviceId = String(item.payload?.edge_upload?.edge_device_id || camera.device_id || "");
+            if (deviceId && edgeDeviceId) return edgeDeviceId === deviceId;
+            if (familyId) return Number(item.family_id || camera.family_id) === Number(familyId);
+            return false;
+        });
+        if (!event) {
+            writeError(res, 404, "event not found");
+            return;
+        }
+        rejectSafetyIncidentAsFalsePositive(event);
+        await store.save();
+        write(res, 200, { ok: true, event: publicEvent(event) });
+    }
+
     async function handleHeartbeat(req, res) {
         if (!requireDevice(req, res)) return;
         const payload = await parseJsonBody(req);
@@ -7037,6 +7094,12 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && pathname === "/api/v1/device/event-log") {
                 deviceEventLog(req, res, url);
+                return;
+            }
+
+            const deviceEventFeedbackMatch = pathname.match(/^\/api\/v1\/device\/events\/([^/]+)\/feedback$/);
+            if (deviceEventFeedbackMatch && req.method === "POST") {
+                await handleDeviceEventFeedback(req, res, decodeURIComponent(deviceEventFeedbackMatch[1]));
                 return;
             }
 

@@ -96,6 +96,18 @@ class UploadAgent:
             f"/api/v1/device/event-log?{urlencode({'limit': max(1, min(int(limit), 200))})}",
         )
 
+    def submit_event_feedback(self, edge_event_id: int | str, *, resolution: str) -> Dict[str, Any]:
+        configured, reason = self._configured()
+        if not configured:
+            raise RuntimeError(reason)
+        if resolution != "false_positive":
+            raise ValueError("only false_positive feedback is supported")
+        return self._request_json(
+            "POST",
+            f"/api/v1/device/events/{edge_event_id}/feedback",
+            json_body={"resolution": resolution},
+        )
+
     def process_once(self, *, max_jobs: int | None = None) -> Dict[str, Any]:
         configured, reason = self._configured()
         if not configured:

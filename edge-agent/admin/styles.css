@@ -5333,6 +5333,16 @@ body.admin-web-page .event-log-main {
   margin-top: 10px;
 }
 
+.event-log-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.danger-text {
+  color: var(--red);
+}
+
 .event-log-details {
   border-top: 1px dashed var(--line);
   padding: 9px 0 5px;

@@ -96,6 +96,8 @@ def main() -> None:
                     "ok": True,
                     "records": [{"event_id": 8801, "edge_event_id": str(event["id"]), "incident": {"status": "confirmed"}}],
                 }
+            if path == f"/api/v1/device/events/{event['id']}/feedback":
+                return {"ok": True, "event": {"edge_event_id": str(event["id"]), "resolution": "false_positive"}}
             raise AssertionError(f"unexpected upload path: {path}")
 
         agent._request_json = fake_request  # type: ignore[method-assign]
@@ -104,9 +106,10 @@ def main() -> None:
         completed = storage.list_upload_jobs(status="completed", limit=10)
         verification_status = agent.vision_verification_status(limit=6)
         event_log_status = agent.event_log_status(limit=20)
+        feedback_status = agent.submit_event_feedback(event["id"], resolution="false_positive")
         if result["completed"] != 2 or summary["completed"] != 2:
             raise SystemExit(f"upload agent did not complete both jobs: result={result} summary={summary}")
-        if [call["method"] for call in calls] != ["POST", "POST", "GET", "GET"]:
+        if [call["method"] for call in calls] != ["POST", "POST", "GET", "GET", "POST"]:
             raise SystemExit(f"unexpected upload calls: {calls}")
         media_path = str(calls[0]["path"])
         if "camera_id=101" not in media_path or "local_camera_id=1" not in media_path:
@@ -120,6 +123,8 @@ def main() -> None:
             raise SystemExit(f"cloud verification status was not returned: {verification_status}")
         if event_log_status.get("records", [{}])[0].get("incident", {}).get("status") != "confirmed":
             raise SystemExit(f"cloud event log status was not returned: {event_log_status}")
+        if feedback_status.get("event", {}).get("resolution") != "false_positive":
+            raise SystemExit(f"event feedback was not returned: {feedback_status}")
 
         print(
             json.dumps(
