@@ -15,7 +15,7 @@ from .scene_context import SceneContextTracker
 
 
 class VisionPipeline:
-    version = "vision-pipeline-v1"
+    version = "vision-pipeline-v2"
 
     def __init__(
         self,
@@ -107,12 +107,18 @@ class VisionPipeline:
             list(pose.get("poses") or []),
         )
         scene = self.scene.update(scene_candidates, runtime_config)
-        raw_people, annotated_poses = self.scene.annotate(
+        raw_people, filtered_poses, screen_content_suppressed = self._suppress_display_content(
             raw_people,
             list(pose.get("poses") or []),
             list(scene.get("scene_zones") or []),
+            runtime_config,
         )
-        pose = self._pose_with_scene_context(pose, annotated_poses)
+        raw_people, annotated_poses = self.scene.annotate(
+            raw_people,
+            filtered_poses,
+            list(scene.get("scene_zones") or []),
+        )
+        pose = self._pose_with_scene_context(pose, annotated_poses, runtime_config)
         person_poses = self._poses_for_person_evidence(pose.get("poses") or [])
         people = self._refine_people_with_pose(raw_people, person_poses, frame, runtime_config)
         if (
@@ -212,6 +218,7 @@ class VisionPipeline:
             "scene_zones": scene.get("scene_zones") or [],
             "normal_lying_zones": scene.get("normal_lying_zones") or [],
             "scene_map_status": scene.get("scene_map_status") or "empty",
+            "screen_content_suppressed": screen_content_suppressed,
             "pose_count": pose.get("pose_count"),
             "poses": pose.get("poses") or [],
             "pose_skeleton_edges": pose.get("pose_skeleton_edges") or [],
@@ -448,12 +455,104 @@ class VisionPipeline:
         base_area = max(1.0, (ax2 - ax1) * (ay2 - ay1))
         return intersection / base_area
 
-    def _pose_with_scene_context(self, pose: Dict[str, Any], poses: list[Dict[str, Any]]) -> Dict[str, Any]:
-        updated = {**pose, "poses": poses, "pose_count": len(poses)}
+    def _box_area(self, bbox: Any) -> float:
+        if not self._valid_box(bbox):
+            return 0.0
+        x1, y1, x2, y2 = [float(value) for value in bbox]
+        return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+    def _pose_with_scene_context(
+        self,
+        pose: Dict[str, Any],
+        poses: list[Dict[str, Any]],
+        config: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        threshold = float((config or {}).get("pose_fall_threshold") or 0.90)
+        fall_score = max([float(item.get("fall_score") or 0.0) for item in poses], default=0.0)
+        fall_candidate = any(
+            float(item.get("fall_score") or 0.0) >= threshold
+            and "fall_candidate" in (item.get("action_hints") or [])
+            for item in poses
+        )
+        tags = [tag for tag in (pose.get("tags") or []) if tag not in {"pose_fall_candidate", "pose_low_body"}]
+        if any(str(item.get("posture") or "") in {"lying", "low_body"} for item in poses):
+            tags.append("pose_low_body")
+        if fall_candidate:
+            tags.append("pose_fall_candidate")
+        updated = {
+            **pose,
+            "poses": poses,
+            "pose_count": len(poses),
+            "pose_fall_score": fall_score,
+            "pose_fall_candidate": fall_candidate,
+            "pose_action_hints": self._dedupe_tags([
+                hint for item in poses for hint in (item.get("action_hints") or [])
+            ]),
+            "tags": self._dedupe_tags(tags),
+        }
         result = updated.get("result")
         if result is not None:
-            result.data = {**result.data, "poses": poses, "pose_count": len(poses)}
+            if str(pose.get("pose_model_status") or "") not in {"disabled", "unavailable"}:
+                result.status = "visible" if poses else "not_visible"
+            result.score = max([float(item.get("confidence") or 0.0) for item in poses], default=None)
+            result.tags = updated["tags"]
+            result.data = {
+                **result.data,
+                "poses": poses,
+                "pose_count": len(poses),
+                "pose_fall_score": fall_score,
+                "pose_fall_candidate": fall_candidate,
+            }
         return updated
+
+    def _suppress_display_content(
+        self,
+        people: list[Dict[str, Any]],
+        poses: list[Dict[str, Any]],
+        scene_zones: list[Dict[str, Any]],
+        config: Dict[str, Any],
+    ) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]], list[Dict[str, Any]]]:
+        if not config.get("screen_content_suppression_enabled", True):
+            return people, poses, []
+        display_zones = [
+            zone for zone in scene_zones
+            if zone.get("stable") and str(zone.get("label") or "") == "tv" and self._valid_box(zone.get("bbox"))
+        ]
+        if not display_zones:
+            return people, poses, []
+
+        min_containment = float(config.get("screen_content_min_containment") or 0.86)
+        max_area_ratio = float(config.get("screen_content_max_area_ratio") or 0.90)
+        suppressed: list[Dict[str, Any]] = []
+
+        def keep(item: Dict[str, Any], kind: str) -> bool:
+            item_box = item.get("bbox")
+            if not self._valid_box(item_box):
+                return True
+            for zone in display_zones:
+                containment = self._box_intersection_ratio(item_box, zone.get("bbox"))
+                area_ratio = self._box_area(item_box) / max(1.0, self._box_area(zone.get("bbox")))
+                if containment >= min_containment and area_ratio <= max_area_ratio:
+                    suppressed.append({
+                        "kind": kind,
+                        "bbox": [round(float(value), 1) for value in item_box],
+                        "confidence": item.get("confidence"),
+                        "posture": item.get("posture"),
+                        "scene_zone_id": zone.get("id"),
+                        "scene_zone_label": zone.get("label"),
+                        "scene_zone_label_zh": zone.get("label_zh") or "电视",
+                        "containment": round(containment, 4),
+                        "area_ratio": round(area_ratio, 4),
+                        "reason": "inside_stable_display_surface",
+                    })
+                    return False
+            return True
+
+        return (
+            [item for item in people if keep(item, "person")],
+            [item for item in poses if keep(item, "pose")],
+            suppressed,
+        )
 
     def _update_person_scene_context(self, person: Dict[str, Any], scene: Dict[str, Any]) -> None:
         person["scene_objects"] = scene.get("scene_objects") or []
@@ -525,12 +624,12 @@ class VisionPipeline:
                 "pose_validated": bool(overlaps_pose),
                 "pose_tracking_state": matching_pose.get("tracking_state") if matching_pose else person.get("pose_tracking_state"),
                 "pose_track_age_seconds": matching_pose.get("track_age_seconds") if matching_pose else person.get("pose_track_age_seconds"),
-                "normal_lying_zone": matching_pose.get("normal_lying_zone", person.get("normal_lying_zone", False)) if matching_pose else person.get("normal_lying_zone", False),
-                "scene_zone_id": matching_pose.get("scene_zone_id") if matching_pose else person.get("scene_zone_id"),
-                "scene_zone_label": matching_pose.get("scene_zone_label") if matching_pose else person.get("scene_zone_label"),
-                "scene_zone_label_zh": matching_pose.get("scene_zone_label_zh") if matching_pose else person.get("scene_zone_label_zh"),
-                "scene_zone_bbox": matching_pose.get("scene_zone_bbox") if matching_pose else person.get("scene_zone_bbox"),
-                "scene_zone_overlap": matching_pose.get("scene_zone_overlap") if matching_pose else person.get("scene_zone_overlap"),
+                "normal_lying_zone": bool(person.get("normal_lying_zone") or (matching_pose or {}).get("normal_lying_zone")),
+                "scene_zone_id": (matching_pose or {}).get("scene_zone_id") or person.get("scene_zone_id"),
+                "scene_zone_label": (matching_pose or {}).get("scene_zone_label") or person.get("scene_zone_label"),
+                "scene_zone_label_zh": (matching_pose or {}).get("scene_zone_label_zh") or person.get("scene_zone_label_zh"),
+                "scene_zone_bbox": (matching_pose or {}).get("scene_zone_bbox") or person.get("scene_zone_bbox"),
+                "scene_zone_overlap": (matching_pose or {}).get("scene_zone_overlap") or person.get("scene_zone_overlap"),
             })
 
         for pose in poses:

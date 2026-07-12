@@ -73,6 +73,8 @@ def main() -> None:
     pose_posture = verify_pose_posture_direction()
     scene_context = verify_scene_context_stabilizes_normal_lying_zone()
     scene_human_filter = verify_scene_context_rejects_human_shaped_furniture()
+    display_suppression = verify_display_content_suppression()
+    scene_merge = verify_scene_context_survives_pose_merge()
 
     checks = {
         "black_screen": bool(black_result["black_screen"]),
@@ -110,6 +112,11 @@ def main() -> None:
         "scene_zone_count": scene_context["zone_count"],
         "scene_normal_lying": scene_context["normal_lying"],
         "scene_human_filter_count": scene_human_filter,
+        "display_suppressed_people": display_suppression["suppressed_people"],
+        "display_suppressed_poses": display_suppression["suppressed_poses"],
+        "display_real_people_retained": display_suppression["real_people_retained"],
+        "scene_merge_normal_lying": scene_merge["normal_lying_zone"],
+        "scene_merge_label": scene_merge["scene_zone_label"],
         "pose_result_status": fire_result.get("algorithm_results", {}).get("pose", {}).get("status"),
         "pipeline_version": fire_result.get("pipeline_version"),
         "algorithm_results": sorted((fire_result.get("algorithm_results") or {}).keys()),
@@ -161,6 +168,12 @@ def main() -> None:
         raise SystemExit("lying pose overlapping a stable couch must be marked as normal lying zone")
     if checks["scene_human_filter_count"] != 1:
         raise SystemExit("scene context must reject furniture boxes mostly covered by a person")
+    if checks["display_suppressed_people"] != 1 or checks["display_suppressed_poses"] != 1:
+        raise SystemExit("stable TV zones must suppress people and poses contained inside screen content")
+    if checks["display_real_people_retained"] != 1:
+        raise SystemExit("a real person extending outside the TV zone must remain visible")
+    if not checks["scene_merge_normal_lying"] or checks["scene_merge_label"] != "couch":
+        raise SystemExit("pose refinement must not erase a person box already matched to a couch or bed")
     if checks["pose_det_frequency_with_tracking"] != 8:
         raise SystemExit("RTMPose tracking mode should preserve configured detector frequency")
     if checks["pose_fall_low_quality_eligible"]:
@@ -253,6 +266,69 @@ def verify_scene_context_rejects_human_shaped_furniture() -> int:
     ]
     people = [{"bbox": [320.0, 195.0, 535.0, 350.0]}]
     return len(pipeline._scene_objects_without_human_overlap(scene_objects, people, []))
+
+
+def verify_display_content_suppression() -> dict:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+    )
+    zones = [{
+        "id": "tv-1",
+        "bbox": [200.0, 40.0, 500.0, 260.0],
+        "label": "tv",
+        "label_zh": "电视",
+        "stable": True,
+    }]
+    screen_person = {"bbox": [245.0, 70.0, 390.0, 245.0], "confidence": 0.72}
+    real_person = {"bbox": [150.0, 55.0, 310.0, 350.0], "confidence": 0.84}
+    screen_pose = {"bbox": [260.0, 82.0, 382.0, 238.0], "confidence": 0.77, "posture": "standing"}
+    people, poses, suppressed = pipeline._suppress_display_content(
+        [screen_person, real_person],
+        [screen_pose],
+        zones,
+        {},
+    )
+    return {
+        "suppressed_people": len([item for item in suppressed if item.get("kind") == "person"]),
+        "suppressed_poses": len([item for item in suppressed if item.get("kind") == "pose"]),
+        "real_people_retained": len(people),
+        "remaining_poses": len(poses),
+    }
+
+
+def verify_scene_context_survives_pose_merge() -> dict:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+    )
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    people = [{
+        "bbox": [120.0, 170.0, 400.0, 280.0],
+        "confidence": 0.56,
+        "fall_candidate": True,
+        "normal_lying_zone": True,
+        "scene_zone_id": "couch-1",
+        "scene_zone_label": "couch",
+        "scene_zone_label_zh": "沙发",
+        "scene_zone_bbox": [0.0, 200.0, 410.0, 358.0],
+        "scene_zone_overlap": 0.68,
+    }]
+    poses = [{
+        "bbox": [125.0, 168.0, 220.0, 270.0],
+        "confidence": 0.62,
+        "posture": "standing",
+        "normal_lying_zone": False,
+    }]
+    refined = pipeline._refine_people_with_pose(people, poses, frame, {})
+    return {
+        "normal_lying_zone": bool(refined and refined[0].get("normal_lying_zone")),
+        "scene_zone_label": refined[0].get("scene_zone_label") if refined else None,
+    }
 
 
 def synthetic_weak_fall_people() -> list[dict]:

@@ -2563,6 +2563,12 @@ class Storage:
             where = """
                 WHERE ec.status NOT IN ('suppressed', 'aggregated')
                   AND ec.event_type NOT IN ('no_motion', 'no_person')
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM events resolved_event
+                    WHERE resolved_event.id = ec.promoted_event_id
+                      AND json_extract(resolved_event.payload, '$.resolution') = 'false_positive'
+                  )
                   AND ec.id IN (
                     SELECT MAX(latest.id)
                     FROM event_candidates latest

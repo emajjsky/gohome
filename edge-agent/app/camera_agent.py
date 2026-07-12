@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Generator, Tuple
 from urllib.parse import quote, urlsplit, urlunsplit
+import logging
 import os
 import time
 
@@ -15,6 +16,7 @@ NETWORK_CAPTURE_WARMUP_SECONDS = 3.0
 NETWORK_CAPTURE_MIN_READS = 8
 NETWORK_CAPTURE_MAX_READS = 45
 DEMO_STREAM_PREFIXES = ("demo:", "sample:", "mock:")
+logger = logging.getLogger(__name__)
 
 
 class CameraError(RuntimeError):
@@ -272,41 +274,52 @@ class CameraAgent:
             return
 
         is_local_source = isinstance(source, int)
-        if is_local_source:
-            os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
-            backend = getattr(cv2, "CAP_AVFOUNDATION", 0)
-            cap = cv2.VideoCapture(source, backend) if backend else cv2.VideoCapture(source)
-            if not cap.isOpened():
-                cap.release()
-                cap = cv2.VideoCapture(source)
-        else:
-            os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", NETWORK_CAPTURE_OPTIONS)
-            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-
+        cap = None
+        last_good_frame = None
+        black_frame_streak = 0
+        reconnect_count = 0
+        delay = 1.0 / max(1, min(int(fps), 15))
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(35, min(int(jpeg_quality), 95))]
+        stale_frame_reads = max(0, min(int(drop_stale_frames), 12))
+        black_confirm_frames = max(3, min(int(fps), 12))
         try:
-            if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            if not is_local_source and hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
-                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)
-            if not is_local_source and hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
-                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
-
-            if not cap.isOpened():
-                hint = ""
-                if is_local_source:
-                    hint = ". On macOS, grant Camera permission to Terminal/Codex and retry"
-                raise CameraError(f"Cannot open {source_label}{hint}")
-
-            delay = 1.0 / max(1, min(int(fps), 15))
-            encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(35, min(int(jpeg_quality), 95))]
-            stale_frame_reads = max(0, min(int(drop_stale_frames), 12))
             while True:
+                if cap is None or not cap.isOpened():
+                    if cap is not None:
+                        cap.release()
+                    cap = self._open_stream_capture(cv2, source, is_local_source)
+                    if not cap.isOpened():
+                        cap.release()
+                        cap = None
+                        time.sleep(0.35)
+                        continue
+                    if reconnect_count:
+                        logger.info("camera %s stream recovered after %s reconnect(s)", camera.get("id"), reconnect_count)
+                        reconnect_count = 0
                 ok, frame = self._latest_stream_frame(cap, stale_frame_reads)
                 if not ok or frame is None:
-                    break
-                self._store_latest_frame(camera, frame, source_label)
-                frame = self._resize_for_stream(cv2, frame, max_width=max_width, max_height=max_height)
-                ok, encoded = cv2.imencode(".jpg", frame, encode_params)
+                    reconnect_count += 1
+                    logger.warning("camera %s stream read failed; reopening capture", camera.get("id"))
+                    cap.release()
+                    cap = None
+                    time.sleep(0.18)
+                    continue
+
+                if self._frame_is_near_black(cv2, frame):
+                    black_frame_streak += 1
+                    if black_frame_streak == 1:
+                        logger.warning("camera %s emitted a near-black frame; holding last valid preview frame", camera.get("id"))
+                    display_frame = last_good_frame if last_good_frame is not None and black_frame_streak < black_confirm_frames else frame
+                else:
+                    if black_frame_streak:
+                        logger.info("camera %s recovered from %s near-black frame(s)", camera.get("id"), black_frame_streak)
+                    black_frame_streak = 0
+                    last_good_frame = frame.copy()
+                    display_frame = frame
+
+                self._store_latest_frame(camera, display_frame, source_label)
+                output_frame = self._resize_for_stream(cv2, display_frame, max_width=max_width, max_height=max_height)
+                ok, encoded = cv2.imencode(".jpg", output_frame, encode_params)
                 if not ok:
                     continue
                 yield (
@@ -318,7 +331,35 @@ class CameraAgent:
                 )
                 time.sleep(delay)
         finally:
-            cap.release()
+            if cap is not None:
+                cap.release()
+
+    def _open_stream_capture(self, cv2: Any, source: Any, is_local_source: bool) -> Any:
+        if is_local_source:
+            os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
+            backend = getattr(cv2, "CAP_AVFOUNDATION", 0)
+            cap = cv2.VideoCapture(source, backend) if backend else cv2.VideoCapture(source)
+            if not cap.isOpened():
+                cap.release()
+                cap = cv2.VideoCapture(source)
+        else:
+            os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", NETWORK_CAPTURE_OPTIONS)
+            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if not is_local_source and hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)
+        if not is_local_source and hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
+        return cap
+
+    def _frame_is_near_black(self, cv2: Any, frame: Any) -> bool:
+        try:
+            sample = frame[::8, ::8]
+            gray = cv2.cvtColor(sample, cv2.COLOR_BGR2GRAY)
+            return float(gray.mean()) < 6.0 and float(gray.std()) < 3.0
+        except (AttributeError, TypeError, ValueError):
+            return True
 
     def _latest_stream_frame(self, cap: Any, drop_stale_frames: int) -> Tuple[bool, Any]:
         if drop_stale_frames <= 0:

@@ -29,7 +29,7 @@ if [[ "$EVAL_ONLY" -eq 0 ]]; then
     --adl ${ADL_SEQUENCES} \
     --positive-per-fall "${GOHOME_UR_FALL_POSITIVE_PER_FALL:-4}" \
     --negative-per-fall "${GOHOME_UR_FALL_NEGATIVE_PER_FALL:-2}" \
-    "${IMPORT_ARGS[@]}"
+    ${IMPORT_ARGS[@]+"${IMPORT_ARGS[@]}"}
 fi
 
 if [[ ! -f data/eval/samples/fall/ur_fall/manifest.jsonl ]]; then

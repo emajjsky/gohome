@@ -21,7 +21,7 @@ for arg in "$@"; do
 done
 
 if [[ "$EVAL_ONLY" -eq 0 ]]; then
-  "$PYTHON_BIN" scripts/import-ur-fall-sample.py "${IMPORT_ARGS[@]}"
+  "$PYTHON_BIN" scripts/import-ur-fall-sample.py ${IMPORT_ARGS[@]+"${IMPORT_ARGS[@]}"}
 fi
 
 if [[ ! -f data/eval/samples/fall/ur_fall/manifest.jsonl ]]; then
