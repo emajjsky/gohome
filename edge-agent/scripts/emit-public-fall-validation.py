@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sequence", default="fall-01")
     parser.add_argument("--frame-delay", type=float, default=1.0)
     parser.add_argument("--repeat-last", type=int, default=8)
+    parser.add_argument("--vision-verification-probe", action="store_true")
     return parser.parse_args()
 
 
@@ -138,6 +139,7 @@ def main() -> None:
     matched_analysis = None
     matched_evaluation = None
     frame_rows: list[dict[str, Any]] = []
+    processed_frames: list[dict[str, Any]] = []
     replay_entries = list(entries)
     if replay_entries:
         replay_entries.extend([replay_entries[-1]] * max(0, int(args.repeat_last)))
@@ -170,6 +172,11 @@ def main() -> None:
             "fall_stage": evaluation.state.get("fall_stage"),
             "fall_score": analysis.get("fall_score"),
             "candidate_count": len(fall_candidates),
+        })
+        processed_frames.append({
+            "frame": frame.copy(),
+            "analysis": analysis,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
         })
         last_frame = frame
         if fall_candidates:
@@ -223,7 +230,39 @@ def main() -> None:
         "dataset": "UR Fall Detection Dataset",
         "sequence": sequence_name,
         "executed_at": datetime.now(timezone.utc).isoformat(),
+        "vision_verification_probe": bool(args.vision_verification_probe),
     }
+    representative_indices = sorted({0, len(processed_frames) // 2, len(processed_frames) - 1})
+    evidence_snapshots: list[dict[str, Any]] = []
+    for position, frame_index in enumerate(representative_indices):
+        item = processed_frames[frame_index]
+        if frame_index == len(processed_frames) - 1:
+            frame_snapshot = snapshot
+        else:
+            keyframe_path = camera_agent.snapshot_relative_path(camera_id)
+            camera_agent.save_frame(item["frame"], keyframe_path)
+            keyframe_height, keyframe_width = item["frame"].shape[:2]
+            frame_snapshot = storage.create_snapshot(
+                camera_id=camera_id,
+                image_path=keyframe_path,
+                width=keyframe_width,
+                height=keyframe_height,
+                brightness=float(item["analysis"].get("brightness") or 0.0),
+                motion_score=item["analysis"].get("motion_score"),
+                tags=item["analysis"].get("tags") or [],
+                person_count=item["analysis"].get("person_count"),
+                analysis=item["analysis"],
+            )
+        evidence_snapshots.append({
+            "snapshot_id": int(frame_snapshot["id"]),
+            "snapshot_path": frame_snapshot["image_path"],
+            "observed_at": item["observed_at"],
+            "postures": sorted({
+                str(pose.get("posture") or "unknown")
+                for pose in item["analysis"].get("poses") or []
+            }),
+            "role": "before" if position == 0 else "current" if position == len(representative_indices) - 1 else "transition",
+        })
     candidate_payload = {
         **(candidate.get("payload") or {}),
         "validation": validation,
@@ -236,6 +275,19 @@ def main() -> None:
         "data_chain": {
             "detection_result_id": int(detection["id"]),
             "rule_evaluation_id": int(persisted_evaluation["id"]),
+        },
+    }
+    evidence = candidate_payload.get("evidence") if isinstance(candidate_payload.get("evidence"), dict) else {}
+    candidate_payload["evidence"] = {
+        **evidence,
+        "temporal_evidence_bundle": {
+            **(evidence.get("temporal_evidence_bundle") if isinstance(evidence.get("temporal_evidence_bundle"), dict) else {}),
+            "schema_version": "temporal-evidence-bundle-v1",
+            "event_type": "fall_candidate",
+            "window_started_at": evidence_snapshots[0]["observed_at"],
+            "window_ended_at": evidence_snapshots[-1]["observed_at"],
+            "sample_count": len(processed_frames),
+            "snapshots": evidence_snapshots,
         },
     }
     candidate["payload"] = candidate_payload
@@ -270,6 +322,8 @@ def main() -> None:
         "snapshot_path": event.get("snapshot_path"),
         "sequence": sequence_name,
         "frame_rows": frame_rows,
+        "evidence_snapshots": evidence_snapshots,
+        "vision_verification_probe": bool(args.vision_verification_probe),
         "upload_queue": storage.upload_queue_summary(),
     }, ensure_ascii=False, indent=2))
 
