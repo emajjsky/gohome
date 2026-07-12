@@ -10630,3 +10630,33 @@ SafetyIncident 与提醒：
 - 实机画面识别到沙发、电视和椅子并正确叠加；正常卧躺位于沙发区域时场景关系仍参与跌倒误报抑制。
 
 当前边界：统一页展示的是当前实时分析结果；姿态持续时间、完整 track 生命周期和云端复核结论仍以 worker 持久化数据和正式事件链为准，不能用一次预览结果替代正式告警判断。
+
+## 98. 2026-07-12 屏幕内容抑制、跌倒语义与视频流恢复
+
+屏幕内容抑制：
+
+- `VisionPipeline` 在场景跟踪形成稳定 `tv` 区域后，对人物框和姿态框计算目标区域被电视区域包含的比例。
+- 包含比例至少 `0.86` 且目标面积不超过电视区域 `0.90` 的结果记录到 `screen_content_suppressed`，并在人物计数、姿态、活动、跌倒和时序前移除。
+- 真实人物站在电视前但身体明显超出屏幕区域时不会被过滤；回归测试同时覆盖“屏幕人物被过滤”和“真实人物保留”。
+
+姿态与跌倒：
+
+- 统一页不再依据原始单帧 `fall_candidate` 显示跌倒，只读取规则评估的 `fall_stage`。
+- `standing / sitting / lying / upper_body` 始终作为姿态展示；只有 `suspect / confirming / confirmed` 显示跌倒过程。
+- `awaiting_transition` 表示只有当前低位或卧姿、缺少此前站坐和快速下降证据；`normal_lying_zone` 表示床或沙发正常卧躺，两者均不显示为跌倒事件。
+- 修复 `_refine_people_with_pose()` 场景字段覆盖：人物框或骨架任一命中床/沙发，合并结果都保留 `normal_lying_zone=true` 和对应场景信息。
+
+视频流恢复：
+
+- `CameraAgent.mjpeg_frames()` 不再因一次 `read/retrieve` 失败结束 HTTP 视频连接，而是释放并重新打开 RTSP capture。
+- 近黑帧首次出现时保持上一有效画面；连续达到约 1 秒后才作为真实黑屏输出，因此不会掩盖摄像头遮挡或真实断黑。
+- 管理页在视频请求仍然失败时使用 `0.8s` 起步、最大 `8s` 的指数退避自动重连。
+- 新增 `verify-camera-stream-resilience.py`，验证读取失败后重开、短暂黑帧保持和后续有效帧恢复。
+
+验证：
+
+- `verify-vision-pipeline.py` 新增电视屏幕、真实人物保留和沙发区域合并回归，全部通过。
+- `verify-fall-rule-engine.py`、完整视觉 smoke、UR Fall 18 段和 GMDCSA24 密集 9 段回归通过。
+- UR Fall 保持 `TP=8 / FP=0 / TN=10 / FN=0`；GMDCSA24 保持 `TP=3 / FP=0 / TN=5 / FN=1`。
+- 真实 Pi 连续 5 轮页面采样均为 `black_screen=false`、亮度约 `129`、`fall_stage=clear`、视频 `640x360`、控制台错误 `0`。
+- 本地误报事件 `#1877` 已通过事件接口标记为 `false_positive`；活跃候选查询新增 JSON resolution 过滤，不再把误报显示为最近安全记录。
