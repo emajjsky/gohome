@@ -10842,3 +10842,45 @@ App 守护页：
 - `gohome-app` 重启后 active，`https://gohome.ai2shx.club/health` 返回 `store=postgres`，线上静态资源版本为 `20260712-incident-timeline-1`，近 5 分钟无 warning/error。
 
 当前边界：App 时间线已复用统一事故状态，但当前云端只上传事件主截图；跌倒过程的多帧关键证据仍主要保存在盒子结构化时序包。后续若增加多图证据，应沿用同一 incident，不新增第二套告警生命周期。
+
+## 105. 2026-07-12 跌倒关键帧上传、云端三图复核与宠物误识别修正
+
+盒子上传：
+
+- `enqueue_event_upload_jobs()` 从事件 `evidence.temporal_evidence_bundle.snapshots` 读取代表帧，去除当前主截图重复项后最多追加 2 个 `event_keyframe` 媒体任务。
+- 关键帧优先级为 4、主截图为 5、事件 JSON 为 10，确保事件提交时媒体资产已经存在；所有任务使用 snapshot/event 幂等键。
+- `UploadAgent` 汇总同事件已完成媒体任务，提交 `evidence_media_assets`，每项包含 asset、before/transition/current 角色、采集时间、snapshot_id 和姿态摘要。
+
+云端复核：
+
+- 媒体上传记录新增 `evidence_frame_role`；事件入口校验资产必须属于当前设备和相同 edge_event_id，防止设备引用其他家庭资产。
+- 视觉任务保留主 `asset_id` 兼容字段，同时新增最多 3 个 `asset_ids` 和 `evidence_frame_count`。
+- Qwen 请求按时间顺序发送最多 3 个 `image_url`，单图上限 8MB、序列总上限 18MB；结构化上下文新增 evidence_frames。
+- `publicEvent()` 返回经过权限控制的 `evidence_media`，App 使用资产播放票据加载，不直接暴露存储路径。
+
+App：
+
+- 事件主截图下新增关键帧横滑区，标签为事发前、姿态变化、当前画面；少于 2 张可用图时自动隐藏。
+- 模型 pending/verifying 文案会说明正在复核几张关键帧；原 SafetyIncident 时间线保持不变。
+- Chrome 390x844 实测 3 张图 naturalWidth 均为 320，页面 scrollWidth 与 viewportWidth 均为 390，无失败请求。
+
+生产验证：
+
+- `emit-public-fall-validation.py` 新增 `--vision-verification-probe`，从 UR Fall 正序回放中保存 3 张隐藏关键帧。
+- 真实盒子 event 1878 上传 asset 8/9/10，云端 event 8 的 Qwen 任务 11 一次成功。
+- 模型结果：`person_count=1 / posture=fallen / surface=floor / emergency=true / confidence=0.92`，原因明确为“第一张站立，后续两张倒地于地面”。
+- 验证事件未进入正式 PostgreSQL 导出；本地 event、3 张 snapshot、4 个上传任务以及云端 3 个临时媒体文件均已清理。
+- 修复 `createIncidentReminderMessage()` 未排除 validation event 的问题，验证事件不再生成每分钟提醒或用户消息。
+
+宠物误识别：
+
+- 现场 camera 24 曾把右侧固定物体以 dog=0.2819 写入近期宠物活动，确认不是实际宠物。
+- `pet_yolo_confidence` 默认值从 0.25 提升到 0.40，人物、姿态和跌倒阈值未改。
+- 已清空两路摄像头错误宠物状态；后续连续帧均为 pet_count=0，云端字段同步为空。
+
+验证与部署：
+
+- `npm test`、上传队列、UploadAgent、TemporalObservationEngine、视觉流水线、跌倒规则和长时间倒地回归全部通过。
+- 树莓派和腾讯云服务均为 active，本地与云端健康检查正常，部署后无 warning/error。
+
+当前边界：三图复核已经证明云端模型能理解跌倒过程，但正式现场报警仍需真实人体安全演练才能验收通知到达、每分钟提醒、App 确认和恢复结束。不得通过制造危险跌倒来测试，应使用安全模拟动作或公开序列探针验证算法。
