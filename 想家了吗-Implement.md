@@ -10690,3 +10690,38 @@ SafetyIncident 与提醒：
 - Chrome 实机页面为 `0 人 / 0 组骨架`，骨架 SVG 线条数为 0，云端复核显示“已排除”和 95% 置信度，控制台错误为 0。
 - 连续 15 秒浏览器像素采样平均亮度为 `122.8-125.4`，视频保持 `640x360`，未出现黑帧。
 - 树莓派 `gohome-edge-agent` 与腾讯云 `gohome-app` 均为 active，部署后日志无新增 error、read failed 或 near-black 记录。
+
+## 100. 2026-07-12 云端 SafetyIncident 事件编排
+
+状态机：
+
+- 视觉安全事件创建后 incident 初始状态为 `verifying`；长期未见等不依赖视觉模型的安全事件直接进入 `confirmed`。
+- 模型结果聚合为 `confirmed / rejected / uncertain`，并把每次迁移记录到 `incident.transitions`，包含来源、时间、触发 event ID 和复核状态。
+- 历史 `active` 状态继续允许持续提醒，避免升级后旧事故停止工作。
+
+复核消息：
+
+- confirmed 创建 `incident-verification-{incident_id}-confirmed` 高优先消息和幂等 notification delivery。
+- rejected 先归档原始告警和分钟提醒，再创建“刚才的异常已经排除”说明消息；原始事件和证据仍保留。
+- uncertain 或模型最终失败创建“这条异常需要你确认”高优先消息，边缘事件不会因模型失败消失。
+- 验证事件不创建 App 消息，避免真实模型探测污染用户消息列表。
+
+跨摄像头关联：
+
+- 同一家庭、同一事件类型、默认 45 秒窗口内且尚未结束的事件共享 incident ID。
+- 主事件保存 `source_event_ids / source_camera_ids`；关联摄像头事件保留独立截图和模型任务，但不重复创建初始消息和投递。
+- App 家庭事件列表只展示主事件；按单摄像头筛选时仍可查看该摄像头的原始证据事件。
+- 聚合规则为 confirmed 优先，其次 uncertain/failed/unavailable，再次 verifying，只有全部 rejected 才排除。
+
+确认与提醒：
+
+- 分钟提醒只由 incident 主事件生成，避免两个摄像头产生双倍提醒。
+- 用户确认任一关联事件时，所有同 incident 事件统一 acknowledged，关联开放消息归档，持续提醒停止。
+- long_absence 自动恢复继续进入 resolved，不与人工 acknowledged 混用。
+
+验证：
+
+- `npm test` 和完整 `verify-local-app-server.js` 通过，覆盖模型二次重试确认、复核结果消息、幂等投递、跨摄像头去重、主事件列表、全 incident 确认和 PostgreSQL 导出恢复。
+- 腾讯云真实空沙发验证事件初始为 verifying，Qwen 返回 `person_count=0 / emergency=false / confidence=0.95 / suggested_event_type=none` 后自动转 rejected。
+- 云端任务记录 `orchestration_status=rejected`、状态迁移来源为 `vision_verification`；验证事件的 `orchestration_message_id` 为空，证明没有生成用户消息。
+- 腾讯云 `gohome-app.service` 保持 active，部署后无新增服务错误。

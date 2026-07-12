@@ -2925,3 +2925,15 @@ P1 用户端：
 - 已完成本地服务、上传代理、视频恢复、视觉 smoke、UR Fall、GMDCSA24、树莓派部署和 Chrome 实机验收。
 
 阶段 10 状态：已完成并部署树莓派与腾讯云。下一步不再继续堆管理台功能，进入真实人物动作片段采集和误报统计；重点验收人物进入、坐下、正常躺沙发、起身、快速跌倒和离开画面的完整时序。
+
+#### L. 阶段 11：云端 SafetyIncident 事件编排（已完成）
+
+- 已把安全事故状态扩展为 `verifying / confirmed / rejected / uncertain / acknowledged / resolved`，同时兼容历史 `active` 数据。
+- 已增加 incident 状态迁移审计，记录来源、时间、触发事件和模型复核状态，最多保留最近 24 条迁移。
+- 已实现模型复核后续消息：confirmed 生成高优先告警，rejected 归档原告警并生成排除说明，uncertain 生成需要人工确认的高优先消息。
+- 已实现同家庭、同事件类型、45 秒窗口内的跨摄像头关联；多个摄像头保留各自事件证据，但 App 列表、初始消息和持续提醒只使用主事件。
+- 已实现复核聚合优先级：任一路 confirmed 即确认；没有确认但存在 uncertain、failed 或 unavailable 时需要人工确认；仍有任务处理中时保持 verifying；全部 rejected 才排除。
+- 已实现用户确认联动：处理任一关联事件会确认整个 incident、归档关联消息并停止后续分钟提醒。
+- 已通过服务端回归、PostgreSQL 数据导出恢复回归和腾讯云真实空沙发验证；验证事件从 verifying 自动转 rejected，状态迁移与任务编排日志均已保存，且测试事件不会生成用户消息。
+
+阶段 11 状态：云端事件编排核心已部署。下一步进入 iOS/APNs 前置工作：把 notification delivery 的 queued 记录接入真实 APNs provider，并在 App 事件详情中把 incident 时间线和多摄像头证据作为统一对象展示。
