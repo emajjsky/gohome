@@ -66,6 +66,9 @@ class Storage:
                     status TEXT NOT NULL DEFAULT 'unknown',
                     last_seen_at TEXT,
                     last_error TEXT,
+                    last_pet_seen_at TEXT,
+                    last_pet_count INTEGER NOT NULL DEFAULT 0,
+                    pet_types_json TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -666,6 +669,9 @@ class Storage:
             self._ensure_column(conn, "snapshots", "width", "INTEGER")
             self._ensure_column(conn, "snapshots", "height", "INTEGER")
             self._ensure_column(conn, "snapshots", "analysis_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(conn, "cameras", "last_pet_seen_at", "TEXT")
+            self._ensure_column(conn, "cameras", "last_pet_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "cameras", "pet_types_json", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(conn, "events", "detection_result_id", "INTEGER")
             self._ensure_column(conn, "events", "rule_evaluation_id", "INTEGER")
             self._ensure_column(conn, "events", "candidate_id", "INTEGER")
@@ -954,6 +960,7 @@ class Storage:
     def _camera_to_dict(self, row: sqlite3.Row, include_secret: bool = False) -> Dict[str, Any]:
         data = dict(row)
         data["enabled"] = bool(data["enabled"])
+        data["pet_types"] = json.loads(data.pop("pet_types_json", "[]") or "[]")
         if not include_secret:
             data.pop("password", None)
         return data
@@ -3231,6 +3238,10 @@ class Storage:
         person_count: Optional[int] = None,
         analysis: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        captured_at = now_iso()
+        analysis_data = analysis or {}
+        pet_count = max(0, int(analysis_data.get("pet_count") or 0))
+        pet_types = sorted({str(item) for item in (analysis_data.get("pet_types") or []) if str(item)})
         with self.connect() as conn:
             cursor = conn.execute(
                 """
@@ -3243,16 +3254,25 @@ class Storage:
                 (
                     camera_id,
                     image_path,
-                    now_iso(),
+                    captured_at,
                     width,
                     height,
                     brightness,
                     motion_score,
                     person_count,
                     json.dumps(list(tags)),
-                    json.dumps(analysis or {}, ensure_ascii=False),
+                    json.dumps(analysis_data, ensure_ascii=False),
                 ),
             )
+            if pet_count > 0:
+                conn.execute(
+                    """
+                    UPDATE cameras
+                    SET last_pet_seen_at = ?, last_pet_count = ?, pet_types_json = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (captured_at, pet_count, json.dumps(pet_types, ensure_ascii=False), captured_at, int(camera_id)),
+                )
             snapshot_id = int(cursor.lastrowid)
             row = conn.execute("SELECT * FROM snapshots WHERE id = ?", (snapshot_id,)).fetchone()
         if row is None:
@@ -3294,6 +3314,10 @@ class Storage:
                 "SELECT MAX(captured_at) AS last_person_seen_at FROM snapshots WHERE camera_id = ? AND person_count > 0",
                 (int(camera_id),),
             ).fetchone()
+            camera = conn.execute(
+                "SELECT last_pet_seen_at, last_pet_count, pet_types_json FROM cameras WHERE id = ?",
+                (int(camera_id),),
+            ).fetchone()
         observed_samples = int(row["observed_samples"] or 0)
         return {
             "last_observed_at": row["last_observed_at"],
@@ -3301,6 +3325,9 @@ class Storage:
             "observation_window_minutes": max(1, int(window_minutes)),
             "observed_samples": observed_samples,
             "person_samples": int(row["person_samples"] or 0),
+            "last_pet_seen_at": camera["last_pet_seen_at"] if camera else None,
+            "last_pet_count": int((camera["last_pet_count"] if camera else 0) or 0),
+            "pet_types": json.loads((camera["pet_types_json"] if camera else "[]") or "[]"),
             "expected_samples": expected_samples,
             "observation_coverage": round(min(1.0, observed_samples / expected_samples), 4),
         }

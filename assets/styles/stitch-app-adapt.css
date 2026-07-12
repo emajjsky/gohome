@@ -2447,7 +2447,7 @@ nav.fixed.bottom-0 .material-symbols-outlined {
 
 .gohome-presence-facts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
   border-radius: 17px;

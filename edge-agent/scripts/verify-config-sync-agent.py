@@ -92,6 +92,17 @@ def main() -> None:
             person_count=1,
             analysis={"person_count": 1},
         )
+        storage.create_snapshot(
+            camera_id=int(cameras[0]["id"]),
+            image_path="pet-presence-test.jpg",
+            width=640,
+            height=360,
+            brightness=92,
+            motion_score=0.03,
+            tags=["pet_detected", "no_person_detected"],
+            person_count=0,
+            analysis={"person_count": 0, "pet_count": 1, "pet_types": ["cat"]},
+        )
 
         config_holder["payload"] = {
             **config_holder["payload"],
@@ -110,6 +121,8 @@ def main() -> None:
         presence = reports[-1]["cameras"][0]["presence"]
         if not presence.get("last_person_seen_at") or presence.get("person_samples") != 1:
             raise SystemExit(f"presence report did not include person observation: {presence}")
+        if not presence.get("last_pet_seen_at") or presence.get("last_pet_count") != 1 or presence.get("pet_types") != ["cat"]:
+            raise SystemExit(f"presence report did not include independent pet activity: {presence}")
 
         config_holder["payload"] = {
             "ok": True,

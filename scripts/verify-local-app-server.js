@@ -548,6 +548,18 @@ async function main() {
                         sync_status: "synced",
                         enabled: true,
                         last_error: "",
+                        presence: {
+                            last_observed_at: new Date().toISOString(),
+                            last_person_seen_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+                            last_pet_seen_at: new Date().toISOString(),
+                            last_pet_count: 1,
+                            pet_types: ["cat"],
+                            observation_window_minutes: 60,
+                            observed_samples: 720,
+                            person_samples: 1,
+                            expected_samples: 720,
+                            observation_coverage: 1,
+                        },
                     },
                 ],
             }),
@@ -563,6 +575,14 @@ async function main() {
         assert.equal(syncedCamera.status, "online");
         assert.equal(syncedCamera.sync_status, "synced");
         assert.ok(syncedCamera.last_seen_at);
+        assert.equal(syncedCamera.presence.last_pet_count, 1);
+        assert.deepEqual(syncedCamera.presence.pet_types, ["cat"]);
+        const petPresenceState = await requestJson(baseUrl, `/api/v1/families/${family.id}/presence-state`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(petPresenceState.pet_activity_recent, true);
+        assert.deepEqual(petPresenceState.pet_types, ["cat"]);
+        assert.ok(petPresenceState.absence_seconds >= 60, "pet activity must not reset person absence time");
 
         const validationMedia = await requestJson(
             baseUrl,

@@ -2670,6 +2670,10 @@ function createLocalAppServer(options = {}) {
         return Math.max(60, normalizeNumber(process.env.GOHOME_LONG_ABSENCE_SECONDS, 12 * 60 * 60));
     }
 
+    function petActivityRecentSeconds() {
+        return Math.max(300, normalizeNumber(process.env.GOHOME_PET_ACTIVITY_RECENT_SECONDS, 6 * 60 * 60));
+    }
+
     function cameraPresenceObservationState(camera, now = Date.now(), options = {}) {
         const minCoverage = options.min_coverage ?? Math.max(0.1, Math.min(1, normalizeNumber(process.env.GOHOME_PRESENCE_MIN_COVERAGE, 0.5)));
         const maxReportAgeMs = options.max_report_age_ms ?? Math.max(30000, normalizeNumber(process.env.GOHOME_PRESENCE_REPORT_MAX_AGE_SECONDS, 120) * 1000);
@@ -2713,6 +2717,13 @@ function createLocalAppServer(options = {}) {
             .map((camera) => Date.parse(camera.presence?.last_person_seen_at || ""))
             .filter(Number.isFinite);
         const lastPersonSeenMs = seenTimes.length ? Math.max(...seenTimes) : null;
+        const petSeenTimes = cameras
+            .map((camera) => Date.parse(camera.presence?.last_pet_seen_at || ""))
+            .filter(Number.isFinite);
+        const lastPetSeenMs = petSeenTimes.length ? Math.max(...petSeenTimes) : null;
+        const petTypes = [...new Set(cameras.flatMap((camera) => (
+            Array.isArray(camera.presence?.pet_types) ? camera.presence.pet_types : []
+        )).map(String).filter(Boolean))];
         const eligibleSince = valid ? (previous.eligible_since || nowIso()) : "";
         const absenceStartedMs = lastPersonSeenMs ?? Date.parse(eligibleSince || "");
         const absenceSeconds = valid && Number.isFinite(absenceStartedMs) ? Math.max(0, Math.floor((now - absenceStartedMs) / 1000)) : null;
@@ -2722,6 +2733,9 @@ function createLocalAppServer(options = {}) {
             camera_count: cameras.length,
             valid_camera_count: validCameraCount,
             last_person_seen_at: lastPersonSeenMs ? new Date(lastPersonSeenMs).toISOString() : null,
+            last_pet_seen_at: lastPetSeenMs ? new Date(lastPetSeenMs).toISOString() : null,
+            pet_types: petTypes,
+            pet_activity_recent: Number.isFinite(lastPetSeenMs) && (now - lastPetSeenMs) <= petActivityRecentSeconds() * 1000,
             absence_started_at: Number.isFinite(absenceStartedMs) ? new Date(absenceStartedMs).toISOString() : null,
             absence_seconds: absenceSeconds,
             threshold_seconds: familyPresenceThresholdSeconds(),
@@ -6135,6 +6149,9 @@ function createLocalAppServer(options = {}) {
                     observation_window_minutes: normalizeNumber(presence.observation_window_minutes, 60),
                     observed_samples: normalizeNumber(presence.observed_samples, 0),
                     person_samples: normalizeNumber(presence.person_samples, 0),
+                    last_pet_seen_at: presence.last_pet_seen_at || null,
+                    last_pet_count: Math.max(0, normalizeNumber(presence.last_pet_count, 0)),
+                    pet_types: Array.isArray(presence.pet_types) ? presence.pet_types.map(String).filter(Boolean) : [],
                     expected_samples: normalizeNumber(presence.expected_samples, 0),
                     observation_coverage: Math.max(0, Math.min(1, normalizeNumber(presence.observation_coverage, 0))),
                     reported_at: receivedAt,

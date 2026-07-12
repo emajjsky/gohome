@@ -69,6 +69,12 @@
         return Number.isFinite(value) ? `${Math.round(value * 100)}%` : "待统计";
     }
 
+    function petTypesLabel(types) {
+        const labels = { cat: "猫", dog: "狗" };
+        const values = [...new Set((Array.isArray(types) ? types : []).map((item) => labels[String(item)] || String(item)).filter(Boolean))];
+        return values.join("、") || "宠物";
+    }
+
     function postureFromEvaluation(evaluation) {
         const event = evaluation?.candidates?.[0] || null;
         const candidates = [
@@ -94,11 +100,24 @@
             };
         }
         if (presence?.status === "long_absence") {
+            const petNote = presence?.pet_activity_recent
+                ? `期间检测到${petTypesLabel(presence.pet_types)}活动，但宠物不计入老人出现记录。`
+                : "";
             return {
                 eyebrow: "需要尽快确认",
                 title: "较长时间没有看到老人",
-                text: "所有有效摄像头持续未检测到人，请联系家里确认情况。",
+                text: `所有有效摄像头持续未检测到人，请联系家里确认情况。${petNote}`,
                 tone: "alert",
+            };
+        }
+        const petSeenAt = Date.parse(presence?.last_pet_seen_at || "");
+        const personSeenAt = Date.parse(presence?.last_person_seen_at || "");
+        if (presence?.pet_activity_recent && Number.isFinite(petSeenAt) && (!Number.isFinite(personSeenAt) || petSeenAt > personSeenAt)) {
+            return {
+                eyebrow: "家庭观察正常",
+                title: `暂未看到老人，检测到${petTypesLabel(presence.pet_types)}活动`,
+                text: `最近一次宠物活动在 ${relativeTime(presence.last_pet_seen_at)}。宠物不会重置老人未见计时，守护仍在继续。`,
+                tone: "good",
             };
         }
         if (presence?.status === "suspended") {
@@ -134,6 +153,9 @@
             .filter(Number.isFinite);
         const average = coverageValues.length ? coverageValues.reduce((sum, value) => sum + value, 0) / coverageValues.length : null;
         setText("familyPresenceCoverage", Number.isFinite(average) ? `${Math.round(average * 100)}%` : "待统计");
+        setText("familyPetActivity", presence?.last_pet_seen_at
+            ? `${petTypesLabel(presence.pet_types)} · ${relativeTime(presence.last_pet_seen_at)}`
+            : "未检测到");
         setText("edgeDeviceStatus", device?.worker_running ? "家庭盒子在线" : "家庭盒子待连接");
         setText("edgeDetector", device?.worker_running ? "视觉感知运行中" : "等待视觉服务");
     }
@@ -172,6 +194,7 @@
                         <span><small>当前姿态</small><strong id="${domId("cameraPosture", camera.id)}">识别中</strong></span>
                         <span><small>观察覆盖</small><strong id="${domId("cameraCoverage", camera.id)}">待统计</strong></span>
                         <span><small>最近见到人</small><strong id="${domId("cameraPersonSeen", camera.id)}">尚未记录</strong></span>
+                        <span><small>宠物活动</small><strong id="${domId("cameraPetSeen", camera.id)}">尚未记录</strong></span>
                     </div>
                 </div>
             </article>`).join("");
@@ -217,6 +240,10 @@
         setText(domId("cameraSeen", camera.id), online ? "画面与检测记录正在持续回传" : "当前不参与长时间无人判断");
         setText(domId("cameraCoverage", camera.id), coverageLabel(presenceCamera?.presence || camera.presence));
         setText(domId("cameraPersonSeen", camera.id), relativeTime(presenceCamera?.presence?.last_person_seen_at || camera.presence?.last_person_seen_at));
+        const petPresence = presenceCamera?.presence || camera.presence || {};
+        setText(domId("cameraPetSeen", camera.id), petPresence.last_pet_seen_at
+            ? `${petTypesLabel(petPresence.pet_types)} · ${relativeTime(petPresence.last_pet_seen_at)}`
+            : "未检测到");
         setText(domId("cameraPosture", camera.id), postureFromEvaluation(evaluation));
     }
 
@@ -225,7 +252,7 @@
         const incidents = (Array.isArray(events) ? events : [])
             .filter((event) => safetyTypes.has(String(event.event_type || event.type || ""))
                 && !event.acknowledged
-                && event.payload?.incident?.status === "active")
+                && ["active", "verifying", "confirmed", "uncertain"].includes(String(event.payload?.incident?.status || "")))
             .slice(0, 4);
         setText("activeIncidentCount", `${incidents.length} 条`);
         if (!list) return;
