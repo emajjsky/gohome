@@ -92,11 +92,25 @@ function apiCacheKeys(storage) {
     return storage.keys().filter((key) => key.startsWith("gohome.apiCache."));
 }
 
+function assertMainPagesHaveNoBlockingLoadingCopy() {
+    const root = path.resolve(__dirname, "..");
+    const forbidden = /正在读取|正在同步|同步中|读取中|正在生成|正在打开|马上出现|正在连接画面|识别中/;
+    for (const file of ["index.html", "monitor.html", "events.html", "companionship.html", "privacy.html"]) {
+        const html = fs.readFileSync(path.join(root, file), "utf8");
+        const main = html.match(/<main\b[\s\S]*?<\/main>/i)?.[0] || "";
+        assert.ok(!forbidden.test(main), `${file} contains blocking loading copy in main content`);
+    }
+    const store = fs.readFileSync(path.join(root, "assets/scripts/app-state-store.js"), "utf8");
+    assert.ok(!store.includes("body::after"), "page state store must not render a full-page spinner");
+    assert.ok(!store.includes("gohome-state-spin"), "page state store must not animate a blocking loader");
+}
+
 async function flush() {
     await new Promise((resolve) => setImmediate(resolve));
 }
 
 async function main() {
+    assertMainPagesHaveNoBlockingLoadingCopy();
     const harness = createHarness();
     const { context, window, localStorage, events, fetches } = harness;
     let payload = { revision: 1 };

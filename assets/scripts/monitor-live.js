@@ -195,18 +195,18 @@
                 <a href="${pageHref(`watch.html?camera_id=${encodeURIComponent(camera.id)}`)}" class="gohome-camera-live">
                     <img id="${domId("monitorStream", camera.id)}" alt="${escapeHtml(cameraLabel(camera))}实时画面"/>
                     <span class="gohome-live-badge">实时</span>
-                    <p id="${domId("streamState", camera.id)}" class="gohome-stream-label">正在连接画面</p>
+                    <p id="${domId("streamState", camera.id)}" class="gohome-stream-label">实时画面</p>
                 </a>
                 <div class="gohome-camera-copy">
                     <div class="gohome-camera-title-row">
-                        <div><h4>${escapeHtml(cameraLabel(camera))}</h4><p id="${domId("cameraSeen", camera.id)}">正在同步观察记录</p></div>
-                        <span id="${domId("cameraStatus", camera.id)}" class="app-mini-pill muted">同步中</span>
+                        <div><h4>${escapeHtml(cameraLabel(camera))}</h4><p id="${domId("cameraSeen", camera.id)}">家庭盒子已接入此摄像头</p></div>
+                        <span id="${domId("cameraStatus", camera.id)}" class="app-mini-pill muted">摄像头</span>
                     </div>
                     <div class="gohome-observation-facts">
-                        <span><small>当前姿态</small><strong id="${domId("cameraPosture", camera.id)}">识别中</strong></span>
-                        <span><small>观察覆盖</small><strong id="${domId("cameraCoverage", camera.id)}">待统计</strong></span>
-                        <span><small>最近见到人</small><strong id="${domId("cameraPersonSeen", camera.id)}">尚未记录</strong></span>
-                        <span><small>宠物活动</small><strong id="${domId("cameraPetSeen", camera.id)}">尚未记录</strong></span>
+                        <span><small>当前姿态</small><strong id="${domId("cameraPosture", camera.id)}">—</strong></span>
+                        <span><small>观察覆盖</small><strong id="${domId("cameraCoverage", camera.id)}">—</strong></span>
+                        <span><small>最近见到人</small><strong id="${domId("cameraPersonSeen", camera.id)}">—</strong></span>
+                        <span><small>宠物活动</small><strong id="${domId("cameraPetSeen", camera.id)}">—</strong></span>
                     </div>
                 </div>
             </article>`).join("");
@@ -226,7 +226,7 @@
                         playing: "实时画面已连接",
                         snapshot: "实时画面已连接",
                         waiting: "等待家庭盒子画面",
-                        loading: "正在连接画面",
+                        loading: "实时画面",
                         error: "画面暂不可用",
                     };
                     setText(domId("streamState", camera.id), labels[nextState] || "等待画面");

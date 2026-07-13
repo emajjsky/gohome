@@ -1,5 +1,6 @@
 (function () {
-    const SNAPSHOT_PREFIX = "gohome.pageSnapshot.v1.";
+    const SNAPSHOT_ROOT = "gohome.pageSnapshot.";
+    const SNAPSHOT_PREFIX = `${SNAPSHOT_ROOT}v3.`;
     const AUTH_TOKEN_KEY = "gohome.authToken";
     const MAX_SNAPSHOT_AGE_MS = 24 * 60 * 60 * 1000;
     const MAX_SNAPSHOT_BYTES = 600 * 1024;
@@ -17,8 +18,8 @@
     let ready = false;
     let captureTimer = null;
     let refreshTimer = null;
-    let safetyTimer = null;
     let suppressCapture = false;
+    let bootSnapshot = null;
 
     function currentPage() {
         return window.location.pathname.split("/").pop() || "index.html";
@@ -51,10 +52,7 @@
 
     function reveal() {
         document.documentElement.classList.remove("gohome-state-pending");
-        if (safetyTimer) {
-            window.clearTimeout(safetyTimer);
-            safetyTimer = null;
-        }
+        document.documentElement.classList.remove("gohome-state-restorable");
     }
 
     function readSnapshot() {
@@ -73,9 +71,18 @@
         }
     }
 
+    function cleanupLegacySnapshots() {
+        for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+            const key = localStorage.key(index) || "";
+            if (key.startsWith(SNAPSHOT_ROOT) && !key.startsWith(SNAPSHOT_PREFIX)) {
+                localStorage.removeItem(key);
+            }
+        }
+    }
+
     function isTemporaryImageSource(value) {
         const source = String(value || "");
-        return /stream\.mjpg|playback_ticket=|access_token=|\/api\/(?:app|v1\/video)\//i.test(source);
+        return /stream\.mjpg|access_token=/i.test(source);
     }
 
     function sanitizedMainHtml(main) {
@@ -94,15 +101,29 @@
             image.removeAttribute("src");
             image.removeAttribute("srcset");
             image.classList.remove("opacity-0");
+        });
+        return clone.innerHTML;
+    }
+
+    function removeExpiredPlaybackImages() {
+        document.querySelectorAll("main img[src*='playback_ticket=']").forEach((image) => {
+            const source = image.getAttribute("src") || "";
+            let issuedAt = 0;
+            try {
+                issuedAt = Number(new URL(source, window.location.href).searchParams.get("t") || 0);
+            } catch (_error) {
+                issuedAt = 0;
+            }
+            if (issuedAt > 0 && Date.now() - issuedAt < 90_000) return;
+            image.removeAttribute("src");
             if (image.id === "edgeHomeCareImage" || image.id === "companionshipCareImage") {
                 image.classList.add("hidden");
                 const fallbackId = image.id === "edgeHomeCareImage"
                     ? "edgeHomeCareImageFallback"
                     : "companionshipCareImageFallback";
-                clone.querySelector(`#${fallbackId}`)?.classList.remove("hidden");
+                document.getElementById(fallbackId)?.classList.remove("hidden");
             }
         });
-        return clone.innerHTML;
     }
 
     function captureNow() {
@@ -133,15 +154,15 @@
         }, CAPTURE_DELAY_MS);
     }
 
-    function restore() {
+    function restore(snapshot = readSnapshot()) {
         if (!PAGE_NAMES.has(currentPage())) {
             reveal();
             return false;
         }
-        const snapshot = readSnapshot();
         const main = document.querySelector("main");
         if (!snapshot || !main) return false;
         main.innerHTML = snapshot.main_html;
+        removeExpiredPlaybackImages();
         DYNAMIC_BODY_CLASSES.forEach((name) => {
             document.body.classList.toggle(name, snapshot.body_classes?.includes(name) === true);
         });
@@ -162,7 +183,7 @@
         suppressCapture = options.suppressCapture !== false;
         for (let index = localStorage.length - 1; index >= 0; index -= 1) {
             const key = localStorage.key(index) || "";
-            if (key.startsWith(SNAPSHOT_PREFIX)) localStorage.removeItem(key);
+            if (key.startsWith(SNAPSHOT_ROOT)) localStorage.removeItem(key);
         }
         restored = false;
         ready = false;
@@ -177,42 +198,19 @@
         }, REFRESH_DELAY_MS);
     }
 
-    document.documentElement.classList.add("gohome-state-pending");
+    cleanupLegacySnapshots();
+    bootSnapshot = readSnapshot();
+    if (bootSnapshot) document.documentElement.classList.add("gohome-state-restorable");
     const style = document.createElement("style");
     style.id = "gohome-state-boot-style";
     style.textContent = `
-        html.gohome-state-pending body > header,
-        html.gohome-state-pending body > main,
-        html.gohome-state-pending body > nav { visibility: hidden !important; }
-        html.gohome-state-pending body::before {
-            content: "";
-            position: fixed;
-            inset: 0;
-            z-index: 9998;
-            background: #fbf9f8;
-        }
-        html.gohome-state-pending body::after {
-            content: "";
-            position: fixed;
-            z-index: 9999;
-            top: 48%;
-            left: 50%;
-            width: 22px;
-            height: 22px;
-            margin: -11px 0 0 -11px;
-            border: 2px solid rgba(61, 86, 68, 0.16);
-            border-top-color: #536d5a;
-            border-radius: 50%;
-            animation: gohome-state-spin .75s linear infinite;
-        }
-        @keyframes gohome-state-spin { to { transform: rotate(360deg); } }
+        html.gohome-state-restorable body > main { visibility: hidden !important; }
     `;
     document.head.append(style);
 
     document.addEventListener("DOMContentLoaded", () => {
-        if (!restore()) {
-            safetyTimer = window.setTimeout(reveal, 8000);
-        }
+        restore(bootSnapshot);
+        reveal();
     });
     window.addEventListener("gohome:data-updated", refreshCurrentPage);
     window.addEventListener("pagehide", captureNow);

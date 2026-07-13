@@ -2,7 +2,6 @@
     const $ = (id) => document.getElementById(id);
     const CONTENT_SECTION_IDS = [
         "edgeHomeCareSection",
-        "edgeHomeCarePreviewSection",
         "edgeHomeCareHistorySection",
         "edgeHomeLocationSection",
         "edgeHomeMetricsSection",
@@ -104,9 +103,9 @@
         if (!imageUrl) {
             lastHomeCareImageUrl = "";
             setHomeCareImageFallback(
-                card?.image_mode === "failed_provider" ? "今日关怀已生成" : "今日关怀正在生成",
-                card?.image_mode === "failed_provider" ? "图片稍后再试" : "稍后显示完整卡片",
-                card?.image_mode === "failed_provider" ? "favorite" : "volunteer_activism"
+                careCardDisplayTitle(card),
+                shortText(cardBodyText(card, "今天可以从家里近况开始聊起。"), 46),
+                "favorite"
             );
             return;
         }
@@ -117,7 +116,11 @@
         }
         const hadVisibleImage = Boolean(image.src && !image.classList.contains("hidden"));
         if (!hadVisibleImage) {
-            setHomeCareImageFallback("正在打开今日关怀", "完整卡片马上出现", "hourglass_top");
+            setHomeCareImageFallback(
+                careCardDisplayTitle(card),
+                shortText(cardBodyText(card, "今天可以从家里近况开始聊起。"), 46),
+                "favorite"
+            );
         }
         try {
             const resolvedUrl = await window.GoHomeEdge.v1VideoMediaPlaybackUrl(imageUrl);
@@ -138,10 +141,6 @@
                     setHomeCareImageFallback("今日关怀已生成", "图片暂时无法打开", "favorite");
                 }
             };
-            if (!hadVisibleImage) {
-                image.classList.remove("hidden");
-                image.classList.add("opacity-0");
-            }
             preload.src = resolvedUrl;
         } catch (_error) {
             if (homeCareImageRenderSeq !== seq) return;
@@ -832,7 +831,7 @@
 
     function renderCareCardSummary(card, family) {
         if (!card) {
-            toggleCareSection(true);
+            $("edgeHomeCarePreviewSection")?.classList.add("hidden");
             $("edgeHomeCareCardLink")?.classList.remove("has-generated-image");
             setText("edgeHomeCareMeta", `${family?.name || "当前家庭"} · 今日关怀`);
             setText("edgeHomeCareTitle", "今日关怀正在生成");
@@ -841,10 +840,10 @@
             if (facts) facts.innerHTML = "";
             const link = $("edgeHomeCareCardLink");
             if (link) link.href = window.GoHomeEdge?.pageHref?.("companionship.html") || "companionship.html";
-            setHomeCareImageFallback("今日关怀正在生成", "稍后显示完整卡片", "volunteer_activism");
+            setHomeCareImageFallback("今日关怀", "家里近况和适合联系的话题会整理在这里。", "favorite");
             return;
         }
-        toggleCareSection(true);
+        $("edgeHomeCarePreviewSection")?.classList.remove("hidden");
         const critical = isCareCritical(card);
         const hasGeneratedImage = Boolean(String(card?.image_url || "").trim());
         const featureLink = $("edgeHomeCareCardLink");
@@ -902,6 +901,7 @@
         if (!setup) return;
         document.body.classList.toggle("gohome-setup-mode", show);
         setup.classList.toggle("hidden", !show);
+        if (show) $("edgeHomeCarePreviewSection")?.classList.add("hidden");
         CONTENT_SECTION_IDS.forEach((id) => $(id)?.classList.toggle("hidden", show));
     }
 

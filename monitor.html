@@ -4,7 +4,7 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家 - 守护</title>
-<script src="assets/scripts/app-state-store.js?v=20260713-appstore-1"></script>
+<script src="assets/scripts/app-state-store.js?v=20260713-appstore-4"></script>
 
 <link rel="icon" href="data:,"/>
 <link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
@@ -132,20 +132,20 @@
 <span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;">home_health</span>
 </span>
 <div class="min-w-0 flex-1">
-<p id="familyPresenceEyebrow" class="gohome-presence-eyebrow">正在同步家庭状态</p>
-<h2 id="edgeStatusTitle">观察中</h2>
-<p id="edgeStatusText">正在读取家庭盒子回传的人物观察记录。</p>
+<p id="familyPresenceEyebrow" class="gohome-presence-eyebrow">家庭观察</p>
+<h2 id="edgeStatusTitle">家里此刻</h2>
+<p id="edgeStatusText">人物出现、姿态和安全事件会汇总在这里。</p>
 </div>
 </div>
 <div class="gohome-presence-facts">
-<span><strong id="familyPresenceCameraCount">--</strong>有效画面</span>
-<span><strong id="familyPresenceLastSeen">--</strong>最近见到人</span>
-	<span><strong id="familyPresenceCoverage">--</strong>观察覆盖</span>
-	<span><strong id="familyPetActivity">--</strong>宠物活动</span>
+<span><strong id="familyPresenceCameraCount">—</strong>有效画面</span>
+<span><strong id="familyPresenceLastSeen">—</strong>最近见到人</span>
+	<span><strong id="familyPresenceCoverage">—</strong>观察覆盖</span>
+	<span><strong id="familyPetActivity">—</strong>宠物活动</span>
 </div>
 <div class="flex flex-wrap gap-2">
-<span id="edgeDeviceStatus" class="app-mini-pill muted">盒子连接中</span>
-<span id="edgeDetector" class="app-mini-pill muted">视觉感知中</span>
+<span id="edgeDeviceStatus" class="app-mini-pill muted">家庭盒子</span>
+<span id="edgeDetector" class="app-mini-pill muted">视觉感知</span>
 </div>
 </section>
 <section class="flex flex-col gap-gutter-card">
@@ -158,8 +158,8 @@
 <div id="edgeMonitorCameraGrid" class="gohome-camera-grid">
 <div class="gohome-panel gohome-empty-state">
 <span class="material-symbols-outlined">linked_camera</span>
-<h3>正在读取摄像头</h3>
-<p>正在读取家庭盒子同步回来的真实摄像头状态。</p>
+<h3>家中摄像头</h3>
+<p>已接入的摄像头画面会显示在这里。</p>
 </div>
 </div>
 </section>
@@ -210,6 +210,6 @@
 
 <script src="assets/scripts/edge-client.js?v=20260713-swr-1"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260713-appstore-1"></script>
-<script src="assets/scripts/monitor-live.js?v=20260713-appstore-2"></script>
+<script src="assets/scripts/monitor-live.js?v=20260713-no-loading-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
 </body></html>

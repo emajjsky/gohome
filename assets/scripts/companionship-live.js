@@ -133,35 +133,46 @@
         const seq = careImageRenderSeq + 1;
         careImageRenderSeq = seq;
         const imageUrl = String(card?.image_url || "").trim();
+        const hadVisibleImage = Boolean(image.src && !image.classList.contains("hidden"));
         if (!imageUrl) {
-            if (card?.image_mode === "failed_provider") {
-                setCareImageFallback("今日关怀已生成", "图片稍后再试", "favorite");
-            } else {
-                setCareImageFallback("今日关怀正在生成", "温暖卡片稍后出现", "volunteer_activism");
-            }
+            setCareImageFallback(
+                card?.title || "今日关怀",
+                card?.body || "今天可以从家里近况开始聊起。",
+                "favorite"
+            );
             return;
         }
-        setCareImageFallback("正在打开今日关怀", "温暖卡片马上出现", "hourglass_top");
+        if (!hadVisibleImage) {
+            setCareImageFallback(
+                card?.title || "今日关怀",
+                card?.body || "今天可以从家里近况开始聊起。",
+                "favorite"
+            );
+        }
         try {
             const resolvedUrl = await window.GoHomeEdge.v1VideoMediaPlaybackUrl(imageUrl);
             if (careImageRenderSeq !== seq) return;
-            image.onload = () => {
+            const preload = new Image();
+            preload.onload = () => {
                 if (careImageRenderSeq !== seq) return;
+                image.src = resolvedUrl;
                 fallback.classList.add("hidden");
                 image.classList.remove("opacity-0");
                 image.classList.remove("hidden");
             };
-            image.onerror = () => {
+            preload.onerror = () => {
                 if (careImageRenderSeq !== seq) return;
                 image.classList.remove("opacity-0");
-                setCareImageFallback("今日关怀已生成", "图片暂时无法打开", "favorite");
+                if (!hadVisibleImage) {
+                    setCareImageFallback(card?.title || "今日关怀", card?.body || "今天可以从家里近况开始聊起。", "favorite");
+                }
             };
-            image.classList.remove("hidden");
-            image.classList.add("opacity-0");
-            image.src = resolvedUrl;
+            preload.src = resolvedUrl;
         } catch (_error) {
             if (careImageRenderSeq !== seq) return;
-            setCareImageFallback("今日关怀已生成", "图片暂时无法打开", "favorite");
+            if (!hadVisibleImage) {
+                setCareImageFallback(card?.title || "今日关怀", card?.body || "今天可以从家里近况开始聊起。", "favorite");
+            }
         }
     }
 
@@ -275,6 +286,7 @@
 
     function renderCareCard(card, family) {
         if (!card) return;
+        $("companionshipCareSection")?.classList.remove("hidden");
         const title = $("companionshipCareTitle");
         const body = $("companionshipCareBody");
         const meta = $("companionshipCareMeta");

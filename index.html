@@ -4,7 +4,7 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家</title>
-<script src="assets/scripts/app-state-store.js?v=20260713-appstore-1"></script>
+<script src="assets/scripts/app-state-store.js?v=20260713-appstore-4"></script>
 
 <link rel="icon" href="data:,"/>
 <link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
@@ -73,15 +73,15 @@
 <div class="gohome-home-hero-top">
 <div class="min-w-0">
 <p id="edgeHomeFamilyLine" class="gohome-kicker">默认家庭</p>
-<h2 id="edgeHomeLeadTitle" class="gohome-home-title">正在同步家里状态</h2>
+<h2 id="edgeHomeLeadTitle" class="gohome-home-title">今天也看看家里</h2>
 <p id="edgeHomeLeadSub" class="gohome-home-sub">家庭盒子连接后，这里会汇总天气、话题、家里状态和回家提醒。</p>
 </div>
-<span id="edgeHomeCareStatus" class="gohome-status-pill">同步中</span>
+<span id="edgeHomeCareStatus" class="gohome-status-pill muted">家庭概览</span>
 </div>
 <div id="edgeHomeStatusStrip" class="gohome-status-strip">
-<span><i></i>盒子同步中</span>
-<span><i></i>摄像头读取中</span>
-<span><i></i>事件同步中</span>
+<span><i></i>家庭盒子</span>
+<span><i></i>家中画面</span>
+<span><i></i>事件提醒</span>
 </div>
 </section>
 <section id="edgeHomeSetupPanel" class="hidden gohome-section-tight">
@@ -124,7 +124,7 @@
 </div>
 </div>
 </section>
-<section id="edgeHomeCarePreviewSection" class="gohome-section-tight">
+<section id="edgeHomeCarePreviewSection" class="gohome-section-tight hidden">
 <div class="gohome-section-heading gohome-section-heading-compact gohome-care-hero-heading">
 <div>
 <h3>今日关怀</h3>
@@ -136,19 +136,19 @@
 <img id="edgeHomeCareImage" alt="今日关怀图文卡" class="hidden" loading="eager"/>
 <div id="edgeHomeCareImageFallback">
 <span class="material-symbols-outlined">volunteer_activism</span>
-<p>今日关怀正在生成</p>
-<p>稍后显示完整卡片</p>
+<p>今日关怀</p>
+<p>家里近况会整理成一张完整卡片</p>
 </div>
 </div>
 <div class="gohome-care-feature-copy">
-<p id="edgeHomeCareMeta">正在读取家庭状态</p>
-<h4 id="edgeHomeCareTitle">正在生成今日关怀</h4>
-<p id="edgeHomeCareBody">稍后会把家里状态、提醒和适合联系的话题汇总在这里。</p>
+<p id="edgeHomeCareMeta">当前家庭 · 今日</p>
+<h4 id="edgeHomeCareTitle">今日关怀</h4>
+<p id="edgeHomeCareBody">家里状态、提醒和适合联系的话题会汇总在这里。</p>
 <div id="edgeHomeCareFacts" class="gohome-mini-facts"></div>
 </div>
 </a>
 </section>
-<section id="edgeHomeCareSection" class="gohome-section-tight">
+<section id="edgeHomeCareSection" class="gohome-section-tight hidden">
 <div class="gohome-section-heading gohome-section-heading-compact">
 <div>
 <h3>今日信号</h3>
@@ -156,11 +156,11 @@
 </div>
 </div>
 <div id="edgeHomeCareFeed" class="gohome-push-feed">
-<article class="gohome-push-card loading">
+<article class="gohome-push-card">
 <div class="gohome-push-icon">
-<span class="material-symbols-outlined">hourglass_top</span>
+<span class="material-symbols-outlined">favorite</span>
 </div>
-<p>正在读取今日依据</p>
+<p>天气、日历和家里状态会整理在这里</p>
 </article>
 </div>
 </section>
@@ -213,17 +213,17 @@
 <div>
 <span class="material-symbols-outlined">router</span>
 <p>盒子</p>
-<strong id="edgeHomeBoxState">同步中</strong>
+<strong id="edgeHomeBoxState">—</strong>
 </div>
 <div>
 <span class="material-symbols-outlined">linked_camera</span>
 <p>摄像头</p>
-<strong id="edgeHomeCameraState">读取中</strong>
+<strong id="edgeHomeCameraState">—</strong>
 </div>
 <div>
 <span class="material-symbols-outlined">event_available</span>
 <p>今日事件</p>
-<strong id="edgeHomeEventState">同步中</strong>
+<strong id="edgeHomeEventState">—</strong>
 </div>
 </div>
 </section>
@@ -253,7 +253,7 @@
 </nav>
 
 <script src="assets/scripts/edge-client.js?v=20260713-swr-1"></script>
-<script src="assets/scripts/home-live.js?v=20260713-appstore-1"></script>
+<script src="assets/scripts/home-live.js?v=20260713-no-loading-1"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260713-appstore-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
 </body></html>
