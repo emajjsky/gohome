@@ -6,6 +6,7 @@
         streamControllers: new Map(),
         cameraSignature: "",
         inFlight: false,
+        refreshSeq: 0,
     };
 
     const safetyTypes = new Set(["fall_candidate", "prolonged_floor_lying", "fire_candidate", "long_absence"]);
@@ -280,33 +281,47 @@
             </article>`).join("");
     }
 
+    async function loadSecondaryState(family, cameras, refreshSeq) {
+        const [device, presence, events] = await Promise.all([
+            GoHomeEdge.appDevice().catch(() => null),
+            GoHomeEdge.v1PresenceState(family.id).catch(() => ({ cameras: [] })),
+            GoHomeEdge.appEvents("limit=50&view=summary").catch(() => []),
+        ]);
+        if (refreshSeq !== state.refreshSeq) return;
+        renderPresence(presence, device);
+        renderIncidents(events);
+
+        const evaluationLoader = GoHomeEdge.appLatestEvaluationSummary || GoHomeEdge.appLatestEvaluation;
+        const evaluations = await Promise.all(cameras.map((camera) => evaluationLoader(camera.id).catch(() => null)));
+        if (refreshSeq !== state.refreshSeq) return;
+        cameras.forEach((camera, index) => {
+            const presenceCamera = presence.cameras?.find((item) => Number(item.id) === Number(camera.id));
+            updateCamera(camera, presenceCamera, evaluations[index]);
+        });
+        window.GoHomeAppStore?.scheduleCapture?.();
+    }
+
     async function refresh() {
         if (!window.GoHomeEdge || state.inFlight) return;
         state.inFlight = true;
+        const refreshSeq = state.refreshSeq + 1;
+        state.refreshSeq = refreshSeq;
         try {
             GoHomeEdge.bootstrapLaunchState?.();
             await GoHomeEdge.connect();
-            const families = await GoHomeEdge.myFamilies();
+            const [families, cameras] = await Promise.all([
+                GoHomeEdge.myFamilies(),
+                GoHomeEdge.appCameras().catch(() => []),
+            ]);
             const requestedFamilyId = Number(new URLSearchParams(window.location.search).get("family_id"));
             const family = families.find((item) => Number(item.id) === requestedFamilyId) || families[0];
             if (!family) return;
             state.familyId = family.id;
-            const [device, cameras, presence, events] = await Promise.all([
-                GoHomeEdge.appDevice().catch(() => null),
-                GoHomeEdge.appCameras().catch(() => []),
-                GoHomeEdge.v1PresenceState(family.id),
-                GoHomeEdge.appEvents("limit=50").catch(() => []),
-            ]);
             state.cameras = cameras.filter((camera) => camera.enabled !== false);
             cameraStructure(state.cameras);
             attachStreams(state.cameras);
-            renderPresence(presence, device);
-            const evaluations = await Promise.all(state.cameras.map((camera) => GoHomeEdge.appLatestEvaluation(camera.id).catch(() => null)));
-            state.cameras.forEach((camera, index) => {
-                const presenceCamera = presence.cameras?.find((item) => Number(item.id) === Number(camera.id));
-                updateCamera(camera, presenceCamera, evaluations[index]);
-            });
-            renderIncidents(events);
+            window.GoHomeAppStore?.markPageReady?.();
+            void loadSecondaryState(family, state.cameras, refreshSeq).catch(() => {});
         } catch (error) {
             if (error?.status === 401) {
                 GoHomeEdge.clearAuthToken();
@@ -318,14 +333,13 @@
             setText("edgeStatusText", error.message || "请稍后重试。");
         } finally {
             state.inFlight = false;
-            window.GoHomeAppStore?.markPageReady?.();
         }
     }
 
     document.addEventListener("DOMContentLoaded", () => {
         window.GoHomeRefreshPage = () => refresh();
         refresh();
-        window.setInterval(refresh, 10000);
+        window.setInterval(refresh, 15000);
     });
 
     window.addEventListener("beforeunload", () => {

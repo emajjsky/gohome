@@ -1180,6 +1180,12 @@ async function main() {
         });
         assert.equal(events.length, 2);
         assert.ok(events.every((event) => event.type === "fall_candidate"));
+        const eventSummaries = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false&view=summary", {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(eventSummaries.length, events.length);
+        assert.ok(eventSummaries.every((event) => !event.payload.rule && !event.payload.evidence));
+        assert.ok(JSON.stringify(eventSummaries).length < JSON.stringify(events).length);
 
         const blockedDefaultFamilyBindings = await fetch(`${baseUrl}/api/device-bindings?family_id=1`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
@@ -1203,6 +1209,12 @@ async function main() {
         });
         assert.equal(evaluation.candidates.length, 1);
         assert.equal(evaluation.state.latest_event_type, "fall_candidate");
+        const evaluationSummary = await requestJson(baseUrl, `/api/app/cameras/${camera.id}/evaluation/latest?view=summary`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(evaluationSummary.camera_id, camera.id);
+        assert.equal(evaluationSummary.state.latest_event_type, "fall_candidate");
+        assert.ok(JSON.stringify(evaluationSummary).length < JSON.stringify(evaluation).length);
 
         const detail = await requestJson(baseUrl, `/api/app/events/${created.event.id}`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },

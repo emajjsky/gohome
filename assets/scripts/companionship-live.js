@@ -197,13 +197,15 @@
         await window.GoHomeEdge.connect();
         if (!window.GoHomeEdge.isAuthenticated()) return null;
         try {
-            await window.GoHomeEdge.currentUser();
+            const [, families] = await Promise.all([
+                window.GoHomeEdge.currentUser(),
+                window.GoHomeEdge.myFamilies(),
+            ]);
+            return families[0] || null;
         } catch (_error) {
             window.GoHomeEdge.clearAuthToken();
             return null;
         }
-        const families = await window.GoHomeEdge.myFamilies();
-        return families[0] || null;
     }
 
     async function loadMessages(familyId) {
@@ -452,10 +454,14 @@
         try {
             const family = await resolvePrimaryFamily();
             if (!family) return;
-            currentElderProfile = await loadElderProfile(family.id);
-            const careCard = await loadCareCard(family.id);
+            const profilePromise = loadElderProfile(family.id);
+            const careCardPromise = loadCareCard(family.id);
+            const messagesPromise = loadMessages(family.id);
+            const [profile, careCard] = await Promise.all([profilePromise, careCardPromise]);
+            currentElderProfile = profile;
             renderCareCard(careCard, family);
-            const messages = await loadMessages(family.id);
+            window.GoHomeAppStore?.markPageReady?.();
+            const messages = await messagesPromise;
             if (!messages.length) return;
             renderMessageList(messages, family);
             toggleMessageSection(true);

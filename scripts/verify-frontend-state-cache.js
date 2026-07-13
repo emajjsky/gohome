@@ -27,9 +27,9 @@ function response(payload, status = 200) {
     };
 }
 
-function createHarness() {
-    const localStorage = createStorage({ "gohome.authToken": "token-account-1234567890" });
-    const sessionStorage = createStorage();
+function createHarness(options = {}) {
+    const localStorage = options.localStorage || createStorage({ "gohome.authToken": "token-account-1234567890" });
+    const sessionStorage = options.sessionStorage || createStorage();
     const events = [];
     const fetches = [];
     const listeners = new Map();
@@ -85,7 +85,7 @@ function createHarness() {
     window.window = window;
     const source = fs.readFileSync(path.resolve(__dirname, "../assets/scripts/edge-client.js"), "utf8");
     vm.runInNewContext(source, context, { filename: "edge-client.js" });
-    return { context, window, localStorage, events, fetches };
+    return { context, window, localStorage, sessionStorage, events, fetches };
 }
 
 function apiCacheKeys(storage) {
@@ -112,7 +112,7 @@ async function flush() {
 async function main() {
     assertMainPagesHaveNoBlockingLoadingCopy();
     const harness = createHarness();
-    const { context, window, localStorage, events, fetches } = harness;
+    const { context, window, localStorage, sessionStorage, events, fetches } = harness;
     let payload = { revision: 1 };
     context.nextFetch = async () => response(payload);
 
@@ -144,6 +144,23 @@ async function main() {
     context.nextFetch = async () => response({ ticket: "readonly" });
     await window.GoHomeEdge.request("/api/playback", { method: "POST", invalidateCache: false });
     assert.ok(apiCacheKeys(localStorage).length > 0, "read-only technical POST must preserve cache");
+
+    context.nextFetch = async () => response({
+        ticket: "persisted-playback-ticket",
+        expires_at: new Date(Date.now() + 120_000).toISOString(),
+    });
+    const playbackPayload = { resource_type: "stream", camera_id: 9, expires_in_seconds: 120 };
+    await window.GoHomeEdge.createPlaybackSession(playbackPayload);
+    const playbackFetchCount = fetches.length;
+    assert.ok(sessionStorage.keys().some((key) => key.startsWith("gohome.playbackSessions.")), "playback ticket must persist for the next page");
+
+    const nextPage = createHarness({ localStorage, sessionStorage });
+    nextPage.context.nextFetch = async () => {
+        throw new Error("persisted playback ticket should avoid a second request");
+    };
+    const reused = await nextPage.window.GoHomeEdge.createPlaybackSession(playbackPayload);
+    assert.equal(reused.ticket, "persisted-playback-ticket", "next page must reuse the unexpired playback ticket");
+    assert.equal(fetches.length, playbackFetchCount, "reusing a playback ticket must not add a request on the first page");
 
     context.nextFetch = async () => response({ saved: true });
     await window.GoHomeEdge.request("/api/settings", { method: "PUT", body: "{}" });

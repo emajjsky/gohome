@@ -5,7 +5,9 @@ const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
 const https = require("https");
+const os = require("os");
 const path = require("path");
+const { spawnSync } = require("child_process");
 const { URL } = require("url");
 
 function parseEnvValue(raw) {
@@ -1842,6 +1844,43 @@ function createLocalAppServer(options = {}) {
             media_asset_id: asset?.id || null,
             evidence_media: evidenceMedia,
             payload: event.payload || {},
+        };
+    }
+
+    function publicEventSummary(event) {
+        const camera = store.db.cameras[String(event.camera_id)] || {};
+        const asset = event.media_asset_id
+            ? store.db.assets.find((item) => Number(item.id) === Number(event.media_asset_id))
+            : null;
+        const incident = event.payload?.incident || null;
+        const verification = event.payload?.verification || null;
+        return {
+            id: event.id,
+            type: event.event_type,
+            event_type: event.event_type,
+            level: event.level,
+            summary: event.summary,
+            room: event.room || camera.room || camera.name || "",
+            camera_id: event.camera_id,
+            camera_name: camera.name || event.camera_name || "",
+            occurred_at: event.occurred_at,
+            created_at: event.created_at,
+            updated_at: event.updated_at || event.created_at,
+            acknowledged: Boolean(event.acknowledged),
+            resolution: event.resolution || "",
+            snapshot_path: event.snapshot_path || asset?.snapshot_path || "",
+            snapshot_url: event.snapshot_path || asset?.snapshot_path || "",
+            media_asset_id: asset?.id || null,
+            payload: {
+                ...(incident ? { incident: {
+                    status: incident.status || "",
+                    primary_event_id: incident.primary_event_id || event.id,
+                } } : {}),
+                ...(verification ? { verification: {
+                    status: verification.status || "",
+                    decision: verification.decision || "",
+                } } : {}),
+            },
         };
     }
 
@@ -4578,7 +4617,71 @@ function createLocalAppServer(options = {}) {
         return ".png";
     }
 
+    function transcodeCareCardImage(imageBuffer, contentType) {
+        if (!Buffer.isBuffer(imageBuffer) || imageBuffer.length < 320 * 1024) {
+            return { buffer: imageBuffer, content_type: contentType || "image/png" };
+        }
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-care-image-"));
+        const inputPath = path.join(tempDir, `input${imageExtension(contentType)}`);
+        const outputPath = path.join(tempDir, "output.webp");
+        try {
+            fs.writeFileSync(inputPath, imageBuffer);
+            const result = spawnSync("ffmpeg", [
+                "-y",
+                "-loglevel", "error",
+                "-i", inputPath,
+                "-vf", "scale=1024:1024:force_original_aspect_ratio=decrease",
+                "-c:v", "libwebp",
+                "-quality", "82",
+                "-compression_level", "4",
+                outputPath,
+            ], { timeout: 20_000, maxBuffer: 1024 * 1024 });
+            if (result.status !== 0 || !fs.existsSync(outputPath)) {
+                return { buffer: imageBuffer, content_type: contentType || "image/png" };
+            }
+            const optimized = fs.readFileSync(outputPath);
+            if (!optimized.length || optimized.length >= imageBuffer.length) {
+                return { buffer: imageBuffer, content_type: contentType || "image/png" };
+            }
+            return { buffer: optimized, content_type: "image/webp" };
+        } catch (_error) {
+            return { buffer: imageBuffer, content_type: contentType || "image/png" };
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    }
+
+    function optimizedCareCardFile(asset, filePath) {
+        if (asset?.metadata?.purpose !== "care_card_image") return null;
+        const stat = fs.statSync(filePath);
+        if (stat.size < 320 * 1024) return null;
+        const outputPath = `${filePath}.mobile.webp`;
+        try {
+            const outputStat = fs.existsSync(outputPath) ? fs.statSync(outputPath) : null;
+            if (!outputStat || outputStat.mtimeMs < stat.mtimeMs) {
+                const result = spawnSync("ffmpeg", [
+                    "-y",
+                    "-loglevel", "error",
+                    "-i", filePath,
+                    "-vf", "scale=1024:1024:force_original_aspect_ratio=decrease",
+                    "-c:v", "libwebp",
+                    "-quality", "82",
+                    "-compression_level", "4",
+                    outputPath,
+                ], { timeout: 20_000, maxBuffer: 1024 * 1024 });
+                if (result.status !== 0) return null;
+            }
+            const optimizedStat = fs.statSync(outputPath);
+            return optimizedStat.size > 0 && optimizedStat.size < stat.size ? outputPath : null;
+        } catch (_error) {
+            return null;
+        }
+    }
+
     function storeCareCardImageAsset(card, familyId, imageBuffer, contentType, sourceUrl = "") {
+        const optimized = transcodeCareCardImage(imageBuffer, contentType);
+        imageBuffer = optimized.buffer;
+        contentType = optimized.content_type;
         const assetId = store.nextId("asset");
         const extension = imageExtension(contentType, sourceUrl);
         const safeCardId = String(card.card_id || `care-${familyId}-${dateKeyShanghai()}`).replace(/[^\w.-]+/g, "_").slice(0, 90);
@@ -5269,10 +5372,11 @@ function createLocalAppServer(options = {}) {
             const expected = normalizeBool(acknowledged);
             events = events.filter((event) => Boolean(event.acknowledged) === expected);
         }
+        const project = url.searchParams.get("view") === "summary" ? publicEventSummary : publicEvent;
         return events
             .sort((a, b) => String(b.occurred_at || b.created_at).localeCompare(String(a.occurred_at || a.created_at)))
             .slice(0, limit)
-            .map(publicEvent);
+            .map(project);
     }
 
     function upsertCamera(eventPayload) {
@@ -5492,16 +5596,39 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function latestCameraEvaluationSummaryPayload(cameraId) {
+        const evaluation = latestCameraEvaluationPayload(cameraId);
+        const posture = evaluation.analysis?.posture
+            || evaluation.analysis?.pose_factor_graph?.posture
+            || evaluation.candidates?.[0]?.payload?.verification?.result?.posture
+            || evaluation.candidates?.[0]?.payload?.evidence?.posture
+            || evaluation.candidates?.[0]?.payload?.evidence?.pose_factor_graph?.posture
+            || "";
+        return {
+            camera_id: evaluation.camera_id,
+            evaluated_at: evaluation.evaluated_at,
+            score: evaluation.score,
+            state: evaluation.state || {},
+            explanation: evaluation.explanation || "",
+            analysis: posture ? { posture, pose_factor_graph: { posture } } : {},
+            candidates: posture ? [{ payload: {
+                verification: { result: { posture } },
+                evidence: { posture },
+            } }] : [],
+        };
+    }
+
     function serveLatestCameraSnapshot(req, res, cameraId) {
         if (!requireApp(req, res)) return;
         if (!requireCameraAccess(req, res, cameraId)) return;
         write(res, 200, latestCameraSnapshotPayload(cameraId));
     }
 
-    function serveLatestCameraEvaluation(req, res, cameraId) {
+    function serveLatestCameraEvaluation(req, res, cameraId, url) {
         if (!requireApp(req, res)) return;
         if (!requireCameraAccess(req, res, cameraId)) return;
-        write(res, 200, latestCameraEvaluationPayload(cameraId));
+        const summary = url?.searchParams?.get("view") === "summary";
+        write(res, 200, summary ? latestCameraEvaluationSummaryPayload(cameraId) : latestCameraEvaluationPayload(cameraId));
     }
 
     function writeEmptyMjpeg(res) {
@@ -6350,9 +6477,10 @@ function createLocalAppServer(options = {}) {
             return;
         }
         if (!requireAssetAccess(req, res, asset)) return;
-        write(res, 200, fs.readFileSync(filePath), {
-            "Content-Type": asset.content_type || "image/jpeg",
-            "Cache-Control": "private, max-age=60",
+        const optimizedPath = optimizedCareCardFile(asset, filePath);
+        write(res, 200, fs.readFileSync(optimizedPath || filePath), {
+            "Content-Type": optimizedPath ? "image/webp" : (asset.content_type || "image/jpeg"),
+            "Cache-Control": "private, max-age=300",
         });
     }
 
@@ -6365,9 +6493,10 @@ function createLocalAppServer(options = {}) {
             return;
         }
         if (!requireAssetAccess(req, res, asset)) return;
-        write(res, 200, fs.readFileSync(filePath), {
-            "Content-Type": asset.content_type || "image/jpeg",
-            "Cache-Control": "private, max-age=60",
+        const optimizedPath = optimizedCareCardFile(asset, filePath);
+        write(res, 200, fs.readFileSync(optimizedPath || filePath), {
+            "Content-Type": optimizedPath ? "image/webp" : (asset.content_type || "image/jpeg"),
+            "Cache-Control": "private, max-age=300",
         });
     }
 
@@ -7206,7 +7335,7 @@ function createLocalAppServer(options = {}) {
 
             const latestEvaluationMatch = pathname.match(/^\/api\/(?:app\/)?cameras\/([^/]+)\/evaluation\/latest$/);
             if (req.method === "GET" && latestEvaluationMatch) {
-                serveLatestCameraEvaluation(req, res, latestEvaluationMatch[1]);
+                serveLatestCameraEvaluation(req, res, latestEvaluationMatch[1], url);
                 return;
             }
 
@@ -7485,6 +7614,22 @@ function createLocalAppServer(options = {}) {
                 const userFamilies = familiesForUser(activeAppUser(req).id);
                 const familyId = normalizeNumber(url.searchParams.get("family_id"), userFamilies[0]?.id || null);
                 if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                const cardDate = dateKeyShanghai();
+                const existing = store.db.care_cards.find((card) => (
+                    Number(card.family_id) === Number(familyId)
+                    && card.card_date === cardDate
+                    && card.card_type === "daily"
+                ));
+                if (existing) {
+                    write(res, 200, publicCareCard(existing));
+                    const preferences = carePreferences(familyId);
+                    if (careImageRequested(preferences) && !existing.image_url && existing.image_mode !== "failed_provider") {
+                        setImmediate(() => {
+                            generateCareCard(familyId).then(() => store.save()).catch(() => {});
+                        });
+                    }
+                    return;
+                }
                 const card = await generateCareCard(familyId);
                 await store.save();
                 write(res, 200, publicCareCard(card));

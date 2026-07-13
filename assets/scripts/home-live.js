@@ -581,7 +581,7 @@
                 : `${family?.name || "当前家庭"} · 1 张历史关怀卡。`;
         }
         feed.innerHTML = history.map(careHistoryMarkup).join("");
-        await hydrateCareFeedImages(feed);
+        void hydrateCareFeedImages(feed);
     }
 
     function deviceLooksOnline(device = {}, enabled = []) {
@@ -1210,9 +1210,18 @@
             GoHomeEdge.bootstrapLaunchState?.();
             await GoHomeEdge.connect();
             let user = null;
+            let coreState = null;
             if (GoHomeEdge.isAuthenticated()) {
                 try {
-                    user = await GoHomeEdge.currentUser();
+                    [user, coreState] = await Promise.all([
+                        GoHomeEdge.currentUser(),
+                        Promise.all([
+                            GoHomeEdge.myFamilies(),
+                            GoHomeEdge.appDevice(),
+                            GoHomeEdge.appCameras(),
+                            GoHomeEdge.appEvents("limit=10&acknowledged=false&view=summary"),
+                        ]),
+                    ]);
                 } catch (_error) {
                     GoHomeEdge.clearAuthToken();
                 }
@@ -1222,12 +1231,7 @@
                 return;
             }
 
-            const [families, device, cameras, events] = await Promise.all([
-                GoHomeEdge.myFamilies(),
-                GoHomeEdge.appDevice(),
-                GoHomeEdge.appCameras(),
-                GoHomeEdge.appEvents("limit=10&acknowledged=false"),
-            ]);
+            const [families, device, cameras, events] = coreState;
             const enabled = enabledCameras(cameras);
             const primaryFamily = Array.isArray(families) ? families[0] : null;
             if (!primaryFamily) {
@@ -1235,13 +1239,15 @@
                 return;
             }
 
-            const elderProfile = await loadElderProfile(primaryFamily.id);
+            const [elderProfile, bindings] = await Promise.all([
+                loadElderProfile(primaryFamily.id),
+                GoHomeEdge.deviceBindings(primaryFamily.id),
+            ]);
             if (!elderProfile) {
                 renderNeedsProfileHome(user, primaryFamily);
                 return;
             }
 
-            const bindings = await GoHomeEdge.deviceBindings(primaryFamily.id);
             const currentBinding = bindings.find((item) => String(item.status || "active") !== "revoked") || null;
             if (!currentBinding) {
                 renderNeedsBindingHome(user, primaryFamily, elderProfile);
@@ -1280,15 +1286,26 @@
                 return;
             }
 
-            const [careCard, careCards, carePreferences] = await Promise.all([
-                loadCareCard(primaryFamily.id),
-                loadCareCards(primaryFamily.id),
-                loadCarePreferences(primaryFamily.id),
-            ]);
-            const [weatherSignal, contentSignal] = await Promise.all([
-                loadWeatherSignal(primaryFamily.id, elderProfile),
-                loadContentRecommendations(primaryFamily.id, elderProfile),
-            ]);
+            renderHomeSummary({
+                user,
+                family: primaryFamily,
+                device,
+                enabled,
+                liveEvents,
+                careCard: null,
+                profile: elderProfile,
+            });
+            renderLocationSummary(elderProfile, null);
+            toggleSetupMode(false);
+            setAction("edgeHomePrimaryAction", "watch.html", "实时观看", "nest_cam_indoor");
+            setAction("edgeHomeSecondaryAction", "family.html", "家庭空间", "groups");
+            syncCameraEntryLinks(camera);
+            window.GoHomeAppStore?.markPageReady?.();
+
+            const careCardPromise = loadCareCard(primaryFamily.id);
+            const careCardsPromise = loadCareCards(primaryFamily.id);
+            const carePreferencesPromise = loadCarePreferences(primaryFamily.id);
+            const careCard = await careCardPromise;
             renderHomeSummary({
                 user,
                 family: primaryFamily,
@@ -1299,6 +1316,12 @@
                 profile: elderProfile,
             });
             renderCareCardSummary(careCard, primaryFamily);
+            window.GoHomeAppStore?.scheduleCapture?.();
+
+            const [careCards, carePreferences] = await Promise.all([
+                careCardsPromise,
+                carePreferencesPromise,
+            ]);
             const currentCareKey = String(careCard?.card_id || careCard?.id || "");
             const currentCareDate = String(careCard?.card_date || "");
             const historyCards = [careCard, ...careCards].filter((card) => {
@@ -1309,21 +1332,34 @@
                 if (currentCareDate && date === currentCareDate) return false;
                 return true;
             });
-            await renderCareHistory(historyCards, primaryFamily);
-            await renderCareCardFeed(careCards, primaryFamily, {
+            renderCareHistory(historyCards, primaryFamily);
+            renderCareCardFeed(careCards, primaryFamily, {
                 careCard,
                 profile: elderProfile,
                 preferences: carePreferences,
                 device,
                 enabled,
                 liveEvents,
-                weatherSignal,
-                contentSignal,
+                weatherSignal: null,
+                contentSignal: null,
             });
             renderLocationSummary(elderProfile, carePreferences);
-            toggleSetupMode(false);
-            setAction("edgeHomePrimaryAction", "watch.html", "实时观看", "nest_cam_indoor");
-            setAction("edgeHomeSecondaryAction", "family.html", "家庭空间", "groups");
+            void Promise.all([
+                loadWeatherSignal(primaryFamily.id, elderProfile),
+                loadContentRecommendations(primaryFamily.id, elderProfile),
+            ]).then(([weatherSignal, contentSignal]) => {
+                renderCareCardFeed(careCards, primaryFamily, {
+                    careCard,
+                    profile: elderProfile,
+                    preferences: carePreferences,
+                    device,
+                    enabled,
+                    liveEvents,
+                    weatherSignal,
+                    contentSignal,
+                });
+                window.GoHomeAppStore?.scheduleCapture?.();
+            }).catch(() => {});
             const staleEventIds = new Set(events.filter((event) => !liveEvents.includes(event)).map((event) => String(event.id)));
             const visibleEventIds = new Set(liveEvents.filter((event) => enabled.some((item) => Number(item.id) === Number(event.camera_id))).map((event) => String(event.id)));
             let primaryMessage = await loadPrimaryMessage(primaryFamily.id);
@@ -1331,7 +1367,6 @@
             if (!messageHasVisibleEvent(primaryMessage, visibleEventIds)) primaryMessage = null;
             renderMessageCard(primaryMessage);
 
-            syncCameraEntryLinks(camera);
             const event = importantEvent(liveEvents, camera);
             const snapshot = await GoHomeEdge.appLatestSnapshot(camera.id, { allowMissing: true });
             if (snapshot?.available === false) {

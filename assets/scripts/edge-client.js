@@ -5,6 +5,7 @@
     const APP_SHELL_KEY = "gohome.appShellMode";
     const HEALTH_CACHE_KEY = "gohome.apiHealth";
     const API_CACHE_PREFIX = "gohome.apiCache.";
+    const PLAYBACK_CACHE_PREFIX = "gohome.playbackSessions.";
     const DEFAULT_STALE_CACHE_MS = 24 * 60 * 60 * 1000;
     const playbackSessionCache = new Map();
     const nativeBridgeRequests = new Map();
@@ -29,6 +30,43 @@
 
     function getAuthToken() {
         return localStorage.getItem(AUTH_TOKEN_KEY) || cookieValue("gohome_app_session") || "";
+    }
+
+    function playbackStorageKey() {
+        const tokenScope = getAuthToken().slice(-12) || "guest";
+        return `${PLAYBACK_CACHE_PREFIX}${tokenScope}`;
+    }
+
+    function readPlaybackSessions() {
+        try {
+            const entries = JSON.parse(sessionStorage.getItem(playbackStorageKey()) || "{}");
+            return entries && typeof entries === "object" ? entries : {};
+        } catch (_error) {
+            sessionStorage.removeItem(playbackStorageKey());
+            return {};
+        }
+    }
+
+    function persistPlaybackSession(key, entry) {
+        try {
+            const entries = readPlaybackSessions();
+            const now = Date.now();
+            Object.entries(entries).forEach(([entryKey, value]) => {
+                if (!playbackSessionValid(value) || Date.parse(value.expiresAt) <= now) delete entries[entryKey];
+            });
+            entries[key] = entry;
+            sessionStorage.setItem(playbackStorageKey(), JSON.stringify(entries));
+        } catch (_error) {
+            // Playback still works without persisted session storage.
+        }
+    }
+
+    function clearPlaybackSessions() {
+        playbackSessionCache.clear();
+        for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+            const key = sessionStorage.key(index) || "";
+            if (key.startsWith(PLAYBACK_CACHE_PREFIX)) sessionStorage.removeItem(key);
+        }
     }
 
     function clearApiCache() {
@@ -109,12 +147,12 @@
         if (!normalized) {
             localStorage.removeItem(AUTH_TOKEN_KEY);
             clearAuthCookie();
-            playbackSessionCache.clear();
+            clearPlaybackSessions();
             return "";
         }
         localStorage.setItem(AUTH_TOKEN_KEY, normalized);
         setAuthCookie(normalized);
-        playbackSessionCache.clear();
+        clearPlaybackSessions();
         return normalized;
     }
 
@@ -124,7 +162,7 @@
         window.GoHomeAppStore?.clearAll?.();
         localStorage.removeItem(AUTH_TOKEN_KEY);
         clearAuthCookie();
-        playbackSessionCache.clear();
+        clearPlaybackSessions();
         if (token) {
             fetch(`${GoHomeEdge.apiBase || ""}/api/auth/logout`, {
                 method: "POST",
@@ -426,8 +464,9 @@
         return value.replace(/^\/+/, "");
     }
 
-    function playbackSessionKey(payload) {
+    function playbackSessionKey(path, payload) {
         return JSON.stringify({
+            path,
             resource_type: payload.resource_type,
             camera_id: payload.camera_id || null,
             snapshot_path: payload.snapshot_path || "",
@@ -449,9 +488,11 @@
     }
 
     async function createPlaybackSessionAt(path, payload, { forceRefresh = false } = {}) {
-        const key = playbackSessionKey(payload);
-        const cached = playbackSessionCache.get(key);
+        const key = playbackSessionKey(path, payload);
+        const persisted = readPlaybackSessions()[key];
+        const cached = playbackSessionCache.get(key) || persisted;
         if (!forceRefresh && playbackSessionValid(cached)) {
+            playbackSessionCache.set(key, cached);
             return { ticket: cached.ticket, expires_at: cached.expiresAt };
         }
         const data = await request(path, {
@@ -459,10 +500,12 @@
             invalidateCache: false,
             body: JSON.stringify(payload),
         });
-        playbackSessionCache.set(key, {
+        const entry = {
             ticket: data.ticket,
             expiresAt: data.expires_at,
-        });
+        };
+        playbackSessionCache.set(key, entry);
+        persistPlaybackSession(key, entry);
         return data;
     }
 
@@ -1255,6 +1298,10 @@
         appLatestEvaluation: (cameraId) => withDeviceAccessFallback(
             () => request(`/api/app/cameras/${cameraId}/evaluation/latest`),
             () => request(`/api/cameras/${cameraId}/evaluation/latest`)
+        ),
+        appLatestEvaluationSummary: (cameraId) => withDeviceAccessFallback(
+            () => request(`/api/app/cameras/${cameraId}/evaluation/latest?view=summary`, { cacheTtlMs: 3_000 }),
+            () => request(`/api/cameras/${cameraId}/evaluation/latest?view=summary`, { cacheTtlMs: 3_000 })
         ),
         capture: (cameraId) => request(`/api/cameras/${cameraId}/capture`, { method: "POST" }),
         appEvents: (params = "limit=30") => withDeviceAccessFallback(

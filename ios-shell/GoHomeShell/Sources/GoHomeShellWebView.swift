@@ -55,14 +55,19 @@ struct GoHomeShellWebView: UIViewRepresentable {
             guard lastRequestedURL != url || lastReloadID != reloadID else { return }
             lastRequestedURL = url
             lastReloadID = reloadID
-            var request = URLRequest(url: url, cachePolicy: .reloadRevalidatingCacheData, timeoutInterval: 30)
-            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            let request = URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 20)
             webView?.load(request)
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             Task { @MainActor in
                 runtime.markWebContentLoading()
+            }
+        }
+
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            Task { @MainActor in
+                runtime.markWebContentReady()
             }
         }
 
