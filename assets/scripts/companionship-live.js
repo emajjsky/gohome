@@ -431,8 +431,12 @@
     }
 
     async function render() {
-        toggleMessageSection(false);
-        if (!window.GoHomeEdge) return;
+        const hasVisibleState = window.GoHomeAppStore?.hasVisibleState?.() === true;
+        if (!hasVisibleState) toggleMessageSection(false);
+        if (!window.GoHomeEdge) {
+            window.GoHomeAppStore?.markPageReady?.();
+            return;
+        }
         try {
             const family = await resolvePrimaryFamily();
             if (!family) return;
@@ -444,10 +448,17 @@
             renderMessageList(messages, family);
             toggleMessageSection(true);
         } catch (_error) {
-            setFeedback("");
-            toggleMessageSection(false);
+            if (!window.GoHomeAppStore?.hasVisibleState?.()) {
+                setFeedback("");
+                toggleMessageSection(false);
+            }
+        } finally {
+            window.GoHomeAppStore?.markPageReady?.();
         }
     }
 
-    document.addEventListener("DOMContentLoaded", render);
+    document.addEventListener("DOMContentLoaded", () => {
+        window.GoHomeRefreshPage = () => render();
+        render();
+    });
 })();

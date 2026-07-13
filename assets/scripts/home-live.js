@@ -1378,6 +1378,7 @@
                 fallbackGuestHome();
                 return;
             }
+            if (window.GoHomeAppStore?.hasVisibleState?.()) return;
             toggleSetupMode(true);
             toggleMessageSection(false);
             renderHomeSummary({
@@ -1403,6 +1404,7 @@
         } finally {
             lastRenderAt = Date.now();
             renderInFlight = false;
+            window.GoHomeAppStore?.markPageReady?.();
         }
     }
 
@@ -1414,5 +1416,6 @@
             }
         });
         window.GoHomeRefreshHome = () => render();
+        window.GoHomeRefreshPage = () => render();
     });
 })();

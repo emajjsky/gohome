@@ -890,8 +890,8 @@
   }
 
   async function hydratePrivacy() {
-    if (!(await ensureApi())) return;
     try {
+      if (!(await ensureApi())) return;
       const [user, families, auth, device, cameras] = await Promise.all([
         GoHomeEdge.currentUser(),
         GoHomeEdge.myFamilies(),
@@ -916,6 +916,8 @@
       if (badge) badge.textContent = connected ? "家庭盒子已连接" : "等待连接家庭盒子";
     } catch (_error) {
       // Static content remains usable.
+    } finally {
+      window.GoHomeAppStore?.markPageReady?.();
     }
   }
 
@@ -929,7 +931,10 @@
     if (current === "camera_intro.html") wireCameraIntro();
     if (current === "connect.html") wireConnect();
     if (current === "cameras.html") wireCameras();
-    if (current === "privacy.html") hydratePrivacy();
+    if (current === "privacy.html") {
+      window.GoHomeRefreshPage = () => hydratePrivacy();
+      hydratePrivacy();
+    }
   });
 
   if (document.body) compactStitchAppChrome();

@@ -5,8 +5,11 @@
     const APP_SHELL_KEY = "gohome.appShellMode";
     const HEALTH_CACHE_KEY = "gohome.apiHealth";
     const API_CACHE_PREFIX = "gohome.apiCache.";
+    const DEFAULT_STALE_CACHE_MS = 24 * 60 * 60 * 1000;
     const playbackSessionCache = new Map();
     const nativeBridgeRequests = new Map();
+    const inFlightRevalidations = new Map();
+    let apiCacheGeneration = 0;
 
     function normalizeBase(value) {
         return String(value || "").replace(/\/$/, "");
@@ -29,10 +32,12 @@
     }
 
     function clearApiCache() {
-        for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
-            const key = sessionStorage.key(index) || "";
-            if (key.startsWith(API_CACHE_PREFIX)) sessionStorage.removeItem(key);
+        apiCacheGeneration += 1;
+        for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+            const key = localStorage.key(index) || "";
+            if (key.startsWith(API_CACHE_PREFIX)) localStorage.removeItem(key);
         }
+        inFlightRevalidations.clear();
     }
 
     function apiCacheKey(path) {
@@ -40,24 +45,28 @@
         return `${API_CACHE_PREFIX}${tokenScope}.${path}`;
     }
 
-    function cachedApiValue(path, ttlMs) {
-        if (!(ttlMs > 0)) return undefined;
+    function cachedApiEntry(path, ttlMs) {
+        if (!(ttlMs > 0)) return null;
         const key = apiCacheKey(path);
         try {
-            const entry = JSON.parse(sessionStorage.getItem(key) || "null");
-            if (entry && Number(entry.expires_at || 0) > Date.now()) return entry.value;
+            const entry = JSON.parse(localStorage.getItem(key) || "null");
+            if (!entry || !("value" in entry)) return null;
+            const now = Date.now();
+            if (Number(entry.expires_at || 0) > now) return { state: "fresh", entry };
+            if (Number(entry.stale_until || 0) > now) return { state: "stale", entry };
         } catch (_error) {
-            // Invalid session data is disposable.
+            // Invalid persisted data is disposable.
         }
-        sessionStorage.removeItem(key);
-        return undefined;
+        localStorage.removeItem(key);
+        return null;
     }
 
-    function storeApiValue(path, ttlMs, value) {
+    function storeApiValue(path, ttlMs, staleMs, value) {
         if (!(ttlMs > 0)) return;
         try {
-            sessionStorage.setItem(apiCacheKey(path), JSON.stringify({
+            localStorage.setItem(apiCacheKey(path), JSON.stringify({
                 expires_at: Date.now() + ttlMs,
+                stale_until: Date.now() + Math.max(ttlMs, staleMs || DEFAULT_STALE_CACHE_MS),
                 value,
             }));
         } catch (_error) {
@@ -88,22 +97,31 @@
     }
 
     function setAuthToken(token) {
+        const normalized = String(token || "");
+        const previous = getAuthToken();
+        if (normalized && previous === normalized) {
+            localStorage.setItem(AUTH_TOKEN_KEY, normalized);
+            setAuthCookie(normalized);
+            return normalized;
+        }
         clearApiCache();
-        if (!token) {
+        window.GoHomeAppStore?.clearAll?.({ suppressCapture: false });
+        if (!normalized) {
             localStorage.removeItem(AUTH_TOKEN_KEY);
             clearAuthCookie();
             playbackSessionCache.clear();
             return "";
         }
-        localStorage.setItem(AUTH_TOKEN_KEY, String(token));
-        setAuthCookie(token);
+        localStorage.setItem(AUTH_TOKEN_KEY, normalized);
+        setAuthCookie(normalized);
         playbackSessionCache.clear();
-        return String(token);
+        return normalized;
     }
 
     function clearAuthToken() {
         const token = getAuthToken();
         clearApiCache();
+        window.GoHomeAppStore?.clearAll?.();
         localStorage.removeItem(AUTH_TOKEN_KEY);
         clearAuthCookie();
         playbackSessionCache.clear();
@@ -234,13 +252,19 @@
         };
     }
 
-    async function request(path, options = {}) {
-        const { cacheTtlMs = 0, headers = {}, ...fetchOptions } = options;
-        const method = String(fetchOptions.method || "GET").toUpperCase();
-        if (method === "GET") {
-            const cached = cachedApiValue(path, cacheTtlMs);
-            if (cached !== undefined) return cached;
+    function valuesEqual(left, right) {
+        try {
+            return JSON.stringify(left) === JSON.stringify(right);
+        } catch (_error) {
+            return false;
         }
+    }
+
+    function dispatchDataUpdated(path, reason = "revalidated") {
+        window.dispatchEvent(new CustomEvent("gohome:data-updated", { detail: { path, reason } }));
+    }
+
+    async function fetchData(path, fetchOptions, headers) {
         const base = GoHomeEdge.apiBase;
         const response = await fetch(`${base}${path}`, {
             ...fetchOptions,
@@ -253,8 +277,55 @@
             error.status = response.status;
             throw error;
         }
-        if (method === "GET") storeApiValue(path, cacheTtlMs, data);
-        else clearApiCache();
+        return data;
+    }
+
+    function revalidate(path, fetchOptions, headers, ttlMs, staleMs, previousValue) {
+        const key = apiCacheKey(path);
+        if (inFlightRevalidations.has(key)) return inFlightRevalidations.get(key);
+        const generation = apiCacheGeneration;
+        const pending = fetchData(path, fetchOptions, headers)
+            .then((data) => {
+                if (generation !== apiCacheGeneration) return data;
+                storeApiValue(path, ttlMs, staleMs, data);
+                if (!valuesEqual(previousValue, data)) dispatchDataUpdated(path);
+                return data;
+            })
+            .catch((error) => {
+                if (Number(error?.status || 0) === 401) {
+                    localStorage.removeItem(key);
+                    window.dispatchEvent(new CustomEvent("gohome:auth-invalid"));
+                }
+                return previousValue;
+            })
+            .finally(() => inFlightRevalidations.delete(key));
+        inFlightRevalidations.set(key, pending);
+        return pending;
+    }
+
+    async function request(path, options = {}) {
+        const {
+            cacheTtlMs = 0,
+            cacheStaleMs = DEFAULT_STALE_CACHE_MS,
+            invalidateCache = true,
+            headers = {},
+            ...fetchOptions
+        } = options;
+        const method = String(fetchOptions.method || "GET").toUpperCase();
+        if (method === "GET") {
+            const cached = cachedApiEntry(path, cacheTtlMs);
+            if (cached?.state === "fresh") return cached.entry.value;
+            if (cached?.state === "stale") {
+                void revalidate(path, fetchOptions, headers, cacheTtlMs, cacheStaleMs, cached.entry.value);
+                return cached.entry.value;
+            }
+        }
+        const data = await fetchData(path, fetchOptions, headers);
+        if (method === "GET") storeApiValue(path, cacheTtlMs, cacheStaleMs, data);
+        else if (invalidateCache) {
+            clearApiCache();
+            dispatchDataUpdated(path, "mutation");
+        }
         return data;
     }
 
@@ -385,6 +456,7 @@
         }
         const data = await request(path, {
             method: "POST",
+            invalidateCache: false,
             body: JSON.stringify(payload),
         });
         playbackSessionCache.set(key, {
@@ -1230,4 +1302,13 @@
     };
 
     window.GoHomeEdge = GoHomeEdge;
+    let authInvalidHandled = false;
+    window.addEventListener?.("gohome:auth-invalid", () => {
+        if (authInvalidHandled || !getAuthToken()) return;
+        authInvalidHandled = true;
+        clearAuthToken();
+        if (!/^(login|welcome)\.html$/.test(window.location.pathname.split("/").pop() || "")) {
+            window.location.href = loginHref(currentPagePath());
+        }
+    });
 })();

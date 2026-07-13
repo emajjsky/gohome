@@ -13,7 +13,8 @@
     "verify:cloud-onboarding": "node scripts/verify-cloud-onboarding.js",
     "verify:postgres-loop": "node scripts/verify-postgres-loop.js",
     "verify:app-server": "node scripts/verify-local-app-server.js",
-    "test": "npm run verify:app-server"
+    "verify:frontend-cache": "node scripts/verify-frontend-state-cache.js",
+    "test": "npm run verify:frontend-cache && npm run verify:app-server"
   },
   "keywords": [],
   "author": "",

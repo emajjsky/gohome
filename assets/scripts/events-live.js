@@ -1,4 +1,6 @@
 (function () {
+    let renderInFlight = false;
+    let lastRenderAt = 0;
     const $ = (id) => document.getElementById(id);
     const EVENT_UPDATES_KEY = "gohome.eventUpdates";
 
@@ -332,7 +334,8 @@
     }
 
     async function render() {
-        if (!window.GoHomeEdge) return;
+        if (!window.GoHomeEdge || renderInFlight) return;
+        renderInFlight = true;
         try {
             syncNavLinks(requestedCameraId());
             await GoHomeEdge.connect();
@@ -376,19 +379,24 @@
                 window.location.href = GoHomeEdge.loginHref(GoHomeEdge.currentPagePath());
                 return;
             }
+            if (window.GoHomeAppStore?.hasVisibleState?.()) return;
             syncNavLinks(requestedCameraId());
             setText("edgeTimelineTitle", "本机守护服务还没连接");
             setText("edgeTimelineBadge", "离线演示");
             setText("edgeTimelineAction", "启动家庭盒子服务");
+        } finally {
+            lastRenderAt = Date.now();
+            renderInFlight = false;
+            window.GoHomeAppStore?.markPageReady?.();
         }
     }
 
     document.addEventListener("DOMContentLoaded", () => {
+        window.GoHomeRefreshPage = () => render();
         render();
         setInterval(render, 12000);
     });
-    window.addEventListener("pageshow", render);
     document.addEventListener("visibilitychange", () => {
-        if (!document.hidden) render();
+        if (!document.hidden && Date.now() - lastRenderAt > 12000) render();
     });
 })();

@@ -165,7 +165,19 @@
         if (!grid) return;
         const signature = cameras.map((camera) => `${camera.id}:${camera.name || ""}:${camera.room || ""}`).join("|");
         if (signature === state.cameraSignature) return;
+        const restoredCameraIds = [...grid.querySelectorAll("img[id^='monitorStream-']")]
+            .map((image) => image.id.replace("monitorStream-", ""))
+            .join("|");
+        const cameraIds = cameras.map((camera) => String(camera.id)).join("|");
+        if (!state.cameraSignature && cameras.length && (
+            grid.dataset.cameraSignature === signature || restoredCameraIds === cameraIds
+        )) {
+            state.cameraSignature = signature;
+            grid.dataset.cameraSignature = signature;
+            return;
+        }
         state.cameraSignature = signature;
+        grid.dataset.cameraSignature = signature;
         state.streamControllers.forEach((controller) => controller.dispose());
         state.streamControllers.clear();
         if (!cameras.length) {
@@ -301,14 +313,17 @@
                 window.location.href = GoHomeEdge.loginHref(GoHomeEdge.currentPagePath());
                 return;
             }
+            if (window.GoHomeAppStore?.hasVisibleState?.()) return;
             setText("edgeStatusTitle", "暂时无法读取家庭状态");
             setText("edgeStatusText", error.message || "请稍后重试。");
         } finally {
             state.inFlight = false;
+            window.GoHomeAppStore?.markPageReady?.();
         }
     }
 
     document.addEventListener("DOMContentLoaded", () => {
+        window.GoHomeRefreshPage = () => refresh();
         refresh();
         window.setInterval(refresh, 10000);
     });
