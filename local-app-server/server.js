@@ -546,6 +546,7 @@ function createLocalAppServer(options = {}) {
     const playbackTickets = new Map();
     const boxAdminSessions = new Map();
     const providerCache = new Map();
+    const careCardGenerationJobs = new Map();
     const liveFrameCache = new Map();
     const liveFrameSequence = new Map();
     let schedulerRunning = false;
@@ -5253,6 +5254,52 @@ function createLocalAppServer(options = {}) {
         return card;
     }
 
+    function queueCareCardGeneration(familyId) {
+        const key = String(familyId);
+        if (careCardGenerationJobs.has(key)) return careCardGenerationJobs.get(key);
+        const job = Promise.resolve()
+            .then(() => generateCareCard(familyId))
+            .then((card) => store.save().then(() => card))
+            .catch(() => null)
+            .finally(() => careCardGenerationJobs.delete(key));
+        careCardGenerationJobs.set(key, job);
+        return job;
+    }
+
+    function immediateCareCard(familyId, cardDate) {
+        const latest = store.db.care_cards
+            .filter((card) => Number(card.family_id) === Number(familyId) && card.card_type === "daily")
+            .sort((a, b) => String(b.card_date || b.created_at || "").localeCompare(String(a.card_date || a.created_at || "")))[0];
+        if (latest) return { ...publicCareCard(latest), pending_refresh: true };
+        const profile = existingElderProfile(familyId, "elder_primary") || {};
+        const displayName = profile.display_name || "家人";
+        return {
+            id: null,
+            card_id: `care-${familyId}-${cardDate}`,
+            family_id: Number(familyId),
+            elder_id: "elder_primary",
+            card_date: cardDate,
+            card_type: "daily",
+            title: "今天问个安",
+            body: `可以先给${displayName}打一通电话，今天的天气、日历和家里状态会在后台整理好。`,
+            facts: [],
+            source_message_ids: [],
+            image_mode: "pending_provider",
+            image_url: "",
+            actions: [
+                { key: "call", label: "打电话问候" },
+                { key: "message", label: "发一句问候" },
+            ],
+            status: "open",
+            generated_by: "care-fast-fallback-v1",
+            source_summary: [],
+            content_recommendations: [],
+            created_at: nowIso(),
+            updated_at: nowIso(),
+            pending_refresh: true,
+        };
+    }
+
     function currentEdgeDeviceId() {
         const token = activeDeviceToken();
         if (token?.device_id) return String(token.device_id);
@@ -7624,15 +7671,12 @@ function createLocalAppServer(options = {}) {
                     write(res, 200, publicCareCard(existing));
                     const preferences = carePreferences(familyId);
                     if (careImageRequested(preferences) && !existing.image_url && existing.image_mode !== "failed_provider") {
-                        setImmediate(() => {
-                            generateCareCard(familyId).then(() => store.save()).catch(() => {});
-                        });
+                        setImmediate(() => queueCareCardGeneration(familyId));
                     }
                     return;
                 }
-                const card = await generateCareCard(familyId);
-                await store.save();
-                write(res, 200, publicCareCard(card));
+                write(res, 200, immediateCareCard(familyId, cardDate), { "Retry-After": "5" });
+                setImmediate(() => queueCareCardGeneration(familyId));
                 return;
             }
 

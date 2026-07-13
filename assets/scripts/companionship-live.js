@@ -6,6 +6,7 @@
     let lastActionFeedback = "";
     let feedbackTimer = null;
     let careImageRenderSeq = 0;
+    let pendingCareRefreshTimer = null;
 
     function toggleMessageSection(show) {
         $("companionshipMessageSection")?.classList.toggle("hidden", !show);
@@ -215,9 +216,22 @@
         return messages.slice(0, 3);
     }
 
-    async function loadCareCard(familyId) {
+    async function loadCareCard(familyId, options = {}) {
         if (!window.GoHomeEdge?.v1CareCardToday) return null;
-        return window.GoHomeEdge.v1CareCardToday(familyId);
+        return window.GoHomeEdge.v1CareCardToday(familyId, options);
+    }
+
+    function refreshPendingCareCard(family, attempt = 0) {
+        if (pendingCareRefreshTimer) window.clearTimeout(pendingCareRefreshTimer);
+        if (attempt >= 6) return;
+        pendingCareRefreshTimer = window.setTimeout(async () => {
+            pendingCareRefreshTimer = null;
+            const nextCard = await loadCareCard(family.id, { forceRefresh: true }).catch(() => null);
+            if (!nextCard) return;
+            renderCareCard(nextCard, family);
+            window.GoHomeAppStore?.scheduleCapture?.();
+            if (nextCard.pending_refresh) refreshPendingCareCard(family, attempt + 1);
+        }, 5000);
     }
 
     async function loadElderProfile(familyId) {
@@ -454,12 +468,15 @@
         try {
             const family = await resolvePrimaryFamily();
             if (!family) return;
+            currentFamilyId = family.id;
+            currentFamilyLabel = family.name || "当前家庭";
             const profilePromise = loadElderProfile(family.id);
             const careCardPromise = loadCareCard(family.id);
             const messagesPromise = loadMessages(family.id);
             const [profile, careCard] = await Promise.all([profilePromise, careCardPromise]);
             currentElderProfile = profile;
             renderCareCard(careCard, family);
+            if (careCard?.pending_refresh) refreshPendingCareCard(family);
             window.GoHomeAppStore?.markPageReady?.();
             const messages = await messagesPromise;
             if (!messages.length) return;

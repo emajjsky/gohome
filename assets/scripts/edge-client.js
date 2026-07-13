@@ -1094,9 +1094,9 @@
             const suffix = query.toString() ? `?${query.toString()}` : "";
             return request(`/api/v1/families/${encodeURIComponent(familyId)}/content-recommendations${suffix}`, { cacheTtlMs: 600_000 });
         },
-        v1CareCardToday: (familyId = "") => {
+        v1CareCardToday: (familyId = "", options = {}) => {
             const suffix = familyId ? `?family_id=${encodeURIComponent(familyId)}` : "";
-            return request(`/api/v1/app/care-cards/today${suffix}`, { cacheTtlMs: 300_000 });
+            return request(`/api/v1/app/care-cards/today${suffix}`, { cacheTtlMs: options.forceRefresh ? 0 : 30_000 });
         },
         v1CareCards: (params = {}) => {
             const query = new URLSearchParams();

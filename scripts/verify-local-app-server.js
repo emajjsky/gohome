@@ -1313,11 +1313,12 @@ async function main() {
         assert.equal(savedSchedule.visit_reminder.last_visit_at, "2026-06-20");
         assert.equal(savedSchedule.anniversaries[0].label, "妈妈生日");
 
+        app.store.db.care_cards = app.store.db.care_cards.filter((card) => Number(card.family_id) !== Number(family.id));
         const careCard = await requestJson(baseUrl, `/api/v1/app/care-cards/today?family_id=${family.id}`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(careCard.card_type, "daily");
-        assert.ok(careCard.facts.length >= 3);
+        assert.equal(careCard.pending_refresh, true);
         assert.equal(careCard.image_mode, "pending_provider");
         assert.ok(careCard.actions.some((action) => action.key === "call"));
 
@@ -1328,6 +1329,7 @@ async function main() {
         });
         assert.equal(generatedCareCard.ok, true);
         assert.equal(generatedCareCard.card.card_id, careCard.card_id);
+        assert.ok(generatedCareCard.card.facts.length >= 3);
 
         const pushToken = await requestJson(baseUrl, "/api/v1/app/push-tokens", {
             method: "POST",

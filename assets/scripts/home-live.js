@@ -10,6 +10,7 @@
     let renderInFlight = false;
     let lastHomeCareImageUrl = "";
     let lastRenderAt = 0;
+    let pendingCareRefreshTimer = null;
 
     function setText(id, value) {
         const node = $(id);
@@ -218,13 +219,26 @@
         return null;
     }
 
-    async function loadCareCard(familyId) {
+    async function loadCareCard(familyId, options = {}) {
         if (!window.GoHomeEdge?.v1CareCardToday) return null;
         try {
-            return await window.GoHomeEdge.v1CareCardToday(familyId);
+            return await window.GoHomeEdge.v1CareCardToday(familyId, options);
         } catch (_error) {
             return null;
         }
+    }
+
+    function refreshPendingCareCard(familyId, family, attempt = 0) {
+        if (pendingCareRefreshTimer) window.clearTimeout(pendingCareRefreshTimer);
+        if (attempt >= 6) return;
+        pendingCareRefreshTimer = window.setTimeout(async () => {
+            pendingCareRefreshTimer = null;
+            const nextCard = await loadCareCard(familyId, { forceRefresh: true });
+            if (!nextCard) return;
+            renderCareCardSummary(nextCard, family);
+            window.GoHomeAppStore?.scheduleCapture?.();
+            if (nextCard.pending_refresh) refreshPendingCareCard(familyId, family, attempt + 1);
+        }, 5000);
     }
 
     async function loadCareCards(familyId) {
@@ -1316,6 +1330,7 @@
                 profile: elderProfile,
             });
             renderCareCardSummary(careCard, primaryFamily);
+            if (careCard?.pending_refresh) refreshPendingCareCard(primaryFamily.id, primaryFamily);
             window.GoHomeAppStore?.scheduleCapture?.();
 
             const [careCards, carePreferences] = await Promise.all([
