@@ -449,18 +449,19 @@
         return /(家里一切平稳|聊聊家常|家里今天很平稳|打个电话聊聊近况|递杯茶|递茶|端水|送到手边|陪在身边)/.test(String(value || ""));
     }
 
-    function careSafeTopicText(value, limit = 38) {
-        return shortText(String(value || "")
+    function careSafeTopicText(value, limit = 38, options = {}) {
+        let text = String(value || "")
             .replace(/<[^>]*>/g, " ")
             .replace(/\{\{[^}]*\}\}/g, " ")
             .replace(/\\(?:r|n|t)+/gi, " ")
             .replace(/&(?:nbsp|amp|quot|lt|gt|#\d+);/gi, " ")
-            .replace(/[_｜|│].*$/g, "")
             .replace(/新闻频道|央视网|中国网|老年频道|公众号|视频号/g, "")
             .replace(/^#+\s*/g, "")
             .replace(/日期：\d{4}\/\d{1,2}\/\d{1,2}.*/g, "")
             .replace(/\s+/g, " ")
-            .trim(), limit);
+            .trim();
+        if (!options.preserveSeparatorText) text = text.replace(/[_｜|│].*$/g, "").trim();
+        return shortText(text, limit);
     }
 
     function friendlySourceLabel(source) {
@@ -495,7 +496,7 @@
             const source = String(item?.source || item?.url || "").toLowerCase();
             if (/(dangjian|cpc\.people|qstheory|theory\.people)/.test(source)) return false;
             const title = careSafeTopicText(item?.title, 80);
-            const summary = careSafeTopicText(item?.summary || item?.content, 120);
+            const summary = careSafeTopicText(item?.summary || item?.content, 120, { preserveSeparatorText: true });
             if (!title || unsafeTopicText(`${title} ${summary}`, { allowAntiFraud: module === "anti_fraud" })) return false;
             const chineseCharacterCount = (title.match(/[\u4e00-\u9fff]/g) || []).length;
             return chineseCharacterCount >= 2 || title.length >= 4;
@@ -537,7 +538,7 @@
         const source = recommendationSource(recommendation);
         const hasCandidate = Boolean(recommendation);
         const candidateTitle = careSafeTopicText(recommendation?.title, 34);
-        const candidateSummary = careSafeTopicText(recommendation?.summary || recommendation?.content, 76);
+        const candidateSummary = careSafeTopicText(recommendation?.summary || recommendation?.content, 76, { preserveSeparatorText: true });
         const moduleCopy = {
             local_hotspots: {
                 type: "本地热点",
@@ -753,7 +754,7 @@
 
     function friendlyTopicBody(contentSignal, interests, recommendation) {
         const count = Array.isArray(contentSignal?.recommendations) ? contentSignal.recommendations.length : 0;
-        const summary = careSafeTopicText(recommendation?.summary, 54);
+        const summary = careSafeTopicText(recommendation?.summary, 54, { preserveSeparatorText: true });
         const title = careSafeTopicText(recommendation?.title, 80);
         if (/^(澎湃新闻|健康活动|报刊)$/.test(title)) return "今天有健康生活内容，可以问问最近饮食、作息和想看的节目。";
         if (/研讨会|举行|活动|趋势|中心|聚焦/.test(title)) return "今天有健康生活内容，可以问问最近饮食、作息和想看的节目。";
