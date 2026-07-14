@@ -16,11 +16,7 @@
         const node = $("companionshipCareStatus");
         if (!node) return;
         node.textContent = label;
-        node.className = `font-label-md text-label-md px-3 py-1 rounded-full ${
-            tone === "good" ? "text-tertiary-container bg-tertiary-fixed"
-                : tone === "warn" ? "text-on-error-container bg-error-container"
-                    : "text-primary bg-primary-fixed"
-        }`;
+        node.className = `editorial-section-link ${tone === "warn" ? "text-[#b42318]" : ""}`;
     }
 
     function setFeedback(message = "") {
@@ -35,7 +31,7 @@
             node.textContent = "";
             node.classList.add("hidden");
             if ($("companionshipMessageMeta")) {
-                $("companionshipMessageMeta").textContent = `${currentFamilyLabel} · 当前展示打开中的关怀提醒`;
+                $("companionshipMessageMeta").textContent = `${currentFamilyLabel} · 最近的关怀提醒`;
             }
             return;
         }
@@ -49,7 +45,7 @@
             node.textContent = "";
             node.classList.add("hidden");
             if ($("companionshipMessageMeta")) {
-                $("companionshipMessageMeta").textContent = `${currentFamilyLabel} · 当前展示打开中的关怀提醒`;
+                $("companionshipMessageMeta").textContent = `${currentFamilyLabel} · 最近的关怀提醒`;
             }
             feedbackTimer = null;
         }, 2500);
@@ -108,6 +104,15 @@
         return text || fallback;
     }
 
+    function escapeHtml(value) {
+        return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
     function setCareImageFallback(message, subtext, icon = "volunteer_activism") {
         const image = $("companionshipCareImage");
         const fallback = $("companionshipCareImageFallback");
@@ -119,8 +124,9 @@
         if (fallback) {
             fallback.classList.remove("hidden");
             const iconNode = fallback.querySelector(".material-symbols-outlined");
-            const messageNode = fallback.querySelector(".font-label-md");
-            const subtextNode = fallback.querySelector(".font-body-md");
+            const paragraphs = fallback.querySelectorAll("p");
+            const messageNode = fallback.querySelector(".font-label-md") || paragraphs[0];
+            const subtextNode = fallback.querySelector(".font-body-md") || paragraphs[1];
             if (iconNode) iconNode.textContent = icon;
             if (messageNode) messageNode.textContent = message;
             if (subtextNode) subtextNode.textContent = subtext;
@@ -211,9 +217,9 @@
 
     async function loadMessages(familyId) {
         if (!window.GoHomeEdge?.v1AppMessages) return [];
-        let messages = await window.GoHomeEdge.v1AppMessages({ family_id: familyId, limit: 6, status: "open" });
+        let messages = await window.GoHomeEdge.v1AppMessages({ family_id: familyId, limit: 8, status: "all" });
         messages = messages.filter((message) => !isSafetyMessage(message));
-        return messages.slice(0, 3);
+        return messages.slice(0, 4);
     }
 
     async function loadCareCard(familyId, options = {}) {
@@ -243,6 +249,15 @@
         }
     }
 
+    async function loadCarePreferences(familyId) {
+        if (!familyId || !window.GoHomeEdge?.v1CarePreferences) return null;
+        try {
+            return await window.GoHomeEdge.v1CarePreferences(familyId);
+        } catch (_error) {
+            return null;
+        }
+    }
+
     function phoneFromProfile(profile) {
         return String(profile?.mobile_phone || profile?.phone || profile?.home_phone || "").replace(/[^\d+]/g, "");
     }
@@ -255,7 +270,7 @@
     }
 
     function contactActions() {
-        const name = currentElderProfile?.display_name || "老人";
+        const name = currentElderProfile?.display_name || "家里";
         const phone = phoneFromProfile(currentElderProfile);
         return [
             {
@@ -283,7 +298,7 @@
                 if (!action.href || action.href === "#") {
                     event.preventDefault();
                     event.stopImmediatePropagation();
-                    setFeedback("还没有填写老人电话，请先到家人资料里补充。");
+                    setFeedback("还没有填写联系电话，请先到家庭联系人资料里补充。");
                 }
                 return;
             }
@@ -298,6 +313,155 @@
                 setFeedback("请在 iOS App 中使用微信联系。 ");
             }
         }, true);
+    }
+
+    function renderProfileSummary(profile) {
+        const name = String(profile?.display_name || "家庭联系人").trim();
+        const city = String(profile?.city || "").trim();
+        const district = String(profile?.district || "").trim();
+        if ($("companionshipProfileName")) $("companionshipProfileName").textContent = name;
+        if ($("companionshipProfileMeta")) {
+            $("companionshipProfileMeta").textContent = city
+                ? `${city}${district ? ` · ${district}` : ""} · 资料已同步`
+                : "完善所在城市后同步天气与本地内容";
+        }
+        $("companionshipProfileStatus")?.classList.toggle("hidden", !profile);
+        renderTopContactActions();
+    }
+
+    function renderTopContactActions() {
+        const container = $("companionshipContactActions");
+        if (!container) return;
+        container.innerHTML = "";
+        contactActions().forEach((action) => {
+            const node = document.createElement(action.href ? "a" : "button");
+            node.className = action.primary ? "primary" : "secondary";
+            node.dataset.action = `contact-${action.key}`;
+            if (action.href) node.href = action.href;
+            else node.type = "button";
+            const icon = document.createElement("span");
+            icon.className = "material-symbols-outlined";
+            icon.textContent = action.icon;
+            const label = document.createElement("span");
+            label.textContent = action.label;
+            node.append(icon, label);
+            bindContactAction(node, action);
+            container.append(node);
+        });
+    }
+
+    function cleanTopicText(value, limit = 54) {
+        const text = String(value || "")
+            .replace(/家里一切平稳|聊聊家常|递杯茶|递茶|端水|送到手边|陪在身边/g, "")
+            .replace(/\s+/g, " ")
+            .trim();
+        if (!text) return "";
+        return text.length > limit ? `${text.slice(0, limit - 3)}...` : text;
+    }
+
+    function topicCandidates(card) {
+        const recommendations = Array.isArray(card?.content_recommendations) ? card.content_recommendations : [];
+        const values = [
+            ...recommendations.flatMap((item) => [item?.title, item?.summary]),
+            ...(Array.isArray(card?.facts) ? card.facts : []),
+            card?.body,
+        ].map((value) => cleanTopicText(value)).filter(Boolean);
+        return values.filter((value, index) => values.indexOf(value) === index).slice(0, 3);
+    }
+
+    function renderTopics(card) {
+        const list = $("companionshipTopicList");
+        if (!list) return;
+        const topics = topicCandidates(card);
+        const fallbackTopics = [
+            "问问今天的天气是否影响出门安排。",
+            "聊聊最近关注的节目、社区活动或家常话题。",
+            "约一个双方都方便的通话或回家时间。",
+        ];
+        const rows = topics.length ? topics : fallbackTopics;
+        const icons = ["wb_sunny", "chat", "calendar_month"];
+        list.innerHTML = "";
+        rows.forEach((topic, index) => {
+            const row = document.createElement("div");
+            row.className = "companion-topic";
+            const icon = document.createElement("span");
+            icon.className = "material-symbols-outlined";
+            icon.textContent = icons[index % icons.length];
+            const text = document.createElement("p");
+            text.textContent = topic;
+            const copy = document.createElement("button");
+            copy.type = "button";
+            copy.dataset.action = "copy-topic";
+            copy.setAttribute("aria-label", "复制话题");
+            copy.innerHTML = '<span class="material-symbols-outlined">content_copy</span>';
+            copy.addEventListener("click", async () => {
+                try {
+                    await navigator.clipboard?.writeText(topic);
+                    setFeedback("话题已复制");
+                } catch (_error) {
+                    setFeedback("长按文字即可复制");
+                }
+            });
+            row.append(icon, text, copy);
+            list.append(row);
+        });
+    }
+
+    function shanghaiDateKey(date = new Date()) {
+        return new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Asia/Shanghai",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).format(date);
+    }
+
+    function annualOccurrence(value) {
+        const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!match) return null;
+        const today = new Date(`${shanghaiDateKey()}T00:00:00+08:00`);
+        const year = today.getFullYear();
+        let target = new Date(`${year}-${match[2]}-${match[3]}T00:00:00+08:00`);
+        if (target < today) target = new Date(`${year + 1}-${match[2]}-${match[3]}T00:00:00+08:00`);
+        return {
+            date: target,
+            days: Math.ceil((target.getTime() - today.getTime()) / 86400000),
+        };
+    }
+
+    function renderImportantDates(preferences) {
+        const list = $("companionshipImportantList");
+        if (!list) return;
+        const schedule = preferences?.metadata?.care_card_schedule || {};
+        const anniversaries = (Array.isArray(schedule.anniversaries) ? schedule.anniversaries : [])
+            .map((item) => ({ ...item, occurrence: annualOccurrence(item.date) }))
+            .filter((item) => item.occurrence)
+            .sort((a, b) => a.occurrence.days - b.occurrence.days)
+            .slice(0, 2);
+        const year = new Date(`${shanghaiDateKey()}T00:00:00+08:00`).getFullYear();
+        const holidays = [
+            { label: "中秋节", date: year === 2026 ? "2026-09-25" : `${year}-09-15` },
+            { label: "国庆节", date: `${year}-10-01` },
+            { label: "元旦", date: `${year + 1}-01-01` },
+        ].map((item) => ({ ...item, occurrence: annualOccurrence(item.date) }))
+            .filter((item) => item.occurrence)
+            .sort((a, b) => a.occurrence.days - b.occurrence.days);
+        const rows = [...anniversaries, ...holidays.slice(0, 1)]
+            .sort((a, b) => a.occurrence.days - b.occurrence.days)
+            .slice(0, 3);
+        if (!rows.length) return;
+        list.innerHTML = rows.map((item, index) => {
+            const date = item.occurrence.date;
+            const dateLabel = `${date.getMonth() + 1}月${date.getDate()}日`;
+            const countdown = item.occurrence.days === 0 ? "今天" : `还有 ${item.occurrence.days} 天`;
+            return `
+                <div class="companion-important-row">
+                    <span class="material-symbols-outlined">${index === 0 && anniversaries.includes(item) ? "cake" : "event"}</span>
+                    <div><h4>${escapeHtml(safeText(item.label, "重要日期"))}</h4><p>${dateLabel}</p></div>
+                    <strong>${countdown}</strong>
+                </div>
+            `;
+        }).join("");
     }
 
     function renderCareCard(card, family) {
@@ -366,6 +530,7 @@
                 actions.append(anchor);
             });
         }
+        renderTopics(card);
     }
 
     function bindMessageCardActions(article, message) {
@@ -403,8 +568,8 @@
         currentFamilyId = family?.id || null;
         currentFamilyLabel = family?.name || "当前家庭";
         list.innerHTML = "";
-        $("companionshipMessageMeta").textContent = `${currentFamilyLabel} · 当前展示打开中的关怀提醒`;
-        $("companionshipMessageCount").textContent = `${messages.length} 条打开中`;
+        $("companionshipMessageMeta").textContent = `${currentFamilyLabel} · 最近的关怀提醒`;
+        $("companionshipMessageCount").textContent = `${messages.length} 条记录`;
         setFeedback(lastActionFeedback);
         messages.forEach((message) => {
             const badge = messageBadge(message.message_type);
@@ -472,9 +637,12 @@
             currentFamilyLabel = family.name || "当前家庭";
             const profilePromise = loadElderProfile(family.id);
             const careCardPromise = loadCareCard(family.id);
+            const preferencesPromise = loadCarePreferences(family.id);
             const messagesPromise = loadMessages(family.id);
-            const [profile, careCard] = await Promise.all([profilePromise, careCardPromise]);
+            const [profile, careCard, preferences] = await Promise.all([profilePromise, careCardPromise, preferencesPromise]);
             currentElderProfile = profile;
+            renderProfileSummary(profile);
+            renderImportantDates(preferences);
             renderCareCard(careCard, family);
             if (careCard?.pending_refresh) refreshPendingCareCard(family);
             window.GoHomeAppStore?.markPageReady?.();
@@ -493,6 +661,10 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
+        $("companionshipTopicRefresh")?.addEventListener("click", () => {
+            const list = $("companionshipTopicList");
+            if (list?.children.length > 1) list.append(list.children[0]);
+        });
         window.GoHomeRefreshPage = () => render();
         render();
     });

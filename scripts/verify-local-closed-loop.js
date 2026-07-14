@@ -368,7 +368,7 @@ async function main() {
     if (image?.configured && image?.api_key_set) pass("image model", image.model || "configured");
     else warn("image model", "not fully configured");
 
-    await checkPage("index.html?app=1", "今日关怀");
+    await checkPage("index.html?app=1", "今日精选");
     await checkPage("monitor.html?app=1", "摄像头");
     await checkPage("events.html?app=1", "事件");
     await checkPage("companionship.html?app=1", "今日关怀");

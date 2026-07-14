@@ -1,6 +1,7 @@
 (function () {
     const $ = (id) => document.getElementById(id);
     const CONTENT_SECTION_IDS = [
+        "edgeHomeCalendarSection",
         "edgeHomeCareSection",
         "edgeHomeCareHistorySection",
         "edgeHomeLocationSection",
@@ -11,6 +12,7 @@
     let lastHomeCareImageUrl = "";
     let lastRenderAt = 0;
     let pendingCareRefreshTimer = null;
+    let activeFeedFilter = "all";
 
     function setText(id, value) {
         const node = $(id);
@@ -60,8 +62,12 @@
             iconNode.textContent = icon;
             iconNode.classList.toggle("fill", icon === "login" || icon === "home" || icon === "call");
         }
+        const labelNode = node.querySelector("[data-action-label]")
+            || Array.from(node.children).find((child) => child.tagName === "SPAN" && !child.classList.contains("material-symbols-outlined"));
         const textNode = Array.from(node.childNodes).find((child) => child.nodeType === Node.TEXT_NODE && child.textContent.trim());
-        if (textNode) {
+        if (labelNode) {
+            labelNode.textContent = label;
+        } else if (textNode) {
             textNode.textContent = ` ${label}`;
         } else {
             node.append(document.createTextNode(` ${label}`));
@@ -361,6 +367,74 @@
             : `${upcoming.label}还有 ${upcoming.days} 天`;
     }
 
+    function renderDateRail(weatherSignal = null, profile = null) {
+        const now = new Date();
+        const dateLabel = new Intl.DateTimeFormat("zh-CN", {
+            timeZone: "Asia/Shanghai",
+            month: "long",
+            day: "numeric",
+            weekday: "short",
+        }).format(now).replace("周", " 周");
+        setText("edgeHomeDate", dateLabel);
+        setText("edgeHomeLunarDate", "未来七天 · 日程与内容已整理");
+
+        const available = Boolean(weatherSignal?.available);
+        const condition = String(weatherSignal?.condition || "").trim();
+        const temperature = Number(weatherSignal?.temperature_c);
+        const city = String(weatherSignal?.city || profile?.city || "").trim();
+        const icon = /雷/.test(condition)
+            ? "thunderstorm"
+            : /雨/.test(condition)
+                ? "rainy"
+                : /雪/.test(condition)
+                    ? "weather_snowy"
+                    : /阴|云/.test(condition)
+                        ? "partly_cloudy_day"
+                        : "light_mode";
+        setText("edgeHomeWeatherIcon", icon);
+        setText("edgeHomeWeatherTemp", available && Number.isFinite(temperature) ? `${temperature}°` : "--°");
+        setText("edgeHomeWeatherCity", city || "天气");
+        setText(
+            "edgeHomeWeatherSub",
+            available ? (condition || String(weatherSignal?.advice || "天气已更新").trim()) : (city ? "天气数据更新中" : "完善城市后显示天气")
+        );
+    }
+
+    function renderWeekCalendar(preferences = null) {
+        const grid = $("edgeHomeWeekGrid");
+        const notes = $("edgeHomeCalendarNotes");
+        if (!grid || !notes) return;
+        const now = new Date(`${shanghaiDateKey()}T12:00:00+08:00`);
+        setText("edgeHomeCalendarMonth", new Intl.DateTimeFormat("zh-CN", {
+            timeZone: "Asia/Shanghai",
+            month: "long",
+        }).format(now));
+        const weekday = ["日", "一", "二", "三", "四", "五", "六"];
+        grid.innerHTML = Array.from({ length: 7 }, (_, index) => {
+            const date = new Date(now.getTime() + index * 86400000);
+            const day = date.getDay();
+            const isWeekend = day === 0 || day === 6;
+            return `
+                <div class="editorial-day ${index === 0 ? "today" : ""} ${isWeekend ? "weekend" : ""}">
+                    <span>${index === 0 ? "今天" : `周${weekday[day]}`}</span>
+                    <strong>${date.getDate()}</strong>
+                    <i></i>
+                </div>
+            `;
+        }).join("");
+
+        const schedule = preferences?.metadata?.care_card_schedule || {};
+        const anniversary = upcomingAnniversary(schedule);
+        const holiday = upcomingHolidayCard();
+        const noteItems = [
+            anniversary || holiday?.title || nextWeekendLabel(),
+            anniversary ? "按每年同月同日提醒" : (holiday?.sub || "适合安排联系或回家计划"),
+        ];
+        notes.innerHTML = noteItems.map((item) => `
+            <div class="editorial-calendar-note"><i></i><span>${escapeHtml(item)}</span></div>
+        `).join("");
+    }
+
     function cardBodyText(card, fallback = "") {
         return String(card?.body || fallback || "").trim().replace(/\s+/g, " ");
     }
@@ -427,7 +501,7 @@
         const region = schedule.content_region || {};
         const city = String(region.city || profile?.city || "").trim();
         const district = String(region.district || profile?.district || "").trim();
-        return `${city}${district ? district : ""}` || "老人所在城市";
+        return `${city}${district ? district : ""}` || "关注地区";
     }
 
     function enabledContentLabels(preferences) {
@@ -471,7 +545,7 @@
                 tone: "warm",
                 title: "今天的养生话题",
                 body: hasCandidate ? "把养生内容改成电话里能说的生活提醒：喝水、作息和最近胃口。" : "只做生活提醒，不替代医疗建议，可以聊喝水、作息和清淡饮食。",
-                meta: hasCandidate ? source : "按老人兴趣",
+                meta: hasCandidate ? source : "按关注主题",
             },
             anti_fraud: {
                 type: "防诈骗",
@@ -485,7 +559,7 @@
                 type: "文娱兴趣",
                 icon: "theater_comedy",
                 tone: "rose",
-                title: "可以聊她爱看的",
+                title: "可以聊关注的内容",
                 body: hasCandidate ? "从电视、戏曲或社区活动里找轻松开场，问问最近有没有想看的节目。" : `围绕${interests}准备一个轻松开场，不强行跳到其他页面。`,
                 meta: hasCandidate ? source : "按兴趣生成",
             },
@@ -495,7 +569,7 @@
                 tone: "calm",
                 title: `围绕${interests.split("、").slice(0, 2).join("、") || "家常"}开口`,
                 body: hasCandidate ? "把今日候选内容改成一句自然问候，先问近况，再看要不要打电话。" : "先问晚饭、天气和最近想看的节目，再决定是否视频或回家。",
-                meta: hasCandidate ? source : "按老人兴趣",
+                meta: hasCandidate ? source : "按关注主题",
             },
         };
         return moduleCopy[module] || null;
@@ -611,8 +685,13 @@
         const tag = href ? "a" : "article";
         const attrs = href ? `href="${escapeHtml(window.GoHomeEdge?.pageHref?.(href) || href)}"` : "";
         const sizeClass = card.size ? ` ${String(card.size).replace(/[^\w-]/g, "")}` : "";
+        const category = /本地/.test(card.type) ? "local"
+            : /养生|天气|健康/.test(card.type) ? "health"
+                : /诈骗|安全/.test(card.type) ? "fraud"
+                    : /文娱|兴趣|问候/.test(card.type) ? "interest"
+                        : "all";
         return `
-            <${tag} ${attrs} class="gohome-push-card ${escapeHtml(card.tone || "calm")}${escapeHtml(sizeClass)}">
+            <${tag} ${attrs} data-feed-category="${category}" class="gohome-push-card ${escapeHtml(card.tone || "calm")}${escapeHtml(sizeClass)}">
                 <div class="gohome-push-card-top">
                     <span class="material-symbols-outlined">${escapeHtml(card.icon || "favorite")}</span>
                     <span class="gohome-push-type">${escapeHtml(card.type || "推送")}</span>
@@ -632,7 +711,7 @@
         if (/^(澎湃新闻|健康活动|报刊)$/.test(title)) return "可聊时令养生";
         if (/研讨会|举行|活动|趋势|中心|聚焦/.test(title)) return "可聊时令养生";
         if (title) return title;
-        if (!count) return "今天聊点她喜欢的";
+        if (!count) return "今天聊点感兴趣的";
         const topic = String(interests || "家常话题").split("、").filter(Boolean).slice(0, 2).join("、") || "家常话题";
         return `可聊${topic}`;
     }
@@ -644,7 +723,7 @@
         if (/^(澎湃新闻|健康活动|报刊)$/.test(title)) return "今天有健康生活内容，可以问问最近饮食、作息和想看的节目。";
         if (/研讨会|举行|活动|趋势|中心|聚焦/.test(title)) return "今天有健康生活内容，可以问问最近饮食、作息和想看的节目。";
         if (summary) return `${summary}，适合电话里轻轻带一句。`;
-        if (!count && contentSignal?.available === false) return "今天先按老人兴趣准备一句自然开场。";
+        if (!count && contentSignal?.available === false) return "今天先按关注主题准备一句自然开场。";
         if (!count) return `围绕${interests}准备一句电话开场。`;
         return "内容搜索已找到可聊方向，先筛成适合家里电话的轻话题。";
     }
@@ -831,6 +910,28 @@
             contentSignal: context.contentSignal,
         });
         feed.innerHTML = pushCards.map(pushCardMarkup).join("");
+        applyHomeFeedFilter();
+    }
+
+    function applyHomeFeedFilter() {
+        document.querySelectorAll("[data-feed-filter]").forEach((button) => {
+            const selected = button.dataset.feedFilter === activeFeedFilter;
+            button.classList.toggle("active", selected);
+            button.setAttribute("aria-selected", selected ? "true" : "false");
+        });
+        document.querySelectorAll("#edgeHomeCareFeed [data-feed-category]").forEach((card) => {
+            const category = card.dataset.feedCategory || "all";
+            card.classList.toggle("hidden", activeFeedFilter !== "all" && category !== activeFeedFilter);
+        });
+    }
+
+    function wireHomeFeedFilters() {
+        document.querySelectorAll("[data-feed-filter]").forEach((button) => {
+            button.addEventListener("click", () => {
+                activeFeedFilter = button.dataset.feedFilter || "all";
+                applyHomeFeedFilter();
+            });
+        });
     }
 
     function isCareCritical(card) {
@@ -1032,14 +1133,13 @@
         const section = $("edgeHomeLocationSection");
         if (!section) return;
         section.classList.remove("hidden");
-        const name = profile?.display_name || "家人";
         const city = String(profile?.city || "").trim();
         const schedule = preferences?.metadata?.care_card_schedule || {};
         const visit = schedule.visit_reminder || {};
         const days = daysSinceDateString(visit.last_visit_at);
-        setText("edgeHomeLocationTitle", city ? `${name}在${city}` : "老人家位置待完善");
+        setText("edgeHomeLocationTitle", city ? `${city} · 家庭位置` : "家庭位置待完善");
         setText("edgeHomeLocationDistance", "距离待授权");
-        setText("edgeHomeLocationSub", "iOS 定位授权接入后，这里显示你和老人家的距离。");
+        setText("edgeHomeLocationSub", "iOS 定位授权接入后，这里显示当前位置与家的实际距离。");
         setText("edgeHomeVisitState", days === null ? "上次回家时间待补充" : `距离上次回家 ${days} 天`);
     }
 
@@ -1055,8 +1155,8 @@
                 fact: "疑似跌倒姿态",
                 factSub: "视觉模型结果触发了高优先级提醒。",
                 feeling: "需要马上确认",
-                feelingSub: "先确认老人状态，再判断是不是误报。",
-                action: "立即联系老人",
+                feelingSub: "先确认家中人员状态，再判断是不是误报。",
+                action: "立即联系家里",
                 actionSub: "如果联系不上，再通知其他家属或邻居。",
                 snapshot: "检测到疑似跌倒候选",
             };
@@ -1184,7 +1284,7 @@
         setText("edgeHomeTime", "填写资料");
         setText("edgeHomeBoxState", "待绑定");
         setText("edgeHomeCameraState", "待接入");
-        setText("edgeHomeTitle", "先填写老人资料。");
+        setText("edgeHomeTitle", "先填写家庭联系人资料。");
         setText("edgeHomeSubtitle", "称呼、电话和所在城市会用于拨号、天气、关怀卡片和后续提醒。");
         const familyId = family?.id ? `?family_id=${encodeURIComponent(family.id)}&next=device_binding.html` : "";
         setAction("edgeHomePrimaryAction", `parent_profile.html${familyId}`, "填写资料", "badge");
@@ -1261,6 +1361,7 @@
                 renderNeedsProfileHome(user, primaryFamily);
                 return;
             }
+            renderDateRail(null, elderProfile);
 
             const currentBinding = bindings.find((item) => String(item.status || "active") !== "revoked") || null;
             if (!currentBinding) {
@@ -1293,7 +1394,7 @@
                     setText("edgeHomeTime", "等待摄像头接入");
                     setText("edgeHomeCameraState", "未接入");
                     setText("edgeHomeTitle", "还没有添加摄像头");
-                    setText("edgeHomeSubtitle", "在 App 里添加摄像头配置，家庭盒子会从云端拉取并在老人家局域网内测试。");
+                    setText("edgeHomeSubtitle", "在 App 里添加摄像头配置，家庭盒子会从云端拉取并在家中局域网内测试。");
                     setAction("edgeHomePrimaryAction", familyPath("connect.html", primaryFamily), "添加摄像头", "nest_cam_indoor");
                     toggleSetupMode(true);
                 }
@@ -1337,6 +1438,7 @@
                 careCardsPromise,
                 carePreferencesPromise,
             ]);
+            renderWeekCalendar(carePreferences);
             const currentCareKey = String(careCard?.card_id || careCard?.id || "");
             const currentCareDate = String(careCard?.card_date || "");
             const historyCards = [careCard, ...careCards].filter((card) => {
@@ -1363,6 +1465,7 @@
                 loadWeatherSignal(primaryFamily.id, elderProfile),
                 loadContentRecommendations(primaryFamily.id, elderProfile),
             ]).then(([weatherSignal, contentSignal]) => {
+                renderDateRail(weatherSignal, elderProfile);
                 renderCareCardFeed(careCards, primaryFamily, {
                     careCard,
                     profile: elderProfile,
@@ -1392,7 +1495,7 @@
                 setText("edgeHomeFactSub", event ? `${GoHomeEdge.fmtDateTime(event.occurred_at)} 触发，来自 ${event.camera_name || camera.name || "摄像头"}。` : "当前优先展示实时视频，证据截图稍后同步。");
                 setText("edgeHomeFeelingTitle", event ? "有一条提醒待确认" : "家里平稳");
                 setText("edgeHomeFeelingSub", event ? "这类信息应该进入告警处理流程，而不是只作为普通动态展示。" : "不影响你先进入守护页查看实时画面。");
-                setText("edgeHomeActionTitle", event ? "先查看事件，再联系老人" : "继续观察");
+                setText("edgeHomeActionTitle", event ? "先查看事件，再联系家里" : "继续观察");
                 setText("edgeHomeActionSub", event ? "确认安全后可以标记已处理；误报也要保留记录。" : "等检测摘要同步后，首页会自动更新。");
                 setText("edgeHomeSnapshotTime", "等待检测摘要");
                 setText("edgeHomeSnapshotRoom", camera.room || camera.name || "家里动态");
@@ -1416,7 +1519,7 @@
             setText("edgeHomeFactSub", event ? `${GoHomeEdge.fmtDateTime(event.occurred_at)} 触发，来自 ${event.camera_name || camera.name || "摄像头"}。` : state.factSub);
             setText("edgeHomeFeelingTitle", event ? "有一条提醒待确认" : state.feeling);
             setText("edgeHomeFeelingSub", event ? "这类信息应该进入告警处理流程，而不是只作为普通动态展示。" : state.feelingSub);
-            setText("edgeHomeActionTitle", event ? "先查看事件，再联系老人" : state.action);
+            setText("edgeHomeActionTitle", event ? "先查看事件，再联系家里" : state.action);
             setText("edgeHomeActionSub", event ? "确认安全后可以标记已处理；误报也要保留记录。" : state.actionSub);
             setText("edgeHomeSnapshotTime", `${GoHomeEdge.fmtTime(snapshot.captured_at)} 更新`);
             setText("edgeHomeSnapshotRoom", camera.room || camera.name || "家里动态");
@@ -1459,6 +1562,9 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
+        renderDateRail();
+        renderWeekCalendar();
+        wireHomeFeedFilters();
         render();
         document.addEventListener("visibilitychange", () => {
             if (document.visibilityState === "visible" && Date.now() - lastRenderAt > 180000) {

@@ -1,259 +1,167 @@
 <!DOCTYPE html>
-
-<html lang="zh-CN"><head>
+<html lang="zh-CN">
+<head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家</title>
-<script src="assets/scripts/app-state-store.js?v=20260713-appstore-4"></script>
-
+<script src="assets/scripts/app-state-store.js?v=20260714-appstore-5"></script>
 <link rel="icon" href="data:,"/>
 <link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
-<style>
-        body {
-            -webkit-tap-highlight-color: transparent;
-        }
-        .ambient-glow {
-            box-shadow: 0 4px 24px -4px rgba(54, 67, 53, 0.12);
-        }
-        .soft-shadow {
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
-        }
-    </style>
-<style>
-    body {
-      min-height: max(884px, 100dvh);
-    }
-  </style>
-
-<style id="gohome-app-minimal-adapt">
-  :root {
-    --safe-top: env(safe-area-inset-top, 0px);
-    --safe-right: env(safe-area-inset-right, 0px);
-    --safe-bottom: env(safe-area-inset-bottom, 0px);
-    --safe-left: env(safe-area-inset-left, 0px);
-  }
-  html, body {
-    min-height: 100dvh;
-    background: #fbf9f8;
-  }
-  body {
-    padding-left: var(--safe-left);
-    padding-right: var(--safe-right);
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
-  nav.fixed.bottom-0,
-  nav.docked.bottom-0,
-  nav.pb-safe-area-bottom {
-    padding-bottom: calc(10px + var(--safe-bottom)) !important;
-  }
-  @media (display-mode: standalone) {
-    body {
-      padding-top: var(--safe-top);
-    }
-  }
-</style>
 <link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260709-home-feed-2"/>
+<link rel="stylesheet" href="assets/styles/editorial-home-companion.css?v=20260714-editorial-1"/>
 </head>
-<body class="gohome-page-index bg-background text-on-background min-h-screen pb-[90px] md:pb-0">
-<!-- TopAppBar -->
-<header class="flex justify-between items-center w-full px-margin-page py-4 max-w-screen-xl mx-auto bg-surface dark:bg-background docked full-width top-0 z-40 sticky">
-<div class="flex items-center gap-3">
-<div class="w-10 h-10 rounded-full overflow-hidden bg-surface-container-high shrink-0">
-<img alt="用户头像" class="w-full h-full object-cover" data-alt="A warm, inviting portrait photo of an elderly person smiling gently, bathed in soft, natural morning light, creating a sense of peace and comfort. Corporate modern aesthetic." src="assets/stitch-images/23-f0455eccfc.jpg"/>
-</div>
-<h1 class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed-dim">回家</h1>
-</div>
-<a aria-label="通知" href="notifications.html" class="w-10 h-10 rounded-full flex items-center justify-center text-primary dark:text-primary-fixed-dim hover:bg-surface-container-low dark:hover:bg-surface-container-highest transition-colors active:opacity-80 active:scale-95 duration-200">
-<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">notifications</span>
-</a>
+<body class="gohome-page-index bg-white text-[#111111] min-h-screen">
+<header class="editorial-topbar" aria-label="首页工具栏">
+  <div class="editorial-topbar-actions">
+    <a class="editorial-icon-button" href="notifications.html" data-route="notifications.html" aria-label="通知">
+      <span class="material-symbols-outlined">notifications</span>
+      <i class="editorial-notification-dot" aria-hidden="true"></i>
+    </a>
+  </div>
 </header>
-<main class="max-w-screen-xl mx-auto px-margin-page pb-stack-lg">
-<section id="edgeHomeHero" class="gohome-home-hero">
-<div class="gohome-home-hero-top">
-<div class="min-w-0">
-<p id="edgeHomeFamilyLine" class="gohome-kicker">默认家庭</p>
-<h2 id="edgeHomeLeadTitle" class="gohome-home-title">今天也看看家里</h2>
-<p id="edgeHomeLeadSub" class="gohome-home-sub">家庭盒子连接后，这里会汇总天气、话题、家里状态和回家提醒。</p>
-</div>
-<span id="edgeHomeCareStatus" class="gohome-status-pill muted">家庭概览</span>
-</div>
-<div id="edgeHomeStatusStrip" class="gohome-status-strip">
-<span><i></i>家庭盒子</span>
-<span><i></i>家中画面</span>
-<span><i></i>事件提醒</span>
-</div>
-</section>
-<section id="edgeHomeSetupPanel" class="hidden gohome-section-tight">
-<div class="app-soft-card bg-white p-5">
-<div class="flex items-start justify-between gap-3">
-<div>
-<p class="gohome-kicker">新家配置</p>
-<h3 id="edgeHomeTitle" class="mt-1 font-display text-[20px] font-bold leading-tight text-on-surface">先完成家庭配置</h3>
-<p id="edgeHomeSubtitle" class="mt-2 font-sans text-[13px] leading-6 text-on-surface-variant">完成老人资料、盒子绑定和摄像头配置后，再进入首页。</p>
-</div>
-<span id="edgeHomeSetupBadge" class="shrink-0 rounded-full bg-primary-container px-3 py-1 font-sans text-[11px] font-bold text-primary">未完成</span>
-</div>
-<div class="mt-5 space-y-3">
-<div class="flex items-center justify-between rounded-2xl bg-surface-container-low px-4 py-3">
-<span class="font-sans text-[13px] text-on-surface">账号</span>
-<strong id="edgeHomeAccountState" class="font-sans text-[13px] text-on-surface">未登录</strong>
-</div>
-<div class="flex items-center justify-between rounded-2xl bg-surface-container-low px-4 py-3">
-<span class="font-sans text-[13px] text-on-surface">家庭</span>
-<strong id="edgeHomeFamilyState" class="font-sans text-[13px] text-on-surface">未创建</strong>
-</div>
-<div class="flex items-center justify-between rounded-2xl bg-surface-container-low px-4 py-3">
-<span class="font-sans text-[13px] text-on-surface">老人资料</span>
-<strong id="edgeHomeProfileState" class="font-sans text-[13px] text-on-surface">待填写</strong>
-</div>
-<div class="flex items-center justify-between rounded-2xl bg-surface-container-low px-4 py-3">
-<span class="font-sans text-[13px] text-on-surface">盒子与摄像头</span>
-<strong id="edgeHomeBindingState" class="font-sans text-[13px] text-on-surface">待绑定</strong>
-</div>
-</div>
-<div class="mt-5 grid grid-cols-2 gap-3">
-<a id="edgeHomePrimaryAction" href="login.html" class="h-12 rounded-full bg-primary px-4 font-label-md text-label-md text-on-primary flex items-center justify-center gap-1">
-<span class="material-symbols-outlined text-[20px]">login</span>
-去登录
-</a>
-<a id="edgeHomeSecondaryAction" href="family.html" class="h-12 rounded-full bg-surface-container-low px-4 font-label-md text-label-md text-on-surface flex items-center justify-center gap-1">
-<span class="material-symbols-outlined text-[20px]">groups</span>
-家庭
-</a>
-</div>
-</div>
-</section>
-<section id="edgeHomeCarePreviewSection" class="gohome-section-tight hidden">
-<div class="gohome-section-heading gohome-section-heading-compact gohome-care-hero-heading">
-<div>
-<h3>今日关怀</h3>
-<p>图片里是完整图文，页面只保留生成依据。</p>
-</div>
-</div>
-<a id="edgeHomeCareCardLink" class="gohome-care-feature" href="companionship.html">
-<div id="edgeHomeCareImageFrame" class="gohome-care-feature-image">
-<img id="edgeHomeCareImage" alt="今日关怀图文卡" class="hidden" loading="eager"/>
-<div id="edgeHomeCareImageFallback">
-<span class="material-symbols-outlined">volunteer_activism</span>
-<p>今日关怀</p>
-<p>家里近况会整理成一张完整卡片</p>
-</div>
-</div>
-<div class="gohome-care-feature-copy">
-<p id="edgeHomeCareMeta">当前家庭 · 今日</p>
-<h4 id="edgeHomeCareTitle">今日关怀</h4>
-<p id="edgeHomeCareBody">家里状态、提醒和适合联系的话题会汇总在这里。</p>
-<div id="edgeHomeCareFacts" class="gohome-mini-facts"></div>
-</div>
-</a>
-</section>
-<section id="edgeHomeCareSection" class="gohome-section-tight hidden">
-<div class="gohome-section-heading gohome-section-heading-compact">
-<div>
-<h3>今日信号</h3>
-<p id="edgeHomeCareFeedStatus">天气、日历、家里状态和可聊内容会按你的设置筛选。</p>
-</div>
-</div>
-<div id="edgeHomeCareFeed" class="gohome-push-feed">
-<article class="gohome-push-card">
-<div class="gohome-push-icon">
-<span class="material-symbols-outlined">favorite</span>
-</div>
-<p>天气、日历和家里状态会整理在这里</p>
-</article>
-</div>
-</section>
-<section id="edgeHomeCareHistorySection" class="gohome-section-tight hidden">
-<div class="gohome-section-heading gohome-section-heading-compact">
-<div>
-<h3>最近关怀</h3>
-<p id="edgeHomeCareHistoryStatus">像刷消息一样回看最近生成的关怀卡。</p>
-</div>
-</div>
-<div id="edgeHomeCareHistory" class="gohome-care-history-feed"></div>
-</section>
-<section id="edgeHomeLocationSection" class="gohome-section-tight hidden">
-<div class="gohome-map-panel">
-<div class="gohome-map-visual" aria-hidden="true">
-<div class="gohome-map-grid"></div>
-<div class="gohome-map-route"></div>
-<div class="gohome-map-pin home">
-<span class="material-symbols-outlined">home</span>
-</div>
-<div class="gohome-map-pin me">
-<span class="material-symbols-outlined">near_me</span>
-</div>
-</div>
-<div class="gohome-map-copy">
-<p class="gohome-kicker">位置与回家</p>
-<h3 id="edgeHomeLocationTitle">老人家位置待完善</h3>
-<p id="edgeHomeLocationSub">补充城市和上次回家日期后，首页会形成回家提醒。</p>
-<div class="gohome-map-stats">
-<div>
-<span>当前位置距离</span>
-<strong id="edgeHomeLocationDistance">待授权</strong>
-</div>
-<div>
-<span>回家间隔</span>
-<strong id="edgeHomeVisitState">待补充</strong>
-</div>
-</div>
-</div>
-</div>
-</section>
-<section id="edgeHomeMetricsSection" class="gohome-section-tight">
-<div class="gohome-section-heading">
-<div>
-<h3>家庭状态</h3>
-<p>只展示真实同步状态，不用功能入口填充首页。</p>
-</div>
-</div>
-<div class="gohome-home-metrics">
-<div>
-<span class="material-symbols-outlined">router</span>
-<p>盒子</p>
-<strong id="edgeHomeBoxState">—</strong>
-</div>
-<div>
-<span class="material-symbols-outlined">linked_camera</span>
-<p>摄像头</p>
-<strong id="edgeHomeCameraState">—</strong>
-</div>
-<div>
-<span class="material-symbols-outlined">event_available</span>
-<p>今日事件</p>
-<strong id="edgeHomeEventState">—</strong>
-</div>
-</div>
-</section>
+
+<main class="editorial-main">
+  <section class="editorial-date-rail" aria-label="日期和天气">
+    <div>
+      <h2 id="edgeHomeDate">今天</h2>
+      <p id="edgeHomeLunarDate">日程正在整理</p>
+    </div>
+    <div class="editorial-weather">
+      <div class="editorial-weather-main">
+        <span id="edgeHomeWeatherIcon" class="material-symbols-outlined">partly_cloudy_day</span>
+        <span id="edgeHomeWeatherTemp">--°</span>
+        <span id="edgeHomeWeatherCity">天气</span>
+      </div>
+      <p id="edgeHomeWeatherSub" class="editorial-weather-sub">使用已保存的城市</p>
+    </div>
+  </section>
+
+  <section id="edgeHomeSetupPanel" class="hidden editorial-setup-panel">
+    <h3 id="edgeHomeTitle">先完成家庭配置</h3>
+    <p id="edgeHomeSubtitle">完成资料、盒子绑定和摄像头配置后，再进入首页。</p>
+    <span id="edgeHomeSetupBadge" class="sr-only">未完成</span>
+    <div class="editorial-setup-list">
+      <div class="editorial-setup-row"><span>账号</span><strong id="edgeHomeAccountState">未登录</strong></div>
+      <div class="editorial-setup-row"><span>家庭</span><strong id="edgeHomeFamilyState">未创建</strong></div>
+      <div class="editorial-setup-row"><span>资料</span><strong id="edgeHomeProfileState">待填写</strong></div>
+      <div class="editorial-setup-row"><span>盒子与摄像头</span><strong id="edgeHomeBindingState">待绑定</strong></div>
+    </div>
+    <div class="editorial-setup-actions">
+      <a id="edgeHomePrimaryAction" class="editorial-button-primary" href="login.html">
+        <span class="material-symbols-outlined">login</span><span>去登录</span>
+      </a>
+      <a id="edgeHomeSecondaryAction" class="editorial-button-secondary" href="family.html">
+        <span class="material-symbols-outlined">groups</span><span>家庭</span>
+      </a>
+    </div>
+  </section>
+
+  <section id="edgeHomeCarePreviewSection" class="hidden editorial-section">
+    <div class="editorial-section-head">
+      <h3>今日精选</h3>
+      <a class="editorial-section-link" href="companionship.html" data-route="companionship.html">
+        查看完整内容<span class="material-symbols-outlined">chevron_right</span>
+      </a>
+    </div>
+    <a id="edgeHomeCareCardLink" class="editorial-feature" href="companionship.html">
+      <div id="edgeHomeCareImageFrame" class="editorial-feature-media">
+        <img id="edgeHomeCareImage" class="hidden" alt="今日精选图文" loading="eager"/>
+        <div id="edgeHomeCareImageFallback" class="editorial-feature-fallback">
+          <span class="material-symbols-outlined">volunteer_activism</span>
+          <p>今日精选</p>
+          <p>内容准备好后会直接显示在这里</p>
+        </div>
+      </div>
+      <div class="editorial-feature-copy">
+        <p id="edgeHomeCareMeta">今日 · 图文关怀</p>
+        <h4 id="edgeHomeCareTitle">今天值得看的一条内容</h4>
+        <p id="edgeHomeCareBody">结合天气、日历和关注内容生成。</p>
+        <div id="edgeHomeCareFacts" class="gohome-mini-facts"></div>
+      </div>
+    </a>
+  </section>
+
+  <section id="edgeHomeCalendarSection" class="editorial-section">
+    <div class="editorial-section-head">
+      <h3>接下来</h3>
+      <p id="edgeHomeCalendarMonth">本月</p>
+    </div>
+    <div class="editorial-week">
+      <div id="edgeHomeWeekGrid" class="editorial-week-grid" aria-label="未来七天"></div>
+    </div>
+    <div id="edgeHomeCalendarNotes" class="editorial-calendar-notes"></div>
+  </section>
+
+  <section id="edgeHomeLocationSection" class="hidden editorial-section">
+    <div class="editorial-section-head">
+      <h3>家的距离</h3>
+      <p>按定位权限更新</p>
+    </div>
+    <div class="editorial-map-panel">
+      <div class="editorial-map-visual" aria-hidden="true">
+        <i class="editorial-map-road one"></i>
+        <i class="editorial-map-road two"></i>
+        <i class="editorial-map-road three"></i>
+        <i class="editorial-map-route"></i>
+        <span class="editorial-map-pin me"></span>
+        <span class="editorial-map-pin home"><span class="material-symbols-outlined">home</span></span>
+      </div>
+      <div class="editorial-map-copy">
+        <div>
+          <h3 id="edgeHomeLocationTitle">家庭位置待完善</h3>
+          <div class="editorial-map-stats">
+            <div><span>当前位置距离</span><strong id="edgeHomeLocationDistance">待授权</strong></div>
+            <div><span>上次回家</span><strong id="edgeHomeVisitState">待补充</strong></div>
+          </div>
+        </div>
+        <a class="editorial-map-action" href="parent_profile.html" data-route="parent_profile.html">完善位置</a>
+        <p id="edgeHomeLocationSub">授权定位后显示当前位置与家的实际距离。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="edgeHomeCareSection" class="hidden editorial-section">
+    <div class="editorial-section-head">
+      <h3>为你推荐</h3>
+      <p id="edgeHomeCareFeedStatus">按关注内容筛选</p>
+    </div>
+    <div class="editorial-filter-row" role="tablist" aria-label="内容分类">
+      <button class="editorial-filter active" type="button" data-feed-filter="all">推荐</button>
+      <button class="editorial-filter" type="button" data-feed-filter="local">本地</button>
+      <button class="editorial-filter" type="button" data-feed-filter="health">健康</button>
+      <button class="editorial-filter" type="button" data-feed-filter="fraud">防诈骗</button>
+      <button class="editorial-filter" type="button" data-feed-filter="interest">兴趣</button>
+    </div>
+    <div id="edgeHomeCareFeed" class="gohome-push-feed gohome-story-grid" aria-live="polite"></div>
+  </section>
+
+  <section id="edgeHomeCareHistorySection" class="hidden editorial-section">
+    <div class="editorial-section-head">
+      <h3>往期图文</h3>
+      <p id="edgeHomeCareHistoryStatus">最近生成的内容</p>
+    </div>
+    <div id="edgeHomeCareHistory" class="gohome-care-history-feed editorial-history-strip"></div>
+  </section>
+
+  <div class="hidden" aria-hidden="true">
+    <span id="edgeHomeFamilyLine"></span><span id="edgeHomeLeadTitle"></span><span id="edgeHomeLeadSub"></span>
+    <span id="edgeHomeCareStatus"></span><span id="edgeHomeStatusStrip"></span>
+    <span id="edgeHomeBoxState"></span><span id="edgeHomeCameraState"></span><span id="edgeHomeEventState"></span>
+    <span id="edgeHomeDevice"></span><span id="edgeHomeTime"></span>
+  </div>
 </main>
-<!-- BottomNavBar -->
-<nav class="fixed bottom-0 left-0 w-full flex justify-around items-center px-2 pb-6 pt-3 bg-surface dark:bg-surface-dim shadow-[0_-4px_12px_rgba(0,0,0,0.04)] shadow-lg docked full-width z-50 rounded-t-xl md:hidden">
-<a class="flex flex-col items-center justify-center bg-primary-container dark:bg-primary text-on-primary-container dark:text-on-primary rounded-2xl px-4 py-1.5 scale-90 duration-150 ease-in-out hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
-<span class="material-symbols-outlined mb-1" style="font-variation-settings: 'FILL' 1;">home</span>
-<span class="font-label-md text-label-md">首页</span>
-</a>
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
-<span class="material-symbols-outlined mb-1">security</span>
-<span class="font-label-md text-label-md">守护</span>
-</a>
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
-<span class="material-symbols-outlined mb-1">history</span>
-<span class="font-label-md text-label-md">事件</span>
-</a>
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
-<span class="material-symbols-outlined mb-1">volunteer_activism</span>
-<span class="font-label-md text-label-md">陪伴</span>
-</a>
-<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-secondary-fixed-dim px-4 py-1.5 hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors" href="#">
-<span class="material-symbols-outlined mb-1">person</span>
-<span class="font-label-md text-label-md">我的</span>
-</a>
+
+<nav class="editorial-bottom-nav" aria-label="主导航">
+  <a class="active" href="index.html" data-route="index.html" aria-current="page"><span class="material-symbols-outlined">home</span><span>首页</span></a>
+  <a href="monitor.html" data-route="monitor.html"><span class="material-symbols-outlined">shield</span><span>守护</span></a>
+  <a href="events.html" data-route="events.html"><span class="material-symbols-outlined">event_note</span><span>事件</span></a>
+  <a href="companionship.html" data-route="companionship.html"><span class="material-symbols-outlined">volunteer_activism</span><span>陪伴</span></a>
+  <a href="privacy.html" data-route="privacy.html"><span class="material-symbols-outlined">person</span><span>我的</span></a>
 </nav>
 
 <script src="assets/scripts/edge-client.js?v=20260714-perf-3"></script>
-<script src="assets/scripts/home-live.js?v=20260714-perf-3"></script>
+<script src="assets/scripts/home-live.js?v=20260714-editorial-1"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260713-appstore-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
-</body></html>
+</body>
+</html>
