@@ -592,17 +592,20 @@ function createLocalAppServer(options = {}) {
     ].join("\n");
 
     const defaultCareImagePrompt = [
-        "生成一张 1:1 方形中文关怀图文卡片。",
-        "画面用于家属端首页和陪伴页展示，是温暖生活推送，不是告警证据。",
-        "美术方向参考精致电商活动封面和生活方式品牌卡片：单一主视觉、干净留白、柔和光线、温馨家居场景、可爱但不幼稚。",
-        "画面要像一张可直接推送给家属的温暖海报，主题和卡片标题强相关。",
-        "如果主题来自天气、节日、纪念日、回家间隔或老人兴趣，主视觉必须直接体现这个主题，不要生成泛泛的家庭关怀模板。",
-        "画面必须有清晰中文标题和一句 10 到 16 字短关怀文案，文字少、端正、可读，不要密集排版。",
-        "画面里的中文必须直接使用卡片标题和短句，不要额外生成英文、品牌词、角标或说明文字。",
-        "可以出现插画式客厅、餐桌、窗台、节日花束、天气小物、电话问候、日历贴纸等场景元素。",
-        "文案只能表达远程关心，例如打电话、发微信、提醒喝水、周末回家看看；不要写递茶、端水、送到手边或陪在身边。",
-        "不要出现品牌字样、logo、角标、水印、奖章、贴纸式品牌标签或无关徽章。",
-        "不要画成后台管理卡片、按钮面板、排行榜、促销角标或信息堆叠 UI。",
+        "你是回家 App 的视觉设计师，生成一张 1:1 方形中文生活方式编辑视觉。",
+        "卡片用于年轻家属阅读的首页信息流，不是告警证据，也不是老年用品宣传页。",
+        "固定视觉系统：纯白或接近纯白占主要面积，纯黑用于标题和结构，姜黄色 #D49A24 只作单一强调色；允许极少量中性浅灰，不使用其他主色。",
+        "风格参考高级生活方式电商编辑页和现代中文杂志：克制、清晰、年轻、留白准确、信息层级明确，不做传统贺卡。",
+        "温暖感来自自然日光、真实生活细节和具体主题，不依靠米黄滤镜、复古泛黄或大面积奶油色背景。",
+        "主视觉使用一个近景生活静物或局部场景，例如水杯与窗影、电话与日历、花束与餐桌一角；不要画完整客厅全景，不要用泛化的幸福家庭模板。",
+        "版式采用不对称编辑构图，标题左对齐，边距充足；画面、标题和留白直接落在整张方图上，不要再画卡片容器、相框或海报纸张。",
+        "全图严格只有两个文字块：指定中文标题恰好出现一次，指定短句恰好出现一次；不得重复、改写、补充或在其他位置再次出现。",
+        "两个文字块必须逐字使用、端正清晰、无错别字；除此之外不要生成任何文字、数字、英文或装饰标签。",
+        "所有文字完整放在画面内侧留白区域，右侧和底部保留充足空间，任何字都不能贴边、溢出、遮挡或被裁切。",
+        "标题使用中等字号黑体，可自然分成两行，每行 4 到 7 个汉字；短句使用较小字号并保持一行，不要为了填满画面放大文字。",
+        "禁止水彩、蜡笔、儿童绘本、Q 版漫画、卡通老人、怀旧年画、3D 盲盒、廉价促销海报和模板化 AI 插画风格。",
+        "禁止大面积米黄、棕色、粉色、橙色渐变，禁止任何外轮廓、圆角边框、相框、厚重阴影、金色边框、发光文字、贴纸、角标、奖章、logo 和水印。",
+        "文案只能表达远程关心，例如打电话、发消息、提醒喝水或约定回家；不要写递茶、端水、送到手边或陪在身边。",
         "不要出现真实老人肖像、监控画面、跌倒、火灾、医疗诊断、恐慌表情或红色警报风格。",
     ].join("\n");
 
@@ -647,6 +650,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function imageRuntimeConfig() {
+        const prompt = envFirst(["GOHOME_CARE_IMAGE_PROMPT"], defaultCareImagePrompt);
         return {
             capability_id: "care-card-image",
             api_key: envFirst(["GOHOME_IMAGE_API_KEY", "GOHOME_WAN_API_KEY", "DASHSCOPE_API_KEY", "WAN_API_KEY"]),
@@ -654,8 +658,9 @@ function createLocalAppServer(options = {}) {
                 envFirst(["GOHOME_IMAGE_BASE_URL", "GOHOME_WAN_BASE_URL", "DASHSCOPE_BASE_URL", "WAN_BASE_URL"])
             ),
             model: envFirst(["GOHOME_IMAGE_MODEL", "GOHOME_WAN_MODEL", "WAN_MODEL"], "wan2.7-image"),
-            prompt: envFirst(["GOHOME_CARE_IMAGE_PROMPT"], defaultCareImagePrompt),
+            prompt,
             prompt_source: process.env.GOHOME_CARE_IMAGE_PROMPT ? "env" : "default",
+            prompt_fingerprint: sha256(prompt).slice(0, 12),
         };
     }
 
@@ -3781,6 +3786,22 @@ function createLocalAppServer(options = {}) {
         return String(recommendation?.summary || recommendation?.title || "").trim();
     }
 
+    function careImageCaption(card) {
+        const body = String(card?.body || "").replace(/\s+/g, " ").trim();
+        if (/喝水/.test(body)) return "电话里提醒喝水";
+        if (/回家|离家/.test(body)) return "约好下次回家";
+        if (/发消息|发微信/.test(body)) return "发一句具体问候";
+        if (/打电话|联系/.test(body)) return "今天打个电话";
+        if (/节日|生日|纪念日/.test(body)) return "提前准备一句问候";
+        const clauses = body.split(/[，。；,;]/).map((item) => item.trim()).filter(Boolean);
+        const remoteAction = /(打电话|发消息|发微信|问候|提醒|聊聊|回家|周末|约个时间)/;
+        const preferred = clauses.find((item) => remoteAction.test(item) && item.length <= 18)
+            || clauses.find((item) => item.length >= 6 && item.length <= 18)
+            || clauses[0]
+            || "今天记得联系一下";
+        return preferred.slice(0, 18);
+    }
+
     function buildCareImagePrompt(card, context, runtime = imageRuntimeConfig()) {
         const facts = (Array.isArray(card.facts) ? card.facts : []).slice(0, 3).map((item) => String(item || "").trim()).filter(Boolean);
         const schedule = context?.preferences?.care_card_schedule || {};
@@ -3790,20 +3811,12 @@ function createLocalAppServer(options = {}) {
         return [
             runtime.prompt,
             "",
-            `卡片标题：${compactPromptText(card.title, 16)}`,
-            `卡片短句：${compactPromptText(card.body, 34)}`,
-            facts.length ? `事实依据摘要：${facts.join("；")}` : "",
-            `老人兴趣话题：${topicText}`,
-            careImageBrief(card) ? `视觉建议：${compactPromptText(careImageBrief(card), 70)}` : "",
-            "生成要求：方形 1:1，像精致电商活动封面和温暖生活方式卡片。",
-            "构图要有明确生活场景，例如窗边餐桌、客厅沙发、节日花束、电话问候、天气小物或日历贴纸。",
-            "主视觉必须对应当天卡片主题，不要用通用家庭关怀模板糊弄。",
-            "中文字只保留标题和一句短句，排版清爽，必须清晰、端正、无错别字，不能像后台说明。",
-            "不要额外生成英文、品牌词、角标或解释性小字；图片本身就是完整图文卡片。",
-            "标题和短句必须是远程关心语气，例如打电话、发微信、提醒喝水、周末回家看看；不要写递茶、端水、送到手边或陪在身边。",
-            "不要出现品牌字样、logo、角标、水印、奖章、贴纸式品牌标签或无关徽章。",
-            "不要画成后台管理卡片、按钮面板、排行榜、促销角标或信息堆叠 UI。",
-            "不要画真实监控画面、真实老人肖像、跌倒火灾等危险证据画面，也不要制造恐慌或医疗感。",
+            `唯一标题（逐字使用）：${compactPromptText(card.title, 16)}`,
+            `唯一短句（逐字使用）：${careImageCaption(card)}`,
+            facts.length ? `内部事实背景（只用于理解主题，绝对不要排进画面）：${facts.join("；")}` : "",
+            `兴趣背景（只决定选材，不要显示这些文字）：${topicText}`,
+            careImageBrief(card) ? `主题物件建议（只决定场景，不得覆盖上述视觉系统）：${compactPromptText(careImageBrief(card), 70)}` : "",
+            "最终检查：方形 1:1；白、黑、姜黄三色统一；只有一个主视觉；标题只出现一次；短句只出现一次；没有外框和其他文字；逐字检查文字完整且未被裁切。",
         ].filter(Boolean).join("\n");
     }
 
@@ -4909,12 +4922,13 @@ function createLocalAppServer(options = {}) {
             context,
             image_size: careImageSize(),
             prompt_source: runtime.prompt_source,
+            prompt_fingerprint: runtime.prompt_fingerprint,
         }));
         const job = modelJob({
             family_id: familyId,
             purpose: "care_card_image_generation",
             model: runtime.model,
-            prompt_version: `care-image:${runtime.prompt_source}`,
+            prompt_version: `care-image:${runtime.prompt_source}:${runtime.prompt_fingerprint}`,
             input_hash: inputHash,
             output_status: "pending",
             request_payload: {

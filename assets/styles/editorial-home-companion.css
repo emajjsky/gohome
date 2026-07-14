@@ -1265,6 +1265,10 @@ body.gohome-page-index .editorial-feature-copy {
   display: block;
 }
 
+body.gohome-page-index .editorial-feature.has-generated-image .editorial-feature-copy {
+  display: none;
+}
+
 body.gohome-page-index .editorial-feature-copy > p:first-child {
   margin-bottom: 5px;
   color: var(--editorial-accent);

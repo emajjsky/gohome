@@ -1489,6 +1489,7 @@ async function main() {
             GOHOME_IMAGE_BASE_URL: process.env.GOHOME_IMAGE_BASE_URL,
             GOHOME_IMAGE_API_KEY: process.env.GOHOME_IMAGE_API_KEY,
             GOHOME_IMAGE_MODEL: process.env.GOHOME_IMAGE_MODEL,
+            GOHOME_CARE_IMAGE_PROMPT: process.env.GOHOME_CARE_IMAGE_PROMPT,
             GOHOME_IMAGE_REQUEST_MODE: process.env.GOHOME_IMAGE_REQUEST_MODE,
             GOHOME_CARE_IMAGE_POLL_INTERVAL_MS: process.env.GOHOME_CARE_IMAGE_POLL_INTERVAL_MS,
             GOHOME_CARE_IMAGE_MAX_POLLS: process.env.GOHOME_CARE_IMAGE_MAX_POLLS,
@@ -1511,7 +1512,13 @@ async function main() {
                 assert.equal(payload.parameters.stream, undefined);
                 assert.equal(payload.parameters.enable_interleave, undefined);
                 assert.match(payload.input.messages[0].content[0].text, /1:1/);
-                assert.match(payload.input.messages[0].content[0].text, /卡片标题/);
+                assert.match(payload.input.messages[0].content[0].text, /唯一标题（逐字使用）/);
+                assert.match(payload.input.messages[0].content[0].text, /纯白/);
+                assert.match(payload.input.messages[0].content[0].text, /姜黄色 #D49A24/);
+                assert.match(payload.input.messages[0].content[0].text, /禁止水彩/);
+                assert.match(payload.input.messages[0].content[0].text, /唯一短句（逐字使用）/);
+                assert.match(payload.input.messages[0].content[0].text, /标题恰好出现一次/);
+                assert.match(payload.input.messages[0].content[0].text, /禁止任何外轮廓/);
                 res.writeHead(200, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({
                     output: {
@@ -1539,6 +1546,7 @@ async function main() {
             process.env.GOHOME_IMAGE_BASE_URL = `${mockImageBaseUrl}/api/v1/services/aigc/multimodal-generation/generation`;
             process.env.GOHOME_IMAGE_API_KEY = "mock-image-key";
             process.env.GOHOME_IMAGE_MODEL = "mock-wan-image";
+            delete process.env.GOHOME_CARE_IMAGE_PROMPT;
             delete process.env.GOHOME_IMAGE_REQUEST_MODE;
             process.env.GOHOME_CARE_IMAGE_POLL_INTERVAL_MS = "1";
             process.env.GOHOME_CARE_IMAGE_MAX_POLLS = "3";
@@ -1554,6 +1562,7 @@ async function main() {
             assert.ok(imageJob);
             assert.equal(imageJob.model, "mock-wan-image");
             assert.equal(imageJob.output_status, "succeeded");
+            assert.match(imageJob.prompt_version, /^care-image:default:[a-f0-9]{12}$/);
             assert.equal(imageJob.response_payload.request_mode, "sync");
             const careImageAsset = [...app.store.db.assets].reverse().find((asset) => asset.snapshot_path === imageCareCard.card.image_url);
             assert.ok(careImageAsset);
