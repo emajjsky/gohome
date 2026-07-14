@@ -497,7 +497,8 @@
             const title = careSafeTopicText(item?.title, 80);
             const summary = careSafeTopicText(item?.summary || item?.content, 120);
             if (!title || unsafeTopicText(`${title} ${summary}`, { allowAntiFraud: module === "anti_fraud" })) return false;
-            return title.length >= 4;
+            const chineseCharacterCount = (title.match(/[\u4e00-\u9fff]/g) || []).length;
+            return chineseCharacterCount >= 2 || title.length >= 4;
         }) || null;
     }
 
