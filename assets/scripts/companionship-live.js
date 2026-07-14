@@ -85,20 +85,6 @@
         return String(message?.subtitle || message?.body || "这条提醒目前还没有补充依据。").trim();
     }
 
-    function actionText(message) {
-        const actions = Array.isArray(message?.actions) ? message.actions : [];
-        const labels = actions.map((item) => labelText(item)).filter(Boolean);
-        if (labels.length) return labels.join(" / ");
-        return "先看提醒，再决定是否联系。";
-    }
-
-    function sourceText(message) {
-        const sources = Array.isArray(message?.source) ? message.source : [];
-        const labels = sources.map((item) => labelText(item)).filter(Boolean);
-        if (labels.length) return labels.join(" / ");
-        return "当前没有补充来源标签。";
-    }
-
     function safeText(value, fallback = "-") {
         const text = labelText(value, "").trim();
         return text || fallback;
@@ -413,6 +399,7 @@
     function renderCareCard(card, family) {
         if (!card) return;
         $("companionshipCareSection")?.classList.remove("hidden");
+        $("companionshipCareCard")?.classList.toggle("has-generated-image", Boolean(String(card.image_url || "").trim()));
         const title = $("companionshipCareTitle");
         const body = $("companionshipCareBody");
         const meta = $("companionshipCareMeta");
@@ -422,7 +409,7 @@
         if (body) body.textContent = card.body || "今日关怀卡片已经生成。";
         if (meta) meta.textContent = `${family?.name || "当前家庭"} · ${card.card_date || ""}`;
         const careText = [card.title, card.body, ...(Array.isArray(card.facts) ? card.facts : [])].map(String).join(" ");
-        const critical = !/无高优先级|无异常|没有未处理|没有待处理|当前没有|整体平稳|一切平稳/.test(careText)
+        const critical = !/无高优先级|无安全告警|无告警|无异常|没有未处理|没有待处理|当前没有|整体平稳|一切平稳/.test(careText)
             && /高优先级|重要提醒|告警|跌倒|离线|待确认/.test(careText);
         setCareStatus(critical ? "需关注" : "平稳", critical ? "warn" : "good");
         renderCareCardImage(card);
@@ -513,54 +500,34 @@
         currentFamilyId = family?.id || null;
         currentFamilyLabel = family?.name || "当前家庭";
         list.innerHTML = "";
-        $("companionshipMessageMeta").textContent = `${currentFamilyLabel} · 最近的关怀提醒`;
+        $("companionshipMessageMeta").textContent = `${currentFamilyLabel} · 最近的关怀内容`;
         $("companionshipMessageCount").textContent = `${messages.length} 条记录`;
         setFeedback(lastActionFeedback);
         messages.forEach((message) => {
             const badge = messageBadge(message.message_type);
             const article = document.createElement("article");
-            article.className = "app-panel-muted p-4 flex flex-col gap-3";
+            article.className = "companion-record";
             article.innerHTML = `
-                <div class="flex items-start justify-between gap-3">
-                    <div class="flex items-start gap-3 min-w-0">
-                        <div class="app-icon-chip ${badge.tone} shrink-0">
-                            <span class="material-symbols-outlined text-[18px]">${badge.icon}</span>
-                        </div>
-                        <div class="min-w-0">
-                            <p class="font-display text-[17px] leading-snug font-bold text-on-surface">${message.title || "一条新的关怀提醒"}</p>
-                            <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">${message.subtitle || message.body || "这条提醒正在等待你处理。"}</p>
-                        </div>
-                    </div>
-                    <span class="app-status-badge ${badge.tone} shrink-0">${badge.label}</span>
+                <div class="companion-record-marker">
+                    <span class="material-symbols-outlined">${escapeHtml(badge.icon)}</span>
                 </div>
-                <div class="grid grid-cols-1 gap-2">
-                    <div class="rounded-[18px] bg-white/68 border border-white/55 px-3.5 py-3">
-                        <p class="font-sans text-[11px] font-semibold text-primary">关怀依据</p>
-                        <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">${factsText(message)}</p>
+                <div class="companion-record-body">
+                    <div class="companion-record-meta">
+                        <span>${escapeHtml(badge.label)}</span>
+                        <time>${escapeHtml(window.GoHomeEdge?.fmtDateTime?.(message.created_at) || "-")}</time>
                     </div>
-                    <div class="rounded-[18px] bg-white/68 border border-white/55 px-3.5 py-3">
-                        <div class="flex items-center justify-between gap-3">
-                            <p class="font-sans text-[11px] font-semibold text-[#2d7d5c]">建议动作</p>
-                            <span class="font-sans text-[10px] font-medium text-on-surface-variant">${window.GoHomeEdge?.fmtDateTime?.(message.created_at) || "-"}</span>
-                        </div>
-                        <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">${actionText(message)}</p>
+                    <h4>${escapeHtml(message.title || "一条新的关怀记录")}</h4>
+                    <p>${escapeHtml(message.subtitle || message.body || "内容已经记录。")}</p>
+                    <div data-role="detail" class="hidden companion-record-detail">
+                        <strong>关怀依据</strong>
+                        <p>${escapeHtml(factsText(message))}</p>
+                        <strong>完整内容</strong>
+                        <p>${escapeHtml(safeText(message.body, message.subtitle || "当前记录没有额外正文。"))}</p>
                     </div>
-                </div>
-                <div data-role="detail" class="hidden rounded-[20px] bg-white/72 border border-white/60 px-4 py-3.5">
-                    <div class="rounded-[18px] bg-[#fcfaf7] border border-white/80 px-3.5 py-3 mt-3">
-                        <p class="font-sans text-[11px] font-semibold text-primary">完整内容</p>
-                            <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">${safeText(message.body, message.subtitle || "当前提醒没有额外正文。")}</p>
-                        <p class="font-sans text-[11px] font-semibold text-primary mt-3">参考信息</p>
-                        <p class="font-sans text-[12px] text-on-surface-variant leading-relaxed mt-1.5">${sourceText(message)}</p>
+                    <div class="companion-record-actions">
+                        <button data-role="expand" type="button">查看详情</button>
+                        <button data-role="mark-read" type="button">标记已读</button>
                     </div>
-                </div>
-                <div class="grid grid-cols-2 gap-3">
-                    <button data-role="expand" class="app-btn-secondary font-sans text-[13px] font-semibold transition-all active:scale-[0.98] flex items-center justify-center gap-1.5" type="button">
-                        查看详情
-                    </button>
-                    <button data-role="mark-read" class="app-btn-secondary font-sans text-[13px] font-semibold transition-all active:scale-[0.98] flex items-center justify-center gap-1.5" type="button">
-                        标记已读
-                    </button>
                 </div>
             `;
             bindMessageCardActions(article, message);

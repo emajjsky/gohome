@@ -4,11 +4,11 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家 - 陪伴</title>
-<script src="assets/scripts/app-state-store.js?v=20260714-appstore-6"></script>
+<script src="assets/scripts/app-state-store.js?v=20260714-appstore-7"></script>
 <link rel="icon" href="data:,"/>
 <link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-product-flow-1"/>
-<link rel="stylesheet" href="assets/styles/editorial-home-companion.css?v=20260714-editorial-9"/>
+<link rel="stylesheet" href="assets/styles/editorial-home-companion.css?v=20260714-editorial-14"/>
 <link rel="stylesheet" href="assets/styles/editorial-app-system.css?v=20260714-editorial-9"/>
 </head>
 <body class="gohome-page-companionship bg-white text-[#111111] min-h-screen">
@@ -18,21 +18,26 @@
 
 <main class="editorial-main">
   <section class="companion-profile" aria-labelledby="companionshipProfileName">
-    <div class="companion-avatar">
-      <img id="companionshipProfileImage" src="assets/stitch-images/28-ea16817784.jpg" alt="联系人头像"/>
-      <i id="companionshipProfileStatus" class="companion-avatar-status" aria-hidden="true"></i>
+    <p class="companion-profile-label">家庭联系人</p>
+    <div class="companion-profile-main">
+      <div class="companion-avatar">
+        <img id="companionshipProfileImage" src="assets/stitch-images/28-ea16817784.jpg" alt="联系人头像"/>
+        <i id="companionshipProfileStatus" class="companion-avatar-status" aria-hidden="true"></i>
+      </div>
+      <div class="companion-profile-copy">
+        <h2 id="companionshipProfileName">家庭联系人</h2>
+        <p id="companionshipProfileMeta">资料同步后显示所在城市</p>
+      </div>
     </div>
-    <h2 id="companionshipProfileName">家庭联系人</h2>
-    <p id="companionshipProfileMeta">资料同步后显示所在城市</p>
     <div id="companionshipContactActions" class="companion-contact-actions"></div>
   </section>
 
   <section id="companionshipCareSection" class="hidden editorial-section">
     <div class="editorial-section-head">
-      <h3>今天的关怀</h3>
+      <h3>今日关怀</h3>
       <span id="companionshipCareStatus" class="editorial-section-link">今日</span>
     </div>
-    <article class="companion-care-card">
+    <article id="companionshipCareCard" class="companion-care-card">
       <div id="companionshipCareImageFrame" class="companion-care-image">
         <img id="companionshipCareImage" class="hidden" alt="今日关怀图文" loading="eager"/>
         <div id="companionshipCareImageFallback">
@@ -52,7 +57,7 @@
 
   <section id="companionshipImportantSection" class="editorial-section">
     <div class="editorial-section-head">
-      <h3>重要日子</h3>
+      <h3>即将到来</h3>
       <a class="editorial-section-link" href="care_schedule.html" data-route="care_schedule.html" aria-label="编辑重要日期">
         <span class="material-symbols-outlined">add</span>
       </a>
@@ -69,8 +74,8 @@
   <section id="companionshipMessageSection" class="hidden editorial-section">
     <div class="editorial-section-head">
       <div>
-        <h3>关怀记录</h3>
-        <p id="companionshipMessageMeta">最近的关怀提醒</p>
+        <h3>联系记录</h3>
+        <p id="companionshipMessageMeta">最近的关怀内容</p>
       </div>
       <span id="companionshipMessageCount" class="editorial-section-link">0 条</span>
     </div>
@@ -88,7 +93,7 @@
 </nav>
 
 <script src="assets/scripts/edge-client.js?v=20260714-perf-3"></script>
-<script src="assets/scripts/companionship-live.js?v=20260714-editorial-9"></script>
+<script src="assets/scripts/companionship-live.js?v=20260714-editorial-15"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260713-appstore-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
 </body>

@@ -3885,6 +3885,55 @@ function createLocalAppServer(options = {}) {
         return value;
     }
 
+    function knownContentImageUrl(targetUrl) {
+        const target = String(targetUrl || "").trim();
+        if (!target) return false;
+        const cached = [...providerCache.values()].some((entry) => (
+            Array.isArray(entry?.value?.recommendations)
+            && entry.value.recommendations.some((item) => String(item?.image_url || "").trim() === target)
+        ));
+        if (cached) return true;
+        return store.db.care_cards.some((card) => (
+            Array.isArray(card?.content_recommendations)
+            && card.content_recommendations.some((item) => String(item?.image_url || "").trim() === target)
+        ));
+    }
+
+    async function proxyContentImage(targetUrl) {
+        const target = String(targetUrl || "").trim();
+        let parsed;
+        try {
+            parsed = new URL(target);
+        } catch (_error) {
+            throw new Error("invalid content image URL");
+        }
+        if (parsed.protocol !== "https:" || !knownContentImageUrl(parsed.toString())) {
+            throw new Error("content image is not an approved recommendation asset");
+        }
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        try {
+            const response = await fetch(parsed, {
+                headers: {
+                    Accept: "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8",
+                    "User-Agent": "Mozilla/5.0 GoHomeContent/1.0",
+                },
+                redirect: "follow",
+                signal: controller.signal,
+            });
+            if (!response.ok) throw new Error(`content image request failed: ${response.status}`);
+            const contentType = String(response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+            if (!/^image\/(?:avif|webp|png|jpe?g|gif)$/.test(contentType)) {
+                throw new Error("content image response has an unsupported type");
+            }
+            const buffer = Buffer.from(await response.arrayBuffer());
+            if (!buffer.length || buffer.length > 5 * 1024 * 1024) throw new Error("content image size is invalid");
+            return { buffer, contentType };
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
     function providerUrl(baseUrl, pathname, params = {}) {
         const url = new URL(baseUrl);
         const basePath = url.pathname.replace(/\/+$/, "");
@@ -4261,7 +4310,26 @@ function createLocalAppServer(options = {}) {
         return taskList.slice(0, 5);
     }
 
-    function publicRecommendationFromTavily(result, topic) {
+    function publicTavilyImageUrl(value) {
+        const raw = typeof value === "string"
+            ? value
+            : String(value?.url || value?.image_url || value?.src || "").trim();
+        if (!raw) return "";
+        try {
+            const parsed = new URL(raw);
+            return parsed.protocol === "https:" ? parsed.toString() : "";
+        } catch (_error) {
+            return "";
+        }
+    }
+
+    function tavilyResultImage(result, images = [], index = 0) {
+        const direct = publicTavilyImageUrl(result?.image_url || result?.image || result?.thumbnail);
+        if (direct) return direct;
+        return publicTavilyImageUrl(images[index] || images[0]);
+    }
+
+    function publicRecommendationFromTavily(result, topic, imageUrl = "") {
         const url = String(result?.url || "").trim();
         let source = "";
         try {
@@ -4283,6 +4351,7 @@ function createLocalAppServer(options = {}) {
             url,
             source,
             summary: String(result?.content || result?.raw_content || "").replace(/\s+/g, " ").trim().slice(0, 160),
+            image_url: publicTavilyImageUrl(imageUrl),
             published_at: String(result?.published_date || result?.publishedAt || result?.date || "").trim(),
             score: Number.isFinite(Number(result?.score)) ? Number(result.score) : null,
         };
@@ -4369,7 +4438,7 @@ function createLocalAppServer(options = {}) {
         const targetCity = String(city || "杭州").trim() || "杭州";
         const normalizedTopics = normalizeStringList(topics, ["健康养生", "家常"], 8);
         const tasks = contentSearchTasksFromPreferences(preferences || {}, targetCity, district);
-        const cacheKey = `content:tavily:${targetCity}:${tasks.map((item) => `${item.type}:${item.query}`).join("|")}`;
+        const cacheKey = `content:tavily:v2:${targetCity}:${tasks.map((item) => `${item.type}:${item.query}`).join("|")}`;
         const cached = cachedProviderValue(cacheKey, 30 * 60 * 1000);
         if (cached) return { ...cached, family_id: Number(familyId || cached.family_id || 0) };
         try {
@@ -4383,7 +4452,7 @@ function createLocalAppServer(options = {}) {
                     time_range: task.time_range || null,
                     include_answer: false,
                     include_raw_content: false,
-                    include_images: false,
+                    include_images: true,
                     include_image_descriptions: false,
                     include_favicon: false,
                     include_domains: task.domains,
@@ -4418,8 +4487,8 @@ function createLocalAppServer(options = {}) {
             }));
             const recommendations = taskPayloads
                 .flatMap(({ task, payload }) => (Array.isArray(payload?.results) ? payload.results : [])
-                    .map((item) => ({
-                        ...publicRecommendationFromTavily(item, task.topic),
+                    .map((item, index) => ({
+                        ...publicRecommendationFromTavily(item, task.topic, tavilyResultImage(item, payload?.images, index)),
                         module: task.type,
                         search_topic: task.search_topic || "general",
                         time_range: task.time_range || "",
@@ -6631,6 +6700,19 @@ function createLocalAppServer(options = {}) {
                     payload.local_app_demo_token = appToken;
                 }
                 write(res, 200, payload);
+                return;
+            }
+
+            if (req.method === "GET" && pathname === "/api/v1/content/image") {
+                try {
+                    const image = await proxyContentImage(url.searchParams.get("url"));
+                    write(res, 200, image.buffer, {
+                        "Content-Type": image.contentType,
+                        "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+                    });
+                } catch (error) {
+                    writeError(res, 404, error.message || "content image unavailable");
+                }
                 return;
             }
 

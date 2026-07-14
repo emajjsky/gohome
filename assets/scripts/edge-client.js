@@ -1088,6 +1088,7 @@
         },
         v1ContentRecommendations: (familyId, params = {}) => {
             const query = new URLSearchParams();
+            query.set("visuals", "1");
             if (params.elder_id) query.set("elder_id", params.elder_id);
             if (params.city) query.set("city", params.city);
             if (params.district) query.set("district", params.district);

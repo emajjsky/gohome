@@ -532,6 +532,13 @@
         return raw ? `来源 ${friendlySourceLabel(raw)}` : "按关怀设置";
     }
 
+    function recommendationImageUrl(recommendation, fallback) {
+        const raw = String(recommendation?.image_url || "").trim();
+        if (!raw) return fallback;
+        if (!/^https:\/\//i.test(raw)) return raw;
+        return `/api/v1/content/image?url=${encodeURIComponent(raw)}`;
+    }
+
     function moduleRecommendationCard(module, recommendation, context) {
         const region = context.region || "本地";
         const interests = context.interests || "家常话题";
@@ -547,7 +554,7 @@
                 title: candidateTitle || `${region}今日生活提醒`,
                 body: candidateSummary || "正在从便民服务、社区活动和出行信息中筛选值得关注的内容。",
                 meta: hasCandidate ? source : "按区域偏好筛选",
-                image: String(recommendation?.image_url || "assets/stitch-images/13-0028165750.jpg"),
+                image: recommendationImageUrl(recommendation, ""),
                 ratio: "portrait",
             },
             health_tips: {
@@ -557,7 +564,7 @@
                 title: candidateTitle || "今日健康生活建议",
                 body: candidateSummary || "聚焦喝水、作息、饮食和适度运动，不替代医疗建议。",
                 meta: hasCandidate ? source : "按关注主题",
-                image: String(recommendation?.image_url || "assets/stitch-images/09-cc5ea760d2.jpg"),
+                image: recommendationImageUrl(recommendation, ""),
                 ratio: "tall",
             },
             anti_fraud: {
@@ -567,7 +574,7 @@
                 title: candidateTitle || "陌生来电与转账提醒",
                 body: candidateSummary || "只采用官方来源的低频安全提醒，不制造紧张感。",
                 meta: hasCandidate ? source : "低频推送",
-                image: String(recommendation?.image_url || "assets/stitch-images/04-047f4d8895.jpg"),
+                image: recommendationImageUrl(recommendation, ""),
                 ratio: "landscape",
             },
             culture_entertainment: {
@@ -577,7 +584,7 @@
                 title: candidateTitle || "今天值得看的文化内容",
                 body: candidateSummary || `从${interests}中筛选轻松、正向的节目和活动信息。`,
                 meta: hasCandidate ? source : "按兴趣生成",
-                image: String(recommendation?.image_url || "assets/images/grandma-reading.jpg"),
+                image: recommendationImageUrl(recommendation, ""),
                 ratio: "square",
             },
             elder_interest_topics: {
@@ -587,7 +594,7 @@
                 title: candidateTitle || `围绕${interests.split("、").slice(0, 2).join("、") || "日常生活"}的今日推荐`,
                 body: candidateSummary || "从已设置的兴趣中筛选轻松、正向的内容。",
                 meta: hasCandidate ? source : "按关注主题",
-                image: String(recommendation?.image_url || "assets/images/memory-relax-chat.jpg"),
+                image: recommendationImageUrl(recommendation, ""),
                 ratio: "portrait",
             },
         };
@@ -725,8 +732,8 @@
                     <img src="${escapeHtml(card.image)}" data-feed-fallback="${escapeHtml(fallbackImage)}" alt="${escapeHtml(card.title || card.type || "今日资讯")}" loading="lazy"/>
                     <span class="gohome-push-type">${escapeHtml(card.type || "资讯")}</span>
                 </div>`
-            : `<div class="gohome-push-card-top">
-                    <span class="material-symbols-outlined">${escapeHtml(card.icon || "favorite")}</span>
+            : `<div class="gohome-push-poster ratio-${escapeHtml(ratio)}">
+                    <span class="material-symbols-outlined">${escapeHtml(card.icon || "article")}</span>
                     <span class="gohome-push-type">${escapeHtml(card.type || "提醒")}</span>
                 </div>`;
         return `
@@ -766,12 +773,6 @@
 
     function buildPushCards({ careCard, careCards = [], family, profile, preferences, device, enabled = [], liveEvents = [], weatherSignal, contentSignal }) {
         const schedule = preferences?.metadata?.care_card_schedule || {};
-        const enabledIds = new Set((Array.isArray(enabled) ? enabled : []).map((camera) => Number(camera.id)));
-        const eventScope = (Array.isArray(liveEvents) ? liveEvents : []).filter((event) => (
-            !enabledIds.size || enabledIds.has(Number(event.camera_id))
-        ));
-        const openEvents = eventScope.filter((event) => !event.acknowledged);
-        const criticalEvents = openEvents.filter((event) => event.level === "critical");
         const interests = Array.isArray(schedule.interest_topics) && schedule.interest_topics.length
             ? schedule.interest_topics.slice(0, 3).join("、")
             : "养生、天气、家常";
@@ -790,18 +791,6 @@
             return true;
         });
         const cards = [];
-        if (criticalEvents.length) {
-            cards.push({
-                type: "安全提醒",
-                icon: "priority_high",
-                tone: "alert",
-                size: "feature",
-                title: "有提醒需要先确认",
-                body: "先看事件证据，再联系家里。",
-                meta: `${criticalEvents.length} 条重要事件`,
-                href: "events.html",
-            });
-        }
         const types = schedule.content_types || {};
         const moduleContext = {
             region: contentRegionLabel(profile, preferences),
@@ -833,6 +822,24 @@
         node.className = `gohome-status-pill ${tone}`;
     }
 
+    function renderSafetyBrief(criticalEvents = []) {
+        const section = $("edgeHomeSafetySection");
+        if (!section) return;
+        const events = Array.isArray(criticalEvents) ? criticalEvents : [];
+        section.classList.toggle("hidden", !events.length);
+        if (!events.length) return;
+        const latest = events[0] || {};
+        const latestAt = Date.parse(latest.occurred_at || latest.created_at || "");
+        const isRecent = Number.isFinite(latestAt) && Date.now() - latestAt <= 24 * 60 * 60 * 1000;
+        setText(
+            "edgeHomeSafetyTitle",
+            isRecent
+                ? shortText(latest.summary || latest.title || "有事件需要确认", 30)
+                : `${events.length} 条历史事件仍未确认`
+        );
+        setText("edgeHomeSafetyCount", `${events.length} 条`);
+    }
+
     function renderHomeSummary({ user, family, device = {}, enabled = [], liveEvents = [], careCard, profile }) {
         const deviceOnline = deviceLooksOnline(device, enabled);
         const enabledIds = new Set((Array.isArray(enabled) ? enabled : []).map((camera) => Number(camera.id)));
@@ -848,6 +855,8 @@
             : openEvents.length
                 ? `${openEvents.length} 条待看`
                 : "无待处理";
+
+        renderSafetyBrief(criticalEvents);
 
         setText("edgeHomeFamilyLine", `${familyName} · ${user?.display_name || user?.phone || "家属端"}`);
         setText("edgeHomeBoxState", deviceOnline ? "已同步" : "待确认");
@@ -890,11 +899,21 @@
         section.classList.toggle("hidden", false);
         feed.className = "gohome-push-feed gohome-story-grid";
         if (status) {
-            const labels = enabledContentLabels(context.preferences).slice(0, 6);
-            status.innerHTML = labels.length
-                ? `按“我的”设置筛选 <span>${escapeHtml(labels.join(" / "))}</span>`
-                : "在“我的”中选择关注的内容类型。";
+            const labels = enabledContentLabels(context.preferences).filter((label) => !["天气", "节日", "纪念日", "回家提醒"].includes(label));
+            status.textContent = labels.length ? `${labels.length} 类内容持续更新` : "在“我的”中选择关注内容";
         }
+        const contentTypes = context.preferences?.metadata?.care_card_schedule?.content_types || {};
+        const enabledFilters = {
+            local: contentTypes.local_hotspots === true,
+            health: contentTypes.health_tips === true,
+            fraud: contentTypes.anti_fraud === true,
+            interest: contentTypes.culture_entertainment === true || contentTypes.elder_interest_topics === true,
+        };
+        document.querySelectorAll("[data-feed-filter]").forEach((button) => {
+            const key = button.dataset.feedFilter || "all";
+            button.classList.toggle("hidden", key !== "all" && !enabledFilters[key]);
+        });
+        if (activeFeedFilter !== "all" && !enabledFilters[activeFeedFilter]) activeFeedFilter = "all";
         const pushCards = buildPushCards({
             careCard: context.careCard || history[0],
             careCards: history,
@@ -944,7 +963,7 @@
             card?.body,
             ...(Array.isArray(card?.facts) ? card.facts : []),
         ].map(String).join(" ");
-        if (/无高优先级|无异常|没有未处理|没有待处理|当前没有|整体平稳|一切平稳/.test(text)) return false;
+        if (/无高优先级|无安全告警|无告警|无异常|没有未处理|没有待处理|当前没有|整体平稳|一切平稳/.test(text)) return false;
         return /重要|异常|高优先级|告警|跌倒|离线|待确认/.test(text);
     }
 
@@ -968,12 +987,10 @@
         const featureLink = $("edgeHomeCareCardLink");
         featureLink?.classList.toggle("has-generated-image", hasGeneratedImage);
         setText("edgeHomeCareMeta", `${cardDateLabel(card)} · ${family?.name || "当前家庭"}`);
-        setText("edgeHomeCareTitle", hasGeneratedImage ? "今日关怀卡片" : careCardDisplayTitle(card));
+        setText("edgeHomeCareTitle", careCardDisplayTitle(card));
         setText(
             "edgeHomeCareBody",
-            hasGeneratedImage
-                ? "由家里状态、天气和日程生成，点开看完整图文和问候动作。"
-                : shortText(cardBodyText(card, "点开看完整图文。"), 64)
+            shortText(cardBodyText(card, "点开查看完整图文和联系动作。"), 72)
         );
         const link = featureLink;
         if (link) link.href = window.GoHomeEdge?.pageHref?.("companionship.html") || "companionship.html";
