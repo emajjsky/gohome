@@ -1,6 +1,6 @@
 (function () {
     const SNAPSHOT_ROOT = "gohome.pageSnapshot.";
-    const SNAPSHOT_PREFIX = `${SNAPSHOT_ROOT}v6.`;
+    const SNAPSHOT_PREFIX = `${SNAPSHOT_ROOT}v7.`;
     const AUTH_TOKEN_KEY = "gohome.authToken";
     const MAX_SNAPSHOT_AGE_MS = 24 * 60 * 60 * 1000;
     const MAX_SNAPSHOT_BYTES = 600 * 1024;
@@ -20,6 +20,37 @@
     let refreshTimer = null;
     let suppressCapture = false;
     let bootSnapshot = null;
+
+    function installIconFontGuard() {
+        const preload = document.createElement("link");
+        preload.rel = "preload";
+        preload.as = "font";
+        preload.type = "font/ttf";
+        preload.crossOrigin = "anonymous";
+        preload.href = new URL("assets/fonts/material-symbols-outlined.ttf", document.baseURI).toString();
+        document.head.append(preload);
+
+        const guard = document.createElement("style");
+        guard.id = "gohome-icon-font-guard";
+        guard.textContent = `
+            html:not(.gohome-icons-ready) .material-symbols-outlined {
+                visibility: hidden !important;
+            }
+        `;
+        document.head.append(guard);
+    }
+
+    function revealIconsWhenReady() {
+        if (!document.fonts?.load) {
+            document.documentElement.classList.add("gohome-icons-ready");
+            return;
+        }
+        document.fonts.load('300 24px "Material Symbols Outlined"')
+            .then(() => document.documentElement.classList.add("gohome-icons-ready"))
+            .catch(() => {});
+    }
+
+    installIconFontGuard();
 
     function currentPage() {
         return window.location.pathname.split("/").pop() || "index.html";
@@ -209,6 +240,7 @@
     document.head.append(style);
 
     document.addEventListener("DOMContentLoaded", () => {
+        revealIconsWhenReady();
         restore(bootSnapshot);
         reveal();
     });

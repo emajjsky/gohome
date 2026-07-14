@@ -913,15 +913,19 @@
             </div>
         </section>
 
-        <section class="section">
+        <section id="return-plan" class="section">
             <div class="section-head">
                 <div>
-                    <h3>回家提醒</h3>
-                    <p>按上次回家日期和间隔天数进入每日卡片。</p>
+                    <h3>回家计划</h3>
+                    <p>设置下次回家日期，并在间隔过久时提醒。</p>
                 </div>
             </div>
             <input id="locationTracking" type="checkbox" hidden>
             <div class="field-grid">
+                <label class="field">
+                    <span>计划回家日期</span>
+                    <input id="nextVisitAt" class="care-input" type="date">
+                </label>
                 <label class="field">
                     <span>上次回家日期</span>
                     <input id="lastVisitAt" class="care-input" type="date">
@@ -931,7 +935,7 @@
                     <input id="visitThreshold" class="care-input" type="number" min="1" max="90" value="14">
                 </label>
             </div>
-            <p class="inline-hint">当前先用手动日期；后续可结合到家记录和定位授权自动更新。</p>
+            <p class="inline-hint">首页会显示下次回家倒计时；以后可结合定位自动更新实际到家记录。</p>
         </section>
 
         <section class="section">
@@ -962,7 +966,7 @@
     </form>
 </main>
 <script src="assets/scripts/edge-client.js?v=20260714-perf-3"></script>
-<script src="assets/scripts/care-schedule-live.js?v=20260709-care-schedule-2"></script>
+<script src="assets/scripts/care-schedule-live.js?v=20260714-return-plan-1"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260713-appstore-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-cachefix-1"></script>
 </body>

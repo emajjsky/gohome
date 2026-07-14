@@ -4,11 +4,11 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家 - 陪伴</title>
-<script src="assets/scripts/app-state-store.js?v=20260714-appstore-7"></script>
+<script src="assets/scripts/app-state-store.js?v=20260714-appstore-8"></script>
 <link rel="icon" href="data:,"/>
 <link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260708-product-flow-1"/>
-<link rel="stylesheet" href="assets/styles/editorial-home-companion.css?v=20260714-editorial-14"/>
+<link rel="stylesheet" href="assets/styles/editorial-home-companion.css?v=20260714-editorial-16"/>
 <link rel="stylesheet" href="assets/styles/editorial-app-system.css?v=20260714-editorial-9"/>
 </head>
 <body class="gohome-page-companionship bg-white text-[#111111] min-h-screen">
@@ -30,6 +30,30 @@
       </div>
     </div>
     <div id="companionshipContactActions" class="companion-contact-actions"></div>
+  </section>
+
+  <section id="companionshipPlanSection" class="editorial-section companion-plan-section">
+    <div class="editorial-section-head">
+      <h3>联系计划</h3>
+      <a class="editorial-section-link" href="care_schedule.html" data-route="care_schedule.html">管理</a>
+    </div>
+    <div class="companion-plan-grid">
+      <a class="companion-plan-item primary" href="care_schedule.html#return-plan" data-route="care_schedule.html#return-plan">
+        <small>下次回家</small>
+        <strong id="companionshipNextVisit">未设置</strong>
+        <span id="companionshipNextVisitMeta">安排一次回家</span>
+      </a>
+      <div class="companion-plan-item">
+        <small>每日关怀</small>
+        <strong id="companionshipDeliveryTime">08:30</strong>
+        <span>自动整理并推送</span>
+      </div>
+      <div class="companion-plan-item wide">
+        <small>关注内容</small>
+        <strong id="companionshipTopics">天气 · 养生 · 本地</strong>
+        <span>按“我的”设置持续更新</span>
+      </div>
+    </div>
   </section>
 
   <section id="companionshipCareSection" class="hidden editorial-section">
@@ -71,6 +95,14 @@
     </div>
   </section>
 
+  <section id="companionshipArchiveSection" class="hidden editorial-section">
+    <div class="editorial-section-head">
+      <h3>关怀相册</h3>
+      <span id="companionshipArchiveMeta" class="editorial-section-link">最近生成</span>
+    </div>
+    <div id="companionshipArchiveList" class="companion-archive-list"></div>
+  </section>
+
   <section id="companionshipMessageSection" class="hidden editorial-section">
     <div class="editorial-section-head">
       <div>
@@ -92,8 +124,8 @@
   <a href="privacy.html" data-route="privacy.html"><span class="material-symbols-outlined">person</span><span>我的</span></a>
 </nav>
 
-<script src="assets/scripts/edge-client.js?v=20260714-perf-3"></script>
-<script src="assets/scripts/companionship-live.js?v=20260714-editorial-15"></script>
+<script src="assets/scripts/edge-client.js?v=20260714-perf-5"></script>
+<script src="assets/scripts/companionship-live.js?v=20260714-editorial-16"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260713-appstore-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
 </body>

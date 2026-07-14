@@ -409,13 +409,18 @@
             timeZone: "Asia/Shanghai",
             month: "long",
         }).format(now));
+        const schedule = preferences?.metadata?.care_card_schedule || {};
+        const nextVisitAt = String(schedule.visit_reminder?.next_visit_at || "").trim();
+        const nextVisitDays = daysUntilDate(nextVisitAt);
+        const hasVisitPlan = Boolean(nextVisitAt && nextVisitDays !== null && nextVisitDays >= 0);
         const weekday = ["日", "一", "二", "三", "四", "五", "六"];
         grid.innerHTML = Array.from({ length: 7 }, (_, index) => {
             const date = new Date(now.getTime() + index * 86400000);
             const day = date.getDay();
             const isWeekend = day === 0 || day === 6;
+            const isVisitDay = hasVisitPlan && shanghaiDateKey(date) === nextVisitAt;
             return `
-                <div class="editorial-day ${index === 0 ? "today" : ""} ${isWeekend ? "weekend" : ""}">
+                <div class="editorial-day ${index === 0 ? "today" : ""} ${isWeekend ? "weekend" : ""} ${isVisitDay ? "has-event visit-day" : ""}">
                     <span>${index === 0 ? "今天" : `周${weekday[day]}`}</span>
                     <strong>${date.getDate()}</strong>
                     <i></i>
@@ -423,13 +428,20 @@
             `;
         }).join("");
 
-        const schedule = preferences?.metadata?.care_card_schedule || {};
         const anniversary = upcomingAnniversary(schedule);
         const holiday = upcomingHolidayCard();
-        const noteItems = [
-            anniversary || holiday?.title || nextWeekendLabel(),
-            anniversary ? "按每年同月同日提醒" : (holiday?.sub || "适合安排联系或回家计划"),
-        ];
+        const visitDateLabel = hasVisitPlan
+            ? new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric" }).format(new Date(`${nextVisitAt}T00:00:00+08:00`))
+            : "";
+        const noteItems = hasVisitPlan
+            ? [
+                `计划 ${visitDateLabel} 回家`,
+                nextVisitDays === 0 ? "就是今天，记得确认行程" : `还有 ${nextVisitDays} 天，可以提前安排时间`,
+            ]
+            : [
+                "还没有设置下次回家日期",
+                anniversary || holiday?.sub || `${nextWeekendLabel()}，可以安排一次回家`,
+            ];
         notes.innerHTML = noteItems.map((item) => `
             <div class="editorial-calendar-note"><i></i><span>${escapeHtml(item)}</span></div>
         `).join("");
@@ -489,18 +501,23 @@
         return blocked.test(text);
     }
 
-    function safeTopicRecommendation(recommendations, module = "") {
+    function safeTopicRecommendations(recommendations, module = "", limit = 3) {
         return (Array.isArray(recommendations) ? recommendations : [])
             .filter((item) => !module || item?.module === module)
-            .find((item) => {
-            const source = String(item?.source || item?.url || "").toLowerCase();
-            if (/(dangjian|cpc\.people|qstheory|theory\.people)/.test(source)) return false;
-            const title = careSafeTopicText(item?.title, 80);
-            const summary = careSafeTopicText(item?.summary || item?.content, 120, { preserveSeparatorText: true });
-            if (!title || unsafeTopicText(`${title} ${summary}`, { allowAntiFraud: module === "anti_fraud" })) return false;
-            const chineseCharacterCount = (title.match(/[\u4e00-\u9fff]/g) || []).length;
-            return chineseCharacterCount >= 2 || title.length >= 4;
-        }) || null;
+            .filter((item) => {
+                const source = String(item?.source || item?.url || "").toLowerCase();
+                if (/(dangjian|cpc\.people|qstheory|theory\.people)/.test(source)) return false;
+                const title = careSafeTopicText(item?.title, 80);
+                const summary = careSafeTopicText(item?.summary || item?.content, 120, { preserveSeparatorText: true });
+                if (!title || unsafeTopicText(`${title} ${summary}`, { allowAntiFraud: module === "anti_fraud" })) return false;
+                const chineseCharacterCount = (title.match(/[\u4e00-\u9fff]/g) || []).length;
+                return chineseCharacterCount >= 2 || title.length >= 4;
+            })
+            .slice(0, Math.max(1, limit));
+    }
+
+    function safeTopicRecommendation(recommendations, module = "") {
+        return safeTopicRecommendations(recommendations, module, 1)[0] || null;
     }
 
     function contentRegionLabel(profile, preferences) {
@@ -679,7 +696,7 @@
         const history = (Array.isArray(cards) ? cards : [])
             .filter((card) => {
                 const key = String(card?.card_id || card?.id || `${card?.family_id || ""}:${card?.card_date || ""}`);
-                if (!card || seen.has(key)) return false;
+                if (!card || seen.has(key) || isCareCritical(card)) return false;
                 seen.add(key);
                 return true;
             })
@@ -798,9 +815,17 @@
         };
         ["local_hotspots", "health_tips", "anti_fraud", "culture_entertainment"].forEach((module) => {
             if (!types[module]) return;
-            const recommendation = safeTopicRecommendation(recommendations, module);
-            const card = moduleRecommendationCard(module, recommendation, moduleContext);
-            if (card) cards.push(card);
+            const moduleRecommendations = safeTopicRecommendations(recommendations, module, 3);
+            const candidates = moduleRecommendations.length ? moduleRecommendations : [null];
+            candidates.forEach((recommendation, index) => {
+                const card = moduleRecommendationCard(module, recommendation, moduleContext);
+                if (!card) return;
+                if (index > 0) {
+                    const ratios = ["landscape", "square", "portrait", "tall"];
+                    card.ratio = ratios[cards.length % ratios.length];
+                }
+                cards.push(card);
+            });
         });
         if (!cards.some((card) => card.image) && types.elder_interest_topics) {
             const recommendation = safeTopicRecommendation(recommendations);
@@ -898,10 +923,7 @@
             .slice(0, 12);
         section.classList.toggle("hidden", false);
         feed.className = "gohome-push-feed gohome-story-grid";
-        if (status) {
-            const labels = enabledContentLabels(context.preferences).filter((label) => !["天气", "节日", "纪念日", "回家提醒"].includes(label));
-            status.textContent = labels.length ? `${labels.length} 类内容持续更新` : "在“我的”中选择关注内容";
-        }
+        if (status) status.textContent = "正在整理今日内容";
         const contentTypes = context.preferences?.metadata?.care_card_schedule?.content_types || {};
         const enabledFilters = {
             local: contentTypes.local_hotspots === true,
@@ -926,6 +948,7 @@
             weatherSignal: context.weatherSignal,
             contentSignal: context.contentSignal,
         });
+        if (status) status.textContent = pushCards.length ? `${pushCards.length} 条内容持续更新` : "在“我的”中选择关注内容";
         feed.innerHTML = pushCards.map(pushCardMarkup).join("");
         feed.querySelectorAll("img[data-feed-fallback]").forEach((image) => {
             image.addEventListener("error", () => {

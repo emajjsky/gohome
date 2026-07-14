@@ -686,7 +686,7 @@ function createLocalAppServer(options = {}) {
             provider,
             api_key: tavilyKey,
             base_url: envFirst(["GOHOME_TAVILY_BASE_URL", "TAVILY_BASE_URL", "GOHOME_SEARCH_BASE_URL"], "https://api.tavily.com/search").replace(/\/+$/, ""),
-            max_results: Math.max(1, Math.min(8, normalizeNumber(process.env.GOHOME_TAVILY_MAX_RESULTS, 3))),
+            max_results: Math.max(2, Math.min(8, normalizeNumber(process.env.GOHOME_TAVILY_MAX_RESULTS, 5))),
         };
     }
 
@@ -1923,6 +1923,7 @@ function createLocalAppServer(options = {}) {
                 threshold_days: 14,
                 location_tracking_enabled: false,
                 last_visit_at: "",
+                next_visit_at: "",
             },
             delivery_rules: {
                 daily_digest: { enabled: true, mode: "daily_digest" },
@@ -1993,6 +1994,9 @@ function createLocalAppServer(options = {}) {
                 location_tracking_enabled: normalizeBool(visitReminder.location_tracking_enabled),
                 last_visit_at: /^\d{4}-\d{2}-\d{2}$/.test(String(visitReminder.last_visit_at || ""))
                     ? String(visitReminder.last_visit_at)
+                    : "",
+                next_visit_at: /^\d{4}-\d{2}-\d{2}$/.test(String(visitReminder.next_visit_at || ""))
+                    ? String(visitReminder.next_visit_at)
                     : "",
             },
             delivery_rules: {
@@ -4240,13 +4244,21 @@ function createLocalAppServer(options = {}) {
         const region = contentRegionText(preferences, fallbackCity, fallbackDistrict);
         const dateContext = contentSearchDateContext();
         const commonOfficialDomains = ["people.com.cn", "xinhuanet.com", "cctv.com", "gmw.cn"];
+        const shanghaiPublicDomains = [
+            "shanghai.gov.cn",
+            "shyp.gov.cn",
+            "shhk.gov.cn",
+            "shqp.gov.cn",
+            "shpt.gov.cn",
+            "fgj.sh.gov.cn",
+        ];
         const taskList = [];
         if (contentTypes.local_hotspots) {
             taskList.push({
                 type: "local_hotspots",
                 topic: "本地热点",
                 query: `${dateContext.today} ${region.label} 本周 民生 社区活动 便民服务 本地生活 适合老人聊天`,
-                domains: ["shobserver.com", "wsjkw.sh.gov.cn", ...commonOfficialDomains],
+                domains: ["shobserver.com", "wsjkw.sh.gov.cn", ...shanghaiPublicDomains, ...commonOfficialDomains],
                 search_topic: "news",
                 time_range: "week",
                 max_age_days: 21,
@@ -4257,7 +4269,7 @@ function createLocalAppServer(options = {}) {
                 type: "health_tips",
                 topic: "健康养生",
                 query: `${dateContext.month} 老年人 健康生活 养生 节气 饮食 作息 官方 科普`,
-                domains: ["wsjkw.sh.gov.cn", "shobserver.com", ...commonOfficialDomains],
+                domains: ["wsjkw.sh.gov.cn", "nhc.gov.cn", "gov.cn", "ihchina.cn", "shobserver.com", ...commonOfficialDomains],
                 search_topic: "general",
                 time_range: "month",
                 max_age_days: 180,
@@ -4268,7 +4280,7 @@ function createLocalAppServer(options = {}) {
                 type: "anti_fraud",
                 topic: "防诈骗提醒",
                 query: `${dateContext.month} ${region.city} 老年人 防诈骗 反诈 社区 安全提醒 官方`,
-                domains: ["mps.gov.cn", ...commonOfficialDomains],
+                domains: ["mps.gov.cn", "gaj.sh.gov.cn", "shanghai.gov.cn", ...commonOfficialDomains],
                 search_topic: "news",
                 time_range: "month",
                 max_age_days: 120,
@@ -4279,7 +4291,7 @@ function createLocalAppServer(options = {}) {
                 type: "culture_entertainment",
                 topic: "文娱兴趣",
                 query: `${dateContext.month} ${region.label} 老年人 戏曲 电视节目 社区文化 活动`,
-                domains: ["shobserver.com", ...commonOfficialDomains],
+                domains: ["shobserver.com", ...shanghaiPublicDomains, ...commonOfficialDomains],
                 search_topic: "news",
                 time_range: "month",
                 max_age_days: 90,
@@ -4438,7 +4450,7 @@ function createLocalAppServer(options = {}) {
         const targetCity = String(city || "杭州").trim() || "杭州";
         const normalizedTopics = normalizeStringList(topics, ["健康养生", "家常"], 8);
         const tasks = contentSearchTasksFromPreferences(preferences || {}, targetCity, district);
-        const cacheKey = `content:tavily:v2:${targetCity}:${tasks.map((item) => `${item.type}:${item.query}`).join("|")}`;
+        const cacheKey = `content:tavily:v3:${targetCity}:${tasks.map((item) => `${item.type}:${item.query}`).join("|")}`;
         const cached = cachedProviderValue(cacheKey, 30 * 60 * 1000);
         if (cached) return { ...cached, family_id: Number(familyId || cached.family_id || 0) };
         try {
@@ -4494,9 +4506,9 @@ function createLocalAppServer(options = {}) {
                         time_range: task.time_range || "",
                     }))
                     .filter((item) => safeCareContentRecommendation(item, task.type, task))
-                    .slice(0, 1))
+                    .slice(0, 3))
                 .filter((item, index, source) => source.findIndex((candidate) => candidate.url === item.url) === index)
-                .slice(0, runtime.max_results);
+                .slice(0, 10);
             return setCachedProviderValue(cacheKey, {
                 family_id: Number(familyId || 0),
                 city: targetCity,
@@ -5125,6 +5137,10 @@ function createLocalAppServer(options = {}) {
         }
         if (schedule.content_types?.visit_reminder && schedule.visit_reminder?.enabled) {
             const daysSinceVisit = daysSinceDateString(schedule.visit_reminder.last_visit_at);
+            const daysUntilVisit = daysUntilDay(schedule.visit_reminder.next_visit_at);
+            if (daysUntilVisit !== null && daysUntilVisit >= 0) {
+                facts.push(`计划 ${schedule.visit_reminder.next_visit_at} 回家，还有 ${daysUntilVisit} 天。`);
+            }
             if (daysSinceVisit !== null) {
                 facts.push(`距离上次回家已经 ${daysSinceVisit} 天，提醒阈值是 ${schedule.visit_reminder.threshold_days} 天。`);
             } else {

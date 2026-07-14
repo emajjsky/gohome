@@ -66,6 +66,7 @@
             threshold_days: 14,
             location_tracking_enabled: false,
             last_visit_at: "",
+            next_visit_at: "",
         },
         delivery_rules: {
             daily_digest: { enabled: true, mode: "daily_digest" },
@@ -195,6 +196,7 @@
         $("visitThreshold").value = String(current.visit_reminder?.threshold_days || 14);
         $("locationTracking").checked = false;
         $("lastVisitAt").value = current.visit_reminder?.last_visit_at || "";
+        $("nextVisitAt").value = current.visit_reminder?.next_visit_at || "";
         if ($("exceptionPushEnabled")) $("exceptionPushEnabled").checked = current.delivery_rules?.home_status?.exception_push_enabled !== false;
         if ($("holidayLeadDays")) $("holidayLeadDays").value = String(current.delivery_rules?.holidays?.days_before ?? 1);
         if ($("anniversaryLeadDays")) $("anniversaryLeadDays").value = String(current.delivery_rules?.anniversaries?.days_before ?? 3);
@@ -262,6 +264,7 @@
                         threshold_days: visitThreshold,
                         location_tracking_enabled: false,
                         last_visit_at: $("lastVisitAt").value || "",
+                        next_visit_at: $("nextVisitAt").value || "",
                     },
                     delivery_rules: {
                         daily_digest: { enabled: $("scheduleEnabled").checked, mode: "daily_digest" },

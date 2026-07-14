@@ -1292,6 +1292,7 @@ async function main() {
                             threshold_days: 10,
                             location_tracking_enabled: true,
                             last_visit_at: "2026-06-20",
+                            next_visit_at: "2026-07-20",
                         },
                         anniversaries: [
                             { label: "妈妈生日", date: "2026-09-01", repeat: "yearly" },
@@ -1311,6 +1312,7 @@ async function main() {
         assert.equal(savedSchedule.visit_reminder.threshold_days, 10);
         assert.equal(savedSchedule.visit_reminder.location_tracking_enabled, true);
         assert.equal(savedSchedule.visit_reminder.last_visit_at, "2026-06-20");
+        assert.equal(savedSchedule.visit_reminder.next_visit_at, "2026-07-20");
         assert.equal(savedSchedule.anniversaries[0].label, "妈妈生日");
 
         app.store.db.care_cards = app.store.db.care_cards.filter((card) => Number(card.family_id) !== Number(family.id));
@@ -1670,6 +1672,7 @@ async function main() {
         assert.equal(seedBundle.tables.care_preferences[0].image_model, "wan2.7-image");
         assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.delivery_time, "07:45");
         assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.visit_reminder.threshold_days, 10);
+        assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.visit_reminder.next_visit_at, "2026-07-20");
         assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.anniversaries[0].label, "妈妈生日");
         assert.equal(seedBundle.tables.care_cards.length, 1);
         assert.equal(seedBundle.tables.care_cards[0].card_id, careCard.card_id);
@@ -1717,6 +1720,7 @@ async function main() {
         assert.equal(restoredDb.care_preferences[String(family.id)].image_model, "wan2.7-image");
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.delivery_time, "07:45");
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.message_focus, "先说明家里是否平稳，再给女儿一个适合打电话时聊的轻松话题。");
+        assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.visit_reminder.next_visit_at, "2026-07-20");
         assert.equal(restoredDb.care_cards.length, 1);
         assert.equal(restoredDb.care_cards[0].card_id, careCard.card_id);
         assert.ok(restoredDb.app_messages.some((message) => message.message_type === "care_card"));

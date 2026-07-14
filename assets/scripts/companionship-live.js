@@ -203,12 +203,12 @@
 
     async function loadMessages(familyId) {
         if (!window.GoHomeEdge?.v1AppMessages) return [];
-        let messages = await window.GoHomeEdge.v1AppMessages({ family_id: familyId, limit: 8, status: "all" });
+        let messages = await window.GoHomeEdge.v1AppMessages({ family_id: familyId, limit: 12, status: "all" });
         messages = messages.filter((message) => (
             !isSafetyMessage(message)
             && String(message?.message_type || "").trim() !== "test"
         ));
-        return messages.slice(0, 4);
+        return messages.slice(0, 8);
     }
 
     async function loadCareCard(familyId, options = {}) {
@@ -244,6 +244,16 @@
             return await window.GoHomeEdge.v1CarePreferences(familyId);
         } catch (_error) {
             return null;
+        }
+    }
+
+    async function loadCareCards(familyId) {
+        if (!familyId || !window.GoHomeEdge?.v1CareCards) return [];
+        try {
+            const cards = await window.GoHomeEdge.v1CareCards({ family_id: familyId, limit: 12 });
+            return Array.isArray(cards) ? cards : [];
+        } catch (_error) {
+            return [];
         }
     }
 
@@ -359,6 +369,87 @@
             date: target,
             days: Math.ceil((target.getTime() - today.getTime()) / 86400000),
         };
+    }
+
+    function daysUntilDate(value) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return null;
+        const target = Date.parse(`${value}T00:00:00+08:00`);
+        const today = Date.parse(`${shanghaiDateKey()}T00:00:00+08:00`);
+        if (!Number.isFinite(target) || !Number.isFinite(today)) return null;
+        return Math.ceil((target - today) / 86400000);
+    }
+
+    function renderCompanionPlan(preferences) {
+        const schedule = preferences?.metadata?.care_card_schedule || {};
+        const visitDate = String(schedule.visit_reminder?.next_visit_at || "").trim();
+        const visitDays = daysUntilDate(visitDate);
+        if (visitDate && visitDays !== null && visitDays >= 0) {
+            const label = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" })
+                .format(new Date(`${visitDate}T00:00:00+08:00`));
+            $("companionshipNextVisit").textContent = label;
+            $("companionshipNextVisitMeta").textContent = visitDays === 0 ? "就是今天" : `还有 ${visitDays} 天`;
+        } else {
+            $("companionshipNextVisit").textContent = "未设置";
+            $("companionshipNextVisitMeta").textContent = "安排一次回家";
+        }
+        $("companionshipDeliveryTime").textContent = schedule.delivery_time || "08:30";
+        const topics = Array.isArray(schedule.interest_topics) ? schedule.interest_topics.filter(Boolean).slice(0, 4) : [];
+        $("companionshipTopics").textContent = topics.length ? topics.join(" · ") : "等待设置关注内容";
+    }
+
+    function careCardIsCritical(card) {
+        const text = [card?.title, card?.body, ...(Array.isArray(card?.facts) ? card.facts : [])].map(String).join(" ");
+        if (/无高优先级|无安全告警|无告警|无异常|没有未处理|没有待处理|整体平稳|一切平稳/.test(text)) return false;
+        return /高优先级|重要提醒|告警|跌倒|离线|待确认/.test(text);
+    }
+
+    async function hydrateArchiveImages(root) {
+        const images = Array.from(root.querySelectorAll("img[data-care-image]"));
+        await Promise.all(images.map(async (image) => {
+            const source = String(image.dataset.careImage || "").trim();
+            if (!source) return;
+            try {
+                const url = await window.GoHomeEdge.v1VideoMediaPlaybackUrl(source);
+                const preload = new Image();
+                await new Promise((resolve, reject) => {
+                    preload.onload = resolve;
+                    preload.onerror = reject;
+                    preload.src = url;
+                });
+                image.src = url;
+                image.classList.remove("hidden");
+                image.nextElementSibling?.classList.add("hidden");
+            } catch (_error) {}
+        }));
+    }
+
+    function renderCareArchive(cards) {
+        const section = $("companionshipArchiveSection");
+        const list = $("companionshipArchiveList");
+        if (!section || !list) return;
+        const archive = (Array.isArray(cards) ? cards : [])
+            .filter((card) => card && !careCardIsCritical(card))
+            .slice(0, 6);
+        section.classList.toggle("hidden", !archive.length);
+        if (!archive.length) {
+            list.innerHTML = "";
+            return;
+        }
+        $("companionshipArchiveMeta").textContent = `${archive.length} 张`;
+        list.innerHTML = archive.map((card) => `
+            <article class="companion-archive-card">
+                <div class="companion-archive-media">
+                    ${card.image_url ? `<img class="hidden" data-care-image="${escapeHtml(card.image_url)}" alt="${escapeHtml(card.title || "关怀图文")}"/>` : ""}
+                    <div class="companion-archive-fallback">
+                        <span>${escapeHtml(String(card.card_date || "").slice(5).replace("-", "/"))}</span>
+                        <strong>${escapeHtml(card.title || "关怀记录")}</strong>
+                    </div>
+                </div>
+                <p>${escapeHtml(String(card.card_date || "").slice(5).replace("-", "/"))}</p>
+                <h4>${escapeHtml(card.title || "关怀记录")}</h4>
+            </article>
+        `).join("");
+        void hydrateArchiveImages(list);
     }
 
     function renderImportantDates(preferences) {
@@ -550,12 +641,16 @@
             const profilePromise = loadElderProfile(family.id);
             const careCardPromise = loadCareCard(family.id);
             const preferencesPromise = loadCarePreferences(family.id);
+            const careCardsPromise = loadCareCards(family.id);
             const messagesPromise = loadMessages(family.id);
             const [profile, careCard, preferences] = await Promise.all([profilePromise, careCardPromise, preferencesPromise]);
             currentElderProfile = profile;
             renderProfileSummary(profile);
+            renderCompanionPlan(preferences);
             renderImportantDates(preferences);
             renderCareCard(careCard, family);
+            const careCards = await careCardsPromise;
+            renderCareArchive(careCards);
             if (careCard?.pending_refresh) refreshPendingCareCard(family);
             window.GoHomeAppStore?.markPageReady?.();
             const messages = await messagesPromise;
