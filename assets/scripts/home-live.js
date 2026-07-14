@@ -451,6 +451,10 @@
 
     function careSafeTopicText(value, limit = 38) {
         return shortText(String(value || "")
+            .replace(/<[^>]*>/g, " ")
+            .replace(/\{\{[^}]*\}\}/g, " ")
+            .replace(/\\(?:r|n|t)+/gi, " ")
+            .replace(/&(?:nbsp|amp|quot|lt|gt|#\d+);/gi, " ")
             .replace(/[_｜|│].*$/g, "")
             .replace(/新闻频道|央视网|中国网|老年频道|公众号|视频号/g, "")
             .replace(/^#+\s*/g, "")
@@ -477,6 +481,7 @@
     function unsafeTopicText(value, options = {}) {
         const text = String(value || "");
         if (!/[\u4e00-\u9fff]{4,}/.test(text)) return true;
+        if (/(字体放大|字体缩小|默认大小|来源\s*[:：]|作者\s*[:：]|日期\s*[:：]|###|\{\{|font-size|copyright|版权所有|网站地图|登录\s*注册)/i.test(text)) return true;
         const blocked = options.allowAntiFraud
             ? /(痴迷|割韭菜|谣言|投诉|死亡|猝死|癌|肿瘤|医院花钱|收割|曝光|乱象|焦虑|保健品骗局|坑老|习近平|金正恩|朝鲜|党代会|慢性病|疾病风险|医疗诊断)/
             : /(痴迷|骗局|诈骗|防骗|割韭菜|谣言|投诉|死亡|猝死|癌|肿瘤|医院花钱|收割|警惕|曝光|乱象|焦虑|保健品骗局|坑老|习近平|金正恩|朝鲜|党代会|慢性病|疾病风险|医疗诊断)/;
@@ -530,46 +535,58 @@
         const interests = context.interests || "家常话题";
         const source = recommendationSource(recommendation);
         const hasCandidate = Boolean(recommendation);
+        const candidateTitle = careSafeTopicText(recommendation?.title, 34);
+        const candidateSummary = careSafeTopicText(recommendation?.summary || recommendation?.content, 76);
         const moduleCopy = {
             local_hotspots: {
                 type: "本地热点",
                 icon: "location_city",
                 tone: "leaf",
-                title: `${region}身边事`,
-                body: hasCandidate ? "筛成本地生活话题，适合问问买菜、出门和社区活动是否方便。" : "先从天气和附近生活聊起，不显示没有筛选过的新闻标题。",
+                title: candidateTitle || `${region}今日生活提醒`,
+                body: candidateSummary || "正在从便民服务、社区活动和出行信息中筛选值得关注的内容。",
                 meta: hasCandidate ? source : "按区域偏好筛选",
+                image: String(recommendation?.image_url || "assets/stitch-images/13-0028165750.jpg"),
+                ratio: "portrait",
             },
             health_tips: {
                 type: "养生小贴士",
                 icon: "spa",
                 tone: "warm",
-                title: "今天的养生话题",
-                body: hasCandidate ? "把养生内容改成电话里能说的生活提醒：喝水、作息和最近胃口。" : "只做生活提醒，不替代医疗建议，可以聊喝水、作息和清淡饮食。",
+                title: candidateTitle || "今日健康生活建议",
+                body: candidateSummary || "聚焦喝水、作息、饮食和适度运动，不替代医疗建议。",
                 meta: hasCandidate ? source : "按关注主题",
+                image: String(recommendation?.image_url || "assets/stitch-images/09-cc5ea760d2.jpg"),
+                ratio: "tall",
             },
             anti_fraud: {
                 type: "防诈骗",
                 icon: "verified_user",
                 tone: "sun",
-                title: "低频安全提醒",
-                body: hasCandidate ? "用轻松口吻提醒陌生电话和转账，不制造紧张感。" : "只在开启后低频出现，优先官方和社区提醒，不做恐吓式文案。",
+                title: candidateTitle || "陌生来电与转账提醒",
+                body: candidateSummary || "只采用官方来源的低频安全提醒，不制造紧张感。",
                 meta: hasCandidate ? source : "低频推送",
+                image: String(recommendation?.image_url || "assets/stitch-images/04-047f4d8895.jpg"),
+                ratio: "landscape",
             },
             culture_entertainment: {
                 type: "文娱兴趣",
                 icon: "theater_comedy",
                 tone: "rose",
-                title: "可以聊关注的内容",
-                body: hasCandidate ? "从电视、戏曲或社区活动里找轻松开场，问问最近有没有想看的节目。" : `围绕${interests}准备一个轻松开场，不强行跳到其他页面。`,
+                title: candidateTitle || "今天值得看的文化内容",
+                body: candidateSummary || `从${interests}中筛选轻松、正向的节目和活动信息。`,
                 meta: hasCandidate ? source : "按兴趣生成",
+                image: String(recommendation?.image_url || "assets/images/grandma-reading.jpg"),
+                ratio: "square",
             },
             elder_interest_topics: {
-                type: "问候开场",
+                type: "兴趣推荐",
                 icon: "chat",
                 tone: "calm",
-                title: `围绕${interests.split("、").slice(0, 2).join("、") || "家常"}开口`,
-                body: hasCandidate ? "把今日候选内容改成一句自然问候，先问近况，再看要不要打电话。" : "先问晚饭、天气和最近想看的节目，再决定是否视频或回家。",
+                title: candidateTitle || `围绕${interests.split("、").slice(0, 2).join("、") || "日常生活"}的今日推荐`,
+                body: candidateSummary || "从已设置的兴趣中筛选轻松、正向的内容。",
                 meta: hasCandidate ? source : "按关注主题",
+                image: String(recommendation?.image_url || "assets/images/memory-relax-chat.jpg"),
+                ratio: "portrait",
             },
         };
         return moduleCopy[module] || null;
@@ -680,6 +697,15 @@
         );
     }
 
+    function feedFallbackImage(type) {
+        const label = String(type || "");
+        if (/本地/.test(label)) return "assets/stitch-images/13-0028165750.jpg";
+        if (/养生|健康/.test(label)) return "assets/stitch-images/09-cc5ea760d2.jpg";
+        if (/诈骗|安全/.test(label)) return "assets/stitch-images/04-047f4d8895.jpg";
+        if (/文娱|兴趣/.test(label)) return "assets/images/grandma-reading.jpg";
+        return "assets/images/memory-relax-chat.jpg";
+    }
+
     function pushCardMarkup(card) {
         const href = String(card.href || "").trim();
         const tag = href ? "a" : "article";
@@ -690,15 +716,23 @@
                 : /诈骗|安全/.test(card.type) ? "fraud"
                     : /文娱|兴趣|问候/.test(card.type) ? "interest"
                         : "all";
+        const ratio = String(card.ratio || "portrait").replace(/[^\w-]/g, "");
+        const fallbackImage = feedFallbackImage(card.type);
+        const media = card.image
+            ? `<div class="gohome-push-media ratio-${escapeHtml(ratio)}">
+                    <img src="${escapeHtml(card.image)}" data-feed-fallback="${escapeHtml(fallbackImage)}" alt="${escapeHtml(card.title || card.type || "今日资讯")}" loading="lazy"/>
+                    <span class="gohome-push-type">${escapeHtml(card.type || "资讯")}</span>
+                </div>`
+            : `<div class="gohome-push-card-top">
+                    <span class="material-symbols-outlined">${escapeHtml(card.icon || "favorite")}</span>
+                    <span class="gohome-push-type">${escapeHtml(card.type || "提醒")}</span>
+                </div>`;
         return `
             <${tag} ${attrs} data-feed-category="${category}" class="gohome-push-card ${escapeHtml(card.tone || "calm")}${escapeHtml(sizeClass)}">
-                <div class="gohome-push-card-top">
-                    <span class="material-symbols-outlined">${escapeHtml(card.icon || "favorite")}</span>
-                    <span class="gohome-push-type">${escapeHtml(card.type || "推送")}</span>
-                </div>
+                ${media}
                 <div class="gohome-push-card-copy">
-                    <h4>${escapeHtml(card.title || "今日信号")}</h4>
-                    <p>${escapeHtml(shortText(card.body || "打开后查看完整内容。", 54))}</p>
+                    <h4>${escapeHtml(card.title || "今日资讯")}</h4>
+                    <p>${escapeHtml(shortText(card.body || "打开后查看完整内容。", 72))}</p>
                     <strong>${escapeHtml(card.meta || "")}</strong>
                 </div>
             </${tag}>
@@ -736,22 +770,9 @@
         ));
         const openEvents = eventScope.filter((event) => !event.acknowledged);
         const criticalEvents = openEvents.filter((event) => event.level === "critical");
-        const holiday = upcomingHolidayCard();
-        const anniversary = upcomingAnniversary(schedule);
-        const days = daysSinceDateString(schedule.visit_reminder?.last_visit_at);
         const interests = Array.isArray(schedule.interest_topics) && schedule.interest_topics.length
             ? schedule.interest_topics.slice(0, 3).join("、")
             : "养生、天气、家常";
-        const city = String(profile?.city || "杭州").trim();
-        const name = profile?.display_name || "家人";
-        const weatherAvailable = Boolean(weatherSignal?.available);
-        const temperatureText = Number.isFinite(Number(weatherSignal?.temperature_c))
-            ? `${weatherSignal.temperature_c}°C`
-            : "";
-        const weatherTitle = weatherAvailable
-            ? [weatherSignal.city || city, weatherSignal.condition || "天气已更新", temperatureText].filter(Boolean).join(" ")
-            : `${city}天气待接入`;
-        const weatherBody = weatherCareBody(weatherSignal, weatherSignal?.city || city);
         const recommendations = Array.isArray(contentSignal?.recommendations) && contentSignal.recommendations.length
             ? contentSignal.recommendations
             : (Array.isArray(careCard?.content_recommendations) ? careCard.content_recommendations : [])
@@ -769,56 +790,20 @@
                 href: "events.html",
             });
         }
-        cards.push({
-            type: "天气问候",
-            icon: "wb_cloudy",
-            tone: "sky",
-            size: criticalEvents.length ? "" : "feature",
-            title: weatherTitle,
-            body: weatherBody,
-            meta: weatherAvailable ? "天气源已更新" : "天气源暂不可用",
-        });
         const types = schedule.content_types || {};
         const moduleContext = {
             region: contentRegionLabel(profile, preferences),
             interests,
         };
-        ["local_hotspots", "health_tips", "anti_fraud", "culture_entertainment", "elder_interest_topics"].forEach((module) => {
+        ["local_hotspots", "health_tips", "anti_fraud", "culture_entertainment"].forEach((module) => {
             if (!types[module]) return;
-            if (module !== "elder_interest_topics" && preferences?.content_recommendations_enabled === false) return;
-            const recommendation = safeTopicRecommendation(recommendations, module) || (module === "elder_interest_topics" ? safeTopicRecommendation(recommendations) : null);
+            const recommendation = safeTopicRecommendation(recommendations, module);
             const card = moduleRecommendationCard(module, recommendation, moduleContext);
             if (card) cards.push(card);
         });
-        if (types.holidays || types.anniversaries) {
-            cards.push({
-                type: "日历提醒",
-                icon: "event",
-                tone: "sun",
-                title: anniversary || holiday?.title || nextWeekendLabel(),
-                body: anniversary ? "适合提前准备一句更具体的问候。" : (holiday?.sub || "周末可以安排一次电话或回家看看。"),
-                meta: anniversary ? "按每年同月同日" : "节日和周末",
-            });
-        }
-        if (types.visit_reminder) {
-            cards.push({
-                type: "回家提醒",
-                icon: "map",
-                tone: "map",
-                title: days === null ? "补充上次回家日期" : `距离上次回家 ${days} 天`,
-                body: days === null ? "补上日期后，卡片会提醒是否该回家看看。" : "超过你设置的阈值时，会进入每日关怀。",
-                meta: "定位授权后显示距离",
-            });
-        }
-        if (types.home_status !== false) {
-            cards.push({
-                type: "家庭状态",
-                icon: "router",
-                tone: "calm",
-                title: deviceLooksOnline(device, enabled) ? "家庭盒子已同步" : "家庭盒子待确认",
-                body: deviceLooksOnline(device, enabled) ? "设备正在同步状态，异常会进入事件页。" : "若长期离线，请检查盒子网络和电源。",
-                meta: openEvents.length ? `${openEvents.length} 条待查看` : "无未处理事件",
-            });
+        if (!cards.some((card) => card.image) && types.elder_interest_topics) {
+            const recommendation = safeTopicRecommendation(recommendations);
+            cards.push(moduleRecommendationCard("elder_interest_topics", recommendation, moduleContext));
         }
         return cards;
     }
@@ -896,7 +881,7 @@
             const labels = enabledContentLabels(context.preferences).slice(0, 6);
             status.innerHTML = labels.length
                 ? `按“我的”设置筛选 <span>${escapeHtml(labels.join(" / "))}</span>`
-                : `${escapeHtml(family?.name || "当前家庭")}的天气、日历和家里状态。`;
+                : "在“我的”中选择关注的内容类型。";
         }
         const pushCards = buildPushCards({
             careCard: context.careCard || history[0],
@@ -910,6 +895,12 @@
             contentSignal: context.contentSignal,
         });
         feed.innerHTML = pushCards.map(pushCardMarkup).join("");
+        feed.querySelectorAll("img[data-feed-fallback]").forEach((image) => {
+            image.addEventListener("error", () => {
+                const fallback = image.dataset.feedFallback || "";
+                if (fallback && !image.src.endsWith(fallback)) image.src = fallback;
+            }, { once: true });
+        });
         applyHomeFeedFilter();
     }
 
@@ -1333,7 +1324,7 @@
                             GoHomeEdge.myFamilies(),
                             GoHomeEdge.appDevice(),
                             GoHomeEdge.appCameras(),
-                            GoHomeEdge.appEvents("limit=10&acknowledged=false&view=summary"),
+                            GoHomeEdge.appEvents("limit=30"),
                         ]),
                     ]);
                 } catch (_error) {

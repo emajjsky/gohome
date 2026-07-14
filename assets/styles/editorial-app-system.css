@@ -1,3 +1,11 @@
+@font-face {
+  font-family: "Material Symbols Outlined";
+  font-style: normal;
+  font-weight: 300;
+  font-display: block;
+  src: url("../fonts/material-symbols-outlined.ttf") format("truetype");
+}
+
 :root {
   --gohome-bg: #ffffff;
   --gohome-bg-deep: #f3f3f0;
@@ -893,6 +901,19 @@ body.gohome-page-connect button[type="submit"] {
 @media (max-width: 360px) {
   body.gohome-page-parent_profile #relationship-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (min-width: 561px) {
+  body:not(.gohome-page-index):not(.gohome-page-companionship) nav.fixed.bottom-0,
+  body:not(.gohome-page-index):not(.gohome-page-companionship) nav.docked.bottom-0,
+  body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-nav,
+  body:not(.gohome-page-index):not(.gohome-page-companionship) .app-bottom-nav {
+    left: 50% !important;
+    right: auto !important;
+    width: 430px !important;
+    max-width: 430px !important;
+    transform: translateX(-50%) !important;
   }
 }
 

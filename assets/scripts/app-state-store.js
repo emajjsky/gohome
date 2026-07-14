@@ -1,6 +1,6 @@
 (function () {
     const SNAPSHOT_ROOT = "gohome.pageSnapshot.";
-    const SNAPSHOT_PREFIX = `${SNAPSHOT_ROOT}v4.`;
+    const SNAPSHOT_PREFIX = `${SNAPSHOT_ROOT}v5.`;
     const AUTH_TOKEN_KEY = "gohome.authToken";
     const MAX_SNAPSHOT_AGE_MS = 24 * 60 * 60 * 1000;
     const MAX_SNAPSHOT_BYTES = 600 * 1024;

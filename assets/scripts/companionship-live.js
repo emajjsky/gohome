@@ -218,7 +218,10 @@
     async function loadMessages(familyId) {
         if (!window.GoHomeEdge?.v1AppMessages) return [];
         let messages = await window.GoHomeEdge.v1AppMessages({ family_id: familyId, limit: 8, status: "all" });
-        messages = messages.filter((message) => !isSafetyMessage(message));
+        messages = messages.filter((message) => (
+            !isSafetyMessage(message)
+            && String(message?.message_type || "").trim() !== "test"
+        ));
         return messages.slice(0, 4);
     }
 
@@ -350,63 +353,6 @@
         });
     }
 
-    function cleanTopicText(value, limit = 54) {
-        const text = String(value || "")
-            .replace(/家里一切平稳|聊聊家常|递杯茶|递茶|端水|送到手边|陪在身边/g, "")
-            .replace(/\s+/g, " ")
-            .trim();
-        if (!text) return "";
-        return text.length > limit ? `${text.slice(0, limit - 3)}...` : text;
-    }
-
-    function topicCandidates(card) {
-        const recommendations = Array.isArray(card?.content_recommendations) ? card.content_recommendations : [];
-        const values = [
-            ...recommendations.flatMap((item) => [item?.title, item?.summary]),
-            ...(Array.isArray(card?.facts) ? card.facts : []),
-            card?.body,
-        ].map((value) => cleanTopicText(value)).filter(Boolean);
-        return values.filter((value, index) => values.indexOf(value) === index).slice(0, 3);
-    }
-
-    function renderTopics(card) {
-        const list = $("companionshipTopicList");
-        if (!list) return;
-        const topics = topicCandidates(card);
-        const fallbackTopics = [
-            "问问今天的天气是否影响出门安排。",
-            "聊聊最近关注的节目、社区活动或家常话题。",
-            "约一个双方都方便的通话或回家时间。",
-        ];
-        const rows = topics.length ? topics : fallbackTopics;
-        const icons = ["wb_sunny", "chat", "calendar_month"];
-        list.innerHTML = "";
-        rows.forEach((topic, index) => {
-            const row = document.createElement("div");
-            row.className = "companion-topic";
-            const icon = document.createElement("span");
-            icon.className = "material-symbols-outlined";
-            icon.textContent = icons[index % icons.length];
-            const text = document.createElement("p");
-            text.textContent = topic;
-            const copy = document.createElement("button");
-            copy.type = "button";
-            copy.dataset.action = "copy-topic";
-            copy.setAttribute("aria-label", "复制话题");
-            copy.innerHTML = '<span class="material-symbols-outlined">content_copy</span>';
-            copy.addEventListener("click", async () => {
-                try {
-                    await navigator.clipboard?.writeText(topic);
-                    setFeedback("话题已复制");
-                } catch (_error) {
-                    setFeedback("长按文字即可复制");
-                }
-            });
-            row.append(icon, text, copy);
-            list.append(row);
-        });
-    }
-
     function shanghaiDateKey(date = new Date()) {
         return new Intl.DateTimeFormat("en-CA", {
             timeZone: "Asia/Shanghai",
@@ -530,7 +476,6 @@
                 actions.append(anchor);
             });
         }
-        renderTopics(card);
     }
 
     function bindMessageCardActions(article, message) {
@@ -647,7 +592,11 @@
             if (careCard?.pending_refresh) refreshPendingCareCard(family);
             window.GoHomeAppStore?.markPageReady?.();
             const messages = await messagesPromise;
-            if (!messages.length) return;
+            if (!messages.length) {
+                if ($("companionshipMessageList")) $("companionshipMessageList").innerHTML = "";
+                toggleMessageSection(false);
+                return;
+            }
             renderMessageList(messages, family);
             toggleMessageSection(true);
         } catch (_error) {
@@ -661,10 +610,6 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-        $("companionshipTopicRefresh")?.addEventListener("click", () => {
-            const list = $("companionshipTopicList");
-            if (list?.children.length > 1) list.append(list.children[0]);
-        });
         window.GoHomeRefreshPage = () => render();
         render();
     });

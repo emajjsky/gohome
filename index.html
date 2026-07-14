@@ -4,12 +4,12 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/>
 <title>回家</title>
-<script src="assets/scripts/app-state-store.js?v=20260714-appstore-5"></script>
+<script src="assets/scripts/app-state-store.js?v=20260714-appstore-6"></script>
 <link rel="icon" href="data:,"/>
 <link rel="stylesheet" href="assets/styles/tailwind.css?v=20260708-local-1"/>
 <link rel="stylesheet" href="assets/styles/stitch-app-adapt.css?v=20260709-home-feed-2"/>
-<link rel="stylesheet" href="assets/styles/editorial-home-companion.css?v=20260714-editorial-3"/>
-<link rel="stylesheet" href="assets/styles/editorial-app-system.css?v=20260714-editorial-3"/>
+<link rel="stylesheet" href="assets/styles/editorial-home-companion.css?v=20260714-editorial-7"/>
+<link rel="stylesheet" href="assets/styles/editorial-app-system.css?v=20260714-editorial-7"/>
 </head>
 <body class="gohome-page-index bg-white text-[#111111] min-h-screen">
 <header class="editorial-topbar" aria-label="首页工具栏">
@@ -82,6 +82,21 @@
     </a>
   </section>
 
+  <section id="edgeHomeCareSection" class="hidden editorial-section editorial-feed-section">
+    <div class="editorial-section-head">
+      <h3>今日资讯</h3>
+      <p id="edgeHomeCareFeedStatus">按关注内容筛选</p>
+    </div>
+    <div class="editorial-filter-row" role="tablist" aria-label="内容分类">
+      <button class="editorial-filter active" type="button" data-feed-filter="all">全部</button>
+      <button class="editorial-filter" type="button" data-feed-filter="local">本地</button>
+      <button class="editorial-filter" type="button" data-feed-filter="health">健康</button>
+      <button class="editorial-filter" type="button" data-feed-filter="fraud">防诈骗</button>
+      <button class="editorial-filter" type="button" data-feed-filter="interest">文娱</button>
+    </div>
+    <div id="edgeHomeCareFeed" class="gohome-push-feed gohome-story-grid" aria-live="polite"></div>
+  </section>
+
   <section id="edgeHomeCalendarSection" class="editorial-section">
     <div class="editorial-section-head">
       <h3>接下来</h3>
@@ -121,21 +136,6 @@
     </div>
   </section>
 
-  <section id="edgeHomeCareSection" class="hidden editorial-section">
-    <div class="editorial-section-head">
-      <h3>为你推荐</h3>
-      <p id="edgeHomeCareFeedStatus">按关注内容筛选</p>
-    </div>
-    <div class="editorial-filter-row" role="tablist" aria-label="内容分类">
-      <button class="editorial-filter active" type="button" data-feed-filter="all">推荐</button>
-      <button class="editorial-filter" type="button" data-feed-filter="local">本地</button>
-      <button class="editorial-filter" type="button" data-feed-filter="health">健康</button>
-      <button class="editorial-filter" type="button" data-feed-filter="fraud">防诈骗</button>
-      <button class="editorial-filter" type="button" data-feed-filter="interest">兴趣</button>
-    </div>
-    <div id="edgeHomeCareFeed" class="gohome-push-feed gohome-story-grid" aria-live="polite"></div>
-  </section>
-
   <section id="edgeHomeCareHistorySection" class="hidden editorial-section">
     <div class="editorial-section-head">
       <h3>往期图文</h3>
@@ -161,7 +161,7 @@
 </nav>
 
 <script src="assets/scripts/edge-client.js?v=20260714-perf-3"></script>
-<script src="assets/scripts/home-live.js?v=20260714-editorial-3"></script>
+<script src="assets/scripts/home-live.js?v=20260714-editorial-7"></script>
 <script src="assets/scripts/stitch-app-data.js?v=20260713-appstore-1"></script>
 <script src="assets/scripts/stitch-app-routes.js?v=20260708-product-flow-1"></script>
 </body>

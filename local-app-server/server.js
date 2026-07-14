@@ -2092,8 +2092,8 @@ function createLocalAppServer(options = {}) {
             image_generation_enabled: false,
             image_provider: "",
             image_model: "",
-            content_recommendations_enabled: false,
-            content_sources_enabled: false,
+            content_recommendations_enabled: true,
+            content_sources_enabled: true,
             metadata: normalizeCareMetadata(),
             updated_at: nowIso(),
         };
@@ -4343,6 +4343,7 @@ function createLocalAppServer(options = {}) {
         const sourceText = `${item?.source || ""} ${item?.url || ""}`.toLowerCase();
         if (!String(item?.title || "").trim() || !String(item?.url || "").trim()) return false;
         if (!/[\u4e00-\u9fff]{4,}/.test(text)) return false;
+        if (/(字体放大|字体缩小|默认大小|来源\s*[:：]|作者\s*[:：]|日期\s*[:：]|###|\{\{|font-size|copyright|版权所有|网站地图|登录\s*注册)/i.test(text)) return false;
         if (/(dangjian|cpc\.people|qstheory|theory\.people)/.test(sourceText)) return false;
         if (!matchesModuleIntent(text, taskType)) return false;
         const blocked = taskType === "anti_fraud"
@@ -4454,7 +4455,15 @@ function createLocalAppServer(options = {}) {
     async function fetchContentRecommendations({ familyId, city, district = "", preferences }) {
         const resolvedPreferences = preferences || carePreferences(familyId);
         const topics = contentTopicsFromPreferences(resolvedPreferences);
-        if (resolvedPreferences.content_recommendations_enabled === false) {
+        const contentTypes = resolvedPreferences.metadata?.care_card_schedule?.content_types || {};
+        const hasSelectedContent = [
+            "elder_interest_topics",
+            "local_hotspots",
+            "health_tips",
+            "anti_fraud",
+            "culture_entertainment",
+        ].some((key) => contentTypes[key] === true);
+        if (resolvedPreferences.content_recommendations_enabled === false && !hasSelectedContent) {
             return unavailableContentRecommendations({
                 familyId,
                 city,
