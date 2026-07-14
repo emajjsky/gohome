@@ -1,12 +1,12 @@
 (function () {
     const SNAPSHOT_ROOT = "gohome.pageSnapshot.";
-    const SNAPSHOT_PREFIX = `${SNAPSHOT_ROOT}v8.`;
+    const SNAPSHOT_PREFIX = `${SNAPSHOT_ROOT}v9.`;
     const AUTH_TOKEN_KEY = "gohome.authToken";
     const MAX_SNAPSHOT_AGE_MS = 24 * 60 * 60 * 1000;
     const MAX_SNAPSHOT_BYTES = 600 * 1024;
     const CAPTURE_DELAY_MS = 120;
     const REFRESH_DELAY_MS = 180;
-    const APP_SHELL_SERVICE_WORKER = "/service-worker.js";
+    const APP_SHELL_SERVICE_WORKER = "/service-worker.js?v=20260715-4";
     const PAGE_NAMES = new Set([
         "index.html",
         "monitor.html",

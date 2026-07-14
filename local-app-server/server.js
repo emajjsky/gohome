@@ -556,22 +556,24 @@ function createLocalAppServer(options = {}) {
     ensureDir(mediaDir);
 
     const defaultCareTextPrompt = [
-        "你是回家 App 的亲情关怀卡片生成助手。",
-        "请基于老人资料、日历、天气、热点话题、设备状态、摄像头状态和最近事件生成一张每日关怀推送卡片。",
-        "产品目标是让成年子女自然地想起联系家里，不是做监控播报。",
-        "文案风格参考精致电商生活方式卡片：温暖、有画面感、像给家人看的今日小提醒。",
-        "标题必须贴合当天主题，例如家里平稳、节日、纪念日、回家间隔、老人兴趣话题，不要泛泛写建议。",
-        "不要把标题或正文写成“家里一切平稳”“聊聊家常”“多陪陪家人”这类泛化占位句。",
+        "你是回家 App 的联系灵感编辑。",
+        "请基于家庭资料、日历、天气、关注话题、设备状态和最近事件，整理一条今天值得联系家里的具体理由。",
+        "这不是监控播报、健康教育或系统通知；目标是让成年子女自然地开启一次联系。",
+        "标题要像生活方式资讯标题，描述一个具体时刻或话题，不要写成命令、口号或功能名称。",
+        "正文先交代一个真实依据，再给一句能直接拿来开场的话；语气平等、自然，不教育用户，也不教育家里人。",
+        "普通关怀的标题和正文不要播报设备在线、无异常或无告警；这些状态只能放在 facts 里作为内容依据。",
+        "不要使用“提醒喝水”“注意身体”“多陪陪家人”“聊聊家常”“今天问个安”“家里一切平稳”等机械表达。",
+        "不要默认使用老人、妈妈、爸爸等身份标签；只有用户资料明确要求且句子确有必要时才使用称呼。",
         "如果没有安全事件，也必须从天气、周末、节假日、纪念日、回家间隔或老人兴趣中选择一个真实信号作为主题。",
         "热点或内容搜索结果只能作为温和话题候选，不要照抄耸动标题、负面标题或平台水印式标题。",
-        "家属通常不在老人身边，行动建议必须是打电话、发微信、提醒喝水、约定回家或准备问候，禁止写成亲手递茶、端水、送到手边、陪在身边等现场照顾动作。",
+        "家属通常不在家里，行动建议只能是打电话、发微信、约定回家或准备节日问候，禁止写成递茶、端水、送到手边或陪在身边。",
         "不要编造老人真实行为、健康结论、实时天气、手机定位距离或未接入的数据。",
-        "如果有高优先级安全事件，标题要明确提醒先确认事件；如果没有，只写安心和问候话题。",
+        "高优先级安全事件要明确要求先确认；普通关怀不能渲染风险，也不要引导查看监控。",
         "输出必须是 JSON，字段为 title、body、facts、suggested_actions、tone、image_brief。",
-        "title 不超过 16 个中文字符，body 不超过 80 个中文字符，facts 最多 3 条，每条不超过 24 个中文字符。",
+        "title 不超过 18 个中文字符，body 不超过 88 个中文字符，facts 最多 3 条，每条只写一个可核验依据。",
         "suggested_actions 最多 3 条，优先给打电话、发消息、准备节日问候；普通关怀不要引导去看监控。",
         "tone 只能使用 warm、calm、alert、seasonal、memory 中的一个。",
-        "image_brief 用一句话描述画面场景，不要包含监控、危险证据、真实老人肖像。",
+        "image_brief 只描述一幅无文字的生活场景图片，不要包含海报、排版、监控证据或真实人物肖像。",
     ].join("\n");
 
     const defaultVisionVerificationPrompt = [
@@ -592,20 +594,14 @@ function createLocalAppServer(options = {}) {
     ].join("\n");
 
     const defaultCareImagePrompt = [
-        "你是回家 App 的视觉设计师，生成一张 1:1 方形中文生活方式编辑视觉。",
-        "卡片用于年轻家属阅读的首页信息流，不是告警证据，也不是老年用品宣传页。",
-        "固定视觉系统：纯白或接近纯白占主要面积，纯黑用于标题和结构，姜黄色 #D49A24 只作单一强调色；允许极少量中性浅灰，不使用其他主色。",
-        "风格参考高级生活方式电商编辑页和现代中文杂志：克制、清晰、年轻、留白准确、信息层级明确，不做传统贺卡。",
-        "温暖感来自自然日光、真实生活细节和具体主题，不依靠米黄滤镜、复古泛黄或大面积奶油色背景。",
-        "主视觉使用一个近景生活静物或局部场景，例如水杯与窗影、电话与日历、花束与餐桌一角；不要画完整客厅全景，不要用泛化的幸福家庭模板。",
-        "版式采用不对称编辑构图，标题左对齐，边距充足；画面、标题和留白直接落在整张方图上，不要再画卡片容器、相框或海报纸张。",
-        "全图严格只有两个文字块：指定中文标题恰好出现一次，指定短句恰好出现一次；不得重复、改写、补充或在其他位置再次出现。",
-        "两个文字块必须逐字使用、端正清晰、无错别字；除此之外不要生成任何文字、数字、英文或装饰标签。",
-        "所有文字完整放在画面内侧留白区域，右侧和底部保留充足空间，任何字都不能贴边、溢出、遮挡或被裁切。",
-        "标题使用中等字号黑体，可自然分成两行，每行 4 到 7 个汉字；短句使用较小字号并保持一行，不要为了填满画面放大文字。",
-        "禁止水彩、蜡笔、儿童绘本、Q 版漫画、卡通老人、怀旧年画、3D 盲盒、廉价促销海报和模板化 AI 插画风格。",
+        "生成一张横向 4:3 的写实生活方式静物摄影。",
+        "固定视觉系统：纯白或接近纯白占主要面积，黑色只用于少量真实物件，姜黄色 #D49A24 只作为一个小面积点睛色；允许中性灰和自然材质本色。",
+        "自然日光、真实材质、克制构图、轻微景深；主体明确，画面干净但保留生活痕迹。",
+        "使用近景或中近景，完整铺满画幅，不添加二次画布、留白版式或图形设计层。",
+        "所有物件表面保持纯色和无标识，电子设备保持熄屏。",
+        "画面中不要出现任何文字、汉字、字母、数字、日期、品牌、logo、水印、标签、手机界面或可读钟表。",
+        "禁止水彩、蜡笔、儿童绘本、Q 版漫画、卡通人物、怀旧年画、3D 盲盒和模板化 AI 插画风格。",
         "禁止大面积米黄、棕色、粉色、橙色渐变，禁止任何外轮廓、圆角边框、相框、厚重阴影、金色边框、发光文字、贴纸、角标、奖章、logo 和水印。",
-        "文案只能表达远程关心，例如打电话、发消息、提醒喝水或约定回家；不要写递茶、端水、送到手边或陪在身边。",
         "不要出现真实老人肖像、监控画面、跌倒、火灾、医疗诊断、恐慌表情或红色警报风格。",
     ].join("\n");
 
@@ -733,14 +729,19 @@ function createLocalAppServer(options = {}) {
         return Number.isFinite(value) && value >= 5000 ? value : 60000;
     }
 
+    function imageGenerationTimeoutMs() {
+        const value = Number(process.env.GOHOME_CARE_IMAGE_TIMEOUT_MS || 120000);
+        return Number.isFinite(value) && value >= 30000 ? value : 120000;
+    }
+
     function providerRequestTimeoutMs() {
         const value = Number(process.env.GOHOME_PROVIDER_REQUEST_TIMEOUT_MS || 12000);
         return Number.isFinite(value) && value >= 2000 ? value : 12000;
     }
 
     function careImageSize() {
-        const value = String(process.env.GOHOME_CARE_IMAGE_SIZE || "1024*1024").trim();
-        return /^\d{3,4}\*\d{3,4}$/.test(value) ? value : "1024*1024";
+        const value = String(process.env.GOHOME_CARE_IMAGE_SIZE || "1280*960").trim();
+        return /^\d{3,4}\*\d{3,4}$/.test(value) ? value : "1280*960";
     }
 
     function careImagePollIntervalMs() {
@@ -804,14 +805,14 @@ function createLocalAppServer(options = {}) {
                 capability_id: "care-card-image",
                 name: "生图模型",
                 type: "image_generation",
-                scope: "care_card_image_1x1",
+                scope: "care_card_image_4x3",
                 configured: Boolean(image.base_url && image.api_key && image.model),
                 enabled: Boolean(image.base_url && image.api_key && image.model),
                 base_url_set: Boolean(image.base_url),
                 api_key_set: Boolean(image.api_key),
                 model: image.model,
-                purpose_label: "1:1 图文卡片生成",
-                aspect_ratio: "1:1",
+                purpose_label: "4:3 无字生活场景图生成",
+                aspect_ratio: "4:3",
                 prompt: image.prompt,
                 prompt_source: image.prompt_source,
                 env_keys: {
@@ -820,7 +821,7 @@ function createLocalAppServer(options = {}) {
                     model: ["GOHOME_IMAGE_MODEL", "GOHOME_WAN_MODEL", "WAN_MODEL"],
                     prompt: ["GOHOME_CARE_IMAGE_PROMPT"],
                 },
-                output_contract: "1:1 non-evidence illustrated care card image with readable Chinese text",
+                output_contract: "4:3 text-free editorial lifestyle image; copy is rendered by the app",
             },
             {
                 capability_id: "weather-signals",
@@ -3238,7 +3239,6 @@ function createLocalAppServer(options = {}) {
 
     function contextualCareTheme(context = {}) {
         const weather = context.weather || {};
-        const elder = context.elder || {};
         const schedule = context.preferences?.care_card_schedule || {};
         const topics = Array.isArray(schedule.interest_topics) && schedule.interest_topics.length
             ? schedule.interest_topics
@@ -3248,78 +3248,96 @@ function createLocalAppServer(options = {}) {
         if (Number(context.critical_event_count || 0) > 0) {
             return {
                 title: "有提醒待确认",
-                body: `${elder.display_name || "家人"}家里有高优先级事件，先确认事件证据，再联系家里。`,
-                image_brief: "家属手机上的温和提醒界面，重点是先确认家里情况。",
+                body: "家里有一条高优先级事件待确认。先查看事件证据，确认情况后再联系家里。",
+                image_brief: "自然日光下的整洁桌面，一部熄屏手机放在触手可及的位置，画面克制安静。",
             };
         }
         if (weather.available) {
-            const city = weather.city || elder.city || "家里";
+            const city = weather.city || context.elder?.city || "当地";
             const condition = weather.condition || "天气";
             const temp = Number.isFinite(Number(weather.temperature_c)) ? `${weather.temperature_c}°C` : "";
             const isHot = Number(weather.temperature_c) >= 30 || /(闷热|炎热|高温|热)/.test(String(weather.advice || ""));
-            const weatherTitle = isHot
-                ? `${city}闷热，提醒喝水`
-                : `${city}${condition}，打个电话`;
+            const weatherTitle = isHot ? "天气有点闷，晚点问问晚饭" : `${condition}天，晚点问问今天怎么过`;
+            const observation = `${city}今天${condition}${temp ? `，${temp}` : ""}`;
             return {
-                title: weatherTitle.slice(0, 16),
-                body: `今天${city}${condition}${temp ? `，${temp}` : ""}，适合电话提醒喝水、少久晒，再聊聊晚饭和近况。`,
-                image_brief: `${city}${condition}天气下的温馨家居场景，桌上有水杯、电话和日历，主题是远程提醒喝水。`,
+                title: weatherTitle.slice(0, 18),
+                body: isHot
+                    ? `${observation}。傍晚打电话时，问问晚饭吃了什么，话题自然就打开了。`
+                    : `${observation}。晚点联系时，从今天有没有出门、晚饭吃什么聊起，会更自然。`,
+                image_brief: isHot
+                    ? "自然日光下的窗边桌面，一杯清水、几片新鲜柠檬和一部熄屏手机，清爽克制的生活摄影。"
+                    : "天气光线映在安静餐桌一角，一只素色杯子和一部熄屏手机，真实自然的生活摄影。",
             };
         }
         if (visitDays !== null) {
             return {
-                title: `离家${visitDays}天了`.slice(0, 16),
-                body: `距离上次回家已经 ${visitDays} 天，可以约个周末回家或先打一通电话。`,
-                image_brief: "温暖客厅里的日历和电话，表达想回家看看的氛围。",
+                title: "这个周末，留一点时间回家",
+                body: `距离上次回家已经 ${visitDays} 天。先看看周末安排，定不下来也可以今晚打个电话聊聊。`,
+                image_brief: "明亮玄关里的钥匙、轻便背包和一双干净便鞋，像正准备出门回家，没有人物。",
             };
         }
         return {
-            title: `${firstTopic}小话题`.slice(0, 16),
-            body: `今天可以围绕${firstTopic}准备一句自然开场，让问候更具体。`,
-            image_brief: `温馨家居场景，围绕${firstTopic}展开轻松问候。`,
+            title: `${firstTopic}，刚好可以当开场`.slice(0, 18),
+            body: `今天联系时，可以从${firstTopic}里挑一件具体的小事问起，不用先想一段完整的问候。`,
+            image_brief: `自然日光下与${firstTopic}有关的一件日常物品和一部熄屏手机，真实、克制、无人像。`,
         };
     }
 
     function sanitizeContextualCareCard(card, context) {
         if (!card) return null;
-        const genericPattern = /(家里.{0,6}(一切)?(很)?(平稳|安稳|安心)|一切(平稳|安稳)|聊聊家常|多陪陪家人|^今日关怀$|^今日关怀卡片$|今天问个安|打个电话聊聊近况)/;
+        const genericPattern = /(家里.{0,6}(一切)?(很)?(平稳|安稳|安心)|一切(平稳|安稳)|聊聊家常|多陪陪家人|^今日关怀$|^今日关怀卡片$|今天问个安|打个电话聊聊近况|模型生成的今日关怀)/;
+        const directivePattern = /(提醒(多)?喝水|电话里提醒|少久晒|注意身体|多喝水|及时补水|关爱健康|送上关怀)/;
         const impossibleActionPattern = /(递|端|倒|送)(一)?(杯)?(水|茶|热水|温水)|送到(手边|身边)|陪在(身边|旁边)|给.{0,4}(递|端|倒|送)/;
         const next = { ...card };
         const theme = contextualCareTheme(context);
         const weather = context?.weather || {};
-        const city = weather.city || context?.elder?.city || "";
         const hotWeather = weather.available && (Number(weather.temperature_c) >= 30 || /(闷热|炎热|高温|热)/.test(String(weather.advice || "")));
-        if (genericPattern.test(next.title) || impossibleActionPattern.test(next.title) || next.title.length > 16) {
+        if (genericPattern.test(next.title) || directivePattern.test(next.title) || impossibleActionPattern.test(next.title) || next.title.length > 18) {
             next.title = theme.title;
         }
         next.title = String(next.title || "")
-            .replace(/母亲/g, "妈妈")
-            .replace(/多提醒/g, "提醒")
-            .replace(/补水/g, "喝水")
+            .replace(/(老人|妈妈|母亲|爸爸|父亲)/g, "家里")
+            .replace(/家里家里/g, "家里")
             .trim();
-        if (hotWeather && (!/喝水|饮水/.test(next.title) || /(一切|安稳|平稳|安心)/.test(next.title))) {
-            next.title = `${city || "天气"}闷热，提醒喝水`.slice(0, 16);
+        const weatherTopicMatch = next.title.match(/^[^，,]{1,12}[，,]\s*聊聊(.{2,10})(?:新动态|新消息)?$/);
+        if (weatherTopicMatch) {
+            const topic = weatherTopicMatch[1].replace(/新动态|新消息/g, "").trim();
+            next.title = /(旅行|旅游|文旅)/.test(topic)
+                ? `${topic}，问问最近想去哪`.slice(0, 18)
+                : `${topic}，刚好可以聊聊`.slice(0, 18);
+        }
+        if (hotWeather && (directivePattern.test(next.title) || /(一切|安稳|平稳|安心)/.test(next.title))) {
+            next.title = theme.title;
         }
         next.body = String(next.body || "")
             .replace(/家里一切平稳[，,、 ]*/g, "")
-            .replace(/聊聊家常/g, "聊聊近况")
-            .replace(/母亲/g, "妈妈")
-            .replace(/补水/g, "喝水")
-            .replace(/给妈妈递杯茶/g, "电话提醒妈妈喝水")
-            .replace(/递杯茶/g, "提醒喝水")
-            .replace(/递(一)?杯(水|茶|热水|温水)/g, "提醒喝水")
-            .replace(/端(一)?杯(水|茶|热水|温水)/g, "提醒喝水")
-            .replace(/送到(手边|身边)/g, "电话提醒")
+            .replace(/^家里设备在线(?:且)?无异常[。；，,\s]*/g, "")
+            .replace(/^设备在线(?:且)?无异常[。；，,\s]*/g, "")
+            .replace(/(老人|妈妈|母亲|爸爸|父亲)/g, "家里")
+            .replace(/家里家里/g, "家里")
+            .replace(/正好问问家里对(.+?)有没有兴趣[。.]?$/g, "晚点可以问一句：“最近有没有留意$1？”")
             .replace(/\s+/g, " ")
             .trim();
-        if (!next.body || genericPattern.test(next.body) || impossibleActionPattern.test(next.body)) {
+        if (!next.body || genericPattern.test(next.body) || directivePattern.test(next.body) || impossibleActionPattern.test(next.body)) {
             next.body = theme.body;
         }
-        if (hotWeather) {
-            next.body = theme.body;
+        const bodyUsesGenericWeatherOpener = weather.available
+            && /(不用只说[“\"]?注意身体|问一句晚饭吃了什么|问问晚饭吃了什么|话题自然就打开了|从今天有没有出门)/.test(next.body);
+        const titleDescribesWeather = /(晴|阴|多云|雨|雪|闷热|高温|降温|天气|晚饭)/.test(next.title);
+        if (bodyUsesGenericWeatherOpener && !titleDescribesWeather) {
+            next.title = theme.title;
         }
         if (next.body.length > 90) next.body = next.body.slice(0, 87).trim() + "...";
-        if (!next.image_brief || genericPattern.test(next.image_brief) || impossibleActionPattern.test(next.image_brief)) {
+        next.facts = (Array.isArray(next.facts) ? next.facts : [])
+            .map((item) => String(item || "")
+                .replace(/(老人|妈妈|母亲|爸爸|父亲)兴趣/g, "已选关注主题")
+                .replace(/(老人|妈妈|母亲|爸爸|父亲)/g, "家里")
+                .replace(/家里家里/g, "家里")
+                .replace(/已选关注主题话题/g, "已选关注主题")
+                .trim())
+            .filter(Boolean)
+            .slice(0, 3);
+        if (!next.image_brief || genericPattern.test(next.image_brief) || directivePattern.test(next.image_brief) || impossibleActionPattern.test(next.image_brief)) {
             next.image_brief = theme.image_brief;
         }
         return next;
@@ -3781,42 +3799,45 @@ function createLocalAppServer(options = {}) {
     }
 
     function careImageBrief(card) {
-        const recommendation = (Array.isArray(card.content_recommendations) ? card.content_recommendations : [])
-            .find((item) => item?.type === "image_brief" || item?.summary);
+        const recommendations = Array.isArray(card.content_recommendations) ? card.content_recommendations : [];
+        const recommendation = recommendations.find((item) => item?.type === "image_brief")
+            || recommendations.find((item) => item?.summary);
         return String(recommendation?.summary || recommendation?.title || "").trim();
     }
 
-    function careImageCaption(card) {
-        const body = String(card?.body || "").replace(/\s+/g, " ").trim();
-        if (/喝水/.test(body)) return "电话里提醒喝水";
-        if (/回家|离家/.test(body)) return "约好下次回家";
-        if (/发消息|发微信/.test(body)) return "发一句具体问候";
-        if (/打电话|联系/.test(body)) return "今天打个电话";
-        if (/节日|生日|纪念日/.test(body)) return "提前准备一句问候";
-        const clauses = body.split(/[，。；,;]/).map((item) => item.trim()).filter(Boolean);
-        const remoteAction = /(打电话|发消息|发微信|问候|提醒|聊聊|回家|周末|约个时间)/;
-        const preferred = clauses.find((item) => remoteAction.test(item) && item.length <= 18)
-            || clauses.find((item) => item.length >= 6 && item.length <= 18)
-            || clauses[0]
-            || "今天记得联系一下";
-        return preferred.slice(0, 18);
+    function careImageScene(card) {
+        const text = [card?.title, card?.body].map((item) => String(item || "")).join(" ");
+        if (/(旅行|旅游|文旅|戏曲|演出|展览|周末活动)/.test(text)) {
+            return "雨后明亮玄关，收好的素色折叠伞、黑色轻便背包、钥匙和一小块姜黄色手帕，自然侧光，无人物。";
+        }
+        if (/(闷热|炎热|高温|偏热|喝水|清凉)/.test(text)) {
+            return "窗边浅色木桌，一杯清水、切开的青柠、熄屏手机和一块姜黄色杯垫，清爽自然日光，无人物。";
+        }
+        if (/(雨|雷|阴天|多云|天气)/.test(text)) {
+            return "雨后窗边，一把收拢的素色雨伞、熄屏手机和一只姜黄色小碟，柔和阴天自然光，无人物。";
+        }
+        if (/(回家|离家|探望)/.test(text)) {
+            return "明亮玄关里的钥匙、黑色轻便背包、干净便鞋和一小块姜黄色织物，像正准备出门，无人物。";
+        }
+        if (/(生日|纪念日|节日)/.test(text)) {
+            return "白色餐桌上的一束当季鲜花、无标识礼物盒和姜黄色丝带，自然日光，无人物。";
+        }
+        if (/(健康|养生|饮食|晚饭|水果)/.test(text)) {
+            return "浅色餐桌一角，当季水果、素色杯子、熄屏手机和姜黄色餐巾，真实自然日光，无人物。";
+        }
+        const brief = careImageBrief(card);
+        if (brief && !/(横幅|海报|招牌|文字|标题|标语|屏幕|界面|人物|老人|卡片)/.test(brief)) {
+            return compactPromptText(brief, 90);
+        }
+        return "自然日光下的浅色桌面，一部熄屏手机、素色杯子、小束绿植和姜黄色杯垫，安静真实，无人物。";
     }
 
     function buildCareImagePrompt(card, context, runtime = imageRuntimeConfig()) {
-        const facts = (Array.isArray(card.facts) ? card.facts : []).slice(0, 3).map((item) => String(item || "").trim()).filter(Boolean);
-        const schedule = context?.preferences?.care_card_schedule || {};
-        const topicText = Array.isArray(schedule.interest_topics) && schedule.interest_topics.length
-            ? schedule.interest_topics.slice(0, 5).join("、")
-            : "天气、养生、家常";
         return [
             runtime.prompt,
             "",
-            `唯一标题（逐字使用）：${compactPromptText(card.title, 16)}`,
-            `唯一短句（逐字使用）：${careImageCaption(card)}`,
-            facts.length ? `内部事实背景（只用于理解主题，绝对不要排进画面）：${facts.join("；")}` : "",
-            `兴趣背景（只决定选材，不要显示这些文字）：${topicText}`,
-            careImageBrief(card) ? `主题物件建议（只决定场景，不得覆盖上述视觉系统）：${compactPromptText(careImageBrief(card), 70)}` : "",
-            "最终检查：方形 1:1；白、黑、姜黄三色统一；只有一个主视觉；标题只出现一次；短句只出现一次；没有外框和其他文字；逐字检查文字完整且未被裁切。",
+            `本次具体场景：${careImageScene(card)}`,
+            "最终只生成一张铺满画幅的照片，不增加其他内容。",
         ].filter(Boolean).join("\n");
     }
 
@@ -3867,7 +3888,7 @@ function createLocalAppServer(options = {}) {
 
     async function fetchJsonWithTimeout(url, options = {}) {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), modelRequestTimeoutMs());
+        const timeout = setTimeout(() => controller.abort(), imageGenerationTimeoutMs());
         try {
             const response = await fetch(url, {
                 ...options,
@@ -4595,7 +4616,7 @@ function createLocalAppServer(options = {}) {
 
     async function fetchDashScopeSyncPayload(url, requestPayload, runtime) {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), modelRequestTimeoutMs());
+        const timeout = setTimeout(() => controller.abort(), imageGenerationTimeoutMs());
         const headers = {
             Authorization: `Bearer ${runtime.api_key}`,
             "Content-Type": "application/json",
@@ -4897,19 +4918,38 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function latestSuccessfulCareImagePath(familyId, runtime) {
+        const promptVersion = `care-image:${runtime.prompt_source}:${runtime.prompt_fingerprint}`;
+        const job = [...store.db.model_generation_jobs].reverse().find((item) => (
+            Number(item.family_id) === Number(familyId)
+            && item.purpose === "care_card_image_generation"
+            && item.output_status === "succeeded"
+            && item.prompt_version === promptVersion
+            && String(item.response_payload?.snapshot_path || "").trim()
+        ));
+        const snapshotPath = String(job?.response_payload?.snapshot_path || "").trim();
+        if (!snapshotPath) return "";
+        const asset = store.db.assets.find((item) => (
+            Number(item.family_id) === Number(familyId)
+            && String(item.snapshot_path || "") === snapshotPath
+        ));
+        return asset ? snapshotPath : "";
+    }
+
     async function ensureCareCardImage(card, familyId, parts = {}) {
         const preferences = parts.preferences || carePreferences(familyId);
         if (!careImageRequested(preferences)) {
             if (!card.image_url) card.image_mode = "none";
             return false;
         }
-        if (card.image_url && card.image_mode === "generated") return true;
+        if (card.image_url && card.image_mode === "generated" && !parts.forceImage) return true;
         if (card.image_mode === "failed_provider" && !parts.forceImage) return false;
         const runtime = imageRuntimeConfig();
         if (!careImageCallsEnabled() || !imageRuntimeConfigured(runtime)) {
             if (!card.image_url) card.image_mode = "pending_provider";
             return false;
         }
+        const retainedImagePath = latestSuccessfulCareImagePath(familyId, runtime);
         card.image_mode = "pending_provider";
         const context = careCardModelContext(familyId, { ...parts, preferences });
         const inputHash = sha256(JSON.stringify({
@@ -4938,7 +4978,7 @@ function createLocalAppServer(options = {}) {
             metadata: {
                 capability_id: runtime.capability_id,
                 provider: "dashscope-wan",
-                aspect_ratio: "1:1",
+                aspect_ratio: "4:3",
             },
         });
         store.db.model_generation_jobs.push(job);
@@ -4963,9 +5003,17 @@ function createLocalAppServer(options = {}) {
             });
             return true;
         } catch (error) {
-            if (!card.image_url) card.image_mode = "failed_provider";
+            if (retainedImagePath) {
+                card.image_mode = "generated";
+                card.image_url = retainedImagePath;
+            } else if (!card.image_url) {
+                card.image_mode = "failed_provider";
+            }
             card.updated_at = nowIso();
-            card.source_summary = [...new Set([...(Array.isArray(card.source_summary) ? card.source_summary : []), "生图失败，已保留文字卡片"])];
+            card.source_summary = [...new Set([
+                ...(Array.isArray(card.source_summary) ? card.source_summary : []),
+                retainedImagePath ? "生图失败，已保留最近图片" : "生图失败，已保留文字卡片",
+            ])];
             updateModelJob(job, {
                 output_status: "failed",
                 error_message: error.message || "image model request failed",
@@ -5212,33 +5260,10 @@ function createLocalAppServer(options = {}) {
         }
         const factParts = await careCardFacts(targetFamilyId, preferences);
         const { facts, openEvents, criticalEvents, profile, weather, content } = factParts;
-        const displayName = profile.display_name || "家人";
-        const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
-        const visitDays = daysSinceDateString(schedule.visit_reminder?.last_visit_at);
-        const firstTopic = Array.isArray(schedule.interest_topics) && schedule.interest_topics.length
-            ? String(schedule.interest_topics[0] || "").trim()
-            : "";
-        const weatherTemp = Number.isFinite(Number(weather?.temperature_c)) ? `${weather.temperature_c}°C` : "";
-        const calmTitle = weather?.available && weather?.condition
-            ? `${weather.condition}天问候`.slice(0, 16)
-            : visitDays !== null
-                ? `离家${visitDays}天了`.slice(0, 16)
-                : firstTopic
-                    ? `${firstTopic}小话题`.slice(0, 16)
-                    : "今天问个安";
-        const calmBody = weather?.available
-            ? `今天${weather.city || ""}${weather.condition || "天气已更新"}${weatherTemp ? `，${weatherTemp}` : ""}，可以从穿衣、喝水或晚饭聊起。`
-            : visitDays !== null
-                ? `距离上次回家已经 ${visitDays} 天，可以约个周末回家或先打一通电话。`
-                : firstTopic
-                    ? `今天可以围绕${firstTopic}准备一句自然开场，让问候更具体。`
-                    : `${displayName}家里暂无高优先级告警，可以发一句具体问候。`;
-        const title = criticalEvents.length
-            ? "有提醒待确认"
-            : calmTitle;
-        const body = criticalEvents.length
-            ? `${displayName}家里有高优先级事件，先确认事件证据，再联系家里。`
-            : calmBody;
+        const templateContext = careCardModelContext(targetFamilyId, { ...factParts, preferences });
+        const templateTheme = contextualCareTheme(templateContext);
+        const title = templateTheme.title;
+        const body = templateTheme.body;
         const sourceSummary = [
             "设备在线状态",
             "摄像头同步状态",

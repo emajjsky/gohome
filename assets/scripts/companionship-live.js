@@ -506,15 +506,12 @@
         renderCareCardImage(card);
         if (facts) {
             facts.innerHTML = "";
-            (Array.isArray(card.facts) ? card.facts : []).slice(0, 5).forEach((fact) => {
+            (Array.isArray(card.facts) ? card.facts : []).slice(0, 3).forEach((fact) => {
                 const item = document.createElement("div");
                 item.className = "gohome-mini-fact";
-                const icon = document.createElement("span");
-                icon.className = "material-symbols-outlined";
-                icon.textContent = "check_circle";
                 const text = document.createElement("p");
                 text.textContent = String(fact || "");
-                item.append(icon, text);
+                item.append(text);
                 facts.append(item);
             });
         }

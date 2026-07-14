@@ -626,18 +626,18 @@
         const advice = String(weatherSignal.advice || "").replace(/\s+/g, " ").trim();
         const temp = Number(weatherSignal.temperature_c);
         if (/雨|雷|暴雨|阵雨/.test(condition)) {
-            return `今天${condition}，电话里提醒出门带伞、路面湿滑慢一点。`;
+            return `今天${condition}。晚点联系时，可以先问一句今天有没有出门。`;
         }
         if (Number.isFinite(temp) && temp >= 32) {
-            return `今天${city || "当地"}偏热，适合提醒喝水、少久晒，再问问晚饭和近况。`;
+            return `今天${city || "当地"}偏热。傍晚打电话时，问问晚饭吃了什么，话题自然就打开了。`;
         }
         if (Number.isFinite(temp) && temp <= 8) {
-            return `今天气温偏低，适合提醒添衣保暖，顺便问问家里门窗和晚饭。`;
+            return "今天气温偏低。联系时可以问问今天有没有出门、晚饭准备吃什么。";
         }
         if (/风|降温|冷|寒/.test(advice)) {
-            return "天气有变化，适合提醒添衣、关窗，再约一个方便通话的时间。";
+            return "天气有变化。晚点联系时，从今天出门没有聊起会更自然。";
         }
-        return advice || "可以把天气作为今天电话问候的开场。";
+        return advice || "天气刚好可以成为今天联系时的第一句话。";
     }
 
     function careCardDisplayTitle(card) {
@@ -1009,7 +1009,7 @@
         const hasGeneratedImage = Boolean(String(card?.image_url || "").trim());
         const featureLink = $("edgeHomeCareCardLink");
         featureLink?.classList.toggle("has-generated-image", hasGeneratedImage);
-        setText("edgeHomeCareMeta", `${cardDateLabel(card)} · ${family?.name || "当前家庭"}`);
+        setText("edgeHomeCareMeta", `${cardDateLabel(card)} · 联系灵感`);
         setText("edgeHomeCareTitle", careCardDisplayTitle(card));
         setText(
             "edgeHomeCareBody",
@@ -1021,16 +1021,7 @@
         const facts = $("edgeHomeCareFacts");
         if (facts) {
             facts.innerHTML = "";
-            facts.classList.remove("hidden");
-            (Array.isArray(card.facts) ? card.facts : []).slice(0, 2).forEach((fact) => {
-                const item = document.createElement("div");
-                item.className = "gohome-mini-fact";
-                item.innerHTML = `
-                    <span class="material-symbols-outlined">check_circle</span>
-                    <p>${escapeHtml(fact)}</p>
-                `;
-                facts.append(item);
-            });
+            facts.classList.add("hidden");
         }
         setAction("edgeHomeCarePrimaryAction", "companionship.html", "看完整卡片", "volunteer_activism");
         setAction("edgeHomeCareSecondaryAction", critical ? "events.html" : "care_schedule.html", critical ? "查看提醒" : "关怀设置", critical ? "history" : "schedule");

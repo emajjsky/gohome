@@ -1413,7 +1413,7 @@ async function main() {
         assert.ok(Array.isArray(opsConfig.env_files));
         assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "multimodal-language"));
         assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "vision-event-verification"));
-        assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "care-card-image" && capability.aspect_ratio === "1:1"));
+        assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "care-card-image" && capability.aspect_ratio === "4:3"));
         for (const capability of opsConfig.model_capabilities) {
             assert.equal("base_url" in capability, false);
             assert.equal("api_key_preview" in capability, false);
@@ -1479,7 +1479,8 @@ async function main() {
                 headers: { Authorization: `Bearer ${appSessionToken}` },
             });
             assert.equal(modelCareCard.ok, true);
-            assert.equal(modelCareCard.card.title, "模型生成的今日关怀");
+            assert.equal(modelCareCard.card.title, "有提醒待确认");
+            assert.doesNotMatch(modelCareCard.card.body, /家里状态整体平稳|提醒喝水|少久晒/);
             assert.equal(modelCareCard.card.generated_by, "model:mock-care-model");
             assert.ok(app.store.db.model_generation_jobs.some((job) => (
                 job.model === "mock-care-model" && job.output_status === "succeeded"
@@ -1504,8 +1505,10 @@ async function main() {
             GOHOME_CARE_IMAGE_MAX_POLLS: process.env.GOHOME_CARE_IMAGE_MAX_POLLS,
         };
         const mockImageBytes = Buffer.from("mock-png-content");
+        let mockImageRequestCount = 0;
         const mockImageServer = http.createServer(async (req, res) => {
             if (req.method === "POST" && req.url === "/api/v1/services/aigc/multimodal-generation/generation") {
+                mockImageRequestCount += 1;
                 assert.equal(req.headers.authorization, "Bearer mock-image-key");
                 assert.equal(req.headers["x-dashscope-sse"], undefined);
                 const body = await new Promise((resolve) => {
@@ -1515,19 +1518,24 @@ async function main() {
                 });
                 const payload = JSON.parse(body);
                 assert.equal(payload.model, "mock-wan-image");
-                assert.equal(payload.parameters.size, "1024*1024");
+                assert.equal(payload.parameters.size, "1280*960");
                 assert.equal(payload.parameters.n, 1);
                 assert.equal(payload.parameters.thinking_mode, true);
                 assert.equal(payload.parameters.stream, undefined);
                 assert.equal(payload.parameters.enable_interleave, undefined);
-                assert.match(payload.input.messages[0].content[0].text, /1:1/);
-                assert.match(payload.input.messages[0].content[0].text, /唯一标题（逐字使用）/);
+                assert.match(payload.input.messages[0].content[0].text, /4:3/);
+                assert.match(payload.input.messages[0].content[0].text, /不要出现任何文字、汉字、字母、数字/);
                 assert.match(payload.input.messages[0].content[0].text, /纯白/);
                 assert.match(payload.input.messages[0].content[0].text, /姜黄色 #D49A24/);
                 assert.match(payload.input.messages[0].content[0].text, /禁止水彩/);
-                assert.match(payload.input.messages[0].content[0].text, /唯一短句（逐字使用）/);
-                assert.match(payload.input.messages[0].content[0].text, /标题恰好出现一次/);
                 assert.match(payload.input.messages[0].content[0].text, /禁止任何外轮廓/);
+                assert.doesNotMatch(payload.input.messages[0].content[0].text, /唯一标题|唯一短句|逐字使用|标题恰好出现一次/);
+                assert.doesNotMatch(payload.input.messages[0].content[0].text, /兴趣背景|App 会|横幅|海报|书报标题/);
+                if (mockImageRequestCount > 1) {
+                    res.writeHead(503, { "Content-Type": "application/json" });
+                    res.end(JSON.stringify({ message: "temporary image provider failure" }));
+                    return;
+                }
                 res.writeHead(200, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({
                     output: {
@@ -1586,6 +1594,16 @@ async function main() {
             assert.equal(careImageResponse.status, 200);
             assert.equal(careImageResponse.headers.get("content-type"), "image/png");
             assert.equal(await careImageResponse.text(), "mock-png-content");
+
+            const retainedImageCard = await requestJson(baseUrl, "/api/v1/internal/care-cards/generate", {
+                method: "POST",
+                body: JSON.stringify({ family_id: family.id, force: true }),
+                headers: { Authorization: `Bearer ${appSessionToken}` },
+            });
+            assert.equal(retainedImageCard.ok, true);
+            assert.equal(retainedImageCard.card.image_mode, "generated");
+            assert.equal(retainedImageCard.card.image_url, imageCareCard.card.image_url);
+            assert.ok(retainedImageCard.card.source_summary.includes("生图失败，已保留最近图片"));
         } finally {
             for (const [key, value] of Object.entries(originalImageEnv)) {
                 if (value === undefined) delete process.env[key];

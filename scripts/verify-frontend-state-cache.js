@@ -112,7 +112,7 @@ function assertAppShellNavigationCache() {
     assert.match(store, /serviceWorker\.register\(APP_SHELL_SERVICE_WORKER/);
     for (const file of ["index.html", "monitor.html", "events.html", "companionship.html", "privacy.html"]) {
         const html = fs.readFileSync(path.join(root, file), "utf8");
-        assert.match(html, /20260715-appstore-11/, `${file} must load the app shell registrar`);
+        assert.match(html, /20260715-appstore-12/, `${file} must load the app shell registrar`);
         assert.ok(worker.includes(`"/${file}"`), `${file} must be pre-cached for tab navigation`);
     }
     for (const file of ["watch.html", "event_detail.html", "care_schedule.html", "cameras.html", "rules.html", "notifications.html"]) {
@@ -123,6 +123,23 @@ function assertAppShellNavigationCache() {
     assert.match(worker, /event\.waitUntil\(network\.catch/);
 }
 
+function assertCareCardPresentationContract() {
+    const root = path.resolve(__dirname, "..");
+    const homeHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
+    const companionHtml = fs.readFileSync(path.join(root, "companionship.html"), "utf8");
+    const homeScript = fs.readFileSync(path.join(root, "assets/scripts/home-live.js"), "utf8");
+    const styles = fs.readFileSync(path.join(root, "assets/styles/editorial-home-companion.css"), "utf8");
+
+    assert.match(homeHtml, /<h3>今天可以聊<\/h3>/, "home care module must use human contact language");
+    assert.match(companionHtml, /<h3>今天可以聊<\/h3>/, "companion detail must match the home content concept");
+    assert.match(companionHtml, /id="companionshipCareFactsLabel"[^>]*>内容依据</, "care facts need a quiet explanatory label");
+    assert.doesNotMatch(styles, /\.editorial-feature\.has-generated-image\s+\.editorial-feature-copy\s*\{\s*display:\s*none/, "generated images must not hide native card copy");
+    assert.match(styles, /\.editorial-feature-media[\s\S]*?aspect-ratio:\s*4\s*\/\s*3/, "home care image must use a 4:3 editorial ratio");
+    assert.match(styles, /\.companion-care-image[\s\S]*?aspect-ratio:\s*4\s*\/\s*3/, "companion care image must use a 4:3 editorial ratio");
+    assert.match(styles, /#companionshipCareImageFrame\s*\{[\s\S]*?aspect-ratio:\s*4\s*\/\s*3\s*!important/, "companion ratio must override the legacy id rule");
+    assert.doesNotMatch(homeScript, /item\.className = "gohome-mini-fact";[\s\S]{0,500}facts\.append\(item\)/, "home summary must not repeat fact pills below the card copy");
+}
+
 async function flush() {
     await new Promise((resolve) => setImmediate(resolve));
 }
@@ -130,6 +147,7 @@ async function flush() {
 async function main() {
     assertMainPagesHaveNoBlockingLoadingCopy();
     assertAppShellNavigationCache();
+    assertCareCardPresentationContract();
     const harness = createHarness();
     const { context, window, localStorage, sessionStorage, events, fetches } = harness;
     let payload = { revision: 1 };

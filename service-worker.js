@@ -1,6 +1,6 @@
 "use strict";
 
-const SHELL_CACHE = "gohome-app-shell-20260715-3";
+const SHELL_CACHE = "gohome-app-shell-20260715-4";
 const SHELL_DOCUMENTS = new Set([
     "/index.html",
     "/monitor.html",

@@ -1240,18 +1240,21 @@ body.gohome-page-index #edgeHomeCareCardLink #edgeHomeCareImageFrame {
   max-width: none !important;
   height: auto !important;
   margin: 0 !important;
+  aspect-ratio: 4 / 3 !important;
   border-radius: 8px !important;
+  background: #f2f2ef !important;
 }
 
 body.gohome-page-index .editorial-feature-media,
 body.gohome-page-index .editorial-feature:not(.has-generated-image) .editorial-feature-media {
   width: 100% !important;
   height: auto;
-  aspect-ratio: 1;
+  aspect-ratio: 4 / 3;
   border-radius: 8px;
 }
 
 body.gohome-page-index .editorial-feature-media img {
+  object-fit: cover !important;
   transition: transform 260ms ease;
 }
 
@@ -1265,10 +1268,6 @@ body.gohome-page-index .editorial-feature-copy {
   display: block;
 }
 
-body.gohome-page-index .editorial-feature.has-generated-image .editorial-feature-copy {
-  display: none;
-}
-
 body.gohome-page-index .editorial-feature-copy > p:first-child {
   margin-bottom: 5px;
   color: var(--editorial-accent);
@@ -1277,8 +1276,10 @@ body.gohome-page-index .editorial-feature-copy > p:first-child {
 }
 
 body.gohome-page-index .editorial-feature-copy h4 {
-  font-size: 18px;
-  line-height: 1.38;
+  max-width: 25em;
+  font-size: 17px;
+  line-height: 1.42;
+  font-weight: 760;
 }
 
 body.gohome-page-index .editorial-feature-copy > p:not(:first-child) {
@@ -1288,6 +1289,10 @@ body.gohome-page-index .editorial-feature-copy > p:not(:first-child) {
   font-size: 13px;
   line-height: 1.52;
   -webkit-line-clamp: 2;
+}
+
+body.gohome-page-index .editorial-feature-copy .gohome-mini-facts {
+  display: none !important;
 }
 
 body.gohome-page-index .editorial-feature-fallback {
@@ -1579,16 +1584,26 @@ body.gohome-page-companionship .companion-care-card {
 
 body.gohome-page-companionship .companion-care-card .companion-care-image {
   width: 100%;
-  aspect-ratio: 1 / 1;
+  max-width: none !important;
+  aspect-ratio: 4 / 3 !important;
   overflow: hidden;
   background: #f3f3f0;
   border-radius: 8px;
 }
 
+body.gohome-page-companionship #companionshipCareImageFrame {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  aspect-ratio: 4 / 3 !important;
+  border-radius: 8px !important;
+  background: #f2f2ef !important;
+}
+
 body.gohome-page-companionship .companion-care-card .companion-care-image img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: cover !important;
 }
 
 body.gohome-page-companionship .companion-care-copy {
@@ -1613,31 +1628,32 @@ body.gohome-page-companionship .companion-care-copy > p:not(:first-child) {
   line-height: 1.55;
 }
 
+body.gohome-page-companionship .companion-care-copy .companion-care-facts-label {
+  margin-top: 18px;
+  color: var(--editorial-faint);
+  font-size: 10px;
+  line-height: 1.4;
+  font-weight: 700;
+}
+
 body.gohome-page-companionship .companion-care-copy .gohome-mini-facts {
-  margin-top: 13px;
+  margin-top: 5px;
   display: grid !important;
-  gap: 7px;
+  gap: 0;
 }
 
 body.gohome-page-companionship .companion-care-copy .gohome-mini-fact {
-  padding-top: 7px;
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  align-items: start;
-  gap: 7px;
+  min-height: 34px;
+  padding: 8px 0;
+  display: block;
   border-top: 1px solid var(--editorial-line);
-}
-
-body.gohome-page-companionship .companion-care-copy .gohome-mini-fact .material-symbols-outlined {
-  color: var(--editorial-accent);
-  font-size: 15px;
 }
 
 body.gohome-page-companionship .companion-care-copy .gohome-mini-fact p {
   margin: 0;
   color: var(--editorial-muted);
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 body.gohome-page-companionship .companion-important-list {
