@@ -6681,19 +6681,23 @@ function createLocalAppServer(options = {}) {
             ".ttf": "font/ttf",
         };
         const etag = `W/\"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}\"`;
+        const serviceWorkerScript = pathname === "/service-worker.js";
         const versionedAsset = [".css", ".js"].includes(ext) && url.searchParams.has("v");
-        const cacheControl = [".html", ".json", ".webmanifest"].includes(ext)
+        const cacheControl = serviceWorkerScript
             ? "no-cache"
-            : versionedAsset || [".woff2", ".woff", ".ttf"].includes(ext)
-                ? "public, max-age=31536000, immutable"
-                : [".png", ".jpg", ".jpeg", ".svg", ".ico"].includes(ext)
-                    ? "public, max-age=604800, stale-while-revalidate=86400"
-                    : "public, max-age=300, stale-while-revalidate=60";
+            : [".html", ".json", ".webmanifest"].includes(ext)
+                ? "no-cache"
+                : versionedAsset || [".woff2", ".woff", ".ttf"].includes(ext)
+                    ? "public, max-age=31536000, immutable"
+                    : [".png", ".jpg", ".jpeg", ".svg", ".ico"].includes(ext)
+                        ? "public, max-age=604800, stale-while-revalidate=86400"
+                        : "public, max-age=300, stale-while-revalidate=60";
         const headers = {
             "Content-Type": types[ext] || "application/octet-stream",
             "Cache-Control": cacheControl,
             "ETag": etag,
             "Last-Modified": stat.mtime.toUTCString(),
+            ...(serviceWorkerScript ? { "Service-Worker-Allowed": "/" } : {}),
         };
         if (String(req.headers["if-none-match"] || "") === etag) {
             res.writeHead(304, {

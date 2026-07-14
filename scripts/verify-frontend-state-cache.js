@@ -105,12 +105,31 @@ function assertMainPagesHaveNoBlockingLoadingCopy() {
     assert.ok(!store.includes("gohome-state-spin"), "page state store must not animate a blocking loader");
 }
 
+function assertAppShellNavigationCache() {
+    const root = path.resolve(__dirname, "..");
+    const store = fs.readFileSync(path.join(root, "assets/scripts/app-state-store.js"), "utf8");
+    const worker = fs.readFileSync(path.join(root, "service-worker.js"), "utf8");
+    assert.match(store, /serviceWorker\.register\(APP_SHELL_SERVICE_WORKER/);
+    for (const file of ["index.html", "monitor.html", "events.html", "companionship.html", "privacy.html"]) {
+        const html = fs.readFileSync(path.join(root, file), "utf8");
+        assert.match(html, /20260715-appstore-11/, `${file} must load the app shell registrar`);
+        assert.ok(worker.includes(`"/${file}"`), `${file} must be pre-cached for tab navigation`);
+    }
+    for (const file of ["watch.html", "event_detail.html", "care_schedule.html", "cameras.html", "rules.html", "notifications.html"]) {
+        assert.ok(worker.includes(`"/${file}"`), `${file} must be pre-cached for the primary product flow`);
+    }
+    assert.match(worker, /request\.mode !== "navigate"/);
+    assert.ok(!worker.includes("/api/"), "service worker must never cache authenticated API responses");
+    assert.match(worker, /event\.waitUntil\(network\.catch/);
+}
+
 async function flush() {
     await new Promise((resolve) => setImmediate(resolve));
 }
 
 async function main() {
     assertMainPagesHaveNoBlockingLoadingCopy();
+    assertAppShellNavigationCache();
     const harness = createHarness();
     const { context, window, localStorage, sessionStorage, events, fetches } = harness;
     let payload = { revision: 1 };

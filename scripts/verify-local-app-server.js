@@ -129,6 +129,15 @@ async function main() {
         const health = await requestJson(baseUrl, "/health");
         assert.equal(health.ok, true);
 
+        const serviceWorkerResponse = await fetch(`${baseUrl}/service-worker.js`);
+        assert.equal(serviceWorkerResponse.status, 200);
+        assert.equal(serviceWorkerResponse.headers.get("cache-control"), "no-cache");
+        assert.equal(serviceWorkerResponse.headers.get("service-worker-allowed"), "/");
+        assert.match(serviceWorkerResponse.headers.get("content-type") || "", /application\/javascript/);
+        const serviceWorkerSource = await serviceWorkerResponse.text();
+        assert.match(serviceWorkerSource, /gohome-app-shell-/);
+        assert.ok(!serviceWorkerSource.includes("/api/"));
+
         const unknownLogin = await fetch(`${baseUrl}/api/auth/login`, {
             method: "POST",
             body: JSON.stringify({ email: "unknown@gohome.local", password: "secret123" }),

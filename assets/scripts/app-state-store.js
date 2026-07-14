@@ -6,6 +6,7 @@
     const MAX_SNAPSHOT_BYTES = 600 * 1024;
     const CAPTURE_DELAY_MS = 120;
     const REFRESH_DELAY_MS = 180;
+    const APP_SHELL_SERVICE_WORKER = "/service-worker.js";
     const PAGE_NAMES = new Set([
         "index.html",
         "monitor.html",
@@ -50,7 +51,29 @@
             .catch(() => {});
     }
 
+    function registerAppShell() {
+        if (!("serviceWorker" in navigator) || !/^https?:$/.test(window.location.protocol)) {
+            document.documentElement.dataset.appShell = "unsupported";
+            return;
+        }
+        document.documentElement.dataset.appShell = "registering";
+        const markController = () => {
+            document.documentElement.dataset.appShell = navigator.serviceWorker.controller ? "controlled" : "ready";
+        };
+        navigator.serviceWorker.addEventListener("controllerchange", markController);
+        navigator.serviceWorker.register(APP_SHELL_SERVICE_WORKER, {
+            scope: "/",
+            updateViaCache: "none",
+        }).then((registration) => {
+            markController();
+            return registration.update();
+        }).catch(() => {
+            document.documentElement.dataset.appShell = "failed";
+        });
+    }
+
     installIconFontGuard();
+    registerAppShell();
 
     function currentPage() {
         return window.location.pathname.split("/").pop() || "index.html";

@@ -927,3 +927,35 @@ body.gohome-page-connect button[type="submit"] {
     animation-iteration-count: 1 !important;
   }
 }
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 120ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+::view-transition-old(root) {
+  animation-name: gohome-page-out;
+}
+
+::view-transition-new(root) {
+  animation-name: gohome-page-in;
+}
+
+@keyframes gohome-page-out {
+  to { opacity: 0.94; }
+}
+
+@keyframes gohome-page-in {
+  from { opacity: 0.94; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 1ms;
+  }
+}
