@@ -773,10 +773,17 @@
         const interests = Array.isArray(schedule.interest_topics) && schedule.interest_topics.length
             ? schedule.interest_topics.slice(0, 3).join("、")
             : "养生、天气、家常";
-        const recommendations = Array.isArray(contentSignal?.recommendations) && contentSignal.recommendations.length
-            ? contentSignal.recommendations
-            : (Array.isArray(careCard?.content_recommendations) ? careCard.content_recommendations : [])
-                .filter((item) => item && item.type !== "image_brief");
+        const recommendationKeys = new Set();
+        const recommendations = [
+            ...(Array.isArray(contentSignal?.recommendations) ? contentSignal.recommendations : []),
+            ...(Array.isArray(careCard?.content_recommendations) ? careCard.content_recommendations : []),
+        ].filter((item) => {
+            if (!item || item.type === "image_brief") return false;
+            const key = String(item.url || `${item.module || ""}:${item.title || ""}`);
+            if (!key || recommendationKeys.has(key)) return false;
+            recommendationKeys.add(key);
+            return true;
+        });
         const cards = [];
         if (criticalEvents.length) {
             cards.push({
