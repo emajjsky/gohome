@@ -1,0 +1,908 @@
+:root {
+  --gohome-bg: #ffffff;
+  --gohome-bg-deep: #f3f3f0;
+  --gohome-panel: #ffffff;
+  --gohome-panel-soft: #f7f7f4;
+  --gohome-panel-muted: #fafaf8;
+  --gohome-text: #111111;
+  --gohome-muted: #686864;
+  --gohome-line: #e9e9e6;
+  --gohome-primary: #d49a24;
+  --gohome-primary-strong: #111111;
+  --gohome-primary-soft: #f5e8c8;
+  --gohome-good: #426b50;
+  --gohome-warn: #a96925;
+  --gohome-danger: #b42318;
+  --gohome-shadow: none;
+  --gohome-shadow-soft: none;
+}
+
+html {
+  background: #f3f3f0 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) {
+  background: #ffffff !important;
+  color: #111111 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) img {
+  background-color: #f7f7f4;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) > header:not(.gohome-topbar-collapsed) {
+  min-height: 52px;
+  padding-top: calc(8px + env(safe-area-inset-top, 0px)) !important;
+  padding-bottom: 8px !important;
+  background: rgba(255, 255, 255, 0.97) !important;
+  border-bottom: 1px solid rgba(233, 233, 230, 0.78) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) > header h1,
+body:not(.gohome-page-index):not(.gohome-page-companionship) > header [class*="headline"] {
+  color: #111111 !important;
+  font-size: 18px !important;
+  line-height: 1.35 !important;
+  font-weight: 700 !important;
+  letter-spacing: 0 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) > header button,
+body:not(.gohome-page-index):not(.gohome-page-companionship) > header a,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .icon-button,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-round-icon {
+  min-width: 40px;
+  min-height: 40px;
+  border: 0 !important;
+  border-radius: 4px !important;
+  color: #111111 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) > header button:active,
+body:not(.gohome-page-index):not(.gohome-page-companionship) > header a:active,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .icon-button:active,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-round-icon:active {
+  background: #f7f7f4 !important;
+  transform: scale(0.97);
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) > main {
+  width: 100%;
+  max-width: 560px !important;
+  margin: 0 auto;
+  padding-left: max(20px, calc(20px + env(safe-area-inset-left, 0px))) !important;
+  padding-right: max(20px, calc(20px + env(safe-area-inset-right, 0px))) !important;
+}
+
+body.gohome-main-tab-page:not(.gohome-page-index):not(.gohome-page-companionship) > main {
+  padding-top: calc(18px + max(env(safe-area-inset-top, 0px), 30px)) !important;
+  padding-bottom: calc(94px + env(safe-area-inset-bottom, 0px)) !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-page-lead {
+  margin: 0 0 24px;
+  padding: 0;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-page-lead p:first-child,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-kicker,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .eyebrow {
+  color: #d49a24 !important;
+  font-size: 11px !important;
+  line-height: 1.35 !important;
+  font-weight: 700 !important;
+  letter-spacing: 0 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-page-lead h2 {
+  margin-top: 4px;
+  color: #111111 !important;
+  font-size: 24px !important;
+  line-height: 1.25 !important;
+  font-weight: 700 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-page-lead p:not(:first-child) {
+  margin-top: 6px;
+  color: #686864 !important;
+  font-size: 13px !important;
+  line-height: 1.55 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-panel,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-panel-soft,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-panel,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-soft-card,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-panel-muted,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .glass-card {
+  color: #111111 !important;
+  background: #ffffff !important;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-panel-soft,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-panel-muted {
+  background: #f7f7f4 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-rhythm-card,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-rhythm-mini,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-story-note {
+  color: #111111 !important;
+  background: #f7f7f4 !important;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-snapshot-card,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-memory-card {
+  overflow: hidden;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-section-badge {
+  color: #111111 !important;
+  background: #f5e8c8 !important;
+  border-color: #ead49f !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-bottom-nav {
+  padding: 0 0 env(safe-area-inset-bottom, 0px) !important;
+  background: #ffffff !important;
+  border-top: 1px solid #e9e9e6 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-bottom-nav-inner {
+  width: 100% !important;
+  max-width: 560px !important;
+  min-height: 64px;
+  padding: 8px 14px !important;
+  color: #686864 !important;
+  background: #ffffff !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-nav-pill {
+  width: 42px;
+  height: 28px;
+  color: #686864 !important;
+  border-radius: 6px !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-nav-pill.active {
+  color: #111111 !important;
+  background: #f5e8c8 !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-story-icon.info,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-icon-chip.info {
+  color: #111111 !important;
+  background: #f5e8c8 !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-chat-bubble {
+  color: #111111 !important;
+  background: #f7f7f4 !important;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-chat-bubble.user {
+  color: #ffffff !important;
+  background: #111111 !important;
+  border-color: #111111 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-chat-quick-actions {
+  gap: 8px;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-chat-quick-actions button {
+  min-height: 38px;
+  padding: 0 12px;
+  color: #111111 !important;
+  background: #ffffff !important;
+  border: 1px solid #d9d9d5 !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-chat-quick-actions button.accent {
+  background: #f5e8c8 !important;
+  border-color: #ead49f !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-chat-composer-wrap {
+  padding: 0 20px;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-chat-composer {
+  max-width: 520px;
+  padding: 8px;
+  background: #ffffff !important;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-chat-input {
+  background: #f7f7f4 !important;
+  border-color: #e9e9e6 !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-icon-button {
+  color: #686864 !important;
+  background: #f7f7f4 !important;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-icon-button.primary {
+  color: #ffffff !important;
+  background: #111111 !important;
+  border-color: #111111 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .rounded-3xl,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .rounded-2xl,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .rounded-\[30px\],
+body:not(.gohome-page-index):not(.gohome-page-companionship) .rounded-\[24px\],
+body:not(.gohome-page-index):not(.gohome-page-companionship) .rounded-\[22px\],
+body:not(.gohome-page-index):not(.gohome-page-companionship) .rounded-\[20px\],
+body:not(.gohome-page-index):not(.gohome-page-companionship) .rounded-\[18px\] {
+  border-radius: 8px !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .shadow,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .shadow-sm,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .shadow-md,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .shadow-lg,
+body:not(.gohome-page-index):not(.gohome-page-companionship) [class*="shadow-"] {
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bg-primary,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-btn-primary,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-primary-action {
+  color: #ffffff !important;
+  background: #111111 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .text-primary,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .text-primary\/80,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-kicker {
+  color: #d49a24 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bg-primary-container,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bg-primary-fixed,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bg-primary-fixed\/30,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bg-primary-fixed-dim\/30 {
+  color: #111111 !important;
+  background: #f5e8c8 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bg-surface-container-low,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bg-surface-container,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bg-surface-container-high,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bg-surface-container-highest,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bg-surface-variant {
+  background: #f7f7f4 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) input:not([type="checkbox"]):not([type="radio"]),
+body:not(.gohome-page-index):not(.gohome-page-companionship) select,
+body:not(.gohome-page-index):not(.gohome-page-companionship) textarea,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .care-input,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .field input,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .field select {
+  min-height: 44px;
+  color: #111111 !important;
+  background: #ffffff !important;
+  border: 1px solid #d9d9d5 !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+  outline: none;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) input:focus,
+body:not(.gohome-page-index):not(.gohome-page-companionship) select:focus,
+body:not(.gohome-page-index):not(.gohome-page-companionship) textarea:focus,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .care-input:focus {
+  border-color: #d49a24 !important;
+  box-shadow: 0 0 0 3px rgba(212, 154, 36, 0.12) !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) button.rounded-full,
+body:not(.gohome-page-index):not(.gohome-page-companionship) a.rounded-full,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-btn-primary,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-btn-secondary,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-pill-button,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .save-button,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .action,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .btn,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .preset-button {
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-btn-secondary,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-pill-button.soft,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .action.secondary,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .btn:not(.primary) {
+  color: #111111 !important;
+  background: #f7f7f4 !important;
+  border: 1px solid #e9e9e6 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-pill-button.primary,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .save-button,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .action.primary,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .btn.primary {
+  color: #ffffff !important;
+  background: #111111 !important;
+  border-color: #111111 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-mini-pill,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-status-tag,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .small-badge,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .status-pill,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .pill,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .rule-state-badge {
+  min-height: 24px;
+  padding: 4px 8px;
+  color: #686864 !important;
+  background: #f7f7f4 !important;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 3px !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-mini-pill.good,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-status-tag.good,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .pill.good {
+  color: #426b50 !important;
+  background: #edf3ee !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .app-mini-pill.warn,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-status-tag.warn,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .pill.warn {
+  color: #a96925 !important;
+  background: #fbf0da !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.fixed.bottom-0,
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.docked.bottom-0,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-nav {
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  z-index: 50;
+  width: 100% !important;
+  height: calc(64px + env(safe-area-inset-bottom, 0px)) !important;
+  padding: 0 max(8px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(8px, env(safe-area-inset-left, 0px)) !important;
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: stretch !important;
+  background: rgba(255, 255, 255, 0.98) !important;
+  border: 0 !important;
+  border-top: 1px solid #e9e9e6 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  max-width: none !important;
+  margin: 0 !important;
+  transform: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.fixed.bottom-0 > a,
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.fixed.bottom-0 > button,
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.docked.bottom-0 > a,
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.docked.bottom-0 > button,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-nav > a,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-nav > button {
+  position: relative;
+  min-width: 0 !important;
+  min-height: 64px !important;
+  padding: 8px 2px 4px !important;
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: #9a9a94 !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  font-size: 10px !important;
+  line-height: 1.2 !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.fixed.bottom-0 > a::before,
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.fixed.bottom-0 > button::before,
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.docked.bottom-0 > a::before,
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.docked.bottom-0 > button::before,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-nav > a::before,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-nav > button::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 28px;
+  height: 2px;
+  background: transparent;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.fixed.bottom-0 > .bg-primary-container,
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.docked.bottom-0 > .bg-primary-container,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-nav > .active,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-nav > [aria-current="page"] {
+  color: #111111 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.fixed.bottom-0 > .bg-primary-container::before,
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.docked.bottom-0 > .bg-primary-container::before,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-nav > .active::before,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-nav > [aria-current="page"]::before {
+  background: #d49a24;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.fixed.bottom-0 .material-symbols-outlined,
+body:not(.gohome-page-index):not(.gohome-page-companionship) nav.docked.bottom-0 .material-symbols-outlined,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-nav .material-symbols-outlined {
+  margin: 0 !important;
+  font-size: 22px !important;
+}
+
+/* Guard */
+body.gohome-page-monitor .gohome-monitor-hero {
+  padding: 18px;
+  gap: 14px;
+  color: #ffffff !important;
+  background: #111111 !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+body.gohome-page-monitor .gohome-monitor-hero h2,
+body.gohome-page-monitor .gohome-monitor-hero p,
+body.gohome-page-monitor .gohome-monitor-hero strong {
+  color: #ffffff !important;
+}
+
+body.gohome-page-monitor .gohome-monitor-hero .app-story-icon {
+  width: 42px;
+  height: 42px;
+  color: #111111 !important;
+  background: #d49a24 !important;
+  border-radius: 4px !important;
+}
+
+body.gohome-page-monitor .gohome-presence-facts {
+  border-top-color: rgba(255, 255, 255, 0.16) !important;
+}
+
+body.gohome-page-monitor .gohome-camera-card {
+  overflow: hidden;
+  background: #ffffff !important;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+body.gohome-page-monitor .gohome-camera-live,
+body.gohome-page-monitor .gohome-camera-live img {
+  background: #111111 !important;
+}
+
+body.gohome-page-monitor .gohome-camera-action {
+  min-height: 42px;
+  color: #ffffff !important;
+  background: #111111 !important;
+  border-radius: 6px !important;
+}
+
+body.gohome-page-monitor .gohome-live-badge,
+body.gohome-page-monitor .gohome-camera-current {
+  border-radius: 3px !important;
+  box-shadow: none !important;
+}
+
+/* Events */
+body.gohome-page-events .gohome-event-summary {
+  padding: 15px 0;
+  background: #ffffff !important;
+  border: 0 !important;
+  border-top: 1px solid #e9e9e6 !important;
+  border-bottom: 1px solid #e9e9e6 !important;
+  border-radius: 0 !important;
+}
+
+body.gohome-page-events .gohome-event-list {
+  gap: 0;
+  border-top: 1px solid #e9e9e6;
+}
+
+body.gohome-page-events .gohome-event-card {
+  padding: 14px 0;
+  background: #ffffff !important;
+  border: 0 !important;
+  border-bottom: 1px solid #e9e9e6 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+body.gohome-page-events .gohome-event-icon {
+  border-radius: 4px !important;
+}
+
+/* Profile and settings */
+body.gohome-page-privacy .gohome-profile-card,
+body.gohome-page-privacy .user-card-gradient {
+  min-height: 116px;
+  padding: 16px;
+  color: #ffffff !important;
+  background: #111111 !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+body.gohome-page-privacy .gohome-profile-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 6px !important;
+}
+
+body.gohome-page-privacy .gohome-profile-badge {
+  color: #111111 !important;
+  background: #d49a24 !important;
+  border-radius: 3px !important;
+}
+
+body.gohome-page-privacy .gohome-settings-list,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-settings-list {
+  background: #ffffff !important;
+  border: 0 !important;
+  border-top: 1px solid #e9e9e6 !important;
+  border-bottom: 1px solid #e9e9e6 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-settings-row {
+  min-height: 60px;
+  padding: 12px 0 !important;
+  border-bottom: 1px solid #e9e9e6 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-settings-row > .material-symbols-outlined:first-child {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #d49a24 !important;
+  background: #f5e8c8 !important;
+  border-radius: 4px !important;
+}
+
+/* Dense lists and device cards */
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-simple-list {
+  gap: 0 !important;
+  border-top: 1px solid #e9e9e6;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-simple-card,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-device-card,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-camera-check-card {
+  padding: 14px 0 !important;
+  background: #ffffff !important;
+  border: 0 !important;
+  border-bottom: 1px solid #e9e9e6 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+body.gohome-page-cameras .gohome-camera-device-card {
+  padding: 14px !important;
+  background: #ffffff !important;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+body.gohome-page-cameras .gohome-camera-device-actions button {
+  min-height: 40px;
+  border-radius: 6px !important;
+  font-size: 12px;
+  box-shadow: none !important;
+}
+
+body.gohome-page-cameras .gohome-camera-device-actions button:first-child {
+  color: #ffffff !important;
+  background: #111111 !important;
+}
+
+body.gohome-page-cameras .gohome-camera-device-actions button:nth-child(2) {
+  color: #111111 !important;
+  background: #f0f0ed !important;
+}
+
+body.gohome-page-cameras .gohome-camera-device-actions button:last-child {
+  color: #9f2f24 !important;
+  background: #fff0ed !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-simple-avatar {
+  border-radius: 6px !important;
+}
+
+/* Custom settings pages */
+body:not(.gohome-page-index):not(.gohome-page-companionship) .page,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .phone-page,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-presence-settings-page {
+  width: 100% !important;
+  max-width: 560px !important;
+  min-height: 100dvh;
+  margin: 0 auto !important;
+  padding-left: max(20px, calc(20px + env(safe-area-inset-left, 0px))) !important;
+  padding-right: max(20px, calc(20px + env(safe-area-inset-right, 0px))) !important;
+  padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)) !important;
+  background: #ffffff !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .page > .topbar,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .phone-page > .topbar,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-settings-topbar {
+  position: sticky !important;
+  top: 0;
+  z-index: 40;
+  min-height: calc(52px + env(safe-area-inset-top, 0px));
+  margin: 0 -20px 18px !important;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) 20px 8px !important;
+  background: rgba(255, 255, 255, 0.97) !important;
+  border-bottom: 1px solid #e9e9e6 !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .topbar .title h1,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .topbar .page-title,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-settings-topbar h1 {
+  color: #111111 !important;
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .topbar .title p,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-settings-topbar p {
+  color: #686864 !important;
+  font-size: 11px !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .status-card,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .summary-card,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .config-preview,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .setting-card,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .rule-group,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .number-grid,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .panel,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .media,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .evidence-strip,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-presence-settings-intro,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-mode-list {
+  background: #ffffff !important;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+body.gohome-page-care_schedule:not(.gohome-page-index):not(.gohome-page-companionship) .summary-card {
+  color: #ffffff !important;
+  background: #111111 !important;
+  border-color: #111111 !important;
+}
+
+body.gohome-page-care_schedule:not(.gohome-page-index):not(.gohome-page-companionship) .summary-card h2,
+body.gohome-page-care_schedule:not(.gohome-page-index):not(.gohome-page-companionship) .summary-card p,
+body.gohome-page-care_schedule:not(.gohome-page-index):not(.gohome-page-companionship) .summary-card strong,
+body.gohome-page-care_schedule:not(.gohome-page-index):not(.gohome-page-companionship) .summary-card span:not(.status-pill) {
+  color: #ffffff !important;
+}
+
+body.gohome-page-care_schedule:not(.gohome-page-index):not(.gohome-page-companionship) .summary-card .status-pill {
+  color: #111111 !important;
+  background: #d49a24 !important;
+  border-color: #d49a24 !important;
+}
+
+body.gohome-page-care_schedule .switch-input:checked + .switch-track {
+  background: #d49a24 !important;
+  border-color: #d49a24 !important;
+}
+
+body.gohome-page-care_schedule .summary-card::after {
+  display: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .section-title,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .section-head,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-section-heading {
+  margin-top: 26px;
+  margin-bottom: 10px;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .section-title h2,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .section-head h2,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .section-head h3,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-section-heading h3 {
+  color: #111111 !important;
+  font-size: 17px !important;
+  line-height: 1.35 !important;
+  font-weight: 700 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .rule-row,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .setting-row,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .preview-row,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-mode-row {
+  min-height: 60px;
+  border-bottom-color: #e9e9e6 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .switch:checked,
+body:not(.gohome-page-index):not(.gohome-page-companionship) input.switch:checked,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .gohome-setting-toggle:checked {
+  background-color: #d49a24 !important;
+  border-color: #d49a24 !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .preset-button.selected,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .relationship-card.selected,
+body:not(.gohome-page-index):not(.gohome-page-companionship) [aria-pressed="true"] {
+  color: #111111 !important;
+  background: #f5e8c8 !important;
+  border-color: #d49a24 !important;
+  transform: none !important;
+}
+
+/* Media and event detail */
+body:not(.gohome-page-index):not(.gohome-page-companionship) .stage,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .media {
+  overflow: hidden;
+  background: #111111 !important;
+  border-radius: 8px !important;
+}
+
+body.gohome-page-event_detail .hero {
+  background: #ffffff !important;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .metric,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .source-list > *,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .profile-list > *,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .timeline-item,
+body:not(.gohome-page-index):not(.gohome-page-companionship) .row {
+  background: #f7f7f4 !important;
+  border-color: #e9e9e6 !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+body:not(.gohome-page-index):not(.gohome-page-companionship) .bottom-actions {
+  background: rgba(255, 255, 255, 0.98) !important;
+  border-top: 1px solid #e9e9e6 !important;
+  box-shadow: none !important;
+}
+
+/* Linear setup and account flow */
+body.gohome-page-login > main,
+body.gohome-page-parent_profile > main,
+body.gohome-page-family > main,
+body.gohome-page-device_binding > main,
+body.gohome-page-connect > main,
+body.gohome-page-camera_intro > main,
+body.gohome-page-onboarding > main,
+body.gohome-page-welcome > main {
+  max-width: 480px !important;
+}
+
+body.gohome-page-parent_profile #relationship-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 8px !important;
+}
+
+body.gohome-page-parent_profile .relationship-card {
+  min-height: 82px;
+  padding: 10px !important;
+  border: 1px solid #e9e9e6 !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+body.gohome-page-parent_profile .relationship-card .material-symbols-outlined {
+  color: #d49a24 !important;
+  font-size: 24px !important;
+}
+
+body.gohome-page-device_binding img,
+body.gohome-page-camera_intro img,
+body.gohome-page-onboarding img,
+body.gohome-page-welcome img {
+  border-radius: 8px !important;
+}
+
+body.gohome-page-login [class*="headline"],
+body.gohome-page-parent_profile [class*="headline"],
+body.gohome-page-family [class*="headline"],
+body.gohome-page-device_binding [class*="headline"],
+body.gohome-page-connect [class*="headline"],
+body.gohome-page-camera_intro [class*="headline"] {
+  color: #111111 !important;
+  letter-spacing: 0 !important;
+}
+
+body.gohome-page-device_binding #bindingSubmitBtn,
+body.gohome-page-parent_profile #next-button,
+body.gohome-page-family button[type="submit"],
+body.gohome-page-connect button[type="submit"] {
+  color: #ffffff !important;
+  background: #111111 !important;
+  border-color: #111111 !important;
+}
+
+@media (max-width: 360px) {
+  body.gohome-page-parent_profile #relationship-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body:not(.gohome-page-index):not(.gohome-page-companionship) *,
+  body:not(.gohome-page-index):not(.gohome-page-companionship) *::before,
+  body:not(.gohome-page-index):not(.gohome-page-companionship) *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
