@@ -762,7 +762,7 @@
         return "内容搜索已找到可聊方向，先筛成适合家里电话的轻话题。";
     }
 
-    function buildPushCards({ careCard, family, profile, preferences, device, enabled = [], liveEvents = [], weatherSignal, contentSignal }) {
+    function buildPushCards({ careCard, careCards = [], family, profile, preferences, device, enabled = [], liveEvents = [], weatherSignal, contentSignal }) {
         const schedule = preferences?.metadata?.care_card_schedule || {};
         const enabledIds = new Set((Array.isArray(enabled) ? enabled : []).map((camera) => Number(camera.id)));
         const eventScope = (Array.isArray(liveEvents) ? liveEvents : []).filter((event) => (
@@ -777,6 +777,9 @@
         const recommendations = [
             ...(Array.isArray(contentSignal?.recommendations) ? contentSignal.recommendations : []),
             ...(Array.isArray(careCard?.content_recommendations) ? careCard.content_recommendations : []),
+            ...(Array.isArray(careCards) ? careCards : []).flatMap((card) => (
+                Array.isArray(card?.content_recommendations) ? card.content_recommendations : []
+            )),
         ].filter((item) => {
             if (!item || item.type === "image_brief") return false;
             const key = String(item.url || `${item.module || ""}:${item.title || ""}`);
@@ -892,6 +895,7 @@
         }
         const pushCards = buildPushCards({
             careCard: context.careCard || history[0],
+            careCards: history,
             family,
             profile: context.profile,
             preferences: context.preferences,
