@@ -78,6 +78,7 @@ def main() -> None:
     pipeline_pose_source = verify_pipeline_reports_pose_detection_source()
     pose_retry = verify_pose_transient_retry()
     pose_posture = verify_pose_posture_direction()
+    pose_partial_shoulders = verify_pose_action_hints_with_partial_shoulders()
     scene_context = verify_scene_context_stabilizes_normal_lying_zone()
     scene_human_filter = verify_scene_context_rejects_human_shaped_furniture()
     display_suppression = verify_display_content_suppression()
@@ -132,6 +133,7 @@ def main() -> None:
         "pose_transient_retry_used": pose_retry["retried"],
         "pose_front_seated_posture": pose_posture["front_seated"],
         "pose_horizontal_fall_posture": pose_posture["horizontal_fall"],
+        "pose_partial_shoulders_hints": pose_partial_shoulders,
         "scene_status": scene_context["status"],
         "scene_zone_count": scene_context["zone_count"],
         "scene_normal_lying": scene_context["normal_lying"],
@@ -254,6 +256,8 @@ def main() -> None:
         raise SystemExit("front-facing seated skeleton must be classified as sitting")
     if checks["pose_horizontal_fall_posture"] != "lying":
         raise SystemExit("horizontal shoulder-to-hip direction should remain a lying pose")
+    if not isinstance(checks["pose_partial_shoulders_hints"], list):
+        raise SystemExit("partial shoulder keypoints did not produce stable action hints")
     if checks["pose_result_status"] != "disabled":
         raise SystemExit("pose disabled status check failed")
 
@@ -880,6 +884,16 @@ def verify_pose_posture_direction() -> dict:
         "front_seated": analyzer._estimate_posture(front_seated),
         "horizontal_fall": analyzer._estimate_posture(horizontal_fall),
     }
+
+
+def verify_pose_action_hints_with_partial_shoulders() -> list[str]:
+    analyzer = RtmposeAnalyzer(enabled=True)
+    keypoints = [
+        {"name": "nose", "x": 120.0, "y": 72.0, "confidence": 0.9, "visible": True},
+        {"name": "left_shoulder", "x": 110.0, "y": 130.0, "confidence": 0.8, "visible": True},
+        {"name": "left_wrist", "x": 112.0, "y": 92.0, "confidence": 0.8, "visible": True},
+    ]
+    return analyzer._action_hints(keypoints, "upper_body", False)
 
 
 def verify_activity_temporal_candidates() -> dict:

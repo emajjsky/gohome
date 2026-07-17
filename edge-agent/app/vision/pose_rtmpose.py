@@ -545,7 +545,11 @@ class RtmposeAnalyzer:
         by_name = {point["name"]: point for point in keypoints if point.get("visible")}
         nose = by_name.get("nose")
         wrists = [by_name.get("left_wrist"), by_name.get("right_wrist")]
-        shoulders = [by_name.get("left_shoulder"), by_name.get("right_shoulder")]
+        shoulders = [
+            point
+            for point in (by_name.get("left_shoulder"), by_name.get("right_shoulder"))
+            if point is not None
+        ]
         if nose:
             for wrist in wrists:
                 if wrist and self._distance(wrist, nose) <= 92:
