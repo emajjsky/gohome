@@ -58,6 +58,7 @@ class EdgeWorker:
         self.last_error = ""
         self.last_live_upload_at: Dict[int, float] = {}
         self.last_persisted_analysis_at: Dict[int, float] = {}
+        self.last_persisted_person_state: Dict[int, bool] = {}
         self._stop = Event()
         self._wake = Event()
         self._thread: Thread | None = None
@@ -187,6 +188,7 @@ class EdgeWorker:
         self.latest_evaluations.pop(camera_id, None)
         self.last_live_upload_at.pop(camera_id, None)
         self.last_persisted_analysis_at.pop(camera_id, None)
+        self.last_persisted_person_state.pop(camera_id, None)
 
     def _prune_history_if_due(self) -> None:
         if self.snapshot_dir is None:
@@ -366,6 +368,7 @@ class EdgeWorker:
             analysis=analysis,
         )
         self.last_persisted_analysis_at[camera_id] = float(persisted_at)
+        self.last_persisted_person_state[camera_id] = int(analysis.get("person_count") or 0) > 0
         return snapshot, detection_result
 
     def _ephemeral_snapshot(
@@ -587,6 +590,12 @@ class EdgeWorker:
         last_persisted_at = self.last_persisted_analysis_at.get(int(camera_id))
         interval = max(1.0, float(rules.get("capture_interval_seconds") or 5.0))
         if last_persisted_at is None or float(now) - float(last_persisted_at) >= interval:
+            return True
+        person_present = int(analysis.get("person_count") or 0) > 0
+        if (
+            int(camera_id) in self.last_persisted_person_state
+            and self.last_persisted_person_state[int(camera_id)] != person_present
+        ):
             return True
         runtime = analysis.get("inference_runtime") if isinstance(analysis.get("inference_runtime"), dict) else {}
         if runtime.get("mode") == "risk":

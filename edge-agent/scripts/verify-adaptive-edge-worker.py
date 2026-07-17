@@ -107,8 +107,11 @@ def main() -> None:
     if not worker._should_persist_analysis(24, {}, {}, persistence_rules, now=200.0):
         raise SystemExit("first analysis frame must establish a durable baseline")
     worker.last_persisted_analysis_at[24] = 200.0
+    worker.last_persisted_person_state[24] = False
     if worker._should_persist_analysis(24, {}, {}, persistence_rules, now=201.0):
         raise SystemExit("ordinary high-frequency anchors must not all be written to disk")
+    if not worker._should_persist_analysis(24, {"person_count": 1}, {}, persistence_rules, now=201.05):
+        raise SystemExit("no-person to person transition must be persisted immediately")
     if not worker._should_persist_analysis(
         24,
         {"pose_factor_graph": {"fast_fall_candidate": True}},
