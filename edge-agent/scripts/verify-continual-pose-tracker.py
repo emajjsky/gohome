@@ -31,6 +31,8 @@ def main() -> None:
     )
     if observed["state"] != "observed" or observed["pose_count"] != 1:
         raise SystemExit("fresh model anchor was not recorded as observed")
+    if not tracker.has_anchor(24):
+        raise SystemExit("fresh observed pose did not open the short tracking window")
 
     shifted = translate(frame, dx=5, dy=3)
     clock["now"] = 100.05
@@ -83,6 +85,8 @@ def main() -> None:
     )
     if expired["state"] != "expired" or expired["pose_count"] != 0:
         raise SystemExit("tracked pose remained visible beyond the 600ms freshness gate")
+    if tracker.has_anchor(24):
+        raise SystemExit("expired tracking window still requested camera frame copies")
 
     clock["now"] = 101.0
     tracker.observe(

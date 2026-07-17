@@ -231,6 +231,8 @@ class EdgeWorker:
             if not camera.get("enabled", True) or not camera.get("id"):
                 continue
             camera_id = int(camera["id"])
+            if not self.continual_pose_tracker.has_anchor(camera_id):
+                continue
             capture = self.camera_agent.latest_cached_frame(camera, max_age_seconds=0.5)
             if not capture:
                 continue

@@ -174,6 +174,24 @@ class ContinualPoseTracker:
                 camera_id, "empty", "no_anchor", "", ""
             )
 
+    def has_anchor(self, camera_id: int) -> bool:
+        camera_id = int(camera_id)
+        with self._lock:
+            state = self._states.get(camera_id)
+            if state is None:
+                return False
+            age = max(0.0, float(self._clock()) - float(state["observed_monotonic"]))
+            if age > self.max_age_seconds:
+                self._expire_locked(
+                    camera_id,
+                    "anchor_expired",
+                    str(state.get("frame_id") or ""),
+                    str(state.get("captured_at") or ""),
+                    age,
+                )
+                return False
+            return True
+
     def status(self, camera_ids: list[int] | None = None) -> Dict[str, Any]:
         with self._lock:
             ids = sorted(

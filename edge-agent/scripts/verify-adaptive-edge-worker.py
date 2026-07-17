@@ -74,6 +74,9 @@ class ContinualTracker:
     def status(self, camera_ids=None):
         return {"schema_version": self.version, "camera_ids": sorted(camera_ids or [])}
 
+    def has_anchor(self, camera_id):
+        return True
+
     def reset_camera(self, camera_id):
         self.reset.append(camera_id)
 
