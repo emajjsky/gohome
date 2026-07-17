@@ -11,6 +11,7 @@ from .camera_agent import CameraError
 from .rule_engine import RuleEngine, RuleEvaluation, build_event_evidence
 from .vision.temporal import TemporalObservationEngine
 from .vision.pose_factor_graph import PoseFactorGraphEngine
+from .vision.continual_pose_tracker import ContinualPoseTracker
 
 
 LIFE_OBSERVATION_TYPES = {"no_motion", "no_person"}
@@ -35,6 +36,7 @@ class EdgeWorker:
         temporal_engine: TemporalObservationEngine | None = None,
         pose_factor_graph_engine: PoseFactorGraphEngine | None = None,
         inference_scheduler: AdaptiveInferenceScheduler | None = None,
+        continual_pose_tracker: Any | None = None,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.storage = storage
@@ -52,6 +54,7 @@ class EdgeWorker:
         self.temporal_engine = temporal_engine or TemporalObservationEngine()
         self.pose_factor_graph_engine = pose_factor_graph_engine or PoseFactorGraphEngine()
         self.inference_scheduler = inference_scheduler or AdaptiveInferenceScheduler()
+        self.continual_pose_tracker = continual_pose_tracker or ContinualPoseTracker()
         self._monotonic_clock = monotonic_clock or time.monotonic
         self.last_history_cleanup_at = time.monotonic()
         self.last_history_cleanup_result: Dict[str, Any] = {}
@@ -62,6 +65,7 @@ class EdgeWorker:
         self._stop = Event()
         self._wake = Event()
         self._thread: Thread | None = None
+        self._tracking_thread: Thread | None = None
         self.previous_frames: Dict[int, Any] = {}
         self.rule_engine = RuleEngine()
         self.latest_evaluations: Dict[int, Dict[str, Any]] = {}
@@ -70,8 +74,11 @@ class EdgeWorker:
         self.last_rules_snapshot: Dict[str, Any] = {}
         self._known_camera_ids: set[int] = set()
         self._disabled_camera_ids: set[int] = set()
+        self._runtime_cameras: Dict[int, Dict[str, Any]] = {}
+        self._last_tracked_frame_ids: Dict[int, str] = {}
         self.runtime_reconciliation: Dict[str, Any] = {}
         self._runtime_reconciled = False
+        self.last_continual_pose_error = ""
 
     @property
     def is_running(self) -> bool:
@@ -83,13 +90,21 @@ class EdgeWorker:
         self._stop.clear()
         self._wake.clear()
         self._thread = Thread(target=self._run, name="gohome-edge-worker", daemon=True)
+        self._tracking_thread = Thread(
+            target=self._run_continual_tracking,
+            name="gohome-edge-pose-tracker",
+            daemon=True,
+        )
         self._thread.start()
+        self._tracking_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
         self._wake.set()
         if self._thread:
             self._thread.join(timeout=5)
+        if self._tracking_thread:
+            self._tracking_thread.join(timeout=2)
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -113,6 +128,7 @@ class EdgeWorker:
         self.last_rules_snapshot = {**rules}
         cameras = self.storage.list_cameras(include_secret=True)
         cameras_by_id = {int(camera["id"]): camera for camera in cameras}
+        self._runtime_cameras = {camera_id: dict(camera) for camera_id, camera in cameras_by_id.items()}
         current_camera_ids = set(cameras_by_id)
         for removed_camera_id in self._known_camera_ids - current_camera_ids:
             self._reset_camera_runtime_memory(removed_camera_id)
@@ -161,6 +177,11 @@ class EdgeWorker:
         return 0.0
 
     def runtime_status(self) -> Dict[str, Any]:
+        continual_status = (
+            self.continual_pose_tracker.status(sorted(self._runtime_cameras))
+            if self.continual_pose_tracker is not None
+            else {"schema_version": "disabled", "cameras": []}
+        )
         return {
             "worker_running": self.is_running,
             "last_loop_started_at": self.last_loop_started_at,
@@ -170,6 +191,10 @@ class EdgeWorker:
             "temporal_engine": self.temporal_engine.version,
             "pose_factor_graph_engine": self.pose_factor_graph_engine.version,
             "inference_scheduler": self.inference_scheduler.status(now=self._monotonic_clock()),
+            "continual_pose_tracker": getattr(self.continual_pose_tracker, "version", "disabled"),
+            "continual_pose_running": self._tracking_thread is not None and self._tracking_thread.is_alive(),
+            "continual_pose": continual_status,
+            "continual_pose_error": self.last_continual_pose_error,
             "runtime_reconciliation": self.runtime_reconciliation,
             "last_error": self.last_error,
         }
@@ -184,11 +209,36 @@ class EdgeWorker:
         self.pose_factor_graph_engine.reset_camera(camera_id)
         self.inference_scheduler.reset_camera(camera_id)
         self.rule_engine.reset_camera(camera_id)
+        if self.continual_pose_tracker is not None:
+            self.continual_pose_tracker.reset_camera(camera_id)
         self.previous_frames.pop(camera_id, None)
         self.latest_evaluations.pop(camera_id, None)
         self.last_live_upload_at.pop(camera_id, None)
         self.last_persisted_analysis_at.pop(camera_id, None)
         self.last_persisted_person_state.pop(camera_id, None)
+        self._last_tracked_frame_ids.pop(camera_id, None)
+
+    def _run_continual_tracking(self) -> None:
+        while not self._stop.is_set():
+            self._run_continual_tracking_iteration()
+            self._stop.wait(0.04)
+
+    def _run_continual_tracking_iteration(self) -> None:
+        if self.camera_agent is None or self.continual_pose_tracker is None:
+            return
+        cameras = list(self._runtime_cameras.values())
+        for camera in cameras:
+            if not camera.get("enabled", True) or not camera.get("id"):
+                continue
+            camera_id = int(camera["id"])
+            capture = self.camera_agent.latest_cached_frame(camera, max_age_seconds=0.5)
+            if not capture:
+                continue
+            frame_id = str(capture.get("frame_id") or "")
+            if not frame_id or frame_id == self._last_tracked_frame_ids.get(camera_id):
+                continue
+            self._last_tracked_frame_ids[camera_id] = frame_id
+            self.observe_stream_frame(camera, capture["frame"], capture)
 
     def _prune_history_if_due(self) -> None:
         if self.snapshot_dir is None:
@@ -237,6 +287,7 @@ class EdgeWorker:
             )
             analysis["inference_runtime"] = self._inference_runtime_payload(pose_runtime_config)
             temporal = self.temporal_engine.update(camera_id, analysis)
+            self._publish_continual_pose_anchor(camera_id, frame=frame, capture=capture, analysis=analysis)
             self.pose_factor_graph_engine.update(camera_id, analysis)
             self._attach_temporal_evidence(camera_id, analysis)
             persistence_now = self._monotonic_clock()
@@ -329,6 +380,55 @@ class EdgeWorker:
             self.storage.close_camera_runtime_state(camera_id, reason="camera_error")
             self._reset_camera_runtime_memory(camera_id)
             return {"ok": False, "error": str(exc)}
+
+    def observe_stream_frame(
+        self,
+        camera: Dict[str, Any],
+        frame: Any,
+        metadata: Dict[str, Any],
+    ) -> None:
+        if self.continual_pose_tracker is None or not camera.get("id"):
+            return
+        try:
+            self.continual_pose_tracker.update_frame(
+                int(camera["id"]),
+                frame,
+                frame_id=str(metadata.get("frame_id") or ""),
+                captured_at=str(metadata.get("captured_at") or ""),
+            )
+            self.last_continual_pose_error = ""
+        except Exception as exc:
+            self.last_continual_pose_error = str(exc)
+
+    def _publish_continual_pose_anchor(
+        self,
+        camera_id: int,
+        *,
+        frame: Any,
+        capture: Dict[str, Any],
+        analysis: Dict[str, Any],
+    ) -> None:
+        if self.continual_pose_tracker is None:
+            return
+        if str(analysis.get("pose_model_status") or "") != "ready":
+            return
+        poses = [
+            pose
+            for pose in (analysis.get("poses") or [])
+            if str(pose.get("tracking_state") or "fresh") in {"fresh", "observed"}
+        ]
+        try:
+            payload = self.continual_pose_tracker.observe(
+                int(camera_id),
+                frame,
+                frame_id=str(capture.get("frame_id") or ""),
+                captured_at=str(capture.get("captured_at") or ""),
+                poses=poses,
+            )
+            analysis["continual_pose_anchor"] = payload
+            self.last_continual_pose_error = ""
+        except Exception as exc:
+            self.last_continual_pose_error = str(exc)
 
     def _persist_analysis_frame(
         self,
