@@ -101,9 +101,20 @@ def main() -> None:
         raise SystemExit("normal lying scene state mismatch")
 
     worker = EdgeWorker(None, None, None, None)
-    fall_pose_runtime = worker._pose_runtime_config(1, {"fall_detection_enabled": True, "activity_detection_enabled": True})
+    pose_rules = {"fall_detection_enabled": True, "activity_detection_enabled": True}
+    manual_pose_runtime = worker._pose_runtime_config(1, pose_rules, adaptive=False)
+    if not manual_pose_runtime.get("pose_detection_enabled"):
+        raise SystemExit("manual full analysis must keep pose enabled")
+    scheduler_now = worker._monotonic_clock()
+    worker.inference_scheduler.reconcile([1], now=scheduler_now)
+    idle_pose_runtime = worker._pose_runtime_config(1, pose_rules, adaptive=True)
+    if idle_pose_runtime.get("pose_detection_enabled") or idle_pose_runtime.get("eacp_mode") != "idle":
+        raise SystemExit("idle EACP sampling must begin with a person anchor instead of duplicate pose detection")
+    worker.inference_scheduler.mark_started(1, now=scheduler_now)
+    worker.inference_scheduler.observe(1, {"person_count": 1, "motion_detected": True}, now=scheduler_now + 0.1)
+    fall_pose_runtime = worker._pose_runtime_config(1, pose_rules, adaptive=True)
     if not fall_pose_runtime.get("pose_detection_enabled") or fall_pose_runtime.get("worker_pose_interval_frames") != 1:
-        raise SystemExit("formal fall detection must sample pose on every worker frame")
+        raise SystemExit("active fall observation must sample pose on every scheduled model anchor")
 
     print(
         json.dumps(
@@ -119,6 +130,7 @@ def main() -> None:
                 "clear_confirm_count": recovered_eval.state["fall_confirm_count"],
                 "scene_stage": scene_second.state["fall_stage"],
                 "scene_suppressed": scene_second.state["fall_scene_suppressed"],
+                "idle_pose_enabled": idle_pose_runtime["pose_detection_enabled"],
                 "fall_pose_interval": fall_pose_runtime["worker_pose_interval_frames"],
                 "history_baseline_stage": history_first.state["fall_stage"],
             },

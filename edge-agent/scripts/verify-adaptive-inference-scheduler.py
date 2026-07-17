@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.adaptive_inference_scheduler import AdaptiveInferenceScheduler
+
+
+def main() -> None:
+    scheduler = AdaptiveInferenceScheduler(
+        idle_interval_seconds=1.0,
+        active_interval_seconds=0.5,
+        risk_interval_seconds=0.2,
+        active_hold_seconds=4.0,
+        risk_hold_seconds=2.0,
+    )
+    scheduler.reconcile([24, 25], now=100.0)
+
+    first = scheduler.next_due_camera([24, 25], now=100.0)
+    if first != 24:
+        raise SystemExit(f"first camera was not selected deterministically: {first}")
+    scheduler.mark_started(24, now=100.0)
+    scheduler.observe(24, {"person_count": 0, "motion_detected": False}, now=100.1)
+
+    second = scheduler.next_due_camera([24, 25], now=100.1)
+    if second != 25:
+        raise SystemExit(f"second camera was starved by first camera: {second}")
+    scheduler.mark_started(25, now=100.1)
+    scheduler.observe(25, {"person_count": 0, "motion_detected": False}, now=100.2)
+
+    if scheduler.next_due_camera([24, 25], now=100.9) is not None:
+        raise SystemExit("idle cameras were scheduled faster than the one-second baseline")
+    if scheduler.next_due_camera([24, 25], now=101.0) != 24:
+        raise SystemExit("idle camera was not due one second after its previous start")
+
+    scheduler.mark_started(24, now=101.0)
+    scheduler.observe(
+        24,
+        {"person_count": 1, "motion_detected": True, "motion_score": 0.08},
+        now=101.2,
+        frame_age_seconds=0.12,
+    )
+    active = scheduler.camera_state(24, now=101.2)
+    if active["mode"] != "active" or not active["pose_required"]:
+        raise SystemExit(f"visible person did not enable active pose sensing: {active}")
+    if abs(float(active["interval_seconds"]) - 0.5) > 0.0001:
+        raise SystemExit(f"active interval is incorrect: {active}")
+    if abs(float(active["next_due_at"]) - 101.5) > 0.0001:
+        raise SystemExit(f"active deadline did not use start-to-start pacing: {active}")
+
+    scheduler.mark_started(24, now=101.5)
+    scheduler.observe(
+        24,
+        {
+            "person_count": 1,
+            "motion_detected": True,
+            "fall_candidate": True,
+            "pose_factor_graph": {"fast_fall_candidate": True},
+        },
+        now=101.7,
+    )
+    risk = scheduler.camera_state(24, now=101.7)
+    if risk["mode"] != "risk" or abs(float(risk["interval_seconds"]) - 0.2) > 0.0001:
+        raise SystemExit(f"fall candidate did not enter burst mode: {risk}")
+
+    scheduler.mark_started(24, now=104.0)
+    scheduler.observe(24, {"person_count": 0, "motion_detected": False}, now=104.1)
+    held = scheduler.camera_state(24, now=104.1)
+    if held["mode"] != "active":
+        raise SystemExit(f"risk decay did not retain short active observation: {held}")
+
+    scheduler.mark_started(24, now=106.0)
+    scheduler.observe(24, {"person_count": 0, "motion_detected": False}, now=106.1)
+    idle = scheduler.camera_state(24, now=106.1)
+    if idle["mode"] != "idle" or idle["pose_required"]:
+        raise SystemExit(f"expired activity did not return to idle mode: {idle}")
+
+    scheduler.mark_started(24, now=110.0)
+    scheduler.observe(24, {"person_count": 0, "motion_detected": False}, now=113.0)
+    late = scheduler.camera_state(24, now=113.0)
+    if float(late["next_due_at"]) != 113.0 or int(late["deadline_miss_count"]) < 1:
+        raise SystemExit(f"late processing did not drop stale deadlines: {late}")
+
+    scheduler.reconcile([25], now=114.0)
+    if scheduler.camera_state(24, now=114.0):
+        raise SystemExit("removed camera retained scheduler state")
+
+    print({
+        "ok": True,
+        "idle_interval_seconds": idle["interval_seconds"],
+        "active_interval_seconds": active["interval_seconds"],
+        "risk_interval_seconds": risk["interval_seconds"],
+        "independent_camera_rotation": True,
+        "stale_deadlines_dropped": True,
+    })
+
+
+if __name__ == "__main__":
+    main()

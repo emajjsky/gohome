@@ -30,6 +30,9 @@ rsync -az \
   --exclude 'scripts/prepare-vision-smoke-samples.py' \
   --exclude 'scripts/run-*-eval*.sh' \
   --exclude 'scripts/send-test-notification.sh' \
+  --exclude 'scripts/verify-adaptive-analysis-persistence.py' \
+  --exclude 'scripts/verify-adaptive-edge-worker.py' \
+  --exclude 'scripts/verify-adaptive-inference-scheduler.py' \
   --exclude 'scripts/verify-alert-dedupe.py' \
   --exclude 'scripts/verify-camera-stream-resilience.py' \
   --exclude 'scripts/verify-config-sync-agent.py' \
@@ -59,6 +62,9 @@ ssh "$PI_SSH" "cd '$PI_ROOT' && rm -rf eval && find scripts -maxdepth 1 -type f 
   -o -name 'prepare-vision-smoke-samples.py' \\
   -o -name 'run-*-eval*.sh' \\
   -o -name 'send-test-notification.sh' \\
+  -o -name 'verify-adaptive-analysis-persistence.py' \\
+  -o -name 'verify-adaptive-edge-worker.py' \\
+  -o -name 'verify-adaptive-inference-scheduler.py' \\
   -o -name 'verify-alert-dedupe.py' \\
   -o -name 'verify-camera-stream-resilience.py' \\
   -o -name 'verify-config-sync-agent.py' \\

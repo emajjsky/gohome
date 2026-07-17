@@ -77,7 +77,8 @@ class RuleEngine:
     ) -> RuleEvaluation:
         now = utc_now()
         camera_id = int(camera["id"])
-        snapshot_id = int(snapshot["id"])
+        raw_snapshot_id = snapshot.get("id")
+        snapshot_id = int(raw_snapshot_id) if raw_snapshot_id is not None else None
         candidates: list[EventCandidate] = []
         state: Dict[str, Any] = {
             "motion_state": "unknown",
@@ -359,7 +360,7 @@ class RuleEngine:
         event_type: str,
         summary: str,
         level: str,
-        snapshot_id: int,
+        snapshot_id: Optional[int],
         analysis: Dict[str, Any],
         rule: Dict[str, Any],
         extra: Optional[Dict[str, Any]] = None,

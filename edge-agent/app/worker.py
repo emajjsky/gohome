@@ -6,8 +6,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .adaptive_inference_scheduler import AdaptiveInferenceScheduler
 from .camera_agent import CameraError
-from .rule_engine import RuleEngine, RuleEvaluation
+from .rule_engine import RuleEngine, RuleEvaluation, build_event_evidence
 from .vision.temporal import TemporalObservationEngine
 from .vision.pose_factor_graph import PoseFactorGraphEngine
 
@@ -33,6 +34,8 @@ class EdgeWorker:
         completed_upload_retention_days: int = 7,
         temporal_engine: TemporalObservationEngine | None = None,
         pose_factor_graph_engine: PoseFactorGraphEngine | None = None,
+        inference_scheduler: AdaptiveInferenceScheduler | None = None,
+        monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.storage = storage
         self.camera_agent = camera_agent
@@ -48,21 +51,24 @@ class EdgeWorker:
         self.completed_upload_retention_days = max(1, int(completed_upload_retention_days))
         self.temporal_engine = temporal_engine or TemporalObservationEngine()
         self.pose_factor_graph_engine = pose_factor_graph_engine or PoseFactorGraphEngine()
+        self.inference_scheduler = inference_scheduler or AdaptiveInferenceScheduler()
+        self._monotonic_clock = monotonic_clock or time.monotonic
         self.last_history_cleanup_at = time.monotonic()
         self.last_history_cleanup_result: Dict[str, Any] = {}
         self.last_error = ""
         self.last_live_upload_at: Dict[int, float] = {}
+        self.last_persisted_analysis_at: Dict[int, float] = {}
         self._stop = Event()
         self._wake = Event()
         self._thread: Thread | None = None
         self.previous_frames: Dict[int, Any] = {}
-        self.pose_frame_counts: Dict[int, int] = {}
         self.rule_engine = RuleEngine()
         self.latest_evaluations: Dict[int, Dict[str, Any]] = {}
         self.last_loop_started_at: str | None = None
         self.last_rules_loaded_at: str | None = None
         self.last_rules_snapshot: Dict[str, Any] = {}
         self._known_camera_ids: set[int] = set()
+        self._disabled_camera_ids: set[int] = set()
         self.runtime_reconciliation: Dict[str, Any] = {}
         self._runtime_reconciled = False
 
@@ -86,37 +92,72 @@ class EdgeWorker:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            interval = 5
+            wait_seconds = 0.25
             try:
-                if not self._runtime_reconciled:
-                    self.runtime_reconciliation = self.storage.reconcile_camera_runtime_state(close_stale_open=True)
-                    self.runtime_reconciliation["completed_at"] = datetime.now(timezone.utc).isoformat()
-                    self._runtime_reconciled = True
-                rules = self.storage.get_rules()
-                self.last_loop_started_at = datetime.now(timezone.utc).isoformat()
-                self.last_rules_loaded_at = rules.get("updated_at")
-                self.last_rules_snapshot = {**rules}
-                cameras = self.storage.list_cameras(include_secret=True)
-                current_camera_ids = {int(camera["id"]) for camera in cameras}
-                for removed_camera_id in self._known_camera_ids - current_camera_ids:
-                    self._reset_camera_runtime_memory(removed_camera_id)
-                self._known_camera_ids = current_camera_ids
-                for camera in cameras:
-                    if self._stop.is_set():
-                        break
-                    if not camera.get("enabled"):
-                        camera_id = int(camera["id"])
-                        self.storage.close_camera_runtime_state(camera_id, reason="camera_disabled")
-                        self._reset_camera_runtime_memory(camera_id)
-                        continue
-                    self.process_camera(camera, rules)
-                self._prune_history_if_due()
-                interval = max(1, int(rules["capture_interval_seconds"]))
-                self.last_error = ""
+                wait_seconds = self._run_iteration()
             except Exception as exc:
                 self.last_error = str(exc)
-            self._wake.wait(interval)
+            self._wake.wait(max(0.0, wait_seconds))
             self._wake.clear()
+
+    def _run_iteration(self) -> float:
+        now = self._monotonic_clock()
+        if not self._runtime_reconciled:
+            self.runtime_reconciliation = self.storage.reconcile_camera_runtime_state(close_stale_open=True)
+            self.runtime_reconciliation["completed_at"] = datetime.now(timezone.utc).isoformat()
+            self._runtime_reconciled = True
+
+        rules = self.storage.get_rules()
+        self.last_rules_loaded_at = rules.get("updated_at")
+        self.last_rules_snapshot = {**rules}
+        cameras = self.storage.list_cameras(include_secret=True)
+        cameras_by_id = {int(camera["id"]): camera for camera in cameras}
+        current_camera_ids = set(cameras_by_id)
+        for removed_camera_id in self._known_camera_ids - current_camera_ids:
+            self._reset_camera_runtime_memory(removed_camera_id)
+        self._known_camera_ids = current_camera_ids
+
+        disabled_camera_ids = {
+            camera_id for camera_id, camera in cameras_by_id.items() if not camera.get("enabled")
+        }
+        for camera_id in disabled_camera_ids - self._disabled_camera_ids:
+            self.storage.close_camera_runtime_state(camera_id, reason="camera_disabled")
+            self._reset_camera_runtime_memory(camera_id)
+        self._disabled_camera_ids = disabled_camera_ids
+
+        enabled_camera_ids = sorted(current_camera_ids - disabled_camera_ids)
+        self.inference_scheduler.reconcile(enabled_camera_ids, now=now)
+        camera_id = self.inference_scheduler.next_due_camera(enabled_camera_ids, now=now)
+        if camera_id is None:
+            self._prune_history_if_due()
+            return self.inference_scheduler.wait_seconds(
+                enabled_camera_ids,
+                now=now,
+                maximum=0.25,
+            )
+
+        self.last_loop_started_at = datetime.now(timezone.utc).isoformat()
+        self.inference_scheduler.mark_started(camera_id, now=now)
+        try:
+            result = self.process_camera(cameras_by_id[camera_id], rules, adaptive_pose=True)
+        except Exception:
+            self.inference_scheduler.mark_error(camera_id, now=self._monotonic_clock())
+            raise
+
+        completed_at = self._monotonic_clock()
+        if result.get("ok"):
+            self.inference_scheduler.observe(
+                camera_id,
+                result.get("analysis") if isinstance(result.get("analysis"), dict) else {},
+                now=completed_at,
+                frame_age_seconds=self._snapshot_frame_age_seconds(result.get("snapshot")),
+            )
+            self.last_error = ""
+        else:
+            self.inference_scheduler.mark_error(camera_id, now=completed_at)
+            self.last_error = str(result.get("error") or "camera analysis failed")
+        self._prune_history_if_due()
+        return 0.0
 
     def runtime_status(self) -> Dict[str, Any]:
         return {
@@ -127,22 +168,25 @@ class EdgeWorker:
             "history_cleanup": self.last_history_cleanup_result,
             "temporal_engine": self.temporal_engine.version,
             "pose_factor_graph_engine": self.pose_factor_graph_engine.version,
+            "inference_scheduler": self.inference_scheduler.status(now=self._monotonic_clock()),
             "runtime_reconciliation": self.runtime_reconciliation,
             "last_error": self.last_error,
         }
 
     def request_rules_reload(self) -> None:
+        self.inference_scheduler.wake_all(now=self._monotonic_clock())
         self._wake.set()
 
     def _reset_camera_runtime_memory(self, camera_id: int) -> None:
         camera_id = int(camera_id)
         self.temporal_engine.reset_camera(camera_id)
         self.pose_factor_graph_engine.reset_camera(camera_id)
+        self.inference_scheduler.reset_camera(camera_id)
         self.rule_engine.reset_camera(camera_id)
         self.previous_frames.pop(camera_id, None)
-        self.pose_frame_counts.pop(camera_id, None)
         self.latest_evaluations.pop(camera_id, None)
         self.last_live_upload_at.pop(camera_id, None)
+        self.last_persisted_analysis_at.pop(camera_id, None)
 
     def _prune_history_if_due(self) -> None:
         if self.snapshot_dir is None:
@@ -166,86 +210,95 @@ class EdgeWorker:
                 "error": str(exc),
             }
 
-    def process_camera(self, camera: Dict[str, Any], rules: Dict[str, Any]) -> Dict[str, Any]:
+    def process_camera(
+        self,
+        camera: Dict[str, Any],
+        rules: Dict[str, Any],
+        *,
+        adaptive_pose: bool = False,
+    ) -> Dict[str, Any]:
         camera_id = int(camera["id"])
         try:
             capture = self.camera_agent.capture_frame(camera)
             frame = capture["frame"]
+            pose_runtime_config = self._pose_runtime_config(camera_id, rules, adaptive=adaptive_pose)
             analysis_config = {
                 **rules,
                 "force_demo_vision": str(camera.get("stream_url", "")).strip().lower().startswith("demo:"),
                 "camera_id": camera_id,
-                **self._pose_runtime_config(camera_id, rules),
+                **pose_runtime_config,
             }
             analysis = self.detect_agent.analyze_frame_with_config(
                 frame,
                 previous_frame=self.previous_frames.get(camera_id),
                 config=analysis_config,
             )
+            analysis["inference_runtime"] = self._inference_runtime_payload(pose_runtime_config)
             temporal = self.temporal_engine.update(camera_id, analysis)
             self.pose_factor_graph_engine.update(camera_id, analysis)
-
-            relative_path = self.camera_agent.snapshot_relative_path(camera_id)
-            self.camera_agent.save_frame(frame, relative_path)
-            snapshot = self.storage.create_snapshot(
-                camera_id=camera_id,
-                image_path=relative_path,
-                width=capture["width"],
-                height=capture["height"],
-                brightness=analysis["brightness"],
-                motion_score=analysis["motion_score"],
-                tags=analysis["tags"],
-                person_count=analysis.get("person_count"),
-                analysis=analysis,
-            )
-            self.temporal_engine.attach_snapshot(camera_id, snapshot)
-            factor_graph = analysis.get("pose_factor_graph") if isinstance(analysis.get("pose_factor_graph"), dict) else {}
-            evidence_track = factor_graph.get("fast_fall_track")
-            if not isinstance(evidence_track, dict):
-                prolonged_tracks = factor_graph.get("prolonged_floor_lying_tracks") or []
-                evidence_track = prolonged_tracks[0] if prolonged_tracks else None
-            analysis["temporal_evidence_bundle"] = self.temporal_engine.evidence_bundle(
+            self._attach_temporal_evidence(camera_id, analysis)
+            persistence_now = self._monotonic_clock()
+            should_persist = self._should_persist_analysis(
                 camera_id,
-                event_type="pose_safety_candidate",
-                track_id=str((evidence_track or {}).get("track_id") or "") or None,
+                analysis,
+                temporal,
+                rules,
+                now=persistence_now,
             )
-            self._update_presence_session(camera, snapshot, temporal)
-            self._persist_posture_episodes(camera, snapshot, temporal)
-            self._enqueue_live_frame_upload(camera_id, snapshot)
+            snapshot: Dict[str, Any] = self._ephemeral_snapshot(camera_id, capture, analysis)
+            detection_result: Dict[str, Any] | None = None
+            if should_persist:
+                snapshot, detection_result = self._persist_analysis_frame(
+                    camera,
+                    capture,
+                    frame,
+                    analysis,
+                    temporal,
+                    persisted_at=persistence_now,
+                )
+            self._attach_temporal_evidence(camera_id, analysis)
             self.storage.update_camera_status(camera_id, "online")
 
-            detection_result = self.storage.create_detection_result(
-                camera_id=camera_id,
-                snapshot_id=int(snapshot["id"]),
-                captured_at=snapshot["captured_at"],
-                width=capture["width"],
-                height=capture["height"],
-                analysis=analysis,
-            )
             evaluation = self.rule_engine.evaluate_snapshot(camera, snapshot, analysis, rules)
+            if not should_persist and self._requires_durable_candidate(evaluation):
+                snapshot, detection_result = self._persist_analysis_frame(
+                    camera,
+                    capture,
+                    frame,
+                    analysis,
+                    temporal,
+                    persisted_at=self._monotonic_clock(),
+                )
+                should_persist = True
+                self._attach_temporal_evidence(camera_id, analysis)
+                self._attach_snapshot_to_evaluation(evaluation, snapshot, analysis)
+
             evaluation_dict = evaluation.to_dict()
-            persisted_evaluation = self.storage.create_rule_evaluation(
-                camera_id=camera_id,
-                snapshot_id=int(snapshot["id"]),
-                detection_result_id=int(detection_result["id"]),
-                evaluation=evaluation_dict,
-                rule_set_version=str(rules.get("updated_at") or ""),
-            )
-            self.latest_evaluations[camera_id] = persisted_evaluation
+            persisted_evaluation: Dict[str, Any] | None = None
+            if should_persist:
+                persisted_evaluation = self.storage.create_rule_evaluation(
+                    camera_id=camera_id,
+                    snapshot_id=int(snapshot["id"]),
+                    detection_result_id=int(detection_result["id"]) if detection_result else None,
+                    evaluation=evaluation_dict,
+                    rule_set_version=str(rules.get("updated_at") or ""),
+                )
+            self.latest_evaluations[camera_id] = persisted_evaluation or evaluation_dict
             self._close_recovered_observations(camera, evaluation, analysis)
             self._emit_candidates(
                 camera,
                 evaluation=evaluation,
-                detection_result_id=int(detection_result["id"]),
-                rule_evaluation_id=int(persisted_evaluation["id"]),
+                detection_result_id=int(detection_result["id"]) if detection_result else None,
+                rule_evaluation_id=int(persisted_evaluation["id"]) if persisted_evaluation else None,
             )
             self.previous_frames[camera_id] = frame.copy()
             return {
                 "ok": True,
+                "persisted": should_persist,
                 "snapshot": snapshot,
                 "analysis": analysis,
                 "detection_result": detection_result,
-                "evaluation": persisted_evaluation,
+                "evaluation": persisted_evaluation or evaluation_dict,
             }
 
         except CameraError as exc:
@@ -274,6 +327,104 @@ class EdgeWorker:
             self.storage.close_camera_runtime_state(camera_id, reason="camera_error")
             self._reset_camera_runtime_memory(camera_id)
             return {"ok": False, "error": str(exc)}
+
+    def _persist_analysis_frame(
+        self,
+        camera: Dict[str, Any],
+        capture: Dict[str, Any],
+        frame: Any,
+        analysis: Dict[str, Any],
+        temporal: Dict[str, Any],
+        *,
+        persisted_at: float,
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        camera_id = int(camera["id"])
+        relative_path = self.camera_agent.snapshot_relative_path(camera_id)
+        self.camera_agent.save_frame(frame, relative_path)
+        snapshot = self.storage.create_snapshot(
+            camera_id=camera_id,
+            image_path=relative_path,
+            width=capture["width"],
+            height=capture["height"],
+            brightness=analysis["brightness"],
+            motion_score=analysis["motion_score"],
+            tags=analysis["tags"],
+            person_count=analysis.get("person_count"),
+            analysis=analysis,
+        )
+        self.temporal_engine.attach_snapshot(camera_id, snapshot)
+        self._attach_temporal_evidence(camera_id, analysis)
+        self._update_presence_session(camera, snapshot, temporal)
+        self._persist_posture_episodes(camera, snapshot, temporal)
+        self._enqueue_live_frame_upload(camera_id, snapshot)
+        detection_result = self.storage.create_detection_result(
+            camera_id=camera_id,
+            snapshot_id=int(snapshot["id"]),
+            captured_at=snapshot["captured_at"],
+            width=capture["width"],
+            height=capture["height"],
+            analysis=analysis,
+        )
+        self.last_persisted_analysis_at[camera_id] = float(persisted_at)
+        return snapshot, detection_result
+
+    def _ephemeral_snapshot(
+        self,
+        camera_id: int,
+        capture: Dict[str, Any],
+        analysis: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        captured_at = str(capture.get("captured_at") or datetime.now(timezone.utc).isoformat())
+        return {
+            "id": None,
+            "camera_id": int(camera_id),
+            "image_path": "",
+            "image_url": "",
+            "captured_at": captured_at,
+            "created_at": captured_at,
+            "width": capture.get("width"),
+            "height": capture.get("height"),
+            "brightness": analysis.get("brightness"),
+            "motion_score": analysis.get("motion_score"),
+            "person_count": analysis.get("person_count"),
+            "tags": list(analysis.get("tags") or []),
+        }
+
+    def _attach_temporal_evidence(self, camera_id: int, analysis: Dict[str, Any]) -> None:
+        factor_graph = analysis.get("pose_factor_graph") if isinstance(analysis.get("pose_factor_graph"), dict) else {}
+        evidence_track = factor_graph.get("fast_fall_track")
+        if not isinstance(evidence_track, dict):
+            prolonged_tracks = factor_graph.get("prolonged_floor_lying_tracks") or []
+            evidence_track = prolonged_tracks[0] if prolonged_tracks else None
+        analysis["temporal_evidence_bundle"] = self.temporal_engine.evidence_bundle(
+            camera_id,
+            event_type="pose_safety_candidate",
+            track_id=str((evidence_track or {}).get("track_id") or "") or None,
+        )
+
+    def _requires_durable_candidate(self, evaluation: RuleEvaluation) -> bool:
+        return any(candidate.event_type not in LIFE_OBSERVATION_TYPES for candidate in evaluation.candidates)
+
+    def _attach_snapshot_to_evaluation(
+        self,
+        evaluation: RuleEvaluation,
+        snapshot: Dict[str, Any],
+        analysis: Dict[str, Any],
+    ) -> None:
+        snapshot_id = int(snapshot["id"])
+        evaluation.snapshot_id = snapshot_id
+        for candidate in evaluation.candidates:
+            candidate.snapshot_id = snapshot_id
+            payload = {**(candidate.payload or {}), **analysis}
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            payload["evidence"] = build_event_evidence(
+                event_type=candidate.event_type,
+                summary=candidate.summary,
+                level=candidate.level,
+                analysis=analysis,
+                rule=rule,
+            )
+            candidate.payload = payload
 
     def _update_presence_session(
         self,
@@ -371,28 +522,88 @@ class EdgeWorker:
         except Exception:
             return
 
-    def _pose_runtime_config(self, camera_id: int, rules: Dict[str, Any]) -> Dict[str, Any]:
+    def _pose_runtime_config(
+        self,
+        camera_id: int,
+        rules: Dict[str, Any],
+        *,
+        adaptive: bool = True,
+    ) -> Dict[str, Any]:
         needs_pose = bool(rules.get("fall_detection_enabled") or rules.get("activity_detection_enabled"))
         if not needs_pose:
             return {
                 "pose_detection_enabled": False,
                 "pose_runtime_reason": "worker_pose_not_required",
+                "eacp_mode": "idle",
             }
-        if rules.get("fall_detection_enabled"):
+        if not adaptive:
             return {
                 "pose_detection_enabled": True,
-                "pose_runtime_reason": "worker_pose_required_for_fall_sequence",
+                "pose_runtime_reason": "manual_full_pose_analysis",
                 "worker_pose_interval_frames": 1,
+                "eacp_mode": "manual",
             }
-        interval = max(2, int(rules.get("worker_pose_interval_frames") or 5))
-        count = self.pose_frame_counts.get(camera_id, 0) + 1
-        self.pose_frame_counts[camera_id] = count
-        enabled = (count % interval) == 1
+        mode = self.inference_scheduler.mode(camera_id, now=self._monotonic_clock())
+        enabled = mode in {"active", "risk"}
         return {
             "pose_detection_enabled": enabled,
-            "pose_runtime_reason": "worker_pose_sampled" if enabled else "worker_pose_skipped_for_latency",
-            "worker_pose_interval_frames": interval,
+            "pose_runtime_reason": f"eacp_{mode}_pose" if enabled else "eacp_idle_person_anchor",
+            "worker_pose_interval_frames": 1 if enabled else 0,
+            "eacp_mode": mode,
         }
+
+    def _snapshot_frame_age_seconds(self, snapshot: Any) -> float | None:
+        if not isinstance(snapshot, dict):
+            return None
+        captured_at = str(snapshot.get("captured_at") or snapshot.get("created_at") or "").strip()
+        if not captured_at:
+            return None
+        try:
+            parsed = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return max(0.0, (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds())
+        except ValueError:
+            return None
+
+    def _inference_runtime_payload(self, pose_runtime_config: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "schema_version": "eacp-analysis-runtime-v1",
+            "scheduler_version": self.inference_scheduler.version,
+            "mode": str(pose_runtime_config.get("eacp_mode") or "idle"),
+            "pose_requested": bool(pose_runtime_config.get("pose_detection_enabled")),
+            "pose_reason": str(pose_runtime_config.get("pose_runtime_reason") or ""),
+        }
+
+    def _should_persist_analysis(
+        self,
+        camera_id: int,
+        analysis: Dict[str, Any],
+        temporal: Dict[str, Any],
+        rules: Dict[str, Any],
+        *,
+        now: float,
+    ) -> bool:
+        last_persisted_at = self.last_persisted_analysis_at.get(int(camera_id))
+        interval = max(1.0, float(rules.get("capture_interval_seconds") or 5.0))
+        if last_persisted_at is None or float(now) - float(last_persisted_at) >= interval:
+            return True
+        runtime = analysis.get("inference_runtime") if isinstance(analysis.get("inference_runtime"), dict) else {}
+        if runtime.get("mode") == "risk":
+            return True
+        if analysis.get("black_screen") or any(bool(analysis.get(key)) for key in (
+            "fall_candidate",
+            "pose_fall_candidate",
+            "fire_event_candidate",
+        )):
+            return True
+        factor_graph = analysis.get("pose_factor_graph")
+        if isinstance(factor_graph, dict) and (
+            factor_graph.get("fast_fall_candidate")
+            or factor_graph.get("prolonged_floor_lying_candidate")
+        ):
+            return True
+        return False
 
     def _emit_candidates(
         self,
