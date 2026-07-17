@@ -90,7 +90,9 @@ class RtmposeAnalyzer:
         self.det_frequency = max(1, int(det_frequency)) if self.tracking else 1
         self._pose_tracker: Any = None
         self._pose_estimator: Any = None
+        self._pose_detector: Any = None
         self._load_error = ""
+        self._detector_load_error = ""
         self._model_lock = RLock()
         self.posture_classifier = PostureClassifier()
 
@@ -249,32 +251,13 @@ class RtmposeAnalyzer:
         if self._load_error:
             return False, self._load_error
         if not require_detector:
-            if self._pose_estimator is not None:
-                return True, "RTMPose 姿态头已就绪，复用现有人形框。"
-            try:
-                from rtmlib import Body, RTMPose  # type: ignore
-
-                pose_config = Body.MODE[self.mode]
-                self._pose_estimator = RTMPose(
-                    pose_config["pose"],
-                    model_input_size=pose_config["pose_input_size"],
-                    to_openpose=False,
-                    backend=self.runtime_backend,
-                    device=self.device,
-                )
-            except ModuleNotFoundError as exc:
-                self._load_error = f"姿态依赖未安装：{exc.name}"
-                return False, self._load_error
-            except Exception as exc:
-                self._load_error = f"RTMPose 姿态头加载失败：{exc}"
-                return False, self._load_error
-            return True, "RTMPose 姿态头已就绪，复用现有人形框。"
+            return self._ensure_pose_estimator()
         if self._pose_tracker is not None:
             return True, "RTMPose 模型已就绪。"
         try:
-            from rtmlib import Body, PoseTracker  # type: ignore
-
             if self.tracking:
+                from rtmlib import Body, PoseTracker  # type: ignore
+
                 self._pose_tracker = PoseTracker(
                     Body,
                     det_frequency=self.det_frequency,
@@ -285,23 +268,54 @@ class RtmposeAnalyzer:
                     device=self.device,
                 )
             else:
-                # RTMLib PoseTracker 0.0.15 still enters its tracking branch
-                # when tracking=False and det_frequency=1. Body is stateless,
-                # which is also the correct behavior for a shared multi-camera
-                # analyzer.
-                self._pose_tracker = Body(
-                    mode=self.mode,
-                    to_openpose=False,
+                ready, message = self._ensure_pose_estimator()
+                if not ready:
+                    return False, message
+                if self._detector_load_error:
+                    return False, self._detector_load_error
+                from rtmlib import Body, YOLOX  # type: ignore
+
+                pose_config = Body.MODE[self.mode]
+                self._pose_detector = YOLOX(
+                    pose_config["det"],
+                    model_input_size=pose_config["det_input_size"],
                     backend=self.runtime_backend,
                     device=self.device,
                 )
+                self._pose_tracker = self._infer_with_internal_detector
+        except ModuleNotFoundError as exc:
+            self._detector_load_error = f"姿态回退检测依赖未安装：{exc.name}"
+            return False, self._detector_load_error
+        except Exception as exc:
+            self._detector_load_error = f"RTMPose 回退检测器加载失败：{exc}"
+            return False, self._detector_load_error
+        return True, "RTMPose 模型已就绪。"
+
+    def _ensure_pose_estimator(self) -> tuple[bool, str]:
+        if self._pose_estimator is not None:
+            return True, "RTMPose 姿态头已就绪，复用现有人形框。"
+        try:
+            from rtmlib import Body, RTMPose  # type: ignore
+
+            pose_config = Body.MODE[self.mode]
+            self._pose_estimator = RTMPose(
+                pose_config["pose"],
+                model_input_size=pose_config["pose_input_size"],
+                to_openpose=False,
+                backend=self.runtime_backend,
+                device=self.device,
+            )
         except ModuleNotFoundError as exc:
             self._load_error = f"姿态依赖未安装：{exc.name}"
             return False, self._load_error
         except Exception as exc:
-            self._load_error = f"RTMPose 模型加载失败：{exc}"
+            self._load_error = f"RTMPose 姿态头加载失败：{exc}"
             return False, self._load_error
-        return True, "RTMPose 模型已就绪。"
+        return True, "RTMPose 姿态头已就绪，复用现有人形框。"
+
+    def _infer_with_internal_detector(self, frame: Any) -> tuple[Any, Any]:
+        bboxes = self._pose_detector(frame)
+        return self._pose_estimator(frame, bboxes=bboxes)
 
     def _infer_pose(
         self,

@@ -773,25 +773,27 @@ def verify_pose_reuses_external_person_boxes() -> dict:
 
 def verify_pose_uses_detector_fallback_without_external_boxes() -> dict:
     analyzer = RtmposeAnalyzer(enabled=True)
-    captured = {"fallback_calls": 0, "external_calls": 0}
+    captured = {"fallback_calls": 0, "pose_calls": 0, "boxes": []}
 
-    def fallback_tracker(frame):
+    def fallback_detector(frame):
         captured["fallback_calls"] += 1
-        return np.array([]), np.array([])
+        return [[80.0, 50.0, 260.0, 340.0]]
 
     def pose_estimator(frame, *, bboxes):
-        captured["external_calls"] += 1
-        raise SystemExit("external pose estimator must not run without a reusable YOLO box")
+        captured["pose_calls"] += 1
+        captured["boxes"] = [list(box) for box in bboxes]
+        return np.array([]), np.array([])
 
-    analyzer._pose_tracker = fallback_tracker
+    analyzer._pose_detector = fallback_detector
     analyzer._pose_estimator = pose_estimator
+    analyzer._pose_tracker = analyzer._infer_with_internal_detector
     result = analyzer.analyze(
         np.zeros((360, 640, 3), dtype=np.uint8),
         {"pose_detection_enabled": True},
         people=[],
     )
-    if captured["external_calls"]:
-        raise SystemExit("RTMPose external estimator ran without a reusable YOLO box")
+    if captured["pose_calls"] != 1 or captured["boxes"] != [[80.0, 50.0, 260.0, 340.0]]:
+        raise SystemExit("detector fallback did not reuse the shared RTMPose estimator")
     return {
         "fallback_calls": captured["fallback_calls"],
         "detection_source": result.get("pose_detection_source"),
