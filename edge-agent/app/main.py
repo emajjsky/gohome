@@ -2976,6 +2976,105 @@ async def live_camera_analysis(camera_id: int, algorithm: str = Query(default="p
     return result
 
 
+def continual_pose_live_snapshot(camera_id: int) -> Dict[str, Any]:
+    camera = storage.get_camera(camera_id, include_secret=True)
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    tracker = worker.continual_pose_tracker
+    bundle = tracker.latest_frame(camera_id) if tracker is not None else None
+    if bundle is not None:
+        frame = bundle["frame"]
+        tracking = dict(bundle["tracking"])
+        analysis = dict(bundle.get("analysis_context") or {})
+        source = "eacp_same_frame"
+    else:
+        tracking = tracker.latest(camera_id) if tracker is not None else {
+            "state": "empty",
+            "reason": "tracker_disabled",
+            "frame_id": "",
+            "captured_at": "",
+            "age_seconds": None,
+            "pose_count": 0,
+            "poses": [],
+            "quality": {},
+            "formal_evidence_eligible": False,
+        }
+        capture = camera_agent.latest_cached_frame(camera, max_age_seconds=1.5)
+        if capture is None:
+            return {
+                "ok": True,
+                "available": False,
+                "camera_id": camera_id,
+                "tracking": tracking,
+            }
+        frame = capture["frame"]
+        source = str(capture.get("source") or "camera_cache")
+        tracking = {
+            **tracking,
+            "frame_id": str(capture.get("frame_id") or ""),
+            "captured_at": str(capture.get("captured_at") or ""),
+            "poses": [],
+            "pose_count": 0,
+            "formal_evidence_eligible": False,
+        }
+        analysis = {}
+
+    height, width = frame.shape[:2]
+    display_poses = list(tracking.get("poses") or []) if tracking.get("state") in {"observed", "tracked"} else []
+    display_people = [
+        {
+            "bbox": pose.get("bbox") or [],
+            "confidence": pose.get("confidence"),
+            "track_id": pose.get("track_id"),
+            "source": "continual_pose",
+            "pose_tracking_state": tracking.get("state"),
+            "display_only": tracking.get("state") == "tracked",
+        }
+        for pose in display_poses
+        if pose.get("bbox")
+    ]
+    analysis.update({
+        "image_width": width,
+        "image_height": height,
+        "people": display_people,
+        "person_count": len(display_people),
+        "poses": display_poses,
+        "pose_count": len(display_poses),
+        "pose_tracking_state": tracking.get("state"),
+        "continual_pose": tracking,
+    })
+    captured_at = str(tracking.get("captured_at") or "")
+    frame_id = str(tracking.get("frame_id") or "")
+    snapshot = {
+        "id": None,
+        "camera_id": camera_id,
+        "image_url": camera_agent.frame_data_url(frame, jpeg_quality=62, max_width=960),
+        "frame_id": frame_id,
+        "width": width,
+        "height": height,
+        "person_count": len(display_people),
+        "analysis": analysis,
+        "captured_at": captured_at,
+        "created_at": captured_at,
+    }
+    return {
+        "ok": True,
+        "available": True,
+        "camera_id": camera_id,
+        "source": source,
+        "frame_id": frame_id,
+        "captured_at": captured_at,
+        "tracking": tracking,
+        "snapshot": snapshot,
+    }
+
+
+@app.get("/api/cameras/{camera_id}/continual-pose/live")
+async def live_continual_pose(camera_id: int) -> Dict[str, Any]:
+    return await run_in_threadpool(continual_pose_live_snapshot, camera_id)
+
+
 @app.get("/api/cameras/{camera_id}/snapshot/latest")
 def latest_camera_snapshot(camera_id: int, allow_missing: bool = False) -> Dict[str, Any]:
     if storage.get_camera(camera_id) is None:

@@ -36,6 +36,7 @@ rsync -az \
   --exclude 'scripts/verify-alert-dedupe.py' \
   --exclude 'scripts/verify-camera-stream-resilience.py' \
   --exclude 'scripts/verify-config-sync-agent.py' \
+  --exclude 'scripts/verify-continual-pose-live-api.py' \
   --exclude 'scripts/verify-continual-pose-tracker.py' \
   --exclude 'scripts/verify-dataset-readiness-audit.py' \
   --exclude 'scripts/verify-fall-rule-engine.py' \
@@ -69,6 +70,7 @@ ssh "$PI_SSH" "cd '$PI_ROOT' && rm -rf eval && find scripts -maxdepth 1 -type f 
   -o -name 'verify-alert-dedupe.py' \\
   -o -name 'verify-camera-stream-resilience.py' \\
   -o -name 'verify-config-sync-agent.py' \\
+  -o -name 'verify-continual-pose-live-api.py' \\
   -o -name 'verify-continual-pose-tracker.py' \\
   -o -name 'verify-dataset-readiness-audit.py' \\
   -o -name 'verify-fall-rule-engine.py' \\

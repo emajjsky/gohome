@@ -11143,3 +11143,28 @@ iOS 真机：
 - 最终观察期间 live relay 持续运行、双路 active、`last_error` 为空；温度约 60.6-62.8 摄氏度。单独 A/B 压力进程与正式服务并行时温度短时到 76 摄氏度，进程退出后回落，该数字不作为生产常态温度。
 
 当前边界：P2 已完成并部署，但仍不是完整 EACP。当前只有新鲜 `observed` 模型锚点，没有 OC-SORT/KLT 的 `tracked / expired` 连续关键点流；尚未完成双摄真实人物 active 2 FPS、risk 3-5 FPS、300ms 风险升频和 1.5-3 秒边缘候选安全动作验收。下一阶段进入 P3 连续跟踪，不能用姿态 ROI 加速数字替代风险事件端到端验收。
+
+## 115. 2026-07-17 EACP P3a 连续关键点与管理页接入
+
+连续跟踪实现：
+
+- 新增每摄像头独立 `ContinualPoseTracker`，使用 KLT 金字塔光流和前后向误差校验在模型锚点之间传播可信关键点；同时校验最少有效点、有效点比例和骨架几何尺度。
+- 状态统一为 `observed / tracked / expired`。`observed` 来自新鲜 RTMPose 锚点；`tracked` 是 KLT 短时补帧；人物离开、光流漂移或锚点年龄超过 600ms 后立即进入 `expired` 并删除骨架和彩色帧。
+- `tracked` 强制设置 `fall_evidence_eligible=false / person_evidence_eligible=false`，不进入 RuleEngine、PoseFactorGraph、TemporalObservation、PostureEpisode、恢复判断、持久化证据或正式事件。
+- 独立后台线程按约 7.5 FPS 消费共享摄像头最新帧，不依赖管理页是否打开；没有锚点时不复制帧，不额外占用空闲内存带宽。
+
+同帧管理接口与页面：
+
+- 跟踪器只在有效窗口内保存与坐标严格对应的最新彩色帧；`latest_frame()` 在同一锁内返回像素、`frame_id`、跟踪载荷和模型锚点分析上下文，过期后不返回旧帧。
+- 新增受盒子管理员会话保护的 `GET /api/cameras/{camera_id}/continual-pose/live`。接口返回同一 `frame_id` 的 JPEG 与骨架，`tracked` 人框明确标记为 `display_only`；没有有效骨架时只返回摄像头最新帧和空姿态。
+- 统一视觉感知页改为约 140ms 读取后台 EACP 结果，不再每 180ms 调用 `/analysis/live` 重跑完整 YOLO+RTMPose。管理页关闭后算法照常运行，打开页面只编码和显示现成结果。
+- 实线骨架表示 `observed` 模型锚点；淡色虚线表示 `tracked` KLT 补帧；状态栏显示来源、锚点年龄、有效点数和 FB 误差，并明确写出“跟踪帧只补足画面连续性，不作为报警证据”。
+
+回归与实机结果：
+
+- 合成平移回归得到 `dx=5 / dy=3`，保留 9 个有效点；同帧像素、`frame_id` 和分析上下文一致，漂移帧被拒绝，600ms 过期后旧显示帧被删除，两路摄像头状态隔离。
+- API 契约回归确认 `same_frame=true / tracked_display_only=true / formal_evidence_isolated=true / expired_pose_hidden=true`；页面契约确认不再调用完整实时分析接口，并保留旧响应和旧摄像头结果拒绝门。
+- 真实走动测试中 camera 24 累计 `observed=4741 / tracked=15002 / expired=2726`，最近有效跟踪 14 点、FB 误差 0.1193；camera 25 累计 `observed=10386 / tracked=34862 / expired=5157`，最近有效跟踪 9 点、FB 误差 1.1218。人物离开后状态正常回到 empty/expired，没有旧骨架残留。
+- 代码通过 Pi 的真实 OpenCV 回归、视觉运行时预检、Python 编译、JavaScript 语法、调度回归和 diff 检查；服务重启后 `gohome-edge-agent.service=active`，日志无连续跟踪异常，温度从启动瞬时高值回落到约 64.2 摄氏度。
+
+当前边界：P3a 已完成，但完整 P3 仍缺 OC-SORT 多人轨迹和遮挡后身份恢复；P4 的快速下降触发、risk 3-5 FPS、300ms 升频和 1.5-3 秒跌倒候选尚未完成。管理页连续骨架是研发可视化，不代表 KLT 补帧已经成为安全证据。管理员登录后的双摄页面视觉切换仍需做一次人工浏览器验收。

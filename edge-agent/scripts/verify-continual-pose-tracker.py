@@ -28,11 +28,19 @@ def main() -> None:
         frame_id="24-100",
         captured_at="2026-07-17T02:00:00+00:00",
         poses=[pose],
+        context={"detector_backend": "yolo", "pose_model_status": "ready"},
     )
     if observed["state"] != "observed" or observed["pose_count"] != 1:
         raise SystemExit("fresh model anchor was not recorded as observed")
     if not tracker.has_anchor(24):
         raise SystemExit("fresh observed pose did not open the short tracking window")
+    observed_frame = tracker.latest_frame(24)
+    if observed_frame is None or observed_frame["tracking"]["frame_id"] != "24-100":
+        raise SystemExit("observed pose did not retain its exact color frame")
+    if not np.array_equal(observed_frame["frame"], frame):
+        raise SystemExit("observed pose frame pixels do not match its frame_id")
+    if observed_frame["analysis_context"].get("detector_backend") != "yolo":
+        raise SystemExit("observed frame lost its matching analysis context")
 
     shifted = translate(frame, dx=5, dy=3)
     clock["now"] = 100.05
@@ -59,6 +67,11 @@ def main() -> None:
         raise SystemExit("tracked pose did not expose its evidence state")
     if tracked_pose.get("fall_evidence_eligible") or tracked_pose.get("person_evidence_eligible"):
         raise SystemExit("tracked-only pose entered formal person or fall evidence")
+    tracked_frame = tracker.latest_frame(24)
+    if tracked_frame is None or tracked_frame["tracking"]["frame_id"] != "24-101":
+        raise SystemExit("tracked pose did not retain its exact color frame")
+    if not np.array_equal(tracked_frame["frame"], shifted):
+        raise SystemExit("tracked pose frame pixels do not match its frame_id")
     visible = [point for point in tracked_pose.get("keypoints") or [] if point.get("visible")]
     dx = np.median([point["x"] - source["x"] for point, source in zip(visible, pose["keypoints"])])
     dy = np.median([point["y"] - source["y"] for point, source in zip(visible, pose["keypoints"])])
@@ -87,6 +100,8 @@ def main() -> None:
         raise SystemExit("tracked pose remained visible beyond the 600ms freshness gate")
     if tracker.has_anchor(24):
         raise SystemExit("expired tracking window still requested camera frame copies")
+    if tracker.latest_frame(24) is not None:
+        raise SystemExit("expired tracking window retained stale display pixels")
 
     clock["now"] = 101.0
     tracker.observe(

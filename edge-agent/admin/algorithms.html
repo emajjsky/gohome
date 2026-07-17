@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>视觉算法 - 回家</title>
   <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
-  <link rel="stylesheet" href="/admin/styles.css?v=20260705-lowlatency-1">
+  <link rel="stylesheet" href="/admin/styles.css?v=20260717-eacp-p3">
 </head>
 <body data-page="algorithms" class="admin-web-page">
   <a class="skip-link" href="#main">跳到内容</a>
@@ -101,11 +101,19 @@
               </div>
               <div id="previewStage" class="preview-stage algorithm-live-stage">
                 <img id="mjpegStream" alt="实时摄像头视频">
+                <img id="analysisFrame" class="analysis-frame" alt="当前算法分析帧">
                 <div id="detectionOverlay" class="detection-overlay" aria-hidden="true"></div>
                 <div id="streamEmpty" class="empty-preview stream-empty">
                   <span class="material-symbols-outlined" data-icon="□">videocam_off</span>
                   <p>请选择摄像头</p>
                 </div>
+              </div>
+              <div id="continualPoseStatus" class="continual-pose-status" aria-live="polite">
+                <span class="continual-pose-source"><i></i><strong id="continualPoseSource">等待连续感知</strong></span>
+                <span>年龄 <strong id="continualPoseAge">-</strong></span>
+                <span>有效点 <strong id="continualPosePoints">-</strong></span>
+                <span>FB 误差 <strong id="continualPoseError">-</strong></span>
+                <small>跟踪帧只补足画面连续性，不作为报警证据</small>
               </div>
               <div id="algorithmHitStrip" class="algorithm-hit-strip" aria-live="polite">
                 <div class="algorithm-hit-card primary">
@@ -171,6 +179,6 @@
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/admin/console.js?v=20260712-pose-consistency-1"></script>
+  <script src="/admin/console.js?v=20260717-eacp-p3"></script>
 </body>
 </html>

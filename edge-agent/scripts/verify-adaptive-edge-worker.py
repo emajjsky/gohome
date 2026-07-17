@@ -54,13 +54,14 @@ class ContinualTracker:
         self.frames = []
         self.reset = []
 
-    def observe(self, camera_id, frame, *, frame_id, captured_at, poses):
+    def observe(self, camera_id, frame, *, frame_id, captured_at, poses, context=None):
         self.observed.append({
             "camera_id": camera_id,
             "frame": frame,
             "frame_id": frame_id,
             "captured_at": captured_at,
             "poses": poses,
+            "context": context or {},
         })
         return {"state": "observed", "pose_count": len(poses)}
 

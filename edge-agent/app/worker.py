@@ -426,6 +426,7 @@ class EdgeWorker:
                 frame_id=str(capture.get("frame_id") or ""),
                 captured_at=str(capture.get("captured_at") or ""),
                 poses=poses,
+                context=analysis,
             )
             analysis["continual_pose_anchor"] = payload
             self.last_continual_pose_error = ""

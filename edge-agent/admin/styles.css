@@ -1164,12 +1164,73 @@ label.wide,
   vector-effect: non-scaling-stroke;
 }
 
-.pose-skeleton.cached {
+.pose-skeleton.cached,
+.pose-skeleton.tracked {
   opacity: .72;
 }
 
-.pose-skeleton.cached .pose-skeleton-line {
+.pose-skeleton.cached .pose-skeleton-line,
+.pose-skeleton.tracked .pose-skeleton-line {
   stroke-dasharray: 7 5;
+}
+
+.pose-skeleton.tracked .pose-keypoint {
+  opacity: .72;
+}
+
+.continual-pose-status {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 2px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.continual-pose-status > span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.continual-pose-status strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.continual-pose-status small {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.continual-pose-source i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.continual-pose-status[data-state="observed"] .continual-pose-source i {
+  background: oklch(67% 0.14 150);
+}
+
+.continual-pose-status[data-state="tracked"] .continual-pose-source i {
+  background: oklch(72% 0.14 78);
+}
+
+@media (max-width: 860px) {
+  .continual-pose-status {
+    flex-wrap: wrap;
+    gap: 5px 12px;
+    white-space: normal;
+  }
+
+  .continual-pose-status small {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
 }
 
 .pose-skeleton-line.pose-1 {
@@ -6286,6 +6347,17 @@ body.admin-web-page .algorithm-stage-main .algorithm-live-stage {
 body.admin-web-page .algorithm-stage-main .algorithm-live-stage img {
   object-fit: contain;
   background: oklch(10% 0.006 255);
+}
+
+body.admin-web-page .algorithm-stage-main .algorithm-live-stage .analysis-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: none;
+}
+
+body.admin-web-page .algorithm-stage-main .algorithm-live-stage .detection-overlay {
+  z-index: 2;
 }
 
 body.admin-web-page .algorithm-stage-main .stream-badge-row {

@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+import numpy as np
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app import main as edge_main
+
+
+class Storage:
+    def get_camera(self, camera_id: int, *, include_secret: bool = False) -> dict | None:
+        return {"id": camera_id, "stream_url": "rtsp://camera.invalid/live"} if camera_id == 24 else None
+
+
+class Tracker:
+    def __init__(self, frame: np.ndarray) -> None:
+        self.frame = frame
+        self.state = "tracked"
+
+    def latest_frame(self, camera_id: int) -> dict | None:
+        if self.state != "tracked":
+            return None
+        return {
+            "frame": self.frame.copy(),
+            "tracking": {
+                "state": "tracked",
+                "frame_id": "24-101",
+                "captured_at": "2026-07-17T06:00:00.100000+00:00",
+                "age_seconds": 0.11,
+                "pose_count": 1,
+                "poses": [{
+                    "track_id": "c24-p1",
+                    "bbox": [10, 10, 40, 70],
+                    "confidence": 0.7,
+                    "tracking_state": "tracked",
+                    "fall_evidence_eligible": False,
+                    "person_evidence_eligible": False,
+                    "keypoints": [],
+                }],
+                "quality": {"tracked_point_count": 9, "forward_backward_error": 0.12},
+                "formal_evidence_eligible": False,
+            },
+            "analysis_context": {"detector_backend": "yolo", "pose_model_status": "ready"},
+        }
+
+    def latest(self, camera_id: int) -> dict:
+        return {
+            "state": "expired",
+            "reason": "anchor_expired",
+            "frame_id": "24-102",
+            "captured_at": "2026-07-17T06:00:00.800000+00:00",
+            "age_seconds": 0.7,
+            "pose_count": 0,
+            "poses": [],
+            "quality": {},
+            "formal_evidence_eligible": False,
+        }
+
+
+class Worker:
+    def __init__(self, tracker: Tracker) -> None:
+        self.continual_pose_tracker = tracker
+
+
+class CameraAgent:
+    def __init__(self, frame: np.ndarray) -> None:
+        self.frame = frame
+
+    def latest_cached_frame(self, camera: dict, max_age_seconds: float) -> dict:
+        return {
+            "frame": self.frame.copy(),
+            "frame_id": "24-102",
+            "captured_at": "2026-07-17T06:00:00.800000+00:00",
+            "source": "camera cache",
+        }
+
+    def frame_data_url(self, frame: np.ndarray, *, jpeg_quality: int, max_width: int) -> str:
+        if frame.shape != self.frame.shape:
+            raise SystemExit("live API encoded pixels from the wrong frame")
+        return "data:image/jpeg;base64,contract"
+
+
+def main() -> None:
+    frame = np.full((72, 128, 3), 96, dtype=np.uint8)
+    tracker = Tracker(frame)
+    edge_main.storage = Storage()
+    edge_main.worker = Worker(tracker)
+    edge_main.camera_agent = CameraAgent(frame)
+
+    tracked = edge_main.continual_pose_live_snapshot(24)
+    snapshot = tracked.get("snapshot") or {}
+    analysis = snapshot.get("analysis") or {}
+    if tracked.get("source") != "eacp_same_frame" or snapshot.get("frame_id") != "24-101":
+        raise SystemExit("live API did not preserve the tracked frame identity")
+    if analysis.get("pose_tracking_state") != "tracked" or analysis.get("pose_count") != 1:
+        raise SystemExit("live API omitted tracked pose display data")
+    if not analysis.get("people", [{}])[0].get("display_only"):
+        raise SystemExit("tracked pose was not marked as display-only")
+    if analysis.get("continual_pose", {}).get("formal_evidence_eligible"):
+        raise SystemExit("tracked pose entered formal evidence through the management API")
+    json.dumps(tracked)
+
+    tracker.state = "expired"
+    expired = edge_main.continual_pose_live_snapshot(24)
+    expired_analysis = (expired.get("snapshot") or {}).get("analysis") or {}
+    if expired_analysis.get("pose_count") != 0 or expired.get("tracking", {}).get("state") != "expired":
+        raise SystemExit("expired pose remained visible in the management API")
+
+    print({
+        "ok": True,
+        "same_frame": True,
+        "tracked_display_only": True,
+        "formal_evidence_isolated": True,
+        "expired_pose_hidden": True,
+    })
+
+
+if __name__ == "__main__":
+    main()

@@ -24,6 +24,9 @@ const state = {
   liveAnalysisTimer: null,
   liveAnalysisBusy: false,
   liveAnalysisErrorShown: false,
+  liveAnalysisGeneration: 0,
+  lastAnalysisCapturedAt: 0,
+  liveEvaluationUpdatedAt: 0,
   candidateRecords: [],
   observationLogs: [],
   cloudVerifications: null,
@@ -482,7 +485,11 @@ async function loadCameras(options = {}) {
     return;
   }
   if (state.selectedCameraId) {
-    await loadSnapshot(state.selectedCameraId).catch(renderEmptySnapshot);
+    if (pageName === "algorithms") {
+      renderEmptySnapshot();
+    } else {
+      await loadSnapshot(state.selectedCameraId).catch(renderEmptySnapshot);
+    }
     await loadEvaluation(state.selectedCameraId).catch(renderEmptyEvaluation);
   } else {
     renderEmptySnapshot();
@@ -730,6 +737,15 @@ function renderStream({ retry = false } = {}) {
   clearTimeout(state.streamMaskTimer);
   clearTimeout(state.streamReconnectTimer);
   if (!retry) state.streamReconnectAttempts = 0;
+  if (pageName === "algorithms" && !retry) {
+    const analysisFrame = $("analysisFrame");
+    if (analysisFrame) {
+      analysisFrame.removeAttribute("src");
+      analysisFrame.style.display = "none";
+    }
+    stream.style.display = "block";
+    state.lastAnalysisCapturedAt = 0;
+  }
   if (!camera) {
     stopLiveAnalysisLoop();
     stream.removeAttribute("src");
@@ -790,6 +806,14 @@ function snapshotPoses(snapshot) {
   return Array.isArray(poses)
     ? poses.filter((pose) => pose?.person_evidence_eligible !== false && !pose?.rejection_stage)
     : [];
+}
+
+function snapshotDisplayPoses(snapshot) {
+  const continual = snapshot?.analysis?.continual_pose;
+  if (["observed", "tracked"].includes(continual?.state)) {
+    return Array.isArray(continual.poses) ? continual.poses : [];
+  }
+  return snapshotPoses(snapshot);
 }
 
 function snapshotPoseEdges(snapshot) {
@@ -975,7 +999,7 @@ function unifiedSceneTargets(snapshot) {
 
 function imageFitRect(snapshot) {
   const stage = $("previewStage");
-  const image = $("snapshotImage") || $("mjpegStream");
+  const image = $("snapshotImage") || $("analysisFrame") || $("mjpegStream");
   if (!stage || !image) return null;
   const stageWidth = stage.clientWidth;
   const stageHeight = stage.clientHeight;
@@ -995,7 +1019,7 @@ function renderDetectionOverlay(snapshot) {
   const mode = state.previewAlgorithm || "quality";
   const people = overlayPeopleForMode(snapshot, mode);
   const pets = mode === "unified" ? snapshotPets(snapshot) : [];
-  const poses = shouldRenderPoseForMode(mode) ? snapshotPoses(snapshot) : [];
+  const poses = shouldRenderPoseForMode(mode) ? snapshotDisplayPoses(snapshot) : [];
   const fallRuntime = latestFallRuntime();
   const fallActive = ["suspect", "confirming", "confirmed"].includes(fallRuntime.stage);
   const sceneTargets = mode === "unified"
@@ -1017,7 +1041,7 @@ function renderDetectionOverlay(snapshot) {
         const candidateScore = !person.confidence && person.candidate_score ? ` · 候选分 ${Math.round(person.candidate_score * 100)}%` : "";
         const presence = isPresenceCandidate(person);
         const poseValidated = Boolean(person.pose_validated || person.source === "pose_person");
-        const tracked = person.pose_tracking_state === "cached";
+        const tracked = ["cached", "tracked"].includes(person.pose_tracking_state);
         const matchesFallTarget = fallActive && bboxIou(person.bbox, fallRuntime.target?.bbox) >= 0.18;
         const kind = presence && !poseValidated ? "presence" : matchesFallTarget ? "fall" : "person";
         const pose = matchingPose(person, poses);
@@ -1071,12 +1095,12 @@ function renderDetectionOverlay(snapshot) {
 }
 
 function renderPoseSkeleton(snapshot, rect) {
-  const poses = snapshotPoses(snapshot);
+  const poses = snapshotDisplayPoses(snapshot);
   if (!poses.length || !rect?.imageWidth || !rect?.imageHeight) return "";
   const edges = snapshotPoseEdges(snapshot);
   const lines = [];
   const points = [];
-  const cached = poses.length > 0 && poses.every((pose) => pose.tracking_state === "cached");
+  const tracked = poses.length > 0 && poses.every((pose) => ["cached", "tracked"].includes(pose.tracking_state));
   for (const [poseIndex, pose] of poses.entries()) {
     const byName = {};
     for (const point of pose.keypoints || []) {
@@ -1096,7 +1120,7 @@ function renderPoseSkeleton(snapshot, rect) {
     }
   }
   return `
-    <svg class="pose-skeleton${cached ? " cached" : ""}" viewBox="0 0 ${rect.imageWidth} ${rect.imageHeight}" preserveAspectRatio="none" aria-hidden="true">
+    <svg class="pose-skeleton${tracked ? " tracked" : " observed"}" viewBox="0 0 ${rect.imageWidth} ${rect.imageHeight}" preserveAspectRatio="none" aria-hidden="true">
       ${lines.join("")}
       ${points.join("")}
     </svg>
@@ -1112,7 +1136,7 @@ function renderPerceptionTargetList(snapshot) {
     return;
   }
   const analysis = snapshot.analysis || {};
-  const poses = snapshotPoses(snapshot);
+  const poses = snapshotDisplayPoses(snapshot);
   const people = snapshotPeople(snapshot);
   const pets = snapshotPets(snapshot);
   const scenes = unifiedSceneTargets(snapshot);
@@ -1167,10 +1191,19 @@ function renderPerceptionTargetList(snapshot) {
 function renderSnapshot(snapshot) {
   state.latestSnapshot = snapshot;
   const analysis = snapshot?.analysis || {};
-  const image = $("snapshotImage");
+  const image = $("snapshotImage") || $("analysisFrame");
   if (image && snapshot.image_url) {
-    image.onload = () => renderDetectionOverlay(snapshot);
-    image.src = `${snapshot.image_url}?t=${Date.now()}`;
+    image.onload = () => {
+      if (image.id === "analysisFrame") {
+        image.style.display = "block";
+        const stream = $("mjpegStream");
+        if (stream) stream.style.display = "none";
+      }
+      renderDetectionOverlay(snapshot);
+    };
+    image.src = String(snapshot.image_url).startsWith("data:")
+      ? snapshot.image_url
+      : `${snapshot.image_url}?t=${Date.now()}`;
   }
   if ($("snapshotEmpty")) $("snapshotEmpty").style.display = "none";
   setText("snapshotTime", fmtTime(snapshot.captured_at));
@@ -1191,6 +1224,28 @@ function renderSnapshot(snapshot) {
   renderDetectionOverlay(snapshot);
   renderPerceptionTargetList(snapshot);
   renderAlgorithmHitStrip(snapshot);
+  renderContinualPoseStatus(snapshot);
+}
+
+function renderContinualPoseStatus(snapshot) {
+  const tracking = snapshot?.analysis?.continual_pose || {};
+  const trackingState = String(tracking.state || "empty");
+  const sourceLabels = {
+    observed: "模型锚点",
+    tracked: "连续跟踪",
+    expired: "跟踪已清除",
+    empty: "等待人物",
+  };
+  setText("continualPoseSource", sourceLabels[trackingState] || "等待连续感知");
+  const hasAge = tracking.age_seconds !== null && tracking.age_seconds !== undefined && Number.isFinite(Number(tracking.age_seconds));
+  const hasError = tracking.quality?.forward_backward_error !== null
+    && tracking.quality?.forward_backward_error !== undefined
+    && Number.isFinite(Number(tracking.quality.forward_backward_error));
+  setText("continualPoseAge", hasAge ? `${Math.round(Number(tracking.age_seconds) * 1000)} ms` : "-");
+  setText("continualPosePoints", tracking.quality?.tracked_point_count ?? "-");
+  setText("continualPoseError", hasError ? Number(tracking.quality.forward_backward_error).toFixed(2) : "-");
+  const target = $("continualPoseStatus");
+  if (target) target.dataset.state = trackingState;
 }
 
 function renderDetectionSummary(snapshot) {
@@ -1512,6 +1567,7 @@ function algorithmHitState(snapshot) {
   }
 
   const latency = snapshot.live_elapsed_ms ?? snapshot.elapsed_ms ?? snapshot.analysis_elapsed_ms;
+  const frameAge = snapshot.frame_age_ms;
   return {
     hit,
     level,
@@ -1520,7 +1576,9 @@ function algorithmHitState(snapshot) {
     score,
     scoreLabel,
     model: backendLabel(snapshot),
-    latency: latency === undefined || latency === null ? "轮询中" : `${latency}ms`,
+    latency: latency === undefined || latency === null
+      ? "分析中"
+      : `${latency}ms${Number.isFinite(Number(frameAge)) ? ` · 帧龄 ${(Number(frameAge) / 1000).toFixed(1)}s` : ""}`,
   };
 }
 
@@ -1556,6 +1614,10 @@ function renderAlgorithmHitStrip(snapshot = state.latestSnapshot) {
 function renderEmptySnapshot() {
   state.latestSnapshot = null;
   if ($("snapshotImage")) $("snapshotImage").removeAttribute("src");
+  if ($("analysisFrame")) {
+    $("analysisFrame").removeAttribute("src");
+    $("analysisFrame").style.display = "none";
+  }
   if ($("snapshotEmpty")) $("snapshotEmpty").style.display = "grid";
   if ($("detectionOverlay")) $("detectionOverlay").innerHTML = "";
   for (const id of ["snapshotTime", "streamFrameTime", "snapshotBrightness", "snapshotContrast", "snapshotMotion", "snapshotPeople", "snapshotTags", "snapshotPoseCount", "snapshotSceneCount", "snapshotFireState", "snapshotQualityState"]) {
@@ -1563,6 +1625,7 @@ function renderEmptySnapshot() {
   }
   renderPerceptionTargetList(null);
   renderAlgorithmHitStrip(null);
+  renderContinualPoseStatus(null);
 }
 
 function renderCameraTestResult(level, title, message) {
@@ -1590,60 +1653,82 @@ async function loadSnapshot(cameraId) {
 }
 
 function liveAnalysisDelay() {
-  const mode = state.previewAlgorithm || "person";
-  if (mode === "unified") return 7000;
-  if (["fall", "meal", "stillness"].includes(mode)) return 9000;
-  if (mode === "person" || mode === "night") return 7000;
-  if (mode === "fire") return 5200;
-  return 6000;
+  return 140;
 }
 
 function stopLiveAnalysisLoop() {
   clearTimeout(state.liveAnalysisTimer);
   state.liveAnalysisTimer = null;
-  state.liveAnalysisBusy = false;
+  state.liveAnalysisGeneration += 1;
 }
 
-function scheduleLiveAnalysis(delay = liveAnalysisDelay()) {
+function scheduleLiveAnalysis(delay = liveAnalysisDelay(), generation = state.liveAnalysisGeneration) {
   if (pageName !== "algorithms") return;
   clearTimeout(state.liveAnalysisTimer);
   state.liveAnalysisTimer = setTimeout(() => {
-    loadLiveAnalysis().catch(() => null);
+    if (generation === state.liveAnalysisGeneration) loadLiveAnalysis(generation).catch(() => null);
   }, delay);
 }
 
 function startLiveAnalysisLoop() {
   if (pageName !== "algorithms") return;
   clearTimeout(state.liveAnalysisTimer);
+  state.liveAnalysisGeneration += 1;
+  const generation = state.liveAnalysisGeneration;
+  state.lastAnalysisCapturedAt = 0;
   if (!state.selectedCameraId) {
     renderAlgorithmHitStrip(null);
     return;
   }
-  loadLiveAnalysis().catch(() => null);
+  loadLiveAnalysis(generation).catch(() => null);
 }
 
-async function loadLiveAnalysis() {
+async function loadLiveAnalysis(generation = state.liveAnalysisGeneration) {
   if (pageName !== "algorithms" || !state.selectedCameraId) return;
   if (document.hidden) {
-    scheduleLiveAnalysis(3200);
+    scheduleLiveAnalysis(3200, generation);
     return;
   }
-  if (state.liveAnalysisBusy) return;
+  if (generation !== state.liveAnalysisGeneration) return;
+  if (state.liveAnalysisBusy) {
+    scheduleLiveAnalysis(100, generation);
+    return;
+  }
+  const cameraId = state.selectedCameraId;
+  const algorithm = state.previewAlgorithm || "person";
   state.liveAnalysisBusy = true;
   setText("streamStatus", "实时分析中");
   try {
-    const result = await api(`/api/cameras/${state.selectedCameraId}/analysis/live?algorithm=${encodeURIComponent(state.previewAlgorithm || "person")}`, {
-      method: "POST",
-    });
+    const result = await api(`/api/cameras/${cameraId}/continual-pose/live`);
+    if (
+      generation !== state.liveAnalysisGeneration
+      || cameraId !== state.selectedCameraId
+      || algorithm !== (state.previewAlgorithm || "person")
+    ) return;
+    if (!result.available || !result.snapshot) {
+      setText("streamStatus", "等待后台感知");
+      renderContinualPoseStatus({ analysis: { continual_pose: result.tracking || {} } });
+      return;
+    }
     const snapshot = {
       ...(result.snapshot || {}),
       analysis: result.analysis || result.snapshot?.analysis || {},
-      live_elapsed_ms: result.analysis_elapsed_ms ?? result.elapsed_ms,
+      live_elapsed_ms: result.analysis_elapsed_ms ?? result.elapsed_ms ?? 0,
+      frame_id: result.frame_id || result.snapshot?.frame_id || "",
     };
+    const capturedAt = Date.parse(snapshot.captured_at || result.captured_at || "");
+    if (Number.isFinite(capturedAt) && capturedAt <= state.lastAnalysisCapturedAt) return;
+    if (Number.isFinite(capturedAt)) {
+      state.lastAnalysisCapturedAt = capturedAt;
+      snapshot.frame_age_ms = Math.max(0, Date.now() - capturedAt);
+    }
     state.liveAnalysisErrorShown = false;
     renderSnapshot(snapshot);
-    await loadEvaluation(state.selectedCameraId).catch(renderEmptyEvaluation);
-    setText("streamStatus", "实时识别中");
+    if (Date.now() - state.liveEvaluationUpdatedAt >= 3000) {
+      state.liveEvaluationUpdatedAt = Date.now();
+      loadEvaluation(cameraId).catch(renderEmptyEvaluation);
+    }
+    setText("streamStatus", "后台连续感知");
   } catch (error) {
     setText("streamStatus", "识别暂不可用");
     if (!state.liveAnalysisErrorShown) {
@@ -1652,7 +1737,7 @@ async function loadLiveAnalysis() {
     }
   } finally {
     state.liveAnalysisBusy = false;
-    scheduleLiveAnalysis();
+    if (generation === state.liveAnalysisGeneration) scheduleLiveAnalysis(liveAnalysisDelay(), generation);
   }
 }
 
@@ -2781,9 +2866,14 @@ function bindEvents() {
     loadEvents().catch((error) => showToast(userSafeError(error.message)));
   });
   on("cameraSelect", "change", async (event) => {
+    stopLiveAnalysisLoop();
     state.selectedCameraId = Number(event.currentTarget.value);
     renderStream();
-    await loadSnapshot(state.selectedCameraId).catch(renderEmptySnapshot);
+    if (pageName === "algorithms") {
+      renderEmptySnapshot();
+    } else {
+      await loadSnapshot(state.selectedCameraId).catch(renderEmptySnapshot);
+    }
     await loadEvaluation(state.selectedCameraId).catch(renderEmptyEvaluation);
     startLiveAnalysisLoop();
   });
@@ -2923,11 +3013,11 @@ document.addEventListener("DOMContentLoaded", () => {
     setTimeout(() => discoverCameras($("discoverCameras")).catch(() => renderCameraDiscovery()), 400);
   }
   state.refreshTimer = setInterval(() => {
+    if (pageName === "home" && state.selectedCameraId) {
+      loadSnapshot(state.selectedCameraId).catch(() => null);
+      loadEvaluation(state.selectedCameraId).catch(() => null);
+    }
     if (pageName === "home" || pageName === "algorithms") {
-      if (state.selectedCameraId) {
-        loadSnapshot(state.selectedCameraId).catch(() => null);
-        loadEvaluation(state.selectedCameraId).catch(() => null);
-      }
       loadCandidates().catch(() => null);
       loadObservationLogs().catch(() => null);
       loadUploadQueueSummary().catch(() => null);

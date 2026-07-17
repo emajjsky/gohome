@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Generator, Tuple
 from urllib.parse import quote, urlsplit, urlunsplit
+import base64
 import logging
 import os
 import time
@@ -37,6 +38,7 @@ class CameraAgent:
         self._capture_lock = Lock()
         self._frame_cache_lock = Lock()
         self._frame_cache: Dict[str, Dict[str, Any]] = {}
+        self._frame_sequences: Dict[str, int] = {}
 
     def resolve_capture_source(self, camera: Dict[str, Any]) -> Tuple[Any, int | None, str]:
         stream_url = str(camera["stream_url"]).strip()
@@ -84,7 +86,9 @@ class CameraAgent:
                 return cached
         with self._capture_lock:
             capture = self._capture_frame_unlocked(camera)
-        self._store_latest_frame(camera, capture["frame"], capture["source"])
+        frame_identity = self._store_latest_frame(camera, capture["frame"], capture["source"])
+        if frame_identity:
+            capture.update(frame_identity)
         return capture
 
     def latest_cached_frame(self, camera: Dict[str, Any], max_age_seconds: float = 2.0) -> Dict[str, Any] | None:
@@ -104,22 +108,51 @@ class CameraAgent:
                 "height": cached["height"],
                 "elapsed_ms": int(age * 1000),
                 "source": f"{cached['source']} cached",
+                "frame_id": cached["frame_id"],
+                "captured_at": cached["captured_at"],
             }
 
-    def _store_latest_frame(self, camera: Dict[str, Any], frame: Any, source_label: str) -> None:
+    def _store_latest_frame(
+        self,
+        camera: Dict[str, Any],
+        frame: Any,
+        source_label: str,
+    ) -> Dict[str, Any] | None:
         try:
             height, width = frame.shape[:2]
         except (AttributeError, ValueError):
-            return
+            return None
         key = self._frame_cache_key(camera)
+        captured_at = datetime.now(timezone.utc).isoformat()
         with self._frame_cache_lock:
+            sequence = self._frame_sequences.get(key, 0) + 1
+            self._frame_sequences[key] = sequence
+            frame_id = f"{camera.get('id') or 'source'}-{sequence}"
             self._frame_cache[key] = {
                 "frame": frame.copy(),
                 "width": width,
                 "height": height,
                 "source": source_label,
                 "monotonic": time.monotonic(),
+                "frame_id": frame_id,
+                "captured_at": captured_at,
             }
+        return {"frame_id": frame_id, "captured_at": captured_at}
+
+    def frame_data_url(self, frame: Any, jpeg_quality: int = 62, max_width: int = 768) -> str:
+        cv2 = _load_cv2()
+        output_frame = self._resize_for_stream(
+            cv2,
+            frame,
+            max_width=max(320, int(max_width)),
+            max_height=4320,
+        )
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(35, min(int(jpeg_quality), 90))]
+        ok, encoded = cv2.imencode(".jpg", output_frame, encode_params)
+        if not ok:
+            raise CameraError("Failed to encode live analysis frame")
+        payload = base64.b64encode(encoded.tobytes()).decode("ascii")
+        return f"data:image/jpeg;base64,{payload}"
 
     def _frame_cache_key(self, camera: Dict[str, Any]) -> str:
         camera_id = camera.get("id")
