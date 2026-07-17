@@ -58,18 +58,18 @@ def main() -> None:
     main_source = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
     tracker_source = (ROOT / "app" / "vision" / "continual_pose_tracker.py").read_text(encoding="utf-8")
     required_console_contracts = [
-        '$("analysisFrame")',
+        '$("mjpegStream")',
         "liveAnalysisGeneration",
         "lastAnalysisCapturedAt",
-        "/continual-pose/live",
+        "/continual-pose/live?include_frame=false",
         "snapshotDisplayPoses",
         "renderContinualPoseStatus",
     ]
     for contract in required_console_contracts:
         if contract not in console_source:
             raise SystemExit(f"frontend live-frame contract is missing: {contract}")
-    if 'id="analysisFrame"' not in algorithms_source:
-        raise SystemExit("algorithm page has no atomic analysis-frame image")
+    if 'id="mjpegStream"' not in algorithms_source or 'id="analysisFrame"' in algorithms_source:
+        raise SystemExit("algorithm page does not keep one continuous video base")
     if 'id="continualPoseStatus"' not in algorithms_source:
         raise SystemExit("algorithm page has no continual pose status surface")
     if 'if (pageName === "home" && state.selectedCameraId)' not in console_source:
@@ -80,12 +80,15 @@ def main() -> None:
         raise SystemExit("continual pose endpoint is not using the exact tracked frame")
     if "def latest_frame(self, camera_id: int)" not in tracker_source:
         raise SystemExit("continual pose tracker does not expose exact frame bundles")
+    if "def latest_metadata(self, camera_id: int)" not in tracker_source:
+        raise SystemExit("continual pose tracker does not expose pixel-free overlay metadata")
 
     print({
         "ok": True,
         "frame_id_stable": True,
         "new_frame_id_unique": True,
-        "atomic_jpeg": True,
+        "debug_jpeg_available": True,
+        "continuous_video_overlay": True,
         "stale_response_guard": True,
         "continual_pose_same_frame_api": True,
         "management_page_uses_background_eacp": True,

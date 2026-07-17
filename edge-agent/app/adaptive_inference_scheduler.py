@@ -207,28 +207,60 @@ class AdaptiveInferenceScheduler:
         return int(analysis.get("person_count") or 0) > 0 or bool(analysis.get("motion_detected"))
 
     def _risk_signal(self, analysis: Dict[str, Any]) -> bool:
-        if any(bool(analysis.get(key)) for key in (
-            "fall_candidate",
-            "pose_fall_candidate",
-            "fire_event_candidate",
-        )):
-            return True
-        if max(float(analysis.get("fall_score") or 0.0), float(analysis.get("pose_fall_score") or 0.0)) >= 0.45:
+        if bool(analysis.get("fire_event_candidate")):
             return True
         factor_graph = analysis.get("pose_factor_graph")
-        if not isinstance(factor_graph, dict):
+        if isinstance(factor_graph, dict):
+            if factor_graph.get("fast_fall_candidate") or factor_graph.get("prolonged_floor_lying_candidate"):
+                return True
+            if float(factor_graph.get("fast_fall_score") or 0.0) >= 0.45:
+                return True
+            for track in factor_graph.get("tracks") or []:
+                if not isinstance(track, dict):
+                    continue
+                factors = track.get("factors") if isinstance(track.get("factors"), dict) else {}
+                if factors.get("vertical_drop") and factors.get("motion"):
+                    return True
+        if self._normal_lying_only(analysis):
             return False
-        if factor_graph.get("fast_fall_candidate"):
+        if bool(analysis.get("fall_candidate")) or bool(analysis.get("pose_fall_candidate")):
             return True
-        if float(factor_graph.get("fast_fall_score") or 0.0) >= 0.45:
+        if (
+            max(float(analysis.get("fall_score") or 0.0), float(analysis.get("pose_fall_score") or 0.0)) >= 0.45
+            and self._fall_like_target_present(analysis)
+        ):
             return True
-        for track in factor_graph.get("tracks") or []:
-            if not isinstance(track, dict):
+        return False
+
+    def _fall_like_target_present(self, analysis: Dict[str, Any]) -> bool:
+        for target in [*(analysis.get("people") or []), *(analysis.get("poses") or [])]:
+            if not isinstance(target, dict):
                 continue
-            factors = track.get("factors") if isinstance(track.get("factors"), dict) else {}
-            if factors.get("vertical_drop") and factors.get("motion"):
+            posture = str(target.get("posture") or "").lower()
+            if (
+                bool(target.get("fall_candidate"))
+                or bool(target.get("pose_fall_candidate"))
+                or posture in {"lying", "low_body", "fallen"}
+            ):
                 return True
         return False
+
+    def _normal_lying_only(self, analysis: Dict[str, Any]) -> bool:
+        fall_targets = []
+        for target in [*(analysis.get("people") or []), *(analysis.get("poses") or [])]:
+            if not isinstance(target, dict):
+                continue
+            posture = str(target.get("posture") or "").lower()
+            is_fall_target = (
+                bool(target.get("normal_lying_zone"))
+                or bool(target.get("fall_candidate"))
+                or bool(target.get("pose_fall_candidate"))
+                or posture in {"lying", "low_body", "fallen"}
+                or float(target.get("fall_score") or 0.0) >= 0.45
+            )
+            if is_fall_target:
+                fall_targets.append(target)
+        return bool(fall_targets) and all(bool(target.get("normal_lying_zone")) for target in fall_targets)
 
     def _mode_priority(self, mode: str) -> int:
         return {"idle": 0, "active": 1, "risk": 2}.get(mode, 0)

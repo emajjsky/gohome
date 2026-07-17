@@ -738,11 +738,6 @@ function renderStream({ retry = false } = {}) {
   clearTimeout(state.streamReconnectTimer);
   if (!retry) state.streamReconnectAttempts = 0;
   if (pageName === "algorithms" && !retry) {
-    const analysisFrame = $("analysisFrame");
-    if (analysisFrame) {
-      analysisFrame.removeAttribute("src");
-      analysisFrame.style.display = "none";
-    }
     stream.style.display = "block";
     state.lastAnalysisCapturedAt = 0;
   }
@@ -781,8 +776,8 @@ function renderStream({ retry = false } = {}) {
     setText("streamStatus", "实时视频已连接");
   };
   const streamProfile = pageName === "algorithms"
-    ? { fps: 8, width: 768, height: 432, quality: 56, drop: 8, label: "低延迟实时视频" }
-    : { fps: 6, width: 1280, height: 720, quality: 64, drop: 4, label: "720p 低延迟视频" };
+    ? { fps: 10, width: 640, height: 360, quality: 52, drop: 1, label: "连续实时视频" }
+    : { fps: 8, width: 1280, height: 720, quality: 64, drop: 1, label: "720p 低延迟视频" };
   stream.src = `/api/cameras/${camera.id}/stream.mjpg?fps=${streamProfile.fps}&width=${streamProfile.width}&height=${streamProfile.height}&quality=${streamProfile.quality}&drop=${streamProfile.drop}&t=${Date.now()}`;
   state.streamMaskTimer = setTimeout(() => {
     if (stream.getAttribute("src") && empty) empty.style.display = "none";
@@ -999,7 +994,7 @@ function unifiedSceneTargets(snapshot) {
 
 function imageFitRect(snapshot) {
   const stage = $("previewStage");
-  const image = $("snapshotImage") || $("analysisFrame") || $("mjpegStream");
+  const image = $("snapshotImage") || $("mjpegStream");
   if (!stage || !image) return null;
   const stageWidth = stage.clientWidth;
   const stageHeight = stage.clientHeight;
@@ -1191,14 +1186,9 @@ function renderPerceptionTargetList(snapshot) {
 function renderSnapshot(snapshot) {
   state.latestSnapshot = snapshot;
   const analysis = snapshot?.analysis || {};
-  const image = $("snapshotImage") || $("analysisFrame");
+  const image = $("snapshotImage");
   if (image && snapshot.image_url) {
     image.onload = () => {
-      if (image.id === "analysisFrame") {
-        image.style.display = "block";
-        const stream = $("mjpegStream");
-        if (stream) stream.style.display = "none";
-      }
       renderDetectionOverlay(snapshot);
     };
     image.src = String(snapshot.image_url).startsWith("data:")
@@ -1568,6 +1558,7 @@ function algorithmHitState(snapshot) {
 
   const latency = snapshot.live_elapsed_ms ?? snapshot.elapsed_ms ?? snapshot.analysis_elapsed_ms;
   const frameAge = snapshot.frame_age_ms;
+  const continualDisplay = Boolean(analysis.continual_pose);
   return {
     hit,
     level,
@@ -1576,9 +1567,11 @@ function algorithmHitState(snapshot) {
     score,
     scoreLabel,
     model: backendLabel(snapshot),
-    latency: latency === undefined || latency === null
-      ? "分析中"
-      : `${latency}ms${Number.isFinite(Number(frameAge)) ? ` · 帧龄 ${(Number(frameAge) / 1000).toFixed(1)}s` : ""}`,
+    latency: continualDisplay
+      ? Number.isFinite(Number(frameAge)) ? `${(Number(frameAge) / 1000).toFixed(1)}s` : "-"
+      : latency === undefined || latency === null
+        ? "分析中"
+        : `${latency}ms${Number.isFinite(Number(frameAge)) ? ` · 帧龄 ${(Number(frameAge) / 1000).toFixed(1)}s` : ""}`,
   };
 }
 
@@ -1604,7 +1597,7 @@ function renderAlgorithmHitStrip(snapshot = state.latestSnapshot) {
       <small>${escapeHtml(stateInfo.model)}</small>
     </div>
     <div class="algorithm-hit-card">
-      <span>分析延迟</span>
+      <span>${snapshot?.analysis?.continual_pose ? "画面帧龄" : "分析延迟"}</span>
       <strong>${escapeHtml(stateInfo.latency)}</strong>
       <small>${snapshot ? escapeHtml(fmtTime(snapshot.captured_at)) : "等待当前帧"}</small>
     </div>
@@ -1614,10 +1607,6 @@ function renderAlgorithmHitStrip(snapshot = state.latestSnapshot) {
 function renderEmptySnapshot() {
   state.latestSnapshot = null;
   if ($("snapshotImage")) $("snapshotImage").removeAttribute("src");
-  if ($("analysisFrame")) {
-    $("analysisFrame").removeAttribute("src");
-    $("analysisFrame").style.display = "none";
-  }
   if ($("snapshotEmpty")) $("snapshotEmpty").style.display = "grid";
   if ($("detectionOverlay")) $("detectionOverlay").innerHTML = "";
   for (const id of ["snapshotTime", "streamFrameTime", "snapshotBrightness", "snapshotContrast", "snapshotMotion", "snapshotPeople", "snapshotTags", "snapshotPoseCount", "snapshotSceneCount", "snapshotFireState", "snapshotQualityState"]) {
@@ -1699,17 +1688,14 @@ async function loadLiveAnalysis(generation = state.liveAnalysisGeneration) {
   state.liveAnalysisBusy = true;
   setText("streamStatus", "实时分析中");
   try {
-    const result = await api(`/api/cameras/${cameraId}/continual-pose/live`);
+    const statusResult = await api(`/api/cameras/${cameraId}/continual-pose/live?include_frame=false`);
     if (
       generation !== state.liveAnalysisGeneration
       || cameraId !== state.selectedCameraId
       || algorithm !== (state.previewAlgorithm || "person")
     ) return;
-    if (!result.available || !result.snapshot) {
-      setText("streamStatus", "等待后台感知");
-      renderContinualPoseStatus({ analysis: { continual_pose: result.tracking || {} } });
-      return;
-    }
+    const result = statusResult;
+    if (!result.snapshot) return;
     const snapshot = {
       ...(result.snapshot || {}),
       analysis: result.analysis || result.snapshot?.analysis || {},

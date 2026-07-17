@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def function_source(source: str, start: str, end: str) -> str:
+    start_index = source.index(start)
+    end_index = source.index(end, start_index)
+    return source[start_index:end_index]
+
+
+def main() -> None:
+    html = (ROOT / "admin" / "algorithms.html").read_text(encoding="utf-8")
+    console = (ROOT / "admin" / "console.js").read_text(encoding="utf-8")
+
+    if html.count('id="mjpegStream"') != 1 or 'id="detectionOverlay"' not in html:
+        raise SystemExit("algorithm console must have one continuous video base and one overlay")
+    if 'id="analysisFrame"' in html:
+        raise SystemExit("algorithm console still swaps the video base for analysis JPEGs")
+
+    live_loop = function_source(console, "async function loadLiveAnalysis", "async function captureSelected")
+    if "include_frame=false" not in live_loop:
+        raise SystemExit("algorithm console does not poll lightweight overlay metadata")
+    if "include_frame=true" in live_loop:
+        raise SystemExit("algorithm console still downloads analysis JPEGs during live display")
+
+    render_snapshot = function_source(console, "function renderSnapshot", "function renderContinualPoseStatus")
+    if 'removeAttribute("src")' in render_snapshot or '$("analysisFrame")' in render_snapshot:
+        raise SystemExit("rendering metadata can still stop or replace the continuous video")
+
+    render_stream = function_source(console, "function renderStream", "function snapshotPeople")
+    if '$("analysisFrame")' in render_stream:
+        raise SystemExit("stream lifecycle still depends on the removed analysis image")
+
+    print({
+        "ok": True,
+        "continuous_video_base": True,
+        "metadata_overlay_only": True,
+        "analysis_jpeg_swap_removed": True,
+    })
+
+
+if __name__ == "__main__":
+    main()

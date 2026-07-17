@@ -6349,13 +6349,6 @@ body.admin-web-page .algorithm-stage-main .algorithm-live-stage img {
   background: oklch(10% 0.006 255);
 }
 
-body.admin-web-page .algorithm-stage-main .algorithm-live-stage .analysis-frame {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: none;
-}
-
 body.admin-web-page .algorithm-stage-main .algorithm-live-stage .detection-overlay {
   z-index: 2;
 }

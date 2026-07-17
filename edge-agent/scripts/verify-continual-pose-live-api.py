@@ -51,6 +51,8 @@ class Tracker:
         }
 
     def latest(self, camera_id: int) -> dict:
+        if self.state == "tracked":
+            return dict(self.latest_frame(camera_id)["tracking"])
         return {
             "state": "expired",
             "reason": "anchor_expired",
@@ -62,6 +64,21 @@ class Tracker:
             "quality": {},
             "formal_evidence_eligible": False,
         }
+
+    def latest_metadata(self, camera_id: int) -> dict:
+        tracking = self.latest(camera_id)
+        return {
+            "tracking": tracking,
+            "analysis_context": {
+                "detector_backend": "yolo",
+                "pose_model_status": "ready",
+            },
+            "image_width": 128,
+            "image_height": 72,
+        }
+
+    def has_anchor(self, camera_id: int) -> bool:
+        return self.state == "tracked"
 
 
 class Worker:
@@ -107,6 +124,19 @@ def main() -> None:
         raise SystemExit("tracked pose entered formal evidence through the management API")
     json.dumps(tracked)
 
+    status_only = edge_main.continual_pose_live_snapshot(24, include_frame=False)
+    metadata_snapshot = status_only.get("snapshot") or {}
+    metadata_analysis = metadata_snapshot.get("analysis") or {}
+    if not status_only.get("frame_available") or not metadata_snapshot:
+        raise SystemExit("status-only live API lost active overlay metadata")
+    if metadata_snapshot.get("image_url") or "data:image" in json.dumps(status_only):
+        raise SystemExit("status-only live API encoded pixels")
+    if metadata_analysis.get("image_width") != 128 or metadata_analysis.get("pose_count") != 1:
+        raise SystemExit("status-only live API lost overlay dimensions or poses")
+    main_source = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+    if "include_frame: bool = Query(default=False)" not in main_source:
+        raise SystemExit("live API still defaults legacy clients to JPEG encoding")
+
     tracker.state = "expired"
     expired = edge_main.continual_pose_live_snapshot(24)
     expired_analysis = (expired.get("snapshot") or {}).get("analysis") or {}
@@ -118,6 +148,7 @@ def main() -> None:
         "same_frame": True,
         "tracked_display_only": True,
         "formal_evidence_isolated": True,
+        "status_only_overlay_metadata": True,
         "expired_pose_hidden": True,
     })
 

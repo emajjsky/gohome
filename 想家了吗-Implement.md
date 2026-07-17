@@ -11168,3 +11168,35 @@ iOS 真机：
 - 代码通过 Pi 的真实 OpenCV 回归、视觉运行时预检、Python 编译、JavaScript 语法、调度回归和 diff 检查；服务重启后 `gohome-edge-agent.service=active`，日志无连续跟踪异常，温度从启动瞬时高值回落到约 64.2 摄氏度。
 
 当前边界：P3a 已完成，但完整 P3 仍缺 OC-SORT 多人轨迹和遮挡后身份恢复；P4 的快速下降触发、risk 3-5 FPS、300ms 升频和 1.5-3 秒跌倒候选尚未完成。管理页连续骨架是研发可视化，不代表 KLT 补帧已经成为安全证据。管理员登录后的双摄页面视觉切换仍需做一次人工浏览器验收。
+
+## 116. 2026-07-17 EACP P3a.1 连续视频与姿态覆盖层解耦
+
+问题根因：
+
+- P3a 管理页在检测到有效骨架后停止 MJPEG，并持续请求、显示带像素的分析 JPEG；骨架短暂过期后又重启 MJPEG。
+- `observed / tracked / expired` 在短时间切换时会带动整张底图切换，造成闪烁、等待首帧和额外 JPEG 编码负载。
+
+实现：
+
+- `ContinualPoseTracker.latest_metadata()` 返回每路最新跟踪状态、分析上下文、源画面尺寸和骨架，不复制或编码彩色帧。
+- `GET /api/cameras/{camera_id}/continual-pose/live` 默认返回无 `image_url` 的覆盖层 snapshot，兼容未刷新的旧页面也不会持续编码 JPEG；只有显式 `include_frame=true` 才返回同帧图片，供研发精确帧复核。
+- 统一视觉感知页删除第二张 `analysisFrame`，始终保持一条 640x360、目标 10 FPS 的 MJPEG 底图；约 140ms 轮询只更新人物框、骨架、姿态、风险标签和状态指标。
+- 骨架过期只清空覆盖层，不停止、重连或替换视频流；页面不再传输 base64 分析 JPEG。
+- 实机部署前发现 camera 25 的正常沙发躺卧已被场景层正确标记为 `normal_lying_zone=true / overlap=0.992`，但调度器仍读取原始 `fall_candidate=0.96`，使该路长期保持 risk 并把 CPU 推到约 235%。调度器现优先保留快速下降、地面低位和火灾风险；只有床/沙发正常躺卧且没有独立下降因子时降为 active，正式 RuleEngine 和事件阈值不变。
+- P3a.1 不修改 EACP 调度、RTMPose、KLT、姿态分类、跌倒因子、RuleEngine、事件阈值或云端复核语义；既定 P3b 仍为 OC-SORT 多人轨迹。
+
+回归：
+
+- 新增 `verify-continuous-overlay-console.py`，锁定单一连续视频底图、无像素元数据轮询和分析 JPEG 切换删除。
+- `verify-continual-pose-tracker.py` 验证元数据保留 320x240 源尺寸且不包含帧像素。
+- `verify-continual-pose-live-api.py` 验证轻量接口保留骨架与尺寸、没有 data URL，`tracked` 仍不能进入正式证据。
+- `verify-live-analysis-frame-sync.py` 更新为连续视频覆盖层契约；调度、双摄 worker、跌倒状态机和上传/云端复核回归保持通过。
+
+实机验收：
+
+- 管理页只有一个 `mjpegStream`，自然尺寸 640x360；`analysisFrame` 数量为 0，页面无脚本错误。
+- camera 25 连续采样覆盖 `tracked / observed / expired` 三种状态，10 次采样的 MJPEG `src` 完全一致；覆盖层随骨架状态从安全标记到完整骨架变化，视频未重连。
+- 切换至 camera 24 后只更换一次视频地址，约 1.8 秒内画面就绪，空白层保持隐藏；切回 camera 25 后仍保持单流。
+- 真实画面中两名人物、两组骨架、坐/躺姿态和沙发场景框均能同时显示。正常沙发躺卧回归为 active，非正常区域躺倒仍进入 risk，坐姿裸人框分数不再单独触发 risk。
+
+当前边界：P3a.1 已完成实机交付，但现场两路同时有人时纯 CPU 仍约 216%，温度约 81.8 摄氏度，说明双路 active 姿态推理预算仍未达持续温度目标。本轮没有擅自加入全局单槽位；该问题继续归入既定 P3b/P4 的多人轨迹、风险调度和硬件加速评估。

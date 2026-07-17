@@ -28,7 +28,13 @@ def main() -> None:
         frame_id="24-100",
         captured_at="2026-07-17T02:00:00+00:00",
         poses=[pose],
-        context={"detector_backend": "yolo", "pose_model_status": "ready"},
+        context={
+            "detector_backend": "yolo",
+            "pose_model_status": "ready",
+            "scene_zones": [{"id": "sofa-1", "label": "couch", "bbox": [0, 120, 250, 230]}],
+            "algorithm_results": {"pose": {"data": {"poses": [pose]}}},
+            "temporal_evidence_bundle": {"snapshots": list(range(50))},
+        },
     )
     if observed["state"] != "observed" or observed["pose_count"] != 1:
         raise SystemExit("fresh model anchor was not recorded as observed")
@@ -41,6 +47,16 @@ def main() -> None:
         raise SystemExit("observed pose frame pixels do not match its frame_id")
     if observed_frame["analysis_context"].get("detector_backend") != "yolo":
         raise SystemExit("observed frame lost its matching analysis context")
+    observed_metadata = tracker.latest_metadata(24)
+    if observed_metadata.get("image_width") != 320 or observed_metadata.get("image_height") != 240:
+        raise SystemExit(f"continual pose metadata lost source dimensions: {observed_metadata}")
+    if "frame" in observed_metadata:
+        raise SystemExit("continual pose metadata copied frame pixels")
+    display_context = observed_metadata.get("analysis_context") or {}
+    if not display_context.get("scene_zones") or display_context.get("algorithm_results"):
+        raise SystemExit(f"continual pose metadata did not filter heavy analysis context: {display_context}")
+    if display_context.get("temporal_evidence_bundle"):
+        raise SystemExit("continual pose metadata exposed historical evidence bundles")
 
     shifted = translate(frame, dx=5, dy=3)
     clock["now"] = 100.05

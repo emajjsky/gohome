@@ -36,6 +36,7 @@ rsync -az \
   --exclude 'scripts/verify-alert-dedupe.py' \
   --exclude 'scripts/verify-camera-stream-resilience.py' \
   --exclude 'scripts/verify-config-sync-agent.py' \
+  --exclude 'scripts/verify-continuous-overlay-console.py' \
   --exclude 'scripts/verify-continual-pose-live-api.py' \
   --exclude 'scripts/verify-continual-pose-tracker.py' \
   --exclude 'scripts/verify-dataset-readiness-audit.py' \

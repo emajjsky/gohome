@@ -11,6 +11,52 @@ class ContinualPoseTracker:
     """Propagate fresh pose anchors briefly without creating safety evidence."""
 
     version = "eacp-continual-pose-v1"
+    display_context_keys = {
+        "detector_backend",
+        "model_status",
+        "model_message",
+        "model_name",
+        "model_version",
+        "pipeline_version",
+        "pose_model_status",
+        "pose_model_message",
+        "pose_model_name",
+        "pose_detection_source",
+        "pose_external_box_count",
+        "pose_skeleton_edges",
+        "brightness",
+        "contrast",
+        "black_screen",
+        "motion_score",
+        "motion_detected",
+        "thresholds",
+        "pets",
+        "pet_count",
+        "pet_types",
+        "scene_objects",
+        "scene_zones",
+        "normal_lying_zones",
+        "scene_map_status",
+        "screen_content_suppressed",
+        "fall_candidate",
+        "fall_score",
+        "pose_fall_candidate",
+        "pose_fall_score",
+        "fire_candidate",
+        "fire_event_candidate",
+        "fire_score",
+        "fire_temporal_candidate",
+        "fire_temporal_score",
+        "meal_candidate",
+        "meal_score",
+        "stillness_candidate",
+        "stillness_score",
+        "daze_candidate",
+        "daze_score",
+        "tags",
+        "inference_runtime",
+        "pose_factor_graph",
+    }
 
     def __init__(
         self,
@@ -70,8 +116,10 @@ class ContinualPoseTracker:
                 "previous_gray": gray,
                 "frame_id": str(frame_id or ""),
                 "captured_at": str(captured_at or ""),
+                "image_width": int(frame.shape[1]),
+                "image_height": int(frame.shape[0]),
                 "poses": tracked_poses,
-                "context": deepcopy(context or {}),
+                "context": self._display_context(context or {}),
             }
             payload = self._payload(
                 camera_id,
@@ -149,6 +197,8 @@ class ContinualPoseTracker:
             state["last_updated_monotonic"] = now
             state["frame_id"] = str(frame_id or "")
             state["captured_at"] = str(captured_at or "")
+            state["image_width"] = int(frame.shape[1])
+            state["image_height"] = int(frame.shape[0])
             state["poses"] = next_poses
             payload = self._payload(
                 camera_id,
@@ -201,6 +251,23 @@ class ContinualPoseTracker:
                 "frame": frame.copy(),
                 "tracking": deepcopy(payload),
                 "analysis_context": deepcopy(state.get("context") or {}),
+            }
+
+    def latest_metadata(self, camera_id: int) -> Dict[str, Any]:
+        """Return display metadata without copying or encoding frame pixels."""
+        camera_id = int(camera_id)
+        self.has_anchor(camera_id)
+        with self._lock:
+            state = self._states.get(camera_id) or {}
+            payload = self._latest.get(camera_id)
+            tracking = deepcopy(payload) if payload is not None else self._empty_payload(
+                camera_id, "empty", "no_anchor", "", ""
+            )
+            return {
+                "tracking": tracking,
+                "analysis_context": deepcopy(state.get("context") or {}),
+                "image_width": int(state.get("image_width") or 0),
+                "image_height": int(state.get("image_height") or 0),
             }
 
     def has_anchor(self, camera_id: int) -> bool:
@@ -482,6 +549,13 @@ class ContinualPoseTracker:
 
     def _gray(self, cv2: Any, frame: Any) -> Any:
         return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    def _display_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            key: deepcopy(context[key])
+            for key in self.display_context_keys
+            if key in context
+        }
 
     def _vision_modules(self) -> tuple[Any, Any]:
         import cv2  # type: ignore

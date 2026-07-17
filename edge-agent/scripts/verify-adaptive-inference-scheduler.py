@@ -68,6 +68,63 @@ def main() -> None:
     if risk["mode"] != "risk" or abs(float(risk["interval_seconds"]) - 0.2) > 0.0001:
         raise SystemExit(f"fall candidate did not enter burst mode: {risk}")
 
+    scheduler.reset_camera(25)
+    scheduler.reconcile([24, 25], now=102.0)
+    scheduler.mark_started(25, now=102.0)
+    scheduler.observe(
+        25,
+        {
+            "person_count": 1,
+            "fall_candidate": True,
+            "pose_fall_candidate": True,
+            "pose_fall_score": 0.96,
+            "people": [{"normal_lying_zone": True}],
+            "poses": [{"posture": "lying", "normal_lying_zone": True}],
+            "pose_factor_graph": {"fast_fall_candidate": False, "fast_fall_score": 0.29},
+        },
+        now=102.1,
+    )
+    normal_lying = scheduler.camera_state(25, now=102.1)
+    if normal_lying["mode"] != "active":
+        raise SystemExit(f"normal bed/sofa lying incorrectly entered risk mode: {normal_lying}")
+
+    scheduler.reset_camera(25)
+    scheduler.reconcile([24, 25], now=102.2)
+    scheduler.mark_started(25, now=102.2)
+    scheduler.observe(
+        25,
+        {
+            "person_count": 1,
+            "pose_fall_candidate": True,
+            "pose_fall_score": 0.96,
+            "poses": [{"posture": "lying", "normal_lying_zone": False}],
+        },
+        now=102.3,
+    )
+    floor_lying = scheduler.camera_state(25, now=102.3)
+    if floor_lying["mode"] != "risk":
+        raise SystemExit(f"non-normal lying failed to enter risk mode: {floor_lying}")
+
+    scheduler.reset_camera(25)
+    scheduler.reconcile([24, 25], now=102.4)
+    scheduler.mark_started(25, now=102.4)
+    scheduler.observe(
+        25,
+        {
+            "person_count": 1,
+            "fall_candidate": False,
+            "pose_fall_candidate": False,
+            "fall_score": 0.62,
+            "pose_fall_score": 0.24,
+            "poses": [{"posture": "sitting", "normal_lying_zone": False}],
+            "pose_factor_graph": {"fast_fall_candidate": False, "fast_fall_score": 0.22},
+        },
+        now=102.5,
+    )
+    seated_score = scheduler.camera_state(25, now=102.5)
+    if seated_score["mode"] != "active":
+        raise SystemExit(f"box-only score incorrectly promoted a seated person to risk: {seated_score}")
+
     scheduler.mark_started(24, now=104.0)
     scheduler.observe(24, {"person_count": 0, "motion_detected": False}, now=104.1)
     held = scheduler.camera_state(24, now=104.1)
@@ -95,6 +152,9 @@ def main() -> None:
         "idle_interval_seconds": idle["interval_seconds"],
         "active_interval_seconds": active["interval_seconds"],
         "risk_interval_seconds": risk["interval_seconds"],
+        "normal_lying_mode": normal_lying["mode"],
+        "floor_lying_mode": floor_lying["mode"],
+        "seated_score_mode": seated_score["mode"],
         "independent_camera_rotation": True,
         "stale_deadlines_dropped": True,
     })
