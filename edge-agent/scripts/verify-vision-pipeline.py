@@ -72,6 +72,9 @@ def main() -> None:
     pose_fall_quality = verify_pose_fall_quality_gate()
     pose_candidate_partition = verify_pose_candidate_partition()
     pose_human_consistency = verify_pose_human_consistency_gate()
+    pose_external_boxes = verify_pose_reuses_external_person_boxes()
+    pose_detector_fallback = verify_pose_uses_detector_fallback_without_external_boxes()
+    pipeline_pose_source = verify_pipeline_reports_pose_detection_source()
     pose_retry = verify_pose_transient_retry()
     pose_posture = verify_pose_posture_direction()
     scene_context = verify_scene_context_stabilizes_normal_lying_zone()
@@ -114,6 +117,14 @@ def main() -> None:
         "pose_furniture_rejected_count": pose_human_consistency["furniture_rejected"],
         "pose_real_lying_retained_count": pose_human_consistency["real_lying_retained"],
         "pose_occluded_seated_retained_count": pose_human_consistency["occluded_seated_retained"],
+        "pose_unmatched_low_confidence_rejected_count": pose_human_consistency["unmatched_low_confidence_rejected"],
+        "pose_external_box_count": pose_external_boxes["box_count"],
+        "pose_external_detection_source": pose_external_boxes["detection_source"],
+        "pose_external_fallback_calls": pose_external_boxes["fallback_calls"],
+        "pose_detector_fallback_calls": pose_detector_fallback["fallback_calls"],
+        "pose_detector_fallback_source": pose_detector_fallback["detection_source"],
+        "pipeline_pose_detection_source": pipeline_pose_source["detection_source"],
+        "pipeline_pose_external_box_count": pipeline_pose_source["box_count"],
         "pose_transient_retry_count": pose_retry["call_count"],
         "pose_transient_retry_used": pose_retry["retried"],
         "pose_front_seated_posture": pose_posture["front_seated"],
@@ -210,6 +221,22 @@ def main() -> None:
         raise SystemExit("low-quality sofa-like skeleton must remain diagnostic-only")
     if checks["pose_furniture_hallucination_count"] != 0 or checks["pose_furniture_rejected_count"] != 1:
         raise SystemExit("wide unmatched skeleton on stable furniture must be rejected")
+    if checks["pose_unmatched_low_confidence_rejected_count"] != 1:
+        raise SystemExit("low-confidence pose without YOLO human evidence must be rejected")
+    if checks["pose_external_box_count"] != 1:
+        raise SystemExit("RTMPose did not receive the existing YOLO person box")
+    if checks["pose_external_detection_source"] != "external_person_boxes":
+        raise SystemExit("RTMPose did not report external-box inference")
+    if checks["pose_external_fallback_calls"] != 0:
+        raise SystemExit("RTMPose called its internal detector despite a reusable YOLO person box")
+    if checks["pose_detector_fallback_calls"] != 1:
+        raise SystemExit("RTMPose did not use its detector fallback when no reusable YOLO box existed")
+    if checks["pose_detector_fallback_source"] != "rtmlib_detector_fallback":
+        raise SystemExit("RTMPose did not report detector fallback inference")
+    if checks["pipeline_pose_detection_source"] != "external_person_boxes":
+        raise SystemExit("top-level analysis did not expose the RTMPose detection source")
+    if checks["pipeline_pose_external_box_count"] != 1:
+        raise SystemExit("top-level analysis did not expose the reused person box count")
     if checks["pose_real_lying_retained_count"] != 1:
         raise SystemExit("a genuine lying person matched by YOLO must remain visible")
     if checks["pose_occluded_seated_retained_count"] != 1:
@@ -646,11 +673,24 @@ def verify_pose_human_consistency_gate() -> dict:
         body_aspect=0.62,
     )
     occluded_seated, _ = pipeline._filter_pose_human_consistency([seated_pose], [], furniture, {})
+    low_confidence_pose = synthetic_pose_candidate(
+        bbox=[258.0, 180.0, 475.0, 320.0],
+        confidence=0.38,
+        posture="lying",
+        body_aspect=1.55,
+    )
+    _, low_confidence_rejected = pipeline._filter_pose_human_consistency(
+        [low_confidence_pose],
+        [],
+        furniture,
+        {},
+    )
     return {
         "furniture_count": len(kept),
         "furniture_rejected": len(rejected),
         "real_lying_retained": len(real_lying),
         "occluded_seated_retained": len(occluded_seated),
+        "unmatched_low_confidence_rejected": len(low_confidence_rejected),
     }
 
 
@@ -701,6 +741,84 @@ def verify_pose_transient_retry() -> dict:
     analyzer._pose_tracker = transient_tracker
     _, _, retried = analyzer._infer_pose(np.zeros((8, 8, 3), dtype=np.uint8))
     return {"call_count": calls["count"], "retried": retried}
+
+
+def verify_pose_reuses_external_person_boxes() -> dict:
+    analyzer = RtmposeAnalyzer(enabled=True)
+    captured = {"boxes": [], "fallback_calls": 0}
+    keypoints = np.array([[[120.0 + index * 2.0, 80.0 + index * 8.0] for index in range(17)]])
+    scores = np.full((1, 17), 0.92, dtype=np.float32)
+
+    def pose_estimator(frame, *, bboxes):
+        captured["boxes"] = [list(box) for box in bboxes]
+        return keypoints, scores
+
+    def fallback_tracker(frame):
+        captured["fallback_calls"] += 1
+        raise SystemExit("internal detector fallback must not run when YOLO boxes are available")
+
+    analyzer._pose_estimator = pose_estimator
+    analyzer._pose_tracker = fallback_tracker
+    result = analyzer.analyze(
+        np.zeros((360, 640, 3), dtype=np.uint8),
+        {"pose_detection_enabled": True},
+        people=[{"bbox": [100.0, 60.0, 240.0, 340.0], "confidence": 0.91, "source": "yolo"}],
+    )
+    return {
+        "box_count": len(captured["boxes"]),
+        "detection_source": result.get("pose_detection_source"),
+        "fallback_calls": captured["fallback_calls"],
+    }
+
+
+def verify_pose_uses_detector_fallback_without_external_boxes() -> dict:
+    analyzer = RtmposeAnalyzer(enabled=True)
+    captured = {"fallback_calls": 0, "external_calls": 0}
+
+    def fallback_tracker(frame):
+        captured["fallback_calls"] += 1
+        return np.array([]), np.array([])
+
+    def pose_estimator(frame, *, bboxes):
+        captured["external_calls"] += 1
+        raise SystemExit("external pose estimator must not run without a reusable YOLO box")
+
+    analyzer._pose_tracker = fallback_tracker
+    analyzer._pose_estimator = pose_estimator
+    result = analyzer.analyze(
+        np.zeros((360, 640, 3), dtype=np.uint8),
+        {"pose_detection_enabled": True},
+        people=[],
+    )
+    if captured["external_calls"]:
+        raise SystemExit("RTMPose external estimator ran without a reusable YOLO box")
+    return {
+        "fallback_calls": captured["fallback_calls"],
+        "detection_source": result.get("pose_detection_source"),
+    }
+
+
+def verify_pipeline_reports_pose_detection_source() -> dict:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+        pose_enabled=True,
+    )
+    gradient = np.tile(np.linspace(60, 132, 640, dtype=np.uint8), (360, 1))
+    frame = np.dstack([gradient, np.roll(gradient, 24, axis=1), np.full_like(gradient, 96)])
+    keypoints = np.array([[[120.0 + index * 2.0, 80.0 + index * 8.0] for index in range(17)]])
+    scores = np.full((1, 17), 0.92, dtype=np.float32)
+    pipeline.pose._pose_estimator = lambda image, *, bboxes: (keypoints, scores)
+    analysis = pipeline.analyze(
+        frame,
+        config={"force_demo_vision": True, "pose_detection_enabled": True},
+    )
+    return {
+        "detection_source": analysis.get("pose_detection_source"),
+        "box_count": analysis.get("pose_external_box_count"),
+    }
 
 
 def verify_pose_posture_direction() -> dict:

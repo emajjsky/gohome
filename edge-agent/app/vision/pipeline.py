@@ -100,7 +100,7 @@ class VisionPipeline:
         person = self.person.analyze(frame, runtime_config)
         raw_people = list(person.get("people") or [])
         raw_pets = list(person.get("pets") or [])
-        raw_pose = self.pose.analyze(frame, runtime_config)
+        raw_pose = self.pose.analyze(frame, runtime_config, people=raw_people)
         pose = self._pose_with_short_cache(raw_pose, runtime_config, quality)
         scene_candidates = self._scene_objects_without_human_overlap(
             list(person.get("scene_objects") or []),
@@ -221,6 +221,8 @@ class VisionPipeline:
             "pose_model_status": pose.get("pose_model_status") or "disabled",
             "pose_model_message": pose.get("pose_model_message") or "",
             "pose_model_name": pose.get("pose_model_name") or "",
+            "pose_detection_source": pose.get("pose_detection_source") or "disabled",
+            "pose_external_box_count": int(pose.get("pose_external_box_count") or 0),
             "model_version": self.version,
             "pipeline_version": self.version,
             "image_width": int(frame.shape[1]),
@@ -482,6 +484,7 @@ class VisionPipeline:
         min_furniture_overlap = float(config.get("pose_furniture_min_overlap") or 0.40)
         min_wide_aspect = float(config.get("pose_furniture_min_wide_aspect") or 2.40)
         min_person_overlap = float(config.get("pose_human_yolo_min_overlap") or 0.18)
+        min_unmatched_confidence = float(config.get("pose_unmatched_person_min_confidence") or 0.42)
         accepted: list[Dict[str, Any]] = []
         rejected: list[Dict[str, Any]] = []
 
@@ -497,6 +500,15 @@ class VisionPipeline:
                 if not person.get("presence_candidate") and self._valid_box(person.get("bbox"))
             )
             confidence = float(pose.get("confidence") or 0.0)
+            if not matched_person and confidence < min_unmatched_confidence:
+                rejected.append(self._rejected_pose(
+                    pose,
+                    "unmatched_low_confidence_pose",
+                    pose_confidence=round(confidence, 4),
+                    minimum_confidence=round(min_unmatched_confidence, 4),
+                    yolo_person_matched=False,
+                ))
+                continue
             factors = pose.get("posture_factors") or {}
             aspect = float(factors.get("body_aspect") or 0.0)
             if aspect <= 0.0:

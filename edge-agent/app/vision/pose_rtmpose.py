@@ -89,6 +89,7 @@ class RtmposeAnalyzer:
         # stays disabled and every sampled pose frame runs person detection.
         self.det_frequency = max(1, int(det_frequency)) if self.tracking else 1
         self._pose_tracker: Any = None
+        self._pose_estimator: Any = None
         self._load_error = ""
         self._model_lock = RLock()
         self.posture_classifier = PostureClassifier()
@@ -97,18 +98,34 @@ class RtmposeAnalyzer:
     def model_name(self) -> str:
         return f"RTMPose-{self.mode} ({self.runtime_backend}/{self.device})"
 
-    def analyze(self, frame: Any, config: Dict[str, Any]) -> Dict[str, Any]:
+    def analyze(
+        self,
+        frame: Any,
+        config: Dict[str, Any],
+        *,
+        people: list[Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
         runtime_enabled = bool(config.get("pose_detection_enabled", self.enabled))
         if not runtime_enabled:
             return self._disabled_result("姿态检测未启用。")
 
+        external_bboxes = self._external_person_boxes(people or [], config)
+        detection_source = "external_person_boxes" if external_bboxes else "rtmlib_detector_fallback"
         with self._model_lock:
-            ready, message = self._ensure_ready()
+            ready, message = (
+                self._ensure_ready(require_detector=False)
+                if external_bboxes
+                else self._ensure_ready()
+            )
             if not ready:
                 return self._disabled_result(message, status="unavailable")
 
             try:
-                keypoints, scores, inference_retried = self._infer_pose(frame)
+                keypoints, scores, inference_retried = (
+                    self._infer_pose(frame, bboxes=external_bboxes)
+                    if external_bboxes
+                    else self._infer_pose(frame)
+                )
                 raw_poses = self._extract_poses(keypoints, scores, frame)
             except Exception as exc:
                 return self._disabled_result(f"RTMPose 推理失败：{exc}", status="error")
@@ -144,6 +161,8 @@ class RtmposeAnalyzer:
         action_hints = self._merge_hints([hint for pose in poses for hint in pose.get("action_hints", [])])
         if pose_count:
             tags.append("pose_detected")
+        if external_bboxes:
+            tags.append("pose_external_person_boxes")
         if inference_retried:
             tags.append("pose_inference_retried")
         if any(pose.get("posture") == "lying" for pose in poses):
@@ -201,6 +220,8 @@ class RtmposeAnalyzer:
                 "pose_model_name": self.model_name,
                 "pose_model_message": self._ready_message(message, inference_retried),
                 "pose_backend": "rtmpose",
+                "pose_detection_source": detection_source,
+                "pose_external_box_count": len(external_bboxes),
                 "pose_fall_threshold": threshold,
             },
         )
@@ -218,13 +239,36 @@ class RtmposeAnalyzer:
             "pose_model_status": "ready",
             "pose_model_name": self.model_name,
             "pose_model_message": self._ready_message(message, inference_retried),
+            "pose_detection_source": detection_source,
+            "pose_external_box_count": len(external_bboxes),
             "tags": tags,
             "result": result,
         }
 
-    def _ensure_ready(self) -> tuple[bool, str]:
+    def _ensure_ready(self, *, require_detector: bool = True) -> tuple[bool, str]:
         if self._load_error:
             return False, self._load_error
+        if not require_detector:
+            if self._pose_estimator is not None:
+                return True, "RTMPose 姿态头已就绪，复用现有人形框。"
+            try:
+                from rtmlib import Body, RTMPose  # type: ignore
+
+                pose_config = Body.MODE[self.mode]
+                self._pose_estimator = RTMPose(
+                    pose_config["pose"],
+                    model_input_size=pose_config["pose_input_size"],
+                    to_openpose=False,
+                    backend=self.runtime_backend,
+                    device=self.device,
+                )
+            except ModuleNotFoundError as exc:
+                self._load_error = f"姿态依赖未安装：{exc.name}"
+                return False, self._load_error
+            except Exception as exc:
+                self._load_error = f"RTMPose 姿态头加载失败：{exc}"
+                return False, self._load_error
+            return True, "RTMPose 姿态头已就绪，复用现有人形框。"
         if self._pose_tracker is not None:
             return True, "RTMPose 模型已就绪。"
         try:
@@ -259,15 +303,47 @@ class RtmposeAnalyzer:
             return False, self._load_error
         return True, "RTMPose 模型已就绪。"
 
-    def _infer_pose(self, frame: Any) -> tuple[Any, Any, bool]:
+    def _infer_pose(
+        self,
+        frame: Any,
+        *,
+        bboxes: list[list[float]] | None = None,
+    ) -> tuple[Any, Any, bool]:
+        runner = (
+            (lambda image: self._pose_estimator(image, bboxes=bboxes))
+            if bboxes
+            else self._pose_tracker
+        )
         try:
-            keypoints, scores = self._pose_tracker(frame)
+            keypoints, scores = runner(frame)
             return keypoints, scores, False
         except TypeError as exc:
             if "NoneType" not in str(exc):
                 raise
-            keypoints, scores = self._pose_tracker(frame)
+            keypoints, scores = runner(frame)
             return keypoints, scores, True
+
+    def _external_person_boxes(
+        self,
+        people: list[Dict[str, Any]],
+        config: Dict[str, Any],
+    ) -> list[list[float]]:
+        if not config.get("pose_reuse_person_boxes", True):
+            return []
+        candidates = []
+        for person in people:
+            bbox = person.get("bbox")
+            if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                continue
+            try:
+                x1, y1, x2, y2 = [float(value) for value in bbox]
+            except (TypeError, ValueError):
+                continue
+            if x2 <= x1 or y2 <= y1:
+                continue
+            candidates.append((float(person.get("confidence") or 0.0), [x1, y1, x2, y2]))
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return [bbox for _, bbox in candidates[:self.max_poses]]
 
     def _ready_message(self, message: str, inference_retried: bool) -> str:
         if inference_retried:
