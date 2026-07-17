@@ -11083,3 +11083,37 @@ iOS 真机：
 - 本轮只更新 PRD、Plan 和 Implement，未修改生产算法、正式 worker、规则数据库、树莓派文件或云端服务。
 - 用户已明确要求先审阅完整重构方案，再开始实现。实施从只读指标和失败回归开始，随后按最新帧调度、推理去重、连续跟踪、风险升频、增量时序模型和可选硬件加速分批推进。
 - 不允许临时把采样间隔粗暴改为 1 秒后宣称完成；该做法会持续运行重复完整模型，可能重新造成高温，也不解决双摄公平、历史帧丢弃、骨架连续性和告警证据边界。
+
+## 113. 2026-07-17 EACP P0/P1 最新帧独立调度
+
+实现：
+
+- 新增 `AdaptiveInferenceScheduler`，每路摄像头独立维护 deadline、in-flight、active/risk 保持时间、锚点计数、实际 FPS、推理耗时、帧龄和 deadline miss。
+- 调度频率为 idle 1 秒、active 0.5 秒、risk 0.25 秒；风险和活跃保持分别为 5 秒、8 秒。到期摄像头按最早 deadline 和风险优先级选择，同级按摄像头稳定轮转。
+- `EdgeWorker` 每次只处理一台到期摄像头，不再完成双摄整轮后读取 `capture_interval_seconds=5` 作为固定 sleep；模型忙时不建立历史帧队列。
+- idle 只执行人物/场景/火灾锚点，首次可信人物或明显运动使该路进入 active，之后每个调度锚点启用 RTMPose；手动“抓取并分析”继续完整运行姿态，不受 idle 降频影响。
+- 每条分析增加 `eacp-analysis-runtime-v1`，记录 mode、是否请求姿态和调度器版本；`/api/rules/runtime` 返回每路实际 FPS、帧龄、耗时和 deadline miss。
+
+持久化与事件安全：
+
+- 算法频率与持久化频率解耦。`capture_interval_seconds=5` 继续作为普通 JPEG、Snapshot、DetectionResult 和 RuleEvaluation 的常态落盘间隔，不再控制守护算法频率。
+- 所有锚点仍更新内存 TemporalObservation、PoseFactorGraph 和 RuleEngine；普通高频锚点不重复写完整图片和 analysis JSON。
+- 人物 `无 -> 有`、`有 -> 无`、risk 模式、黑屏、跌倒、火灾和长时间地面躺卧立即持久化；任何非生活观察候选如果出现在非持久化帧，会先补写当前证据再创建事件。
+- DetectionResult 落盘前重新挂接当前 snapshot 到 temporal evidence，保证事发前、转折和当前证据链不缺当前帧。
+- RuleEngine 允许没有持久化 snapshot 的普通内存评估，但正式安全候选仍必须获得真实 snapshot ID。
+
+回归：
+
+- 新增调度器、worker 集成和持久化节流三组红绿回归，覆盖双摄公平、start-to-start 节拍、过期 deadline 丢弃、模式保持、姿态按模式启停、普通锚点不放大写入、人物状态切换立即落盘和当前证据帧挂接。
+- 跌倒状态机、长时间倒地、TemporalObservation、PoseFactorGraph、姿态分类、观察日志、事件去重、恢复上传、DetectAgent 串行、配置同步和完整 VisionPipeline 回归全部通过。
+- 部署脚本排除新增 QA 文件，树莓派生产目录只同步运行模块；YOLO、ONNX Runtime、RTMLib 和 RTMPose 模型预检通过。
+
+实机结果：
+
+- 算法页关闭时，camera 24 idle 实测约 0.99 FPS，camera 25 约 1.00-1.15 FPS；单次锚点约 0.14-0.17 秒，帧龄约 0.16-0.24 秒。
+- 连续 120 秒两路共处理 261 个新鲜锚点，Snapshot、DetectionResult 和 RuleEvaluation 各只新增 48 条，符合两路每 5 秒一条的持久化预算。
+- CPU 多数采样约 65%-68%，姿态短时加载时峰值约 180%；两分钟窗口温度最高 69.2 摄氏度，后续模型短时活跃时瞬时 73.6 摄氏度并回落至 65.9 摄氏度，当前 throttling 位为 0，未发生实时热降频。
+- 两路本地 MJPEG 分别实测 7.97 FPS 和 7.98 FPS；live relay 配置 8 FPS、双路 active、云端返回成功且无 relay error。
+- 配置同步继续使用 `device-config-93a5e83a8b8f`，双路在线并 synced；worker runtime `last_error` 为空。
+
+当前边界：P0/P1 已部署，但还不是完整 EACP。现有 RTMPose 仍包含内部人体检测，OC-SORT/KLT 连续跟踪尚未接入；真实人物 active 2 FPS、risk 3-5 FPS、300ms 风险触发和 1.5-3 秒边缘候选尚未完成安全动作验收。下一阶段先做 P2 推理链去重，再进入 P3 连续跟踪。
