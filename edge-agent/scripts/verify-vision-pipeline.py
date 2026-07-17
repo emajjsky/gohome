@@ -74,6 +74,7 @@ def main() -> None:
     pose_human_consistency = verify_pose_human_consistency_gate()
     pose_external_boxes = verify_pose_reuses_external_person_boxes()
     pose_detector_fallback = verify_pose_uses_detector_fallback_without_external_boxes()
+    pose_empty_fallback = verify_pose_skips_estimator_when_fallback_detector_is_empty()
     pipeline_pose_source = verify_pipeline_reports_pose_detection_source()
     pose_retry = verify_pose_transient_retry()
     pose_posture = verify_pose_posture_direction()
@@ -123,6 +124,8 @@ def main() -> None:
         "pose_external_fallback_calls": pose_external_boxes["fallback_calls"],
         "pose_detector_fallback_calls": pose_detector_fallback["fallback_calls"],
         "pose_detector_fallback_source": pose_detector_fallback["detection_source"],
+        "pose_empty_fallback_estimator_calls": pose_empty_fallback["estimator_calls"],
+        "pose_empty_fallback_status": pose_empty_fallback["status"],
         "pipeline_pose_detection_source": pipeline_pose_source["detection_source"],
         "pipeline_pose_external_box_count": pipeline_pose_source["box_count"],
         "pose_transient_retry_count": pose_retry["call_count"],
@@ -233,6 +236,10 @@ def main() -> None:
         raise SystemExit("RTMPose did not use its detector fallback when no reusable YOLO box existed")
     if checks["pose_detector_fallback_source"] != "rtmlib_detector_fallback":
         raise SystemExit("RTMPose did not report detector fallback inference")
+    if checks["pose_empty_fallback_estimator_calls"] != 0:
+        raise SystemExit("RTMPose ran whole-frame pose inference after the fallback detector found no person")
+    if checks["pose_empty_fallback_status"] != "not_visible":
+        raise SystemExit("an empty fallback detector result must be reported as not visible")
     if checks["pipeline_pose_detection_source"] != "external_person_boxes":
         raise SystemExit("top-level analysis did not expose the RTMPose detection source")
     if checks["pipeline_pose_external_box_count"] != 1:
@@ -797,6 +804,28 @@ def verify_pose_uses_detector_fallback_without_external_boxes() -> dict:
     return {
         "fallback_calls": captured["fallback_calls"],
         "detection_source": result.get("pose_detection_source"),
+    }
+
+
+def verify_pose_skips_estimator_when_fallback_detector_is_empty() -> dict:
+    analyzer = RtmposeAnalyzer(enabled=True)
+    captured = {"estimator_calls": 0}
+
+    def pose_estimator(frame, *, bboxes):
+        captured["estimator_calls"] += 1
+        raise SystemExit("whole-frame RTMPose must not run after an empty person detection")
+
+    analyzer._pose_detector = lambda frame: np.empty((0, 4), dtype=np.float32)
+    analyzer._pose_estimator = pose_estimator
+    analyzer._pose_tracker = analyzer._infer_with_internal_detector
+    result = analyzer.analyze(
+        np.zeros((360, 640, 3), dtype=np.uint8),
+        {"pose_detection_enabled": True},
+        people=[],
+    )
+    return {
+        "estimator_calls": captured["estimator_calls"],
+        "status": result.get("result").status,
     }
 
 

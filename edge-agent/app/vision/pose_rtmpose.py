@@ -120,7 +120,12 @@ class RtmposeAnalyzer:
                 else self._ensure_ready()
             )
             if not ready:
-                return self._disabled_result(message, status="unavailable")
+                return self._disabled_result(
+                    message,
+                    status="unavailable",
+                    detection_source=detection_source,
+                    external_box_count=len(external_bboxes),
+                )
 
             try:
                 keypoints, scores, inference_retried = (
@@ -130,7 +135,12 @@ class RtmposeAnalyzer:
                 )
                 raw_poses = self._extract_poses(keypoints, scores, frame)
             except Exception as exc:
-                return self._disabled_result(f"RTMPose 推理失败：{exc}", status="error")
+                return self._disabled_result(
+                    f"RTMPose 推理失败：{exc}",
+                    status="error",
+                    detection_source=detection_source,
+                    external_box_count=len(external_bboxes),
+                )
 
         threshold = float(config.get("pose_fall_threshold", self.fall_threshold))
         raw_pose_fall_score = max([float(pose.get("fall_score") or 0.0) for pose in raw_poses], default=0.0)
@@ -315,6 +325,8 @@ class RtmposeAnalyzer:
 
     def _infer_with_internal_detector(self, frame: Any) -> tuple[Any, Any]:
         bboxes = self._pose_detector(frame)
+        if bboxes is None or len(bboxes) == 0:
+            return [], []
         return self._pose_estimator(frame, bboxes=bboxes)
 
     def _infer_pose(
@@ -560,7 +572,14 @@ class RtmposeAnalyzer:
     def _distance(self, point_a: Dict[str, Any], point_b: Dict[str, Any]) -> float:
         return ((float(point_a["x"]) - float(point_b["x"])) ** 2 + (float(point_a["y"]) - float(point_b["y"])) ** 2) ** 0.5
 
-    def _disabled_result(self, message: str, status: str = "disabled") -> Dict[str, Any]:
+    def _disabled_result(
+        self,
+        message: str,
+        status: str = "disabled",
+        *,
+        detection_source: str = "disabled",
+        external_box_count: int = 0,
+    ) -> Dict[str, Any]:
         result = AlgorithmResult(
             algorithm_id="pose",
             label="骨架 / 姿态",
@@ -582,6 +601,8 @@ class RtmposeAnalyzer:
                 "pose_model_name": self.model_name,
                 "pose_model_message": message,
                 "pose_backend": "rtmpose",
+                "pose_detection_source": detection_source,
+                "pose_external_box_count": int(external_box_count),
             },
         )
         return {
@@ -596,6 +617,8 @@ class RtmposeAnalyzer:
             "pose_model_status": status,
             "pose_model_name": self.model_name,
             "pose_model_message": message,
+            "pose_detection_source": detection_source,
+            "pose_external_box_count": int(external_box_count),
             "tags": [],
             "result": result,
         }
