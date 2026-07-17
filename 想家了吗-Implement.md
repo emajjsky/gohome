@@ -11117,3 +11117,29 @@ iOS 真机：
 - 配置同步继续使用 `device-config-93a5e83a8b8f`，双路在线并 synced；worker runtime `last_error` 为空。
 
 当前边界：P0/P1 已部署，但还不是完整 EACP。现有 RTMPose 仍包含内部人体检测，OC-SORT/KLT 连续跟踪尚未接入；真实人物 active 2 FPS、risk 3-5 FPS、300ms 风险触发和 1.5-3 秒边缘候选尚未完成安全动作验收。下一阶段先做 P2 推理链去重，再进入 P3 连续跟踪。
+
+## 114. 2026-07-17 EACP P2 推理链去重
+
+实现：
+
+- `VisionPipeline` 将同一轮 YOLO 已产生的人框传给 `RtmposeAnalyzer`，RTMLib `RTMPose(image, bboxes=...)` 只对人物 ROI 执行姿态头，不再在每个姿态锚点中重复运行 `Body` 内部 YOLOX。
+- 外层没有可用人框时仍保留懒加载 RTMLib YOLOX 回退检测，用于遮挡或外层检测漏失；回退检测器和外部人框路径共用同一 RTMPose 实例，不重复驻留姿态模型，也不共享跨摄像头跟踪状态。
+- 修正 RTMLib 空框语义：回退检测没有人体框时直接返回无骨架，不再把空框交给 RTMPose 后退化为整图姿态推理，避免空沙发家具假骨架、无效 CPU 消耗和瞬态 `NoneType` 错误。
+- 顶层 `analysis_json`、姿态算法结果和错误结果均增加 `pose_detection_source / pose_external_box_count`，明确区分 `external_person_boxes / rtmlib_detector_fallback / disabled`。
+- 修复部分遮挡人物只有单侧肩关键点时 `_action_hints` 读取另一侧空点导致异常的问题；单侧肩、手腕和鼻点现在可正常形成上半身动作提示，不再被误报为模型推理失败。
+- 没有 YOLO 对应的低置信 pose-only 候选继续执行 0.42 人体一致性门，只保留在 `rejected_poses`，不进入人数、姿态、活动、跌倒或页面叠加。
+
+回归：
+
+- `verify-vision-pipeline.py` 覆盖外部人框复用、内部检测器不被调用、无外部框时回退、回退空框不执行整图姿态、顶层来源字段、单侧肩关键点和原家具假骨架门。
+- AdaptiveInferenceScheduler、EdgeWorker、5 秒持久化节流、跌倒状态机、长时间倒地、TemporalObservation、PoseFactorGraph、观察日志、配置同步、姿态片段、PresenceSession、告警去重和 Python 编译回归全部通过。
+- 代码检查点为 `08837fa / 5990c1a / a3e4b06 / b55546a`，均已推送 `origin/main`；部署脚本未覆盖 Pi `.env.local`、数据库、截图、模型或虚拟环境，视觉运行时预检全部通过。
+
+树莓派实机结果：
+
+- 使用 camera 25 当天真实历史人物帧做同帧 A/B。外层 YOLO 中位数约 0.250 秒；旧 `Body` 姿态阶段约 0.461 秒，外部人框直送姿态头约 0.068 秒，姿态阶段减少 85.3%。
+- 完整模型链中位数由约 0.711 秒降至 0.318 秒，减少 55.3%。最终生产 `VisionPipeline` 在高置信真人帧上返回 `pose_detection_source=external_person_boxes / pose_model_status=ready / person_count=1 / pose_count=1 / posture=sitting`，连续 5 次中位数约 0.326 秒。
+- 首轮在线观察发现空画面回退路径产生 5 条姿态错误，由此定位并修复空框整图推理；最终版本重启后连续 120 秒，两路各持久化 23 条记录，camera 25 两次进入 active 回退路径，新增姿态错误为 0。
+- 最终观察期间 live relay 持续运行、双路 active、`last_error` 为空；温度约 60.6-62.8 摄氏度。单独 A/B 压力进程与正式服务并行时温度短时到 76 摄氏度，进程退出后回落，该数字不作为生产常态温度。
+
+当前边界：P2 已完成并部署，但仍不是完整 EACP。当前只有新鲜 `observed` 模型锚点，没有 OC-SORT/KLT 的 `tracked / expired` 连续关键点流；尚未完成双摄真实人物 active 2 FPS、risk 3-5 FPS、300ms 风险升频和 1.5-3 秒边缘候选安全动作验收。下一阶段进入 P3 连续跟踪，不能用姿态 ROI 加速数字替代风险事件端到端验收。
