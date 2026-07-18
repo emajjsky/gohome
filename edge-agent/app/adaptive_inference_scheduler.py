@@ -3,7 +3,11 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Protocol
+
+
+class ResourceMonitor(Protocol):
+    def snapshot(self, *, now: float | None = None) -> Dict[str, Any]: ...
 
 
 @dataclass
@@ -35,6 +39,8 @@ class AdaptiveInferenceScheduler:
         active_hold_seconds: float = 8.0,
         risk_hold_seconds: float = 5.0,
         error_interval_seconds: float = 2.0,
+        resource_monitor: ResourceMonitor | None = None,
+        max_starvation_seconds: float = 3.0,
     ) -> None:
         self.idle_interval_seconds = max(0.25, float(idle_interval_seconds))
         self.active_interval_seconds = max(0.15, min(self.idle_interval_seconds, float(active_interval_seconds)))
@@ -42,8 +48,14 @@ class AdaptiveInferenceScheduler:
         self.active_hold_seconds = max(self.active_interval_seconds, float(active_hold_seconds))
         self.risk_hold_seconds = max(self.risk_interval_seconds, float(risk_hold_seconds))
         self.error_interval_seconds = max(0.5, float(error_interval_seconds))
+        self.resource_monitor = resource_monitor
+        self.max_starvation_seconds = max(0.5, float(max_starvation_seconds))
         self._states: dict[int, _CameraSchedule] = {}
         self._lock = RLock()
+        self._global_next_due_at = 0.0
+        self._last_resource_status: Dict[str, Any] = {"thermal_state": "unknown", "available": False}
+        self._resource_transition_count = 0
+        self._last_resource_transition: Dict[str, Any] | None = None
 
     def reconcile(self, camera_ids: Iterable[int], *, now: float) -> None:
         normalized = {int(camera_id) for camera_id in camera_ids}
@@ -67,6 +79,8 @@ class AdaptiveInferenceScheduler:
     def next_due_camera(self, camera_ids: Iterable[int], *, now: float) -> int | None:
         allowed = {int(camera_id) for camera_id in camera_ids}
         with self._lock:
+            if self._global_next_due_at > float(now):
+                return None
             due = [
                 (camera_id, state)
                 for camera_id, state in self._states.items()
@@ -75,8 +89,9 @@ class AdaptiveInferenceScheduler:
             if not due:
                 return None
             due.sort(key=lambda item: (
-                item[1].next_due_at,
+                not self._starved(item[1], now=float(now)),
                 -self._mode_priority(self._mode_at(item[1], float(now))),
+                item[1].next_due_at,
                 item[1].last_started_at if item[1].last_started_at is not None else -1.0,
                 item[0],
             ))
@@ -122,6 +137,10 @@ class AdaptiveInferenceScheduler:
                 None if frame_age_seconds is None else max(0.0, float(frame_age_seconds))
             )
             state.observed_count += 1
+            self._global_next_due_at = max(
+                self._global_next_due_at,
+                current + self._cooldown_seconds(mode=mode, now=current),
+            )
 
     def mark_error(self, camera_id: int, *, now: float) -> None:
         with self._lock:
@@ -129,6 +148,10 @@ class AdaptiveInferenceScheduler:
             state.in_flight = False
             state.last_completed_at = float(now)
             state.next_due_at = float(now) + self.error_interval_seconds
+            self._global_next_due_at = max(
+                self._global_next_due_at,
+                float(now) + self._cooldown_seconds(mode="active", now=float(now)),
+            )
 
     def wait_seconds(self, camera_ids: Iterable[int], *, now: float, maximum: float = 0.25) -> float:
         allowed = {int(camera_id) for camera_id in camera_ids}
@@ -139,8 +162,11 @@ class AdaptiveInferenceScheduler:
                 if camera_id in allowed and not state.in_flight
             ]
             if not deadlines:
-                return max(0.01, float(maximum))
-            return max(0.0, min(float(maximum), min(deadlines) - float(now)))
+                next_due = float(maximum)
+            else:
+                next_due = min(deadlines) - float(now)
+            next_due = max(next_due, self._global_next_due_at - float(now))
+            return max(0.0, min(float(maximum), next_due))
 
     def mode(self, camera_id: int, *, now: float) -> str:
         with self._lock:
@@ -172,6 +198,7 @@ class AdaptiveInferenceScheduler:
 
     def status(self, *, now: float) -> Dict[str, Any]:
         with self._lock:
+            resource = self._resource_status(now=float(now))
             return {
                 "schema_version": self.version,
                 "intervals": {
@@ -183,6 +210,12 @@ class AdaptiveInferenceScheduler:
                     "active": self.active_hold_seconds,
                     "risk": self.risk_hold_seconds,
                 },
+                "global_next_due_at": round(self._global_next_due_at, 6),
+                "global_next_due_in_seconds": round(max(0.0, self._global_next_due_at - float(now)), 4),
+                "max_starvation_seconds": self.max_starvation_seconds,
+                "resource": resource,
+                "resource_transition_count": self._resource_transition_count,
+                "last_resource_transition": self._last_resource_transition,
                 "cameras": [
                     self.camera_state(camera_id, now=float(now))
                     for camera_id in sorted(self._states)
@@ -195,6 +228,44 @@ class AdaptiveInferenceScheduler:
         if now < state.active_until:
             return "active"
         return "idle"
+
+    def _starved(self, state: _CameraSchedule, *, now: float) -> bool:
+        return now - float(state.next_due_at) >= self.max_starvation_seconds
+
+    def _resource_status(self, *, now: float) -> Dict[str, Any]:
+        if self.resource_monitor is None:
+            self._last_resource_status = {"thermal_state": "unknown", "available": False}
+            return dict(self._last_resource_status)
+        try:
+            value = self.resource_monitor.snapshot(now=now)
+            next_status = dict(value or {})
+            previous_state = str(self._last_resource_status.get("thermal_state") or "unknown")
+            next_state = str(next_status.get("thermal_state") or "unknown")
+            if next_state != previous_state:
+                self._resource_transition_count += 1
+                self._last_resource_transition = {
+                    "from": previous_state,
+                    "to": next_state,
+                    "at_monotonic": round(float(now), 3),
+                }
+            self._last_resource_status = next_status
+        except Exception as exc:
+            self._last_resource_status = {
+                "thermal_state": "unknown",
+                "available": False,
+                "error": str(exc),
+            }
+        return dict(self._last_resource_status)
+
+    def _cooldown_seconds(self, *, mode: str, now: float) -> float:
+        thermal_state = str(self._resource_status(now=now).get("thermal_state") or "unknown")
+        if thermal_state in {"normal", "unknown"}:
+            return 0.0
+        if thermal_state == "warm":
+            return 0.04 if mode == "risk" else 0.08
+        if thermal_state == "hot":
+            return 0.08 if mode == "risk" else 0.22
+        return 0.18 if mode == "risk" else 0.55
 
     def _interval_for_mode(self, mode: str) -> float:
         if mode == "risk":

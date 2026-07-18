@@ -43,6 +43,7 @@ rsync -az \
   --exclude 'scripts/verify-fall-rule-engine.py' \
   --exclude 'scripts/verify-observation-logs.py' \
   --exclude 'scripts/verify-pose-factor-graph.py' \
+  --exclude 'scripts/verify-resource-monitor.py' \
   --exclude 'scripts/verify-posture-classifier.py' \
   --exclude 'scripts/verify-posture-episodes.py' \
   --exclude 'scripts/verify-presence-sessions.py' \

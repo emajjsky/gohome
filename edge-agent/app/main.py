@@ -37,6 +37,7 @@ from .notifier import Notifier
 from .object_storage_service import ObjectStorageService, build_object_storage_router
 from .package_service import PackageService
 from .public_pilot_service import PublicPilotService
+from .resource_monitor import SystemResourceMonitor
 from .schemas import (
     CalendarEventCreate,
     AdminLogin,
@@ -86,6 +87,7 @@ from .video_service import (
     normalize_snapshot_reference,
     v1_video_snapshot_url,
 )
+from .adaptive_inference_scheduler import AdaptiveInferenceScheduler
 from .worker import EdgeWorker
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -1170,6 +1172,16 @@ detect_agent = DetectAgent(
 )
 notifier = Notifier(settings)
 event_agent = EventAgent(storage, notifier, settings.event_throttle_seconds)
+resource_monitor = (
+    SystemResourceMonitor(
+        warm_temperature_c=settings.thermal_warm_temperature_c,
+        hot_temperature_c=settings.thermal_hot_temperature_c,
+        critical_temperature_c=settings.thermal_critical_temperature_c,
+        sample_interval_seconds=settings.thermal_sample_interval_seconds,
+    )
+    if settings.thermal_monitor_enabled
+    else None
+)
 worker = EdgeWorker(
     storage,
     camera_agent,
@@ -1187,6 +1199,10 @@ worker = EdgeWorker(
     history_cleanup_interval_seconds=settings.history_cleanup_interval_seconds,
     history_cleanup_batch_size=settings.history_cleanup_batch_size,
     completed_upload_retention_days=settings.completed_upload_retention_days,
+    inference_scheduler=AdaptiveInferenceScheduler(
+        resource_monitor=resource_monitor,
+        max_starvation_seconds=settings.inference_max_starvation_seconds,
+    ),
 )
 video_distribution_service = VideoDistributionService(
     storage=storage,

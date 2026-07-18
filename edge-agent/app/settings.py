@@ -69,6 +69,12 @@ class Settings:
         self.disable_worker = os.getenv("GOHOME_AGENT_DISABLE_WORKER", "0") == "1"
         self.app_runtime_watchdog_interval_seconds = float(os.getenv("GOHOME_APP_RUNTIME_WATCHDOG_INTERVAL_SECONDS", "2"))
         self.app_runtime_startup_grace_seconds = float(os.getenv("GOHOME_APP_RUNTIME_STARTUP_GRACE_SECONDS", "2"))
+        self.thermal_monitor_enabled = os.getenv("GOHOME_THERMAL_MONITOR_ENABLED", "1") == "1"
+        self.thermal_warm_temperature_c = float(os.getenv("GOHOME_THERMAL_WARM_TEMPERATURE_C", "72"))
+        self.thermal_hot_temperature_c = float(os.getenv("GOHOME_THERMAL_HOT_TEMPERATURE_C", "76"))
+        self.thermal_critical_temperature_c = float(os.getenv("GOHOME_THERMAL_CRITICAL_TEMPERATURE_C", "80"))
+        self.thermal_sample_interval_seconds = float(os.getenv("GOHOME_THERMAL_SAMPLE_INTERVAL_SECONDS", "2"))
+        self.inference_max_starvation_seconds = float(os.getenv("GOHOME_INFERENCE_MAX_STARVATION_SECONDS", "3"))
 
         self.default_capture_interval_seconds = int(os.getenv("GOHOME_CAPTURE_INTERVAL_SECONDS", "5"))
         self.default_no_motion_seconds = int(os.getenv("GOHOME_NO_MOTION_SECONDS", "300"))

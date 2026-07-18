@@ -11,6 +11,19 @@ if str(ROOT) not in sys.path:
 from app.adaptive_inference_scheduler import AdaptiveInferenceScheduler
 
 
+class ResourceMonitor:
+    def __init__(self, thermal_state: str) -> None:
+        self.thermal_state = thermal_state
+
+    def snapshot(self, *, now=None) -> dict:
+        return {
+            "schema_version": "test-resource-v1",
+            "available": True,
+            "temperature_c": 77.0,
+            "thermal_state": self.thermal_state,
+        }
+
+
 def main() -> None:
     scheduler = AdaptiveInferenceScheduler(
         idle_interval_seconds=1.0,
@@ -147,6 +160,56 @@ def main() -> None:
     if scheduler.camera_state(24, now=114.0):
         raise SystemExit("removed camera retained scheduler state")
 
+    priority_scheduler = AdaptiveInferenceScheduler(
+        active_interval_seconds=0.5,
+        risk_interval_seconds=0.2,
+        active_hold_seconds=4.0,
+        risk_hold_seconds=2.0,
+    )
+    priority_scheduler.reconcile([24, 25], now=200.0)
+    priority_scheduler.mark_started(24, now=200.0)
+    priority_scheduler.observe(
+        24,
+        {"person_count": 1, "pose_factor_graph": {"fast_fall_candidate": True}},
+        now=200.1,
+    )
+    priority_scheduler.mark_started(25, now=200.1)
+    priority_scheduler.observe(25, {"person_count": 1}, now=200.2)
+    if priority_scheduler.next_due_camera([24, 25], now=200.6) != 24:
+        raise SystemExit("risk camera did not receive global inference priority")
+
+    starvation_scheduler = AdaptiveInferenceScheduler(
+        active_interval_seconds=0.5,
+        risk_interval_seconds=0.2,
+        active_hold_seconds=4.0,
+        risk_hold_seconds=2.0,
+        max_starvation_seconds=1.0,
+    )
+    starvation_scheduler.reconcile([24, 25], now=300.0)
+    starvation_scheduler.mark_started(24, now=300.0)
+    starvation_scheduler.observe(
+        24,
+        {"person_count": 1, "pose_factor_graph": {"fast_fall_candidate": True}},
+        now=300.1,
+    )
+    if starvation_scheduler.next_due_camera([24, 25], now=301.1) != 25:
+        raise SystemExit("risk priority starved the overdue baseline camera")
+
+    hot_scheduler = AdaptiveInferenceScheduler(
+        resource_monitor=ResourceMonitor("hot"),
+        active_interval_seconds=0.5,
+    )
+    hot_scheduler.reconcile([24, 25], now=400.0)
+    hot_scheduler.mark_started(24, now=400.0)
+    hot_scheduler.observe(24, {"person_count": 1}, now=400.2)
+    if hot_scheduler.next_due_camera([24, 25], now=400.3) is not None:
+        raise SystemExit("hot resource state did not apply a global cooldown")
+    if hot_scheduler.next_due_camera([24, 25], now=400.42) != 25:
+        raise SystemExit("global cooldown did not release the next camera fairly")
+    hot_status = hot_scheduler.status(now=400.42)
+    if hot_status.get("resource", {}).get("thermal_state") != "hot":
+        raise SystemExit(f"thermal state missing from scheduler status: {hot_status}")
+
     print({
         "ok": True,
         "idle_interval_seconds": idle["interval_seconds"],
@@ -157,6 +220,9 @@ def main() -> None:
         "seated_score_mode": seated_score["mode"],
         "independent_camera_rotation": True,
         "stale_deadlines_dropped": True,
+        "risk_priority": True,
+        "starvation_guard": True,
+        "thermal_cooldown": True,
     })
 
 
