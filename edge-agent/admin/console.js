@@ -805,7 +805,7 @@ function snapshotPoses(snapshot) {
 
 function snapshotDisplayPoses(snapshot) {
   const continual = snapshot?.analysis?.continual_pose;
-  if (["observed", "tracked"].includes(continual?.state)) {
+  if (["observed", "tracked", "coasting"].includes(continual?.state)) {
     return Array.isArray(continual.poses) ? continual.poses : [];
   }
   return snapshotPoses(snapshot);
@@ -1037,6 +1037,7 @@ function renderDetectionOverlay(snapshot) {
         const presence = isPresenceCandidate(person);
         const poseValidated = Boolean(person.pose_validated || person.source === "pose_person");
         const tracked = ["cached", "tracked"].includes(person.pose_tracking_state);
+        const coasting = person.pose_tracking_state === "coasting";
         const matchesFallTarget = fallActive && bboxIou(person.bbox, fallRuntime.target?.bbox) >= 0.18;
         const kind = presence && !poseValidated ? "presence" : matchesFallTarget ? "fall" : "person";
         const pose = matchingPose(person, poses);
@@ -1045,7 +1046,7 @@ function renderDetectionOverlay(snapshot) {
         const identity = trackId ? `人物 ${String(trackId).split("-").pop()}` : `人物 ${index + 1}`;
         const prefix = presence && !poseValidated ? "人体候选" : identity;
         const label = `${prefix}${posture}${confidence}${candidateScore}`;
-        return { bbox: [x1, y1, x2, y2], label: matchesFallTarget ? `${label} · 跌倒过程复核` : label, kind: tracked ? "tracked" : kind };
+        return { bbox: [x1, y1, x2, y2], label: matchesFallTarget ? `${label} · 跌倒过程复核` : label, kind: coasting ? "coasting" : tracked ? "tracked" : kind };
       })
     : [];
   const petBoxes = pets.map((pet) => ({
@@ -1095,7 +1096,11 @@ function renderPoseSkeleton(snapshot, rect) {
   const edges = snapshotPoseEdges(snapshot);
   const lines = [];
   const points = [];
-  const tracked = poses.length > 0 && poses.every((pose) => ["cached", "tracked"].includes(pose.tracking_state));
+  const trackingClass = poses.every((pose) => pose.tracking_state === "coasting")
+    ? "coasting"
+    : poses.every((pose) => ["cached", "tracked"].includes(pose.tracking_state))
+      ? "tracked"
+      : "observed";
   for (const [poseIndex, pose] of poses.entries()) {
     const byName = {};
     for (const point of pose.keypoints || []) {
@@ -1115,7 +1120,7 @@ function renderPoseSkeleton(snapshot, rect) {
     }
   }
   return `
-    <svg class="pose-skeleton${tracked ? " tracked" : " observed"}" viewBox="0 0 ${rect.imageWidth} ${rect.imageHeight}" preserveAspectRatio="none" aria-hidden="true">
+    <svg class="pose-skeleton ${trackingClass}" viewBox="0 0 ${rect.imageWidth} ${rect.imageHeight}" preserveAspectRatio="none" aria-hidden="true">
       ${lines.join("")}
       ${points.join("")}
     </svg>
@@ -1223,6 +1228,7 @@ function renderContinualPoseStatus(snapshot) {
   const sourceLabels = {
     observed: "模型锚点",
     tracked: "连续跟踪",
+    coasting: "等待模型锚点",
     expired: "跟踪已清除",
     empty: "等待人物",
   };

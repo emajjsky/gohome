@@ -62,6 +62,7 @@ class ContinualPoseTracker:
         self,
         *,
         max_age_seconds: float = 0.6,
+        max_display_age_seconds: float = 1.2,
         minimum_interval_seconds: float = 0.1,
         min_tracked_points: int = 6,
         min_tracked_ratio: float = 0.55,
@@ -71,6 +72,7 @@ class ContinualPoseTracker:
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.max_age_seconds = max(0.1, float(max_age_seconds))
+        self.max_display_age_seconds = max(self.max_age_seconds, float(max_display_age_seconds))
         self.minimum_interval_seconds = max(0.02, float(minimum_interval_seconds))
         self.min_tracked_points = max(3, int(min_tracked_points))
         self.min_tracked_ratio = max(0.2, min(1.0, float(min_tracked_ratio)))
@@ -115,6 +117,7 @@ class ContinualPoseTracker:
                 "last_updated_monotonic": now,
                 "previous_gray": gray,
                 "frame_id": str(frame_id or ""),
+                "display_frame_id": str(frame_id or ""),
                 "captured_at": str(captured_at or ""),
                 "image_width": int(frame.shape[1]),
                 "image_height": int(frame.shape[0]),
@@ -164,9 +167,9 @@ class ContinualPoseTracker:
                 return deepcopy(self._latest.get(camera_id) or self._empty_payload(
                     camera_id, "empty", "same_frame", frame_id, captured_at
                 ))
-            age = max(0.0, now - float(state["observed_monotonic"]))
-            if age > self.max_age_seconds:
-                return self._expire_locked(camera_id, "anchor_expired", frame_id, captured_at, age)
+            anchor_age = max(0.0, now - float(state["observed_monotonic"]))
+            if anchor_age > self.max_display_age_seconds:
+                return self._expire_locked(camera_id, "anchor_expired", frame_id, captured_at, anchor_age)
             if now - float(state.get("last_updated_monotonic") or 0.0) < self.minimum_interval_seconds:
                 return deepcopy(self._latest.get(camera_id) or self._empty_payload(
                     camera_id, "empty", "tracking_throttled", frame_id, captured_at
@@ -178,8 +181,9 @@ class ContinualPoseTracker:
             errors = []
             scales = []
             rejection_reasons = []
+            track_age = max(0.0, now - float(state.get("last_updated_monotonic") or 0.0))
             for item in state["poses"]:
-                result = self._track_pose(cv2, np, state["previous_gray"], gray, item, frame, age)
+                result = self._track_pose(cv2, np, state["previous_gray"], gray, item, frame, track_age)
                 if not result.get("ok"):
                     rejection_reasons.append(str(result.get("reason") or "optical_flow_failed"))
                     continue
@@ -191,11 +195,20 @@ class ContinualPoseTracker:
 
             if not next_poses:
                 reason = rejection_reasons[0] if rejection_reasons else "optical_flow_failed"
-                return self._expire_locked(camera_id, reason, frame_id, captured_at, age)
+                return self._coast_locked(
+                    camera_id,
+                    reason,
+                    frame,
+                    frame_id,
+                    captured_at,
+                    anchor_age,
+                    track_age,
+                )
 
             state["previous_gray"] = gray
             state["last_updated_monotonic"] = now
             state["frame_id"] = str(frame_id or "")
+            state["display_frame_id"] = str(frame_id or "")
             state["captured_at"] = str(captured_at or "")
             state["image_width"] = int(frame.shape[1])
             state["image_height"] = int(frame.shape[0])
@@ -205,13 +218,14 @@ class ContinualPoseTracker:
                 state="tracked",
                 frame_id=frame_id,
                 captured_at=captured_at,
-                age_seconds=age,
+                age_seconds=anchor_age,
                 poses=public_poses,
                 quality={
                     "tracked_point_count": tracked_points,
                     "forward_backward_error": round(max(errors, default=0.0), 4),
                     "geometry_scale": round(sum(scales) / max(1, len(scales)), 4),
                 },
+                display_only_stale=anchor_age > self.max_age_seconds,
             )
             self._latest[camera_id] = payload
             self._latest_frames[camera_id] = frame.copy()
@@ -243,8 +257,8 @@ class ContinualPoseTracker:
                 payload is None
                 or frame is None
                 or state is None
-                or payload.get("state") not in {"observed", "tracked"}
-                or str(payload.get("frame_id") or "") != str(state.get("frame_id") or "")
+                or payload.get("state") not in {"observed", "tracked", "coasting"}
+                or str(payload.get("frame_id") or "") != str(state.get("display_frame_id") or "")
             ):
                 return None
             return {
@@ -277,7 +291,7 @@ class ContinualPoseTracker:
             if state is None:
                 return False
             age = max(0.0, float(self._clock()) - float(state["observed_monotonic"]))
-            if age > self.max_age_seconds:
+            if age > self.max_display_age_seconds:
                 self._expire_locked(
                     camera_id,
                     "anchor_expired",
@@ -298,6 +312,7 @@ class ContinualPoseTracker:
             return {
                 "schema_version": self.version,
                 "max_age_seconds": self.max_age_seconds,
+                "max_display_age_seconds": self.max_display_age_seconds,
                 "minimum_interval_seconds": self.minimum_interval_seconds,
                 "cameras": [
                     {
@@ -469,6 +484,63 @@ class ContinualPoseTracker:
         item["track_age_seconds"] = 0.0
         return item
 
+    def _public_coasting_pose(self, pose: Dict[str, Any], coast_age_seconds: float) -> Dict[str, Any]:
+        item = deepcopy(pose)
+        item["tracking_state"] = "coasting"
+        item["tracking_source"] = "last_good_overlay"
+        item["coast_age_seconds"] = round(float(coast_age_seconds), 4)
+        item["fall_score"] = 0.0
+        item["pose_fall_candidate"] = False
+        item["fall_evidence_eligible"] = False
+        item["person_evidence_eligible"] = False
+        item["action_hints"] = [hint for hint in item.get("action_hints") or [] if hint != "fall_candidate"]
+        return item
+
+    def _coast_locked(
+        self,
+        camera_id: int,
+        reason: str,
+        frame: Any,
+        frame_id: str,
+        captured_at: str,
+        anchor_age_seconds: float,
+        coast_age_seconds: float,
+    ) -> Dict[str, Any]:
+        state = self._states.get(camera_id)
+        if state is None or anchor_age_seconds > self.max_display_age_seconds:
+            return self._expire_locked(
+                camera_id,
+                "anchor_expired" if anchor_age_seconds > self.max_display_age_seconds else reason,
+                frame_id,
+                captured_at,
+                anchor_age_seconds,
+            )
+        poses = [self._public_coasting_pose(item["pose"], coast_age_seconds) for item in state["poses"]]
+        previous_quality = dict((self._latest.get(camera_id) or {}).get("quality") or {})
+        previous_quality["failure_reason"] = str(reason or "optical_flow_failed")
+        previous_quality["coast_age_seconds"] = round(float(coast_age_seconds), 4)
+        payload = self._payload(
+            camera_id,
+            state="coasting",
+            reason=reason,
+            frame_id=frame_id,
+            captured_at=captured_at,
+            age_seconds=anchor_age_seconds,
+            poses=poses,
+            quality=previous_quality,
+            display_only_stale=True,
+        )
+        state["display_frame_id"] = str(frame_id or "")
+        self._latest[camera_id] = payload
+        self._latest_frames[camera_id] = frame.copy()
+        metric = self._metric(camera_id)
+        metric["coasting_count"] += 1
+        metric["last_state"] = "coasting"
+        metric["last_frame_id"] = str(frame_id or "")
+        metric["last_reason"] = str(reason or "")
+        metric["last_quality"] = dict(payload["quality"])
+        return deepcopy(payload)
+
     def _expire_locked(
         self,
         camera_id: int,
@@ -493,6 +565,7 @@ class ContinualPoseTracker:
         return self._metrics.setdefault(int(camera_id), {
             "observed_count": 0,
             "tracked_count": 0,
+            "coasting_count": 0,
             "expired_count": 0,
             "last_state": "empty",
             "last_frame_id": "",
@@ -510,12 +583,14 @@ class ContinualPoseTracker:
         age_seconds: float,
         poses: list[Dict[str, Any]],
         quality: Dict[str, Any],
+        display_only_stale: bool = False,
+        reason: str = "",
     ) -> Dict[str, Any]:
         return {
             "schema_version": self.version,
             "camera_id": int(camera_id),
             "state": state,
-            "reason": "",
+            "reason": str(reason or ""),
             "frame_id": str(frame_id or ""),
             "captured_at": str(captured_at or ""),
             "age_seconds": round(float(age_seconds), 4),
@@ -523,6 +598,7 @@ class ContinualPoseTracker:
             "poses": poses,
             "quality": quality,
             "formal_evidence_eligible": state == "observed",
+            "display_only_stale": bool(display_only_stale),
         }
 
     def _empty_payload(

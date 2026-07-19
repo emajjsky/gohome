@@ -25,12 +25,14 @@ class Tracker:
         self.state = "tracked"
 
     def latest_frame(self, camera_id: int) -> dict | None:
-        if self.state != "tracked":
+        if self.state not in {"tracked", "coasting"}:
             return None
+        display_only_stale = self.state == "coasting"
         return {
             "frame": self.frame.copy(),
             "tracking": {
-                "state": "tracked",
+                "state": self.state,
+                "reason": "forward_backward_error" if display_only_stale else "",
                 "frame_id": "24-101",
                 "captured_at": "2026-07-17T06:00:00.100000+00:00",
                 "age_seconds": 0.11,
@@ -39,19 +41,21 @@ class Tracker:
                     "track_id": "c24-p1",
                     "bbox": [10, 10, 40, 70],
                     "confidence": 0.7,
-                    "tracking_state": "tracked",
+                    "tracking_state": self.state,
+                    "tracking_source": "last_good_overlay" if display_only_stale else "klt",
                     "fall_evidence_eligible": False,
                     "person_evidence_eligible": False,
                     "keypoints": [],
                 }],
                 "quality": {"tracked_point_count": 9, "forward_backward_error": 0.12},
                 "formal_evidence_eligible": False,
+                "display_only_stale": display_only_stale,
             },
             "analysis_context": {"detector_backend": "yolo", "pose_model_status": "ready"},
         }
 
     def latest(self, camera_id: int) -> dict:
-        if self.state == "tracked":
+        if self.state in {"tracked", "coasting"}:
             return dict(self.latest_frame(camera_id)["tracking"])
         return {
             "state": "expired",
@@ -78,7 +82,7 @@ class Tracker:
         }
 
     def has_anchor(self, camera_id: int) -> bool:
-        return self.state == "tracked"
+        return self.state in {"tracked", "coasting"}
 
 
 class Worker:
@@ -124,6 +128,21 @@ def main() -> None:
         raise SystemExit("tracked pose entered formal evidence through the management API")
     json.dumps(tracked)
 
+    tracker.state = "coasting"
+    coasting = edge_main.continual_pose_live_snapshot(24, include_frame=False)
+    coasting_analysis = (coasting.get("snapshot") or {}).get("analysis") or {}
+    coasting_person = (coasting_analysis.get("people") or [{}])[0]
+    coasting_pose = (coasting_analysis.get("poses") or [{}])[0]
+    if (
+        coasting.get("tracking", {}).get("state") != "coasting"
+        or coasting_analysis.get("pose_count") != 1
+        or not coasting_person.get("display_only")
+        or coasting_pose.get("fall_evidence_eligible")
+        or coasting_pose.get("person_evidence_eligible")
+    ):
+        raise SystemExit("management API did not isolate bounded coasting display data")
+    tracker.state = "tracked"
+
     status_only = edge_main.continual_pose_live_snapshot(24, include_frame=False)
     metadata_snapshot = status_only.get("snapshot") or {}
     metadata_analysis = metadata_snapshot.get("analysis") or {}
@@ -147,6 +166,7 @@ def main() -> None:
         "ok": True,
         "same_frame": True,
         "tracked_display_only": True,
+        "coasting_display_only": True,
         "formal_evidence_isolated": True,
         "status_only_overlay_metadata": True,
         "expired_pose_hidden": True,

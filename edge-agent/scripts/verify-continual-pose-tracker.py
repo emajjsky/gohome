@@ -18,6 +18,7 @@ def main() -> None:
     clock = {"now": 100.0}
     tracker = ContinualPoseTracker(
         max_age_seconds=0.6,
+        max_display_age_seconds=0.6,
         min_tracked_points=6,
         monotonic_clock=lambda: clock["now"],
     )
@@ -94,6 +95,34 @@ def main() -> None:
     if abs(float(dx) - 5.0) > 1.0 or abs(float(dy) - 3.0) > 1.0:
         raise SystemExit(f"tracked keypoints drifted from the synthetic translation: dx={dx}, dy={dy}")
 
+    grace_clock = {"now": 200.0}
+    grace_tracker = ContinualPoseTracker(
+        max_age_seconds=0.6,
+        max_display_age_seconds=1.2,
+        min_tracked_points=6,
+        monotonic_clock=lambda: grace_clock["now"],
+    )
+    grace_tracker.observe(24, frame, frame_id="grace-100", captured_at="2026-07-17T02:00:00+00:00", poses=[pose])
+    grace_clock["now"] = 200.7
+    grace = grace_tracker.update_frame(
+        24,
+        shifted,
+        frame_id="grace-101",
+        captured_at="2026-07-17T02:00:00.700000+00:00",
+    )
+    if grace["state"] != "tracked" or not grace.get("display_only_stale"):
+        raise SystemExit("display grace did not retain a stale tracked overlay")
+    if grace.get("formal_evidence_eligible") or grace["poses"][0].get("fall_evidence_eligible"):
+        raise SystemExit("display grace leaked into formal evidence")
+    grace_clock["now"] = 201.3
+    if grace_tracker.update_frame(
+        24,
+        shifted,
+        frame_id="grace-102",
+        captured_at="2026-07-17T02:00:01.300000+00:00",
+    )["state"] != "expired":
+        raise SystemExit("display grace did not expire after its bounded window")
+
     camera_25_frame, camera_25_pose = synthetic_anchor(offset_x=120)
     tracker.observe(
         25,
@@ -134,18 +163,36 @@ def main() -> None:
         frame_id="24-201",
         captured_at="2026-07-17T02:00:01.100000+00:00",
     )
-    if rejected["state"] != "expired" or rejected.get("reason") not in {
+    if rejected["state"] != "coasting" or rejected.get("reason") not in {
         "insufficient_points",
         "forward_backward_error",
         "optical_flow_failed",
     }:
-        raise SystemExit(f"invalid optical flow was not rejected: {rejected}")
+        raise SystemExit(f"invalid optical flow did not enter bounded display coasting: {rejected}")
+    rejected_pose = (rejected.get("poses") or [{}])[0]
+    if (
+        rejected.get("formal_evidence_eligible")
+        or rejected_pose.get("fall_evidence_eligible")
+        or rejected_pose.get("person_evidence_eligible")
+        or rejected_pose.get("tracking_state") != "coasting"
+        or rejected_pose.get("tracking_source") != "last_good_overlay"
+    ):
+        raise SystemExit(f"coasting pose leaked into formal evidence: {rejected}")
+    clock["now"] = 102.3
+    coast_expired = tracker.update_frame(
+        24,
+        np.zeros_like(frame),
+        frame_id="24-202",
+        captured_at="2026-07-17T02:00:02.300000+00:00",
+    )
+    if coast_expired["state"] != "expired" or coast_expired.get("reason") != "anchor_expired":
+        raise SystemExit(f"bounded coasting did not expire: {coast_expired}")
 
     runtime = tracker.status([24, 25])
     camera_24_runtime = next(item for item in runtime["cameras"] if item["camera_id"] == 24)
     if camera_24_runtime["observed_count"] != 2 or camera_24_runtime["tracked_count"] < 1:
         raise SystemExit(f"continual pose runtime counters are incomplete: {runtime}")
-    if camera_24_runtime["expired_count"] < 2:
+    if camera_24_runtime["coasting_count"] < 1 or camera_24_runtime["expired_count"] < 2:
         raise SystemExit(f"continual pose expiry metrics are incomplete: {runtime}")
 
     tracker.reset_camera(25)
@@ -164,6 +211,8 @@ def main() -> None:
         "ok": True,
         "translation": [round(float(dx), 2), round(float(dy), 2)],
         "tracked_points": tracked["quality"]["tracked_point_count"],
+        "display_grace_stale_tracked": True,
+        "bounded_display_coasting": True,
         "tracked_age_seconds": tracked["age_seconds"],
         "expired_state": expired["state"],
         "drift_rejection": rejected.get("reason"),

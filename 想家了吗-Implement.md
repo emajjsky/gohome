@@ -11149,7 +11149,7 @@ iOS 真机：
 连续跟踪实现：
 
 - 新增每摄像头独立 `ContinualPoseTracker`，使用 KLT 金字塔光流和前后向误差校验在模型锚点之间传播可信关键点；同时校验最少有效点、有效点比例和骨架几何尺度。
-- 状态统一为 `observed / tracked / expired`。`observed` 来自新鲜 RTMPose 锚点；`tracked` 是 KLT 短时补帧；人物离开、光流漂移或锚点年龄超过 600ms 后立即进入 `expired` 并删除骨架和彩色帧。
+- 状态统一为 `observed / tracked / coasting / expired`。`observed` 来自新鲜 RTMPose 锚点；`tracked` 是 KLT 成功传播；光流短暂失败时在正式锚点年龄 600ms 内进入 display-only `coasting`，最多延续到 1.2s；人物离开、展示宽限耗尽或质量门限失败后进入 `expired` 并删除骨架和彩色帧。
 - `tracked` 强制设置 `fall_evidence_eligible=false / person_evidence_eligible=false`，不进入 RuleEngine、PoseFactorGraph、TemporalObservation、PostureEpisode、恢复判断、持久化证据或正式事件。
 - 独立后台线程按约 7.5 FPS 消费共享摄像头最新帧，不依赖管理页是否打开；没有锚点时不复制帧，不额外占用空闲内存带宽。
 
@@ -11158,7 +11158,7 @@ iOS 真机：
 - 跟踪器只在有效窗口内保存与坐标严格对应的最新彩色帧；`latest_frame()` 在同一锁内返回像素、`frame_id`、跟踪载荷和模型锚点分析上下文，过期后不返回旧帧。
 - 新增受盒子管理员会话保护的 `GET /api/cameras/{camera_id}/continual-pose/live`。接口返回同一 `frame_id` 的 JPEG 与骨架，`tracked` 人框明确标记为 `display_only`；没有有效骨架时只返回摄像头最新帧和空姿态。
 - 统一视觉感知页改为约 140ms 读取后台 EACP 结果，不再每 180ms 调用 `/analysis/live` 重跑完整 YOLO+RTMPose。管理页关闭后算法照常运行，打开页面只编码和显示现成结果。
-- 实线骨架表示 `observed` 模型锚点；淡色虚线表示 `tracked` KLT 补帧；状态栏显示来源、锚点年龄、有效点数和 FB 误差，并明确写出“跟踪帧只补足画面连续性，不作为报警证据”。
+- 实线骨架表示 `observed` 模型锚点；淡色虚线表示 `tracked` KLT 补帧；更淡的虚线表示 `coasting` 最后可信叠加层。状态栏显示来源、锚点年龄、有效点数和 FB 误差，并明确写出“跟踪帧只补足画面连续性，不作为报警证据”。
 
 回归与实机结果：
 
@@ -11168,6 +11168,28 @@ iOS 真机：
 - 代码通过 Pi 的真实 OpenCV 回归、视觉运行时预检、Python 编译、JavaScript 语法、调度回归和 diff 检查；服务重启后 `gohome-edge-agent.service=active`，日志无连续跟踪异常，温度从启动瞬时高值回落到约 64.2 摄氏度。
 
 当前边界：P3a 已完成，但完整 P3 仍缺 OC-SORT 多人轨迹和遮挡后身份恢复；P4 的快速下降触发、risk 3-5 FPS、300ms 升频和 1.5-3 秒跌倒候选尚未完成。管理页连续骨架是研发可视化，不代表 KLT 补帧已经成为安全证据。管理员登录后的双摄页面视觉切换仍需做一次人工浏览器验收。
+
+## 119. 2026-07-19 EACP P3a.3 覆盖层有界承接
+
+问题根因：
+
+- P3a.1 已经把视频底图与姿态覆盖层解耦，但 KLT 在某一帧出现 `forward_backward_error`、`insufficient_points` 或其它光流失败时，跟踪器仍立即返回 `expired`，所以人物还在底图中时框和骨架会瞬间消失。
+- 600ms 正式模型新鲜度门与展示连续性被错误地当成同一个门限；延长正式证据窗口会污染安全逻辑，不能采用。
+
+实现：
+
+- `ContinualPoseTracker` 保留正式 `max_age_seconds=0.6`，增加 `max_display_age_seconds=1.2`。KLT 失败且锚点仍在展示窗口内时返回 `state=coasting`，保存最后一次可信姿态、当前底图和失败原因；超过 1.2s 仍按 `expired` 清除。
+- `coasting` 的人物姿态标记 `tracking_source=last_good_overlay`、`display_only_stale=true`，并强制关闭 `formal_evidence_eligible / fall_evidence_eligible / person_evidence_eligible`。它不进入 RuleEngine、TemporalObservation、PoseFactorGraph、PostureEpisode、恢复判断、事件持久化或云端上传。
+- 管理 API 接受 `coasting` 作为显示状态；前端保留单条 MJPEG 底图，人物框与骨架以更淡的虚线呈现，状态栏显示“等待模型锚点”。不重连视频、不请求分析 JPEG、不提高模型频率。
+- 运行指标增加每摄像头 `coasting_count` 与最近失败原因，便于区分真实人物离开、光流失败和锚点超时。
+
+回归与部署：
+
+- `verify-continual-pose-tracker.py` 验证光流失败进入 `coasting`、正式证据全关闭、1.2s 后 `expired`、摄像头状态隔离和计数器。
+- `verify-continual-pose-live-api.py` 验证管理接口可显示 `coasting` 但不泄漏人物或跌倒证据；`verify-continuous-overlay-console.py` 验证页面显示承接状态且保持单一视频底图。
+- 本地与 Pi 的 Python/OpenCV、视觉运行时、页面契约和 JavaScript 语法检查通过。2026-07-19 定向部署后，Pi 服务 active、双路 online/synced、live relay 8 FPS、温度约 63.7-75.2 摄氏度、`throttled=0x0`，运行约 20 秒 camera 24/25 的 `coasting_count` 分别为 133/51，`continual_pose_error` 和 `last_error` 均为空。
+
+当前边界：P3a.3 只解决显示覆盖层的短暂闪烁，不等于完成 P3b 多人 OC-SORT 身份恢复、P4 风险升频或跌倒端到端验收；正式告警仍必须等待新鲜 `observed` 模型证据和既有时序规则。
 
 ## 116. 2026-07-17 EACP P3a.1 连续视频与姿态覆盖层解耦
 

@@ -3015,7 +3015,7 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
             "quality": {},
             "formal_evidence_eligible": False,
         }
-        display_poses = list(tracking.get("poses") or []) if tracking.get("state") in {"observed", "tracked"} else []
+        display_poses = list(tracking.get("poses") or []) if tracking.get("state") in {"observed", "tracked", "coasting"} else []
         display_people = [
             {
                 "bbox": pose.get("bbox") or [],
@@ -3023,7 +3023,7 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
                 "track_id": pose.get("track_id"),
                 "source": "continual_pose",
                 "pose_tracking_state": tracking.get("state"),
-                "display_only": tracking.get("state") == "tracked",
+                "display_only": tracking.get("state") != "observed",
             }
             for pose in display_poses
             if pose.get("bbox")
@@ -3055,8 +3055,8 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
         }
         return {
             "ok": True,
-            "available": tracking.get("state") in {"observed", "tracked"},
-            "frame_available": tracking.get("state") in {"observed", "tracked"},
+            "available": tracking.get("state") in {"observed", "tracked", "coasting"},
+            "frame_available": tracking.get("state") in {"observed", "tracked", "coasting"},
             "camera_id": camera_id,
             "tracking": tracking,
             "snapshot": snapshot,
@@ -3101,7 +3101,7 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
         analysis = {}
 
     height, width = frame.shape[:2]
-    display_poses = list(tracking.get("poses") or []) if tracking.get("state") in {"observed", "tracked"} else []
+    display_poses = list(tracking.get("poses") or []) if tracking.get("state") in {"observed", "tracked", "coasting"} else []
     display_people = [
         {
             "bbox": pose.get("bbox") or [],
@@ -3109,7 +3109,7 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
             "track_id": pose.get("track_id"),
             "source": "continual_pose",
             "pose_tracking_state": tracking.get("state"),
-            "display_only": tracking.get("state") == "tracked",
+            "display_only": tracking.get("state") != "observed",
         }
         for pose in display_poses
         if pose.get("bbox")

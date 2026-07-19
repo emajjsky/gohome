@@ -1174,8 +1174,17 @@ label.wide,
   stroke-dasharray: 7 5;
 }
 
-.pose-skeleton.tracked .pose-keypoint {
+.pose-skeleton.tracked .pose-keypoint,
+.pose-skeleton.coasting .pose-keypoint {
   opacity: .72;
+}
+
+.pose-skeleton.coasting {
+  opacity: .46;
+}
+
+.pose-skeleton.coasting .pose-skeleton-line {
+  stroke-dasharray: 4 7;
 }
 
 .continual-pose-status {
@@ -1218,6 +1227,10 @@ label.wide,
 
 .continual-pose-status[data-state="tracked"] .continual-pose-source i {
   background: oklch(72% 0.14 78);
+}
+
+.continual-pose-status[data-state="coasting"] .continual-pose-source i {
+  background: oklch(66% 0.05 225);
 }
 
 @media (max-width: 860px) {
@@ -1292,6 +1305,14 @@ label.wide,
     0 0 0 4px oklch(61% 0.09 205 / .12);
 }
 
+.detection-box.coasting {
+  border-color: oklch(66% 0.05 225 / .72);
+  border-style: dashed;
+  box-shadow: none;
+  opacity: .58;
+  animation: none;
+}
+
 .detection-box.scene {
   border-color: oklch(68% 0.11 205);
   border-style: dashed;
@@ -1340,6 +1361,10 @@ label.wide,
 
 .detection-box.tracked span {
   background: oklch(34% 0.075 205 / .9);
+}
+
+.detection-box.coasting span {
+  background: oklch(34% 0.035 225 / .86);
 }
 
 .detection-box.scene span {

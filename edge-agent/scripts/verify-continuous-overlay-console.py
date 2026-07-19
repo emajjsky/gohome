@@ -39,12 +39,20 @@ def main() -> None:
     if '$("analysisFrame")' in render_stream:
         raise SystemExit("stream lifecycle still depends on the removed analysis image")
 
+    display_poses = function_source(console, "function snapshotDisplayPoses", "function snapshotPoseEdges")
+    if '"coasting"' not in display_poses:
+        raise SystemExit("algorithm console hides bounded coasting overlays")
+    status = function_source(console, "function renderContinualPoseStatus", "function renderDetectionSummary")
+    if 'coasting: "等待模型锚点"' not in status:
+        raise SystemExit("algorithm console does not identify display-only coasting")
+
     print({
         "ok": True,
         "continuous_video_base": True,
         "metadata_overlay_only": True,
         "analysis_jpeg_swap_removed": True,
         "stable_stream_status": True,
+        "bounded_coasting_visible": True,
     })
 
 
