@@ -11219,3 +11219,23 @@ iOS 真机：
 - 重启后日志未出现新的 Traceback、database locked、读取失败或中继错误。历史 `0xe0000` 会保留到整机重启，不能用它判断当前仍在热降频。
 
 当前边界：P3a.2 解决持续高温下的受控降级和多路预算，不代表 P3b/P4 已完成。下一步仍是 OC-SORT 多人轨迹、KLT 快速下降触发风险升频、同一 SafetyIncident 的边缘候选与云端异步复核，以及真实坐下、蹲下、弯腰、沙发卧躺和跌倒动作验收。
+
+## 118. 2026-07-19 盒子 SQLite 锁与上传线程稳定性
+
+问题根因：
+
+- 盒子重启后，配置同步线程按云端维护命令清理历史 `rule_evaluations / detection_results / snapshots`；同一时间上传线程尝试 claim `upload_jobs`。
+- SQLite 连接已有 30 秒 busy timeout，但清理事务与高频页面读取/事件写入叠加时，上传线程收到 `database is locked` 后未捕获异常，daemon 线程退出，造成事件证据无法继续上传。
+
+修复：
+
+- `Storage.connect()` 的 SQLite timeout 和 `PRAGMA busy_timeout` 提升至 120 秒，让短上传事务等待有界维护事务完成。
+- `UploadAgent.process_once()` 将锁异常转换为可重试结果；`UploadAgent._run()` 捕获未预期的存储/网络异常并继续下一轮，不允许后台线程静默死亡。
+- 新增 `verify-upload-lock-retry.py`，验证锁异常不会退出上传 daemon；EACP 调度、worker、Python 编译和部署脚本检查继续通过。
+
+实机验证：
+
+- 定向部署 `storage.py / upload_agent.py`，远端回归通过后重启盒子。
+- 重启后 `gohome-edge-agent=active`、配置同步 `running=true`、两路摄像头 `online/synced`、live relay `8 FPS`。
+- `upload_agent.running=true`，重启后成功上传 camera offline 事件，`last_error` 为空；后续 5 分钟无新的 `database is locked / Traceback / ERROR`。
+- 双路有人时 CPU 短时约 200%，温度约 72-74 摄氏度，当前 `throttled=0`；这仍然要求后续 P3b/P4 降低纯 CPU 双路 active 的持续成本。

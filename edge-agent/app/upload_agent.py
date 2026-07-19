@@ -7,6 +7,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 import json
+import sqlite3
 import time
 
 
@@ -117,7 +118,19 @@ class UploadAgent:
         completed = 0
         failed = 0
         for _ in range(limit):
-            job = self.storage.claim_next_upload_job()
+            try:
+                job = self.storage.claim_next_upload_job()
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower():
+                    raise
+                self.last_error = "upload_queue_busy: database is locked; retrying"
+                return {
+                    "ok": False,
+                    "processed": processed,
+                    "completed": completed,
+                    "failed": failed,
+                    "reason": "database_locked",
+                }
             if job is None:
                 break
             processed += 1
@@ -144,7 +157,13 @@ class UploadAgent:
         while not self._stop.is_set():
             self.last_loop_started_at = self._utc_iso()
             if bool(getattr(self.settings, "upload_worker_enabled", True)):
-                self.process_once()
+                try:
+                    self.process_once()
+                except Exception as exc:
+                    # A transient storage or network failure must not kill the
+                    # daemon thread; the next interval retries the queue.
+                    self.last_error = str(exc)
+                    self.last_result = {"ok": False, "error": str(exc)}
             interval = max(1.0, float(getattr(self.settings, "upload_worker_interval_seconds", 5)))
             self._wake.wait(interval)
             self._wake.clear()

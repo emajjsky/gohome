@@ -40,9 +40,11 @@ class Storage:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path, timeout=30)
+        # Runtime cleanup and event uploads can overlap during boot. Let the
+        # short upload transaction wait for the bounded cleanup transaction.
+        conn = sqlite3.connect(self.db_path, timeout=120)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA busy_timeout = 120000")
         try:
             with conn:
                 yield conn

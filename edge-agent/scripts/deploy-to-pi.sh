@@ -44,6 +44,7 @@ rsync -az \
   --exclude 'scripts/verify-observation-logs.py' \
   --exclude 'scripts/verify-pose-factor-graph.py' \
   --exclude 'scripts/verify-resource-monitor.py' \
+  --exclude 'scripts/verify-upload-lock-retry.py' \
   --exclude 'scripts/verify-posture-classifier.py' \
   --exclude 'scripts/verify-posture-episodes.py' \
   --exclude 'scripts/verify-presence-sessions.py' \
