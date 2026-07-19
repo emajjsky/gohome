@@ -1686,7 +1686,6 @@ async function loadLiveAnalysis(generation = state.liveAnalysisGeneration) {
   const cameraId = state.selectedCameraId;
   const algorithm = state.previewAlgorithm || "person";
   state.liveAnalysisBusy = true;
-  setText("streamStatus", "实时分析中");
   try {
     const statusResult = await api(`/api/cameras/${cameraId}/continual-pose/live?include_frame=false`);
     if (

@@ -26,6 +26,10 @@ def main() -> None:
         raise SystemExit("algorithm console does not poll lightweight overlay metadata")
     if "include_frame=true" in live_loop:
         raise SystemExit("algorithm console still downloads analysis JPEGs during live display")
+    if 'setText("streamStatus", "实时分析中")' in live_loop:
+        raise SystemExit("metadata polling still flashes a request-in-progress label")
+    if live_loop.count('setText("streamStatus", "后台连续感知")') != 1:
+        raise SystemExit("algorithm console does not expose one stable continual sensing label")
 
     render_snapshot = function_source(console, "function renderSnapshot", "function renderContinualPoseStatus")
     if 'removeAttribute("src")' in render_snapshot or '$("analysisFrame")' in render_snapshot:
@@ -40,6 +44,7 @@ def main() -> None:
         "continuous_video_base": True,
         "metadata_overlay_only": True,
         "analysis_jpeg_swap_removed": True,
+        "stable_stream_status": True,
     })
 
 
