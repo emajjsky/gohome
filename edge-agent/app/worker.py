@@ -435,6 +435,7 @@ class EdgeWorker:
                     int(camera["id"]),
                     now=self._monotonic_clock(),
                     risk=True,
+                    source=str(risk_hint.get("reason") or "klt_risk_hint"),
                 )
                 self._wake.set()
             self.last_continual_pose_error = ""

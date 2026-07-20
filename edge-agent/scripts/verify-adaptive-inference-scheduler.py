@@ -57,6 +57,15 @@ def main() -> None:
     retained_due = float(wake_scheduler.camera_state(24, now=100.10)["next_due_at"])
     if abs(scheduled_due - retained_due) > 0.0001:
         raise SystemExit("motion gate bypassed the active inference cadence")
+    wake_scheduler.signal_activity(24, now=100.15, risk=True, source="klt_rapid_downward")
+    risk_wakeup = wake_scheduler.camera_state(24, now=100.15)
+    if (
+        risk_wakeup.get("mode") != "risk"
+        or risk_wakeup.get("risk_signal_count") != 1
+        or risk_wakeup.get("last_risk_signal_source") != "klt_rapid_downward"
+        or abs(float(risk_wakeup.get("last_risk_signal_at_monotonic") or 0.0) - 100.15) > 0.0001
+    ):
+        raise SystemExit(f"risk signal diagnostics are incomplete: {risk_wakeup}")
 
     first = scheduler.next_due_camera([24, 25], now=100.0)
     if first != 24:

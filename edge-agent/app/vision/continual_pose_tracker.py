@@ -257,6 +257,10 @@ class ContinualPoseTracker:
             metric["last_state"] = "tracked"
             metric["last_frame_id"] = str(frame_id or "")
             metric["last_quality"] = dict(payload["quality"])
+            if risk_tracks:
+                metric["risk_hint_count"] += 1
+                metric["last_risk_hint_at_monotonic"] = round(now, 6)
+                metric["last_risk_hint"] = deepcopy(payload["risk_hint"])
             return deepcopy(payload)
 
     def latest(self, camera_id: int) -> Dict[str, Any]:
@@ -628,6 +632,9 @@ class ContinualPoseTracker:
             "tracked_count": 0,
             "coasting_count": 0,
             "expired_count": 0,
+            "risk_hint_count": 0,
+            "last_risk_hint_at_monotonic": None,
+            "last_risk_hint": self._empty_risk_hint(),
             "last_state": "empty",
             "last_frame_id": "",
             "last_reason": "",

@@ -127,6 +127,12 @@ def main() -> None:
         raise SystemExit(f"rapid downward KLT motion did not request risk scheduling: {downward}")
     if downward.get("formal_evidence_eligible") or risk_hint.get("formal_evidence_eligible"):
         raise SystemExit("KLT risk scheduling hint leaked into formal event evidence")
+    risk_runtime = risk_tracker.status([26])["cameras"][0]
+    if (
+        risk_runtime.get("risk_hint_count") != 1
+        or abs(float(risk_runtime.get("last_risk_hint_at_monotonic") or 0.0) - 300.11) > 0.0001
+    ):
+        raise SystemExit(f"KLT risk hint diagnostics are incomplete: {risk_runtime}")
 
     grace_clock = {"now": 200.0}
     grace_tracker = ContinualPoseTracker(

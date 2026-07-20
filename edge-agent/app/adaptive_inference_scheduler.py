@@ -23,6 +23,8 @@ class _CameraSchedule:
     last_frame_age_seconds: float | None = None
     observed_count: int = 0
     deadline_miss_count: int = 0
+    risk_signal_count: int = 0
+    risk_signals: deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=64))
     starts: deque[float] = field(default_factory=lambda: deque(maxlen=24))
 
 
@@ -77,7 +79,14 @@ class AdaptiveInferenceScheduler:
                 if not state.in_flight:
                     state.next_due_at = min(state.next_due_at, float(now))
 
-    def signal_activity(self, camera_id: int, *, now: float, risk: bool = False) -> None:
+    def signal_activity(
+        self,
+        camera_id: int,
+        *,
+        now: float,
+        risk: bool = False,
+        source: str = "motion_gate",
+    ) -> None:
         """Wake inference from a cheap gate without treating it as formal evidence."""
         with self._lock:
             current = float(now)
@@ -86,6 +95,7 @@ class AdaptiveInferenceScheduler:
             state.active_until = max(state.active_until, current + self.active_hold_seconds)
             if risk:
                 state.risk_until = max(state.risk_until, current + self.risk_hold_seconds)
+                self._record_risk_signal(state, current, source)
             should_wake = previous_mode == "idle" or (risk and previous_mode != "risk")
             if should_wake and not state.in_flight:
                 state.next_due_at = min(state.next_due_at, current)
@@ -132,6 +142,7 @@ class AdaptiveInferenceScheduler:
             if self._risk_signal(analysis):
                 state.risk_until = max(state.risk_until, current + self.risk_hold_seconds)
                 state.active_until = max(state.active_until, current + self.active_hold_seconds)
+                self._record_risk_signal(state, current, "observed_model_risk")
             elif self._active_signal(analysis):
                 state.active_until = max(state.active_until, current + self.active_hold_seconds)
             if int(analysis.get("person_count") or 0) > 0:
@@ -210,8 +221,23 @@ class AdaptiveInferenceScheduler:
                 "last_frame_age_seconds": self._rounded(state.last_frame_age_seconds),
                 "observed_count": state.observed_count,
                 "deadline_miss_count": state.deadline_miss_count,
+                "risk_signal_count": state.risk_signal_count,
+                "last_risk_signal_at_monotonic": (
+                    state.risk_signals[-1]["at_monotonic"] if state.risk_signals else None
+                ),
+                "last_risk_signal_source": (
+                    state.risk_signals[-1]["source"] if state.risk_signals else ""
+                ),
+                "risk_signals": list(state.risk_signals),
                 "effective_fps": self._effective_fps(state.starts),
             }
+
+    def _record_risk_signal(self, state: _CameraSchedule, now: float, source: str) -> None:
+        state.risk_signal_count += 1
+        state.risk_signals.append({
+            "at_monotonic": round(float(now), 6),
+            "source": str(source or "unknown"),
+        })
 
     def status(self, *, now: float) -> Dict[str, Any]:
         with self._lock:

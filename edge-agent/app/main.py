@@ -89,6 +89,7 @@ from .video_service import (
     v1_video_snapshot_url,
 )
 from .adaptive_inference_scheduler import AdaptiveInferenceScheduler
+from .eacp_acceptance import EacpAcceptanceService
 from .worker import EdgeWorker
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -1240,6 +1241,14 @@ upload_agent = UploadAgent(
     token_resolver=read_local_device_token,
     remote_camera_id_resolver=remote_camera_id_for_local_camera,
 )
+eacp_acceptance_service = EacpAcceptanceService(
+    state_path=settings.data_dir / "eacp_acceptance.json",
+    runtime_resolver=worker.runtime_status,
+    events_resolver=lambda: storage.list_events(limit=200),
+    candidates_resolver=lambda: storage.list_event_candidates(limit=200),
+    uploads_resolver=lambda: storage.list_upload_jobs(limit=500),
+    cloud_verification_resolver=lambda: upload_agent.vision_verification_status(limit=50),
+)
 live_relay_agent = LiveRelayAgent(
     storage=storage,
     settings=settings,
@@ -1334,6 +1343,7 @@ def admin_api_requires_auth(path: str) -> bool:
         "/api/observation-logs",
         "/api/upload-jobs",
         "/api/cloud-verifications",
+        "/api/eacp-acceptance",
         "/snapshots",
     )
     return any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected_prefixes)
@@ -3367,6 +3377,36 @@ def cloud_verification_status(limit: int = 12) -> Dict[str, Any]:
             "reason": str(exc),
             "records": [],
         }
+
+
+@app.get("/api/eacp-acceptance")
+def eacp_acceptance_status() -> Dict[str, Any]:
+    return eacp_acceptance_service.status()
+
+
+@app.post("/api/eacp-acceptance/start")
+def start_eacp_acceptance(payload: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return eacp_acceptance_service.start(
+            scenario=str(payload.get("scenario") or "custom"),
+            camera_id=int(payload.get("camera_id") or 0),
+            label=str(payload.get("label") or ""),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/eacp-acceptance/finish")
+def finish_eacp_acceptance() -> Dict[str, Any]:
+    try:
+        return eacp_acceptance_service.finish()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.delete("/api/eacp-acceptance")
+def clear_eacp_acceptance() -> Dict[str, Any]:
+    return eacp_acceptance_service.clear()
 
 
 @app.get("/api/events/{event_id}")
