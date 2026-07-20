@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from threading import RLock
 from typing import Any, Dict
+import time
 
 from .base import AlgorithmResult, clamp
 
@@ -34,6 +36,8 @@ class PersonDetector:
         self.yolo_imgsz = yolo_imgsz
         self._yolo_model: Any = None
         self._yolo_lock = RLock()
+        self._cache_lock = RLock()
+        self._detection_cache: dict[str, Dict[str, Any]] = {}
         self._cascade_cache: dict[str, Any | None] = {}
 
     def analyze(self, frame: Any, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -43,6 +47,8 @@ class PersonDetector:
         people: list[Dict[str, Any]] = []
         pets: list[Dict[str, Any]] = []
         scene_objects: list[Dict[str, Any]] = []
+        detection_cached = False
+        detection_cache_age_seconds: float | None = None
         self.yolo_confidence = float(config.get("yolo_confidence", self.yolo_confidence))
         self.yolo_imgsz = int(config.get("yolo_imgsz", self.yolo_imgsz))
 
@@ -53,15 +59,21 @@ class PersonDetector:
             model_message = "演示摄像头使用内置视觉效果，真实摄像头会走正式模型。"
         elif self.detector_backend == "yolo":
             try:
-                presence_yolo_confidence = float(config.get("presence_yolo_confidence", 0.18))
-                detected = self._detect_yolo_entities(
-                    frame,
-                    person_confidence=min(self.yolo_confidence, presence_yolo_confidence),
-                    pet_confidence=float(config.get("pet_yolo_confidence", 0.40)),
-                    pet_enabled=bool(config.get("pet_detection_enabled", True)),
-                    scene_confidence=float(config.get("scene_object_confidence", 0.30)),
-                    scene_enabled=bool(config.get("scene_context_enabled", True)),
-                )
+                cached = self._cached_entities(config)
+                if cached is not None:
+                    detected, detection_cache_age_seconds = cached
+                    detection_cached = True
+                else:
+                    presence_yolo_confidence = float(config.get("presence_yolo_confidence", 0.18))
+                    detected = self._detect_yolo_entities(
+                        frame,
+                        person_confidence=min(self.yolo_confidence, presence_yolo_confidence),
+                        pet_confidence=float(config.get("pet_yolo_confidence", 0.40)),
+                        pet_enabled=bool(config.get("pet_detection_enabled", True)),
+                        scene_confidence=float(config.get("scene_object_confidence", 0.30)),
+                        scene_enabled=bool(config.get("scene_context_enabled", True)),
+                    )
+                    self._store_cached_entities(config, detected)
                 raw_people, pets, scene_objects = self._unpack_yolo_entities(detected)
                 people = [person for person in raw_people if float(person.get("confidence") or 0.0) >= self.yolo_confidence]
                 if not people and config.get("presence_enhancement_enabled", True):
@@ -86,7 +98,7 @@ class PersonDetector:
                     else:
                         model_status = "ready"
                 else:
-                    model_status = "ready"
+                    model_status = "ready_cached" if detection_cached else "ready"
             except RuntimeError as exc:
                 people = []
                 backend = "yolo"
@@ -134,6 +146,8 @@ class PersonDetector:
                 "pets": pets,
                 "pet_count": len(pets),
                 "pet_types": sorted({str(pet.get("type") or "") for pet in pets if pet.get("type")}),
+                "detection_cached": detection_cached,
+                "detection_cache_age_seconds": detection_cache_age_seconds,
             },
         )
         return {
@@ -149,9 +163,47 @@ class PersonDetector:
             "pet_count": len(pets),
             "pet_types": sorted({str(pet.get("type") or "") for pet in pets if pet.get("type")}),
             "scene_objects": scene_objects,
+            "detection_cached": detection_cached,
+            "detection_cache_age_seconds": detection_cache_age_seconds,
             "tags": tags,
             "result": result,
         }
+
+    def _cache_key(self, config: Dict[str, Any]) -> str:
+        camera_id = str(config.get("camera_id") or "").strip()
+        if not camera_id:
+            return ""
+        return f"{camera_id}:{self.yolo_model_name}:{self.yolo_imgsz}:{self.yolo_confidence:.4f}"
+
+    def _cached_entities(self, config: Dict[str, Any]) -> tuple[Any, float] | None:
+        cache_seconds = max(0.0, float(config.get("person_detection_cache_seconds") or 0.0))
+        cache_key = self._cache_key(config)
+        if not cache_key or cache_seconds <= 0.0:
+            return None
+        motion_score = float(config.get("frame_motion_score") or 0.0)
+        max_motion = max(0.0, float(config.get("person_detection_cache_max_motion") or 0.05))
+        if motion_score > max_motion:
+            return None
+        now = time.monotonic()
+        with self._cache_lock:
+            cached = self._detection_cache.get(cache_key)
+            if cached is None:
+                return None
+            age = max(0.0, now - float(cached["stored_at"]))
+            if age > cache_seconds:
+                self._detection_cache.pop(cache_key, None)
+                return None
+            return deepcopy(cached["entities"]), round(age, 4)
+
+    def _store_cached_entities(self, config: Dict[str, Any], entities: Any) -> None:
+        cache_key = self._cache_key(config)
+        if not cache_key or float(config.get("person_detection_cache_seconds") or 0.0) <= 0.0:
+            return
+        with self._cache_lock:
+            self._detection_cache[cache_key] = {
+                "stored_at": time.monotonic(),
+                "entities": deepcopy(entities),
+            }
 
     def _detect_people_demo(self, frame: Any) -> list[Dict[str, Any]]:
         try:

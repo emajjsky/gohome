@@ -114,10 +114,22 @@ def main() -> None:
                 }
             ],
         }
+        stale_local = storage.create_camera({
+            "name": "本地旁路摄像头",
+            "room": "错误配置",
+            "stream_url": "demo:stale-local",
+            "enabled": True,
+        })
         updated = agent.process_once()
         cameras = storage.list_cameras(include_secret=True)
         if updated["applied"] != 1 or len(cameras) != 1 or cameras[0]["room"] != "卧室":
             raise SystemExit(f"camera was not updated in place: result={updated} cameras={cameras}")
+        stale_delete = next((
+            item for item in reports[-1]["cameras"]
+            if item.get("local_camera_id") == stale_local["id"] and item.get("status") == "deleted"
+        ), None)
+        if stale_delete is None:
+            raise SystemExit(f"unmapped local camera was not reported as deleted: {reports[-1]}")
         presence = reports[-1]["cameras"][0]["presence"]
         if not presence.get("last_person_seen_at") or presence.get("person_samples") != 1:
             raise SystemExit(f"presence report did not include person observation: {presence}")

@@ -115,6 +115,8 @@ class ConfigSyncAgent:
         applied = 0
         skipped = 0
         deleted = 0
+        desired_local_ids: set[int] = set()
+        authoritative_camera_list = isinstance(config.get("cameras"), list)
 
         for camera_config in config.get("cameras") or []:
             remote_id = self._remote_camera_id(camera_config)
@@ -130,6 +132,8 @@ class ConfigSyncAgent:
             desired_remote_ids.add(remote_id)
             report = self._apply_camera(camera_config, camera_map)
             reports.append(report)
+            if report.get("local_camera_id"):
+                desired_local_ids.add(int(report["local_camera_id"]))
             if report.get("sync_status") == "synced":
                 applied += 1
             else:
@@ -149,6 +153,25 @@ class ConfigSyncAgent:
                     "enabled": False,
                 })
             camera_map.pop(remote_id, None)
+
+        if authoritative_camera_list:
+            for local_camera in self.storage.list_cameras(include_secret=False):
+                local_id = int(local_camera["id"])
+                if local_id in desired_local_ids:
+                    continue
+                if self._delete_local_camera(local_id):
+                    deleted += 1
+                    reports.append({
+                        "camera_id": f"local:{local_id}",
+                        "local_camera_id": local_id,
+                        "status": "deleted",
+                        "sync_status": "synced",
+                        "last_error": "cloud_authoritative_reconcile",
+                        "enabled": False,
+                    })
+                for remote_id, mapped_local_id in list(camera_map.items()):
+                    if str(mapped_local_id) == str(local_id):
+                        camera_map.pop(remote_id, None)
 
         state["camera_map"] = camera_map
         state["config_version"] = str(config.get("config_version") or "")

@@ -16,6 +16,7 @@ class _CameraSchedule:
     in_flight: bool = False
     active_until: float = 0.0
     risk_until: float = 0.0
+    person_until: float = 0.0
     last_started_at: float | None = None
     last_completed_at: float | None = None
     last_duration_seconds: float | None = None
@@ -76,6 +77,19 @@ class AdaptiveInferenceScheduler:
                 if not state.in_flight:
                     state.next_due_at = min(state.next_due_at, float(now))
 
+    def signal_activity(self, camera_id: int, *, now: float, risk: bool = False) -> None:
+        """Wake inference from a cheap gate without treating it as formal evidence."""
+        with self._lock:
+            current = float(now)
+            state = self._states.setdefault(int(camera_id), _CameraSchedule(next_due_at=current))
+            previous_mode = self._mode_at(state, current)
+            state.active_until = max(state.active_until, current + self.active_hold_seconds)
+            if risk:
+                state.risk_until = max(state.risk_until, current + self.risk_hold_seconds)
+            should_wake = previous_mode == "idle" or (risk and previous_mode != "risk")
+            if should_wake and not state.in_flight:
+                state.next_due_at = min(state.next_due_at, current)
+
     def next_due_camera(self, camera_ids: Iterable[int], *, now: float) -> int | None:
         allowed = {int(camera_id) for camera_id in camera_ids}
         with self._lock:
@@ -120,6 +134,8 @@ class AdaptiveInferenceScheduler:
                 state.active_until = max(state.active_until, current + self.active_hold_seconds)
             elif self._active_signal(analysis):
                 state.active_until = max(state.active_until, current + self.active_hold_seconds)
+            if int(analysis.get("person_count") or 0) > 0:
+                state.person_until = max(state.person_until, current + self.active_hold_seconds)
 
             mode = self._mode_at(state, current)
             interval = self._interval_for_mode(mode)
@@ -182,7 +198,8 @@ class AdaptiveInferenceScheduler:
             return {
                 "camera_id": int(camera_id),
                 "mode": mode,
-                "pose_required": mode in {"active", "risk"},
+                "pose_required": float(now) < state.person_until,
+                "person_confirmed_until": round(state.person_until, 6),
                 "interval_seconds": self._interval_for_mode(mode),
                 "next_due_at": round(state.next_due_at, 6),
                 "next_due_in_seconds": round(max(0.0, state.next_due_at - float(now)), 4),

@@ -23,6 +23,21 @@ def analysis(*people: dict) -> dict:
     }
 
 
+def person(bbox: list[float], confidence: float = 0.9, posture: str = "standing") -> dict:
+    return {
+        "bbox": bbox,
+        "confidence": confidence,
+        "posture": posture,
+        "posture_confidence": confidence,
+    }
+
+
+def assert_track(payload: dict, index: int, expected: str, message: str) -> None:
+    actual = str(payload["people"][index].get("track_id") or "")
+    if actual != expected:
+        raise SystemExit(f"{message}: expected {expected}, got {actual}")
+
+
 def main() -> None:
     engine = TemporalObservationEngine(history_size=8, track_ttl_seconds=10)
     first = analysis({"bbox": [100, 60, 220, 330], "confidence": 0.91})
@@ -60,7 +75,79 @@ def main() -> None:
     if engine.recent_history(1):
         raise SystemExit("camera reset must clear temporal history")
 
-    print(json.dumps({"ok": True, "stable_track_id": track_id, "history_capacity": 8}, ensure_ascii=False, indent=2))
+    # Observation-centric motion must preserve identities while two people cross.
+    crossing = TemporalObservationEngine(history_size=16, track_ttl_seconds=10)
+    crossing_frames = [
+        ([50, 50, 150, 330], [480, 50, 580, 330]),
+        ([140, 50, 240, 330], [390, 50, 490, 330]),
+        ([250, 50, 350, 330], [280, 50, 380, 330]),
+        ([360, 50, 460, 330], [170, 50, 270, 330]),
+    ]
+    first_crossing = analysis(
+        person(crossing_frames[0][0], 0.95),
+        person(crossing_frames[0][1], 0.90),
+    )
+    crossing.update(7, first_crossing, monotonic_at=1.0)
+    left_track = str(first_crossing["people"][0]["track_id"])
+    right_track = str(first_crossing["people"][1]["track_id"])
+    for frame_index, (left_bbox, right_bbox) in enumerate(crossing_frames[1:], start=2):
+        payload = analysis(person(left_bbox, 0.95), person(right_bbox, 0.90))
+        crossing.update(7, payload, monotonic_at=float(frame_index))
+        assert_track(payload, 0, left_track, "left-to-right person changed identity during crossing")
+        assert_track(payload, 1, right_track, "right-to-left person changed identity during crossing")
+
+    # A short detector miss may be bridged, but the bridge remains model-to-model identity only.
+    occlusion = TemporalObservationEngine(history_size=12, track_ttl_seconds=10)
+    before = analysis(person([80, 50, 180, 330]))
+    occlusion.update(8, before, monotonic_at=1.0)
+    occluded_track = str(before["people"][0]["track_id"])
+    moving = analysis(person([130, 50, 230, 330]))
+    occlusion.update(8, moving, monotonic_at=1.5)
+    occlusion.update(8, analysis(), monotonic_at=2.0)
+    restored = analysis(person([230, 50, 330, 330]))
+    occlusion.update(8, restored, monotonic_at=2.5)
+    assert_track(restored, 0, occluded_track, "short occlusion must restore the same model track")
+
+    # A fast upright-to-low movement can travel farther than the old fixed center gate.
+    fast_move = TemporalObservationEngine(history_size=12, track_ttl_seconds=10)
+    upright = analysis(person([80, 40, 180, 330], posture="standing"))
+    fast_move.update(9, upright, monotonic_at=1.0)
+    fast_track = str(upright["people"][0]["track_id"])
+    low = analysis(person([140, 190, 390, 345], posture="lying"))
+    fast_move.update(9, low, monotonic_at=1.35)
+    assert_track(low, 0, fast_track, "fast posture transition must not create a new track")
+
+    # A new person after a long absence must never inherit the previous safety history.
+    replacement = TemporalObservationEngine(
+        history_size=12,
+        track_ttl_seconds=10,
+        max_match_age_seconds=2.0,
+    )
+    original = analysis(person([120, 50, 220, 330]))
+    replacement.update(10, original, monotonic_at=1.0)
+    original_track = str(original["people"][0]["track_id"])
+    replacement.update(10, analysis(), monotonic_at=3.1)
+    newcomer = analysis(person([122, 52, 222, 332]))
+    replacement.update(10, newcomer, monotonic_at=3.2)
+    newcomer_track = str(newcomer["people"][0]["track_id"])
+    if newcomer_track == original_track:
+        raise SystemExit("a replacement person must not inherit an expired model track")
+
+    # Camera-local state is a hard safety boundary.
+    other_camera = analysis(person([120, 50, 220, 330]))
+    replacement.update(11, other_camera, monotonic_at=3.2)
+    if not str(other_camera["people"][0].get("track_id") or "").startswith("c11-"):
+        raise SystemExit("track identity must remain isolated per camera")
+
+    print(json.dumps({
+        "ok": True,
+        "stable_track_id": track_id,
+        "crossing_tracks": [left_track, right_track],
+        "occlusion_track": occluded_track,
+        "fast_transition_track": fast_track,
+        "replacement_track": newcomer_track,
+        "history_capacity": 8,
+    }, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

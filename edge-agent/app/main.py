@@ -28,6 +28,7 @@ from .apns_relay_service import APNSRelayService
 from .app_push_service import AppPushService
 from .box_init_service import ADMIN_SESSION_COOKIE, DEFAULT_ADMIN_PASSWORD, BoxInitService
 from .camera_agent import CameraAgent, CameraError
+from .camera_config_authority import camera_config_authority
 from .config_sync_agent import ConfigSyncAgent
 from .detect_agent import DetectAgent
 from .edge_bootstrap_service import EdgeBootstrapService
@@ -473,6 +474,24 @@ def require_device_access(user: Dict[str, Any]) -> str:
     return device_id
 
 
+def current_camera_config_authority() -> Dict[str, Any]:
+    return camera_config_authority(
+        settings,
+        storage,
+        current_device_id(),
+        cloud_claimed=bool(read_local_device_token()),
+    )
+
+
+def require_local_camera_mutation() -> None:
+    authority = current_camera_config_authority()
+    if not authority["local_mutation_allowed"]:
+        raise HTTPException(
+            status_code=409,
+            detail="摄像头配置由回家 App 统一管理，请在 App 中添加、删除或启停摄像头。",
+        )
+
+
 def require_family_access(user: Dict[str, Any], family_id: int) -> None:
     if int(family_id) not in set(storage.list_user_family_ids(int(user["id"]))):
         raise HTTPException(status_code=403, detail="You do not have access to this family")
@@ -590,6 +609,7 @@ def v1_device_summary() -> Dict[str, Any]:
         "detector_backend": settings.detector_backend,
         "upload_agent": upload_agent.status(),
         "config_sync_agent": config_sync_agent.status(),
+        "camera_config_authority": current_camera_config_authority(),
         "token": token,
     }
 
@@ -1200,6 +1220,9 @@ worker = EdgeWorker(
     history_cleanup_batch_size=settings.history_cleanup_batch_size,
     completed_upload_retention_days=settings.completed_upload_retention_days,
     inference_scheduler=AdaptiveInferenceScheduler(
+        idle_interval_seconds=settings.inference_idle_interval_seconds,
+        active_interval_seconds=settings.inference_active_interval_seconds,
+        risk_interval_seconds=settings.inference_risk_interval_seconds,
         resource_monitor=resource_monitor,
         max_starvation_seconds=settings.inference_max_starvation_seconds,
     ),
@@ -2783,6 +2806,7 @@ def list_cameras() -> list[Dict[str, Any]]:
 
 @app.post("/api/cameras")
 def create_camera(camera: CameraCreate) -> Dict[str, Any]:
+    require_local_camera_mutation()
     if len(storage.list_cameras()) >= 3:
         raise HTTPException(status_code=400, detail="最多只能接入 3 路摄像头")
     return storage.create_camera(model_dump(camera))
@@ -2832,6 +2856,7 @@ def get_camera(camera_id: int) -> Dict[str, Any]:
 
 @app.patch("/api/cameras/{camera_id}")
 def update_camera(camera_id: int, patch: CameraUpdate) -> Dict[str, Any]:
+    require_local_camera_mutation()
     camera = storage.update_camera(camera_id, model_dump(patch))
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
@@ -2840,6 +2865,7 @@ def update_camera(camera_id: int, patch: CameraUpdate) -> Dict[str, Any]:
 
 @app.delete("/api/cameras/{camera_id}")
 def delete_camera(camera_id: int) -> Dict[str, Any]:
+    require_local_camera_mutation()
     deleted = storage.delete_camera(camera_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Camera not found")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 
@@ -9,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import app.rule_engine as rule_engine_module
 from app.rule_engine import RuleEngine
 from app.worker import EdgeWorker
 
@@ -82,7 +84,6 @@ def main() -> None:
         raise SystemExit("second clear frame must recover fall state")
 
     scene_engine = RuleEngine()
-    scene_engine.evaluate_snapshot(camera, {"id": 2000}, make_upright_analysis(), rules)
     scene_first = scene_engine.evaluate_snapshot(
         camera,
         {"id": 2001},
@@ -99,6 +100,60 @@ def main() -> None:
         raise SystemExit("stable bed/couch overlap must suppress formal fall events")
     if scene_second.state["fall_stage"] != "normal_lying_zone" or not scene_second.state.get("fall_scene_suppressed"):
         raise SystemExit("normal lying scene state mismatch")
+
+    transition_scene_engine = RuleEngine()
+    transition_scene_engine.evaluate_snapshot(camera, {"id": 2100}, make_upright_analysis(), rules)
+    transition_scene_first = transition_scene_engine.evaluate_snapshot(
+        camera,
+        {"id": 2101},
+        make_pose_fall_analysis(normal_lying_zone=True),
+        rules,
+    )
+    transition_scene_second = transition_scene_engine.evaluate_snapshot(
+        camera,
+        {"id": 2102},
+        make_pose_fall_analysis(normal_lying_zone=True),
+        rules,
+    )
+    if transition_scene_first.candidates:
+        raise SystemExit("first transitioned pose-fall frame must remain a suspect")
+    if len(transition_scene_second.candidates) != 1:
+        raise SystemExit("confirmed pose fall must override static couch/bed suppression")
+    if transition_scene_second.state["fall_stage"] != "confirmed":
+        raise SystemExit("transitioned pose fall in a normal lying zone must be confirmed")
+    if transition_scene_second.state.get("fall_scene_suppressed"):
+        raise SystemExit("dynamic pose fall must not remain scene-suppressed")
+
+    fast_rules = {**rules, "fall_confirm_seconds": 4}
+    fast_engine = RuleEngine()
+    fast_start = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    original_clock = rule_engine_module.utc_now
+    try:
+        current_time = [fast_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        fast_engine.evaluate_snapshot(camera, {"id": 2200}, make_upright_analysis(), fast_rules)
+        current_time[0] = fast_start + timedelta(seconds=2)
+        fast_first = fast_engine.evaluate_snapshot(
+            camera,
+            {"id": 2201},
+            make_pose_fall_analysis(normal_lying_zone=True, fast_graph=True),
+            fast_rules,
+        )
+        current_time[0] = fast_start + timedelta(seconds=2.25)
+        fast_second = fast_engine.evaluate_snapshot(
+            camera,
+            {"id": 2202},
+            make_pose_fall_analysis(normal_lying_zone=True),
+            fast_rules,
+        )
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if fast_first.candidates:
+        raise SystemExit("first graph-confirmed fast-fall frame must remain a suspect")
+    if len(fast_second.candidates) != 1 or fast_second.state.get("fall_stage") != "confirmed":
+        raise SystemExit("two formal pose frames after a graph-confirmed fast fall must create an event without cached evidence")
+    if fast_second.state.get("fall_confirm_seconds", 0) >= fast_rules["fall_confirm_seconds"]:
+        raise SystemExit("fast-fall path did not exercise the short dynamic confirmation branch")
 
     worker = EdgeWorker(None, None, None, None)
     pose_rules = {"fall_detection_enabled": True, "activity_detection_enabled": True}
@@ -130,6 +185,10 @@ def main() -> None:
                 "clear_confirm_count": recovered_eval.state["fall_confirm_count"],
                 "scene_stage": scene_second.state["fall_stage"],
                 "scene_suppressed": scene_second.state["fall_scene_suppressed"],
+                "transition_scene_stage": transition_scene_second.state["fall_stage"],
+                "transition_scene_suppressed": transition_scene_second.state["fall_scene_suppressed"],
+                "fast_dynamic_stage": fast_second.state["fall_stage"],
+                "fast_dynamic_seconds": fast_second.state["fall_confirm_seconds"],
                 "idle_pose_enabled": idle_pose_runtime["pose_detection_enabled"],
                 "fall_pose_interval": fall_pose_runtime["worker_pose_interval_frames"],
                 "history_baseline_stage": history_first.state["fall_stage"],
@@ -269,6 +328,45 @@ def make_bending_analysis() -> dict:
     analysis["poses"][0]["bbox"] = [105, 90, 225, 285]
     analysis["poses"][0]["posture"] = "bending"
     analysis["motion_score"] = 0.06
+    return analysis
+
+
+def make_pose_fall_analysis(*, normal_lying_zone: bool, fast_graph: bool = False) -> dict:
+    analysis = make_analysis(fall_candidate=False, fall_score=0.96, normal_lying_zone=normal_lying_zone)
+    scene_fields = {
+        "normal_lying_zone": normal_lying_zone,
+        "scene_zone_id": "couch-1" if normal_lying_zone else None,
+        "scene_zone_label": "couch" if normal_lying_zone else None,
+        "scene_zone_label_zh": "沙发" if normal_lying_zone else None,
+        "scene_zone_overlap": 0.82 if normal_lying_zone else None,
+    }
+    analysis["fall_candidate"] = True
+    analysis["pose_fall_candidate"] = True
+    analysis["pose_fall_score"] = 0.96
+    analysis["poses"] = [{
+        "bbox": [80, 180, 230, 238],
+        "confidence": 0.88,
+        "posture_confidence": 0.91,
+        "source": "rtmpose",
+        "posture": "lying",
+        "track_id": "person-1",
+        "person_evidence_eligible": True,
+        "fall_evidence_eligible": True,
+        "fall_score": 0.96,
+        **scene_fields,
+    }]
+    analysis["pose_count"] = 1
+    if fast_graph:
+        analysis["pose_factor_graph"] = {
+            "fast_fall_candidate": True,
+            "fast_fall_score": 0.82,
+            "fast_fall_track": {
+                **analysis["poses"][0],
+                "fast_fall_candidate": True,
+                "fast_fall_score": 0.82,
+            },
+            "tracks": [],
+        }
     return analysis
 
 

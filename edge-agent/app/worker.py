@@ -12,6 +12,7 @@ from .rule_engine import RuleEngine, RuleEvaluation, build_event_evidence
 from .vision.temporal import TemporalObservationEngine
 from .vision.pose_factor_graph import PoseFactorGraphEngine
 from .vision.continual_pose_tracker import ContinualPoseTracker
+from .vision.motion_gate import MotionGate
 
 
 LIFE_OBSERVATION_TYPES = {"no_motion", "no_person"}
@@ -37,6 +38,7 @@ class EdgeWorker:
         pose_factor_graph_engine: PoseFactorGraphEngine | None = None,
         inference_scheduler: AdaptiveInferenceScheduler | None = None,
         continual_pose_tracker: Any | None = None,
+        motion_gate: Any | None = None,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.storage = storage
@@ -55,6 +57,7 @@ class EdgeWorker:
         self.pose_factor_graph_engine = pose_factor_graph_engine or PoseFactorGraphEngine()
         self.inference_scheduler = inference_scheduler or AdaptiveInferenceScheduler()
         self.continual_pose_tracker = continual_pose_tracker or ContinualPoseTracker()
+        self.motion_gate = motion_gate or MotionGate()
         self._monotonic_clock = monotonic_clock or time.monotonic
         self.last_history_cleanup_at = time.monotonic()
         self.last_history_cleanup_result: Dict[str, Any] = {}
@@ -105,6 +108,8 @@ class EdgeWorker:
             self._thread.join(timeout=5)
         if self._tracking_thread:
             self._tracking_thread.join(timeout=2)
+        if self.camera_agent is not None and hasattr(self.camera_agent, "reconcile_managed_streams"):
+            self.camera_agent.reconcile_managed_streams([])
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -128,6 +133,8 @@ class EdgeWorker:
         self.last_rules_snapshot = {**rules}
         cameras = self.storage.list_cameras(include_secret=True)
         cameras_by_id = {int(camera["id"]): camera for camera in cameras}
+        if hasattr(self.camera_agent, "reconcile_managed_streams"):
+            self.camera_agent.reconcile_managed_streams(list(cameras_by_id.values()))
         self._runtime_cameras = {camera_id: dict(camera) for camera_id, camera in cameras_by_id.items()}
         current_camera_ids = set(cameras_by_id)
         for removed_camera_id in self._known_camera_ids - current_camera_ids:
@@ -182,6 +189,11 @@ class EdgeWorker:
             if self.continual_pose_tracker is not None
             else {"schema_version": "disabled", "cameras": []}
         )
+        stream_status = (
+            self.camera_agent.managed_stream_status()
+            if hasattr(self.camera_agent, "managed_stream_status")
+            else {"managed_stream_count": 0, "streams": []}
+        )
         return {
             "worker_running": self.is_running,
             "last_loop_started_at": self.last_loop_started_at,
@@ -195,6 +207,8 @@ class EdgeWorker:
             "continual_pose_running": self._tracking_thread is not None and self._tracking_thread.is_alive(),
             "continual_pose": continual_status,
             "continual_pose_error": self.last_continual_pose_error,
+            "motion_gate": self.motion_gate.status() if self.motion_gate is not None else {"schema_version": "disabled"},
+            "camera_streams": stream_status,
             "runtime_reconciliation": self.runtime_reconciliation,
             "last_error": self.last_error,
         }
@@ -211,6 +225,8 @@ class EdgeWorker:
         self.rule_engine.reset_camera(camera_id)
         if self.continual_pose_tracker is not None:
             self.continual_pose_tracker.reset_camera(camera_id)
+        if self.motion_gate is not None:
+            self.motion_gate.reset_camera(camera_id)
         self.previous_frames.pop(camera_id, None)
         self.latest_evaluations.pop(camera_id, None)
         self.last_live_upload_at.pop(camera_id, None)
@@ -221,7 +237,14 @@ class EdgeWorker:
     def _run_continual_tracking(self) -> None:
         while not self._stop.is_set():
             self._run_continual_tracking_iteration()
-            self._stop.wait(0.04)
+            self._stop.wait(self._continual_tracking_interval_seconds())
+
+    def _continual_tracking_interval_seconds(self) -> float:
+        interval = getattr(self.continual_pose_tracker, "minimum_interval_seconds", 0.1)
+        try:
+            return max(0.08, min(0.25, float(interval)))
+        except (TypeError, ValueError):
+            return 0.1
 
     def _run_continual_tracking_iteration(self) -> None:
         if self.camera_agent is None or self.continual_pose_tracker is None:
@@ -231,12 +254,20 @@ class EdgeWorker:
             if not camera.get("enabled", True) or not camera.get("id"):
                 continue
             camera_id = int(camera["id"])
-            if not self.continual_pose_tracker.has_anchor(camera_id):
-                continue
             capture = self.camera_agent.latest_cached_frame(camera, max_age_seconds=0.5)
             if not capture:
                 continue
             frame_id = str(capture.get("frame_id") or "")
+            if self.motion_gate is not None:
+                gate = self.motion_gate.update(camera_id, capture["frame"], frame_id=frame_id)
+                if gate.get("detected"):
+                    self.inference_scheduler.signal_activity(
+                        camera_id,
+                        now=self._monotonic_clock(),
+                    )
+                    self._wake.set()
+            if not self.continual_pose_tracker.has_anchor(camera_id):
+                continue
             if not frame_id or frame_id == self._last_tracked_frame_ids.get(camera_id):
                 continue
             self._last_tracked_frame_ids[camera_id] = frame_id
@@ -388,19 +419,29 @@ class EdgeWorker:
         camera: Dict[str, Any],
         frame: Any,
         metadata: Dict[str, Any],
-    ) -> None:
+    ) -> Dict[str, Any] | None:
         if self.continual_pose_tracker is None or not camera.get("id"):
-            return
+            return None
         try:
-            self.continual_pose_tracker.update_frame(
+            payload = self.continual_pose_tracker.update_frame(
                 int(camera["id"]),
                 frame,
                 frame_id=str(metadata.get("frame_id") or ""),
                 captured_at=str(metadata.get("captured_at") or ""),
             )
+            risk_hint = payload.get("risk_hint") if isinstance(payload, dict) else None
+            if isinstance(risk_hint, dict) and risk_hint.get("detected"):
+                self.inference_scheduler.signal_activity(
+                    int(camera["id"]),
+                    now=self._monotonic_clock(),
+                    risk=True,
+                )
+                self._wake.set()
             self.last_continual_pose_error = ""
+            return payload if isinstance(payload, dict) else None
         except Exception as exc:
             self.last_continual_pose_error = str(exc)
+            return None
 
     def _publish_continual_pose_anchor(
         self,
@@ -649,12 +690,17 @@ class EdgeWorker:
                 "worker_pose_interval_frames": 1,
                 "eacp_mode": "manual",
             }
-        mode = self.inference_scheduler.mode(camera_id, now=self._monotonic_clock())
-        enabled = mode in {"active", "risk"}
+        now = self._monotonic_clock()
+        schedule = self.inference_scheduler.camera_state(camera_id, now=now)
+        mode = str(schedule.get("mode") or self.inference_scheduler.mode(camera_id, now=now))
+        enabled = bool(schedule.get("pose_required"))
         return {
             "pose_detection_enabled": enabled,
-            "pose_runtime_reason": f"eacp_{mode}_pose" if enabled else "eacp_idle_person_anchor",
+            "pose_runtime_reason": f"eacp_{mode}_pose" if enabled else f"eacp_{mode}_person_probe",
             "worker_pose_interval_frames": 1 if enabled else 0,
+            "pose_allow_internal_detector_fallback": False,
+            "person_detection_cache_seconds": 0.45 if mode == "risk" else 0.6 if mode == "active" else 0.0,
+            "person_detection_cache_max_motion": 0.05,
             "eacp_mode": mode,
         }
 

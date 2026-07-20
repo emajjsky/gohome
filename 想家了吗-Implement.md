@@ -11261,3 +11261,31 @@ iOS 真机：
 - 重启后 `gohome-edge-agent=active`、配置同步 `running=true`、两路摄像头 `online/synced`、live relay `8 FPS`。
 - `upload_agent.running=true`，重启后成功上传 camera offline 事件，`last_error` 为空；后续 5 分钟无新的 `database is locked / Traceback / ERROR`。
 - 双路有人时 CPU 短时约 200%，温度约 72-74 摄氏度，当前 `throttled=0`；这仍然要求后续 P3b/P4 降低纯 CPU 双路 active 的持续成本。
+
+## 120. 2026-07-20 EACP P3b/P4 算法代码收口
+
+本轮先完成算法闭环，未改管理页面。当前唯一正式运行链仍为：
+
+`CameraAgent -> AdaptiveInferenceScheduler -> DetectAgent/VisionPipeline -> TemporalObservationEngine -> PoseFactorGraphEngine -> RuleEngine -> EventAgent/UploadAgent`
+
+P3b 内嵌人体轨迹：
+
+- `vision/temporal.py` 从逐轨迹贪心 IoU/中心距离匹配升级为 observation-centric 全局分配。
+- 每路独立维护人体轨迹、归一化框速度和有限历史；预测框参与匹配，最多 2 秒短遮挡窗口，超过窗口的新人物不得继承旧 track 的姿态/跌倒历史。
+- 全局分配覆盖多人交叉、快速位移、短时漏检恢复、轨迹替换和摄像头隔离；家庭人数较少时使用有界 bitmask 动态规划，人数异常升高时退化为有界贪心，避免引入 SciPy/BoxMOT。
+- 该实现采用 OC-SORT 的观测中心、速度预测和全局关联目标，但不是未经评估直接安装的上游 boxmot/OC-SORT 包，管理端不得写成已安装第三方 OC-SORT。
+
+P4 风险升频边界：
+
+- `ContinualPoseTracker` 对可信 KLT `tracked` 帧计算单帧向下位移速度与锚点累计向下位移，只产生 `risk_hint`。
+- `risk_hint` 由 `EdgeWorker.observe_stream_frame` 交给调度器，唤醒该路正式 YOLO/RTMPose 锚点并暂时进入 `risk` 频率。
+- `risk_hint.formal_evidence_eligible=false`；`tracked/coasting` 不进入 TemporalObservation、PoseFactorGraph、RuleEngine、恢复判断、姿态片段或云端事件证据。
+- 没有新的 `observed` 模型锚点时，快速下移提示不能生成跌倒事件；床/沙发正常躺卧仍保持 `active`。
+
+验证结果：
+
+- 人体轨迹回归覆盖稳定轨迹、多人交叉、短遮挡、快速姿态位移、长时间替换和跨摄像头隔离。
+- KLT/worker 回归覆盖显示连续性、快速向下升频提示和正式证据隔离。
+- 本地 30 个边缘回归脚本通过；`npm run verify:app-server` 的事件、三图媒体和云端视觉复核闭环通过。整仓 `npm test` 仍被首页已有阻塞式加载文案检查拦截，与本轮算法无关。
+- 部署树莓派后，模型运行时、双摄在线、配置同步、视频中继无错误；单服务进程 CPU 约 131-150%，温度约 61.5-65.3 摄氏度，`throttled=0x0`。
+- 未宣称真人跌倒端到端、目标 3-5 FPS 风险采样、1.5-3 秒边缘候选和现场云端复核已经完成；这些必须在用户可模拟动作时执行。

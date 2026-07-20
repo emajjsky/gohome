@@ -112,6 +112,13 @@ class RtmposeAnalyzer:
             return self._disabled_result("姿态检测未启用。")
 
         external_bboxes = self._external_person_boxes(people or [], config)
+        if not external_bboxes and not config.get("pose_allow_internal_detector_fallback", True):
+            return self._disabled_result(
+                "当前帧没有可信人形框，姿态头保持待机。",
+                status="not_visible",
+                detection_source="waiting_person_box",
+                external_box_count=0,
+            )
         detection_source = "external_person_boxes" if external_bboxes else "rtmlib_detector_fallback"
         with self._model_lock:
             ready, message = (
@@ -133,7 +140,12 @@ class RtmposeAnalyzer:
                     if external_bboxes
                     else self._infer_pose(frame)
                 )
-                raw_poses = self._extract_poses(keypoints, scores, frame)
+                raw_poses = self._extract_poses(
+                    keypoints,
+                    scores,
+                    frame,
+                    source_person_boxes=external_bboxes,
+                )
             except Exception as exc:
                 return self._disabled_result(
                     f"RTMPose 推理失败：{exc}",
@@ -376,7 +388,14 @@ class RtmposeAnalyzer:
             return f"{message} 本帧人体框推理瞬态失败后重试成功。"
         return message
 
-    def _extract_poses(self, keypoints: Any, scores: Any, frame: Any) -> list[Dict[str, Any]]:
+    def _extract_poses(
+        self,
+        keypoints: Any,
+        scores: Any,
+        frame: Any,
+        *,
+        source_person_boxes: list[list[float]] | None = None,
+    ) -> list[Dict[str, Any]]:
         import math
         import numpy as np  # type: ignore
 
@@ -421,8 +440,7 @@ class RtmposeAnalyzer:
             posture = posture_result["label"]
             fall_score = self._estimate_fall_score(keypoint_payload, posture, frame_width, frame_height)
             action_hints = self._action_hints(keypoint_payload, posture, fall_score >= self.fall_threshold)
-            poses.append(
-                {
+            pose_payload = {
                     "keypoints": keypoint_payload,
                     "confidence": confidence,
                     "posture": posture,
@@ -436,7 +454,11 @@ class RtmposeAnalyzer:
                     "action_hints": action_hints,
                     "source": "rtmpose",
                 }
-            )
+            if source_person_boxes and pose_index < len(source_person_boxes):
+                pose_payload["source_person_bbox"] = [
+                    round(float(value), 1) for value in source_person_boxes[pose_index]
+                ]
+            poses.append(pose_payload)
         poses.sort(key=lambda pose: float(pose.get("confidence") or 0.0), reverse=True)
         return poses
 

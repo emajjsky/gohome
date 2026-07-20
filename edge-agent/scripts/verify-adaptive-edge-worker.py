@@ -67,7 +67,16 @@ class ContinualTracker:
 
     def update_frame(self, camera_id, frame, *, frame_id, captured_at):
         self.frames.append({"camera_id": camera_id, "frame_id": frame_id, "captured_at": captured_at})
-        return {"state": "tracked", "pose_count": 1}
+        return {
+            "state": "tracked",
+            "pose_count": 1,
+            "formal_evidence_eligible": False,
+            "risk_hint": {
+                "detected": camera_id == 25,
+                "reason": "rapid_downward_pose_motion" if camera_id == 25 else "",
+                "formal_evidence_eligible": False,
+            },
+        }
 
     def latest(self, camera_id):
         return {"camera_id": camera_id, "state": "tracked", "pose_count": 1}
@@ -83,6 +92,12 @@ class ContinualTracker:
 
 
 class CameraAgent:
+    def __init__(self):
+        self.reconciled_camera_ids = []
+
+    def reconcile_managed_streams(self, cameras):
+        self.reconciled_camera_ids = sorted(int(camera["id"]) for camera in cameras)
+
     def latest_cached_frame(self, camera, max_age_seconds=2.0):
         return {
             "frame": "latest-frame",
@@ -129,6 +144,8 @@ def main() -> None:
     second_wait = worker._run_iteration()
     if processed != [24, 25] or second_wait != 0.0:
         raise SystemExit(f"second camera was not independently scheduled: {processed}, {second_wait}")
+    if worker.camera_agent.reconciled_camera_ids != [24, 25]:
+        raise SystemExit("worker did not keep enabled camera streams alive independently of preview pages")
 
     idle_wait = worker._run_iteration()
     if not 0.0 < idle_wait <= 0.25:
@@ -136,6 +153,12 @@ def main() -> None:
 
     if worker._pose_runtime_config(24, worker.storage.rules)["pose_detection_enabled"]:
         raise SystemExit("idle camera should not run RTMPose before person or motion is observed")
+
+    clock.value = 100.5
+    scheduler.signal_activity(24, now=clock.value)
+    motion_only_config = worker._pose_runtime_config(24, worker.storage.rules)
+    if motion_only_config["pose_detection_enabled"]:
+        raise SystemExit("motion-only wakeup must run YOLO without enabling RTMPose")
 
     clock.value = 101.0
     scheduler.mark_started(24, now=clock.value)
@@ -199,7 +222,7 @@ def main() -> None:
     if len(continual_tracker.observed) != 1:
         raise SystemExit("cached pose was incorrectly promoted to a fresh model anchor")
 
-    worker.observe_stream_frame(
+    tracked_payload = worker.observe_stream_frame(
         {"id": 25},
         "stream-frame",
         {"frame_id": "25-200", "captured_at": "2026-07-17T00:00:00.2+00:00"},
@@ -210,11 +233,17 @@ def main() -> None:
         "captured_at": "2026-07-17T00:00:00.2+00:00",
     }]:
         raise SystemExit("shared stream frame was not sent to the continual tracker")
+    if not isinstance(tracked_payload, dict) or not tracked_payload.get("risk_hint", {}).get("detected"):
+        raise SystemExit("continual tracking risk hint was not returned to the worker")
+    if scheduler.camera_state(25, now=clock.value).get("mode") != "risk":
+        raise SystemExit("display-only rapid downward hint did not wake formal risk inference")
 
     worker._runtime_cameras = {24: {"id": 24, "enabled": True}}
     worker._run_continual_tracking_iteration()
     if continual_tracker.frames[-1]["frame_id"] != "24-latest":
         raise SystemExit("independent continual tracking loop did not consume the latest cached frame")
+    if abs(worker._continual_tracking_interval_seconds() - 0.1) > 0.001:
+        raise SystemExit("continual tracking loop is running faster than its effective tracker interval")
 
     worker._reset_camera_runtime_memory(24)
     if continual_tracker.reset != [24]:

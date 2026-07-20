@@ -34,6 +34,30 @@ def main() -> None:
     )
     scheduler.reconcile([24, 25], now=100.0)
 
+    wake_scheduler = AdaptiveInferenceScheduler(
+        idle_interval_seconds=1.0,
+        active_interval_seconds=0.5,
+        risk_interval_seconds=0.2,
+    )
+    wake_scheduler.reconcile([24], now=100.0)
+    wake_scheduler.signal_activity(24, now=100.0)
+    activity_wakeup = wake_scheduler.camera_state(24, now=100.0)
+    if (
+        activity_wakeup["mode"] != "active"
+        or activity_wakeup["pose_required"]
+        or float(activity_wakeup["next_due_in_seconds"]) > 0.001
+    ):
+        raise SystemExit(f"motion gate did not wake the active camera: {activity_wakeup}")
+    wake_scheduler.mark_started(24, now=100.0)
+    wake_scheduler.observe(24, {"person_count": 1, "motion_detected": True}, now=100.05)
+    if not wake_scheduler.camera_state(24, now=100.05)["pose_required"]:
+        raise SystemExit("confirmed person did not enable pose inference")
+    scheduled_due = float(wake_scheduler.camera_state(24, now=100.05)["next_due_at"])
+    wake_scheduler.signal_activity(24, now=100.10)
+    retained_due = float(wake_scheduler.camera_state(24, now=100.10)["next_due_at"])
+    if abs(scheduled_due - retained_due) > 0.0001:
+        raise SystemExit("motion gate bypassed the active inference cadence")
+
     first = scheduler.next_due_camera([24, 25], now=100.0)
     if first != 24:
         raise SystemExit(f"first camera was not selected deterministically: {first}")
@@ -223,6 +247,7 @@ def main() -> None:
         "risk_priority": True,
         "starvation_guard": True,
         "thermal_cooldown": True,
+        "motion_wakeup": True,
     })
 
 

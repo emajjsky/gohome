@@ -146,6 +146,7 @@ class PoseFactorGraphEngine:
         low_posture = posture == "lying" or (posture in {"squatting", "low_body"} and center[1] >= 0.62)
         factors = {
             "recent_upright": recent_upright_ok,
+            "same_track_continuity": recent_upright_ok,
             "vertical_drop": vertical_drop >= 0.12,
             "spatial_consistency": horizontal_distance <= 0.28,
             "low_posture": low_posture,
@@ -154,16 +155,16 @@ class PoseFactorGraphEngine:
             "non_normal_lying_surface": not normal_lying_zone,
         }
         weights = {
-            "recent_upright": 0.20, "vertical_drop": 0.20, "spatial_consistency": 0.10,
+            "recent_upright": 0.20, "same_track_continuity": 0.10, "vertical_drop": 0.20, "spatial_consistency": 0.10,
             "low_posture": 0.20, "horizontal_body": 0.10, "motion": 0.10,
-            "non_normal_lying_surface": 0.10,
+            "non_normal_lying_surface": 0.0,
         }
         score = sum(weights[name] for name, matched in factors.items() if matched)
         score *= max(0.55, min(1.0, confidence if confidence > 0 else 0.55))
         fast_candidate = bool(
             score >= 0.72 and factors["recent_upright"] and factors["vertical_drop"]
-            and factors["spatial_consistency"] and factors["low_posture"]
-            and factors["non_normal_lying_surface"]
+            and (factors["spatial_consistency"] or factors["same_track_continuity"])
+            and factors["low_posture"]
         )
         prolonged_candidate = bool(
             posture == "lying" and confidence >= self.min_posture_confidence

@@ -97,6 +97,7 @@ class VisionPipeline:
         runtime_config = {**self.default_config, **(config or {})}
 
         quality = self.quality.analyze(frame, previous_frame, runtime_config)
+        runtime_config["frame_motion_score"] = float(quality.get("motion_score") or 0.0)
         person = self.person.analyze(frame, runtime_config)
         raw_people = list(person.get("people") or [])
         raw_pets = list(person.get("pets") or [])
@@ -674,10 +675,20 @@ class VisionPipeline:
             item_box = item.get("bbox")
             if not self._valid_box(item_box):
                 return True
+            evidence_boxes = [item_box]
+            source_person_box = item.get("source_person_bbox")
+            if kind == "pose" and self._valid_box(source_person_box):
+                evidence_boxes.insert(0, source_person_box)
             for zone in display_zones:
-                containment = self._box_intersection_ratio(item_box, zone.get("bbox"))
-                area_ratio = self._box_area(item_box) / max(1.0, self._box_area(zone.get("bbox")))
-                if containment >= min_containment and area_ratio <= max_area_ratio:
+                matched_box = next((
+                    box
+                    for box in evidence_boxes
+                    if self._box_intersection_ratio(box, zone.get("bbox")) >= min_containment
+                    and self._box_area(box) / max(1.0, self._box_area(zone.get("bbox"))) <= max_area_ratio
+                ), None)
+                if matched_box is not None:
+                    containment = self._box_intersection_ratio(matched_box, zone.get("bbox"))
+                    area_ratio = self._box_area(matched_box) / max(1.0, self._box_area(zone.get("bbox")))
                     suppressed.append({
                         "kind": kind,
                         "bbox": [round(float(value), 1) for value in item_box],
@@ -688,7 +699,11 @@ class VisionPipeline:
                         "scene_zone_label_zh": zone.get("label_zh") or "电视",
                         "containment": round(containment, 4),
                         "area_ratio": round(area_ratio, 4),
-                        "reason": "inside_stable_display_surface",
+                        "reason": (
+                            "source_person_inside_stable_display_surface"
+                            if matched_box is source_person_box
+                            else "inside_stable_display_surface"
+                        ),
                     })
                     return False
             return True

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from copy import deepcopy
 from datetime import datetime, timezone
+from functools import lru_cache
 import math
 import time
 from typing import Any, Dict
@@ -11,13 +12,15 @@ from typing import Any, Dict
 class TemporalObservationEngine:
     """Maintains compact per-camera tracks and a bounded observation history."""
 
-    version = "temporal-observation-v1"
+    version = "temporal-observation-v2"
+    tracker_version = "eacp-observation-centric-v1"
 
     def __init__(
         self,
         *,
         history_size: int = 48,
         track_ttl_seconds: float = 20.0,
+        max_match_age_seconds: float = 2.0,
         min_iou: float = 0.12,
         max_center_distance: float = 0.24,
         posture_min_duration_seconds: float = 3.0,
@@ -26,6 +29,7 @@ class TemporalObservationEngine:
     ) -> None:
         self.history_size = max(8, int(history_size))
         self.track_ttl_seconds = max(2.0, float(track_ttl_seconds))
+        self.max_match_age_seconds = max(0.5, min(self.track_ttl_seconds, float(max_match_age_seconds)))
         self.min_iou = max(0.0, min(1.0, float(min_iou)))
         self.max_center_distance = max(0.01, float(max_center_distance))
         self.posture_min_duration_seconds = max(0.0, float(posture_min_duration_seconds))
@@ -56,24 +60,35 @@ class TemporalObservationEngine:
         expired_track_ids = self._expire_tracks(tracks, now_mono)
         episode_closures = self._close_expired_postures(camera_id, expired_track_ids, timestamp)
 
-        unmatched_track_ids = set(tracks)
+        assignments = self._assign_tracks(
+            detections,
+            tracks,
+            now_mono=now_mono,
+            frame_width=frame_width,
+            frame_height=frame_height,
+        )
         assigned: list[Dict[str, Any]] = []
-        for detection in sorted(detections, key=lambda item: float(item.get("confidence") or 0.0), reverse=True):
-            track_id = self._match_track(
-                detection,
-                tracks,
-                unmatched_track_ids,
-                frame_width=frame_width,
-                frame_height=frame_height,
-            )
+        for detection_index, detection in enumerate(detections):
+            track_id = assignments.get(detection_index)
             if track_id is None:
                 track_id = self._new_track_id(camera_id)
                 tracks[track_id] = {
                     "track_id": track_id,
                     "first_seen_at": timestamp,
                     "sample_count": 0,
+                    "bbox_velocity": [0.0, 0.0, 0.0, 0.0],
                 }
             track = tracks[track_id]
+            previous_bbox = track.get("bbox")
+            previous_seen = track.get("last_seen_monotonic")
+            velocity = self._updated_velocity(
+                previous_bbox,
+                detection["bbox"],
+                previous_velocity=track.get("bbox_velocity"),
+                elapsed=None if previous_seen is None else now_mono - float(previous_seen),
+                frame_width=frame_width,
+                frame_height=frame_height,
+            )
             track.update({
                 "last_seen_at": timestamp,
                 "last_seen_monotonic": now_mono,
@@ -83,8 +98,8 @@ class TemporalObservationEngine:
                 "posture": str(detection.get("posture") or "unknown"),
                 "posture_confidence": float(detection.get("posture_confidence") or 0.0),
                 "sample_count": int(track.get("sample_count") or 0) + 1,
+                "bbox_velocity": velocity,
             })
-            unmatched_track_ids.discard(track_id)
             assigned.append({**detection, "track_id": track_id})
 
         self._annotate_analysis(people, poses, assigned, frame_width, frame_height)
@@ -109,6 +124,7 @@ class TemporalObservationEngine:
         history.append(observation)
         result = {
             "schema_version": self.version,
+            "tracker_version": self.tracker_version,
             "camera_id": camera_id,
             "person_present": observation["person_present"],
             "person_count": observation["person_count"],
@@ -224,28 +240,234 @@ class TemporalObservationEngine:
         best = max(candidates, key=lambda pose: self._iou(bbox, pose.get("bbox")))
         return best if self._iou(bbox, best.get("bbox")) >= 0.20 else None
 
-    def _match_track(
+    def _assign_tracks(
+        self,
+        detections: list[Dict[str, Any]],
+        tracks: dict[str, Dict[str, Any]],
+        *,
+        now_mono: float,
+        frame_width: float,
+        frame_height: float,
+    ) -> dict[int, str]:
+        if not detections or not tracks:
+            return {}
+        candidate_ids = [
+            track_id
+            for track_id, track in tracks.items()
+            if track.get("last_seen_monotonic") is not None
+            and now_mono - float(track["last_seen_monotonic"]) <= self.max_match_age_seconds
+        ]
+        if not candidate_ids:
+            return {}
+        scores = [
+            [
+                self._assignment_score(
+                    detection,
+                    tracks[track_id],
+                    now_mono=now_mono,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                )
+                for track_id in candidate_ids
+            ]
+            for detection in detections
+        ]
+        pairs = self._maximum_score_assignment(scores)
+        return {
+            detection_index: candidate_ids[track_index]
+            for detection_index, track_index in pairs
+            if scores[detection_index][track_index] > 0.0
+        }
+
+    def _assignment_score(
         self,
         detection: Dict[str, Any],
-        tracks: dict[str, Dict[str, Any]],
-        candidates: set[str],
+        track: Dict[str, Any],
+        *,
+        now_mono: float,
+        frame_width: float,
+        frame_height: float,
+    ) -> float:
+        elapsed = max(0.0, now_mono - float(track.get("last_seen_monotonic") or now_mono))
+        predicted_bbox = self._predicted_bbox(track, elapsed, frame_width, frame_height)
+        predicted_iou = self._iou(detection["bbox"], predicted_bbox)
+        observed_iou = self._iou(detection["bbox"], track.get("bbox"))
+        predicted_distance = self._center_distance(
+            detection["bbox"], predicted_bbox, frame_width, frame_height
+        )
+        shape_similarity = self._shape_similarity(detection["bbox"], track.get("bbox"))
+        transition = self._credible_posture_transition(track.get("posture"), detection.get("posture"))
+        speed = self._velocity_speed(track.get("bbox_velocity"))
+        distance_gate = self.max_center_distance + min(0.16, speed * min(1.5, elapsed) * 0.75)
+        if transition:
+            distance_gate = max(distance_gate, 0.38)
+        if predicted_iou < self.min_iou and predicted_distance > distance_gate:
+            return -math.inf
+        if shape_similarity < (0.16 if transition else 0.28):
+            return -math.inf
+
+        direction = self._direction_consistency(
+            track,
+            detection["bbox"],
+            frame_width=frame_width,
+            frame_height=frame_height,
+        )
+        if direction < -0.65 and predicted_iou < 0.30:
+            return -math.inf
+        distance_score = max(0.0, 1.0 - predicted_distance / max(distance_gate, 0.01))
+        return (
+            predicted_iou * 2.4
+            + observed_iou * 0.35
+            + distance_score * 0.9
+            + shape_similarity * 0.35
+            + max(0.0, direction) * 0.45
+            + (0.20 if transition else 0.0)
+            - min(0.25, elapsed * 0.08)
+        )
+
+    def _maximum_score_assignment(self, scores: list[list[float]]) -> list[tuple[int, int]]:
+        detection_count = len(scores)
+        track_count = len(scores[0]) if scores else 0
+        if not detection_count or not track_count:
+            return []
+        if track_count > 10 or detection_count > 10:
+            candidates = sorted(
+                (
+                    (score, detection_index, track_index)
+                    for detection_index, row in enumerate(scores)
+                    for track_index, score in enumerate(row)
+                    if math.isfinite(score) and score > 0.0
+                ),
+                reverse=True,
+            )
+            used_detections: set[int] = set()
+            used_tracks: set[int] = set()
+            result = []
+            for _, detection_index, track_index in candidates:
+                if detection_index in used_detections or track_index in used_tracks:
+                    continue
+                used_detections.add(detection_index)
+                used_tracks.add(track_index)
+                result.append((detection_index, track_index))
+            return result
+
+        @lru_cache(maxsize=None)
+        def solve(detection_index: int, used_tracks: int) -> tuple[float, tuple[tuple[int, int], ...]]:
+            if detection_index >= detection_count:
+                return 0.0, ()
+            best_score, best_pairs = solve(detection_index + 1, used_tracks)
+            for track_index, score in enumerate(scores[detection_index]):
+                if used_tracks & (1 << track_index) or not math.isfinite(score) or score <= 0.0:
+                    continue
+                remainder_score, remainder_pairs = solve(
+                    detection_index + 1,
+                    used_tracks | (1 << track_index),
+                )
+                total = score + remainder_score
+                if total > best_score:
+                    best_score = total
+                    best_pairs = ((detection_index, track_index), *remainder_pairs)
+            return best_score, best_pairs
+
+        return list(solve(0, 0)[1])
+
+    def _updated_velocity(
+        self,
+        previous_bbox: Any,
+        bbox: Any,
+        *,
+        previous_velocity: Any,
+        elapsed: float | None,
+        frame_width: float,
+        frame_height: float,
+    ) -> list[float]:
+        if not self._valid_bbox(previous_bbox) or not self._valid_bbox(bbox) or not elapsed or elapsed <= 0.0:
+            return [0.0, 0.0, 0.0, 0.0]
+        previous = self._normalized_bbox_state(previous_bbox, frame_width, frame_height)
+        current = self._normalized_bbox_state(bbox, frame_width, frame_height)
+        measured = [(current[index] - previous[index]) / elapsed for index in range(4)]
+        if not isinstance(previous_velocity, (list, tuple)) or len(previous_velocity) != 4:
+            return measured
+        old = [float(value) for value in previous_velocity]
+        if max(abs(value) for value in old) <= 1e-6:
+            return measured
+        return [old[index] * 0.30 + measured[index] * 0.70 for index in range(4)]
+
+    def _predicted_bbox(
+        self,
+        track: Dict[str, Any],
+        elapsed: float,
+        frame_width: float,
+        frame_height: float,
+    ) -> list[float]:
+        bbox = track.get("bbox")
+        if not self._valid_bbox(bbox):
+            return []
+        state = self._normalized_bbox_state(bbox, frame_width, frame_height)
+        velocity = track.get("bbox_velocity")
+        if not isinstance(velocity, (list, tuple)) or len(velocity) != 4:
+            velocity = [0.0, 0.0, 0.0, 0.0]
+        horizon = min(1.5, max(0.0, elapsed))
+        cx = state[0] + float(velocity[0]) * horizon
+        cy = state[1] + float(velocity[1]) * horizon
+        width = max(0.01, state[2] + float(velocity[2]) * horizon)
+        height = max(0.01, state[3] + float(velocity[3]) * horizon)
+        return [
+            (cx - width / 2.0) * frame_width,
+            (cy - height / 2.0) * frame_height,
+            (cx + width / 2.0) * frame_width,
+            (cy + height / 2.0) * frame_height,
+        ]
+
+    def _normalized_bbox_state(self, bbox: Any, width: float, height: float) -> list[float]:
+        x1, y1, x2, y2 = [float(value) for value in bbox]
+        return [
+            (x1 + x2) / (2.0 * max(1.0, width)),
+            (y1 + y2) / (2.0 * max(1.0, height)),
+            (x2 - x1) / max(1.0, width),
+            (y2 - y1) / max(1.0, height),
+        ]
+
+    def _velocity_speed(self, velocity: Any) -> float:
+        if not isinstance(velocity, (list, tuple)) or len(velocity) < 2:
+            return 0.0
+        return math.hypot(float(velocity[0]), float(velocity[1]))
+
+    def _direction_consistency(
+        self,
+        track: Dict[str, Any],
+        bbox: Any,
         *,
         frame_width: float,
         frame_height: float,
-    ) -> str | None:
-        best_id = None
-        best_score = -1.0
-        for track_id in candidates:
-            track = tracks[track_id]
-            overlap = self._iou(detection["bbox"], track.get("bbox"))
-            distance = self._center_distance(detection["bbox"], track.get("bbox"), frame_width, frame_height)
-            if overlap < self.min_iou and distance > self.max_center_distance:
-                continue
-            score = overlap * 2.0 + max(0.0, self.max_center_distance - distance)
-            if score > best_score:
-                best_id = track_id
-                best_score = score
-        return best_id
+    ) -> float:
+        velocity = track.get("bbox_velocity")
+        if not isinstance(velocity, (list, tuple)) or len(velocity) < 2:
+            return 0.0
+        vx, vy = float(velocity[0]), float(velocity[1])
+        speed = math.hypot(vx, vy)
+        if speed <= 1e-5 or not self._valid_bbox(track.get("bbox")):
+            return 0.0
+        previous = self._normalized_bbox_state(track["bbox"], frame_width, frame_height)
+        current = self._normalized_bbox_state(bbox, frame_width, frame_height)
+        dx, dy = current[0] - previous[0], current[1] - previous[1]
+        distance = math.hypot(dx, dy)
+        if distance <= 1e-5:
+            return 0.0
+        return max(-1.0, min(1.0, (vx * dx + vy * dy) / (speed * distance)))
+
+    def _shape_similarity(self, first: Any, second: Any) -> float:
+        if not self._valid_bbox(first) or not self._valid_bbox(second):
+            return 0.0
+        ax1, ay1, ax2, ay2 = [float(value) for value in first]
+        bx1, by1, bx2, by2 = [float(value) for value in second]
+        width_ratio = max(1e-4, (ax2 - ax1) / max(1.0, bx2 - bx1))
+        height_ratio = max(1e-4, (ay2 - ay1) / max(1.0, by2 - by1))
+        return math.exp(-abs(math.log(width_ratio)) - abs(math.log(height_ratio)))
+
+    def _credible_posture_transition(self, previous: Any, current: Any) -> bool:
+        upright = {"standing", "sitting", "squatting", "bending", "upper_body", "standing_or_sitting"}
+        return str(previous or "").lower() in upright and str(current or "").lower() in {"lying", "low_body"}
 
     def _annotate_analysis(
         self,
@@ -309,6 +531,7 @@ class TemporalObservationEngine:
             "posture": str(track.get("posture") or "unknown"),
             "posture_confidence": round(float(track.get("posture_confidence") or 0.0), 4),
             "sample_count": int(track.get("sample_count") or 0),
+            "bbox_velocity": [round(float(value), 4) for value in track.get("bbox_velocity") or []],
         }
 
     def _history_track(self, item: Dict[str, Any]) -> Dict[str, Any]:

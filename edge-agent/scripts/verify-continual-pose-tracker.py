@@ -94,6 +94,39 @@ def main() -> None:
     dy = np.median([point["y"] - source["y"] for point, source in zip(visible, pose["keypoints"])])
     if abs(float(dx) - 5.0) > 1.0 or abs(float(dy) - 3.0) > 1.0:
         raise SystemExit(f"tracked keypoints drifted from the synthetic translation: dx={dx}, dy={dy}")
+    if tracked.get("risk_hint", {}).get("detected"):
+        raise SystemExit("ordinary small pose motion incorrectly triggered risk scheduling")
+
+    risk_clock = {"now": 300.0}
+    risk_tracker = ContinualPoseTracker(
+        max_age_seconds=0.6,
+        max_display_age_seconds=1.2,
+        min_tracked_points=6,
+        monotonic_clock=lambda: risk_clock["now"],
+    )
+    risk_tracker.observe(
+        26,
+        frame,
+        frame_id="26-100",
+        captured_at="2026-07-17T02:00:00+00:00",
+        poses=[pose],
+    )
+    risk_clock["now"] = 300.11
+    downward = risk_tracker.update_frame(
+        26,
+        translate(frame, dx=0, dy=20),
+        frame_id="26-101",
+        captured_at="2026-07-17T02:00:00.110000+00:00",
+    )
+    risk_hint = downward.get("risk_hint") or {}
+    if (
+        downward.get("state") != "tracked"
+        or not risk_hint.get("detected")
+        or risk_hint.get("reason") != "rapid_downward_pose_motion"
+    ):
+        raise SystemExit(f"rapid downward KLT motion did not request risk scheduling: {downward}")
+    if downward.get("formal_evidence_eligible") or risk_hint.get("formal_evidence_eligible"):
+        raise SystemExit("KLT risk scheduling hint leaked into formal event evidence")
 
     grace_clock = {"now": 200.0}
     grace_tracker = ContinualPoseTracker(
@@ -211,6 +244,7 @@ def main() -> None:
         "ok": True,
         "translation": [round(float(dx), 2), round(float(dy), 2)],
         "tracked_points": tracked["quality"]["tracked_point_count"],
+        "risk_hint": risk_hint,
         "display_grace_stale_tracked": True,
         "bounded_display_coasting": True,
         "tracked_age_seconds": tracked["age_seconds"],

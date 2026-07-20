@@ -22,6 +22,9 @@ def main() -> None:
         raise SystemExit("algorithm console still swaps the video base for analysis JPEGs")
 
     live_loop = function_source(console, "async function loadLiveAnalysis", "async function captureSelected")
+    delay = function_source(console, "function liveAnalysisDelay", "function stopLiveAnalysisLoop")
+    if "return 750" not in delay:
+        raise SystemExit("algorithm console metadata polling must use a controlled 750ms cadence")
     if "include_frame=false" not in live_loop:
         raise SystemExit("algorithm console does not poll lightweight overlay metadata")
     if "include_frame=true" in live_loop:
@@ -30,6 +33,8 @@ def main() -> None:
         raise SystemExit("metadata polling still flashes a request-in-progress label")
     if live_loop.count('setText("streamStatus", "后台连续感知")') != 1:
         raise SystemExit("algorithm console does not expose one stable continual sensing label")
+    if 'document.addEventListener("visibilitychange"' not in console:
+        raise SystemExit("algorithm console does not pause and resume metadata updates with page visibility")
 
     render_snapshot = function_source(console, "function renderSnapshot", "function renderContinualPoseStatus")
     if 'removeAttribute("src")' in render_snapshot or '$("analysisFrame")' in render_snapshot:

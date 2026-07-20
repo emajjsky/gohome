@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import Lock
 from typing import Any, Dict, Optional
 
 from .vision import VisionPipeline
@@ -57,6 +58,10 @@ class DetectAgent:
             activity_window_seconds=activity_window_seconds,
             activity_max_samples=activity_max_samples,
         )
+        self._initialize_inference_lock()
+
+    def _initialize_inference_lock(self) -> None:
+        self._inference_lock = Lock()
 
     def analyze_frame(self, frame: Any, previous_frame: Optional[Any] = None) -> Dict[str, Any]:
         return self.analyze_frame_with_config(frame, previous_frame=previous_frame)
@@ -67,4 +72,5 @@ class DetectAgent:
         previous_frame: Optional[Any] = None,
         config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        return self.pipeline.analyze(frame, previous_frame=previous_frame, config=config)
+        with self._inference_lock:
+            return self.pipeline.analyze(frame, previous_frame=previous_frame, config=config)

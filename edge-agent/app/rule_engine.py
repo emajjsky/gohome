@@ -163,7 +163,7 @@ class RuleEngine:
                     rule={
                         "id": "fall_candidate",
                         "label": "跌倒应急报警",
-                        "reason": "同一人体先出现站坐状态，随后快速下降并在非床/沙发区域持续倒地，达到帧数、持续时间和置信度阈值。",
+                        "reason": "同一人体先出现站坐状态，随后快速下降，并达到连续姿态证据、帧数、持续时间和置信度阈值。",
                         "observed": {
                             **fall_runtime["observed"],
                             "people": analysis.get("people", []),
@@ -431,7 +431,7 @@ class RuleEngine:
         upright_before = self.fall_upright_states.get(camera_id) or {}
         upright_targets = self._upright_targets(analysis)
         transition = self._fall_transition(target, upright_before, now, analysis, rules)
-        scene_suppressed = bool(target and target.get("normal_lying_zone"))
+        normal_lying_zone = bool(target and target.get("normal_lying_zone"))
 
         fall_score_ok = fall_score >= fall_score_threshold
         pose_score_ok = pose_fall and pose_fall_score >= pose_fall_threshold
@@ -446,6 +446,12 @@ class RuleEngine:
             or graph_candidate
             or bool(previous.get("transition_confirmed") and same_visual_target)
         )
+        fast_transition_confirmed = bool(
+            graph_candidate
+            or (previous.get("fast_transition_confirmed") and same_visual_target)
+        )
+        dynamic_scene_override = bool(normal_lying_zone and pose_score_ok and transition_confirmed)
+        scene_suppressed = bool(normal_lying_zone and not dynamic_scene_override)
         strong_candidate = strong_visual_candidate and transition_confirmed and not scene_suppressed
         same_target = bool(strong_candidate and previous and self._same_fall_target(previous.get("target"), target))
 
@@ -462,6 +468,7 @@ class RuleEngine:
                     "first_score": fall_score,
                     "max_score": max(fall_score, pose_fall_score, graph_score),
                     "transition_confirmed": transition_confirmed,
+                    "fast_transition_confirmed": fast_transition_confirmed,
                 }
             else:
                 track = {
@@ -472,10 +479,12 @@ class RuleEngine:
                     "target": target,
                     "max_score": max(float(previous.get("max_score") or 0.0), fall_score, pose_fall_score, graph_score),
                     "transition_confirmed": transition_confirmed,
+                    "fast_transition_confirmed": fast_transition_confirmed,
                 }
             duration = max(0.0, (now - track["started_at"]).total_seconds())
             track["duration_seconds"] = duration
-            if track["confirm_count"] >= confirm_frames and duration >= confirm_seconds:
+            fast_path_confirmed = bool(track.get("fast_transition_confirmed"))
+            if track["confirm_count"] >= confirm_frames and (duration >= confirm_seconds or fast_path_confirmed):
                 track["stage"] = "confirmed"
             elif track["confirm_count"] > 1:
                 track["stage"] = "confirming"
@@ -566,9 +575,10 @@ class RuleEngine:
             "fall_score": fall_score,
             "pose_fall_score": pose_fall_score,
             "pose_factor_graph_score": graph_score,
-            "confirm_frames": int(track.get("confirm_count") or 0),
-            "duration_seconds": round(duration_seconds, 3),
-            "same_target": bool(same_target),
+                "confirm_frames": int(track.get("confirm_count") or 0),
+                "duration_seconds": round(duration_seconds, 3),
+                "fast_transition_confirmed": bool(track.get("fast_transition_confirmed")),
+                "same_target": bool(same_target),
             "target": target,
             "evidence": fall_evidence,
             "scene_suppressed": scene_suppressed,
@@ -589,6 +599,7 @@ class RuleEngine:
                 "fall_target": target,
                 "fall_scene_suppressed": scene_suppressed,
                 "fall_transition_confirmed": transition_confirmed,
+                "fall_fast_transition_confirmed": bool(track.get("fast_transition_confirmed")),
                 "fall_transition": {**transition, "confirmed": transition_confirmed, "inherited": transition_confirmed and not bool(transition.get("confirmed"))},
                 "fall_score": fall_score,
                 "pose_fall_score": pose_fall_score,

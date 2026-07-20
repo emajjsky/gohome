@@ -53,11 +53,11 @@ class Settings:
         self.live_frame_upload_enabled = os.getenv("GOHOME_LIVE_FRAME_UPLOAD_ENABLED", "1") == "1"
         self.live_frame_upload_interval_seconds = float(os.getenv("GOHOME_LIVE_FRAME_UPLOAD_INTERVAL_SECONDS", "12"))
         self.live_relay_enabled = os.getenv("GOHOME_LIVE_RELAY_ENABLED", "1") == "1"
-        self.live_relay_fps = int(os.getenv("GOHOME_LIVE_RELAY_FPS", "5"))
+        self.live_relay_fps = int(os.getenv("GOHOME_LIVE_RELAY_FPS", "8"))
         self.live_relay_width = int(os.getenv("GOHOME_LIVE_RELAY_WIDTH", "640"))
         self.live_relay_height = int(os.getenv("GOHOME_LIVE_RELAY_HEIGHT", "360"))
         self.live_relay_quality = int(os.getenv("GOHOME_LIVE_RELAY_QUALITY", "55"))
-        self.live_relay_drop_stale_frames = int(os.getenv("GOHOME_LIVE_RELAY_DROP_STALE_FRAMES", "4"))
+        self.live_relay_drop_stale_frames = int(os.getenv("GOHOME_LIVE_RELAY_DROP_STALE_FRAMES", "1"))
         self.live_relay_request_timeout_seconds = float(os.getenv("GOHOME_LIVE_RELAY_REQUEST_TIMEOUT_SECONDS", "2"))
         self.history_retention_hours = int(os.getenv("GOHOME_HISTORY_RETENTION_HOURS", "24"))
         self.history_cleanup_interval_seconds = float(os.getenv("GOHOME_HISTORY_CLEANUP_INTERVAL_SECONDS", "3600"))
@@ -74,6 +74,9 @@ class Settings:
         self.thermal_hot_temperature_c = float(os.getenv("GOHOME_THERMAL_HOT_TEMPERATURE_C", "76"))
         self.thermal_critical_temperature_c = float(os.getenv("GOHOME_THERMAL_CRITICAL_TEMPERATURE_C", "80"))
         self.thermal_sample_interval_seconds = float(os.getenv("GOHOME_THERMAL_SAMPLE_INTERVAL_SECONDS", "2"))
+        self.inference_idle_interval_seconds = float(os.getenv("GOHOME_INFERENCE_IDLE_INTERVAL_SECONDS", "1.0"))
+        self.inference_active_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACTIVE_INTERVAL_SECONDS", "0.25"))
+        self.inference_risk_interval_seconds = float(os.getenv("GOHOME_INFERENCE_RISK_INTERVAL_SECONDS", "0.16"))
         self.inference_max_starvation_seconds = float(os.getenv("GOHOME_INFERENCE_MAX_STARVATION_SECONDS", "3"))
 
         self.default_capture_interval_seconds = int(os.getenv("GOHOME_CAPTURE_INTERVAL_SECONDS", "5"))

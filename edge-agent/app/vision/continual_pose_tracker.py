@@ -181,9 +181,19 @@ class ContinualPoseTracker:
             errors = []
             scales = []
             rejection_reasons = []
+            risk_tracks = []
             track_age = max(0.0, now - float(state.get("last_updated_monotonic") or 0.0))
             for item in state["poses"]:
-                result = self._track_pose(cv2, np, state["previous_gray"], gray, item, frame, track_age)
+                result = self._track_pose(
+                    cv2,
+                    np,
+                    state["previous_gray"],
+                    gray,
+                    item,
+                    frame,
+                    track_age,
+                    anchor_age,
+                )
                 if not result.get("ok"):
                     rejection_reasons.append(str(result.get("reason") or "optical_flow_failed"))
                     continue
@@ -192,6 +202,13 @@ class ContinualPoseTracker:
                 tracked_points += int(result["tracked_point_count"])
                 errors.append(float(result["forward_backward_error"]))
                 scales.append(float(result["geometry_scale"]))
+                if result.get("rapid_downward_motion"):
+                    risk_tracks.append({
+                        "track_id": str(result["pose"].get("track_id") or ""),
+                        "downward_displacement_ratio": round(float(result.get("downward_displacement_ratio") or 0.0), 4),
+                        "downward_velocity_ratio_per_second": round(float(result.get("downward_velocity_ratio_per_second") or 0.0), 4),
+                        "cumulative_downward_ratio": round(float(result.get("cumulative_downward_ratio") or 0.0), 4),
+                    })
 
             if not next_poses:
                 reason = rejection_reasons[0] if rejection_reasons else "optical_flow_failed"
@@ -224,6 +241,12 @@ class ContinualPoseTracker:
                     "tracked_point_count": tracked_points,
                     "forward_backward_error": round(max(errors, default=0.0), 4),
                     "geometry_scale": round(sum(scales) / max(1, len(scales)), 4),
+                },
+                risk_hint={
+                    "detected": bool(risk_tracks),
+                    "reason": "rapid_downward_pose_motion" if risk_tracks else "",
+                    "tracks": risk_tracks,
+                    "formal_evidence_eligible": False,
                 },
                 display_only_stale=anchor_age > self.max_age_seconds,
             )
@@ -354,6 +377,7 @@ class ContinualPoseTracker:
             "pose": deepcopy(pose),
             "points": points,
             "point_indices": indices,
+            "anchor_center_y": self._bbox_center_y(pose.get("bbox")),
         }
 
     def _track_pose(
@@ -365,6 +389,7 @@ class ContinualPoseTracker:
         item: Dict[str, Any],
         frame: Any,
         age_seconds: float,
+        anchor_age_seconds: float,
     ) -> Dict[str, Any]:
         previous_points = item["points"]
         next_points, forward_status, _ = cv2.calcOpticalFlowPyrLK(
@@ -431,6 +456,22 @@ class ContinualPoseTracker:
 
         displacement = np.median(new_valid - old_valid, axis=0)
         pose["bbox"] = self._shift_bbox(pose.get("bbox"), displacement, frame)
+        frame_height = max(1.0, float(frame.shape[0]))
+        downward_displacement_ratio = max(0.0, float(displacement[1]) / frame_height)
+        downward_velocity_ratio = downward_displacement_ratio / max(0.02, float(age_seconds))
+        current_center_y = self._bbox_center_y(pose.get("bbox"))
+        anchor_center_y = float(item.get("anchor_center_y") or current_center_y)
+        cumulative_downward_ratio = max(0.0, (current_center_y - anchor_center_y) / frame_height)
+        rapid_downward_motion = bool(
+            (
+                downward_displacement_ratio >= 0.03
+                and downward_velocity_ratio >= 0.25
+            )
+            or (
+                cumulative_downward_ratio >= 0.08
+                and anchor_age_seconds <= self.max_age_seconds
+            )
+        )
         pose["keypoints"] = keypoints
         pose["confidence"] = round(float(pose.get("confidence") or 0.0) * decay, 4)
         pose["tracking_state"] = "tracked"
@@ -440,6 +481,13 @@ class ContinualPoseTracker:
         pose["pose_fall_candidate"] = False
         pose["fall_evidence_eligible"] = False
         pose["person_evidence_eligible"] = False
+        pose["tracking_motion"] = {
+            "downward_displacement_ratio": round(downward_displacement_ratio, 4),
+            "downward_velocity_ratio_per_second": round(downward_velocity_ratio, 4),
+            "cumulative_downward_ratio": round(cumulative_downward_ratio, 4),
+            "risk_hint": rapid_downward_motion,
+            "formal_evidence_eligible": False,
+        }
         pose["action_hints"] = [hint for hint in pose.get("action_hints") or [] if hint != "fall_candidate"]
         return {
             "ok": True,
@@ -448,11 +496,24 @@ class ContinualPoseTracker:
                 "pose": pose,
                 "points": np.asarray(valid_points, dtype=np.float32).reshape(-1, 1, 2),
                 "point_indices": valid_indices,
+                "anchor_center_y": anchor_center_y,
             },
             "tracked_point_count": valid_count,
             "forward_backward_error": float(fb_error[valid].max()),
             "geometry_scale": float(scale),
+            "downward_displacement_ratio": downward_displacement_ratio,
+            "downward_velocity_ratio_per_second": downward_velocity_ratio,
+            "cumulative_downward_ratio": cumulative_downward_ratio,
+            "rapid_downward_motion": rapid_downward_motion,
         }
+
+    def _bbox_center_y(self, bbox: Any) -> float:
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            return 0.0
+        try:
+            return (float(bbox[1]) + float(bbox[3])) / 2.0
+        except (TypeError, ValueError):
+            return 0.0
 
     def _geometry_scale(self, np: Any, old_points: Any, new_points: Any) -> float:
         old_center = np.median(old_points, axis=0)
@@ -583,6 +644,7 @@ class ContinualPoseTracker:
         age_seconds: float,
         poses: list[Dict[str, Any]],
         quality: Dict[str, Any],
+        risk_hint: Dict[str, Any] | None = None,
         display_only_stale: bool = False,
         reason: str = "",
     ) -> Dict[str, Any]:
@@ -597,6 +659,7 @@ class ContinualPoseTracker:
             "pose_count": len(poses),
             "poses": poses,
             "quality": quality,
+            "risk_hint": deepcopy(risk_hint) if isinstance(risk_hint, dict) else self._empty_risk_hint(),
             "formal_evidence_eligible": state == "observed",
             "display_only_stale": bool(display_only_stale),
         }
@@ -620,6 +683,15 @@ class ContinualPoseTracker:
             "pose_count": 0,
             "poses": [],
             "quality": {},
+            "risk_hint": self._empty_risk_hint(),
+            "formal_evidence_eligible": False,
+        }
+
+    def _empty_risk_hint(self) -> Dict[str, Any]:
+        return {
+            "detected": False,
+            "reason": "",
+            "tracks": [],
             "formal_evidence_eligible": False,
         }
 

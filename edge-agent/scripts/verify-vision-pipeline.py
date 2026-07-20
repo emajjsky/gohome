@@ -82,8 +82,11 @@ def main() -> None:
     scene_context = verify_scene_context_stabilizes_normal_lying_zone()
     scene_human_filter = verify_scene_context_rejects_human_shaped_furniture()
     display_suppression = verify_display_content_suppression()
+    display_pose_bypass = verify_display_pose_cannot_recreate_suppressed_person()
     scene_merge = verify_scene_context_survives_pose_merge()
     pet_isolation = verify_pet_detection_isolated_from_people_and_fall(normal)
+    detector_cache = verify_person_detector_cache_is_motion_aware()
+    pose_requires_person_box = verify_pose_requires_person_box()
 
     checks = {
         "black_screen": bool(black_result["black_screen"]),
@@ -123,6 +126,7 @@ def main() -> None:
         "pose_external_box_count": pose_external_boxes["box_count"],
         "pose_external_detection_source": pose_external_boxes["detection_source"],
         "pose_external_fallback_calls": pose_external_boxes["fallback_calls"],
+        "pose_external_source_bbox": pose_external_boxes["source_bbox"],
         "pose_detector_fallback_calls": pose_detector_fallback["fallback_calls"],
         "pose_detector_fallback_source": pose_detector_fallback["detection_source"],
         "pose_empty_fallback_estimator_calls": pose_empty_fallback["estimator_calls"],
@@ -141,6 +145,8 @@ def main() -> None:
         "display_suppressed_people": display_suppression["suppressed_people"],
         "display_suppressed_poses": display_suppression["suppressed_poses"],
         "display_real_people_retained": display_suppression["real_people_retained"],
+        "display_pose_bypass_suppressed": display_pose_bypass["suppressed_pose_count"],
+        "display_pose_bypass_people": display_pose_bypass["refined_person_count"],
         "scene_merge_normal_lying": scene_merge["normal_lying_zone"],
         "scene_merge_label": scene_merge["scene_zone_label"],
         "pet_count": pet_isolation["pet_count"],
@@ -149,6 +155,9 @@ def main() -> None:
         "pet_event_evidence_count": pet_isolation["event_evidence_count"],
         "pet_screen_suppressed": pet_isolation["screen_suppressed"],
         "pet_default_confidence": pet_isolation["default_confidence"],
+        "detector_cache_calls": detector_cache["calls"],
+        "detector_cache_motion_refresh": detector_cache["motion_refresh"],
+        "pose_requires_person_box": pose_requires_person_box["fallback_calls"],
         "pose_result_status": fire_result.get("algorithm_results", {}).get("pose", {}).get("status"),
         "pipeline_version": fire_result.get("pipeline_version"),
         "algorithm_results": sorted((fire_result.get("algorithm_results") or {}).keys()),
@@ -204,10 +213,16 @@ def main() -> None:
         raise SystemExit("stable TV zones must suppress people and poses contained inside screen content")
     if checks["display_real_people_retained"] != 1:
         raise SystemExit("a real person extending outside the TV zone must remain visible")
+    if checks["display_pose_bypass_suppressed"] != 1 or checks["display_pose_bypass_people"] != 0:
+        raise SystemExit("a pose derived from suppressed TV content must not recreate a person")
     if not checks["scene_merge_normal_lying"] or checks["scene_merge_label"] != "couch":
         raise SystemExit("pose refinement must not erase a person box already matched to a couch or bed")
     if checks["pet_count"] != 1 or checks["pet_person_count"] != 0:
         raise SystemExit("cat/dog detections must remain independent from person_count")
+    if checks["detector_cache_calls"] != 2 or not checks["detector_cache_motion_refresh"]:
+        raise SystemExit("person detector cache did not refresh on meaningful motion")
+    if checks["pose_requires_person_box"] != 0:
+        raise SystemExit("worker pose mode must not run a whole-frame fallback without a person box")
     if checks["pet_fall_candidate"]:
         raise SystemExit("cat/dog detections must never enter fall analysis")
     if checks["pet_event_evidence_count"] != 1:
@@ -234,6 +249,8 @@ def main() -> None:
         raise SystemExit("RTMPose did not report external-box inference")
     if checks["pose_external_fallback_calls"] != 0:
         raise SystemExit("RTMPose called its internal detector despite a reusable YOLO person box")
+    if checks["pose_external_source_bbox"] != [100.0, 60.0, 240.0, 340.0]:
+        raise SystemExit("RTMPose poses must retain their source person box")
     if checks["pose_detector_fallback_calls"] != 1:
         raise SystemExit("RTMPose did not use its detector fallback when no reusable YOLO box existed")
     if checks["pose_detector_fallback_source"] != "rtmlib_detector_fallback":
@@ -371,6 +388,44 @@ def verify_display_content_suppression() -> dict:
     }
 
 
+def verify_display_pose_cannot_recreate_suppressed_person() -> dict:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+    )
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    zones = [{
+        "id": "tv-bypass",
+        "bbox": [200.0, 40.0, 500.0, 260.0],
+        "label": "tv",
+        "label_zh": "电视",
+        "stable": True,
+    }]
+    screen_person = {
+        "bbox": [245.0, 70.0, 390.0, 245.0],
+        "confidence": 0.72,
+    }
+    expanded_screen_pose = {
+        "bbox": [170.0, 60.0, 430.0, 285.0],
+        "source_person_bbox": list(screen_person["bbox"]),
+        "confidence": 0.77,
+        "posture": "standing",
+    }
+    people, poses, suppressed = pipeline._suppress_display_content(
+        [screen_person],
+        [expanded_screen_pose],
+        zones,
+        {},
+    )
+    refined = pipeline._refine_people_with_pose(people, poses, frame, {})
+    return {
+        "suppressed_pose_count": len([item for item in suppressed if item.get("kind") == "pose"]),
+        "refined_person_count": len(refined),
+    }
+
+
 def verify_pet_detection_isolated_from_people_and_fall(frame: np.ndarray) -> dict:
     pipeline = VisionPipeline(
         black_brightness_threshold=18,
@@ -421,6 +476,51 @@ def verify_pet_detection_isolated_from_people_and_fall(frame: np.ndarray) -> dic
         "screen_suppressed": len(suppressed),
         "default_confidence": detector_config.get("pet_confidence"),
     }
+
+
+def verify_person_detector_cache_is_motion_aware() -> dict:
+    detector = PersonDetector(detector_backend="yolo")
+    calls = {"count": 0}
+    people = [{"bbox": [40.0, 20.0, 120.0, 220.0], "confidence": 0.8}]
+
+    def detect_entities(*args, **kwargs):
+        calls["count"] += 1
+        return people, [], []
+
+    detector._detect_yolo_entities = detect_entities  # type: ignore[method-assign]
+    frame = np.zeros((240, 320, 3), dtype=np.uint8)
+    config = {
+        "camera_id": "cache-test",
+        "person_detection_cache_seconds": 2.0,
+        "person_detection_cache_max_motion": 0.05,
+        "frame_motion_score": 0.01,
+    }
+    detector.analyze(frame, config)
+    detector.analyze(frame, config)
+    refreshed_config = {**config, "frame_motion_score": 0.20}
+    detector.analyze(frame, refreshed_config)
+    return {"calls": calls["count"], "motion_refresh": calls["count"] == 2}
+
+
+def verify_pose_requires_person_box() -> dict:
+    analyzer = RtmposeAnalyzer(enabled=True)
+    calls = {"fallback": 0}
+
+    def fallback_detector(frame):
+        calls["fallback"] += 1
+        return [[20.0, 20.0, 200.0, 230.0]]
+
+    analyzer._pose_detector = fallback_detector
+    analyzer._pose_tracker = analyzer._infer_with_internal_detector
+    result = analyzer.analyze(
+        np.zeros((240, 320, 3), dtype=np.uint8),
+        {
+            "pose_detection_enabled": True,
+            "pose_allow_internal_detector_fallback": False,
+        },
+        people=[],
+    )
+    return {"fallback_calls": calls["fallback"], "status": result.get("pose_model_status")}
 
 
 def verify_scene_context_survives_pose_merge() -> dict:
@@ -643,7 +743,7 @@ def verify_pose_candidate_partition() -> dict:
     )
     analyzer._ensure_ready = lambda: (True, "ready")  # type: ignore[method-assign]
     analyzer._infer_pose = lambda frame: (None, None, False)  # type: ignore[method-assign]
-    analyzer._extract_poses = lambda keypoints, scores, frame: [low_quality_pose]  # type: ignore[method-assign]
+    analyzer._extract_poses = lambda keypoints, scores, frame, **kwargs: [low_quality_pose]  # type: ignore[method-assign]
     result = analyzer.analyze(np.zeros((360, 640, 3), dtype=np.uint8), {})
     return {
         "visible_count": int(result.get("pose_count") or 0),
@@ -779,6 +879,7 @@ def verify_pose_reuses_external_person_boxes() -> dict:
         "box_count": len(captured["boxes"]),
         "detection_source": result.get("pose_detection_source"),
         "fallback_calls": captured["fallback_calls"],
+        "source_bbox": (result.get("poses") or [{}])[0].get("source_person_bbox"),
     }
 
 

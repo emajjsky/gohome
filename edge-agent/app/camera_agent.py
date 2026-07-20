@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
+from threading import Condition, Event, Lock, Thread
 from typing import Any, Dict, Generator, Tuple
 from urllib.parse import quote, urlsplit, urlunsplit
 import base64
@@ -11,7 +11,7 @@ import os
 import time
 
 
-NETWORK_CAPTURE_OPTIONS = "rtsp_transport;tcp|stimeout;3000000|fflags;nobuffer|flags;low_delay|max_delay;100000|probesize;32|analyzeduration;0"
+NETWORK_CAPTURE_OPTIONS = "rtsp_transport;tcp|stimeout;3000000|rw_timeout;5000000|fflags;nobuffer|flags;low_delay|max_delay;100000|probesize;32|analyzeduration;0"
 LOCAL_CAPTURE_WARMUP_SECONDS = 1.0
 NETWORK_CAPTURE_WARMUP_SECONDS = 3.0
 NETWORK_CAPTURE_MIN_READS = 8
@@ -24,12 +24,130 @@ class CameraError(RuntimeError):
     pass
 
 
+def next_stream_frame_delay(
+    *,
+    previous_deadline: float,
+    now: float,
+    frame_interval: float,
+) -> tuple[float, float]:
+    interval = max(0.001, float(frame_interval))
+    next_deadline = float(previous_deadline) + interval
+    if now - next_deadline >= interval:
+        return 0.0, float(now)
+    return max(0.0, next_deadline - float(now)), next_deadline
+
+
 def _load_cv2():
     try:
         import cv2  # type: ignore
     except ModuleNotFoundError as exc:
         raise CameraError("OpenCV is not installed. Run: python -m pip install -r requirements.txt") from exc
     return cv2
+
+
+class _SharedStreamReader:
+    def __init__(
+        self,
+        *,
+        agent: "CameraAgent",
+        camera: Dict[str, Any],
+        source: Any,
+        is_local_source: bool,
+        source_label: str,
+    ) -> None:
+        self.agent = agent
+        self.camera = dict(camera)
+        self.source = source
+        self.is_local_source = is_local_source
+        self.source_label = source_label
+        self.subscribers = 0
+        self._condition = Condition()
+        self._stop = Event()
+        self._reconnect = Event()
+        self._thread = Thread(
+            target=self._run,
+            name=f"gohome-camera-reader-{camera.get('id') or 'source'}",
+            daemon=True,
+        )
+        self._frame: Any = None
+        self._sequence = 0
+        self._last_error = ""
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._reconnect.set()
+        with self._condition:
+            self._condition.notify_all()
+        self._thread.join(timeout=2)
+
+    def request_reconnect(self) -> None:
+        self._reconnect.set()
+
+    def wait_for_frame(self, after_sequence: int, timeout: float = 3.5) -> Tuple[Any | None, int, str]:
+        with self._condition:
+            self._condition.wait_for(
+                lambda: self._sequence > after_sequence or self._stop.is_set(),
+                timeout=max(0.1, float(timeout)),
+            )
+            if self._sequence <= after_sequence or self._frame is None:
+                return None, after_sequence, self._last_error
+            return self._frame.copy(), self._sequence, self._last_error
+
+    def _run(self) -> None:
+        cv2 = _load_cv2()
+        cap = None
+        reconnect_count = 0
+        try:
+            while not self._stop.is_set():
+                if cap is None or not cap.isOpened() or self._reconnect.is_set():
+                    self._reconnect.clear()
+                    if cap is not None:
+                        cap.release()
+                    cap = self.agent._open_stream_capture(cv2, self.source, self.is_local_source)
+                    if not cap.isOpened():
+                        cap.release()
+                        cap = None
+                        self._set_error("stream open failed")
+                        self._stop.wait(0.35)
+                        continue
+                    if reconnect_count:
+                        logger.info(
+                            "camera %s shared stream recovered after %s reconnect(s)",
+                            self.camera.get("id"),
+                            reconnect_count,
+                        )
+                    reconnect_count = 0
+
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    reconnect_count += 1
+                    self._set_error("stream read failed")
+                    logger.warning(
+                        "camera %s shared stream read failed; reopening capture",
+                        self.camera.get("id"),
+                    )
+                    cap.release()
+                    cap = None
+                    self._stop.wait(0.18)
+                    continue
+
+                self.agent._store_latest_frame(self.camera, frame, self.source_label)
+                with self._condition:
+                    self._frame = frame.copy()
+                    self._sequence += 1
+                    self._last_error = ""
+                    self._condition.notify_all()
+        finally:
+            if cap is not None:
+                cap.release()
+
+    def _set_error(self, message: str) -> None:
+        with self._condition:
+            self._last_error = message
+            self._condition.notify_all()
 
 
 class CameraAgent:
@@ -39,6 +157,66 @@ class CameraAgent:
         self._frame_cache_lock = Lock()
         self._frame_cache: Dict[str, Dict[str, Any]] = {}
         self._frame_sequences: Dict[str, int] = {}
+        self._shared_stream_lock = Lock()
+        self._shared_streams: Dict[str, _SharedStreamReader] = {}
+        self._managed_streams: Dict[str, tuple[Dict[str, Any], _SharedStreamReader]] = {}
+
+    def reconcile_managed_streams(self, cameras: list[Dict[str, Any]]) -> None:
+        """Keep one reader per enabled real camera regardless of preview subscribers."""
+        desired: dict[str, Dict[str, Any]] = {}
+        for camera in cameras:
+            if not camera.get("enabled", True):
+                continue
+            source, _backend, source_label = self.resolve_capture_source(camera)
+            if self._is_demo_source(source):
+                continue
+            desired[self._frame_cache_key(camera)] = {
+                **camera,
+                "_managed_source": source,
+                "_managed_local": isinstance(source, int),
+                "_managed_source_label": source_label,
+            }
+
+        with self._shared_stream_lock:
+            existing = dict(self._managed_streams)
+        for key, (camera, reader) in existing.items():
+            if key in desired:
+                continue
+            self._release_shared_stream(camera, reader)
+            with self._shared_stream_lock:
+                self._managed_streams.pop(key, None)
+
+        for key, camera in desired.items():
+            with self._shared_stream_lock:
+                if key in self._managed_streams:
+                    continue
+            reader = self._acquire_shared_stream(
+                camera,
+                source=camera["_managed_source"],
+                is_local_source=bool(camera["_managed_local"]),
+                source_label=str(camera["_managed_source_label"]),
+            )
+            release_duplicate = False
+            with self._shared_stream_lock:
+                if key not in self._managed_streams:
+                    self._managed_streams[key] = (camera, reader)
+                else:
+                    release_duplicate = True
+            if release_duplicate:
+                self._release_shared_stream(camera, reader)
+
+    def managed_stream_status(self) -> Dict[str, Any]:
+        with self._shared_stream_lock:
+            streams = [
+                {
+                    "key": key,
+                    "camera_id": camera.get("id"),
+                    "subscribers": reader.subscribers,
+                    "running": reader._thread.is_alive(),
+                }
+                for key, (camera, reader) in self._managed_streams.items()
+            ]
+        return {"managed_stream_count": len(streams), "streams": streams}
 
     def resolve_capture_source(self, camera: Dict[str, Any]) -> Tuple[Any, int | None, str]:
         stream_url = str(camera["stream_url"]).strip()
@@ -84,6 +262,12 @@ class CameraAgent:
             cached = self.latest_cached_frame(camera, max_age_seconds=max_cache_age_seconds)
             if cached is not None:
                 return cached
+            managed_reader = self._managed_reader(camera)
+            if managed_reader is not None:
+                managed_reader.wait_for_frame(0, timeout=2.0)
+                cached = self.latest_cached_frame(camera, max_age_seconds=max_cache_age_seconds)
+                if cached is not None:
+                    return cached
         with self._capture_lock:
             capture = self._capture_frame_unlocked(camera)
         frame_identity = self._store_latest_frame(camera, capture["frame"], capture["source"])
@@ -159,6 +343,12 @@ class CameraAgent:
         stream_url = str(camera.get("stream_url", "")).strip()
         return f"{camera_id or 'source'}::{stream_url}"
 
+    def _managed_reader(self, camera: Dict[str, Any]) -> _SharedStreamReader | None:
+        key = self._frame_cache_key(camera)
+        with self._shared_stream_lock:
+            managed = self._managed_streams.get(key)
+            return managed[1] if managed is not None else None
+
     def _is_demo_source(self, source: Any) -> bool:
         return isinstance(source, str) and source.strip().lower().startswith(DEMO_STREAM_PREFIXES)
 
@@ -186,8 +376,7 @@ class CameraAgent:
                 cap.release()
                 cap = cv2.VideoCapture(source)
         else:
-            os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", NETWORK_CAPTURE_OPTIONS)
-            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+            cap = self._open_network_capture(cv2, source)
 
         try:
             if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
@@ -195,7 +384,7 @@ class CameraAgent:
             if not is_local_source and hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
                 cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)
             if not is_local_source and hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
-                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
+                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
 
             if not cap.isOpened():
                 hint = ""
@@ -307,36 +496,25 @@ class CameraAgent:
             return
 
         is_local_source = isinstance(source, int)
-        cap = None
+        reader = self._acquire_shared_stream(
+            camera,
+            source=source,
+            is_local_source=is_local_source,
+            source_label=source_label,
+        )
+        last_sequence = 0
         last_good_frame = None
         black_frame_streak = 0
-        reconnect_count = 0
-        delay = 1.0 / max(1, min(int(fps), 15))
+        frame_interval = 1.0 / max(1, min(int(fps), 15))
+        frame_deadline = time.monotonic()
         encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(35, min(int(jpeg_quality), 95))]
-        stale_frame_reads = max(0, min(int(drop_stale_frames), 12))
         black_confirm_frames = max(3, min(int(fps), 12))
         try:
             while True:
-                if cap is None or not cap.isOpened():
-                    if cap is not None:
-                        cap.release()
-                    cap = self._open_stream_capture(cv2, source, is_local_source)
-                    if not cap.isOpened():
-                        cap.release()
-                        cap = None
-                        time.sleep(0.35)
-                        continue
-                    if reconnect_count:
-                        logger.info("camera %s stream recovered after %s reconnect(s)", camera.get("id"), reconnect_count)
-                        reconnect_count = 0
-                ok, frame = self._latest_stream_frame(cap, stale_frame_reads)
-                if not ok or frame is None:
-                    reconnect_count += 1
-                    logger.warning("camera %s stream read failed; reopening capture", camera.get("id"))
-                    cap.release()
-                    cap = None
-                    time.sleep(0.18)
+                frame, sequence, _error = reader.wait_for_frame(last_sequence)
+                if frame is None:
                     continue
+                last_sequence = sequence
 
                 if self._frame_is_near_black(cv2, frame):
                     black_frame_streak += 1
@@ -345,16 +523,14 @@ class CameraAgent:
                     if last_good_frame is None:
                         if black_frame_streak >= black_confirm_frames:
                             logger.warning("camera %s remained near-black; reopening capture before publishing video", camera.get("id"))
-                            cap.release()
-                            cap = None
+                            reader.request_reconnect()
                             black_frame_streak = 0
                         time.sleep(0.08)
                         continue
                     display_frame = last_good_frame
                     if black_frame_streak >= black_confirm_frames:
                         logger.warning("camera %s remained near-black; preserving preview and reopening capture", camera.get("id"))
-                        cap.release()
-                        cap = None
+                        reader.request_reconnect()
                         black_frame_streak = 0
                 else:
                     if black_frame_streak:
@@ -375,10 +551,55 @@ class CameraAgent:
                     + encoded.tobytes()
                     + b"\r\n"
                 )
-                time.sleep(delay)
+                delay, frame_deadline = next_stream_frame_delay(
+                    previous_deadline=frame_deadline,
+                    now=time.monotonic(),
+                    frame_interval=frame_interval,
+                )
+                if delay > 0:
+                    time.sleep(delay)
         finally:
-            if cap is not None:
-                cap.release()
+            self._release_shared_stream(camera, reader)
+
+    def _acquire_shared_stream(
+        self,
+        camera: Dict[str, Any],
+        *,
+        source: Any,
+        is_local_source: bool,
+        source_label: str,
+    ) -> _SharedStreamReader:
+        key = self._frame_cache_key(camera)
+        with self._shared_stream_lock:
+            reader = self._shared_streams.get(key)
+            if reader is None:
+                reader = _SharedStreamReader(
+                    agent=self,
+                    camera=camera,
+                    source=source,
+                    is_local_source=is_local_source,
+                    source_label=source_label,
+                )
+                self._shared_streams[key] = reader
+                reader.subscribers = 1
+                reader.start()
+                return reader
+            reader.subscribers += 1
+            return reader
+
+    def _release_shared_stream(self, camera: Dict[str, Any], reader: _SharedStreamReader) -> None:
+        key = self._frame_cache_key(camera)
+        should_stop = False
+        with self._shared_stream_lock:
+            current = self._shared_streams.get(key)
+            if current is not reader:
+                return
+            reader.subscribers = max(0, reader.subscribers - 1)
+            if reader.subscribers == 0:
+                self._shared_streams.pop(key, None)
+                should_stop = True
+        if should_stop:
+            reader.stop()
 
     def _open_stream_capture(self, cv2: Any, source: Any, is_local_source: bool) -> Any:
         if is_local_source:
@@ -389,15 +610,28 @@ class CameraAgent:
                 cap.release()
                 cap = cv2.VideoCapture(source)
         else:
-            os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", NETWORK_CAPTURE_OPTIONS)
-            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+            cap = self._open_network_capture(cv2, source)
         if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not is_local_source and hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
             cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 8000)
         if not is_local_source and hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
-            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 8000)
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
         return cap
+
+    def _open_network_capture(self, cv2: Any, source: Any) -> Any:
+        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", NETWORK_CAPTURE_OPTIONS)
+        params: list[int] = []
+        if hasattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC"):
+            params.extend([int(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC), 8000])
+        if hasattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC"):
+            params.extend([int(cv2.CAP_PROP_READ_TIMEOUT_MSEC), 5000])
+        if params:
+            try:
+                return cv2.VideoCapture(source, cv2.CAP_FFMPEG, params)
+            except Exception:
+                logger.warning("OpenCV rejected capture timeout parameters; using backend defaults")
+        return cv2.VideoCapture(source, cv2.CAP_FFMPEG)
 
     def _frame_is_near_black(self, cv2: Any, frame: Any) -> bool:
         try:
