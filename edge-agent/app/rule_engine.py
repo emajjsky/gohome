@@ -6,6 +6,9 @@ import math
 from typing import Any, Dict, Optional
 
 
+DYNAMIC_FLOOR_BOTTOM_Y = 0.88
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -422,6 +425,8 @@ class RuleEngine:
         pose_fall_threshold = float(thresholds.get("pose_fall_threshold") or 0.78)
         confirm_frames = max(2, int(rules.get("fall_confirm_frames") or 2))
         confirm_seconds = max(0, int(rules.get("fall_confirm_seconds", 4)))
+        dynamic_confirm_frames = max(3, confirm_frames)
+        dynamic_confirm_seconds = min(float(confirm_seconds), 2.0)
         recover_frames = max(2, int(rules.get("fall_recover_frames") or 2))
         fall_evidence = self._fall_evidence(analysis)
         target = self._fall_target(analysis, fall_evidence)
@@ -440,28 +445,39 @@ class RuleEngine:
         )
         visual_candidate = bool(target) and (fall_candidate or graph_candidate)
         previous = self.fall_tracks.get(camera_id) or {}
-        same_visual_target = bool(strong_visual_candidate and previous and self._same_fall_target(previous.get("target"), target))
+        same_observed_target = bool(previous and target and self._same_fall_target(previous.get("target"), target))
         transition_confirmed = (
             bool(transition.get("confirmed"))
             or graph_candidate
-            or bool(previous.get("transition_confirmed") and same_visual_target)
+            or bool(previous.get("transition_confirmed") and same_observed_target)
         )
         fast_transition_confirmed = bool(
             graph_candidate
-            or (previous.get("fast_transition_confirmed") and same_visual_target)
+            or (previous.get("fast_transition_confirmed") and same_observed_target)
         )
         dynamic_scene_override = bool(normal_lying_zone and pose_score_ok and transition_confirmed)
         scene_suppressed = bool(normal_lying_zone and not dynamic_scene_override)
         strong_candidate = strong_visual_candidate and transition_confirmed and not scene_suppressed
-        same_target = bool(strong_candidate and previous and self._same_fall_target(previous.get("target"), target))
+        dynamic_low_position = self._dynamic_low_position_signal(
+            target,
+            transition_confirmed=transition_confirmed,
+        )
+        dynamic_transition_signal = bool(
+            transition_confirmed
+            and not scene_suppressed
+            and (strong_visual_candidate or dynamic_low_position)
+        )
+        confirmation_signal = bool(strong_candidate or dynamic_transition_signal)
+        same_target = bool(confirmation_signal and same_observed_target)
 
-        if strong_candidate:
+        if confirmation_signal:
             if not same_target or previous.get("stage") in {"clear", "recovered"}:
                 track = {
                     "stage": "suspect",
                     "started_at": now,
                     "last_seen_at": now,
-                    "confirm_count": 1,
+                    "confirm_count": 1 if strong_candidate else 0,
+                    "dynamic_low_count": 1 if dynamic_transition_signal else 0,
                     "clear_count": 0,
                     "target": target,
                     "alert_emitted": False,
@@ -469,24 +485,50 @@ class RuleEngine:
                     "max_score": max(fall_score, pose_fall_score, graph_score),
                     "transition_confirmed": transition_confirmed,
                     "fast_transition_confirmed": fast_transition_confirmed,
+                    "confirmation_path": "dynamic_low_position" if dynamic_transition_signal else "standard",
                 }
             else:
                 track = {
                     **previous,
                     "last_seen_at": now,
-                    "confirm_count": int(previous.get("confirm_count") or 0) + 1,
+                    "confirm_count": int(previous.get("confirm_count") or 0) + int(strong_candidate),
+                    "dynamic_low_count": int(previous.get("dynamic_low_count") or 0) + int(dynamic_transition_signal),
                     "clear_count": 0,
                     "target": target,
                     "max_score": max(float(previous.get("max_score") or 0.0), fall_score, pose_fall_score, graph_score),
                     "transition_confirmed": transition_confirmed,
                     "fast_transition_confirmed": fast_transition_confirmed,
+                    "confirmation_path": (
+                        "dynamic_low_position"
+                        if dynamic_transition_signal or previous.get("confirmation_path") == "dynamic_low_position"
+                        else str(previous.get("confirmation_path") or "standard")
+                    ),
                 }
             duration = max(0.0, (now - track["started_at"]).total_seconds())
             track["duration_seconds"] = duration
-            fast_path_confirmed = bool(track.get("fast_transition_confirmed"))
-            if track["confirm_count"] >= confirm_frames and (duration >= confirm_seconds or fast_path_confirmed):
+            fast_path_confirmed = bool(
+                track.get("fast_transition_confirmed")
+                and int(track.get("confirm_count") or 0) >= confirm_frames
+            )
+            dynamic_path_confirmed = bool(
+                track.get("confirmation_path") == "dynamic_low_position"
+                and int(track.get("dynamic_low_count") or 0) >= dynamic_confirm_frames
+                and duration >= dynamic_confirm_seconds
+            )
+            standard_path_confirmed = bool(
+                int(track.get("confirm_count") or 0) >= confirm_frames
+                and duration >= confirm_seconds
+            )
+            if fast_path_confirmed or dynamic_path_confirmed or standard_path_confirmed:
                 track["stage"] = "confirmed"
-            elif track["confirm_count"] > 1:
+                track["confirmation_path"] = (
+                    "fast_factor_graph"
+                    if fast_path_confirmed
+                    else "dynamic_low_position"
+                    if dynamic_path_confirmed
+                    else "standard"
+                )
+            elif int(track.get("confirm_count") or 0) > 1 or int(track.get("dynamic_low_count") or 0) > 1:
                 track["stage"] = "confirming"
             else:
                 track["stage"] = "suspect"
@@ -526,6 +568,7 @@ class RuleEngine:
                         "started_at": previous.get("started_at"),
                         "last_seen_at": now,
                         "confirm_count": 0,
+                        "dynamic_low_count": 0,
                         "clear_count": int(track["clear_count"]),
                         "target": previous.get("target"),
                         "alert_emitted": bool(previous.get("alert_emitted")),
@@ -556,7 +599,7 @@ class RuleEngine:
             emit_event = False
             self.fall_tracks[camera_id] = track
 
-        if upright_targets and not visual_candidate:
+        if upright_targets and not (visual_candidate or dynamic_transition_signal):
             self._record_upright_targets(camera_id, now, upright_targets, rules)
 
         duration_seconds = float(track.get("duration_seconds") or 0.0)
@@ -566,6 +609,9 @@ class RuleEngine:
             "pose_fall_score": pose_fall_threshold,
             "confirm_frames": confirm_frames,
             "confirm_seconds": confirm_seconds,
+            "dynamic_confirm_frames": dynamic_confirm_frames,
+            "dynamic_confirm_seconds": dynamic_confirm_seconds,
+            "dynamic_floor_bottom_y": DYNAMIC_FLOOR_BOTTOM_Y,
             "recover_frames": recover_frames,
             "transition_window_seconds": int(transition.get("window_seconds") or 20),
             "min_vertical_drop": float(transition.get("min_vertical_drop") or 0.12),
@@ -575,10 +621,12 @@ class RuleEngine:
             "fall_score": fall_score,
             "pose_fall_score": pose_fall_score,
             "pose_factor_graph_score": graph_score,
-                "confirm_frames": int(track.get("confirm_count") or 0),
-                "duration_seconds": round(duration_seconds, 3),
-                "fast_transition_confirmed": bool(track.get("fast_transition_confirmed")),
-                "same_target": bool(same_target),
+            "confirm_frames": int(track.get("confirm_count") or 0),
+            "dynamic_low_count": int(track.get("dynamic_low_count") or 0),
+            "duration_seconds": round(duration_seconds, 3),
+            "confirmation_path": str(track.get("confirmation_path") or "standard"),
+            "fast_transition_confirmed": bool(track.get("fast_transition_confirmed")),
+            "same_target": bool(same_target),
             "target": target,
             "evidence": fall_evidence,
             "scene_suppressed": scene_suppressed,
@@ -593,7 +641,9 @@ class RuleEngine:
                 "fall_state": stage,
                 "fall_stage": stage,
                 "fall_confirm_count": int(track.get("confirm_count") or 0),
+                "fall_dynamic_low_count": int(track.get("dynamic_low_count") or 0),
                 "fall_confirm_seconds": round(duration_seconds, 3),
+                "fall_confirmation_path": str(track.get("confirmation_path") or "standard"),
                 "fall_clear_count": int(track.get("clear_count") or 0),
                 "fall_alert_emitted": bool(track.get("alert_emitted")),
                 "fall_target": target,
@@ -607,6 +657,26 @@ class RuleEngine:
                 "fall_threshold": threshold,
             },
         }
+
+    def _dynamic_low_position_signal(
+        self,
+        target: Dict[str, Any] | None,
+        *,
+        transition_confirmed: bool,
+    ) -> bool:
+        if not target or not transition_confirmed or bool(target.get("normal_lying_zone")):
+            return False
+        posture = str(target.get("posture") or "")
+        if posture not in {"lying", "sitting", "upper_body"}:
+            return False
+        if str(target.get("scene_zone_label") or "").lower() in {"bed", "couch", "chair", "sofa"}:
+            return False
+        center = target.get("center")
+        if not isinstance(center, list) or len(center) != 2 or float(center[1]) < 0.62:
+            return False
+        if posture in {"sitting", "upper_body"} and float(target.get("bottom_y") or 0.0) < DYNAMIC_FLOOR_BOTTOM_Y:
+            return False
+        return float(target.get("score") or 0.0) >= 0.18
 
     def _fall_target(self, analysis: Dict[str, Any], fall_evidence: Dict[str, Any]) -> Dict[str, Any] | None:
         candidates = []
@@ -634,6 +704,7 @@ class RuleEngine:
             "bbox": [round(value, 1) for value in bbox],
             "center": [round(((x1 + x2) / 2.0) / width, 4), round(((y1 + y2) / 2.0) / height, 4)],
             "size": [round((x2 - x1) / width, 4), round((y2 - y1) / height, 4)],
+            "bottom_y": round(y2 / height, 4),
             "source": best.get("source") or best.get("method") or "fall_candidate",
             "track_id": best.get("track_id"),
             "score": round(float(best.get("score") or best.get("fall_score") or best.get("confidence") or 0.0), 4),
@@ -706,6 +777,7 @@ class RuleEngine:
             "bottom_y": round(y2 / height, 4),
             "posture": posture,
             "source": item.get("source") or "upright_history",
+            "track_id": item.get("track_id"),
             "score": round(float(item.get("confidence") or 0.0), 4),
         }
 
@@ -755,11 +827,19 @@ class RuleEngine:
         if not isinstance(target_center, list) or len(target_center) != 2:
             result["reason"] = "missing_target_center"
             return result
+        target_track_id = str(target.get("track_id") or "")
+        same_track_candidates = [
+            item for item in recent_targets
+            if target_track_id and str(item[0].get("track_id") or "") == target_track_id
+        ]
+        if target_track_id and int(analysis.get("person_count") or 0) > 1 and not same_track_candidates:
+            result["reason"] = "track_identity_missing"
+            return result
         spatial_candidates = [
             item for item in recent_targets
             if abs(float((item[0].get("center") or [0, 0])[0]) - float(target_center[0])) <= 0.28
         ]
-        candidates = spatial_candidates or recent_targets
+        candidates = same_track_candidates or spatial_candidates or recent_targets
         best, observed_at, age_seconds = max(
             candidates,
             key=lambda item: float(target_center[1]) - float((item[0].get("center") or [0, 0])[1]),
@@ -792,7 +872,8 @@ class RuleEngine:
         dy = float(prev_center[1]) - float(curr_center[1])
         distance = math.sqrt(dx * dx + dy * dy)
         same_track = bool(previous.get("track_id") and previous.get("track_id") == current.get("track_id"))
-        return same_track or distance <= 0.22 or self._bbox_overlap(previous.get("bbox"), current.get("bbox")) >= 0.20
+        plausible_same_track = same_track and distance <= 0.38
+        return plausible_same_track or distance <= 0.22 or self._bbox_overlap(previous.get("bbox"), current.get("bbox")) >= 0.20
 
     def _valid_bbox(self, bbox: Any) -> bool:
         if not isinstance(bbox, list) or len(bbox) != 4:

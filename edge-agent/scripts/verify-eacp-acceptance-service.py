@@ -23,7 +23,14 @@ class Clock:
         self.utc += timedelta(seconds=seconds)
 
 
-def runtime(*, anchors: int, risk_signals: int, risk_hints: int, last_risk: float | None) -> dict:
+def runtime(
+    *,
+    anchors: int,
+    risk_signals: int,
+    risk_hints: int,
+    last_risk: float | None,
+    risk_history: list[float] | None = None,
+) -> dict:
     return {
         "inference_scheduler": {
             "cameras": [{
@@ -33,6 +40,10 @@ def runtime(*, anchors: int, risk_signals: int, risk_hints: int, last_risk: floa
                 "deadline_miss_count": 2,
                 "risk_signal_count": risk_signals,
                 "last_risk_signal_at_monotonic": last_risk,
+                "risk_signals": [
+                    {"at_monotonic": value, "source": "test"}
+                    for value in (risk_history or [])
+                ],
                 "effective_fps": 3.4,
             }],
             "resource": {"temperature_c": 68.5, "thermal_state": "normal"},
@@ -84,7 +95,13 @@ def main() -> None:
             raise SystemExit(f"cloud verification was polled before a safety event: {cloud_calls}")
 
         clock.tick(2.0)
-        state["runtime"] = runtime(anchors=17, risk_signals=1, risk_hints=1, last_risk=100.3)
+        state["runtime"] = runtime(
+            anchors=17,
+            risk_signals=1,
+            risk_hints=1,
+            last_risk=100.3,
+            risk_history=[100.3],
+        )
         events.append({
             "id": 81,
             "camera_id": 24,
@@ -92,6 +109,14 @@ def main() -> None:
             "level": "critical",
             "created_at": "2026-07-20T03:00:01.800000+00:00",
             "payload": {
+                "evaluation": {
+                    "state": {
+                        "fall_confirmation_path": "dynamic_low_position",
+                        "fall_confirm_seconds": 2.1,
+                        "fall_dynamic_low_count": 4,
+                        "fall_transition": {"age_seconds": 3.2},
+                    },
+                },
                 "evidence": {
                     "temporal_evidence_bundle": {
                         "snapshots": [{"snapshot_id": 1}, {"snapshot_id": 2}, {"snapshot_id": 3}],
@@ -108,7 +133,11 @@ def main() -> None:
         ])
         cloud["records"] = [{
             "edge_event_id": "81",
-            "verification": {"status": "confirmed", "confidence": 0.91},
+            "verification": {
+                "status": "confirmed",
+                "confidence": 0.91,
+                "result": {"reason": "三帧显示连续倒地过程。"},
+            },
         }]
 
         report = service.status()
@@ -123,8 +152,41 @@ def main() -> None:
             raise SystemExit(f"three-frame evidence was not counted: {report}")
         if report["events"][0]["cloud_verification"]["status"] != "confirmed":
             raise SystemExit(f"cloud verification was not joined: {report}")
+        if report["events"][0]["cloud_verification"].get("reason") != "三帧显示连续倒地过程。":
+            raise SystemExit(f"cloud verification reason is missing: {report}")
+        event_metrics = report["events"][0]
+        if event_metrics.get("confirmation_path") != "dynamic_low_position":
+            raise SystemExit(f"event confirmation path is missing: {event_metrics}")
+        if event_metrics.get("action_to_event_seconds") != 3.2 or event_metrics.get("low_confirmation_seconds") != 2.1:
+            raise SystemExit(f"event action latency metrics are incorrect: {event_metrics}")
         if report["checks"]["simulated_fall_event"] != "passed":
             raise SystemExit(f"fall acceptance did not pass: {report['checks']}")
+        rejected_checks = service._checks(
+            scenario="simulated_fall",
+            events=[{
+                "event_type": "fall_candidate",
+                "evidence_frame_count": 3,
+                "event_upload_status": "completed",
+                "cloud_verification": {"status": "rejected"},
+            }],
+            finalizing=True,
+        )
+        if rejected_checks.get("cloud_confirmed") != "failed":
+            raise SystemExit(f"a cloud-rejected simulated fall must not pass acceptance: {rejected_checks}")
+
+        clock.tick(70.0)
+        state["runtime"] = runtime(
+            anchors=100,
+            risk_signals=71,
+            risk_hints=1,
+            last_risk=170.0,
+            risk_history=[float(value) for value in range(107, 171)],
+        )
+        truncated_metrics = service.status()["metrics"]
+        if truncated_metrics.get("first_risk_latency_seconds") is not None:
+            raise SystemExit(f"truncated risk history must not report a false first latency: {truncated_metrics}")
+        if truncated_metrics.get("first_risk_latency_status") != "history_truncated":
+            raise SystemExit(f"truncated risk history status is missing: {truncated_metrics}")
 
         finished = service.finish()
         if finished["status"] != "finished" or finished["result"] != "passed":

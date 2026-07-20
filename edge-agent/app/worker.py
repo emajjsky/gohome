@@ -544,10 +544,21 @@ class EdgeWorker:
         if not isinstance(evidence_track, dict):
             prolonged_tracks = factor_graph.get("prolonged_floor_lying_tracks") or []
             evidence_track = prolonged_tracks[0] if prolonged_tracks else None
+        if not isinstance(evidence_track, dict) and not bool(analysis.get("fire_event_candidate")):
+            tracked_poses = [
+                pose for pose in (analysis.get("poses") or [])
+                if isinstance(pose, dict) and pose.get("track_id")
+            ]
+            evidence_track = max(
+                tracked_poses,
+                key=lambda pose: float(pose.get("fall_score") or 0.0),
+                default=None,
+            )
         analysis["temporal_evidence_bundle"] = self.temporal_engine.evidence_bundle(
             camera_id,
             event_type="pose_safety_candidate",
             track_id=str((evidence_track or {}).get("track_id") or "") or None,
+            max_age_seconds=10,
         )
 
     def _requires_durable_candidate(self, evaluation: RuleEvaluation) -> bool:

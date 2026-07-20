@@ -197,17 +197,27 @@ class EacpAcceptanceService:
         anchor_count = max(0, int(schedule.get("observed_count") or 0) - int(before_schedule.get("observed_count") or 0))
         risk_count = max(0, int(schedule.get("risk_signal_count") or 0) - int(before_schedule.get("risk_signal_count") or 0))
         hint_count = max(0, int(continual.get("risk_hint_count") or 0) - int(before_continual.get("risk_hint_count") or 0))
+        risk_history = schedule.get("risk_signals")
+        risk_history_present = isinstance(risk_history, list)
         risk_times = [
             float(item.get("at_monotonic"))
-            for item in schedule.get("risk_signals") or []
+            for item in risk_history or []
             if isinstance(item, dict) and item.get("at_monotonic") is not None
             and float(item["at_monotonic"]) >= started_monotonic
         ]
-        if not risk_times and risk_count:
+        risk_latency_status = "no_risk_signal"
+        if risk_count and risk_history_present and risk_count > len(risk_times):
+            risk_latency_status = "history_truncated"
+        elif risk_times:
+            risk_latency_status = "available"
+        elif not risk_history_present and risk_count:
             last_risk = schedule.get("last_risk_signal_at_monotonic")
             if last_risk is not None and float(last_risk) >= started_monotonic:
                 risk_times.append(float(last_risk))
+                risk_latency_status = "available_from_last_signal"
         first_risk_latency = min(risk_times) - started_monotonic if risk_times else None
+        if risk_latency_status == "history_truncated":
+            first_risk_latency = None
         return {
             "mode": str(schedule.get("mode") or "unknown"),
             "model_anchor_count": anchor_count,
@@ -220,6 +230,7 @@ class EacpAcceptanceService:
             "risk_signal_count": risk_count,
             "risk_hint_count": hint_count,
             "first_risk_latency_seconds": None if first_risk_latency is None else round(max(0.0, first_risk_latency), 3),
+            "first_risk_latency_status": risk_latency_status,
             "tracked_frame_count": max(
                 0,
                 int(continual.get("tracked_count") or 0) - int(before_continual.get("tracked_count") or 0),
@@ -248,6 +259,7 @@ class EacpAcceptanceService:
         verification = (cloud_record or {}).get("verification")
         if not isinstance(verification, dict):
             verification = (cloud_record or {}).get("incident") if isinstance((cloud_record or {}).get("incident"), dict) else {}
+        verification_result = verification.get("result") if isinstance(verification.get("result"), dict) else {}
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         evidence = payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {}
         bundle = evidence.get("temporal_evidence_bundle") if isinstance(evidence.get("temporal_evidence_bundle"), dict) else {}
@@ -256,6 +268,9 @@ class EacpAcceptanceService:
         snapshots = bundle.get("snapshots") if isinstance(bundle.get("snapshots"), list) else []
         assets = payload.get("evidence_media_assets") if isinstance(payload.get("evidence_media_assets"), list) else []
         evidence_frame_count = max(len(snapshots), len(assets), len(media))
+        evaluation = payload.get("evaluation") if isinstance(payload.get("evaluation"), dict) else {}
+        evaluation_state = evaluation.get("state") if isinstance(evaluation.get("state"), dict) else {}
+        transition = evaluation_state.get("fall_transition") if isinstance(evaluation_state.get("fall_transition"), dict) else {}
         occurred_at = str(event.get("occurred_at") or event.get("created_at") or "")
         return {
             "event_id": event_id,
@@ -263,12 +278,18 @@ class EacpAcceptanceService:
             "level": str(event.get("level") or ""),
             "occurred_at": occurred_at,
             "event_latency_seconds": self._seconds_between(started_at, occurred_at),
+            "confirmation_path": str(evaluation_state.get("fall_confirmation_path") or ""),
+            "action_to_event_seconds": transition.get("age_seconds"),
+            "low_confirmation_seconds": evaluation_state.get("fall_confirm_seconds"),
+            "dynamic_low_count": int(evaluation_state.get("fall_dynamic_low_count") or 0),
             "evidence_frame_count": evidence_frame_count,
             "media_upload_completed": sum(1 for item in media if item.get("status") == "completed"),
             "event_upload_status": str((event_job or {}).get("status") or "missing"),
             "cloud_verification": {
                 "status": str(verification.get("status") or "pending"),
-                "confidence": verification.get("confidence"),
+                "confidence": verification.get("confidence") if verification.get("confidence") is not None else verification_result.get("confidence"),
+                "reason": str(verification_result.get("reason") or verification.get("reason") or ""),
+                "decision": str(verification.get("decision") or ""),
             },
         }
 
@@ -280,6 +301,7 @@ class EacpAcceptanceService:
             }
         if scenario == "simulated_fall":
             fall = next((item for item in events if item.get("event_type") == "fall_candidate"), None)
+            verification_status = str((fall or {}).get("cloud_verification", {}).get("status") or "")
             return {
                 "simulated_fall_event": "passed" if fall else "failed" if finalizing else "pending",
                 "three_frame_evidence": (
@@ -291,8 +313,13 @@ class EacpAcceptanceService:
                     else "failed" if finalizing else "pending"
                 ),
                 "cloud_verified": (
-                    "passed" if fall and fall.get("cloud_verification", {}).get("status") in {"confirmed", "rejected", "uncertain"}
+                    "passed" if fall and verification_status in {"confirmed", "rejected", "uncertain"}
                     else "failed" if finalizing else "pending"
+                ),
+                "cloud_confirmed": (
+                    "passed" if fall and verification_status == "confirmed"
+                    else "failed" if verification_status == "rejected" or finalizing
+                    else "pending"
                 ),
             }
         return {"manual_review": "pending" if not finalizing else "incomplete"}

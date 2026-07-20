@@ -152,10 +152,24 @@ class TemporalObservationEngine:
         event_type: str,
         track_id: str | None = None,
         limit: int = 3,
+        max_age_seconds: float | None = None,
     ) -> Dict[str, Any]:
         history = list(self._histories.get(int(camera_id), ()))
         if track_id:
             history = [item for item in history if str(track_id) in (item.get("track_ids") or [])]
+        if history and max_age_seconds is not None:
+            try:
+                ended_at = datetime.fromisoformat(str(history[-1].get("observed_at") or "").replace("Z", "+00:00"))
+                window_seconds = max(0.0, float(max_age_seconds))
+                history = [
+                    item for item in history
+                    if 0.0 <= (
+                        ended_at
+                        - datetime.fromisoformat(str(item.get("observed_at") or "").replace("Z", "+00:00"))
+                    ).total_seconds() <= window_seconds
+                ]
+            except (TypeError, ValueError):
+                pass
         snapshots = [item for item in history if item.get("snapshot_id")]
         selected = self._representative_samples(snapshots, max(1, min(3, int(limit))))
         return {

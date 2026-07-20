@@ -9,6 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.vision.temporal import TemporalObservationEngine
+from app.worker import EdgeWorker
 
 
 def analysis(*people: dict) -> dict:
@@ -70,6 +71,60 @@ def main() -> None:
         raise SystemExit(f"ring buffer must remain bounded, got {len(history)}")
     if engine.update(1, analysis(), monotonic_at=40.0)["active_tracks"]:
         raise SystemExit("expired tracks must be removed")
+
+    evidence_engine = TemporalObservationEngine(
+        history_size=12,
+        track_ttl_seconds=30,
+        max_match_age_seconds=10,
+    )
+    evidence_track = ""
+    for index, seconds in enumerate((0, 5, 10, 15), start=1):
+        payload = analysis(person([100, 50, 200, 330]))
+        evidence_engine.update(
+            12,
+            payload,
+            observed_at=f"2026-07-11T10:02:{seconds:02d}+00:00",
+            monotonic_at=float(seconds),
+        )
+        evidence_track = str(payload["people"][0]["track_id"])
+        evidence_engine.attach_snapshot(12, {"id": index, "image_path": f"camera-12/{index}.jpg"})
+    recent_bundle = evidence_engine.evidence_bundle(
+        12,
+        event_type="fall_candidate",
+        track_id=evidence_track,
+        max_age_seconds=10,
+    )
+    if [item["snapshot_id"] for item in recent_bundle["snapshots"]] != [2, 3, 4]:
+        raise SystemExit(f"event evidence must use the recent action window: {recent_bundle}")
+
+    class RecordingTemporalEngine:
+        def __init__(self) -> None:
+            self.track_id = None
+
+        def evidence_bundle(self, camera_id, *, event_type, track_id=None, limit=3, max_age_seconds=None):
+            self.track_id = track_id
+            return {"snapshots": []}
+
+    worker = EdgeWorker(None, None, None, None)
+    recorder = RecordingTemporalEngine()
+    worker.temporal_engine = recorder
+    worker._attach_temporal_evidence(12, {
+        "poses": [
+            {"track_id": "lower-risk", "fall_score": 0.18},
+            {"track_id": "event-target", "fall_score": 0.24},
+        ],
+        "pose_factor_graph": {},
+    })
+    if recorder.track_id != "event-target":
+        raise SystemExit(f"dynamic event evidence must follow the highest-risk pose track: {recorder.track_id}")
+    dynamic_evidence_track = recorder.track_id
+    worker._attach_temporal_evidence(12, {
+        "poses": [{"track_id": "near-fire", "fall_score": 0.24}],
+        "pose_factor_graph": {},
+        "fire_event_candidate": True,
+    })
+    if recorder.track_id is not None:
+        raise SystemExit(f"fire evidence must remain scene-wide instead of following a person: {recorder.track_id}")
 
     engine.reset_camera(1)
     if engine.recent_history(1):
@@ -147,6 +202,8 @@ def main() -> None:
         "fast_transition_track": fast_track,
         "replacement_track": newcomer_track,
         "history_capacity": 8,
+        "recent_evidence_snapshot_ids": [2, 3, 4],
+        "dynamic_evidence_track": dynamic_evidence_track,
     }, ensure_ascii=False, indent=2))
 
 

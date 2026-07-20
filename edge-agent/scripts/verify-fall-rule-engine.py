@@ -155,6 +155,169 @@ def main() -> None:
     if fast_second.state.get("fall_confirm_seconds", 0) >= fast_rules["fall_confirm_seconds"]:
         raise SystemExit("fast-fall path did not exercise the short dynamic confirmation branch")
 
+    dynamic_engine = RuleEngine()
+    dynamic_start = datetime(2026, 7, 20, 12, 43, 0, tzinfo=timezone.utc)
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        dynamic_engine.evaluate_snapshot(camera, {"id": 2300}, make_upright_analysis(), fast_rules)
+        current_time[0] = dynamic_start + timedelta(seconds=1.0)
+        dynamic_first = dynamic_engine.evaluate_snapshot(
+            camera,
+            {"id": 2301},
+            make_floor_seated_analysis(),
+            fast_rules,
+        )
+        current_time[0] = dynamic_start + timedelta(seconds=1.8)
+        dynamic_jitter = dynamic_engine.evaluate_snapshot(
+            camera,
+            {"id": 2302},
+            make_pose_fall_analysis(normal_lying_zone=False),
+            fast_rules,
+        )
+        current_time[0] = dynamic_start + timedelta(seconds=3.1)
+        dynamic_confirmed = dynamic_engine.evaluate_snapshot(
+            camera,
+            {"id": 2303},
+            make_floor_seated_analysis(),
+            fast_rules,
+        )
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if dynamic_first.candidates or dynamic_jitter.candidates:
+        raise SystemExit("dynamic low-position evidence must not alert before the bounded confirmation window")
+    if dynamic_jitter.state.get("fall_stage") not in {"suspect", "confirming"}:
+        raise SystemExit(f"same-track posture jitter reset dynamic fall evidence: {dynamic_jitter.state}")
+    if len(dynamic_confirmed.candidates) != 1 or dynamic_confirmed.state.get("fall_stage") != "confirmed":
+        raise SystemExit(f"sustained post-descent floor sitting must create one event: {dynamic_confirmed.state}")
+    if dynamic_confirmed.state.get("fall_confirmation_path") != "dynamic_low_position":
+        raise SystemExit(f"dynamic fall path is not auditable: {dynamic_confirmed.state}")
+    if not 1.5 <= float(dynamic_confirmed.state.get("fall_confirm_seconds") or 0.0) <= 3.0:
+        raise SystemExit(f"dynamic fall confirmation missed the 1.5-3 second target: {dynamic_confirmed.state}")
+
+    chair_engine = RuleEngine()
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        chair_engine.evaluate_snapshot(camera, {"id": 2400}, make_upright_analysis(), fast_rules)
+        chair_results = []
+        for index, seconds in enumerate((1.0, 2.0, 3.2), start=1):
+            current_time[0] = dynamic_start + timedelta(seconds=seconds)
+            chair_results.append(chair_engine.evaluate_snapshot(
+                camera,
+                {"id": 2400 + index},
+                make_chair_seated_analysis(),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if any(result.candidates for result in chair_results):
+        raise SystemExit("ordinary chair-height sitting must not enter the floor-impact path")
+
+    unmapped_sofa_engine = RuleEngine()
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        unmapped_sofa_engine.evaluate_snapshot(camera, {"id": 2450}, make_upright_analysis(), fast_rules)
+        unmapped_sofa_results = []
+        for index, seconds in enumerate((1.0, 2.0, 3.2), start=1):
+            current_time[0] = dynamic_start + timedelta(seconds=seconds)
+            unmapped_sofa_results.append(unmapped_sofa_engine.evaluate_snapshot(
+                camera,
+                {"id": 2450 + index},
+                make_unmapped_sofa_seated_analysis(),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if any(result.candidates for result in unmapped_sofa_results):
+        raise SystemExit("normal sofa-height sitting must not alert when furniture mapping is missing")
+
+    no_upright_engine = RuleEngine()
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        no_upright_results = []
+        for index, seconds in enumerate((0.0, 1.0, 2.2), start=1):
+            current_time[0] = dynamic_start + timedelta(seconds=seconds)
+            no_upright_results.append(no_upright_engine.evaluate_snapshot(
+                camera,
+                {"id": 2500 + index},
+                make_floor_seated_analysis(),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if any(result.candidates for result in no_upright_results):
+        raise SystemExit("floor sitting without a recent upright-to-low transition must not alert")
+
+    squat_engine = RuleEngine()
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        squat_engine.evaluate_snapshot(camera, {"id": 2600}, make_upright_analysis(), fast_rules)
+        squat_results = []
+        for index, seconds in enumerate((1.0, 2.0, 3.2), start=1):
+            current_time[0] = dynamic_start + timedelta(seconds=seconds)
+            squat_results.append(squat_engine.evaluate_snapshot(
+                camera,
+                {"id": 2600 + index},
+                make_floor_squatting_analysis(),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if any(result.candidates for result in squat_results):
+        raise SystemExit("rapid squatting must not enter the floor-seated fall path")
+
+    multi_person_engine = RuleEngine()
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        multi_person_engine.evaluate_snapshot(
+            camera,
+            {"id": 2700},
+            make_multi_person_upright_analysis(),
+            fast_rules,
+        )
+        multi_person_results = []
+        for index, seconds in enumerate((1.0, 2.0, 3.2), start=1):
+            current_time[0] = dynamic_start + timedelta(seconds=seconds)
+            multi_person_results.append(multi_person_engine.evaluate_snapshot(
+                camera,
+                {"id": 2700 + index},
+                make_multi_person_seated_analysis(),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if any(result.candidates for result in multi_person_results):
+        raise SystemExit("an upright bystander must not confirm another person's seated posture as a fall")
+
+    track_jump_engine = RuleEngine()
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        tracked_upright = make_upright_analysis()
+        tracked_upright["people"][0]["track_id"] = "person-1"
+        tracked_upright["poses"][0]["track_id"] = "person-1"
+        track_jump_engine.evaluate_snapshot(camera, {"id": 2800}, tracked_upright, fast_rules)
+        current_time[0] = dynamic_start + timedelta(seconds=1.0)
+        track_jump_engine.evaluate_snapshot(camera, {"id": 2801}, make_floor_seated_analysis(), fast_rules)
+        track_jump_results = []
+        for index, seconds in enumerate((1.8, 3.2), start=2):
+            current_time[0] = dynamic_start + timedelta(seconds=seconds)
+            track_jump_results.append(track_jump_engine.evaluate_snapshot(
+                camera,
+                {"id": 2800 + index},
+                make_edge_track_jump_analysis(),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if any(result.candidates for result in track_jump_results):
+        raise SystemExit("an impossible same-id jump across the frame must break fall-state inheritance")
+
     worker = EdgeWorker(None, None, None, None)
     pose_rules = {"fall_detection_enabled": True, "activity_detection_enabled": True}
     manual_pose_runtime = worker._pose_runtime_config(1, pose_rules, adaptive=False)
@@ -189,6 +352,14 @@ def main() -> None:
                 "transition_scene_suppressed": transition_scene_second.state["fall_scene_suppressed"],
                 "fast_dynamic_stage": fast_second.state["fall_stage"],
                 "fast_dynamic_seconds": fast_second.state["fall_confirm_seconds"],
+                "dynamic_floor_stage": dynamic_confirmed.state["fall_stage"],
+                "dynamic_floor_seconds": dynamic_confirmed.state["fall_confirm_seconds"],
+                "chair_sitting_suppressed": True,
+                "unmapped_sofa_sitting_suppressed": True,
+                "floor_sitting_without_transition_suppressed": True,
+                "rapid_squatting_suppressed": True,
+                "multi_person_track_switch_suppressed": True,
+                "impossible_track_jump_suppressed": True,
                 "idle_pose_enabled": idle_pose_runtime["pose_detection_enabled"],
                 "fall_pose_interval": fall_pose_runtime["worker_pose_interval_frames"],
                 "history_baseline_stage": history_first.state["fall_stage"],
@@ -367,6 +538,143 @@ def make_pose_fall_analysis(*, normal_lying_zone: bool, fast_graph: bool = False
             },
             "tracks": [],
         }
+    return analysis
+
+
+def make_floor_seated_analysis() -> dict:
+    analysis = make_upright_analysis()
+    bbox = [80, 200, 240, 350]
+    analysis["people"] = [{
+        "bbox": bbox,
+        "confidence": 0.82,
+        "source": "yolo",
+        "track_id": "person-1",
+        "aspect_ratio": 1.07,
+        "fall_candidate": False,
+        "presence_candidate": False,
+        "normal_lying_zone": False,
+    }]
+    analysis["poses"] = [{
+        "bbox": bbox,
+        "confidence": 0.78,
+        "posture_confidence": 0.78,
+        "source": "rtmpose",
+        "posture": "sitting",
+        "track_id": "person-1",
+        "person_evidence_eligible": True,
+        "fall_evidence_eligible": True,
+        "fall_score": 0.24,
+        "normal_lying_zone": False,
+    }]
+    analysis["fall_candidate"] = False
+    analysis["fall_score"] = 0.24
+    analysis["pose_fall_candidate"] = False
+    analysis["pose_fall_score"] = 0.24
+    analysis["motion_detected"] = True
+    analysis["motion_score"] = 0.06
+    analysis["algorithm_results"]["fall"]["data"] = {
+        "fall_candidate": False,
+        "candidate_count": 0,
+        "people": [],
+    }
+    analysis["tags"] = ["person_detected", "pose_detected"]
+    return analysis
+
+
+def make_chair_seated_analysis() -> dict:
+    analysis = make_floor_seated_analysis()
+    bbox = [90, 105, 215, 270]
+    for target in [*analysis["people"], *analysis["poses"]]:
+        target["bbox"] = bbox
+        target["scene_zone_id"] = "chair-1"
+        target["scene_zone_label"] = "chair"
+    return analysis
+
+
+def make_unmapped_sofa_seated_analysis() -> dict:
+    analysis = make_floor_seated_analysis()
+    bbox = [30, 176, 103, 271]
+    for target in [*analysis["people"], *analysis["poses"]]:
+        target["bbox"] = bbox
+        target["scene_zone_id"] = None
+        target["scene_zone_label"] = None
+        target["normal_lying_zone"] = False
+    analysis["motion_score"] = 0.03
+    return analysis
+
+
+def make_floor_squatting_analysis() -> dict:
+    analysis = make_floor_seated_analysis()
+    analysis["poses"][0]["posture"] = "squatting"
+    analysis["poses"][0]["fall_score"] = 0.36
+    analysis["fall_score"] = 0.36
+    analysis["pose_fall_score"] = 0.36
+    return analysis
+
+
+def make_multi_person_upright_analysis() -> dict:
+    analysis = make_upright_analysis()
+    analysis["person_count"] = 2
+    analysis["people"] = [
+        {
+            "bbox": [16, 90, 73, 214],
+            "confidence": 0.82,
+            "source": "yolo",
+            "track_id": "bystander",
+            "aspect_ratio": 0.46,
+            "fall_candidate": False,
+            "presence_candidate": False,
+        },
+        {
+            "bbox": [91, 184, 166, 274],
+            "confidence": 0.78,
+            "source": "yolo",
+            "track_id": "seated-person",
+            "aspect_ratio": 0.83,
+            "fall_candidate": False,
+            "presence_candidate": False,
+        },
+    ]
+    analysis["poses"] = [
+        {
+            "bbox": [16, 90, 73, 214],
+            "confidence": 0.82,
+            "source": "rtmpose",
+            "track_id": "bystander",
+            "posture": "standing",
+            "person_evidence_eligible": True,
+            "fall_score": 0.08,
+        },
+        {
+            "bbox": [91, 184, 166, 274],
+            "confidence": 0.78,
+            "source": "rtmpose",
+            "track_id": "seated-person",
+            "posture": "sitting",
+            "person_evidence_eligible": True,
+            "fall_score": 0.24,
+        },
+    ]
+    analysis["pose_count"] = 2
+    return analysis
+
+
+def make_multi_person_seated_analysis() -> dict:
+    analysis = make_multi_person_upright_analysis()
+    analysis["poses"][0]["bbox"] = [74, 125, 138, 238]
+    analysis["poses"][0]["posture"] = "sitting"
+    analysis["poses"][0]["fall_score"] = 0.18
+    analysis["people"][0]["bbox"] = [74, 125, 138, 238]
+    analysis["motion_score"] = 0.01
+    return analysis
+
+
+def make_edge_track_jump_analysis() -> dict:
+    analysis = make_floor_seated_analysis()
+    bbox = [565, 126, 640, 360]
+    for target in [*analysis["people"], *analysis["poses"]]:
+        target["bbox"] = bbox
+    analysis["motion_score"] = 0.05
     return analysis
 
 
