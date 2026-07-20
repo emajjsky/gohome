@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 import app.rule_engine as rule_engine_module
 from app.rule_engine import RuleEngine
+from app.vision.pose_factor_graph import PoseFactorGraphEngine
 from app.worker import EdgeWorker
 
 
@@ -154,6 +155,58 @@ def main() -> None:
         raise SystemExit("two formal pose frames after a graph-confirmed fast fall must create an event without cached evidence")
     if fast_second.state.get("fall_confirm_seconds", 0) >= fast_rules["fall_confirm_seconds"]:
         raise SystemExit("fast-fall path did not exercise the short dynamic confirmation branch")
+
+    sustained_graph = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    sustained_engine = RuleEngine()
+    sustained_start = datetime(2026, 7, 20, 14, 43, 20, tzinfo=timezone.utc)
+    try:
+        current_time = [sustained_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        sustained_upright = make_upright_analysis()
+        sustained_upright["people"][0]["bbox"] = [250, 20, 340, 320]
+        sustained_upright["poses"][0]["bbox"] = [250, 20, 340, 320]
+        sustained_upright["people"][0]["track_id"] = "person-1"
+        sustained_upright["poses"][0]["track_id"] = "person-1"
+        sustained_graph.update(1, sustained_upright, monotonic_at=0.0)
+        sustained_engine.evaluate_snapshot(camera, {"id": 2250}, sustained_upright, fast_rules)
+
+        current_time[0] = sustained_start + timedelta(seconds=1.0)
+        sustained_first_analysis = make_shallow_floor_lying_analysis()
+        sustained_graph.update(1, sustained_first_analysis, monotonic_at=1.0)
+        sustained_first = sustained_engine.evaluate_snapshot(
+            camera,
+            {"id": 2251},
+            sustained_first_analysis,
+            fast_rules,
+        )
+
+        current_time[0] = sustained_start + timedelta(seconds=2.6)
+        sustained_second_analysis = make_shallow_floor_lying_analysis()
+        sustained_graph.update(1, sustained_second_analysis, monotonic_at=2.6)
+        sustained_second = sustained_engine.evaluate_snapshot(
+            camera,
+            {"id": 2252},
+            sustained_second_analysis,
+            fast_rules,
+        )
+
+        current_time[0] = sustained_start + timedelta(seconds=2.85)
+        sustained_third_analysis = make_shallow_floor_lying_analysis()
+        sustained_graph.update(1, sustained_third_analysis, monotonic_at=2.85)
+        sustained_confirmed = sustained_engine.evaluate_snapshot(
+            camera,
+            {"id": 2253},
+            sustained_third_analysis,
+            fast_rules,
+        )
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if sustained_first.candidates or sustained_second.candidates:
+        raise SystemExit("sustained lying transition must not alert before two formal factor-graph frames")
+    if len(sustained_confirmed.candidates) != 1 or sustained_confirmed.state.get("fall_stage") != "confirmed":
+        raise SystemExit(f"sustained floor lying after a shallow descent must create an event: {sustained_confirmed.state}")
+    if sustained_confirmed.state.get("fall_confirmation_path") != "fast_factor_graph":
+        raise SystemExit(f"sustained floor transition path is not auditable: {sustained_confirmed.state}")
 
     dynamic_engine = RuleEngine()
     dynamic_start = datetime(2026, 7, 20, 12, 43, 0, tzinfo=timezone.utc)
@@ -352,6 +405,8 @@ def main() -> None:
                 "transition_scene_suppressed": transition_scene_second.state["fall_scene_suppressed"],
                 "fast_dynamic_stage": fast_second.state["fall_stage"],
                 "fast_dynamic_seconds": fast_second.state["fall_confirm_seconds"],
+                "sustained_floor_stage": sustained_confirmed.state["fall_stage"],
+                "sustained_floor_action_seconds": 2.85,
                 "dynamic_floor_stage": dynamic_confirmed.state["fall_stage"],
                 "dynamic_floor_seconds": dynamic_confirmed.state["fall_confirm_seconds"],
                 "chair_sitting_suppressed": True,
@@ -538,6 +593,22 @@ def make_pose_fall_analysis(*, normal_lying_zone: bool, fast_graph: bool = False
             },
             "tracks": [],
         }
+    return analysis
+
+
+def make_shallow_floor_lying_analysis() -> dict:
+    analysis = make_pose_fall_analysis(normal_lying_zone=False)
+    bbox = [220, 150, 540, 300]
+    analysis["motion_detected"] = False
+    analysis["motion_score"] = 0.001
+    for target in [*analysis["people"], *analysis["poses"]]:
+        target["bbox"] = list(bbox)
+        target["track_id"] = "person-1"
+        target["confidence"] = 0.78
+        target["posture_confidence"] = 0.78
+        target["normal_lying_zone"] = False
+        target["scene_zone_id"] = None
+        target["scene_zone_label"] = None
     return analysis
 
 

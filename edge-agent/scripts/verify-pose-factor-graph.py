@@ -51,6 +51,36 @@ def main() -> None:
     if track.get("vertical_drop", 0) < 0.12 or track.get("normal_lying_zone"):
         raise SystemExit("fast-fall graph must preserve displacement and scene factors")
 
+    sustained_engine = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    sustained_engine.update(1, frame("standing", [250, 20, 340, 320], confidence=0.78), monotonic_at=10.0)
+    shallow_floor_lying = frame(
+        "lying",
+        [220, 150, 540, 300],
+        motion=0.001,
+        confidence=0.78,
+    )
+    sustained_engine.update(1, shallow_floor_lying, monotonic_at=11.0)
+    sustained_floor = sustained_engine.update(1, shallow_floor_lying, monotonic_at=12.6)
+    if not sustained_floor["fast_fall_candidate"]:
+        raise SystemExit(
+            "same-track high-confidence floor lying must preserve recent descent evidence "
+            f"after motion stops: {sustained_floor}"
+        )
+
+    sustained_engine.reset_camera(1)
+    sustained_engine.update(1, frame("standing", [250, 20, 340, 320], confidence=0.78), monotonic_at=20.0)
+    shallow_couch_lying = frame(
+        "lying",
+        [220, 150, 540, 300],
+        normal_zone=True,
+        motion=0.001,
+        confidence=0.78,
+    )
+    sustained_engine.update(1, shallow_couch_lying, monotonic_at=21.0)
+    sustained_couch = sustained_engine.update(1, shallow_couch_lying, monotonic_at=22.6)
+    if sustained_couch["fast_fall_candidate"]:
+        raise SystemExit("sustained couch or bed lying must not synthesize descent motion evidence")
+
     prolonged = engine.update(1, frame("lying", [220, 220, 540, 350], motion=0.0), monotonic_at=183.0)
     if not prolonged["prolonged_floor_lying_candidate"]:
         raise SystemExit("continuous non-normal-zone lying must trigger after 180 seconds")
@@ -102,6 +132,8 @@ def main() -> None:
         "prolonged_seconds": prolonged["prolonged_floor_lying_tracks"][0]["lying_duration_seconds"],
         "normal_zone_suppressed": True,
         "normal_zone_fast_fall": couch_fall["fast_fall_candidate"],
+        "sustained_floor_fast_fall": sustained_floor["fast_fall_candidate"],
+        "sustained_couch_suppressed": not sustained_couch["fast_fall_candidate"],
         "traversed_fast_fall": traversed_fall["fast_fall_candidate"],
         "different_track_suppressed": not different_track["fast_fall_candidate"],
         "recovery_verified": True,

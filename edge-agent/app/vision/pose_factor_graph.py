@@ -10,6 +10,8 @@ UPRIGHT_POSTURES = {
     "standing", "sitting", "squatting", "bending", "upper_body",
     "standing_or_sitting", "seated_or_half_body", "low_body",
 }
+SUSTAINED_FLOOR_LYING_TRANSITION_SECONDS = 1.5
+SUSTAINED_FLOOR_LYING_MIN_CONFIDENCE = 0.70
 
 
 class PoseFactorGraphEngine:
@@ -144,6 +146,16 @@ class PoseFactorGraphEngine:
             recent_upright_ok = upright_age <= self.upright_window_seconds
 
         low_posture = posture == "lying" or (posture in {"squatting", "low_body"} and center[1] >= 0.62)
+        direct_motion = motion_score >= 0.02 or vertical_drop >= 0.18
+        sustained_floor_lying_after_descent = bool(
+            posture == "lying"
+            and confidence >= SUSTAINED_FLOOR_LYING_MIN_CONFIDENCE
+            and lying_duration >= SUSTAINED_FLOOR_LYING_TRANSITION_SECONDS
+            and recent_upright_ok
+            and vertical_drop >= 0.12
+            and horizontal_distance <= 0.28
+            and not normal_lying_zone
+        )
         factors = {
             "recent_upright": recent_upright_ok,
             "same_track_continuity": recent_upright_ok,
@@ -151,7 +163,7 @@ class PoseFactorGraphEngine:
             "spatial_consistency": horizontal_distance <= 0.28,
             "low_posture": low_posture,
             "horizontal_body": posture == "lying" or body_aspect >= 1.10,
-            "motion": motion_score >= 0.02 or vertical_drop >= 0.18,
+            "motion": direct_motion or sustained_floor_lying_after_descent,
             "non_normal_lying_surface": not normal_lying_zone,
         }
         weights = {
@@ -187,6 +199,15 @@ class PoseFactorGraphEngine:
             "motion_score": round(motion_score, 4),
             "lying_started_at": lying_started_at,
             "lying_duration_seconds": round(lying_duration, 3),
+            "direct_motion_evidence": direct_motion,
+            "sustained_floor_lying_after_descent": sustained_floor_lying_after_descent,
+            "motion_evidence_source": (
+                "direct_motion"
+                if direct_motion
+                else "sustained_floor_lying_after_descent"
+                if sustained_floor_lying_after_descent
+                else "none"
+            ),
             "factors": factors,
             "factor_weights": weights,
             "fast_fall_score": round(score, 4),
