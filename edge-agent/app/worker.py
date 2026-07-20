@@ -321,7 +321,7 @@ class EdgeWorker:
             analysis["inference_runtime"] = self._inference_runtime_payload(pose_runtime_config)
             temporal = self.temporal_engine.update(camera_id, analysis)
             self._publish_continual_pose_anchor(camera_id, frame=frame, capture=capture, analysis=analysis)
-            self.pose_factor_graph_engine.update(camera_id, analysis)
+            self.pose_factor_graph_engine.update(camera_id, analysis, config=rules)
             self._attach_temporal_evidence(camera_id, analysis)
             persistence_now = self._monotonic_clock()
             should_persist = self._should_persist_analysis(

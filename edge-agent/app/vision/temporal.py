@@ -9,6 +9,16 @@ import time
 from typing import Any, Dict
 
 
+LOW_POSTURES = {"lying", "low_body"}
+UPRIGHT_POSTURES = {
+    "standing", "sitting", "squatting", "bending", "upper_body", "standing_or_sitting",
+}
+POSTURE_TRANSITION_MIN_SHAPE_SIMILARITY = 0.16
+LOW_POSTURE_CONTINUITY_MIN_SHAPE_SIMILARITY = 0.22
+DEFAULT_MIN_SHAPE_SIMILARITY = 0.28
+LOW_POSTURE_CONTINUITY_SCORE_BONUS = 0.12
+
+
 class TemporalObservationEngine:
     """Maintains compact per-camera tracks and a bounded observation history."""
 
@@ -321,7 +331,13 @@ class TemporalObservationEngine:
             distance_gate = max(distance_gate, 0.38)
         if predicted_iou < self.min_iou and predicted_distance > distance_gate:
             return -math.inf
-        minimum_shape_similarity = 0.16 if transition else 0.22 if low_posture_continuity else 0.28
+        minimum_shape_similarity = (
+            POSTURE_TRANSITION_MIN_SHAPE_SIMILARITY
+            if transition
+            else LOW_POSTURE_CONTINUITY_MIN_SHAPE_SIMILARITY
+            if low_posture_continuity
+            else DEFAULT_MIN_SHAPE_SIMILARITY
+        )
         if shape_similarity < minimum_shape_similarity:
             return -math.inf
 
@@ -341,7 +357,7 @@ class TemporalObservationEngine:
             + shape_similarity * 0.35
             + max(0.0, direction) * 0.45
             + (0.20 if transition else 0.0)
-            + (0.12 if low_posture_continuity else 0.0)
+            + (LOW_POSTURE_CONTINUITY_SCORE_BONUS if low_posture_continuity else 0.0)
             - min(0.25, elapsed * 0.08)
         )
 
@@ -486,12 +502,16 @@ class TemporalObservationEngine:
         return math.exp(-abs(math.log(width_ratio)) - abs(math.log(height_ratio)))
 
     def _credible_posture_transition(self, previous: Any, current: Any) -> bool:
-        upright = {"standing", "sitting", "squatting", "bending", "upper_body", "standing_or_sitting"}
-        return str(previous or "").lower() in upright and str(current or "").lower() in {"lying", "low_body"}
+        return bool(
+            str(previous or "").lower() in UPRIGHT_POSTURES
+            and str(current or "").lower() in LOW_POSTURES
+        )
 
     def _credible_low_posture_continuity(self, previous: Any, current: Any) -> bool:
-        low = {"lying", "low_body"}
-        return str(previous or "").lower() in low and str(current or "").lower() in low
+        return bool(
+            str(previous or "").lower() in LOW_POSTURES
+            and str(current or "").lower() in LOW_POSTURES
+        )
 
     def _annotate_analysis(
         self,

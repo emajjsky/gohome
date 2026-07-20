@@ -12,6 +12,11 @@ SCENE_LABELS_ZH = {
     "dining_table": "餐桌",
     "tv": "电视",
 }
+STABLE_BBOX_SMOOTHING_MAX = 0.08
+STABLE_BBOX_MIN_DIMENSION_RATIO = 0.72
+STABLE_BBOX_MAX_DIMENSION_RATIO = 1.30
+STABLE_BBOX_MIN_AREA_RATIO = 0.68
+STABLE_BBOX_MAX_AREA_RATIO = 1.32
 
 
 class SceneContextTracker:
@@ -54,7 +59,11 @@ class SceneContextTracker:
                 previous_hits >= min_hits
                 and not self._static_bbox_compatible(previous.get("bbox"), detected.get("bbox"))
             )
-            bbox_smoothing = min(smoothing, 0.08) if previous_hits >= min_hits else smoothing
+            bbox_smoothing = (
+                min(smoothing, STABLE_BBOX_SMOOTHING_MAX)
+                if previous_hits >= min_hits
+                else smoothing
+            )
             next_bbox = (
                 [round(float(value), 1) for value in previous.get("bbox")]
                 if bbox_update_rejected
@@ -168,9 +177,13 @@ class SceneContextTracker:
         height_ratio = (cy2 - cy1) / reference_height
         area_ratio = self._box_area(current) / max(1.0, self._box_area(reference))
         return bool(
-            0.72 <= width_ratio <= 1.30
-            and 0.72 <= height_ratio <= 1.30
-            and 0.68 <= area_ratio <= 1.32
+            STABLE_BBOX_MIN_DIMENSION_RATIO
+            <= width_ratio
+            <= STABLE_BBOX_MAX_DIMENSION_RATIO
+            and STABLE_BBOX_MIN_DIMENSION_RATIO
+            <= height_ratio
+            <= STABLE_BBOX_MAX_DIMENSION_RATIO
+            and STABLE_BBOX_MIN_AREA_RATIO <= area_ratio <= STABLE_BBOX_MAX_AREA_RATIO
         )
 
     def _coalesce_objects(self, objects: list[Dict[str, Any]]) -> list[Dict[str, Any]]:

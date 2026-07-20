@@ -12,8 +12,9 @@ UPRIGHT_POSTURES = {
 }
 SUSTAINED_FLOOR_LYING_TRANSITION_SECONDS = 1.5
 SUSTAINED_FLOOR_LYING_MIN_CONFIDENCE = 0.70
-FAST_FALL_MIN_VERTICAL_DROP = 0.12
+DEFAULT_FAST_FALL_MIN_VERTICAL_DROP = 0.12
 SUSTAINED_FLOOR_LYING_DROP_TOLERANCE = 0.90
+DEFAULT_FALL_TRANSITION_MOTION_SCORE = 0.02
 
 
 class PoseFactorGraphEngine:
@@ -42,6 +43,7 @@ class PoseFactorGraphEngine:
         *,
         observed_at: str | None = None,
         monotonic_at: float | None = None,
+        config: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         camera_id = int(camera_id)
         now_mono = float(monotonic_at if monotonic_at is not None else time.monotonic())
@@ -49,6 +51,18 @@ class PoseFactorGraphEngine:
         width = max(1.0, float(analysis.get("image_width") or 1.0))
         height = max(1.0, float(analysis.get("image_height") or 1.0))
         motion_score = float(analysis.get("motion_score") or 0.0)
+        runtime_config = config or {}
+        fall_min_vertical_drop = max(
+            0.05,
+            float(runtime_config.get("fall_min_vertical_drop") or DEFAULT_FAST_FALL_MIN_VERTICAL_DROP),
+        )
+        fall_transition_motion_score = max(
+            0.01,
+            float(
+                runtime_config.get("fall_transition_motion_score")
+                or DEFAULT_FALL_TRANSITION_MOTION_SCORE
+            ),
+        )
         targets = self._track_targets(analysis)
         states = self._states.setdefault(camera_id, {})
         graphs: list[Dict[str, Any]] = []
@@ -93,6 +107,8 @@ class PoseFactorGraphEngine:
                 motion_score=motion_score,
                 lying_duration=lying_duration,
                 lying_started_at=state.get("lying_started_at"),
+                fall_min_vertical_drop=fall_min_vertical_drop,
+                fall_transition_motion_score=fall_transition_motion_score,
             ))
             state.update({"last_seen_monotonic": now_mono, "last_seen_at": timestamp, "last_posture": posture})
 
@@ -131,6 +147,8 @@ class PoseFactorGraphEngine:
         motion_score: float,
         lying_duration: float,
         lying_started_at: Any,
+        fall_min_vertical_drop: float,
+        fall_transition_motion_score: float,
     ) -> Dict[str, Any]:
         posture = str(target.get("posture") or "unknown")
         confidence = float(target.get("posture_confidence") or target.get("confidence") or 0.0)
@@ -148,8 +166,11 @@ class PoseFactorGraphEngine:
             recent_upright_ok = upright_age <= self.upright_window_seconds
 
         low_posture = posture == "lying" or (posture in {"squatting", "low_body"} and center[1] >= 0.62)
-        direct_motion = motion_score >= 0.02 or vertical_drop >= 0.18
-        sustained_min_vertical_drop = FAST_FALL_MIN_VERTICAL_DROP * SUSTAINED_FLOOR_LYING_DROP_TOLERANCE
+        direct_motion = bool(
+            motion_score >= fall_transition_motion_score
+            or vertical_drop >= fall_min_vertical_drop * 1.5
+        )
+        sustained_min_vertical_drop = fall_min_vertical_drop * SUSTAINED_FLOOR_LYING_DROP_TOLERANCE
         sustained_floor_lying_after_descent = bool(
             posture == "lying"
             and confidence >= SUSTAINED_FLOOR_LYING_MIN_CONFIDENCE
@@ -160,7 +181,7 @@ class PoseFactorGraphEngine:
             and not normal_lying_zone
         )
         vertical_drop_evidence = bool(
-            vertical_drop >= FAST_FALL_MIN_VERTICAL_DROP
+            vertical_drop >= fall_min_vertical_drop
             or sustained_floor_lying_after_descent
         )
         factors = {
@@ -207,6 +228,8 @@ class PoseFactorGraphEngine:
             "lying_started_at": lying_started_at,
             "lying_duration_seconds": round(lying_duration, 3),
             "sustained_floor_lying_min_vertical_drop": round(sustained_min_vertical_drop, 4),
+            "fall_min_vertical_drop": round(fall_min_vertical_drop, 4),
+            "fall_transition_motion_score": round(fall_transition_motion_score, 4),
             "direct_motion_evidence": direct_motion,
             "sustained_floor_lying_after_descent": sustained_floor_lying_after_descent,
             "motion_evidence_source": (

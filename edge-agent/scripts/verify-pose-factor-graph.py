@@ -88,6 +88,37 @@ def main() -> None:
             f"{sustained_borderline}"
         )
 
+    configured_engine = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    configured_rules = {"fall_min_vertical_drop": 0.16, "fall_transition_motion_score": 0.03}
+    configured_engine.update(
+        1,
+        frame("standing", [367.1, 64.5, 463.8, 304.1], confidence=0.78, track_id="configured-track"),
+        monotonic_at=40.0,
+        config=configured_rules,
+    )
+    configured_floor = frame(
+        "lying",
+        [301.9, 182.5, 465.9, 268.1],
+        motion=0.002,
+        confidence=0.7824,
+        track_id="configured-track",
+    )
+    configured_engine.update(
+        1,
+        configured_floor,
+        monotonic_at=41.0,
+        config=configured_rules,
+    )
+    configured_result = configured_engine.update(
+        1,
+        configured_floor,
+        monotonic_at=42.58,
+        config=configured_rules,
+    )
+    configured_track = configured_result["tracks"][0]
+    if configured_result["fast_fall_candidate"] or configured_track.get("fall_min_vertical_drop") != 0.16:
+        raise SystemExit(f"pose factor graph must use the shared runtime fall thresholds: {configured_result}")
+
     sustained_engine.reset_camera(1)
     sustained_engine.update(1, frame("standing", [250, 20, 340, 320], confidence=0.78), monotonic_at=20.0)
     shallow_couch_lying = frame(
@@ -155,6 +186,7 @@ def main() -> None:
         "normal_zone_fast_fall": couch_fall["fast_fall_candidate"],
         "sustained_floor_fast_fall": sustained_floor["fast_fall_candidate"],
         "sustained_borderline_fast_fall": sustained_borderline["fast_fall_candidate"],
+        "shared_runtime_threshold": configured_track["fall_min_vertical_drop"],
         "sustained_couch_suppressed": not sustained_couch["fast_fall_candidate"],
         "traversed_fast_fall": traversed_fall["fast_fall_candidate"],
         "different_track_suppressed": not different_track["fast_fall_candidate"],
