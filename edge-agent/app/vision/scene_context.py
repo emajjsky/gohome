@@ -49,13 +49,26 @@ class SceneContextTracker:
                 matched_tracks.add(len(tracks) - 1)
                 continue
             previous = tracks[best_index]
+            previous_hits = int(previous.get("hits") or 0)
+            bbox_update_rejected = bool(
+                previous_hits >= min_hits
+                and not self._static_bbox_compatible(previous.get("bbox"), detected.get("bbox"))
+            )
+            bbox_smoothing = min(smoothing, 0.08) if previous_hits >= min_hits else smoothing
+            next_bbox = (
+                [round(float(value), 1) for value in previous.get("bbox")]
+                if bbox_update_rejected
+                else self._smooth_box(previous.get("bbox"), detected.get("bbox"), bbox_smoothing)
+            )
             tracks[best_index] = {
                 **previous,
                 **detected,
-                "bbox": self._smooth_box(previous.get("bbox"), detected.get("bbox"), smoothing),
+                "bbox": next_bbox,
                 "confidence": round(max(float(previous.get("confidence") or 0.0), float(detected.get("confidence") or 0.0)), 4),
-                "hits": int(previous.get("hits") or 0) + 1,
+                "hits": previous_hits + 1,
                 "misses": 0,
+                "last_detected_bbox": [round(float(value), 1) for value in detected.get("bbox")],
+                "bbox_update_rejected": bbox_update_rejected,
             }
             matched_tracks.add(best_index)
 
@@ -143,6 +156,22 @@ class SceneContextTracker:
             round(float(old) * (1.0 - weight) + float(new) * weight, 1)
             for old, new in zip(previous, current)
         ]
+
+    def _static_bbox_compatible(self, reference: Any, current: Any) -> bool:
+        if not self._valid_box(reference) or not self._valid_box(current):
+            return False
+        rx1, ry1, rx2, ry2 = [float(value) for value in reference]
+        cx1, cy1, cx2, cy2 = [float(value) for value in current]
+        reference_width = max(1.0, rx2 - rx1)
+        reference_height = max(1.0, ry2 - ry1)
+        width_ratio = (cx2 - cx1) / reference_width
+        height_ratio = (cy2 - cy1) / reference_height
+        area_ratio = self._box_area(current) / max(1.0, self._box_area(reference))
+        return bool(
+            0.72 <= width_ratio <= 1.30
+            and 0.72 <= height_ratio <= 1.30
+            and 0.68 <= area_ratio <= 1.32
+        )
 
     def _coalesce_objects(self, objects: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
         merged: list[Dict[str, Any]] = []

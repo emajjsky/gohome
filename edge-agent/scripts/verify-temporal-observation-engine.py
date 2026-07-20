@@ -163,6 +163,21 @@ def main() -> None:
     occlusion.update(8, restored, monotonic_at=2.5)
     assert_track(restored, 0, occluded_track, "short occlusion must restore the same model track")
 
+    # A partially occluded floor-lying person may return with a much larger box.
+    lying_occlusion = TemporalObservationEngine(history_size=12, track_ttl_seconds=10)
+    lying_before = analysis(person([396.0, 185.6, 458.1, 259.3], posture="lying"))
+    lying_occlusion.update(18, lying_before, monotonic_at=1.0)
+    lying_track = str(lying_before["people"][0]["track_id"])
+    lying_occlusion.update(18, analysis(), monotonic_at=1.8)
+    lying_restored = analysis(person([323.8, 189.1, 465.1, 316.7], posture="lying"))
+    lying_occlusion.update(18, lying_restored, monotonic_at=2.58)
+    assert_track(
+        lying_restored,
+        0,
+        lying_track,
+        "short floor-lying occlusion with box expansion must preserve identity",
+    )
+
     # A fast upright-to-low movement can travel farther than the old fixed center gate.
     fast_move = TemporalObservationEngine(history_size=12, track_ttl_seconds=10)
     upright = analysis(person([80, 40, 180, 330], posture="standing"))
@@ -199,6 +214,7 @@ def main() -> None:
         "stable_track_id": track_id,
         "crossing_tracks": [left_track, right_track],
         "occlusion_track": occluded_track,
+        "lying_occlusion_track": lying_track,
         "fast_transition_track": fast_track,
         "replacement_track": newcomer_track,
         "history_capacity": 8,

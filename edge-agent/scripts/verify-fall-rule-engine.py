@@ -163,8 +163,8 @@ def main() -> None:
         current_time = [sustained_start]
         rule_engine_module.utc_now = lambda: current_time[0]
         sustained_upright = make_upright_analysis()
-        sustained_upright["people"][0]["bbox"] = [250, 20, 340, 320]
-        sustained_upright["poses"][0]["bbox"] = [250, 20, 340, 320]
+        sustained_upright["people"][0]["bbox"] = [367.1, 64.5, 463.8, 304.1]
+        sustained_upright["poses"][0]["bbox"] = [367.1, 64.5, 463.8, 304.1]
         sustained_upright["people"][0]["track_id"] = "person-1"
         sustained_upright["poses"][0]["track_id"] = "person-1"
         sustained_graph.update(1, sustained_upright, monotonic_at=0.0)
@@ -598,14 +598,14 @@ def make_pose_fall_analysis(*, normal_lying_zone: bool, fast_graph: bool = False
 
 def make_shallow_floor_lying_analysis() -> dict:
     analysis = make_pose_fall_analysis(normal_lying_zone=False)
-    bbox = [220, 150, 540, 300]
+    bbox = [301.9, 182.5, 465.9, 268.1]
     analysis["motion_detected"] = False
     analysis["motion_score"] = 0.001
     for target in [*analysis["people"], *analysis["poses"]]:
         target["bbox"] = list(bbox)
         target["track_id"] = "person-1"
-        target["confidence"] = 0.78
-        target["posture_confidence"] = 0.78
+        target["confidence"] = 0.7824
+        target["posture_confidence"] = 0.7824
         target["normal_lying_zone"] = False
         target["scene_zone_id"] = None
         target["scene_zone_label"] = None

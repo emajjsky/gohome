@@ -80,6 +80,7 @@ def main() -> None:
     pose_posture = verify_pose_posture_direction()
     pose_partial_shoulders = verify_pose_action_hints_with_partial_shoulders()
     scene_context = verify_scene_context_stabilizes_normal_lying_zone()
+    scene_occlusion = verify_scene_context_resists_occlusion_drift()
     scene_human_filter = verify_scene_context_rejects_human_shaped_furniture()
     display_suppression = verify_display_content_suppression()
     display_pose_bypass = verify_display_pose_cannot_recreate_suppressed_person()
@@ -141,6 +142,8 @@ def main() -> None:
         "scene_status": scene_context["status"],
         "scene_zone_count": scene_context["zone_count"],
         "scene_normal_lying": scene_context["normal_lying"],
+        "scene_occlusion_zone_right": scene_occlusion["zone_right"],
+        "scene_occlusion_normal_lying": scene_occlusion["normal_lying"],
         "scene_human_filter_count": scene_human_filter,
         "display_suppressed_people": display_suppression["suppressed_people"],
         "display_suppressed_poses": display_suppression["suppressed_poses"],
@@ -207,6 +210,8 @@ def main() -> None:
         raise SystemExit("scene context should stabilize a repeated couch detection")
     if not checks["scene_normal_lying"]:
         raise SystemExit("lying pose overlapping a stable couch must be marked as normal lying zone")
+    if checks["scene_occlusion_zone_right"] > 360.0 or checks["scene_occlusion_normal_lying"]:
+        raise SystemExit("a person occluding a static couch must not make the couch zone drift into floor lying")
     if checks["scene_human_filter_count"] != 1:
         raise SystemExit("scene context must reject furniture boxes mostly covered by a person")
     if checks["display_suppressed_people"] != 1 or checks["display_suppressed_poses"] != 1:
@@ -338,6 +343,37 @@ def verify_scene_context_stabilizes_normal_lying_zone() -> dict:
     return {
         "status": scene["scene_map_status"],
         "zone_count": len(scene["normal_lying_zones"]),
+        "normal_lying": bool(poses and poses[0].get("normal_lying_zone")),
+    }
+
+
+def verify_scene_context_resists_occlusion_drift() -> dict:
+    tracker = SceneContextTracker()
+    config = {"camera_id": 10, "scene_stable_min_hits": 2}
+    static_couch = [{
+        "bbox": [0.0, 202.0, 330.0, 350.0],
+        "confidence": 0.90,
+        "label": "couch",
+        "source": "yolo_scene",
+    }]
+    occluded_couch = [{
+        "bbox": [0.0, 202.0, 460.0, 357.0],
+        "confidence": 0.90,
+        "label": "couch",
+        "source": "yolo_scene",
+    }]
+    tracker.update(static_couch, config)
+    tracker.update(static_couch, config)
+    for _ in range(20):
+        scene = tracker.update(occluded_couch, config)
+    _, poses = tracker.annotate(
+        [],
+        [{"bbox": [302.0, 182.0, 466.0, 268.0], "posture": "lying", "fall_candidate": True}],
+        scene["scene_zones"],
+    )
+    zone = scene["normal_lying_zones"][0]
+    return {
+        "zone_right": float(zone["bbox"][2]),
         "normal_lying": bool(poses and poses[0].get("normal_lying_zone")),
     }
 

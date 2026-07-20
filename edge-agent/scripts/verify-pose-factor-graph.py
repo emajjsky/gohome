@@ -67,6 +67,27 @@ def main() -> None:
             f"after motion stops: {sustained_floor}"
         )
 
+    borderline_engine = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    borderline_engine.update(
+        1,
+        frame("standing", [367.1, 64.5, 463.8, 304.1], confidence=0.78, track_id="c24-p30"),
+        monotonic_at=30.0,
+    )
+    borderline_floor = frame(
+        "lying",
+        [301.9, 182.5, 465.9, 268.1],
+        motion=0.002,
+        confidence=0.7824,
+        track_id="c24-p30",
+    )
+    borderline_engine.update(1, borderline_floor, monotonic_at=31.0)
+    sustained_borderline = borderline_engine.update(1, borderline_floor, monotonic_at=32.58)
+    if not sustained_borderline["fast_fall_candidate"]:
+        raise SystemExit(
+            "sustained same-track floor lying must tolerate bounded pose-box jitter near the descent threshold: "
+            f"{sustained_borderline}"
+        )
+
     sustained_engine.reset_camera(1)
     sustained_engine.update(1, frame("standing", [250, 20, 340, 320], confidence=0.78), monotonic_at=20.0)
     shallow_couch_lying = frame(
@@ -133,6 +154,7 @@ def main() -> None:
         "normal_zone_suppressed": True,
         "normal_zone_fast_fall": couch_fall["fast_fall_candidate"],
         "sustained_floor_fast_fall": sustained_floor["fast_fall_candidate"],
+        "sustained_borderline_fast_fall": sustained_borderline["fast_fall_candidate"],
         "sustained_couch_suppressed": not sustained_couch["fast_fall_candidate"],
         "traversed_fast_fall": traversed_fall["fast_fall_candidate"],
         "different_track_suppressed": not different_track["fast_fall_candidate"],

@@ -12,6 +12,8 @@ UPRIGHT_POSTURES = {
 }
 SUSTAINED_FLOOR_LYING_TRANSITION_SECONDS = 1.5
 SUSTAINED_FLOOR_LYING_MIN_CONFIDENCE = 0.70
+FAST_FALL_MIN_VERTICAL_DROP = 0.12
+SUSTAINED_FLOOR_LYING_DROP_TOLERANCE = 0.90
 
 
 class PoseFactorGraphEngine:
@@ -147,19 +149,24 @@ class PoseFactorGraphEngine:
 
         low_posture = posture == "lying" or (posture in {"squatting", "low_body"} and center[1] >= 0.62)
         direct_motion = motion_score >= 0.02 or vertical_drop >= 0.18
+        sustained_min_vertical_drop = FAST_FALL_MIN_VERTICAL_DROP * SUSTAINED_FLOOR_LYING_DROP_TOLERANCE
         sustained_floor_lying_after_descent = bool(
             posture == "lying"
             and confidence >= SUSTAINED_FLOOR_LYING_MIN_CONFIDENCE
             and lying_duration >= SUSTAINED_FLOOR_LYING_TRANSITION_SECONDS
             and recent_upright_ok
-            and vertical_drop >= 0.12
+            and vertical_drop >= sustained_min_vertical_drop
             and horizontal_distance <= 0.28
             and not normal_lying_zone
+        )
+        vertical_drop_evidence = bool(
+            vertical_drop >= FAST_FALL_MIN_VERTICAL_DROP
+            or sustained_floor_lying_after_descent
         )
         factors = {
             "recent_upright": recent_upright_ok,
             "same_track_continuity": recent_upright_ok,
-            "vertical_drop": vertical_drop >= 0.12,
+            "vertical_drop": vertical_drop_evidence,
             "spatial_consistency": horizontal_distance <= 0.28,
             "low_posture": low_posture,
             "horizontal_body": posture == "lying" or body_aspect >= 1.10,
@@ -199,6 +206,7 @@ class PoseFactorGraphEngine:
             "motion_score": round(motion_score, 4),
             "lying_started_at": lying_started_at,
             "lying_duration_seconds": round(lying_duration, 3),
+            "sustained_floor_lying_min_vertical_drop": round(sustained_min_vertical_drop, 4),
             "direct_motion_evidence": direct_motion,
             "sustained_floor_lying_after_descent": sustained_floor_lying_after_descent,
             "motion_evidence_source": (

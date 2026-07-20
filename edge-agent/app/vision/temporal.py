@@ -311,13 +311,18 @@ class TemporalObservationEngine:
         )
         shape_similarity = self._shape_similarity(detection["bbox"], track.get("bbox"))
         transition = self._credible_posture_transition(track.get("posture"), detection.get("posture"))
+        low_posture_continuity = self._credible_low_posture_continuity(
+            track.get("posture"),
+            detection.get("posture"),
+        )
         speed = self._velocity_speed(track.get("bbox_velocity"))
         distance_gate = self.max_center_distance + min(0.16, speed * min(1.5, elapsed) * 0.75)
         if transition:
             distance_gate = max(distance_gate, 0.38)
         if predicted_iou < self.min_iou and predicted_distance > distance_gate:
             return -math.inf
-        if shape_similarity < (0.16 if transition else 0.28):
+        minimum_shape_similarity = 0.16 if transition else 0.22 if low_posture_continuity else 0.28
+        if shape_similarity < minimum_shape_similarity:
             return -math.inf
 
         direction = self._direction_consistency(
@@ -336,6 +341,7 @@ class TemporalObservationEngine:
             + shape_similarity * 0.35
             + max(0.0, direction) * 0.45
             + (0.20 if transition else 0.0)
+            + (0.12 if low_posture_continuity else 0.0)
             - min(0.25, elapsed * 0.08)
         )
 
@@ -482,6 +488,10 @@ class TemporalObservationEngine:
     def _credible_posture_transition(self, previous: Any, current: Any) -> bool:
         upright = {"standing", "sitting", "squatting", "bending", "upper_body", "standing_or_sitting"}
         return str(previous or "").lower() in upright and str(current or "").lower() in {"lying", "low_body"}
+
+    def _credible_low_posture_continuity(self, previous: Any, current: Any) -> bool:
+        low = {"lying", "low_body"}
+        return str(previous or "").lower() in low and str(current or "").lower() in low
 
     def _annotate_analysis(
         self,
