@@ -14,6 +14,7 @@
     "verify:postgres-loop": "node scripts/verify-postgres-loop.js",
     "verify:app-server": "node scripts/verify-local-app-server.js",
     "verify:frontend-cache": "node scripts/verify-frontend-state-cache.js",
+    "test:native-server": "node --test local-app-server/test/*.test.js",
     "test": "npm run verify:frontend-cache && npm run verify:app-server"
   },
   "keywords": [],
