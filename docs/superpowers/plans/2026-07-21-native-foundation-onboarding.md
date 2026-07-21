@@ -169,16 +169,16 @@ git commit -m "feat(ios): add typed cloud API client"
 - Create: `Sources/Storage/DiskCache.swift`
 - Test: `GoHomeShellTests/AuthAndCacheTests.swift`
 
-- [ ] **Step 1: Write failing isolation tests**
+- [x] **Step 1: Write failing isolation tests**
 
 Assert token round-trip, logout deletion, user/family cache key separation, expired-entry rejection, and prior-account data not returned after switching scope.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellTests/AuthAndCacheTests`  
 Expected: FAIL because stores do not exist.
 
-- [ ] **Step 3: Implement stores**
+- [x] **Step 3: Implement stores**
 
 ```swift
 struct CacheScope: Hashable, Codable {
@@ -195,13 +195,13 @@ actor DiskCache {
 
 Store Keychain items under service `com.gohome.family.auth`; use `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
 
-- [ ] **Step 4: Run tests and inspect filesystem protection**
+- [x] **Step 4: Run tests and inspect filesystem protection**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellTests/AuthAndCacheTests`
 
 Expected: PASS; cache files use complete-unless-open data protection and contain no token.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Storage ios-shell/GoHomeShellTests/AuthAndCacheTests.swift

@@ -7,10 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0020062684B57893A0F1D834 /* AuthAndCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42DDFD5335CD648168DD8760 /* AuthAndCacheTests.swift */; };
 		23F245CC31AE82B7921C5886 /* GoHomeShellWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C91ECB575819076A3325F82 /* GoHomeShellWebView.swift */; };
 		44FCCD307E547535444FFAF1 /* APIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A166F07C9E3E29754D62C633 /* APIClientTests.swift */; };
 		51FBE67F5F279B4917217D2E /* AppSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBD54AB746D00CA01186A345 /* AppSmokeTests.swift */; };
+		70F06EE866583BBFCA696C62 /* DiskCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCAFEAC63D4BAB2911F6E0A8 /* DiskCache.swift */; };
 		809BC57A72314D36F0FB3B12 /* AppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D4A21A561B17A4972C5E71 /* AppRoute.swift */; };
+		9B92A863465C0268BDF06FF8 /* KeychainAuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133FEB218A86BD650E7A4F08 /* KeychainAuthStore.swift */; };
 		B0CDCED7D6A5959EA9F04A2B /* GoHomeShellRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91C24A55A123E7BC7B7A8210 /* GoHomeShellRuntime.swift */; };
 		BB93EEC11571A3993186E568 /* Endpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748C4BBD1C9C334B3C126EDA /* Endpoint.swift */; };
 		E02FC8ECDB02D2A42CBF558B /* GoHomeShellApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FE057158722526CC639E04C /* GoHomeShellApp.swift */; };
@@ -38,6 +41,8 @@
 
 /* Begin PBXFileReference section */
 		10D4A21A561B17A4972C5E71 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoute.swift; sourceTree = "<group>"; };
+		133FEB218A86BD650E7A4F08 /* KeychainAuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainAuthStore.swift; sourceTree = "<group>"; };
+		42DDFD5335CD648168DD8760 /* AuthAndCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthAndCacheTests.swift; sourceTree = "<group>"; };
 		4C91ECB575819076A3325F82 /* GoHomeShellWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoHomeShellWebView.swift; sourceTree = "<group>"; };
 		4FE057158722526CC639E04C /* GoHomeShellApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoHomeShellApp.swift; sourceTree = "<group>"; };
 		748C4BBD1C9C334B3C126EDA /* Endpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Endpoint.swift; sourceTree = "<group>"; };
@@ -50,9 +55,19 @@
 		CE166B0C27414D0408D563F7 /* LaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
 		E3C5B56549E211F6B746E441 /* GoHomeShellTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GoHomeShellTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FBFD8D61829080770E3C4FBF /* GoHomeShellUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GoHomeShellUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FCAFEAC63D4BAB2911F6E0A8 /* DiskCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskCache.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		02F26E4575A1876AFEE56619 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				FCAFEAC63D4BAB2911F6E0A8 /* DiskCache.swift */,
+				133FEB218A86BD650E7A4F08 /* KeychainAuthStore.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
 		6264E5DF73877DB3CC1DE369 /* App */ = {
 			isa = PBXGroup;
 			children = (
@@ -69,6 +84,7 @@
 				4C91ECB575819076A3325F82 /* GoHomeShellWebView.swift */,
 				6264E5DF73877DB3CC1DE369 /* App */,
 				96169D5FD56A949069CD5262 /* Networking */,
+				02F26E4575A1876AFEE56619 /* Storage */,
 			);
 			name = Sources;
 			path = GoHomeShell/Sources;
@@ -79,6 +95,7 @@
 			children = (
 				A166F07C9E3E29754D62C633 /* APIClientTests.swift */,
 				BBD54AB746D00CA01186A345 /* AppSmokeTests.swift */,
+				42DDFD5335CD648168DD8760 /* AuthAndCacheTests.swift */,
 			);
 			path = GoHomeShellTests;
 			sourceTree = "<group>";
@@ -219,6 +236,7 @@
 			files = (
 				44FCCD307E547535444FFAF1 /* APIClientTests.swift in Sources */,
 				51FBE67F5F279B4917217D2E /* AppSmokeTests.swift in Sources */,
+				0020062684B57893A0F1D834 /* AuthAndCacheTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -237,10 +255,12 @@
 				FD4E4E4BA72E5F4A5A5F822F /* APIClient.swift in Sources */,
 				E7E65E15AED50A8CEA9E0EC2 /* APIError.swift in Sources */,
 				809BC57A72314D36F0FB3B12 /* AppRoute.swift in Sources */,
+				70F06EE866583BBFCA696C62 /* DiskCache.swift in Sources */,
 				BB93EEC11571A3993186E568 /* Endpoint.swift in Sources */,
 				E02FC8ECDB02D2A42CBF558B /* GoHomeShellApp.swift in Sources */,
 				B0CDCED7D6A5959EA9F04A2B /* GoHomeShellRuntime.swift in Sources */,
 				23F245CC31AE82B7921C5886 /* GoHomeShellWebView.swift in Sources */,
+				9B92A863465C0268BDF06FF8 /* KeychainAuthStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
