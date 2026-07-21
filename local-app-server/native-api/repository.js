@@ -9,6 +9,10 @@ const ACTION_TYPES = new Set([
     "returned_home",
 ]);
 
+function repositoryError(message, statusCode) {
+    return Object.assign(new Error(message), { statusCode });
+}
+
 function clone(value) {
     if (value === undefined) return undefined;
     return JSON.parse(JSON.stringify(value));
@@ -30,16 +34,32 @@ function arrayValue(value) {
         : [];
 }
 
-function actionInput(action = {}) {
+function dateKeyShanghai(value = new Date()) {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(value);
+}
+
+function actionInput(action = {}, now = Date.now()) {
     const actionType = textId(action.action_type || action.type);
     if (!ACTION_TYPES.has(actionType)) {
-        throw new Error("invalid message action");
+        throw repositoryError("invalid message action", 400);
     }
     const idempotencyKey = textId(action.idempotency_key || action.idempotencyKey);
-    if (!idempotencyKey) throw new Error("idempotency key required");
+    if (!idempotencyKey) throw repositoryError("idempotency key required", 400);
+    const payload = action.payload && typeof action.payload === "object" && !Array.isArray(action.payload)
+        ? clone(action.payload)
+        : {};
+    if (actionType === "snoozed") {
+        const snoozedUntil = Date.parse(payload.snoozed_until || payload.until || "");
+        if (!Number.isFinite(snoozedUntil) || snoozedUntil <= now) throw repositoryError("snooze time must be in the future", 400);
+    }
     return {
         action_type: actionType,
-        payload: action.payload && typeof action.payload === "object" ? clone(action.payload) : {},
+        payload,
         idempotency_key: idempotencyKey,
     };
 }
@@ -98,7 +118,7 @@ class JsonNativeRepository extends NativeRepository {
     user(userId) {
         const id = textId(userId);
         const user = (this.db.users || []).find((item) => textId(item.id) === id);
-        if (!user) throw new Error("user not found");
+        if (!user) throw repositoryError("user not found", 404);
         return clone(user);
     }
 
@@ -110,7 +130,7 @@ class JsonNativeRepository extends NativeRepository {
             textId(item.family_id) === family &&
             (item.status || "active") === "active"
         ));
-        if (!member) throw new Error("family access denied");
+        if (!member) throw repositoryError("family access denied", 403);
         return member;
     }
 
@@ -185,18 +205,19 @@ class JsonNativeRepository extends NativeRepository {
     messageForFamily(userId, familyId, messageId) {
         this.assertFamilyAccess(userId, familyId);
         const message = this.db.app_messages.find((item) => textId(item.family_id) === textId(familyId) && textId(item.message_id || item.id) === textId(messageId));
-        if (!message) throw new Error("message not found");
+        if (!message) throw repositoryError("message not found", 404);
         return clone(message);
     }
 
     recordMessageAction(userId, familyId, messageId, action) {
         this.assertFamilyAccess(userId, familyId);
         const message = this.db.app_messages.find((item) => textId(item.family_id) === textId(familyId) && textId(item.message_id || item.id) === textId(messageId));
-        if (!message) throw new Error("message not found");
-        const input = actionInput(action);
+        if (!message) throw repositoryError("message not found", 404);
+        const timestamp = this.clock();
+        const input = actionInput(action, Date.parse(timestamp));
         const existing = this.db.app_message_actions.find((item) => item.idempotency_key === input.idempotency_key);
         if (existing) {
-            if (textId(existing.family_id) !== textId(familyId)) throw new Error("idempotency key conflict");
+            if (textId(existing.family_id) !== textId(familyId)) throw repositoryError("idempotency key conflict", 409);
             return clone(existing);
         }
         const row = {
@@ -207,9 +228,37 @@ class JsonNativeRepository extends NativeRepository {
             action_type: input.action_type,
             payload: input.payload,
             idempotency_key: input.idempotency_key,
-            created_at: this.clock(),
+            created_at: timestamp,
         };
         this.db.app_message_actions.push(row);
+        if (input.action_type === "opened") message.read_at = message.read_at || timestamp;
+        if (input.action_type === "dismissed") message.status = "dismissed";
+        if (input.action_type === "returned_home") message.status = "closed";
+        if (input.action_type === "snoozed") {
+            message.metadata = { ...(message.metadata || {}), snoozed_until: input.payload.snoozed_until || input.payload.until };
+        }
+        message.updated_at = timestamp;
+        if (input.action_type === "returned_home") {
+            const family = textId(familyId);
+            const preferences = this.db.care_preferences[family] || { family_id: family, metadata: {} };
+            const metadata = preferences.metadata && typeof preferences.metadata === "object" ? preferences.metadata : {};
+            const schedule = metadata.care_card_schedule && typeof metadata.care_card_schedule === "object"
+                ? metadata.care_card_schedule
+                : {};
+            preferences.metadata = {
+                ...metadata,
+                care_card_schedule: {
+                    ...schedule,
+                    visit_reminder: {
+                        ...(schedule.visit_reminder || {}),
+                        last_visit_at: dateKeyShanghai(new Date(timestamp)),
+                        next_visit_at: "",
+                    },
+                },
+            };
+            preferences.updated_at = timestamp;
+            this.db.care_preferences[family] = preferences;
+        }
         return clone(row);
     }
 
@@ -227,7 +276,7 @@ class JsonNativeRepository extends NativeRepository {
     productById(userId, familyId, productId) {
         this.assertFamilyAccess(userId, familyId);
         const product = this.db.product_catalog.find((item) => textId(item.id) === textId(productId) && (item.status || "draft") === "active");
-        if (!product) throw new Error("product not found");
+        if (!product) throw repositoryError("product not found", 404);
         return clone(product);
     }
 
@@ -263,4 +312,5 @@ module.exports = {
     NativeRepository,
     JsonNativeRepository,
     actionInput,
+    repositoryError,
 };

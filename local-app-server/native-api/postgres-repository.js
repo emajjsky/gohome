@@ -1,6 +1,6 @@
 "use strict";
 
-const { NativeRepository, actionInput } = require("./repository");
+const { NativeRepository, actionInput, repositoryError } = require("./repository");
 
 const USER_COLUMNS = "id, email, display_name, phone, status, created_at, updated_at";
 const FAMILY_COLUMNS = "f.id, f.name, f.status, f.timezone, f.metadata, f.created_at, f.updated_at, fm.role";
@@ -29,8 +29,17 @@ function limitValue(value, fallback = 50, maximum = 100) {
     return Math.min(parsed, maximum);
 }
 
+function dateKeyShanghai(value = new Date()) {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(value);
+}
+
 function accessDenied() {
-    return new Error("family access denied");
+    return repositoryError("family access denied", 403);
 }
 
 class PostgresNativeRepository extends NativeRepository {
@@ -55,7 +64,7 @@ class PostgresNativeRepository extends NativeRepository {
             [textId(userId)],
         );
         const user = row(userResult);
-        if (!user) throw new Error("user not found");
+        if (!user) throw repositoryError("user not found", 404);
         const familiesResult = await this.pool.query(
             `select ${FAMILY_COLUMNS}
              from family_members fm
@@ -145,12 +154,12 @@ class PostgresNativeRepository extends NativeRepository {
             [textId(familyId), textId(messageId)],
         );
         const message = row(result);
-        if (!message) throw new Error("message not found");
+        if (!message) throw repositoryError("message not found", 404);
         return message;
     }
 
     async recordMessageAction(userId, familyId, messageId, action) {
-        const input = actionInput(action);
+        const input = actionInput(action, new Date(this.clock()).getTime());
         const client = typeof this.pool.connect === "function" ? await this.pool.connect() : this.pool;
         let transaction = false;
         try {
@@ -162,7 +171,7 @@ class PostgresNativeRepository extends NativeRepository {
                 `select message_id from app_messages where family_id = $1 and message_id = $2 for update`,
                 [textId(familyId), textId(messageId)],
             );
-            if (!messageResult.rowCount) throw new Error("message not found");
+            if (!messageResult.rowCount) throw repositoryError("message not found", 404);
             const inserted = await client.query(
                 `insert into app_message_actions
                     (family_id, message_id, user_id, action_type, payload, idempotency_key)
@@ -177,7 +186,50 @@ class PostgresNativeRepository extends NativeRepository {
                     `select * from app_message_actions where idempotency_key = $1`,
                     [input.idempotency_key],
                 ));
-            if (!persisted || textId(persisted.family_id) !== textId(familyId)) throw new Error("idempotency key conflict");
+            if (!persisted || textId(persisted.family_id) !== textId(familyId)) throw repositoryError("idempotency key conflict", 409);
+            if (inserted.rowCount) {
+                await client.query(
+                    `update app_messages set
+                        read_at = case when $3 = 'opened' then coalesce(read_at, now()) else read_at end,
+                        status = case
+                            when $3 = 'dismissed' then 'dismissed'
+                            when $3 = 'returned_home' then 'closed'
+                            else status
+                        end,
+                        metadata = case
+                            when $3 = 'snoozed' then metadata || jsonb_build_object('snoozed_until', $4)
+                            else metadata
+                        end,
+                        updated_at = now()
+                     where family_id = $1 and message_id = $2`,
+                    [textId(familyId), textId(messageId), input.action_type, input.payload.snoozed_until || input.payload.until || null],
+                );
+                if (input.action_type === "returned_home") {
+                    const preferencesResult = await client.query(
+                        `select metadata from care_preferences where family_id = $1 for update`,
+                        [textId(familyId)],
+                    );
+                    const metadata = preferencesResult.rows[0]?.metadata || {};
+                    const schedule = metadata.care_card_schedule || {};
+                    const updatedMetadata = {
+                        ...metadata,
+                        care_card_schedule: {
+                            ...schedule,
+                            visit_reminder: {
+                                ...(schedule.visit_reminder || {}),
+                                last_visit_at: dateKeyShanghai(new Date(this.clock())),
+                                next_visit_at: "",
+                            },
+                        },
+                    };
+                    await client.query(
+                        `insert into care_preferences (family_id, metadata)
+                         values ($1, $2::jsonb)
+                         on conflict (family_id) do update set metadata = excluded.metadata, updated_at = now()`,
+                        [textId(familyId), JSON.stringify(updatedMetadata)],
+                    );
+                }
+            }
             await client.query("commit");
             transaction = false;
             return persisted;
@@ -211,7 +263,7 @@ class PostgresNativeRepository extends NativeRepository {
             [textId(productId)],
         );
         const product = row(result);
-        if (!product) throw new Error("product not found");
+        if (!product) throw repositoryError("product not found", 404);
         return product;
     }
 

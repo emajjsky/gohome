@@ -2478,6 +2478,59 @@ function createLocalAppServer(options = {}) {
         return message;
     }
 
+    function createReturnHomeMessage(family, preferences) {
+        const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
+        const reminder = schedule.visit_reminder || {};
+        const thresholdDays = Math.max(1, normalizeNumber(
+            schedule.delivery_rules?.visit_reminder?.threshold_days,
+            reminder.threshold_days || 14,
+        ));
+        const daysSinceVisit = daysSinceDateString(reminder.last_visit_at);
+        if (schedule.content_types?.visit_reminder === false || reminder.enabled === false) return null;
+        if (daysSinceVisit === null || daysSinceVisit < thresholdDays) return null;
+        const messageId = `return-home-${family.id}-${reminder.last_visit_at}-${thresholdDays}`;
+        const existing = store.db.app_messages.find((message) => String(message.message_id || "") === messageId);
+        if (existing) return null;
+        const region = [schedule.content_region?.city, schedule.content_region?.district].filter(Boolean).join("");
+        const interests = normalizeStringList(schedule.interest_topics, [], 2);
+        const topics = [
+            "这周末的时间安排",
+            region ? `${region}最近的天气和出行` : "最近的天气和出行",
+            interests[0] ? `最近有没有在关注${interests[0]}` : "最近想做的一件小事",
+        ].slice(0, 3);
+        const messageVariants = [
+            "这周末我在看看时间安排，你们有什么计划？",
+            interests[0]
+                ? `最近看到一些${interests[0]}相关的内容，想听听你们怎么看。`
+                : "最近有什么新鲜事？晚上有空的话想听你们聊聊。",
+        ];
+        return upsertAppMessage({
+            message_id: messageId,
+            idempotency_key: messageId,
+            family_id: family.id,
+            message_type: "return_home",
+            title: "周末安排可以提前定了",
+            subtitle: `距离上次回家 ${daysSinceVisit} 天`,
+            body: "看看这周末是否适合回家；暂时定不下来，也可以先选一个话题联系家里。",
+            facts: [`上次回家：${reminder.last_visit_at}`, `提醒阈值：${thresholdDays} 天`],
+            actions: [
+                { key: "shared", label: "分享参考文案" },
+                { key: "contacted", label: "已联系" },
+                { key: "snoozed", label: "稍后提醒" },
+                { key: "returned_home", label: "已回家" },
+            ],
+            source: [{ type: "visit_schedule", last_visit_at: reminder.last_visit_at, threshold_days: thresholdDays }],
+            priority: "normal",
+            generated_by: "return-home-scheduler",
+            metadata: {
+                trigger_reason: "days_since_last_visit",
+                trigger_context: { last_visit_at: reminder.last_visit_at, days_since_visit: daysSinceVisit, threshold_days: thresholdDays },
+                topics,
+                message_variants: messageVariants,
+            },
+        });
+    }
+
     function createEventAlertMessage(event) {
         const camera = store.db.cameras[String(event.camera_id)] || {};
         return upsertAppMessage({
@@ -2936,6 +2989,7 @@ function createLocalAppServer(options = {}) {
                 care_cards_generated: 0,
                 app_messages_created: 0,
                 notification_deliveries_created: 0,
+                return_home_messages_created: 0,
                 event_alerts_created: 0,
                 incident_reminders_created: 0,
                 long_absence_events_created: 0,
@@ -2987,6 +3041,7 @@ function createLocalAppServer(options = {}) {
             care_cards_generated: 0,
             app_messages_created: 0,
             notification_deliveries_created: 0,
+            return_home_messages_created: 0,
             event_alerts_created: 0,
             incident_reminders_created: 0,
             long_absence_events_created: 0,
@@ -3026,6 +3081,12 @@ function createLocalAppServer(options = {}) {
                     result.skipped.push({ family_id: family.id, reason: "schedule_disabled" });
                     continue;
                 }
+                const beforeReturnHomeMessages = store.db.app_messages.length;
+                const beforeReturnHomeDeliveries = store.db.notification_deliveries.length;
+                const returnHomeMessage = createReturnHomeMessage(family, preferences);
+                if (returnHomeMessage) queueNotificationDelivery(returnHomeMessage);
+                result.return_home_messages_created += Math.max(0, store.db.app_messages.length - beforeReturnHomeMessages);
+                result.notification_deliveries_created += Math.max(0, store.db.notification_deliveries.length - beforeReturnHomeDeliveries);
                 if (dailyCareDue(family.id, schedule, options)) {
                     const beforeMessages = store.db.app_messages.length;
                     const beforeDeliveries = store.db.notification_deliveries.length;
@@ -6808,6 +6869,7 @@ function createLocalAppServer(options = {}) {
                     url,
                     userId: req.appUserId,
                     headers: req.headers,
+                    body: ["POST", "PUT", "PATCH"].includes(req.method) ? await parseJsonBody(req) : {},
                 });
                 if (result) {
                     if (result.status === 304) {

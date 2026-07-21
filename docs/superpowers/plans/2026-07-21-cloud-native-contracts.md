@@ -292,16 +292,16 @@ git commit -m "feat(server): expose native bootstrap and home contracts"
 - Modify: `local-app-server/server.js`
 - Test: `local-app-server/test/native-messages.test.js`
 
-- [ ] **Step 1: Write workflow tests**
+- [x] **Step 1: Write workflow tests**
 
 Create one threshold trigger and assert one idempotent `return_home` message contains `trigger_reason`, 2-3 `topics`, two `message_variants`, and allowed actions. Record `shared`, `snoozed`, and `returned_home`; assert each updates state without claiming WeChat delivery.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `node --test local-app-server/test/native-messages.test.js`  
 Expected: FAIL because v2 message actions are absent.
 
-- [ ] **Step 3: Implement endpoints**
+- [x] **Step 3: Implement endpoints**
 
 Implement:
 
@@ -313,7 +313,7 @@ POST /api/v2/messages/:id/actions
 
 Allow only `opened`, `shared`, `contacted`, `snoozed`, `dismissed`, and `returned_home`. Require an idempotency key. `snoozed` requires a future timestamp; `returned_home` closes the reminder and updates the visit record.
 
-- [ ] **Step 4: Run scheduler and message tests**
+- [x] **Step 4: Run scheduler and message tests**
 
 Run: `npm run test:native-server && npm run verify:app-server`  
 Expected: PASS; legacy safety reminders remain unchanged.

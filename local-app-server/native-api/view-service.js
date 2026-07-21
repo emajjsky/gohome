@@ -77,6 +77,27 @@ class NativeViewService {
         };
         return { ...payload, revision: revisionFor(payload) };
     }
+
+    async messagesForFamily(userId, familyId, options = {}) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const messages = await this.repository.messagesForFamily(userId, familyId, options);
+        const payload = { messages };
+        return { ...payload, revision: revisionFor(payload) };
+    }
+
+    async messageForFamily(userId, familyId, messageId) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const message = await this.repository.messageForFamily(userId, familyId, messageId);
+        const payload = { message };
+        return { ...payload, revision: revisionFor(payload) };
+    }
+
+    async recordMessageAction(userId, familyId, messageId, action) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const recorded = await this.repository.recordMessageAction(userId, familyId, messageId, action);
+        const message = await this.repository.messageForFamily(userId, familyId, messageId);
+        return { action: recorded, message };
+    }
 }
 
 module.exports = { NativeViewService, articleView, revisionFor };
