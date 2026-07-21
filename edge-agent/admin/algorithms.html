@@ -6,7 +6,7 @@
   <title>视觉算法 - 回家</title>
   <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
   <link rel="stylesheet" href="/admin/styles.css?v=20260721-minimal-1">
-  <link rel="stylesheet" href="/admin/console.css?v=20260721-console-4">
+  <link rel="stylesheet" href="/admin/console.css?v=20260721-console-5">
 </head>
 <body data-page="algorithms" class="admin-web-page">
   <a class="skip-link" href="#main">跳到内容</a>
@@ -28,13 +28,11 @@
       <section class="admin-sidebar-controls" aria-label="服务状态">
         <span id="workerBadge" class="status-pill muted">检查中</span>
       </section>
-      <section class="panel algorithm-switch-panel">
-        <div class="panel-head compact">
-          <div>
-            <h2>算法开关</h2>
-            <p>异常自动留证，联网后同步。</p>
-          </div>
-        </div>
+      <details class="algorithm-switch-panel">
+        <summary>
+          <span><strong>算法配置</strong><small>检测规则与阈值</small></span>
+          <span class="material-symbols-outlined" data-icon="›">chevron_right</span>
+        </summary>
         <form class="rules-page-form" onsubmit="return false">
           <section class="rules-section no-border">
             <div class="rule-grid switch-grid">
@@ -68,7 +66,7 @@
             保存算法配置
           </button>
         </form>
-      </section>
+      </details>
       <section class="admin-sidebar-session" aria-label="登录操作">
         <div class="admin-session-slot"></div>
       </section>
