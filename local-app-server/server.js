@@ -550,6 +550,14 @@ function createLocalAppServer(options = {}) {
         secret: options.authSecret || process.env.GOHOME_AUTH_SECRET || "",
         smsProvider: options.smsProvider || null,
     });
+    const { JsonNativeRepository } = require("./native-api/repository");
+    const { PostgresNativeRepository } = require("./native-api/postgres-repository");
+    const { NativeViewService } = require("./native-api/view-service");
+    const { NativeApiRouter } = require("./native-api/router");
+    const nativeRepository = options.nativeRepository || (store.kind === "postgres"
+        ? new PostgresNativeRepository(store.pool)
+        : new JsonNativeRepository(store.db));
+    const nativeRouter = options.nativeRouter || new NativeApiRouter(new NativeViewService(nativeRepository));
     const playbackTickets = new Map();
     const boxAdminSessions = new Map();
     const providerCache = new Map();
@@ -1015,6 +1023,17 @@ function createLocalAppServer(options = {}) {
             return false;
         }
         req.appUserId = store.db.active_user_id;
+        return true;
+    }
+
+    function requireNativeApp(req, res) {
+        const session = sessionForToken(tokenFrom(req));
+        if (!session) {
+            writeError(res, 401, "请先登录回家 App。");
+            return false;
+        }
+        session.last_seen_at = nowIso();
+        req.appUserId = session.user_id;
         return true;
     }
 
@@ -6782,6 +6801,29 @@ function createLocalAppServer(options = {}) {
         }
 
         try {
+            if (pathname.startsWith("/api/v2/")) {
+                if (!requireNativeApp(req, res)) return;
+                const result = await nativeRouter.dispatch({
+                    method: req.method,
+                    url,
+                    userId: req.appUserId,
+                    headers: req.headers,
+                });
+                if (result) {
+                    if (result.status === 304) {
+                        res.writeHead(304, {
+                            "Access-Control-Allow-Origin": "*",
+                            "Cache-Control": "private, no-cache",
+                            ...(result.headers || {}),
+                        });
+                        res.end();
+                    } else {
+                        write(res, result.status, result.body, result.headers);
+                    }
+                    return;
+                }
+            }
+
             if (req.method === "GET" && pathname === "/health") {
                 const payload = {
                     ok: true,
@@ -8346,7 +8388,7 @@ function createLocalAppServer(options = {}) {
             clearTimeout(initialTimer);
         });
     }
-    return { server, store, dataDir, appToken, deviceToken };
+    return { server, store, dataDir, appToken, deviceToken, nativeRepository };
 }
 
 function appServerStoreKind(options = {}) {

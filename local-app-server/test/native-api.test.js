@@ -1,0 +1,98 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const test = require('node:test');
+const { createLocalAppServer } = require('../server');
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`));
+  });
+}
+
+async function json(response) {
+  const body = await response.json();
+  assert.equal(response.ok, true, JSON.stringify(body));
+  return body;
+}
+
+test('native bootstrap and home are session-scoped, modular, sourced, and cacheable', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-native-api-'));
+  let repositoryUserId = null;
+  const nativeRepository = {
+    async bootstrapForUser(userId) {
+      repositoryUserId = String(userId);
+      return {
+        user: { id: String(userId), phone: '13800138001' },
+        families: [{ id: 'family-native', name: 'Home' }],
+        active_family_id: 'family-native',
+        onboarding: { next_step: 'complete', complete: true },
+        unread_count: 2,
+      };
+    },
+    async homeForFamily(userId, familyId) {
+      assert.equal(String(userId), repositoryUserId);
+      assert.equal(familyId, 'family-native');
+      return {
+        family: { id: familyId, name: 'Home' },
+        weather: { city: '上海', temperature: 28, condition: '晴' },
+        calendar: [{ id: 'calendar-1', title: '周末', starts_at: '2026-07-25T00:00:00.000Z' }],
+        distance: { meters: 12800, travel_minutes: 35 },
+        critical_alert: null,
+        cameras: [{ id: 'camera-1', name: '客厅' }],
+        articles: [
+          { id: 'article-1', title: '城市公园本周开放夜游', url: 'https://news.example.com/a', source_name: '城市发布' },
+          { id: 'article-2', title: 'No trusted source', url: 'http://unsafe.example.com/a', source_name: 'Unknown' },
+        ],
+      };
+    },
+  };
+  const app = createLocalAppServer({
+    rootDir: path.join(__dirname, '..', '..'),
+    dataDir,
+    authMode: 'demo',
+    demoOtp: '246810',
+    nativeRepository,
+  });
+  const baseUrl = await listen(app.server);
+  try {
+    const registration = await json(await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: '13800138001', code: '246810' }),
+    }));
+    const authorization = { Authorization: `Bearer ${registration.token}` };
+
+    const bootstrapResponse = await fetch(`${baseUrl}/api/v2/app/bootstrap`, { headers: authorization });
+    const bootstrap = await json(bootstrapResponse);
+    assert.deepEqual(Object.keys(bootstrap).sort(), [
+      'active_family_id', 'families', 'onboarding', 'revision', 'unread_count', 'user',
+    ]);
+    assert.equal(bootstrap.onboarding.next_step, 'complete');
+    assert.equal(bootstrap.unread_count, 2);
+    const etag = bootstrapResponse.headers.get('etag');
+    assert.ok(etag);
+
+    const unchanged = await fetch(`${baseUrl}/api/v2/app/bootstrap`, {
+      headers: { ...authorization, 'If-None-Match': etag },
+    });
+    assert.equal(unchanged.status, 304);
+
+    const home = await json(await fetch(`${baseUrl}/api/v2/home?family_id=family-native`, { headers: authorization }));
+    assert.deepEqual(home.weather, { city: '上海', temperature: 28, condition: '晴' });
+    assert.equal(home.calendar.length, 1);
+    assert.equal(home.distance.meters, 12800);
+    assert.equal(home.articles.length, 1);
+    assert.equal(home.articles[0].source_url, 'https://news.example.com/a');
+
+    const globalToken = await fetch(`${baseUrl}/api/v2/app/bootstrap`, {
+      headers: { Authorization: `Bearer ${app.appToken}` },
+    });
+    assert.equal(globalToken.status, 401);
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

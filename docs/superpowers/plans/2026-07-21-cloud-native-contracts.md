@@ -259,20 +259,20 @@ git commit -m "feat(auth): enforce environment-scoped phone verification"
 - Modify: `local-app-server/server.js`
 - Test: `local-app-server/test/native-api.test.js`
 
-- [ ] **Step 1: Write failing HTTP contract tests**
+- [x] **Step 1: Write failing HTTP contract tests**
 
 Assert `/api/v2/app/bootstrap` returns `user`, `families`, `active_family_id`, `onboarding.next_step`, `unread_count`, and `revision`; `/api/v2/home` returns separate `weather`, `calendar`, `distance`, `critical_alert`, and `articles` fields. Assert articles without HTTPS source URLs are omitted.
 
-- [ ] **Step 2: Run and verify 404**
+- [x] **Step 2: Run and verify 404**
 
 Run: `node --test local-app-server/test/native-api.test.js`  
 Expected: FAIL with HTTP 404.
 
-- [ ] **Step 3: Implement router delegation and views**
+- [x] **Step 3: Implement router delegation and views**
 
 Delegate `/api/v2/*` before legacy route matching. Return ETags/revisions and support `If-None-Match`. Bootstrap computes exactly one onboarding next step: `family`, `profile`, `device`, `camera`, or `complete`.
 
-- [ ] **Step 4: Run contract tests**
+- [x] **Step 4: Run contract tests**
 
 Run: `npm run test:native-server`  
 Expected: PASS with two-account isolation fixtures.
