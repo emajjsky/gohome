@@ -7,6 +7,7 @@ const { promisify } = require('node:util');
 const { execFile } = require('node:child_process');
 const test = require('node:test');
 const { Client } = require('pg');
+const { PostgresNativeRepository } = require('../native-api/postgres-repository');
 
 const execFileAsync = promisify(execFile);
 const databaseUrl =
@@ -219,6 +220,15 @@ test(
         `insert into families (name) values ('Family A'), ('Family B') returning id`,
       );
       const [familyA, familyB] = families.rows.map((row) => row.id);
+      const users = await client.query(
+        `insert into users (email) values ('native-a@example.com'), ('native-b@example.com') returning id`,
+      );
+      const [userA, userB] = users.rows.map((row) => row.id);
+      await client.query(
+        `insert into family_members (family_id, user_id, role, status)
+         values ($1, $2, 'creator', 'active'), ($3, $4, 'creator', 'active')`,
+        [familyA, userA, familyB, userB],
+      );
       await client.query(
         `
           insert into app_messages (message_id, family_id, idempotency_key)
@@ -355,7 +365,38 @@ test(
         ),
         'active product should require verified_at',
       );
-      await client.query(activeInsert, activeValues(validProduct));
+      const product = await client.query(`${activeInsert} returning *`, activeValues(validProduct));
+
+      const repo = new PostgresNativeRepository(client);
+      assert.deepEqual(
+        (await repo.bootstrapForUser(userA)).families.map((family) => family.id),
+        [familyA],
+      );
+      assert.deepEqual(
+        (await repo.messagesForFamily(userA, familyA)).map((message) => message.family_id),
+        [familyA],
+      );
+      await assert.rejects(
+        repo.messagesForFamily(userA, familyB),
+        /family access denied/,
+      );
+      assert.deepEqual(
+        (await repo.productsForFamily(userA, familyA)).map((item) => item.id),
+        [product.rows[0].id],
+      );
+      const firstAction = await repo.recordMessageAction(
+        userA,
+        familyA,
+        'native-integration-message',
+        { action_type: 'shared', idempotency_key: 'repository-share-action' },
+      );
+      const repeatedAction = await repo.recordMessageAction(
+        userA,
+        familyA,
+        'native-integration-message',
+        { action_type: 'shared', idempotency_key: 'repository-share-action' },
+      );
+      assert.equal(firstAction.id, repeatedAction.id);
     } finally {
       try {
         if (schemaCreated) {

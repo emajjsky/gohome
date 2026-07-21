@@ -31,7 +31,7 @@
 - Create: `local-app-server/test/native-schema.test.js`
 - Modify: `package.json`
 
-- [ ] **Step 1: Write the failing schema test**
+- [x] **Step 1: Write the failing schema test**
 
 ```js
 const test = require("node:test");
@@ -47,12 +47,12 @@ test("native migration defines action and curated catalog ownership", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test and verify failure**
+- [x] **Step 2: Run the test and verify failure**
 
 Run: `node --test local-app-server/test/native-schema.test.js`  
 Expected: FAIL because `005_native_app.sql` does not exist.
 
-- [ ] **Step 3: Add the migration**
+- [x] **Step 3: Add the migration**
 
 Define:
 
@@ -96,7 +96,7 @@ create table if not exists product_preferences (
 
 Add indexes for `(family_id, created_at desc)`, `(status, category)`, and message action lookup.
 
-- [ ] **Step 4: Add and run the test command**
+- [x] **Step 4: Add and run the test command**
 
 Add to `package.json`:
 
@@ -107,7 +107,7 @@ Add to `package.json`:
 Run: `npm run test:native-server`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add local-app-server/migrations/005_native_app.sql local-app-server/test/native-schema.test.js package.json
@@ -121,7 +121,7 @@ git commit -m "feat(server): add native app schema"
 - Create: `local-app-server/native-api/postgres-repository.js`
 - Test: `local-app-server/test/native-repository.test.js`
 
-- [ ] **Step 1: Write repository isolation tests**
+- [x] **Step 1: Write repository isolation tests**
 
 Test two users in different families and assert that `bootstrapForUser`, `messagesForFamily`, and `productsForFamily` never return rows from the other family. Also assert `recordMessageAction` returns the same row for the same idempotency key.
 
@@ -131,12 +131,12 @@ await assert.rejects(() => repo.messagesForFamily("family-b", "user-a"), /family
 assert.equal(first.id, duplicate.id);
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `node --test local-app-server/test/native-repository.test.js`  
 Expected: FAIL because the repository modules do not exist.
 
-- [ ] **Step 3: Implement the repository interface**
+- [x] **Step 3: Implement the repository interface**
 
 Expose exactly these methods:
 
@@ -156,12 +156,12 @@ class NativeRepository {
 
 The PostgreSQL implementation must use parameterized statements and an access guard based on `family_members`. It must not read a global active user.
 
-- [ ] **Step 4: Run repository tests**
+- [x] **Step 4: Run repository tests**
 
 Run: `npm run test:native-server`  
 Expected: PASS for JSON contract tests; PostgreSQL integration tests skip only when `GOHOME_DATABASE_URL` is absent.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add local-app-server/native-api/repository.js local-app-server/native-api/postgres-repository.js local-app-server/test/native-repository.test.js
