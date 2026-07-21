@@ -35,6 +35,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>GoHomePushEnabled</key>
 	<false/>
+	<key>GoHomeAPIBaseURL</key>
+	<string>https://gohome.ai2shx.club</string>
 	<key>GoHomeWebAppURL</key>
 	<string>https://gohome.ai2shx.club/index.html?app=1</string>
 	<key>LSRequiresIPhoneOS</key>

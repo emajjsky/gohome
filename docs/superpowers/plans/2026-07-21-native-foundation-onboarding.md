@@ -107,7 +107,7 @@ git commit -m "test(ios): add native unit and UI targets"
 - Create: `ios-shell/GoHomeShell/Sources/Networking/Endpoint.swift`
 - Test: `ios-shell/GoHomeShellTests/APIClientTests.swift`
 
-- [ ] **Step 1: Write transport tests with URLProtocol**
+- [x] **Step 1: Write transport tests with URLProtocol**
 
 Test authorization, JSON decode, 401 mapping, server detail mapping, cancellation, and ETag 304 handling.
 
@@ -117,7 +117,7 @@ XCTAssertEqual(response.user.phone, "13800000000")
 XCTAssertEqual(URLProtocolStub.lastRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer token")
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -130,7 +130,7 @@ xcodebuild test -project GoHomeShell.xcodeproj -scheme GoHomeShell \
 
 Expected: FAIL because `APIClient` is undefined.
 
-- [ ] **Step 3: Implement actor client**
+- [x] **Step 3: Implement actor client**
 
 ```swift
 actor APIClient {
@@ -149,13 +149,13 @@ actor APIClient {
 
 Use `GoHomeAPIBaseURL` from `Info.plist`; do not reuse `GoHomeWebAppURL`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellTests/APIClientTests`
 
 Expected: all API client tests PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Networking ios-shell/GoHomeShellTests/APIClientTests.swift ios-shell/GoHomeShell/Config/Info.plist
