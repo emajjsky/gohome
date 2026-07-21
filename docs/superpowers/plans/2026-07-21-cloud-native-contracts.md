@@ -332,16 +332,16 @@ git commit -m "feat(messages): close return-home action workflow"
 - Modify: `local-app-server/native-api/router.js`
 - Test: `local-app-server/test/native-products.test.js`
 
-- [ ] **Step 1: Write product policy tests**
+- [x] **Step 1: Write product policy tests**
 
 Reject non-HTTPS links, stale verification timestamps, missing source/brand/image, and categories matching medicine, supplement, medical device, or diagnosis. Verify a household safety light with a real source passes.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `node --test local-app-server/test/native-products.test.js`  
 Expected: FAIL because policy and endpoints are absent.
 
-- [ ] **Step 3: Implement product policy and endpoints**
+- [x] **Step 3: Implement product policy and endpoints**
 
 Add `GET /api/v2/products`, `GET /api/v2/products/:id`, and preference GET/PUT. Responses expose no cart, checkout, order, payment, or inventory fields. Recommendation reasons use only explicitly selected preference categories/needs.
 
@@ -358,7 +358,7 @@ npm run verify:cloud-onboarding
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add local-app-server/native-api/product-policy.js local-app-server/native-api/router.js local-app-server/test/native-products.test.js

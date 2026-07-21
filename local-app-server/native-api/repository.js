@@ -265,7 +265,8 @@ class JsonNativeRepository extends NativeRepository {
     productsForFamily(userId, familyId, options = {}) {
         this.assertFamilyAccess(userId, familyId);
         const preferences = this.db.product_preferences[textId(familyId)] || {};
-        const categories = arrayValue(options.categories || preferences.categories);
+        const requestedCategories = arrayValue(options.categories);
+        const categories = requestedCategories.length ? requestedCategories : arrayValue(preferences.categories);
         const catalog = this.db.product_catalog
             .filter((product) => (product.status || "draft") === "active")
             .filter((product) => !categories.length || categories.includes(textId(product.category)))

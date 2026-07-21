@@ -6872,6 +6872,7 @@ function createLocalAppServer(options = {}) {
                     body: ["POST", "PUT", "PATCH"].includes(req.method) ? await parseJsonBody(req) : {},
                 });
                 if (result) {
+                    if (req.method !== "GET" && req.method !== "HEAD") await store.save();
                     if (result.status === 304) {
                         res.writeHead(304, {
                             "Access-Control-Allow-Origin": "*",

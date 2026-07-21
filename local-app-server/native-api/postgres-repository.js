@@ -244,7 +244,8 @@ class PostgresNativeRepository extends NativeRepository {
     async productsForFamily(userId, familyId, options = {}) {
         await this.assertFamilyAccess(this.pool, userId, familyId);
         const preferences = await this.productPreferences(userId, familyId);
-        const categories = arrayValue(options.categories || preferences.categories);
+        const requestedCategories = arrayValue(options.categories);
+        const categories = requestedCategories.length ? requestedCategories : arrayValue(preferences.categories);
         const values = [categories, limitValue(options.limit)];
         return rows(await this.pool.query(
             `select * from product_catalog

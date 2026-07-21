@@ -114,6 +114,9 @@ test('native return-home messages support idempotent actions without claiming We
     );
     assert.equal(app.store.db.care_preferences[familyId].metadata.care_card_schedule.visit_reminder.next_visit_at, '');
     assert.equal(app.store.db.app_message_actions.length, 2);
+    const persistedAfterAction = JSON.parse(fs.readFileSync(path.join(dataDir, 'db.json'), 'utf8'));
+    assert.equal(persistedAfterAction.app_messages[0].status, 'closed');
+    assert.equal(persistedAfterAction.app_message_actions.length, 2);
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(dataDir, { recursive: true, force: true });

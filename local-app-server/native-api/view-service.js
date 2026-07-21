@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const { normalizeProductPreferences, productView } = require("./product-policy");
 
 const ONBOARDING_STEPS = new Set(["family", "profile", "device", "camera", "complete"]);
 
@@ -97,6 +98,39 @@ class NativeViewService {
         const recorded = await this.repository.recordMessageAction(userId, familyId, messageId, action);
         const message = await this.repository.messageForFamily(userId, familyId, messageId);
         return { action: recorded, message };
+    }
+
+    async productsForFamily(userId, familyId, options = {}) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const preferences = await this.repository.productPreferences(userId, familyId);
+        const products = await this.repository.productsForFamily(userId, familyId, options);
+        const payload = { products: products.map((product) => productView(product, preferences)).filter(Boolean) };
+        return { ...payload, revision: revisionFor(payload) };
+    }
+
+    async productForFamily(userId, familyId, productId) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const preferences = await this.repository.productPreferences(userId, familyId);
+        const source = await this.repository.productById(userId, familyId, productId);
+        const product = productView(source, preferences);
+        if (!product) throw Object.assign(new Error("product not found"), { statusCode: 404 });
+        const payload = { product };
+        return { ...payload, revision: revisionFor(payload) };
+    }
+
+    async productPreferences(userId, familyId) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        return { preferences: await this.repository.productPreferences(userId, familyId) };
+    }
+
+    async updateProductPreferences(userId, familyId, input) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const preferences = await this.repository.updateProductPreferences(
+            userId,
+            familyId,
+            normalizeProductPreferences(input),
+        );
+        return { preferences };
     }
 }
 

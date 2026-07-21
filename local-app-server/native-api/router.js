@@ -64,6 +64,39 @@ class NativeApiRouter {
             return { status: 200, body: responseBody };
         }
 
+        if (method === "GET" && url.pathname === "/api/v2/products") {
+            const responseBody = await this.viewService.productsForFamily(userId, url.searchParams.get("family_id"), {
+                categories: url.searchParams.getAll("category"),
+                limit: url.searchParams.get("limit") || undefined,
+            });
+            const etag = etagFor(responseBody.revision);
+            if (notModified(headers, responseBody.revision)) return { status: 304, headers: { ETag: etag } };
+            return { status: 200, body: responseBody, headers: { ETag: etag } };
+        }
+
+        const productMatch = url.pathname.match(/^\/api\/v2\/products\/([^/]+)$/);
+        if (method === "GET" && productMatch) {
+            const responseBody = await this.viewService.productForFamily(
+                userId,
+                url.searchParams.get("family_id"),
+                decodeURIComponent(productMatch[1]),
+            );
+            const etag = etagFor(responseBody.revision);
+            if (notModified(headers, responseBody.revision)) return { status: 304, headers: { ETag: etag } };
+            return { status: 200, body: responseBody, headers: { ETag: etag } };
+        }
+
+        if (method === "GET" && url.pathname === "/api/v2/product-preferences") {
+            return { status: 200, body: await this.viewService.productPreferences(userId, url.searchParams.get("family_id")) };
+        }
+
+        if (method === "PUT" && url.pathname === "/api/v2/product-preferences") {
+            return {
+                status: 200,
+                body: await this.viewService.updateProductPreferences(userId, url.searchParams.get("family_id"), body),
+            };
+        }
+
         return null;
     }
 }
