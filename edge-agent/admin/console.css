@@ -437,7 +437,7 @@ body.admin-web-page .admin-sidebar-status .preview-meta > div {
 
 /* Algorithm console */
 body.admin-web-page[data-page="algorithms"] .admin-web-main {
-  height: 100dvh;
+  min-height: 100dvh;
   padding: 14px;
 }
 
@@ -504,13 +504,12 @@ body.admin-web-page .algorithm-switch-panel .primary-button {
 body.admin-web-page .algorithm-cinema-console,
 body.admin-web-page .algorithm-preview-panel {
   width: 100%;
-  height: 100%;
   min-height: 0;
 }
 
 body.admin-web-page .algorithm-preview-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) minmax(150px, 25vh);
+  grid-template-rows: auto auto minmax(180px, 25vh);
   border: 0;
   padding: 0;
   background: transparent;
@@ -613,7 +612,7 @@ body.admin-web-page .cinema-stage-main {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
   border-right: 1px solid #2b2d2d;
   background: var(--console-video);
 }
@@ -621,7 +620,7 @@ body.admin-web-page .cinema-stage-main {
 body.admin-web-page .cinema-video-shell {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
   background: var(--console-video);
 }
 
@@ -652,8 +651,10 @@ body.admin-web-page .cinema-topline > div:last-child span {
 }
 
 body.admin-web-page .algorithm-live-stage {
+  width: 100%;
+  height: auto !important;
   min-height: 0;
-  aspect-ratio: auto;
+  aspect-ratio: 16 / 9 !important;
   border: 0;
   border-radius: 0;
   background: #090a0a;
@@ -662,7 +663,7 @@ body.admin-web-page .algorithm-live-stage {
 body.admin-web-page .algorithm-live-stage > img {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: contain !important;
 }
 
 body.admin-web-page .cinema-hit-strip {
