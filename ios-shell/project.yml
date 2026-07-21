@@ -17,8 +17,6 @@ targets:
       - path: GoHomeShell/Sources
     resources:
       - path: GoHomeShell/Resources
-    info:
-      path: GoHomeShell/Config/Info.plist
     settings:
       base:
         PRODUCT_NAME: GoHomeShell
@@ -27,6 +25,31 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
         DEVELOPMENT_ASSET_PATHS: ""
+  GoHomeShellTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: GoHomeShellTests
+    dependencies:
+      - target: GoHomeShell
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gohome.family.tests
+        GENERATE_INFOPLIST_FILE: YES
+  GoHomeShellUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: GoHomeShellUITests
+    dependencies:
+      - target: GoHomeShell
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gohome.family.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: GoHomeShell
 schemes:
   GoHomeShell:
     build:
@@ -34,3 +57,8 @@ schemes:
         GoHomeShell: all
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - GoHomeShellTests
+        - GoHomeShellUITests

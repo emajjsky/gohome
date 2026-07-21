@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
-   LastUpgradeVersion = "1600"
+   LastUpgradeVersion = "1430"
    version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
-      buildImplicitDependencies = "YES">
+      buildImplicitDependencies = "YES"
+      runPostActionsOnFailure = "NO">
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"
@@ -14,7 +15,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "AA0000000000000000000501"
+               BlueprintIdentifier = "F26901BF5C105FD06B384CF9"
                BuildableName = "GoHomeShell.app"
                BlueprintName = "GoHomeShell"
                ReferencedContainer = "container:GoHomeShell.xcodeproj">
@@ -26,9 +27,43 @@
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
-      shouldUseLaunchSchemeArgsEnv = "YES">
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      onlyGenerateCoverageForSpecifiedTargets = "NO">
+      <MacroExpansion>
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "F26901BF5C105FD06B384CF9"
+            BuildableName = "GoHomeShell.app"
+            BlueprintName = "GoHomeShell"
+            ReferencedContainer = "container:GoHomeShell.xcodeproj">
+         </BuildableReference>
+      </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "545E17F36E1DFD709AF483CB"
+               BuildableName = "GoHomeShellTests.xctest"
+               BlueprintName = "GoHomeShellTests"
+               ReferencedContainer = "container:GoHomeShell.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "EBFD7AFEABEFDB942FCAB7B7"
+               BuildableName = "GoHomeShellUITests.xctest"
+               BlueprintName = "GoHomeShellUITests"
+               ReferencedContainer = "container:GoHomeShell.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -44,12 +79,14 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "AA0000000000000000000501"
+            BlueprintIdentifier = "F26901BF5C105FD06B384CF9"
             BuildableName = "GoHomeShell.app"
             BlueprintName = "GoHomeShell"
             ReferencedContainer = "container:GoHomeShell.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
@@ -61,7 +98,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "AA0000000000000000000501"
+            BlueprintIdentifier = "F26901BF5C105FD06B384CF9"
             BuildableName = "GoHomeShell.app"
             BlueprintName = "GoHomeShell"
             ReferencedContainer = "container:GoHomeShell.xcodeproj">

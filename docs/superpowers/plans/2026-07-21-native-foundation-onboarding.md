@@ -31,7 +31,7 @@
 - Create: `ios-shell/GoHomeShellTests/AppSmokeTests.swift`
 - Create: `ios-shell/GoHomeShellUITests/LaunchTests.swift`
 
-- [ ] **Step 1: Add test targets and failing smoke tests**
+- [x] **Step 1: Add test targets and failing smoke tests**
 
 ```swift
 import XCTest
@@ -57,7 +57,7 @@ xcodebuild test -project GoHomeShell.xcodeproj -scheme GoHomeShell \
   -destination 'platform=iOS Simulator,name=iPhone 16 Pro' "${args[@]}"
 ```
 
-- [ ] **Step 2: Generate and verify failure**
+- [x] **Step 2: Generate and verify failure**
 
 Run:
 
@@ -70,7 +70,7 @@ xcodebuild test -project GoHomeShell.xcodeproj -scheme GoHomeShell \
 
 Expected: FAIL because `AppRoute` is undefined.
 
-- [ ] **Step 3: Add the minimal route type**
+- [x] **Step 3: Add the minimal route type**
 
 Create `Sources/App/AppRoute.swift`:
 
@@ -87,12 +87,12 @@ enum OnboardingStep: String, Codable, Equatable {
 }
 ```
 
-- [ ] **Step 4: Regenerate and pass smoke test**
+- [x] **Step 4: Regenerate and pass smoke test**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellTests/AppSmokeTests`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/project.yml ios-shell/scripts/test.sh ios-shell/GoHomeShellTests ios-shell/GoHomeShellUITests ios-shell/GoHomeShell/Sources/App/AppRoute.swift ios-shell/GoHomeShell.xcodeproj
