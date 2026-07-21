@@ -38,11 +38,23 @@ test('native app migration defines family-owned message actions, product catalog
 
   assert.match(sql, /(?:^| )begin; /, 'migration should use begin');
   assert.match(sql, / commit;\s*$/, 'migration should end with commit');
+  assert.match(
+    sql,
+    /create unique index if not exists app_messages_family_message_idx on app_messages \(family_id, message_id\)/,
+  );
 
   const messageActions = tableDefinition(sql, 'app_message_actions');
   assert.match(messageActions, /id text primary key default gen_random_uuid\(\)::text/);
   assert.match(messageActions, /family_id text not null references families\(id\) on delete cascade/);
-  assert.match(messageActions, /message_id text not null references app_messages\(message_id\) on delete cascade/);
+  assert.match(messageActions, /message_id text not null/);
+  assert.doesNotMatch(
+    messageActions,
+    /message_id text not null references app_messages\(message_id\)/,
+  );
+  assert.match(
+    messageActions,
+    /constraint app_message_actions_family_message_fkey foreign key \(family_id, message_id\) references app_messages\(family_id, message_id\) on delete cascade/,
+  );
   assert.match(messageActions, /user_id text references users\(id\) on delete set null/);
   assert.match(
     messageActions,
@@ -61,12 +73,24 @@ test('native app migration defines family-owned message actions, product catalog
   assert.match(productCatalog, /image_url text not null default ''/);
   assert.match(productCatalog, /source_name text not null default ''/);
   assert.match(productCatalog, /source_url text not null default ''/);
-  assert.match(productCatalog, /suitability jsonb not null default '\{\}'::jsonb/);
+  assert.match(productCatalog, /suitability jsonb not null default '\[\]'::jsonb/);
   assert.match(productCatalog, /disclosure text not null default ''/);
-  assert.match(productCatalog, /status text not null default 'active'/);
+  assert.match(productCatalog, /status text not null default 'draft'/);
   assert.match(productCatalog, /verified_at timestamptz/);
   assert.match(productCatalog, /created_at timestamptz not null default now\(\)/);
   assert.match(productCatalog, /updated_at timestamptz not null default now\(\)/);
+  assert.match(
+    productCatalog,
+    /constraint product_catalog_suitability_array_check check \(jsonb_typeof\(suitability\) = 'array'\)/,
+  );
+  assert.match(
+    productCatalog,
+    /constraint product_catalog_status_check check \(status in \('draft', 'active', 'disabled'\)\)/,
+  );
+  assert.match(
+    productCatalog,
+    /constraint product_catalog_active_fields_check check \(\s*status <> 'active' or \(\s*btrim\(category\) <> '' and btrim\(brand\) <> '' and btrim\(name\) <> '' and btrim\(image_url\) <> '' and btrim\(image_url\) ~\* '\^https:\/\/\[\^\[:space:\]\]\+\$' and btrim\(source_name\) <> '' and btrim\(source_url\) <> '' and btrim\(source_url\) ~\* '\^https:\/\/\[\^\[:space:\]\]\+\$' and verified_at is not null\s*\)\s*\)/,
+  );
 
   const preferences = tableDefinition(sql, 'product_preferences');
   assert.match(preferences, /family_id text primary key references families\(id\) on delete cascade/);
