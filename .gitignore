@@ -15,3 +15,4 @@ edge-agent/hyperframes/
 edge-agent/.trae_runtime_verify.py
 ios-shell/**/xcuserdata/
 ios-shell/**/*.xcuserstate
+.worktrees/
