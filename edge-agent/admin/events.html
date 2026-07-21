@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>事件日志 - 回家</title>
   <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
-  <link rel="stylesheet" href="/admin/styles.css?v=20260712-event-log-1">
+  <link rel="stylesheet" href="/admin/styles.css?v=20260721-minimal-1">
+  <link rel="stylesheet" href="/admin/console.css?v=20260721-console-3">
 </head>
 <body data-page="events" class="admin-web-page">
   <a class="skip-link" href="#main">跳到内容</a>
@@ -13,7 +14,7 @@
     <aside class="admin-sidebar" aria-label="管理导航">
       <div class="admin-brand">
         <span class="material-symbols-outlined" data-icon="⌂">home_iot_device</span>
-        <div><small>回家盒子</small><strong>开发管理台</strong></div>
+        <div><small>回家盒子</small><strong>边缘感知台</strong></div>
       </div>
       <nav class="admin-nav">
         <a href="/admin/index.html"><span class="material-symbols-outlined" data-icon="↗">monitoring</span>首页</a>
@@ -36,9 +37,9 @@
     <main id="main" class="admin-web-main event-log-main">
       <header class="event-log-header">
         <div>
-          <span class="section-kicker">安全事件链路</span>
+          <span class="section-kicker">EVIDENCE LOG</span>
           <h1>事件日志</h1>
-          <p>核对盒子触发、证据上传、云端复核与 App 处理状态。</p>
+          <p>边缘触发 · 证据上传 · 模型复核 · 用户确认</p>
         </div>
         <button id="refreshEventLog" class="secondary-button icon-command" type="button">
           <span class="material-symbols-outlined" data-icon="↻">refresh</span>刷新
@@ -84,6 +85,6 @@
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/admin/console.js?v=20260712-event-log-1"></script>
+  <script src="/admin/console.js?v=20260721-console-1"></script>
 </body>
 </html>

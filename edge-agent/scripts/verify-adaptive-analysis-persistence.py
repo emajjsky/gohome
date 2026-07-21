@@ -180,6 +180,24 @@ def main() -> None:
     if worker.temporal_engine.recent_history(24)[-1]["observed_at"] == worker.temporal_engine.recent_history(24)[-2]["observed_at"]:
         raise SystemExit("non-persisted anchor did not advance in-memory temporal observation")
 
+    risk_analysis = {
+        "person_count": 1,
+        "inference_runtime": {"mode": "risk"},
+        "fall_candidate": False,
+        "pose_fall_candidate": False,
+        "fire_event_candidate": False,
+        "black_screen": False,
+        "pose_factor_graph": {},
+    }
+    if worker._should_persist_analysis(24, risk_analysis, {}, rules(), now=100.2):
+        raise SystemExit("risk-frequency analysis still writes every inference frame")
+    if not worker._should_persist_analysis(24, risk_analysis, {}, rules(), now=101.0):
+        raise SystemExit("risk-frequency analysis did not retain its one-second evidence sample")
+
+    confirmed_analysis = {**risk_analysis, "fall_candidate": True}
+    if not worker._should_persist_analysis(24, confirmed_analysis, {}, rules(), now=100.25):
+        raise SystemExit("formal fall candidate was delayed by the persistence throttle")
+
     print({
         "ok": True,
         "analysis_calls": 2,
@@ -187,6 +205,8 @@ def main() -> None:
         "durable_detections": storage.detections,
         "durable_evaluations": storage.evaluations,
         "jpeg_writes": camera_agent.saved,
+        "risk_persistence_interval_seconds": 1.0,
+        "formal_candidate_immediate": True,
     })
 
 

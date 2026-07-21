@@ -6,6 +6,7 @@
   <title>摄像头配置 - 回家</title>
   <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
   <link rel="stylesheet" href="/admin/styles.css?v=20260704-pose-1">
+  <link rel="stylesheet" href="/admin/console.css?v=20260721-console-3">
 </head>
 <body data-page="cameras" class="admin-web-page">
   <a class="skip-link" href="#main">跳到内容</a>
@@ -15,7 +16,7 @@
         <span class="material-symbols-outlined" data-icon="⌂">home_iot_device</span>
         <div>
           <small>回家盒子</small>
-          <strong>开发管理台</strong>
+          <strong>边缘感知台</strong>
         </div>
       </div>
       <nav class="admin-nav">
@@ -37,6 +38,10 @@
     </aside>
 
     <main id="main" class="admin-web-main">
+      <header class="console-page-header">
+        <div><span class="console-kicker">CAMERA I/O</span><h1>摄像头接入</h1></div>
+        <p>局域网发现与链路校验</p>
+      </header>
       <section class="admin-camera-grid">
         <div class="admin-camera-column">
           <section class="panel">
@@ -70,7 +75,7 @@
           <div class="panel-head compact">
             <div>
               <h2>接入参数</h2>
-              <p>本页用于安装调试；正式 App 配置后续由云端同步到盒子。</p>
+              <p id="cameraSourceHint">本页用于安装调试；正式摄像头配置由回家 App 同步到盒子。</p>
             </div>
           </div>
 
@@ -119,6 +124,6 @@
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/admin/console.js?v=20260712-pose-consistency-1"></script>
+  <script src="/admin/console.js?v=20260721-console-1"></script>
 </body>
 </html>

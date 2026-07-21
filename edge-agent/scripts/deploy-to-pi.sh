@@ -35,10 +35,12 @@ rsync -az \
   --exclude 'scripts/verify-adaptive-inference-scheduler.py' \
   --exclude 'scripts/verify-alert-dedupe.py' \
   --exclude 'scripts/verify-camera-stream-resilience.py' \
+  --exclude 'scripts/verify-camera-shared-stream.py' \
   --exclude 'scripts/verify-config-sync-agent.py' \
   --exclude 'scripts/verify-continuous-overlay-console.py' \
   --exclude 'scripts/verify-continual-pose-live-api.py' \
   --exclude 'scripts/verify-continual-pose-tracker.py' \
+  --exclude 'scripts/verify-continual-identity-bridge.py' \
   --exclude 'scripts/verify-dataset-readiness-audit.py' \
   --exclude 'scripts/verify-fall-rule-engine.py' \
   --exclude 'scripts/verify-observation-logs.py' \
@@ -50,6 +52,7 @@ rsync -az \
   --exclude 'scripts/verify-presence-sessions.py' \
   --exclude 'scripts/verify-prolonged-floor-rule.py' \
   --exclude 'scripts/verify-runtime-retention.py' \
+  --exclude 'scripts/verify-synchronized-pose-stream.py' \
   --exclude 'scripts/verify-temporal-observation-engine.py' \
   --exclude 'scripts/verify-upload-agent.py' \
   --exclude 'scripts/verify-upload-queue.py' \

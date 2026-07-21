@@ -255,6 +255,11 @@ class TemporalObservationEngine:
             "scene_zone_id": posture_item.get("scene_zone_id") or item.get("scene_zone_id"),
             "scene_zone_label": posture_item.get("scene_zone_label") or item.get("scene_zone_label"),
             "source": source,
+            "track_id_hint": str(
+                item.get("_continual_track_id_hint")
+                or posture_item.get("_continual_track_id_hint")
+                or ""
+            ),
             "source_item": item,
             "pose_item": posture_source,
         }
@@ -287,25 +292,42 @@ class TemporalObservationEngine:
         ]
         if not candidate_ids:
             return {}
+        assignments: dict[int, str] = {}
+        used_track_ids: set[str] = set()
+        for detection_index, detection in enumerate(detections):
+            hint = str(detection.get("track_id_hint") or "")
+            if hint and hint in candidate_ids and hint not in used_track_ids:
+                assignments[detection_index] = hint
+                used_track_ids.add(hint)
+
+        remaining_detection_indices = [
+            index for index in range(len(detections)) if index not in assignments
+        ]
+        remaining_candidate_ids = [
+            track_id for track_id in candidate_ids if track_id not in used_track_ids
+        ]
+        if not remaining_detection_indices or not remaining_candidate_ids:
+            return assignments
         scores = [
             [
                 self._assignment_score(
-                    detection,
+                    detections[detection_index],
                     tracks[track_id],
                     now_mono=now_mono,
                     frame_width=frame_width,
                     frame_height=frame_height,
                 )
-                for track_id in candidate_ids
+                for track_id in remaining_candidate_ids
             ]
-            for detection in detections
+            for detection_index in remaining_detection_indices
         ]
         pairs = self._maximum_score_assignment(scores)
-        return {
-            detection_index: candidate_ids[track_index]
+        assignments.update({
+            remaining_detection_indices[detection_index]: remaining_candidate_ids[track_index]
             for detection_index, track_index in pairs
             if scores[detection_index][track_index] > 0.0
-        }
+        })
+        return assignments
 
     def _assignment_score(
         self,
@@ -548,6 +570,9 @@ class TemporalObservationEngine:
             best = self._nearest_assignment(person["bbox"], assigned, frame_width, frame_height)
             if best is not None:
                 person["track_id"] = best["track_id"]
+        for item in [*people, *poses]:
+            if isinstance(item, dict):
+                item.pop("_continual_track_id_hint", None)
 
     def _nearest_assignment(self, bbox: Any, assigned: list[Dict[str, Any]], width: float, height: float) -> Dict[str, Any] | None:
         if not assigned:

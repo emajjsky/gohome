@@ -109,6 +109,11 @@ def main() -> None:
     sequence_after = int(str(cached_after_preview["frame_id"]).rsplit("-", 1)[-1])
     if sequence_after <= sequence_before:
         raise SystemExit("managed stream stopped when the preview subscribers disconnected")
+    if sequence_after > counters["reads"]:
+        raise SystemExit(
+            "preview subscribers rewrote the shared camera cache and created synthetic frame ids: "
+            f"frame_sequence={sequence_after}, source_reads={counters['reads']}"
+        )
     status = agent.managed_stream_status()
     if status.get("managed_stream_count") != 1:
         raise SystemExit(f"managed stream status is incorrect: {status}")

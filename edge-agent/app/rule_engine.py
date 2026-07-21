@@ -456,13 +456,19 @@ class RuleEngine:
             graph_candidate
             or (previous.get("fast_transition_confirmed") and same_observed_target)
         )
-        dynamic_scene_override = bool(normal_lying_zone and pose_score_ok and transition_confirmed)
+        dynamic_scene_override = bool(normal_lying_zone and graph_candidate)
         scene_suppressed = bool(normal_lying_zone and not dynamic_scene_override)
         strong_candidate = strong_visual_candidate and transition_confirmed and not scene_suppressed
+        inference_runtime = (
+            analysis.get("inference_runtime")
+            if isinstance(analysis.get("inference_runtime"), dict)
+            else {}
+        )
         dynamic_low_position = self._dynamic_low_position_signal(
             target,
             transition_confirmed=transition_confirmed,
             transition=transition,
+            recent_rapid_descent=bool(inference_runtime.get("recent_rapid_descent")),
         )
         dynamic_transition_signal = bool(
             transition_confirmed
@@ -687,6 +693,7 @@ class RuleEngine:
         *,
         transition_confirmed: bool,
         transition: Dict[str, Any],
+        recent_rapid_descent: bool,
     ) -> bool:
         if not target or not transition_confirmed or bool(target.get("normal_lying_zone")):
             return False
@@ -703,6 +710,8 @@ class RuleEngine:
         if posture in {"sitting", "upper_body"} and float(target.get("bottom_y") or 0.0) < DYNAMIC_FLOOR_BOTTOM_Y:
             return False
         if posture in {"sitting", "upper_body"}:
+            if not recent_rapid_descent:
+                return False
             motion_score = float(transition.get("motion_score") or 0.0)
             motion_threshold = float(transition.get("motion_threshold") or 0.02)
             if motion_score < motion_threshold:
@@ -766,7 +775,7 @@ class RuleEngine:
                 4,
             ),
             "frame_edge_clipped": bool(
-                x1 <= 2.0 or x2 >= width - 2.0
+                x1 <= 2.0 or y1 <= 2.0 or x2 >= width - 2.0 or y2 >= height - 2.0
             ),
         }
 

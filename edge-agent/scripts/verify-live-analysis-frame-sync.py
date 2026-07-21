@@ -62,6 +62,7 @@ def main() -> None:
         "liveAnalysisGeneration",
         "lastAnalysisCapturedAt",
         "/continual-pose/live?include_frame=false",
+        "/continual-pose/stream.mjpg",
         "snapshotDisplayPoses",
         "renderContinualPoseStatus",
     ]
@@ -76,6 +77,8 @@ def main() -> None:
         raise SystemExit("periodic refresh can still replace the live analysis frame with an old snapshot")
     if '@app.get("/api/cameras/{camera_id}/continual-pose/live")' not in main_source:
         raise SystemExit("continual pose same-frame endpoint is missing")
+    if '@app.get("/api/cameras/{camera_id}/continual-pose/stream.mjpg")' not in main_source:
+        raise SystemExit("synchronized continual pose video endpoint is missing")
     if "tracker.latest_frame(camera_id)" not in main_source or 'source = "eacp_same_frame"' not in main_source:
         raise SystemExit("continual pose endpoint is not using the exact tracked frame")
     if "def latest_frame(self, camera_id: int)" not in tracker_source:

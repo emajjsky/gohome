@@ -116,14 +116,12 @@ def main() -> None:
         make_pose_fall_analysis(normal_lying_zone=True),
         rules,
     )
-    if transition_scene_first.candidates:
-        raise SystemExit("first transitioned pose-fall frame must remain a suspect")
-    if len(transition_scene_second.candidates) != 1:
-        raise SystemExit("confirmed pose fall must override static couch/bed suppression")
-    if transition_scene_second.state["fall_stage"] != "confirmed":
-        raise SystemExit("transitioned pose fall in a normal lying zone must be confirmed")
-    if transition_scene_second.state.get("fall_scene_suppressed"):
-        raise SystemExit("dynamic pose fall must not remain scene-suppressed")
+    if transition_scene_first.candidates or transition_scene_second.candidates:
+        raise SystemExit("normal lying zones must suppress pose-only fall transitions")
+    if transition_scene_second.state["fall_stage"] != "normal_lying_zone":
+        raise SystemExit("pose-only normal lying transition must stay in the scene-suppressed state")
+    if not transition_scene_second.state.get("fall_scene_suppressed"):
+        raise SystemExit("pose-only normal lying transition must remain scene-suppressed")
 
     fast_rules = {**rules, "fall_confirm_seconds": 4}
     fast_engine = RuleEngine()
@@ -141,19 +139,37 @@ def main() -> None:
             fast_rules,
         )
         current_time[0] = fast_start + timedelta(seconds=2.25)
-        fast_second = fast_engine.evaluate_snapshot(
+        fast_uncorroborated = fast_engine.evaluate_snapshot(
             camera,
             {"id": 2202},
             make_pose_fall_analysis(normal_lying_zone=True),
+            fast_rules,
+        )
+        current_time[0] = fast_start + timedelta(seconds=2.50)
+        fast_second = fast_engine.evaluate_snapshot(
+            camera,
+            {"id": 2203},
+            make_pose_fall_analysis(normal_lying_zone=True, fast_graph=True),
+            fast_rules,
+        )
+        current_time[0] = fast_start + timedelta(seconds=2.75)
+        fast_third = fast_engine.evaluate_snapshot(
+            camera,
+            {"id": 2204},
+            make_pose_fall_analysis(normal_lying_zone=True, fast_graph=True),
             fast_rules,
         )
     finally:
         rule_engine_module.utc_now = original_clock
     if fast_first.candidates:
         raise SystemExit("first graph-confirmed fast-fall frame must remain a suspect")
-    if len(fast_second.candidates) != 1 or fast_second.state.get("fall_stage") != "confirmed":
-        raise SystemExit("two formal pose frames after a graph-confirmed fast fall must create an event without cached evidence")
-    if fast_second.state.get("fall_confirm_seconds", 0) >= fast_rules["fall_confirm_seconds"]:
+    if fast_uncorroborated.candidates:
+        raise SystemExit("normal lying zone must not inherit a stale graph-confirmed fast-fall path")
+    if fast_second.candidates:
+        raise SystemExit("first refreshed graph-confirmed frame after scene suppression must remain a suspect")
+    if len(fast_third.candidates) != 1 or fast_third.state.get("fall_stage") != "confirmed":
+        raise SystemExit("two current factor-graph fall frames must create an event inside a normal lying zone")
+    if fast_third.state.get("fall_confirm_seconds", 0) >= fast_rules["fall_confirm_seconds"]:
         raise SystemExit("fast-fall path did not exercise the short dynamic confirmation branch")
 
     sustained_graph = PoseFactorGraphEngine(prolonged_lying_seconds=180)
@@ -218,7 +234,7 @@ def main() -> None:
         dynamic_first = dynamic_engine.evaluate_snapshot(
             camera,
             {"id": 2301},
-            make_floor_seated_analysis(),
+            make_corroborated_floor_seated_analysis(),
             fast_rules,
         )
         current_time[0] = dynamic_start + timedelta(seconds=1.8)
@@ -232,7 +248,7 @@ def main() -> None:
         dynamic_confirmed = dynamic_engine.evaluate_snapshot(
             camera,
             {"id": 2303},
-            make_floor_seated_analysis(),
+            make_corroborated_floor_seated_analysis(),
             fast_rules,
         )
     finally:
@@ -247,6 +263,25 @@ def main() -> None:
         raise SystemExit(f"dynamic fall path is not auditable: {dynamic_confirmed.state}")
     if not 1.5 <= float(dynamic_confirmed.state.get("fall_confirm_seconds") or 0.0) <= 3.0:
         raise SystemExit(f"dynamic fall confirmation missed the 1.5-3 second target: {dynamic_confirmed.state}")
+
+    uncorroborated_engine = RuleEngine()
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        uncorroborated_engine.evaluate_snapshot(camera, {"id": 2350}, make_upright_analysis(), fast_rules)
+        uncorroborated_results = []
+        for index, seconds in enumerate((1.0, 2.0, 3.2), start=1):
+            current_time[0] = dynamic_start + timedelta(seconds=seconds)
+            uncorroborated_results.append(uncorroborated_engine.evaluate_snapshot(
+                camera,
+                {"id": 2350 + index},
+                make_floor_seated_analysis(),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if any(result.candidates for result in uncorroborated_results):
+        raise SystemExit("low seated posture without a recent continual descent hint must not create a fall event")
 
     chair_engine = RuleEngine()
     try:
@@ -304,6 +339,35 @@ def main() -> None:
         rule_engine_module.utc_now = original_clock
     if any(result.candidates for result in edge_clipped_results):
         raise SystemExit("edge-clipped lying pose must not create a dynamic fall event without direct evidence")
+
+    bottom_clipped_engine = RuleEngine()
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        bottom_clipped_engine.evaluate_snapshot(
+            camera,
+            {"id": 2435},
+            make_bottom_edge_upright_analysis(),
+            fast_rules,
+        )
+        bottom_clipped_results = []
+        bottom_clipped_samples = [
+            make_bottom_clipped_lying_transition_analysis(),
+            make_bottom_clipped_upper_body_analysis(),
+            make_bottom_clipped_upper_body_analysis(),
+        ]
+        for index, (seconds, sample) in enumerate(zip((1.0, 2.0, 3.2), bottom_clipped_samples), start=1):
+            current_time[0] = dynamic_start + timedelta(seconds=seconds)
+            bottom_clipped_results.append(bottom_clipped_engine.evaluate_snapshot(
+                camera,
+                {"id": 2435 + index},
+                sample,
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if any(result.candidates for result in bottom_clipped_results):
+        raise SystemExit("bottom-clipped upper-body pose must not create a dynamic fall event")
 
     rotation_engine = RuleEngine()
     try:
@@ -467,6 +531,18 @@ def main() -> None:
     fall_pose_runtime = worker._pose_runtime_config(1, pose_rules, adaptive=True)
     if not fall_pose_runtime.get("pose_detection_enabled") or fall_pose_runtime.get("worker_pose_interval_frames") != 1:
         raise SystemExit("active fall observation must sample pose on every scheduled model anchor")
+    worker.inference_scheduler.signal_activity(
+        1,
+        now=scheduler_now + 0.2,
+        risk=True,
+        source="rapid_downward_pose_motion",
+    )
+    corroborated_runtime = worker._pose_runtime_config(1, pose_rules, adaptive=True)
+    corroborated_payload = worker._inference_runtime_payload(corroborated_runtime)
+    if not corroborated_payload.get("recent_rapid_descent"):
+        raise SystemExit("continual descent hint must reach the next formal model anchor")
+    if corroborated_payload.get("rapid_descent_source") != "rapid_downward_pose_motion":
+        raise SystemExit("continual descent hint source must remain auditable")
 
     print(
         json.dumps(
@@ -498,6 +574,7 @@ def main() -> None:
                 "impossible_track_jump_suppressed": True,
                 "idle_pose_enabled": idle_pose_runtime["pose_detection_enabled"],
                 "fall_pose_interval": fall_pose_runtime["worker_pose_interval_frames"],
+                "rapid_descent_corroborated": corroborated_payload["recent_rapid_descent"],
                 "history_baseline_stage": history_first.state["fall_stage"],
             },
             ensure_ascii=False,
@@ -733,6 +810,17 @@ def make_floor_seated_analysis() -> dict:
     return analysis
 
 
+def make_corroborated_floor_seated_analysis() -> dict:
+    analysis = make_floor_seated_analysis()
+    analysis["inference_runtime"] = {
+        "schema_version": "eacp-analysis-runtime-v1",
+        "recent_rapid_descent": True,
+        "rapid_descent_age_seconds": 0.3,
+        "rapid_descent_source": "rapid_downward_pose_motion",
+    }
+    return analysis
+
+
 def make_settled_floor_seated_analysis() -> dict:
     analysis = make_floor_seated_analysis()
     analysis["motion_detected"] = False
@@ -751,6 +839,41 @@ def make_edge_clipped_lying_analysis() -> dict:
     analysis["poses"][0]["posture_confidence"] = 0.64
     analysis["pose_fall_score"] = 0.68
     analysis["fall_score"] = 0.18
+    return analysis
+
+
+def make_bottom_clipped_upper_body_analysis() -> dict:
+    analysis = make_floor_seated_analysis()
+    bbox = [457.1, 278.0, 570.3, 360.0]
+    for target in [*analysis["people"], *analysis["poses"]]:
+        target["bbox"] = list(bbox)
+        target["track_id"] = "person-1"
+        target["fall_score"] = 0.22
+    analysis["poses"][0]["posture"] = "upper_body"
+    analysis["poses"][0]["posture_confidence"] = 0.55
+    analysis["motion_score"] = 0.03
+    analysis["pose_fall_score"] = 0.22
+    analysis["fall_score"] = 0.16
+    return analysis
+
+
+def make_bottom_clipped_lying_transition_analysis() -> dict:
+    analysis = make_bottom_clipped_upper_body_analysis()
+    bbox = [430.0, 310.0, 590.0, 360.0]
+    for target in [*analysis["people"], *analysis["poses"]]:
+        target["bbox"] = list(bbox)
+    analysis["poses"][0]["posture"] = "lying"
+    analysis["poses"][0]["posture_confidence"] = 0.62
+    return analysis
+
+
+def make_bottom_edge_upright_analysis() -> dict:
+    analysis = make_upright_analysis()
+    bbox = [472.5, 219.8, 591.1, 360.0]
+    for target in [*analysis["people"], *analysis["poses"]]:
+        target["bbox"] = list(bbox)
+        target["track_id"] = "person-1"
+    analysis["poses"][0]["posture"] = "standing"
     return analysis
 
 

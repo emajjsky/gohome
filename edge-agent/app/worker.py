@@ -82,6 +82,8 @@ class EdgeWorker:
         self.runtime_reconciliation: Dict[str, Any] = {}
         self._runtime_reconciled = False
         self.last_continual_pose_error = ""
+        self.continual_identity_bridge_count = 0
+        self.last_continual_identity_bridge: Dict[str, Any] = {}
 
     @property
     def is_running(self) -> bool:
@@ -207,6 +209,10 @@ class EdgeWorker:
             "continual_pose_running": self._tracking_thread is not None and self._tracking_thread.is_alive(),
             "continual_pose": continual_status,
             "continual_pose_error": self.last_continual_pose_error,
+            "continual_identity_bridge": {
+                "count": self.continual_identity_bridge_count,
+                "last": dict(self.last_continual_identity_bridge),
+            },
             "motion_gate": self.motion_gate.status() if self.motion_gate is not None else {"schema_version": "disabled"},
             "camera_streams": stream_status,
             "runtime_reconciliation": self.runtime_reconciliation,
@@ -319,6 +325,7 @@ class EdgeWorker:
                 config=analysis_config,
             )
             analysis["inference_runtime"] = self._inference_runtime_payload(pose_runtime_config)
+            self._attach_continual_identity_hints(camera_id, analysis)
             temporal = self.temporal_engine.update(camera_id, analysis)
             self._publish_continual_pose_anchor(camera_id, frame=frame, capture=capture, analysis=analysis)
             self.pose_factor_graph_engine.update(camera_id, analysis, config=rules)
@@ -474,6 +481,84 @@ class EdgeWorker:
             self.last_continual_pose_error = ""
         except Exception as exc:
             self.last_continual_pose_error = str(exc)
+
+    def _attach_continual_identity_hints(self, camera_id: int, analysis: Dict[str, Any]) -> None:
+        if self.continual_pose_tracker is None:
+            return
+        tracking = self.continual_pose_tracker.latest(int(camera_id))
+        if str(tracking.get("state") or "") not in {"observed", "tracked"}:
+            return
+        tracked_poses = [
+            pose
+            for pose in (tracking.get("poses") or [])
+            if isinstance(pose, dict)
+            and pose.get("track_id")
+            and self._valid_bbox(pose.get("bbox"))
+        ]
+        if not tracked_poses:
+            return
+        people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
+        poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
+        pose_targets = [item for item in poses if isinstance(item, dict) and self._valid_bbox(item.get("bbox"))]
+        person_targets = [item for item in people if isinstance(item, dict) and self._valid_bbox(item.get("bbox"))]
+        targets = pose_targets or person_targets
+        width = max(1.0, float(analysis.get("image_width") or 1.0))
+        height = max(1.0, float(analysis.get("image_height") or 1.0))
+        candidates = []
+        for target_index, target in enumerate(targets):
+            for tracked_index, tracked in enumerate(tracked_poses):
+                overlap = self._bbox_iou(target["bbox"], tracked["bbox"])
+                distance = self._bbox_center_distance(target["bbox"], tracked["bbox"], width, height)
+                if overlap < 0.12 and distance > 0.16:
+                    continue
+                candidates.append((overlap * 2.0 + max(0.0, 1.0 - distance / 0.16), target_index, tracked_index))
+        used_targets: set[int] = set()
+        used_tracks: set[int] = set()
+        for _score, target_index, tracked_index in sorted(candidates, reverse=True):
+            if target_index in used_targets or tracked_index in used_tracks:
+                continue
+            targets[target_index]["_continual_track_id_hint"] = str(tracked_poses[tracked_index]["track_id"])
+            if targets is pose_targets:
+                matching_person = max(
+                    person_targets,
+                    key=lambda item: self._bbox_iou(item["bbox"], targets[target_index]["bbox"]),
+                    default=None,
+                )
+                if matching_person is not None and self._bbox_iou(matching_person["bbox"], targets[target_index]["bbox"]) >= 0.12:
+                    matching_person["_continual_track_id_hint"] = str(tracked_poses[tracked_index]["track_id"])
+            self.continual_identity_bridge_count += 1
+            self.last_continual_identity_bridge = {
+                "camera_id": int(camera_id),
+                "track_id": str(tracked_poses[tracked_index]["track_id"]),
+                "source": "pose" if targets is pose_targets else "person",
+            }
+            used_targets.add(target_index)
+            used_tracks.add(tracked_index)
+
+    def _valid_bbox(self, bbox: Any) -> bool:
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            return False
+        try:
+            x1, y1, x2, y2 = [float(value) for value in bbox]
+        except (TypeError, ValueError):
+            return False
+        return x2 > x1 and y2 > y1
+
+    def _bbox_iou(self, first: Any, second: Any) -> float:
+        if not self._valid_bbox(first) or not self._valid_bbox(second):
+            return 0.0
+        ax1, ay1, ax2, ay2 = [float(value) for value in first]
+        bx1, by1, bx2, by2 = [float(value) for value in second]
+        intersection = max(0.0, min(ax2, bx2) - max(ax1, bx1)) * max(0.0, min(ay2, by2) - max(ay1, by1))
+        union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - intersection
+        return intersection / union if union > 0 else 0.0
+
+    def _bbox_center_distance(self, first: Any, second: Any, width: float, height: float) -> float:
+        ax1, ay1, ax2, ay2 = [float(value) for value in first]
+        bx1, by1, bx2, by2 = [float(value) for value in second]
+        dx = ((ax1 + ax2) - (bx1 + bx2)) / (2.0 * max(1.0, width))
+        dy = ((ay1 + ay2) - (by1 + by2)) / (2.0 * max(1.0, height))
+        return (dx * dx + dy * dy) ** 0.5
 
     def _persist_analysis_frame(
         self,
@@ -706,6 +791,13 @@ class EdgeWorker:
         schedule = self.inference_scheduler.camera_state(camera_id, now=now)
         mode = str(schedule.get("mode") or self.inference_scheduler.mode(camera_id, now=now))
         enabled = bool(schedule.get("pose_required"))
+        last_risk_at = schedule.get("last_risk_signal_at_monotonic")
+        rapid_descent_age = (
+            max(0.0, now - float(last_risk_at))
+            if last_risk_at is not None
+            and str(schedule.get("last_risk_signal_source") or "") == "rapid_downward_pose_motion"
+            else None
+        )
         return {
             "pose_detection_enabled": enabled,
             "pose_runtime_reason": f"eacp_{mode}_pose" if enabled else f"eacp_{mode}_person_probe",
@@ -714,6 +806,15 @@ class EdgeWorker:
             "person_detection_cache_seconds": 0.45 if mode == "risk" else 0.6 if mode == "active" else 0.0,
             "person_detection_cache_max_motion": 0.05,
             "eacp_mode": mode,
+            "recent_rapid_descent": rapid_descent_age is not None and rapid_descent_age <= 3.0,
+            "rapid_descent_age_seconds": (
+                None if rapid_descent_age is None else round(rapid_descent_age, 4)
+            ),
+            "rapid_descent_source": (
+                str(schedule.get("last_risk_signal_source") or "")
+                if rapid_descent_age is not None
+                else ""
+            ),
         }
 
     def _snapshot_frame_age_seconds(self, snapshot: Any) -> float | None:
@@ -737,6 +838,9 @@ class EdgeWorker:
             "mode": str(pose_runtime_config.get("eacp_mode") or "idle"),
             "pose_requested": bool(pose_runtime_config.get("pose_detection_enabled")),
             "pose_reason": str(pose_runtime_config.get("pose_runtime_reason") or ""),
+            "recent_rapid_descent": bool(pose_runtime_config.get("recent_rapid_descent")),
+            "rapid_descent_age_seconds": pose_runtime_config.get("rapid_descent_age_seconds"),
+            "rapid_descent_source": str(pose_runtime_config.get("rapid_descent_source") or ""),
         }
 
     def _should_persist_analysis(
@@ -749,18 +853,9 @@ class EdgeWorker:
         now: float,
     ) -> bool:
         last_persisted_at = self.last_persisted_analysis_at.get(int(camera_id))
-        interval = max(1.0, float(rules.get("capture_interval_seconds") or 5.0))
-        if last_persisted_at is None or float(now) - float(last_persisted_at) >= interval:
+        if last_persisted_at is None:
             return True
-        person_present = int(analysis.get("person_count") or 0) > 0
-        if (
-            int(camera_id) in self.last_persisted_person_state
-            and self.last_persisted_person_state[int(camera_id)] != person_present
-        ):
-            return True
-        runtime = analysis.get("inference_runtime") if isinstance(analysis.get("inference_runtime"), dict) else {}
-        if runtime.get("mode") == "risk":
-            return True
+        elapsed = max(0.0, float(now) - float(last_persisted_at))
         if analysis.get("black_screen") or any(bool(analysis.get(key)) for key in (
             "fall_candidate",
             "pose_fall_candidate",
@@ -772,6 +867,20 @@ class EdgeWorker:
             factor_graph.get("fast_fall_candidate")
             or factor_graph.get("prolonged_floor_lying_candidate")
         ):
+            return True
+        interval = max(1.0, float(rules.get("capture_interval_seconds") or 5.0))
+        if elapsed >= interval:
+            return True
+        person_present = int(analysis.get("person_count") or 0) > 0
+        if (
+            elapsed >= 1.0
+            and
+            int(camera_id) in self.last_persisted_person_state
+            and self.last_persisted_person_state[int(camera_id)] != person_present
+        ):
+            return True
+        runtime = analysis.get("inference_runtime") if isinstance(analysis.get("inference_runtime"), dict) else {}
+        if runtime.get("mode") == "risk" and elapsed >= 1.0:
             return True
         return False
 

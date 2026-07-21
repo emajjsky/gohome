@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>视觉算法 - 回家</title>
   <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
-  <link rel="stylesheet" href="/admin/styles.css?v=20260719-coasting-1">
+  <link rel="stylesheet" href="/admin/styles.css?v=20260721-minimal-1">
+  <link rel="stylesheet" href="/admin/console.css?v=20260721-console-3">
 </head>
 <body data-page="algorithms" class="admin-web-page">
   <a class="skip-link" href="#main">跳到内容</a>
@@ -15,7 +16,7 @@
         <span class="material-symbols-outlined" data-icon="⌂">home_iot_device</span>
         <div>
           <small>回家盒子</small>
-          <strong>开发管理台</strong>
+          <strong>边缘感知台</strong>
         </div>
       </div>
       <nav class="admin-nav">
@@ -74,15 +75,21 @@
     </aside>
 
     <main id="main" class="admin-web-main">
-      <section class="guard-layout algorithm-guard-layout">
+      <section class="algorithm-cinema-console">
         <section class="panel preview-card algorithm-preview-panel algorithm-theater-panel">
-          <div class="algorithm-stage-toolbar">
+          <div class="algorithm-stage-toolbar cinema-toolbar">
             <div class="preview-picker">
               <label>摄像头<select id="cameraSelect"></select></label>
               <div class="unified-mode-indicator" aria-label="当前分析模式">
-                <span class="unified-mode-glyph" aria-hidden="true">全</span>
-                <div><span>分析模式</span><strong>统一实时感知</strong></div>
+                <span class="unified-mode-glyph" aria-hidden="true">感</span>
+                <div><span>实时感知</span><strong>统一视觉链路</strong></div>
               </div>
+            </div>
+            <div class="cinema-runtime-strip" aria-label="运行状态">
+              <span><b id="runtimeMode">-</b><em>模式</em></span>
+              <span><b id="runtimeFps">-</b><em>帧率</em></span>
+              <span><b id="runtimeTemp">-</b><em>温度</em></span>
+              <span><b id="runtimeStreams">-</b><em>路数</em></span>
             </div>
             <button id="captureSelected" class="secondary-button icon-command" type="button" title="抓取当前检测帧">
               <span class="material-symbols-outlined" data-icon="◎">photo_camera</span>
@@ -90,94 +97,102 @@
             </button>
           </div>
 
-          <div class="algorithm-theater">
-            <section class="algorithm-stage-main" aria-label="实时检测画面">
-              <div class="live-analysis-head">
-                <div>
-                  <span>实时检测</span>
-                  <strong id="streamCamera">无摄像头</strong>
+          <div class="algorithm-theater cinema-theater">
+            <section class="algorithm-stage-main cinema-stage-main" aria-label="实时检测画面">
+              <div class="cinema-video-shell">
+                <div class="cinema-topline">
+                  <div>
+                    <span id="streamStatus" class="status-pill muted">等待视频</span>
+                    <strong id="streamCamera">无摄像头</strong>
+                  </div>
+                  <div>
+                    <span id="runtimePose">姿态待命</span>
+                    <span id="streamFrameTime">-</span>
+                  </div>
                 </div>
-                <span id="streamStatus" class="status-pill muted">等待视频</span>
-              </div>
-              <div id="previewStage" class="preview-stage algorithm-live-stage">
-                <img id="mjpegStream" alt="实时摄像头视频">
-                <div id="detectionOverlay" class="detection-overlay" aria-hidden="true"></div>
-                <div id="streamEmpty" class="empty-preview stream-empty">
-                  <span class="material-symbols-outlined" data-icon="□">videocam_off</span>
-                  <p>请选择摄像头</p>
+                <div id="previewStage" class="preview-stage algorithm-live-stage">
+                  <img id="mjpegStream" alt="实时摄像头视频">
+                  <div id="detectionOverlay" class="detection-overlay" aria-hidden="true"></div>
+                  <div id="streamEmpty" class="empty-preview stream-empty">
+                    <span class="material-symbols-outlined" data-icon="□">videocam_off</span>
+                    <p>请选择摄像头</p>
+                  </div>
+                </div>
+                <div id="algorithmHitStrip" class="algorithm-hit-strip cinema-hit-strip" aria-live="polite">
+                  <div class="algorithm-hit-card primary">
+                    <span>安全状态</span>
+                    <strong>等待检测</strong>
+                  </div>
+                  <div class="algorithm-hit-card">
+                    <span>当前人物</span>
+                    <strong>-</strong>
+                  </div>
+                  <div class="algorithm-hit-card">
+                    <span>画面帧龄</span>
+                    <strong>-</strong>
+                  </div>
                 </div>
               </div>
-              <div id="continualPoseStatus" class="continual-pose-status" aria-live="polite">
+
+              <div id="continualPoseStatus" class="continual-pose-status cinema-pose-status" aria-live="polite">
                 <span class="continual-pose-source"><i></i><strong id="continualPoseSource">等待连续感知</strong></span>
-                <span>年龄 <strong id="continualPoseAge">-</strong></span>
-                <span>有效点 <strong id="continualPosePoints">-</strong></span>
-                <span>FB 误差 <strong id="continualPoseError">-</strong></span>
-                <small>跟踪帧只补足画面连续性，不作为报警证据</small>
-              </div>
-              <div id="algorithmHitStrip" class="algorithm-hit-strip" aria-live="polite">
-                <div class="algorithm-hit-card primary">
-                  <span>安全状态</span>
-                  <strong>等待检测</strong>
-                </div>
-                <div class="algorithm-hit-card">
-                  <span>当前人物</span>
-                  <strong>-</strong>
-                </div>
-                <div class="algorithm-hit-card">
-                  <span>画面帧龄</span>
-                  <strong>-</strong>
-                </div>
+                <span>帧龄 <strong id="continualPoseAge">-</strong></span>
+                <span>点位 <strong id="continualPosePoints">-</strong></span>
+                <span>误差 <strong id="continualPoseError">-</strong></span>
               </div>
             </section>
 
-            <aside class="algorithm-evidence-rail" aria-label="算法证据">
+            <aside class="algorithm-evidence-rail cinema-evidence-rail" aria-label="算法证据">
               <div class="unified-perception-head">
-                <div><span>当前感知</span><strong>画面中的全部目标与状态</strong></div>
+                <div><span>目标感知</span><strong>人物、姿态与场景</strong></div>
                 <span id="sceneMapStatus" class="status-pill muted">场景学习中</span>
               </div>
               <div id="detectionSummary" class="detection-summary plain">
                 <span class="status-pill muted">等待检测</span>
-                <p>检测结果会随后台最新帧刷新。</p>
+                <p>等待后台最新帧。</p>
               </div>
               <div id="perceptionTargetList" class="perception-target-list" aria-live="polite">
-                <div class="empty-state">等待人物、姿态与场景目标。</div>
+                <div class="empty-state">等待目标。</div>
               </div>
-              <div class="preview-meta">
-                <div><span>检测帧</span><strong id="snapshotTime">-</strong></div>
-                <div><span>人 / 宠物</span><strong id="snapshotPeople">-</strong></div>
+              <div class="preview-meta cinema-meta">
+                <div><span>时间</span><strong id="snapshotTime">-</strong></div>
+                <div><span>目标</span><strong id="snapshotPeople">-</strong></div>
                 <div><span>姿态</span><strong id="snapshotPoseCount">-</strong></div>
-                <div><span>场景目标</span><strong id="snapshotSceneCount">-</strong></div>
-                <div><span>火灾状态</span><strong id="snapshotFireState">-</strong></div>
-                <div><span>画面状态</span><strong id="snapshotQualityState">-</strong></div>
+                <div><span>场景</span><strong id="snapshotSceneCount">-</strong></div>
+                <div><span>火灾</span><strong id="snapshotFireState">-</strong></div>
+                <div><span>画面</span><strong id="snapshotQualityState">-</strong></div>
               </div>
-              <section class="algorithm-candidate-panel" aria-label="最近命中">
-                <div class="compact-section-head">
-                  <strong id="candidatePanelTitle">最近安全记录</strong>
-                  <span id="uploadQueueSummary">后台留证记录</span>
-                </div>
-                <div id="candidateList" class="candidate-list compact" aria-live="polite"></div>
-              </section>
-              <section class="algorithm-candidate-panel observation-panel" aria-label="生活观察">
-                <div class="compact-section-head">
-                  <strong id="observationPanelTitle">最近生活观察</strong>
-                  <span id="observationPanelSubtitle">统一时间线</span>
-                </div>
-                <div id="observationList" class="candidate-list observation-list compact" aria-live="polite"></div>
-              </section>
-              <section class="algorithm-candidate-panel verification-panel" aria-label="云端模型复核">
-                <div class="compact-section-head">
-                  <strong>云端模型复核</strong>
-                  <span id="verificationPanelStatus">读取中</span>
-                </div>
-                <div id="verificationList" class="candidate-list verification-list compact" aria-live="polite"></div>
-              </section>
             </aside>
           </div>
+
+          <section class="algorithm-evidence-board" aria-label="证据流">
+            <section class="algorithm-candidate-panel" aria-label="最近命中">
+              <div class="compact-section-head">
+                <strong id="candidatePanelTitle">最近安全记录</strong>
+                <span id="uploadQueueSummary">留证队列</span>
+              </div>
+              <div id="candidateList" class="candidate-list compact" aria-live="polite"></div>
+            </section>
+            <section class="algorithm-candidate-panel observation-panel" aria-label="生活观察">
+              <div class="compact-section-head">
+                <strong id="observationPanelTitle">最近生活观察</strong>
+                <span id="observationPanelSubtitle">时间线</span>
+              </div>
+              <div id="observationList" class="candidate-list observation-list compact" aria-live="polite"></div>
+            </section>
+            <section class="algorithm-candidate-panel verification-panel" aria-label="云端模型复核">
+              <div class="compact-section-head">
+                <strong>云端模型复核</strong>
+                <span id="verificationPanelStatus">读取中</span>
+              </div>
+              <div id="verificationList" class="candidate-list verification-list compact" aria-live="polite"></div>
+            </section>
+          </section>
         </section>
       </section>
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/admin/console.js?v=20260719-coasting-1"></script>
+  <script src="/admin/console.js?v=20260721-console-1"></script>
 </body>
 </html>
