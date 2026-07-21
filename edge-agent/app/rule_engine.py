@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 
 DYNAMIC_FLOOR_BOTTOM_Y = 0.88
+BODY_ROTATION_MOTION_WINDOW_SECONDS = 0.75
 
 
 def utc_now() -> datetime:
@@ -461,6 +462,7 @@ class RuleEngine:
         dynamic_low_position = self._dynamic_low_position_signal(
             target,
             transition_confirmed=transition_confirmed,
+            transition=transition,
         )
         dynamic_transition_signal = bool(
             transition_confirmed
@@ -484,6 +486,7 @@ class RuleEngine:
                     "first_score": fall_score,
                     "max_score": max(fall_score, pose_fall_score, graph_score),
                     "transition_confirmed": transition_confirmed,
+                    "body_rotation_confirmed": bool(transition.get("body_rotation_confirmed")),
                     "fast_transition_confirmed": fast_transition_confirmed,
                     "confirmation_path": "dynamic_low_position" if dynamic_transition_signal else "standard",
                 }
@@ -497,6 +500,10 @@ class RuleEngine:
                     "target": target,
                     "max_score": max(float(previous.get("max_score") or 0.0), fall_score, pose_fall_score, graph_score),
                     "transition_confirmed": transition_confirmed,
+                    "body_rotation_confirmed": bool(
+                        previous.get("body_rotation_confirmed")
+                        or transition.get("body_rotation_confirmed")
+                    ),
                     "fast_transition_confirmed": fast_transition_confirmed,
                     "confirmation_path": (
                         "dynamic_low_position"
@@ -631,7 +638,15 @@ class RuleEngine:
             "evidence": fall_evidence,
             "scene_suppressed": scene_suppressed,
             "scene_zone": target.get("scene_zone_label") if target else None,
-            "transition": {**transition, "confirmed": transition_confirmed, "inherited": transition_confirmed and not bool(transition.get("confirmed"))},
+            "transition": {
+                **transition,
+                "confirmed": transition_confirmed,
+                "inherited": transition_confirmed and not bool(transition.get("confirmed")),
+                "body_rotation_confirmed": bool(
+                    transition.get("body_rotation_confirmed")
+                    or track.get("body_rotation_confirmed")
+                ),
+            },
         }
         return {
             "emit_event": bool(emit_event),
@@ -650,7 +665,15 @@ class RuleEngine:
                 "fall_scene_suppressed": scene_suppressed,
                 "fall_transition_confirmed": transition_confirmed,
                 "fall_fast_transition_confirmed": bool(track.get("fast_transition_confirmed")),
-                "fall_transition": {**transition, "confirmed": transition_confirmed, "inherited": transition_confirmed and not bool(transition.get("confirmed"))},
+                "fall_transition": {
+                    **transition,
+                    "confirmed": transition_confirmed,
+                    "inherited": transition_confirmed and not bool(transition.get("confirmed")),
+                    "body_rotation_confirmed": bool(
+                        transition.get("body_rotation_confirmed")
+                        or track.get("body_rotation_confirmed")
+                    ),
+                },
                 "fall_score": fall_score,
                 "pose_fall_score": pose_fall_score,
                 "pose_factor_graph_score": graph_score,
@@ -663,8 +686,11 @@ class RuleEngine:
         target: Dict[str, Any] | None,
         *,
         transition_confirmed: bool,
+        transition: Dict[str, Any],
     ) -> bool:
         if not target or not transition_confirmed or bool(target.get("normal_lying_zone")):
+            return False
+        if bool(target.get("frame_edge_clipped")):
             return False
         posture = str(target.get("posture") or "")
         if posture not in {"lying", "sitting", "upper_body"}:
@@ -676,6 +702,11 @@ class RuleEngine:
             return False
         if posture in {"sitting", "upper_body"} and float(target.get("bottom_y") or 0.0) < DYNAMIC_FLOOR_BOTTOM_Y:
             return False
+        if posture in {"sitting", "upper_body"}:
+            motion_score = float(transition.get("motion_score") or 0.0)
+            motion_threshold = float(transition.get("motion_threshold") or 0.02)
+            if motion_score < motion_threshold:
+                return False
         return float(target.get("score") or 0.0) >= 0.18
 
     def _fall_target(self, analysis: Dict[str, Any], fall_evidence: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -690,12 +721,25 @@ class RuleEngine:
                 candidates.append(item)
         people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
         candidates.extend([person for person in people if person.get("fall_candidate") and self._valid_bbox(person.get("bbox"))])
+        poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
         if not candidates:
-            poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
             candidates.extend([pose for pose in poses if self._valid_bbox(pose.get("bbox")) and float(pose.get("fall_score") or 0.0) > 0])
         if not candidates:
             return None
         best = max(candidates, key=lambda item: float(item.get("score") or item.get("fall_score") or item.get("confidence") or 0.0))
+        if not best.get("posture"):
+            matching_poses = [
+                pose for pose in poses
+                if self._valid_bbox(pose.get("bbox")) and self._bbox_overlap(best.get("bbox"), pose.get("bbox")) >= 0.20
+            ]
+            if matching_poses:
+                matching_pose = max(matching_poses, key=lambda pose: self._bbox_overlap(best.get("bbox"), pose.get("bbox")))
+                best = {
+                    **best,
+                    "posture": matching_pose.get("posture"),
+                    "posture_factors": matching_pose.get("posture_factors") or {},
+                    "posture_confidence": matching_pose.get("posture_confidence"),
+                }
         bbox = [float(value) for value in best.get("bbox")]
         x1, y1, x2, y2 = bbox
         width = max(1.0, float(best.get("frame_width") or analysis.get("image_width") or 640))
@@ -714,6 +758,16 @@ class RuleEngine:
             "scene_zone_label": best.get("scene_zone_label"),
             "scene_zone_label_zh": best.get("scene_zone_label_zh"),
             "scene_zone_overlap": best.get("scene_zone_overlap"),
+            "body_aspect": round(
+                float(
+                    (best.get("posture_factors") or {}).get("body_aspect")
+                    or ((x2 - x1) / max(1.0, y2 - y1))
+                ),
+                4,
+            ),
+            "frame_edge_clipped": bool(
+                x1 <= 2.0 or x2 >= width - 2.0
+            ),
         }
 
     def _upright_targets(self, analysis: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -730,7 +784,10 @@ class RuleEngine:
                 continue
             if pose.get("person_evidence_eligible") is False or not self._valid_bbox(pose.get("bbox")):
                 continue
-            targets.append(self._normalized_target(pose, width, height, posture=posture))
+            targets.append({
+                **self._normalized_target(pose, width, height, posture=posture),
+                "motion_score": round(float(analysis.get("motion_score") or 0.0), 4),
+            })
         if targets:
             return targets
         people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
@@ -739,7 +796,10 @@ class RuleEngine:
                 continue
             if float(person.get("aspect_ratio") or 0.0) > 1.25:
                 continue
-            targets.append(self._normalized_target(person, width, height, posture="person_upright"))
+            targets.append({
+                **self._normalized_target(person, width, height, posture="person_upright"),
+                "motion_score": round(float(analysis.get("motion_score") or 0.0), 4),
+            })
         return targets
 
     def _record_upright_targets(
@@ -779,6 +839,11 @@ class RuleEngine:
             "source": item.get("source") or "upright_history",
             "track_id": item.get("track_id"),
             "score": round(float(item.get("confidence") or 0.0), 4),
+            "body_aspect": round(
+                float(item.get("body_aspect") or ((bbox[2] - bbox[0]) / max(1.0, bbox[3] - bbox[1]))),
+                4,
+            ),
+            "motion_score": round(float(item.get("motion_score") or 0.0), 4),
         }
 
     def _fall_transition(
@@ -803,6 +868,9 @@ class RuleEngine:
             "horizontal_distance": None,
             "motion_score": analysis.get("motion_score"),
             "upright_target": None,
+            "body_rotation_confirmed": False,
+            "body_aspect_change": None,
+            "rotation_motion_score": 0.0,
         }
         upright_targets = upright_state.get("targets") if isinstance(upright_state.get("targets"), list) else []
         fallback_observed_at = upright_state.get("observed_at")
@@ -852,12 +920,48 @@ class RuleEngine:
         spatial_match = bool(spatial_candidates) and horizontal_distance <= 0.28
         descent = vertical_drop >= min_vertical_drop
         motion_ok = motion_score >= motion_threshold or vertical_drop >= min_vertical_drop * 1.5
+        target_posture = str(target.get("posture") or "").lower()
+        target_aspect = float(target.get("body_aspect") or 0.0)
+        rotation_candidates = [
+            item for item, _, _ in (same_track_candidates or spatial_candidates or recent_targets)
+            if float(item.get("body_aspect") or 0.0) > 0.0
+            and float(item.get("body_aspect") or 0.0) <= 0.80
+        ]
+        rotation_baseline = min(
+            rotation_candidates,
+            key=lambda item: float(item.get("body_aspect") or 1.0),
+            default=None,
+        )
+        recent_motion_score = max(
+            [motion_score]
+            + [
+                float(item.get("motion_score") or 0.0)
+                for item, _, age in (same_track_candidates or spatial_candidates or recent_targets)
+                if age <= BODY_ROTATION_MOTION_WINDOW_SECONDS
+            ]
+        )
+        body_aspect_change = (
+            target_aspect - float(rotation_baseline.get("body_aspect") or 0.0)
+            if rotation_baseline is not None and target_aspect > 0.0
+            else None
+        )
+        body_rotation_confirmed = bool(
+            target_posture == "lying"
+            and rotation_baseline is not None
+            and target_aspect >= 1.10
+            and float(body_aspect_change or 0.0) >= 0.45
+            and spatial_match
+            and recent_motion_score >= motion_threshold
+        )
         result.update({
-            "confirmed": bool(spatial_match and descent and motion_ok),
-            "reason": "confirmed" if spatial_match and descent and motion_ok else ("target_too_far" if not spatial_match else "insufficient_descent"),
+            "confirmed": bool(spatial_match and ((descent and motion_ok) or body_rotation_confirmed)),
+            "reason": "confirmed_body_rotation" if body_rotation_confirmed else "confirmed" if spatial_match and descent and motion_ok else ("target_too_far" if not spatial_match else "insufficient_descent"),
             "vertical_drop": round(vertical_drop, 4),
             "horizontal_distance": round(horizontal_distance, 4),
             "upright_target": {key: value for key, value in best.items() if key != "_observed_at"},
+            "body_rotation_confirmed": body_rotation_confirmed,
+            "body_aspect_change": None if body_aspect_change is None else round(float(body_aspect_change), 4),
+            "rotation_motion_score": round(recent_motion_score, 4),
         })
         return result
 

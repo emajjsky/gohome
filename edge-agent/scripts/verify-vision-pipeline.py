@@ -142,6 +142,8 @@ def main() -> None:
         "scene_status": scene_context["status"],
         "scene_zone_count": scene_context["zone_count"],
         "scene_normal_lying": scene_context["normal_lying"],
+        "scene_seated_zone_label": scene_context["seated_zone_label"],
+        "scene_seated_normal_lying": scene_context["seated_normal_lying"],
         "scene_occlusion_zone_right": scene_occlusion["zone_right"],
         "scene_occlusion_normal_lying": scene_occlusion["normal_lying"],
         "scene_human_filter_count": scene_human_filter,
@@ -210,6 +212,8 @@ def main() -> None:
         raise SystemExit("scene context should stabilize a repeated couch detection")
     if not checks["scene_normal_lying"]:
         raise SystemExit("lying pose overlapping a stable couch must be marked as normal lying zone")
+    if checks["scene_seated_zone_label"] != "couch" or checks["scene_seated_normal_lying"]:
+        raise SystemExit("seated furniture overlap must remain auditable without becoming a lying zone")
     if checks["scene_occlusion_zone_right"] > 360.0 or checks["scene_occlusion_normal_lying"]:
         raise SystemExit("a person occluding a static couch must not make the couch zone drift into floor lying")
     if checks["scene_human_filter_count"] != 1:
@@ -340,10 +344,17 @@ def verify_scene_context_stabilizes_normal_lying_zone() -> dict:
         [{"bbox": [350.0, 200.0, 540.0, 350.0], "posture": "lying", "fall_candidate": True}],
         scene["scene_zones"],
     )
+    _, seated_poses = tracker.annotate(
+        [],
+        [{"bbox": [160.0, 210.0, 300.0, 350.0], "posture": "sitting", "fall_candidate": False}],
+        scene["scene_zones"],
+    )
     return {
         "status": scene["scene_map_status"],
         "zone_count": len(scene["normal_lying_zones"]),
         "normal_lying": bool(poses and poses[0].get("normal_lying_zone")),
+        "seated_zone_label": (seated_poses[0] or {}).get("scene_zone_label") if seated_poses else None,
+        "seated_normal_lying": bool(seated_poses and seated_poses[0].get("normal_lying_zone")),
     }
 
 

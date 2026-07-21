@@ -124,9 +124,6 @@ class SceneContextTracker:
     ) -> Dict[str, Any]:
         annotated = {**target}
         can_be_lying = posture in {"lying", "low_body"} or bool(target.get("fall_candidate"))
-        if not can_be_lying:
-            annotated["normal_lying_zone"] = False
-            return annotated
         best_zone = None
         best_overlap = 0.0
         for zone in zones:
@@ -138,7 +135,7 @@ class SceneContextTracker:
             annotated["normal_lying_zone"] = False
             return annotated
         annotated.update({
-            "normal_lying_zone": True,
+            "normal_lying_zone": bool(can_be_lying),
             "scene_zone_id": best_zone.get("id"),
             "scene_zone_label": best_zone.get("label"),
             "scene_zone_label_zh": best_zone.get("label_zh"),

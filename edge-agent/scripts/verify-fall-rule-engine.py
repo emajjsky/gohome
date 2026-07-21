@@ -267,6 +267,87 @@ def main() -> None:
     if any(result.candidates for result in chair_results):
         raise SystemExit("ordinary chair-height sitting must not enter the floor-impact path")
 
+    settled_floor_engine = RuleEngine()
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        settled_floor_engine.evaluate_snapshot(camera, {"id": 2420}, make_upright_analysis(), fast_rules)
+        settled_floor_results = []
+        for index, seconds in enumerate((1.0, 2.0, 3.2), start=1):
+            current_time[0] = dynamic_start + timedelta(seconds=seconds)
+            settled_floor_results.append(settled_floor_engine.evaluate_snapshot(
+                camera,
+                {"id": 2420 + index},
+                make_settled_floor_seated_analysis(),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if any(result.candidates for result in settled_floor_results):
+        raise SystemExit("settled low sitting without descent motion must not enter the dynamic fall path")
+
+    edge_clipped_engine = RuleEngine()
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        edge_clipped_engine.evaluate_snapshot(camera, {"id": 2430}, make_upright_analysis(), fast_rules)
+        edge_clipped_results = []
+        for index, seconds in enumerate((1.0, 2.0, 3.2), start=1):
+            current_time[0] = dynamic_start + timedelta(seconds=seconds)
+            edge_clipped_results.append(edge_clipped_engine.evaluate_snapshot(
+                camera,
+                {"id": 2430 + index},
+                make_edge_clipped_lying_analysis(),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if any(result.candidates for result in edge_clipped_results):
+        raise SystemExit("edge-clipped lying pose must not create a dynamic fall event without direct evidence")
+
+    rotation_engine = RuleEngine()
+    try:
+        current_time = [dynamic_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        rotation_engine.evaluate_snapshot(
+            camera,
+            {"id": 2440},
+            make_rotation_transition_analysis("standing", [398.5, 52.1, 485.3, 307.5], 0.022, 0.08),
+            fast_rules,
+        )
+        current_time[0] = dynamic_start + timedelta(seconds=2.0)
+        rotation_engine.evaluate_snapshot(
+            camera,
+            {"id": 2441},
+            make_rotation_transition_analysis("sitting", [342.4, 137.5, 437.4, 282.9], 0.024, 0.18),
+            fast_rules,
+        )
+        current_time[0] = dynamic_start + timedelta(seconds=3.1)
+        rotation_engine.evaluate_snapshot(
+            camera,
+            {"id": 2442},
+            make_rotation_transition_analysis("squatting", [361.6, 163.9, 434.6, 248.6], 0.024, 0.36),
+            fast_rules,
+        )
+        rotation_results = []
+        for index, seconds in enumerate((3.4, 3.9, 5.6), start=1):
+            current_time[0] = dynamic_start + timedelta(seconds=seconds)
+            rotation_results.append(rotation_engine.evaluate_snapshot(
+                camera,
+                {"id": 2442 + index},
+                make_rotation_transition_analysis("lying", [373.2, 167.7, 461.9, 235.0], 0.016, 0.82),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if rotation_results[0].candidates or rotation_results[1].candidates:
+        raise SystemExit("body-rotation transition must retain bounded multi-frame confirmation")
+    if len(rotation_results[-1].candidates) != 1:
+        raise SystemExit(f"standing-to-horizontal rotation must create one fall event: {rotation_results[-1].state}")
+    transition = rotation_results[-1].state.get("fall_transition") or {}
+    if not transition.get("body_rotation_confirmed"):
+        raise SystemExit(f"rotation-based fall transition must remain auditable: {transition}")
+
     unmapped_sofa_engine = RuleEngine()
     try:
         current_time = [dynamic_start]
@@ -649,6 +730,62 @@ def make_floor_seated_analysis() -> dict:
         "people": [],
     }
     analysis["tags"] = ["person_detected", "pose_detected"]
+    return analysis
+
+
+def make_settled_floor_seated_analysis() -> dict:
+    analysis = make_floor_seated_analysis()
+    analysis["motion_detected"] = False
+    analysis["motion_score"] = 0.005
+    return analysis
+
+
+def make_edge_clipped_lying_analysis() -> dict:
+    analysis = make_settled_floor_seated_analysis()
+    bbox = [548, 145, 640, 357]
+    for target in [*analysis["people"], *analysis["poses"]]:
+        target["bbox"] = list(bbox)
+        target["posture"] = "lying"
+        target["track_id"] = "person-edge"
+        target["fall_score"] = 0.68
+    analysis["poses"][0]["posture_confidence"] = 0.64
+    analysis["pose_fall_score"] = 0.68
+    analysis["fall_score"] = 0.18
+    return analysis
+
+
+def make_rotation_transition_analysis(
+    posture: str,
+    bbox: list[float],
+    motion_score: float,
+    fall_score: float,
+) -> dict:
+    analysis = make_upright_analysis()
+    track_id = "rotation-person"
+    pose = analysis["poses"][0]
+    person = analysis["people"][0]
+    for target in (pose, person):
+        target["bbox"] = list(bbox)
+        target["track_id"] = track_id
+    pose.update({
+        "posture": posture,
+        "posture_confidence": 0.82,
+        "fall_score": fall_score,
+        "fall_evidence_eligible": True,
+        "posture_factors": {"body_aspect": (bbox[2] - bbox[0]) / (bbox[3] - bbox[1])},
+    })
+    person["fall_candidate"] = posture == "lying"
+    analysis["fall_candidate"] = posture == "lying"
+    analysis["fall_score"] = fall_score
+    analysis["pose_fall_candidate"] = posture == "lying"
+    analysis["pose_fall_score"] = fall_score
+    analysis["motion_detected"] = motion_score >= 0.015
+    analysis["motion_score"] = motion_score
+    analysis["algorithm_results"]["fall"]["data"] = {
+        "fall_candidate": posture == "lying",
+        "candidate_count": 1 if posture == "lying" else 0,
+        "people": [],
+    }
     return analysis
 
 

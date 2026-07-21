@@ -17,6 +17,8 @@ POSTURE_TRANSITION_MIN_SHAPE_SIMILARITY = 0.16
 LOW_POSTURE_CONTINUITY_MIN_SHAPE_SIMILARITY = 0.22
 DEFAULT_MIN_SHAPE_SIMILARITY = 0.28
 LOW_POSTURE_CONTINUITY_SCORE_BONUS = 0.12
+DIRECTION_REVERSAL_MIN_OBSERVED_IOU = 0.30
+TRACK_MATCH_SCHEDULER_JITTER_SECONDS = 0.15
 
 
 class TemporalObservationEngine:
@@ -279,7 +281,9 @@ class TemporalObservationEngine:
             track_id
             for track_id, track in tracks.items()
             if track.get("last_seen_monotonic") is not None
-            and now_mono - float(track["last_seen_monotonic"]) <= self.max_match_age_seconds
+            and now_mono - float(track["last_seen_monotonic"]) <= (
+                self.max_match_age_seconds + TRACK_MATCH_SCHEDULER_JITTER_SECONDS
+            )
         ]
         if not candidate_ids:
             return {}
@@ -347,7 +351,11 @@ class TemporalObservationEngine:
             frame_width=frame_width,
             frame_height=frame_height,
         )
-        if direction < -0.65 and predicted_iou < 0.30:
+        if (
+            direction < -0.65
+            and predicted_iou < 0.30
+            and observed_iou < DIRECTION_REVERSAL_MIN_OBSERVED_IOU
+        ):
             return -math.inf
         distance_score = max(0.0, 1.0 - predicted_distance / max(distance_gate, 0.01))
         return (

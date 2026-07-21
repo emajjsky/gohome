@@ -187,6 +187,37 @@ def main() -> None:
     fast_move.update(9, low, monotonic_at=1.35)
     assert_track(low, 0, fast_track, "fast posture transition must not create a new track")
 
+    # A body rotation can contract the observed box against the prior velocity
+    # while still overlapping the same person clearly.
+    rotating = TemporalObservationEngine(history_size=16, track_ttl_seconds=10)
+    rotation_frames = [
+        (1.00, [342.4, 137.5, 437.4, 282.9], "sitting"),
+        (1.34, [339.2, 167.4, 431.4, 283.0], "sitting"),
+        (1.55, [352.2, 166.8, 432.6, 276.8], "sitting"),
+        (1.77, [343.9, 167.1, 433.2, 287.4], "squatting"),
+        (2.09, [373.0, 162.2, 450.3, 233.5], "sitting"),
+    ]
+    rotation_track = ""
+    for index, (seconds, bbox, posture) in enumerate(rotation_frames):
+        payload = analysis(person(bbox, posture=posture))
+        rotating.update(24, payload, monotonic_at=seconds)
+        if index == 0:
+            rotation_track = str(payload["people"][0]["track_id"])
+        assert_track(payload, 0, rotation_track, "body rotation must preserve the overlapping model track")
+
+    scheduling_jitter = TemporalObservationEngine(history_size=8, track_ttl_seconds=10)
+    jitter_before = analysis(person([398.5, 52.1, 485.3, 307.5], posture="standing"))
+    scheduling_jitter.update(25, jitter_before, monotonic_at=1.0)
+    jitter_track = str(jitter_before["people"][0]["track_id"])
+    jitter_after = analysis(person([342.4, 137.5, 437.4, 282.9], posture="sitting"))
+    scheduling_jitter.update(25, jitter_after, monotonic_at=3.01)
+    assert_track(
+        jitter_after,
+        0,
+        jitter_track,
+        "normal inference scheduling jitter must not split a continuous person track",
+    )
+
     # A new person after a long absence must never inherit the previous safety history.
     replacement = TemporalObservationEngine(
         history_size=12,
@@ -216,6 +247,8 @@ def main() -> None:
         "occlusion_track": occluded_track,
         "lying_occlusion_track": lying_track,
         "fast_transition_track": fast_track,
+        "body_rotation_track": rotation_track,
+        "scheduling_jitter_track": jitter_track,
         "replacement_track": newcomer_track,
         "history_capacity": 8,
         "recent_evidence_snapshot_ids": [2, 3, 4],
