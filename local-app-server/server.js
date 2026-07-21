@@ -543,6 +543,13 @@ function createLocalAppServer(options = {}) {
     const deviceToken = String(options.deviceToken || DEFAULT_DEVICE_TOKEN);
     const appToken = String(options.appToken || DEFAULT_APP_TOKEN);
     const opsToken = String(options.opsToken || DEFAULT_OPS_TOKEN);
+    const { AuthService } = require("./native-api/auth-service");
+    const authService = options.authService || new AuthService({
+        mode: options.authMode || process.env.GOHOME_AUTH_MODE || "production",
+        demoOtp: options.demoOtp || process.env.GOHOME_DEMO_OTP || "",
+        secret: options.authSecret || process.env.GOHOME_AUTH_SECRET || "",
+        smsProvider: options.smsProvider || null,
+    });
     const playbackTickets = new Map();
     const boxAdminSessions = new Map();
     const providerCache = new Map();
@@ -6792,6 +6799,13 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
+            if (req.method === "POST" && (pathname === "/api/auth/request-code" || pathname === "/api/v1/identity/request-code")) {
+                const payload = await parseJsonBody(req);
+                const result = await authService.requestCode(payload.phone || payload.mobile || payload.mobile_phone);
+                write(res, 200, result);
+                return;
+            }
+
             if (req.method === "GET" && pathname === "/api/v1/content/image") {
                 try {
                     const image = await proxyContentImage(url.searchParams.get("url"));
@@ -6816,7 +6830,8 @@ function createLocalAppServer(options = {}) {
                     return;
                 }
                 const isPhoneAccount = identity.isPhone || /@phone\.gohome\.local$/i.test(email);
-                const phoneOtpLogin = isPhoneAccount && (password === "000000" || (user.password && String(user.password) === password));
+                if (isPhoneAccount) authService.verifyCode(identity.phone, password, payload.challenge_id || payload.challengeId);
+                const phoneOtpLogin = isPhoneAccount;
                 const passwordMatches = user.password ? String(user.password) === password : Boolean(password);
                 if (!phoneOtpLogin && !passwordMatches) {
                     writeError(res, 401, isPhoneAccount ? "验证码不正确" : "密码不正确");
@@ -6835,6 +6850,7 @@ function createLocalAppServer(options = {}) {
                 const payload = await parseJsonBody(req);
                 const identity = authIdentityFromPayload(payload, `user-${Date.now()}@gohome.local`);
                 const email = identity.email;
+                if (identity.isPhone) authService.verifyCode(identity.phone, payload.code || payload.password, payload.challenge_id || payload.challengeId);
                 let user = store.db.users.find((item) => item.email === email);
                 if (user) {
                     writeError(res, 409, identity.isPhone ? "手机号已注册，请直接登录。" : "账号已存在，请直接登录。");
@@ -6845,7 +6861,7 @@ function createLocalAppServer(options = {}) {
                     email,
                     phone: identity.phone || "",
                     display_name: String(payload.display_name || payload.name || "回家用户"),
-                    password: String(payload.password || payload.code || ""),
+                    password: identity.isPhone ? "" : String(payload.password || payload.code || ""),
                     created_at: nowIso(),
                     updated_at: nowIso(),
                 };
@@ -8294,7 +8310,7 @@ function createLocalAppServer(options = {}) {
 
             serveStatic(req, res, url);
         } catch (error) {
-            writeError(res, 500, error.message || "server error");
+            writeError(res, Number(error?.statusCode) || 500, error.message || "server error");
         }
     }
 

@@ -12,6 +12,8 @@ process.env.GOHOME_CARE_IMAGE_CALLS = "0";
 process.env.GOHOME_WEATHER_PROVIDER = "none";
 process.env.GOHOME_SEARCH_PROVIDER = "none";
 process.env.GOHOME_VISION_VERIFICATION_ENABLED = "0";
+process.env.GOHOME_AUTH_MODE = "demo";
+process.env.GOHOME_DEMO_OTP = "000000";
 
 const { createDefaultDb, createLocalAppServer, normalizeDb } = require("../local-app-server/server");
 const { createDbFromCloudRows, TABLE_ORDER } = require("../local-app-server/postgres-store");

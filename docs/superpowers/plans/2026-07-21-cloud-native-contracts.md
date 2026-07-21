@@ -220,16 +220,16 @@ git commit -m "fix(server): persist postgres changes by row"
 - Modify: `local-app-server/server.js`
 - Test: `local-app-server/test/native-auth.test.js`
 
-- [ ] **Step 1: Write tests for demo and production modes**
+- [x] **Step 1: Write tests for demo and production modes**
 
 Assert production rejects `000000`, challenge requests are rate-limited, challenge hashes expire, and debug mode accepts the configured `GOHOME_DEMO_OTP` only when `GOHOME_AUTH_MODE=demo`.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `node --test local-app-server/test/native-auth.test.js`  
 Expected: FAIL because the legacy route accepts `000000` unconditionally.
 
-- [ ] **Step 3: Implement provider abstraction**
+- [x] **Step 3: Implement provider abstraction**
 
 Define `requestCode(phone)` and `verifyCode(phone, code)` around a `SmsProvider`. Store only `sha256(challengeId + code + serverSecret)`, expiry, attempt count, and consumed timestamp. Return `503 sms provider not configured` in production when no provider exists; never silently fall back to demo OTP.
 
