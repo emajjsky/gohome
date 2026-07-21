@@ -41,7 +41,7 @@ create index if not exists product_catalog_status_category_idx
 
 create table if not exists product_preferences (
     family_id text primary key references families(id) on delete cascade,
-    category_preferences jsonb not null default '[]'::jsonb,
+    categories jsonb not null default '[]'::jsonb,
     needs jsonb not null default '[]'::jsonb,
     updated_by text references users(id) on delete set null,
     updated_at timestamptz not null default now()

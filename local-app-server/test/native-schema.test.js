@@ -70,7 +70,8 @@ test('native app migration defines family-owned message actions, product catalog
 
   const preferences = tableDefinition(sql, 'product_preferences');
   assert.match(preferences, /family_id text primary key references families\(id\) on delete cascade/);
-  assert.match(preferences, /category_preferences jsonb not null default '\[\]'::jsonb/);
+  assert.match(preferences, /categories jsonb not null default '\[\]'::jsonb/);
+  assert.doesNotMatch(preferences, /category_preferences/);
   assert.match(preferences, /needs jsonb not null default '\[\]'::jsonb/);
   assert.match(preferences, /updated_by text references users\(id\) on delete set null/);
   assert.match(preferences, /updated_at timestamptz not null default now\(\)/);
