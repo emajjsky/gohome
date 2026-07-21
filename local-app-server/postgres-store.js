@@ -33,7 +33,36 @@ const TABLE_ORDER = [
     "audit_logs",
 ];
 
-const DELETE_ORDER = [...TABLE_ORDER].reverse();
+const PRIMARY_KEYS = Object.freeze({
+    users: "id",
+    app_sessions: "id",
+    families: "id",
+    family_members: "id",
+    elder_profiles: "id",
+    devices: "device_id",
+    device_bindings: "id",
+    binding_codes: "id",
+    device_tokens: "id",
+    cameras: "id",
+    camera_secrets: "camera_id",
+    care_rules: "id",
+    care_preferences: "family_id",
+    model_providers: "provider_id",
+    content_sources: "id",
+    media_assets: "id",
+    events: "id",
+    device_heartbeats: "id",
+    calendar_events: "id",
+    care_cards: "id",
+    app_messages: "id",
+    app_push_tokens: "id",
+    notification_deliveries: "id",
+    scheduler_runs: "id",
+    model_generation_jobs: "id",
+    content_recommendations: "id",
+    device_config_versions: "id",
+    audit_logs: "id",
+});
 
 function textId(value, fallback = "") {
     if (value === null || value === undefined || value === "") return String(fallback || "");
@@ -573,33 +602,93 @@ async function readRowsByTable(pool) {
     return rowsByTable;
 }
 
-async function insertRows(client, table, rows) {
+function sqlValue(value) {
+    if (value && typeof value === "object" && !Buffer.isBuffer(value) && !(value instanceof Date)) {
+        return JSON.stringify(value);
+    }
+    return value;
+}
+
+function comparable(value) {
+    if (value instanceof Date) return value.toISOString();
+    if (Buffer.isBuffer(value)) return value.toString("base64");
+    if (Array.isArray(value)) return value.map(comparable);
+    if (value && typeof value === "object") {
+        return Object.fromEntries(Object.keys(value).sort().map((key) => [key, comparable(value[key])]));
+    }
+    return value;
+}
+
+function rowFingerprint(row) {
+    return JSON.stringify(comparable(row));
+}
+
+function rowsByPrimaryKey(table, rows) {
+    const primaryKey = PRIMARY_KEYS[table];
+    if (!primaryKey) throw new Error(`unsupported postgres table: ${table}`);
+    const mapped = new Map();
+    for (const row of rows || []) {
+        const key = textId(row?.[primaryKey]);
+        if (!key) throw new Error(`missing ${table}.${primaryKey}`);
+        mapped.set(key, row);
+    }
+    return mapped;
+}
+
+function changedRows(table, currentRows, persistedRows) {
+    const persisted = rowsByPrimaryKey(table, persistedRows);
+    return (currentRows || []).filter((current) => {
+        const key = textId(current?.[PRIMARY_KEYS[table]]);
+        const previous = persisted.get(key);
+        return !previous || rowFingerprint(previous) !== rowFingerprint(current);
+    });
+}
+
+async function upsertRows(client, table, rows) {
+    const primaryKey = PRIMARY_KEYS[table];
     for (const row of rows) {
         const columns = Object.keys(row);
         if (!columns.length) continue;
         const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ");
-        const values = columns.map((column) => {
-            const value = row[column];
-            if (value && typeof value === "object" && !Buffer.isBuffer(value) && !(value instanceof Date)) {
-                return JSON.stringify(value);
-            }
-            return value;
-        });
-        await client.query(`insert into ${table} (${columns.join(", ")}) values (${placeholders})`, values);
+        const values = columns.map((column) => sqlValue(row[column]));
+        const updatedColumns = columns.filter((column) => column !== primaryKey);
+        const conflictAction = updatedColumns.length
+            ? `do update set ${updatedColumns.map((column) => `${column} = excluded.${column}`).join(", ")}`
+            : "do nothing";
+        await client.query(
+            `insert into ${table} (${columns.join(", ")}) values (${placeholders}) on conflict (${primaryKey}) ${conflictAction}`,
+            values,
+        );
     }
 }
 
-async function replaceAllRows(pool, bundle) {
+function mergePersistedTables(persistedTables, currentTables) {
+    const merged = {};
+    for (const table of TABLE_ORDER) {
+        const primaryKey = PRIMARY_KEYS[table];
+        const rows = rowsByPrimaryKey(table, persistedTables?.[table] || []);
+        for (const row of currentTables?.[table] || []) {
+            rows.set(textId(row[primaryKey]), comparable(row));
+        }
+        merged[table] = [...rows.values()];
+    }
+    return merged;
+}
+
+async function persistRowDeltas(pool, bundle, persistedTables = {}) {
     const client = await pool.connect();
     try {
         await client.query("begin");
-        for (const table of DELETE_ORDER) {
-            await client.query(`delete from ${table}`);
-        }
+        await client.query("select pg_advisory_xact_lock(hashtext('gohome-app-store'))");
         for (const table of TABLE_ORDER) {
-            await insertRows(client, table, bundle.tables[table] || []);
+            await upsertRows(
+                client,
+                table,
+                changedRows(table, bundle.tables[table] || [], persistedTables[table] || []),
+            );
         }
         await client.query("commit");
+        return mergePersistedTables(persistedTables, bundle.tables);
     } catch (error) {
         await client.query("rollback");
         throw error;
@@ -613,6 +702,7 @@ class PostgresStore {
         this.kind = "postgres";
         this.pool = options.pool;
         this.db = options.db;
+        this.persistedTables = mergePersistedTables({}, options.persistedTables || {});
         this.pendingSave = Promise.resolve();
         this.last_save_error = "";
     }
@@ -627,13 +717,50 @@ class PostgresStore {
         this.db.updated_at = new Date().toISOString();
         const bundle = buildCloudSeedBundle(this.db, { source: "postgres-store" });
         this.pendingSave = this.pendingSave
-            .then(() => replaceAllRows(this.pool, bundle))
+            .catch(() => undefined)
+            .then(async () => {
+                this.persistedTables = await persistRowDeltas(this.pool, bundle, this.persistedTables);
+            })
             .then(() => {
                 this.last_save_error = "";
             })
             .catch((error) => {
                 this.last_save_error = error.message || String(error);
                 throw error;
+            });
+        return this.pendingSave;
+    }
+
+    deleteRow(table, id) {
+        const primaryKey = PRIMARY_KEYS[table];
+        const rowId = textId(id);
+        if (!primaryKey) return Promise.reject(new Error(`unsupported postgres table: ${table}`));
+        if (!rowId) return Promise.reject(new Error(`missing ${table}.${primaryKey}`));
+        this.pendingSave = this.pendingSave
+            .catch(() => undefined)
+            .then(async () => {
+                const client = await this.pool.connect();
+                try {
+                    await client.query("begin");
+                    await client.query("select pg_advisory_xact_lock(hashtext('gohome-app-store'))");
+                    await client.query(`delete from ${table} where ${primaryKey} = $1`, [rowId]);
+                    await client.query("commit");
+                    this.persistedTables[table] = (this.persistedTables[table] || [])
+                        .filter((row) => textId(row[primaryKey]) !== rowId);
+                    if (table === "cameras") {
+                        this.persistedTables.camera_secrets = (this.persistedTables.camera_secrets || [])
+                            .filter((row) => textId(row.camera_id) !== rowId);
+                        this.persistedTables.care_rules = (this.persistedTables.care_rules || [])
+                            .filter((row) => textId(row.camera_id) !== rowId);
+                    }
+                    this.last_save_error = "";
+                } catch (error) {
+                    await client.query("rollback");
+                    this.last_save_error = error.message || String(error);
+                    throw error;
+                } finally {
+                    client.release();
+                }
             });
         return this.pendingSave;
     }
@@ -655,7 +782,7 @@ async function createPostgresStore(options) {
     const hasSeedRows = TABLE_ORDER.some((table) => (rowsByTable[table] || []).length > 0);
     const rawDb = hasSeedRows ? createDbFromCloudRows(rowsByTable, options.initialDb) : options.initialDb;
     const db = options.normalizeDb(rawDb);
-    const store = new PostgresStore({ pool, db });
+    const store = new PostgresStore({ pool, db, persistedTables: rowsByTable });
     if (!hasSeedRows && options.seedWhenEmpty !== false) {
         await store.save();
     }
@@ -665,5 +792,8 @@ async function createPostgresStore(options) {
 module.exports = {
     createPostgresStore,
     createDbFromCloudRows,
+    persistRowDeltas,
+    PostgresStore,
+    PRIMARY_KEYS,
     TABLE_ORDER,
 };

@@ -175,7 +175,7 @@ git commit -m "feat(server): add account-scoped native repository"
 - Modify: `local-app-server/server.js`
 - Test: `local-app-server/test/postgres-row-delta.test.js`
 
-- [ ] **Step 1: Add a failing SQL-spy test**
+- [x] **Step 1: Add a failing SQL-spy test**
 
 Use a fake pool/client, call `store.save()` after changing one camera, and assert no query matches `delete from users`, `delete from families`, or another unmodified table. Then call `store.deleteRow("cameras", cameraID)` and assert exactly one parameterized camera delete occurs.
 
@@ -185,12 +185,12 @@ assert.equal(queries.some(q => /^delete from families/i.test(q.text)), false);
 assert.equal(queries.some(q => /insert into cameras/i.test(q.text)), true);
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `node --test local-app-server/test/postgres-row-delta.test.js`  
 Expected: FAIL because `replaceAllRows` deletes every table.
 
-- [ ] **Step 3: Implement snapshot-based row deltas**
+- [x] **Step 3: Implement snapshot-based row deltas**
 
 Maintain the last persisted bundle by table and primary key. Define a primary-key map (`users.id`, `families.id`, `devices.device_id`, and the corresponding declared key for every remaining table). In one transaction, upsert only changed rows with the mapped key, for example `on conflict (id) do update`, and acquire `pg_advisory_xact_lock(hashtext('gohome-app-store'))`. Never infer deletion from a row being absent in the in-memory snapshot, because native repository writes may have occurred in PostgreSQL. Add an explicit parameterized `deleteRow(table, id)` method and migrate existing camera, binding, session, and cleanup deletion routes to call it. Update the in-memory persisted snapshot only after commit.
 

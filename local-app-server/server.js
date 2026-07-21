@@ -1429,6 +1429,7 @@ function createLocalAppServer(options = {}) {
                 && String(camera.device_id || "") === normalizedDeviceId
             ))
             .map((camera) => String(camera.id));
+        detachCameraReferences(removedCameraIds, timestamp);
         removedCameraIds.forEach((cameraId) => {
             delete store.db.cameras[cameraId];
         });
@@ -1452,7 +1453,30 @@ function createLocalAppServer(options = {}) {
             binding,
             device: store.db.devices[normalizedDeviceId],
             removed_camera_count: removedCameraIds.length,
+            removed_camera_ids: removedCameraIds,
         };
+    }
+
+    function detachCameraReferences(cameraIds, timestamp = nowIso()) {
+        const ids = new Set((cameraIds || []).map(String));
+        if (!ids.size) return;
+        for (const asset of store.db.assets) {
+            if (!ids.has(String(asset.camera_id || ""))) continue;
+            asset.camera_id = null;
+            asset.updated_at = timestamp;
+        }
+        for (const event of store.db.events) {
+            if (!ids.has(String(event.camera_id || ""))) continue;
+            event.camera_id = null;
+            event.updated_at = timestamp;
+        }
+    }
+
+    async function deletePersistedRows(rows) {
+        if (typeof store.deleteRow !== "function") return;
+        for (const item of rows || []) {
+            await store.deleteRow(item.table, item.id);
+        }
     }
 
     function cleanupVerifyData(options = {}) {
@@ -1472,22 +1496,27 @@ function createLocalAppServer(options = {}) {
             .filter((camera) => verifyFamilyIds.has(idText(camera.family_id)))
             .map((camera) => idText(camera.id)));
         const deleted = {};
+        const persistenceDeletes = [];
 
-        function countArray(key, predicate) {
+        function countArray(key, predicate, table = key, primaryKey = (item) => item.id) {
             const items = Array.isArray(store.db[key]) ? store.db[key] : [];
-            const removeCount = items.filter(predicate).length;
+            const removed = items.filter(predicate);
+            const removeCount = removed.length;
             deleted[key] = removeCount;
             if (!dryRun && removeCount) {
+                removed.forEach((item) => persistenceDeletes.push({ table, id: idText(primaryKey(item)) }));
                 store.db[key] = items.filter((item) => !predicate(item));
             }
         }
 
-        function countObject(key, predicate) {
+        function countObject(key, predicate, table = key, primaryKey = (value, entryKey) => value.id || entryKey) {
             const object = store.db[key] && typeof store.db[key] === "object" ? store.db[key] : {};
             const entries = Object.entries(object);
-            const removeCount = entries.filter(([entryKey, value]) => predicate(value, entryKey)).length;
+            const removed = entries.filter(([entryKey, value]) => predicate(value, entryKey));
+            const removeCount = removed.length;
             deleted[key] = removeCount;
             if (!dryRun && removeCount) {
+                removed.forEach(([entryKey, value]) => persistenceDeletes.push({ table, id: idText(primaryKey(value, entryKey)) }));
                 store.db[key] = Object.fromEntries(entries.filter(([entryKey, value]) => !predicate(value, entryKey)));
             }
         }
@@ -1502,15 +1531,15 @@ function createLocalAppServer(options = {}) {
         ));
         countArray("binding_codes", (code) => verifyFamilyIds.has(idText(code.family_id)));
         countArray("device_tokens", (token) => verifyFamilyIds.has(idText(token.family_id)) || verifyDeviceIds.has(idText(token.device_id)));
-        countArray("heartbeats", (heartbeat) => verifyDeviceIds.has(idText(heartbeat.device_id)));
-        countObject("devices", (device, key) => verifyDeviceIds.has(idText(device.device_id || device.id || key)));
+        countArray("heartbeats", (heartbeat) => verifyDeviceIds.has(idText(heartbeat.device_id)), "device_heartbeats");
+        countObject("devices", (device, key) => verifyDeviceIds.has(idText(device.device_id || device.id || key)), "devices", (device, key) => device.device_id || device.id || key);
         countObject("cameras", (camera) => verifyFamilyIds.has(idText(camera.family_id)));
-        countArray("assets", (asset) => verifyFamilyIds.has(idText(asset.family_id)) || verifyCameraIds.has(idText(asset.camera_id)));
+        countArray("assets", (asset) => verifyFamilyIds.has(idText(asset.family_id)) || verifyCameraIds.has(idText(asset.camera_id)), "media_assets");
         countArray("events", (event) => verifyFamilyIds.has(idText(event.family_id)) || verifyCameraIds.has(idText(event.camera_id)));
         countArray("calendar_events", (event) => verifyFamilyIds.has(idText(event.family_id)));
-        countObject("elder_profiles", (profile, key) => verifyFamilyIds.has(idText(profile.family_id)) || [...verifyFamilyIds].some((familyId) => String(key).startsWith(`${familyId}:`)));
-        countObject("care_preferences", (preferences, key) => verifyFamilyIds.has(idText(preferences.family_id)) || verifyFamilyIds.has(idText(key)));
-        countObject("family_rules", (_rules, key) => verifyFamilyIds.has(idText(key)));
+        countObject("elder_profiles", (profile, key) => verifyFamilyIds.has(idText(profile.family_id)) || [...verifyFamilyIds].some((familyId) => String(key).startsWith(`${familyId}:`)), "elder_profiles", (profile, key) => `${profile.family_id || String(key).split(":")[0]}:${profile.elder_id || String(key).split(":")[1] || "elder_primary"}`);
+        countObject("care_preferences", (preferences, key) => verifyFamilyIds.has(idText(preferences.family_id)) || verifyFamilyIds.has(idText(key)), "care_preferences", (preferences, key) => preferences.family_id || key);
+        countObject("family_rules", (_rules, key) => verifyFamilyIds.has(idText(key)), "care_rules", (_rules, key) => `${key}:edge_rules`);
         countArray("care_cards", (card) => verifyFamilyIds.has(idText(card.family_id)));
         countArray("app_messages", (message) => verifyFamilyIds.has(idText(message.family_id)) || verifyUserIds.has(idText(message.user_id)));
         countArray("notification_deliveries", (delivery) => verifyFamilyIds.has(idText(delivery.family_id)) || verifyUserIds.has(idText(delivery.user_id)));
@@ -1544,6 +1573,7 @@ function createLocalAppServer(options = {}) {
                 families: verifyFamilies.map((family) => ({ id: family.id, name: family.name })),
             },
             deleted,
+            persistence_deletes: persistenceDeletes,
         };
     }
 
@@ -6936,6 +6966,7 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "盒子绑定已经解除。");
                     return;
                 }
+                await deletePersistedRows(result.removed_camera_ids.map((id) => ({ table: "cameras", id })));
                 await store.save();
                 write(res, 200, {
                     ok: true,
@@ -7496,7 +7527,9 @@ function createLocalAppServer(options = {}) {
                     return;
                 }
                 if (!store.db.cameras[cameraId].family_id || !requireFamilyAccess(req, res, store.db.cameras[cameraId].family_id)) return;
+                detachCameraReferences([cameraId]);
                 delete store.db.cameras[cameraId];
+                await deletePersistedRows([{ table: "cameras", id: cameraId }]);
                 await store.save();
                 write(res, 200, { ok: true, deleted: Number(cameraId) || cameraId });
                 return;
@@ -7909,7 +7942,12 @@ function createLocalAppServer(options = {}) {
                     ? normalizeBool(payload.dry_run)
                     : normalizeBool(url.searchParams.get("dry_run"));
                 const result = cleanupVerifyData({ dry_run: dryRun });
-                if (!dryRun) await store.save();
+                const persistenceDeletes = result.persistence_deletes || [];
+                delete result.persistence_deletes;
+                if (!dryRun) {
+                    await deletePersistedRows(persistenceDeletes);
+                    await store.save();
+                }
                 write(res, 200, result);
                 return;
             }
