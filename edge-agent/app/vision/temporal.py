@@ -10,6 +10,7 @@ from typing import Any, Dict
 
 
 LOW_POSTURES = {"lying", "low_body"}
+TRACK_TRANSITION_POSTURES = LOW_POSTURES | {"squatting", "bending"}
 UPRIGHT_POSTURES = {
     "standing", "sitting", "squatting", "bending", "upper_body", "standing_or_sitting",
 }
@@ -292,22 +293,47 @@ class TemporalObservationEngine:
 
     def _detections(self, people: list[Dict[str, Any]], poses: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
         detections = []
-        for person in people:
-            if not self._valid_bbox(person.get("bbox")):
-                continue
-            matching_pose = self._best_overlapping_pose(person.get("bbox"), poses)
+        valid_people = [person for person in people if self._valid_bbox(person.get("bbox"))]
+        valid_poses = [pose for pose in poses if self._valid_bbox(pose.get("bbox"))]
+        pose_assignments = self._match_people_to_poses(valid_people, valid_poses)
+        matched_pose_indices = set(pose_assignments.values())
+        for person_index, person in enumerate(valid_people):
+            pose_index = pose_assignments.get(person_index)
+            matching_pose = valid_poses[pose_index] if pose_index is not None else None
             item = self._detection(person, "person", posture_source=matching_pose)
             if item is not None:
                 detections.append(item)
-        for pose in poses:
-            if not self._valid_bbox(pose.get("bbox")):
-                continue
-            if any(self._iou(pose.get("bbox"), item.get("bbox")) >= 0.35 for item in detections):
+        for pose_index, pose in enumerate(valid_poses):
+            if pose_index in matched_pose_indices:
                 continue
             item = self._detection(pose, "pose", posture_source=pose)
             if item is not None:
                 detections.append(item)
         return detections
+
+    def _match_people_to_poses(
+        self,
+        people: list[Dict[str, Any]],
+        poses: list[Dict[str, Any]],
+    ) -> dict[int, int]:
+        candidates = sorted(
+            (
+                (self._iou(person["bbox"], pose["bbox"]), person_index, pose_index)
+                for person_index, person in enumerate(people)
+                for pose_index, pose in enumerate(poses)
+            ),
+            reverse=True,
+        )
+        assignments: dict[int, int] = {}
+        used_pose_indices: set[int] = set()
+        for overlap, person_index, pose_index in candidates:
+            if overlap < 0.20:
+                break
+            if person_index in assignments or pose_index in used_pose_indices:
+                continue
+            assignments[person_index] = pose_index
+            used_pose_indices.add(pose_index)
+        return assignments
 
     def _detection(
         self,
@@ -336,13 +362,6 @@ class TemporalObservationEngine:
             "source_item": item,
             "pose_item": posture_source,
         }
-
-    def _best_overlapping_pose(self, bbox: Any, poses: list[Dict[str, Any]]) -> Dict[str, Any] | None:
-        candidates = [pose for pose in poses if self._valid_bbox(pose.get("bbox"))]
-        if not candidates:
-            return None
-        best = max(candidates, key=lambda pose: self._iou(bbox, pose.get("bbox")))
-        return best if self._iou(bbox, best.get("bbox")) >= 0.20 else None
 
     def _assign_tracks(
         self,
@@ -450,6 +469,7 @@ class TemporalObservationEngine:
             direction < -0.65
             and predicted_iou < 0.30
             and observed_iou < DIRECTION_REVERSAL_MIN_OBSERVED_IOU
+            and not transition
         ):
             return -math.inf
         distance_score = max(0.0, 1.0 - predicted_distance / max(distance_gate, 0.01))
@@ -607,7 +627,7 @@ class TemporalObservationEngine:
     def _credible_posture_transition(self, previous: Any, current: Any) -> bool:
         return bool(
             str(previous or "").lower() in UPRIGHT_POSTURES
-            and str(current or "").lower() in LOW_POSTURES
+            and str(current or "").lower() in TRACK_TRANSITION_POSTURES
         )
 
     def _credible_low_posture_continuity(self, previous: Any, current: Any) -> bool:

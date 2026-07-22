@@ -6,10 +6,13 @@ import time
 from typing import Any, Dict
 
 
-UPRIGHT_POSTURES = {
-    "standing", "sitting", "squatting", "bending", "upper_body",
-    "standing_or_sitting", "seated_or_half_body", "low_body",
+IMMEDIATE_BASELINE_POSTURES = {"standing", "standing_or_sitting"}
+STABLE_BASELINE_POSTURES = {
+    "sitting", "upper_body", "seated_or_half_body",
 }
+BASELINE_STABILITY_SECONDS = 1.5
+BASELINE_STABILITY_MIN_SAMPLES = 2
+BASELINE_CENTER_JITTER = 0.06
 SUSTAINED_FLOOR_LYING_TRANSITION_SECONDS = 1.5
 SUSTAINED_FLOOR_LYING_MIN_CONFIDENCE = 0.70
 DEFAULT_FAST_FALL_MIN_VERTICAL_DROP = 0.12
@@ -19,6 +22,7 @@ FAST_FALL_MIN_EVIDENCE_SCORE = 0.72
 FAST_FALL_MIN_POSTURE_RELIABILITY = 0.55
 EVIDENCE_RELIABILITY_FLOOR = 0.75
 FAST_FALL_IMMEDIATE_REVIEW_WINDOW_SECONDS = 3.0
+RECENT_DESCENT_EVIDENCE_SECONDS = 3.0
 FRAME_EDGE_MARGIN_PIXELS = 2.0
 
 
@@ -81,19 +85,28 @@ class PoseFactorGraphEngine:
             normal_lying_zone = bool(target.get("normal_lying_zone"))
             frame_edge_clipped = bool(target.get("frame_edge_clipped"))
             recent_upright = state.get("upright") if isinstance(state.get("upright"), dict) else None
-            if (
-                posture in UPRIGHT_POSTURES
-                and posture_confidence >= self.min_posture_confidence
-                and not frame_edge_clipped
-            ):
-                recent_upright = {
-                    "observed_at": timestamp,
-                    "monotonic_at": now_mono,
-                    "center": center,
-                    "bbox": list(target["bbox"]),
-                    "posture": posture,
-                }
-                state["upright"] = recent_upright
+            recent_upright = self._update_baseline(
+                state,
+                posture=posture,
+                posture_confidence=posture_confidence,
+                center=center,
+                bbox=target["bbox"],
+                timestamp=timestamp,
+                now_mono=now_mono,
+                frame_edge_clipped=frame_edge_clipped,
+            )
+            recent_descent = self._update_descent_evidence(
+                state,
+                posture=posture,
+                center=center,
+                recent_upright=recent_upright,
+                motion_score=motion_score,
+                timestamp=timestamp,
+                now_mono=now_mono,
+                frame_edge_clipped=frame_edge_clipped,
+                fall_min_vertical_drop=fall_min_vertical_drop,
+                fall_transition_motion_score=fall_transition_motion_score,
+            )
 
             lying = bool(
                 posture == "lying"
@@ -118,6 +131,7 @@ class PoseFactorGraphEngine:
                 target=target,
                 center=center,
                 recent_upright=recent_upright,
+                recent_descent=recent_descent,
                 now_mono=now_mono,
                 motion_score=motion_score,
                 lying_duration=lying_duration,
@@ -152,12 +166,141 @@ class PoseFactorGraphEngine:
     def reset_camera(self, camera_id: int) -> None:
         self._states.pop(int(camera_id), None)
 
+    def _update_baseline(
+        self,
+        state: Dict[str, Any],
+        *,
+        posture: str,
+        posture_confidence: float,
+        center: list[float],
+        bbox: list[float],
+        timestamp: str,
+        now_mono: float,
+        frame_edge_clipped: bool,
+    ) -> Dict[str, Any] | None:
+        current = state.get("upright") if isinstance(state.get("upright"), dict) else None
+        eligible = posture_confidence >= self.min_posture_confidence and not frame_edge_clipped
+        if posture in IMMEDIATE_BASELINE_POSTURES and eligible:
+            state.pop("baseline_candidate", None)
+            current = self._baseline_payload(posture, center, bbox, timestamp, now_mono)
+            state["upright"] = current
+            state.pop("recent_descent", None)
+            return current
+        if posture not in STABLE_BASELINE_POSTURES or not eligible:
+            state.pop("baseline_candidate", None)
+            return current
+
+        candidate = state.get("baseline_candidate")
+        if not isinstance(candidate, dict) or candidate.get("posture") != posture:
+            candidate = {
+                "posture": posture,
+                "started_monotonic": now_mono,
+                "sample_count": 1,
+                "center": list(center),
+            }
+            state["baseline_candidate"] = candidate
+            return current
+        center_shift = math.hypot(
+            float(center[0]) - float((candidate.get("center") or center)[0]),
+            float(center[1]) - float((candidate.get("center") or center)[1]),
+        )
+        if center_shift > BASELINE_CENTER_JITTER:
+            state["baseline_candidate"] = {
+                "posture": posture,
+                "started_monotonic": now_mono,
+                "sample_count": 1,
+                "center": list(center),
+            }
+            return current
+        candidate["sample_count"] = int(candidate.get("sample_count") or 0) + 1
+        started = float(candidate.get("started_monotonic") if candidate.get("started_monotonic") is not None else now_mono)
+        if (
+            candidate["sample_count"] >= BASELINE_STABILITY_MIN_SAMPLES
+            and now_mono - started >= BASELINE_STABILITY_SECONDS
+        ):
+            current = self._baseline_payload(posture, center, bbox, timestamp, now_mono)
+            state["upright"] = current
+            state.pop("recent_descent", None)
+        return current
+
+    def _update_descent_evidence(
+        self,
+        state: Dict[str, Any],
+        *,
+        posture: str,
+        center: list[float],
+        recent_upright: Dict[str, Any] | None,
+        motion_score: float,
+        timestamp: str,
+        now_mono: float,
+        frame_edge_clipped: bool,
+        fall_min_vertical_drop: float,
+        fall_transition_motion_score: float,
+    ) -> Dict[str, Any] | None:
+        recent = state.get("recent_descent") if isinstance(state.get("recent_descent"), dict) else None
+        if posture in IMMEDIATE_BASELINE_POSTURES and not frame_edge_clipped:
+            state.pop("recent_descent", None)
+            return None
+        if recent_upright and not frame_edge_clipped:
+            upright_monotonic = recent_upright.get("monotonic_at")
+            upright_age = max(
+                0.0,
+                now_mono - float(now_mono if upright_monotonic is None else upright_monotonic),
+            )
+            upright_center = recent_upright.get("center") or center
+            vertical_drop = float(center[1]) - float(upright_center[1])
+            horizontal_distance = abs(float(center[0]) - float(upright_center[0]))
+            credible_descent = bool(
+                upright_age <= self.upright_window_seconds
+                and vertical_drop >= fall_min_vertical_drop
+                and horizontal_distance <= 0.28
+                and (
+                    motion_score >= fall_transition_motion_score
+                    or (
+                        upright_age <= FAST_FALL_IMMEDIATE_REVIEW_WINDOW_SECONDS
+                        and vertical_drop >= fall_min_vertical_drop * 1.5
+                    )
+                )
+            )
+            if credible_descent:
+                recent = {
+                    "observed_at": timestamp,
+                    "monotonic_at": now_mono,
+                    "vertical_drop": vertical_drop,
+                    "motion_score": motion_score,
+                }
+                state["recent_descent"] = recent
+        if recent is not None:
+            observed_mono = recent.get("monotonic_at")
+            age = max(0.0, now_mono - float(now_mono if observed_mono is None else observed_mono))
+            if age > RECENT_DESCENT_EVIDENCE_SECONDS:
+                state.pop("recent_descent", None)
+                return None
+        return recent
+
+    def _baseline_payload(
+        self,
+        posture: str,
+        center: list[float],
+        bbox: list[float],
+        timestamp: str,
+        now_mono: float,
+    ) -> Dict[str, Any]:
+        return {
+            "observed_at": timestamp,
+            "monotonic_at": now_mono,
+            "center": list(center),
+            "bbox": list(bbox),
+            "posture": posture,
+        }
+
     def _graph(
         self,
         *,
         target: Dict[str, Any],
         center: list[float],
         recent_upright: Dict[str, Any] | None,
+        recent_descent: Dict[str, Any] | None,
         now_mono: float,
         motion_score: float,
         lying_duration: float,
@@ -203,6 +346,15 @@ class PoseFactorGraphEngine:
             vertical_drop >= fall_min_vertical_drop
             or sustained_floor_lying_after_descent
         )
+        recent_descent_age = None
+        recent_descent_ok = False
+        if recent_descent:
+            descent_monotonic = recent_descent.get("monotonic_at")
+            recent_descent_age = max(
+                0.0,
+                now_mono - float(now_mono if descent_monotonic is None else descent_monotonic),
+            )
+            recent_descent_ok = recent_descent_age <= RECENT_DESCENT_EVIDENCE_SECONDS
         factors = {
             "recent_upright": recent_upright_ok,
             "same_track_continuity": recent_upright_ok,
@@ -210,7 +362,7 @@ class PoseFactorGraphEngine:
             "spatial_consistency": horizontal_distance <= 0.28,
             "low_posture": low_posture,
             "horizontal_body": posture == "lying" or body_aspect >= 1.10,
-            "motion": direct_motion or sustained_floor_lying_after_descent,
+            "motion": direct_motion or recent_descent_ok or sustained_floor_lying_after_descent,
             "non_normal_lying_surface": not normal_lying_zone,
         }
         weights = {
@@ -251,6 +403,7 @@ class PoseFactorGraphEngine:
         )
         immediate_review_evidence = bool(
             motion_score >= fall_transition_motion_score
+            or recent_descent_ok
             or (
                 upright_age is not None
                 and upright_age <= FAST_FALL_IMMEDIATE_REVIEW_WINDOW_SECONDS
@@ -278,6 +431,12 @@ class PoseFactorGraphEngine:
             "vertical_drop": round(vertical_drop, 4),
             "horizontal_distance": round(horizontal_distance, 4),
             "motion_score": round(motion_score, 4),
+            "recent_descent_age_seconds": (
+                None if recent_descent_age is None else round(recent_descent_age, 3)
+            ),
+            "recent_descent_vertical_drop": (
+                None if not recent_descent else round(float(recent_descent.get("vertical_drop") or 0.0), 4)
+            ),
             "lying_started_at": lying_started_at,
             "lying_duration_seconds": round(lying_duration, 3),
             "sustained_floor_lying_min_vertical_drop": round(sustained_min_vertical_drop, 4),
@@ -288,6 +447,8 @@ class PoseFactorGraphEngine:
             "motion_evidence_source": (
                 "direct_motion"
                 if direct_motion
+                else "recent_descent"
+                if recent_descent_ok
                 else "sustained_floor_lying_after_descent"
                 if sustained_floor_lying_after_descent
                 else "none"

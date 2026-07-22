@@ -206,6 +206,61 @@ def main() -> None:
     if not real_track.get("review_ready") or real_track.get("posture_reliability", 0) < 0.55:
         raise SystemExit(f"real sequence must expose auditable review quality: {real_track}")
 
+    # Camera 24 live validation on 2026-07-22: the final horizontal posture
+    # followed the descent frame by two seconds, so the transition evidence
+    # must remain available to the factor graph.
+    live_transition = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    live_track_id = "c24-live-transition"
+    live_transition.update(
+        24,
+        frame(
+            "standing",
+            [345.4, 59.7, 432.7, 326.0],
+            motion=0.0054,
+            track_id=live_track_id,
+            confidence=0.7853,
+        ),
+        monotonic_at=0.0,
+    )
+    live_transition.update(
+        24,
+        frame(
+            "sitting",
+            [352.1, 145.9, 451.3, 332.2],
+            motion=0.0204,
+            track_id=live_track_id,
+            confidence=0.7384,
+        ),
+        monotonic_at=8.6,
+    )
+    live_transition.update(
+        24,
+        frame(
+            "squatting",
+            [367.0, 196.6, 454.2, 293.9],
+            motion=0.0197,
+            track_id=live_track_id,
+            confidence=0.6959,
+        ),
+        monotonic_at=9.9,
+    )
+    live_review = live_transition.update(
+        24,
+        frame(
+            "squatting",
+            [361.6, 210.9, 481.8, 299.2],
+            motion=0.009,
+            track_id=live_track_id,
+            confidence=0.6581,
+        ),
+        monotonic_at=10.95,
+    )
+    live_review_track = live_review["fast_fall_track"] or {}
+    if not live_review_track.get("review_ready"):
+        raise SystemExit(f"live descent-to-horizontal sequence must enter cloud review: {live_review}")
+    if live_review_track.get("motion_evidence_source") != "recent_descent":
+        raise SystemExit(f"live sequence must explain its retained descent evidence: {live_review_track}")
+
     sit_engine = PoseFactorGraphEngine()
     sit_engine.update(1, frame("standing", [250, 20, 340, 320]), monotonic_at=0.0)
     deliberate_sit = sit_engine.update(
@@ -311,6 +366,7 @@ def main() -> None:
         "traversed_fast_fall": traversed_fall["fast_fall_candidate"],
         "different_track_suppressed": not different_track["fast_fall_candidate"],
         "real_sequence_review_ready": real_track.get("review_ready"),
+        "live_transition_review_ready": live_review_track.get("review_ready"),
         "deliberate_sit_suppressed": not deliberate_sit["fast_fall_candidate"],
         "crouch_suppressed": not crouch["fast_fall_candidate"],
         "edge_clipped_suppressed": not clipped["fast_fall_candidate"],

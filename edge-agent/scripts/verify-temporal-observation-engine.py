@@ -283,6 +283,37 @@ def main() -> None:
         "normal inference scheduling jitter must not split a continuous person track",
     )
 
+    # A detector box and its pose-refined box describe one person even when
+    # their overlap is below the old duplicate-suppression threshold.
+    pose_box_shift = TemporalObservationEngine(history_size=12, track_ttl_seconds=10)
+    before_shift = analysis(person([396.5, 71.3, 510.2, 359.0], posture="standing"))
+    pose_box_shift.update(24, before_shift, monotonic_at=1.0)
+    shifted_track = str(before_shift["people"][0]["track_id"])
+    shifted = analysis(person([396.5, 71.3, 510.2, 359.0], posture="unknown"))
+    shifted["poses"] = [{
+        "bbox": [352.1, 145.9, 451.3, 332.2],
+        "confidence": 0.688,
+        "posture": "sitting",
+        "posture_confidence": 0.7384,
+    }]
+    shifted_result = pose_box_shift.update(24, shifted, monotonic_at=1.4)
+    if shifted_result["current_track_ids"] != [shifted_track]:
+        raise SystemExit(
+            "one person with a shifted pose box must produce one continuous temporal track"
+        )
+    if shifted["poses"][0].get("track_id") != shifted_track:
+        raise SystemExit("matched pose must inherit the detector person's track identity")
+    shifted_low = analysis(person([367.0, 196.6, 454.2, 293.9], posture="unknown"))
+    shifted_low["poses"] = [{
+        "bbox": [367.0, 196.6, 454.2, 293.9],
+        "confidence": 0.5902,
+        "posture": "squatting",
+        "posture_confidence": 0.6959,
+    }]
+    pose_box_shift.update(24, shifted_low, monotonic_at=2.7)
+    if shifted_low["people"][0].get("track_id") != shifted_track:
+        raise SystemExit("sitting-to-squatting box deformation must preserve the same identity")
+
     # A new person after a long absence must never inherit the previous safety history.
     replacement = TemporalObservationEngine(
         history_size=12,
@@ -314,6 +345,7 @@ def main() -> None:
         "fast_transition_track": fast_track,
         "body_rotation_track": rotation_track,
         "scheduling_jitter_track": jitter_track,
+        "shifted_pose_box_track": shifted_track,
         "replacement_track": newcomer_track,
         "history_capacity": 8,
         "recent_evidence_snapshot_ids": [2, 3, 4],
