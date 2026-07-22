@@ -96,6 +96,55 @@ function readBody(req, limitBytes = 25 * 1024 * 1024) {
     });
 }
 
+function mjpegHeaderValue(value) {
+    return String(value || "").replace(/[\r\n]+/g, " ").trim();
+}
+
+function encodeMjpegFrame(boundary, relayFrame) {
+    const headers = [
+        `--${boundary}`,
+        `Content-Type: ${mjpegHeaderValue(relayFrame.contentType) || "image/jpeg"}`,
+        `Content-Length: ${relayFrame.frame.length}`,
+        `X-GoHome-Frame-Source: ${mjpegHeaderValue(relayFrame.source) || "live"}`,
+    ];
+    if (relayFrame.assetId) headers.push(`X-GoHome-Asset-Id: ${mjpegHeaderValue(relayFrame.assetId)}`);
+    if (relayFrame.capturedAt) headers.push(`X-GoHome-Captured-At: ${mjpegHeaderValue(relayFrame.capturedAt)}`);
+    return Buffer.concat([
+        Buffer.from(`${headers.join("\r\n")}\r\n\r\n`),
+        relayFrame.frame,
+        Buffer.from("\r\n"),
+    ]);
+}
+
+function createLatestFrameMjpegWriter(response, { boundary, getLatestFrame }) {
+    let lastFrameKey = "";
+    let waitingForDrain = false;
+    let closed = false;
+
+    function writeLatest({ force = false } = {}) {
+        if (closed || waitingForDrain || response.destroyed || response.writableEnded) return false;
+        const relayFrame = getLatestFrame();
+        if (!relayFrame || (!force && relayFrame.key === lastFrameKey)) return false;
+        lastFrameKey = relayFrame.key;
+        waitingForDrain = !response.write(encodeMjpegFrame(boundary, relayFrame));
+        return true;
+    }
+
+    function handleDrain() {
+        waitingForDrain = false;
+        writeLatest();
+    }
+
+    response.on("drain", handleDrain);
+    return {
+        writeLatest,
+        close() {
+            closed = true;
+            response.removeListener("drain", handleDrain);
+        },
+    };
+}
+
 function parseJsonBody(req) {
     return readBody(req).then((buffer) => {
         if (!buffer.length) return {};
@@ -6031,7 +6080,6 @@ function createLocalAppServer(options = {}) {
 
     function writeLatestFrameMjpegStream(req, res, cameraId) {
         const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
-        let lastAssetKey = "";
         let closed = false;
 
         if (typeof req.setTimeout === "function") req.setTimeout(0);
@@ -6047,35 +6095,20 @@ function createLocalAppServer(options = {}) {
         });
         if (typeof res.flushHeaders === "function") res.flushHeaders();
 
-        function writeNextFrame({ force = false } = {}) {
-            if (closed || res.destroyed || res.writableEnded) return;
-            const relayFrame = latestRelayFrame(cameraId);
-            if (!relayFrame) return;
-            if (!force && relayFrame.key === lastAssetKey) return;
-            lastAssetKey = relayFrame.key;
-            res.write(`--${boundary}\r\n`);
-            res.write(`Content-Type: ${relayFrame.contentType}\r\n`);
-            res.write(`Content-Length: ${relayFrame.frame.length}\r\n`);
-            res.write(`X-GoHome-Frame-Source: ${relayFrame.source}\r\n`);
-            if (relayFrame.assetId) res.write(`X-GoHome-Asset-Id: ${relayFrame.assetId}\r\n`);
-            if (relayFrame.capturedAt) {
-                res.write(`X-GoHome-Captured-At: ${relayFrame.capturedAt}\r\n`);
-            }
-            res.write("\r\n");
-            res.write(relayFrame.frame);
-            res.write("\r\n");
+        const writer = createLatestFrameMjpegWriter(res, {
+            boundary,
+            getLatestFrame: () => latestRelayFrame(cameraId),
+        });
+        writer.writeLatest({ force: true });
+        const timer = setInterval(writer.writeLatest, 120);
+        function closeStream() {
+            if (closed) return;
+            closed = true;
+            clearInterval(timer);
+            writer.close();
         }
-
-        writeNextFrame({ force: true });
-        const timer = setInterval(writeNextFrame, 120);
-        req.on("close", () => {
-            closed = true;
-            clearInterval(timer);
-        });
-        res.on("close", () => {
-            closed = true;
-            clearInterval(timer);
-        });
+        req.on("close", closeStream);
+        res.on("close", closeStream);
         return true;
     }
 
@@ -8535,4 +8568,10 @@ if (require.main === module) {
         });
 }
 
-module.exports = { createLocalAppServer, createLocalAppServerAsync, createDefaultDb, normalizeDb };
+module.exports = {
+    createDefaultDb,
+    createLatestFrameMjpegWriter,
+    createLocalAppServer,
+    createLocalAppServerAsync,
+    normalizeDb,
+};
