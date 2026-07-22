@@ -265,15 +265,15 @@ git commit -m "feat(ios): add cached app repository and session state"
 - Create: `Sources/Features/Auth/AuthViewModel.swift`
 - Test: `GoHomeShellUITests/AuthFlowTests.swift`
 
-- [ ] **Step 1: Write UI tests**
+- [x] **Step 1: Write UI tests**
 
 Launch with `-uiTestState signedOut`; assert phone input, request-code button, code input, and login/create segmented mode. Assert the view hierarchy contains no `WKWebView` accessibility element.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Expected: FAIL because WebView launch UI is still the root.
 
-- [ ] **Step 3: Replace root with native routing**
+- [x] **Step 3: Replace root with native routing**
 
 ```swift
 struct AppRootView: View {
@@ -291,7 +291,7 @@ struct AppRootView: View {
 
 Move `GoHomeAppDelegate` out of `GoHomeShellRuntime.swift` into its own file so push callbacks can be connected to the native coordinator later. Use labeled native text fields and inline validation. Do not show a full-screen spinner after cached bootstrap exists.
 
-- [ ] **Step 4: Run unit and UI tests**
+- [x] **Step 4: Run unit and UI tests**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellUITests/AuthFlowTests`
 

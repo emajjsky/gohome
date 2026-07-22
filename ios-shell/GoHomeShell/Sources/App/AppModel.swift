@@ -12,6 +12,18 @@ final class AppModel: ObservableObject {
         self.repository = repository
     }
 
+    func start() {
+        if ProcessInfo.processInfo.arguments.contains("-uiTestState") {
+            route = .signedOut
+        } else {
+            route = .signedOut
+        }
+    }
+
+    func authenticated() {
+        route = .onboarding(.family)
+    }
+
     func restore(scope: CacheScope) {
         bootstrapTask?.cancel()
         bootstrapTask = Task { [repository] in

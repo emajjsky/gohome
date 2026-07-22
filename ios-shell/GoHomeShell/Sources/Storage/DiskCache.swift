@@ -19,7 +19,7 @@ actor DiskCache {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    init(rootURL: URL? = nil, clock: @escaping @Sendable () -> Date = Date.init) throws {
+    init(rootURL: URL? = nil, clock: @escaping @Sendable () -> Date = { Date() }) throws {
         let baseURL = rootURL ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         self.rootURL = baseURL.appendingPathComponent("GoHomeNativeCache", isDirectory: true)
         self.clock = clock
