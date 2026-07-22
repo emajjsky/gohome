@@ -31,15 +31,20 @@ final class AuthViewModel: ObservableObject {
     }
 
     var canRequestCode: Bool {
-        normalizedPhone.count == 11 && !isRequestingCode
+        !isRequestingCode
     }
 
     var canSubmit: Bool {
-        canRequestCode && code.count >= 4 && challengeID != nil && !isSubmitting
+        !isSubmitting
     }
 
     func requestCode() {
-        guard canRequestCode else { return }
+        guard !isRequestingCode else { return }
+        guard isValidPhone else {
+            deliveryMessage = nil
+            errorMessage = "请输入完整的 11 位手机号"
+            return
+        }
         isRequestingCode = true
         errorMessage = nil
         Task {
@@ -63,13 +68,25 @@ final class AuthViewModel: ObservableObject {
     }
 
     func submit() {
-        guard canSubmit else { return }
+        guard !isSubmitting else { return }
+        guard isValidPhone else {
+            errorMessage = "请输入完整的 11 位手机号"
+            return
+        }
+        guard challengeID != nil else {
+            errorMessage = "请先获取验证码"
+            return
+        }
+        guard normalizedCode.count == 6 else {
+            errorMessage = "请输入完整验证码"
+            return
+        }
         isSubmitting = true
         errorMessage = nil
         Task {
             defer { isSubmitting = false }
             do {
-                let payload = ["phone": normalizedPhone, "code": code, "challenge_id": challengeID ?? ""]
+                let payload = ["phone": normalizedPhone, "code": normalizedCode, "challenge_id": challengeID ?? ""]
                 let body = try JSONEncoder().encode(payload)
                 let path = mode == .login ? "/api/auth/login" : "/api/auth/register"
                 let session = try await client.send(Endpoint<AuthSessionResponse>(method: .post, path: path, body: body))
@@ -83,5 +100,13 @@ final class AuthViewModel: ObservableObject {
 
     private var normalizedPhone: String {
         phone.filter { $0.isNumber }
+    }
+
+    private var normalizedCode: String {
+        code.filter { $0.isNumber }
+    }
+
+    private var isValidPhone: Bool {
+        normalizedPhone.count == 11 && normalizedPhone.hasPrefix("1")
     }
 }

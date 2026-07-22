@@ -14,6 +14,23 @@ final class AuthAndCacheTests: XCTestCase {
         XCTAssertEqual(challenge.demoCode, "246810")
     }
 
+    @MainActor
+    func testAuthValidationExplainsInvalidActionsInsteadOfSilentlyReturning() {
+        let client = APIClient(baseURL: URL(string: "https://example.invalid")!)
+        let store = KeychainAuthStore(service: "com.gohome.family.tests.\(UUID().uuidString)")
+        let viewModel = AuthViewModel(client: client, authStore: store) {}
+
+        viewModel.phone = "138"
+        viewModel.requestCode()
+        XCTAssertEqual(viewModel.errorMessage, "请输入完整的 11 位手机号")
+
+        viewModel.phone = "13800138000"
+        viewModel.submit()
+        XCTAssertEqual(viewModel.errorMessage, "请先获取验证码")
+        XCTAssertTrue(viewModel.canRequestCode)
+        XCTAssertTrue(viewModel.canSubmit)
+    }
+
     func testKeychainTokenRoundTripAndLogoutDeletion() async throws {
         let store = KeychainAuthStore(service: "com.gohome.family.tests.\(UUID().uuidString)")
         let emptyToken = try await store.token()

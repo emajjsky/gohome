@@ -78,8 +78,16 @@ function iso(value, fallback = null) {
 function dateText(value, fallback = "") {
     if (!value) return fallback;
     if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-    const parsed = iso(value);
-    return parsed ? parsed.slice(0, 10) : fallback;
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return fallback;
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
 }
 
 function metadataValue(row, key, fallback = null) {
