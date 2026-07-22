@@ -8,6 +8,9 @@ actor AppRepository {
     typealias EventsLoader = @Sendable (String) async throws -> [AppEvent]
     typealias EventLoader = @Sendable (String) async throws -> AppEvent
     typealias EventActionLoader = @Sendable (String, String) async throws -> AppEvent
+    typealias ProfileLoader = @Sendable (String) async throws -> ProfileData
+    typealias RulesUpdater = @Sendable (String, RulePatch) async throws -> FamilyRules
+    typealias CarePreferencesUpdater = @Sendable (String, CarePreferencesPatch) async throws -> CarePreferences
 
     private let cache: DiskCache
     private let bootstrapLoader: BootstrapLoader
@@ -15,10 +18,14 @@ actor AppRepository {
     private let eventsLoader: EventsLoader
     private let eventLoader: EventLoader
     private let eventActionLoader: EventActionLoader
+    private let profileLoader: ProfileLoader
+    private let rulesUpdater: RulesUpdater
+    private let carePreferencesUpdater: CarePreferencesUpdater
     private var bootstrapTasks: [CacheScope: Task<BootstrapResponse, Error>] = [:]
     private var homeTasks: [CacheScope: Task<HomeResponse, Error>] = [:]
     private var eventsTasks: [CacheScope: Task<[AppEvent], Error>] = [:]
     private var eventTasks: [String: Task<AppEvent, Error>] = [:]
+    private var profileTasks: [CacheScope: Task<ProfileData, Error>] = [:]
 
     init(
         cache: DiskCache,
@@ -26,7 +33,10 @@ actor AppRepository {
         homeLoader: @escaping HomeLoader = { _ in throw APIError.invalidResponse },
         eventsLoader: @escaping EventsLoader = { _ in throw APIError.invalidResponse },
         eventLoader: @escaping EventLoader = { _ in throw APIError.invalidResponse },
-        eventActionLoader: @escaping EventActionLoader = { _, _ in throw APIError.invalidResponse }
+        eventActionLoader: @escaping EventActionLoader = { _, _ in throw APIError.invalidResponse },
+        profileLoader: @escaping ProfileLoader = { _ in throw APIError.invalidResponse },
+        rulesUpdater: @escaping RulesUpdater = { _, _ in throw APIError.invalidResponse },
+        carePreferencesUpdater: @escaping CarePreferencesUpdater = { _, _ in throw APIError.invalidResponse }
     ) {
         self.cache = cache
         self.bootstrapLoader = bootstrapLoader
@@ -34,6 +44,9 @@ actor AppRepository {
         self.eventsLoader = eventsLoader
         self.eventLoader = eventLoader
         self.eventActionLoader = eventActionLoader
+        self.profileLoader = profileLoader
+        self.rulesUpdater = rulesUpdater
+        self.carePreferencesUpdater = carePreferencesUpdater
     }
 
     func fetchBootstrap() async throws -> BootstrapResponse {
@@ -118,6 +131,37 @@ actor AppRepository {
         try? await cache.write(events, key: "events", scope: scope, ttl: 24 * 60 * 60)
     }
 
+    func profile(scope: CacheScope, onUpdate: @escaping @Sendable (Loadable<ProfileData>) async -> Void) async {
+        let cached = try? await cache.read(ProfileData.self, key: "profile", scope: scope)
+        await onUpdate(Loadable(value: cached, isRefreshing: true, staleReason: nil))
+
+        do {
+            let refreshed = try await refreshProfile(scope: scope)
+            try await cache.write(refreshed, key: "profile", scope: scope, ttl: 24 * 60 * 60)
+            await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
+        } catch is CancellationError {
+            await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
+        } catch {
+            await onUpdate(Loadable(
+                value: cached,
+                isRefreshing: false,
+                staleReason: cached == nil ? "配置暂时无法更新" : "当前显示上次保存的配置"
+            ))
+        }
+    }
+
+    func updateRules(familyID: String, patch: RulePatch) async throws -> FamilyRules {
+        try await rulesUpdater(familyID, patch)
+    }
+
+    func updateCarePreferences(familyID: String, patch: CarePreferencesPatch) async throws -> CarePreferences {
+        try await carePreferencesUpdater(familyID, patch)
+    }
+
+    func cacheProfile(_ profile: ProfileData, scope: CacheScope) async {
+        try? await cache.write(profile, key: "profile", scope: scope, ttl: 24 * 60 * 60)
+    }
+
     private func refreshBootstrap(scope: CacheScope) async throws -> BootstrapResponse {
         if let task = bootstrapTasks[scope] { return try await task.value }
         let task = Task { try await bootstrapLoader() }
@@ -139,6 +183,14 @@ actor AppRepository {
         let task = Task { try await eventsLoader(scope.familyID) }
         eventsTasks[scope] = task
         defer { eventsTasks[scope] = nil }
+        return try await task.value
+    }
+
+    private func refreshProfile(scope: CacheScope) async throws -> ProfileData {
+        if let task = profileTasks[scope] { return try await task.value }
+        let task = Task { try await profileLoader(scope.familyID) }
+        profileTasks[scope] = task
+        defer { profileTasks[scope] = nil }
         return try await task.value
     }
 }

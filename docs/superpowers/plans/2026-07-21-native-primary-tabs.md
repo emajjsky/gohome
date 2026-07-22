@@ -248,25 +248,25 @@ git commit -m "feat(ios): add native incident evidence and actions"
 - Create: `Sources/Features/Profile/ContentPreferencesView.swift`
 - Test: `GoHomeShellTests/ProfilePermissionTests.swift`
 
-- [ ] **Step 1: Write creator/member permission tests**
+- [x] **Step 1: Write creator/member permission tests**
 
 Assert only creator sees enabled algorithm/rule mutation controls; members receive read-only values. Assert “管理员” is absent from personal identity copy and role labels are “创建者/成员” only inside family management.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Expected: FAIL because Profile views are absent.
 
-- [ ] **Step 3: Implement grouped native settings**
+- [x] **Step 3: Implement grouped native settings**
 
 Sections: account, family, cared-for profile/contact, box/cameras, notifications, return-home/content preferences, Discover preferences, privacy/data, logout. Keep rule details in a pushed screen and enforce server permissions as well as UI state.
 
-- [ ] **Step 4: Run full primary-tab gate**
+- [x] **Step 4: Run full primary-tab gate**
 
 Run: `ios-shell/scripts/test.sh`  
 Then install the Debug build on the connected iPhone and execute Home scroll retention, camera A/B switching, event confirmation, Profile permissions, and logout once.  
-Expected: PASS; all four implemented tabs and Profile remain responsive during stream playback.
+Expected: PASS; native unit/UI suites pass and all implemented tabs plus Profile remain responsive in the simulator. Physical-device install and logout still require the local signing/device pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Features/Profile ios-shell/GoHomeShellTests/ProfilePermissionTests.swift

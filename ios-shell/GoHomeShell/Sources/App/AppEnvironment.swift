@@ -46,6 +46,55 @@ struct AppEnvironment {
                     body: EventActionRequest(acknowledged: true, resolution: resolution)
                 )
                 return try await client.send(endpoint)
+            },
+            profileLoader: { familyID in
+                async let bindings: [DeviceBinding] = client.send(Endpoint(
+                    path: "/api/device-bindings",
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                ))
+                async let cameras: [CameraConfig] = client.send(Endpoint(path: "/api/app/cameras"))
+                async let rules: FamilyRules = client.send(Endpoint(
+                    path: "/api/v1/rules",
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                ))
+                async let carePreferences: CarePreferences = client.send(Endpoint(
+                    path: "/api/v1/families/\(familyID)/care-preferences"
+                ))
+                async let productEnvelope: ProductPreferencesEnvelope? = try? client.send(Endpoint(
+                    path: "/api/v2/product-preferences",
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                ))
+                async let elder: ElderProfile? = try? client.send(Endpoint(
+                    path: "/api/v1/families/\(familyID)/elders/elder_primary/profile"
+                ))
+
+                let loadedCameras = try await cameras
+
+                return try await ProfileData(
+                    elder: elder,
+                    bindings: bindings,
+                    cameras: loadedCameras.filter { $0.familyID == familyID },
+                    rules: rules,
+                    carePreferences: carePreferences,
+                    productPreferences: productEnvelope?.preferences ?? ProductPreferences(categories: [], needs: [])
+                )
+            },
+            rulesUpdater: { familyID, patch in
+                let endpoint: Endpoint<FamilyRules> = try .jsonBody(
+                    method: .put,
+                    path: "/api/v1/rules",
+                    body: patch,
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                )
+                return try await client.send(endpoint)
+            },
+            carePreferencesUpdater: { familyID, patch in
+                let endpoint: Endpoint<CarePreferences> = try .jsonBody(
+                    method: .put,
+                    path: "/api/v1/families/\(familyID)/care-preferences",
+                    body: patch
+                )
+                return try await client.send(endpoint)
             }
         )
         return AppEnvironment(
@@ -56,9 +105,21 @@ struct AppEnvironment {
             repository: repository
         )
     }
+
+    func clearAuthenticatedSession(scope: CacheScope?) async {
+        let endpoint = Endpoint<LogoutResponse>(method: .post, path: "/api/auth/logout")
+        _ = try? await apiClient.send(endpoint)
+        try? await authStore.clear()
+        if let scope { try? await cache.clear(scope: scope) }
+        await sessionContextStore.clear()
+    }
 }
 
 private struct EventActionRequest: Encodable {
     let acknowledged: Bool
     let resolution: String
+}
+
+private struct LogoutResponse: Decodable {
+    let ok: Bool
 }

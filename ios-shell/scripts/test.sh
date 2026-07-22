@@ -16,8 +16,15 @@ device_id="$(xcrun simctl list devices available -j | ruby -rjson -e '
   print match.fetch("udid")
 ')"
 
-xcodebuild test \
-  -project GoHomeShell.xcodeproj \
-  -scheme GoHomeShell \
-  -destination "platform=iOS Simulator,id=${device_id}" \
-  "${args[@]}"
+if [ "${#args[@]}" -gt 0 ]; then
+  xcodebuild test \
+    -project GoHomeShell.xcodeproj \
+    -scheme GoHomeShell \
+    -destination "platform=iOS Simulator,id=${device_id}" \
+    "${args[@]}"
+else
+  xcodebuild test \
+    -project GoHomeShell.xcodeproj \
+    -scheme GoHomeShell \
+    -destination "platform=iOS Simulator,id=${device_id}"
+fi
