@@ -6,6 +6,7 @@ struct MainTabView: View {
     let unreadCount: Int
     let apiClient: APIClient?
     @StateObject private var homeModel: HomeViewModel
+    @StateObject private var eventsModel: EventsViewModel
     @State private var selection: GoHomeTab = .home
     @State private var homePath = NavigationPath()
     @State private var guardPath = NavigationPath()
@@ -23,6 +24,8 @@ struct MainTabView: View {
         self.unreadCount = unreadCount
         self.apiClient = apiClient
         _homeModel = StateObject(wrappedValue: HomeViewModel(repository: repository, scope: scope))
+        let seedEvents = ProcessInfo.processInfo.arguments.contains("-uiTestEvent") ? Self.uiTestEvents : []
+        _eventsModel = StateObject(wrappedValue: EventsViewModel(repository: repository, scope: scope, seedEvents: seedEvents))
     }
 
     var body: some View {
@@ -34,11 +37,7 @@ struct MainTabView: View {
                 GuardView(cameras: homeModel.state.value?.cameras ?? [], apiClient: apiClient)
             }
             GoHomeTabRoot(tab: .events, path: $eventsPath) {
-                MainTabEmptyState(
-                    tab: .events,
-                    title: "事件记录",
-                    detail: "当前没有待处理事件"
-                )
+                EventsView(model: eventsModel, apiClient: apiClient)
             }
             GoHomeTabRoot(tab: .discover, path: $discoverPath) {
                 MainTabEmptyState(
@@ -59,5 +58,21 @@ struct MainTabView: View {
         .background(GoHomeTheme.paper)
         .accessibilityIdentifier("main-tab-shell")
         .task { homeModel.start() }
+    }
+
+    private static var uiTestEvents: [AppEvent] {
+        [AppEvent(
+            id: "ui-test-event-1",
+            type: "fall_candidate",
+            level: "critical",
+            room: "客厅",
+            cameraID: "2",
+            cameraName: "客厅摄像头",
+            occurredAt: "2026-07-22T09:30:00+08:00",
+            createdAt: "2026-07-22T09:30:00+08:00",
+            updatedAt: "2026-07-22T09:30:00+08:00",
+            evidenceMedia: [EventEvidence(assetID: "missing-asset", role: "current", capturedAt: "2026-07-22T09:30:00+08:00")],
+            payload: EventPayload(verification: EventVerification(status: "confirmed", result: EventVerificationResult(reason: "云端复核支持这条提醒，请结合实时画面确认。")))
+        )]
     }
 }

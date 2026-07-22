@@ -5,21 +5,35 @@ actor AppRepository {
     typealias BootstrapUpdate = @Sendable (Loadable<BootstrapResponse>) async -> Void
     typealias HomeLoader = @Sendable (String) async throws -> HomeResponse
     typealias HomeUpdate = @Sendable (Loadable<HomeResponse>) async -> Void
+    typealias EventsLoader = @Sendable (String) async throws -> [AppEvent]
+    typealias EventLoader = @Sendable (String) async throws -> AppEvent
+    typealias EventActionLoader = @Sendable (String, String) async throws -> AppEvent
 
     private let cache: DiskCache
     private let bootstrapLoader: BootstrapLoader
     private let homeLoader: HomeLoader
+    private let eventsLoader: EventsLoader
+    private let eventLoader: EventLoader
+    private let eventActionLoader: EventActionLoader
     private var bootstrapTasks: [CacheScope: Task<BootstrapResponse, Error>] = [:]
     private var homeTasks: [CacheScope: Task<HomeResponse, Error>] = [:]
+    private var eventsTasks: [CacheScope: Task<[AppEvent], Error>] = [:]
+    private var eventTasks: [String: Task<AppEvent, Error>] = [:]
 
     init(
         cache: DiskCache,
         bootstrapLoader: @escaping BootstrapLoader,
-        homeLoader: @escaping HomeLoader = { _ in throw APIError.invalidResponse }
+        homeLoader: @escaping HomeLoader = { _ in throw APIError.invalidResponse },
+        eventsLoader: @escaping EventsLoader = { _ in throw APIError.invalidResponse },
+        eventLoader: @escaping EventLoader = { _ in throw APIError.invalidResponse },
+        eventActionLoader: @escaping EventActionLoader = { _, _ in throw APIError.invalidResponse }
     ) {
         self.cache = cache
         self.bootstrapLoader = bootstrapLoader
         self.homeLoader = homeLoader
+        self.eventsLoader = eventsLoader
+        self.eventLoader = eventLoader
+        self.eventActionLoader = eventActionLoader
     }
 
     func fetchBootstrap() async throws -> BootstrapResponse {
@@ -68,6 +82,42 @@ actor AppRepository {
         }
     }
 
+    func events(scope: CacheScope, onUpdate: @escaping @Sendable (Loadable<[AppEvent]>) async -> Void) async {
+        let cached = try? await cache.read([AppEvent].self, key: "events", scope: scope)
+        await onUpdate(Loadable(value: cached, isRefreshing: true, staleReason: nil))
+
+        do {
+            let refreshed = try await refreshEvents(scope: scope)
+            try await cache.write(refreshed, key: "events", scope: scope, ttl: 24 * 60 * 60)
+            await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
+        } catch is CancellationError {
+            await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
+        } catch {
+            await onUpdate(Loadable(
+                value: cached,
+                isRefreshing: false,
+                staleReason: cached == nil ? error.localizedDescription : "暂时无法更新"
+            ))
+        }
+    }
+
+    func fetchEvent(_ id: String) async throws -> AppEvent {
+        if let task = eventTasks[id] { return try await task.value }
+        let task = Task { try await eventLoader(id) }
+        eventTasks[id] = task
+        defer { eventTasks[id] = nil }
+        return try await task.value
+    }
+
+    func updateEvent(_ event: AppEvent, resolution: String) async throws -> AppEvent {
+        let updated = try await eventActionLoader(event.id, resolution)
+        return updated
+    }
+
+    func cacheEvents(_ events: [AppEvent], scope: CacheScope) async {
+        try? await cache.write(events, key: "events", scope: scope, ttl: 24 * 60 * 60)
+    }
+
     private func refreshBootstrap(scope: CacheScope) async throws -> BootstrapResponse {
         if let task = bootstrapTasks[scope] { return try await task.value }
         let task = Task { try await bootstrapLoader() }
@@ -81,6 +131,14 @@ actor AppRepository {
         let task = Task { try await homeLoader(scope.familyID) }
         homeTasks[scope] = task
         defer { homeTasks[scope] = nil }
+        return try await task.value
+    }
+
+    private func refreshEvents(scope: CacheScope) async throws -> [AppEvent] {
+        if let task = eventsTasks[scope] { return try await task.value }
+        let task = Task { try await eventsLoader(scope.familyID) }
+        eventsTasks[scope] = task
+        defer { eventsTasks[scope] = nil }
         return try await task.value
     }
 }

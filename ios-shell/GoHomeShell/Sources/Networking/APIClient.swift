@@ -44,6 +44,30 @@ actor APIClient {
         }
     }
 
+    func data(path: String) async throws -> Data {
+        let endpoint = Endpoint<EmptyResponse>(path: path)
+        var request = try endpoint.request(baseURL: baseURL)
+        if let token = await tokenProvider(), !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            if httpResponse.statusCode == 401 { throw APIError.unauthorized }
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                throw APIError.server(
+                    statusCode: httpResponse.statusCode,
+                    detail: Self.serverDetail(from: data, fallback: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode))
+                )
+            }
+            return data
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        }
+    }
+
     private static func serverDetail(from data: Data, fallback: String) -> String {
         guard
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -53,3 +77,5 @@ actor APIClient {
         return detail
     }
 }
+
+private struct EmptyResponse: Decodable {}

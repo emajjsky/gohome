@@ -257,6 +257,392 @@ struct HomeCamera: Codable, Equatable, Sendable, Identifiable {
     enum CodingKeys: String, CodingKey { case id, name, status }
 }
 
+struct AppEvent: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let type: String
+    let level: String
+    let summary: String?
+    let room: String
+    let cameraID: String?
+    let cameraName: String
+    let occurredAt: String
+    let createdAt: String
+    let updatedAt: String
+    let acknowledged: Bool
+    let resolution: String
+    let snapshotURL: String?
+    let mediaAssetID: String?
+    let evidenceMedia: [EventEvidence]
+    let payload: EventPayload
+
+    enum CodingKeys: String, CodingKey {
+        case id, type, level, summary, room, resolution, acknowledged, payload
+        case cameraID = "camera_id"
+        case cameraName = "camera_name"
+        case occurredAt = "occurred_at"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case snapshotURL = "snapshot_url"
+        case mediaAssetID = "media_asset_id"
+        case evidenceMedia = "evidence_media"
+    }
+
+    init(
+        id: String,
+        type: String,
+        level: String,
+        summary: String? = nil,
+        room: String = "",
+        cameraID: String? = nil,
+        cameraName: String = "",
+        occurredAt: String,
+        createdAt: String,
+        updatedAt: String,
+        acknowledged: Bool = false,
+        resolution: String = "",
+        snapshotURL: String? = nil,
+        mediaAssetID: String? = nil,
+        evidenceMedia: [EventEvidence] = [],
+        payload: EventPayload = EventPayload()
+    ) {
+        self.id = id
+        self.type = type
+        self.level = level
+        self.summary = summary
+        self.room = room
+        self.cameraID = cameraID
+        self.cameraName = cameraName
+        self.occurredAt = occurredAt
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.acknowledged = acknowledged
+        self.resolution = resolution
+        self.snapshotURL = snapshotURL
+        self.mediaAssetID = mediaAssetID
+        self.evidenceMedia = evidenceMedia
+        self.payload = payload
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeFlexibleID(forKey: .id)
+        type = try values.decodeIfPresent(String.self, forKey: .type) ?? "unknown"
+        level = try values.decodeIfPresent(String.self, forKey: .level) ?? "info"
+        summary = try values.decodeIfPresent(String.self, forKey: .summary)
+        room = try values.decodeIfPresent(String.self, forKey: .room) ?? ""
+        cameraID = try values.decodeFlexibleIDIfPresent(forKey: .cameraID)
+        cameraName = try values.decodeIfPresent(String.self, forKey: .cameraName) ?? ""
+        occurredAt = try values.decodeIfPresent(String.self, forKey: .occurredAt) ?? ""
+        createdAt = try values.decodeIfPresent(String.self, forKey: .createdAt) ?? occurredAt
+        updatedAt = try values.decodeIfPresent(String.self, forKey: .updatedAt) ?? createdAt
+        acknowledged = try values.decodeIfPresent(Bool.self, forKey: .acknowledged) ?? false
+        resolution = try values.decodeIfPresent(String.self, forKey: .resolution) ?? ""
+        snapshotURL = try values.decodeIfPresent(String.self, forKey: .snapshotURL)
+        mediaAssetID = try values.decodeFlexibleIDIfPresent(forKey: .mediaAssetID)
+        evidenceMedia = try values.decodeIfPresent([EventEvidence].self, forKey: .evidenceMedia) ?? []
+        payload = try values.decodeIfPresent(EventPayload.self, forKey: .payload) ?? EventPayload()
+    }
+}
+
+struct EventEvidence: Codable, Equatable, Sendable, Identifiable {
+    let assetID: String
+    let role: String
+    let capturedAt: String
+    let postures: [String]
+
+    var id: String { assetID + ":" + role }
+
+    enum CodingKeys: String, CodingKey {
+        case assetID = "asset_id"
+        case role, capturedAt = "captured_at", postures
+    }
+
+    init(assetID: String, role: String, capturedAt: String, postures: [String] = []) {
+        self.assetID = assetID
+        self.role = role
+        self.capturedAt = capturedAt
+        self.postures = postures
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        assetID = try values.decodeFlexibleID(forKey: .assetID)
+        role = try values.decodeIfPresent(String.self, forKey: .role) ?? "evidence"
+        capturedAt = try values.decodeIfPresent(String.self, forKey: .capturedAt) ?? ""
+        postures = try values.decodeIfPresent([String].self, forKey: .postures) ?? []
+    }
+}
+
+struct EventPayload: Codable, Equatable, Sendable {
+    let incident: EventIncident?
+    let verification: EventVerification?
+    let rule: EventRule?
+
+    init(incident: EventIncident? = nil, verification: EventVerification? = nil, rule: EventRule? = nil) {
+        self.incident = incident
+        self.verification = verification
+        self.rule = rule
+    }
+}
+
+struct EventIncident: Codable, Equatable, Sendable {
+    let status: String
+    let primaryEventID: String?
+    let sourceCameraIDs: [String]
+    let startedAt: String?
+    let transitions: [EventTransition]
+
+    enum CodingKeys: String, CodingKey {
+        case status, transitions
+        case primaryEventID = "primary_event_id"
+        case sourceCameraIDs = "source_camera_ids"
+        case startedAt = "started_at"
+    }
+
+    init(
+        status: String = "",
+        primaryEventID: String? = nil,
+        sourceCameraIDs: [String] = [],
+        startedAt: String? = nil,
+        transitions: [EventTransition] = []
+    ) {
+        self.status = status
+        self.primaryEventID = primaryEventID
+        self.sourceCameraIDs = sourceCameraIDs
+        self.startedAt = startedAt
+        self.transitions = transitions
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        status = try values.decodeIfPresent(String.self, forKey: .status) ?? ""
+        primaryEventID = try values.decodeFlexibleIDIfPresent(forKey: .primaryEventID)
+        sourceCameraIDs = try values.decodeFlexibleIDsIfPresent(forKey: .sourceCameraIDs) ?? []
+        startedAt = try values.decodeIfPresent(String.self, forKey: .startedAt)
+        transitions = try values.decodeIfPresent([EventTransition].self, forKey: .transitions) ?? []
+    }
+}
+
+struct EventTransition: Codable, Equatable, Sendable {
+    let status: String
+    let source: String
+    let resolution: String?
+    let at: String?
+
+    enum CodingKeys: String, CodingKey { case status, source, resolution, at }
+
+    init(status: String, source: String, resolution: String? = nil, at: String? = nil) {
+        self.status = status
+        self.source = source
+        self.resolution = resolution
+        self.at = at
+    }
+}
+
+struct EventVerification: Codable, Equatable, Sendable {
+    let status: String
+    let decision: String?
+    let result: EventVerificationResult?
+    let updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status, decision, result
+        case updatedAt = "updated_at"
+    }
+
+    init(status: String = "", decision: String? = nil, result: EventVerificationResult? = nil, updatedAt: String? = nil) {
+        self.status = status
+        self.decision = decision
+        self.result = result
+        self.updatedAt = updatedAt
+    }
+}
+
+struct EventVerificationResult: Codable, Equatable, Sendable {
+    let reason: String?
+
+    init(reason: String? = nil) { self.reason = reason }
+}
+
+struct EventRule: Codable, Equatable, Sendable {
+    let label: String?
+    let reason: String?
+
+    init(label: String? = nil, reason: String? = nil) {
+        self.label = label
+        self.reason = reason
+    }
+}
+
+enum EventSegment: String, CaseIterable, Identifiable, Sendable {
+    case pending
+    case handled
+    case falsePositive
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .pending: return "待处理"
+        case .handled: return "已处理"
+        case .falsePositive: return "误报"
+        }
+    }
+}
+
+struct EventGroup: Identifiable, Equatable, Sendable {
+    let id: String
+    let primary: AppEvent
+    let related: [AppEvent]
+
+    var cameraCount: Int {
+        let directIDs = ([primary] + related).compactMap(\.cameraID)
+        let incidentIDs = ([primary] + related).flatMap { $0.payload.incident?.sourceCameraIDs ?? [] }
+        return max(Set(directIDs + incidentIDs).count, 1)
+    }
+}
+
+enum EventPresentation {
+    static func segment(_ event: AppEvent) -> EventSegment {
+        event.resolution == "false_positive" ? .falsePositive : (event.acknowledged ? .handled : .pending)
+    }
+
+    static func groups(_ events: [AppEvent], segment: EventSegment) -> [EventGroup] {
+        let visible = events.filter { self.segment($0) == segment }
+        var grouped: [String: [AppEvent]] = [:]
+        for event in visible {
+            let key = event.payload.incident?.primaryEventID ?? event.id
+            grouped[key, default: []].append(event)
+        }
+        return grouped.values.compactMap { values in
+            guard let newest = values.sorted(by: sort).first else { return nil }
+            let primaryID = newest.payload.incident?.primaryEventID
+            let primary = values.first(where: { $0.id == primaryID }) ?? newest
+            return EventGroup(id: primary.id, primary: primary, related: values.filter { $0.id != primary.id }.sorted(by: sort))
+        }.sorted { sort($0.primary, $1.primary) }
+    }
+
+    static func label(for type: String) -> String {
+        switch type {
+        case "black_screen": return "画面异常"
+        case "camera_offline": return "设备离线"
+        case "no_motion": return "长时间无变化"
+        case "no_person": return "长时间未见"
+        case "fall_candidate": return "疑似跌倒"
+        case "prolonged_floor_lying": return "长时间倒地"
+        case "long_absence": return "长时间未见"
+        default: return "安全提醒"
+        }
+    }
+
+    static func title(for event: AppEvent) -> String {
+        let place = event.room.isEmpty ? (event.cameraName.isEmpty ? "家庭画面" : event.cameraName) : event.room
+        switch event.type {
+        case "fall_candidate": return "\(place)出现疑似跌倒"
+        case "prolonged_floor_lying": return "\(place)检测到长时间倒地"
+        case "camera_offline": return "\(place)暂时离线"
+        case "black_screen": return "\(place)画面异常"
+        case "no_person", "long_absence": return "\(place)长时间未见人"
+        case "no_motion": return "\(place)长时间没有变化"
+        default: return label(for: event.type)
+        }
+    }
+
+    static func verificationText(_ verification: EventVerification?, evidenceCount: Int) -> String {
+        guard let verification, !verification.status.isEmpty else { return "等待云端复核" }
+        switch verification.status {
+        case "confirmed": return evidenceCount > 1 ? "云端复核支持异常判断 · \(evidenceCount) 张证据" : "云端复核支持异常判断"
+        case "rejected": return "云端复核未发现明确异常"
+        case "uncertain": return "云端证据不足，需要人工确认"
+        case "pending", "verifying", "retrying": return "云端正在复核证据"
+        case "failed", "unavailable": return "云端复核暂未完成"
+        default: return "已收到云端复核结果"
+        }
+    }
+
+    static func timeline(for event: AppEvent) -> [EventTimelineItem] {
+        var items = [EventTimelineItem(
+            id: "detected",
+            title: "家庭盒子发现异常",
+            detail: "\(event.cameraName.isEmpty ? event.room.isEmpty ? "家庭画面" : event.room : event.cameraName)记录了\(label(for: event.type))。",
+            date: event.occurredAt,
+            symbol: "sensor.tag.radiowaves.forward",
+            tone: event.level == "critical" ? .warning : .neutral
+        )]
+        if event.cameraCountForIncident > 1 {
+            items.append(EventTimelineItem(
+                id: "multi-camera",
+                title: "多路画面提供佐证",
+                detail: "同一时间窗口的画面已合并为一条守护事件。",
+                date: event.payload.incident?.startedAt ?? event.occurredAt,
+                symbol: "video.badge.waveform",
+                tone: .neutral
+            ))
+        }
+        let transitions = event.payload.incident?.transitions ?? []
+        for transition in transitions {
+            let copy = transitionCopy(transition)
+            items.append(EventTimelineItem(id: "transition-\(items.count)", title: copy.title, detail: copy.detail, date: transition.at ?? event.createdAt, symbol: copy.symbol, tone: copy.tone))
+        }
+        if let verification = event.payload.verification, !transitions.contains(where: { $0.source == "vision_verification" }) {
+            let copy = verificationCopy(verification)
+            items.append(EventTimelineItem(id: "verification", title: copy.title, detail: copy.detail, date: verification.updatedAt ?? event.createdAt, symbol: copy.symbol, tone: copy.tone))
+        }
+        if event.acknowledged && !transitions.contains(where: { $0.source == "app_user" || $0.status == "acknowledged" }) {
+            items.append(EventTimelineItem(id: "acknowledged", title: event.resolution == "false_positive" ? "已标记为误报" : "已确认收到", detail: event.resolution == "false_positive" ? "记录和证据保留，用于后续校准。" : "这条提醒已停止重复推送。", date: event.updatedAt, symbol: event.resolution == "false_positive" ? "checkmark.seal" : "checkmark", tone: .neutral))
+        }
+        return items.sorted { ($0.date ?? "") < ($1.date ?? "") }
+    }
+
+    private static func sort(_ lhs: AppEvent, _ rhs: AppEvent) -> Bool {
+        lhs.occurredAt > rhs.occurredAt
+    }
+
+    private static func transitionCopy(_ transition: EventTransition) -> (title: String, detail: String, symbol: String, tone: EventTimelineTone) {
+        if transition.source == "app_user" || transition.status == "acknowledged" { return ("已确认收到", "这条提醒已停止重复推送。", "checkmark", .neutral) }
+        if transition.source == "edge_admin" || transition.resolution == "false_positive" { return ("已核对为误报", "记录和证据保留，用于后续校准。", "checkmark.seal", .neutral) }
+        if transition.source == "presence_recovery" || transition.status == "resolved" { return ("家中状态已经恢复", "摄像头重新检测到人，本次提醒自动结束。", "person.crop.circle.badge.checkmark", .neutral) }
+        if transition.source == "vision_verification" {
+            return verificationCopy(EventVerification(status: transition.status))
+        }
+        return ("守护提醒已建立", "系统将持续跟踪，直到收到处理结果。", "bell.badge", .warning)
+    }
+
+    private static func verificationCopy(_ verification: EventVerification) -> (title: String, detail: String, symbol: String, tone: EventTimelineTone) {
+        switch verification.status {
+        case "confirmed": return ("云端模型支持异常判断", safeVerificationReason(verification.result?.reason), "checkmark.seal", .warning)
+        case "rejected": return ("云端模型未发现明确异常", "原始记录仍然保留，供你核对。", "checkmark", .neutral)
+        case "uncertain": return ("云端证据不足", "模型无法明确判断，需要人工确认。", "questionmark.circle", .warning)
+        default: return ("云端正在复核", "系统正在检查事件截图和边缘检测依据。", "icloud.and.arrow.down", .neutral)
+        }
+    }
+
+    private static func safeVerificationReason(_ value: String?) -> String {
+        guard let value, !value.isEmpty else { return "请结合截图或实时画面尽快确认。" }
+        let blocked = ["fall_score", "threshold", "rtsp", "ffmpeg", "opencv", "traceback", "http ", "edge_agent"]
+        return blocked.contains(where: { value.lowercased().contains($0) })
+            ? "请结合截图或实时画面尽快确认。"
+            : value
+    }
+}
+
+enum EventTimelineTone: Sendable { case neutral, warning }
+
+struct EventTimelineItem: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let detail: String
+    let date: String?
+    let symbol: String
+    let tone: EventTimelineTone
+}
+
+private extension AppEvent {
+    var cameraCountForIncident: Int {
+        let ids = Set(([cameraID] + (payload.incident?.sourceCameraIDs ?? [])).compactMap { $0 })
+        return max(ids.count, 1)
+    }
+}
+
 struct ElderProfile: Codable, Equatable, Sendable {
     let id: String
     let elderID: String
@@ -446,5 +832,21 @@ private extension KeyedDecodingContainer {
     func decodeFlexibleIDIfPresent(forKey key: Key) throws -> String? {
         guard contains(key), try !decodeNil(forKey: key) else { return nil }
         return try decodeFlexibleID(forKey: key)
+    }
+
+    func decodeFlexibleIDsIfPresent(forKey key: Key) throws -> [String]? {
+        guard contains(key), try !decodeNil(forKey: key) else { return nil }
+        var values: [String] = []
+        var container = try nestedUnkeyedContainer(forKey: key)
+        while !container.isAtEnd {
+            if let string = try? container.decode(String.self) {
+                values.append(string)
+            } else if let number = try? container.decode(Int.self) {
+                values.append(String(number))
+            } else {
+                _ = try container.superDecoder()
+            }
+        }
+        return values
     }
 }

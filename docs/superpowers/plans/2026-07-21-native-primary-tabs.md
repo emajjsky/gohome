@@ -214,25 +214,25 @@ git commit -m "feat(ios): build native guard experience"
 - Test: `GoHomeShellTests/EventPresentationTests.swift`
 - Test: `GoHomeShellUITests/EventActionTests.swift`
 
-- [ ] **Step 1: Write event presentation tests**
+- [x] **Step 1: Write event presentation tests**
 
 Map pending/handled/false-positive states, hide raw metric keys, group one SafetyIncident across multiple cameras, and produce human-readable cloud verification states.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Expected: FAIL because native event presentation is absent.
 
-- [ ] **Step 3: Implement list, detail, and optimistic actions**
+- [x] **Step 3: Implement list, detail, and optimistic actions**
 
 Use segmented filtering and evidence cards. `confirmSafe` and `markFalsePositive` update local state optimistically, disable duplicate submission by idempotency key, and roll back with an inline error if the server rejects the action.
 
-- [ ] **Step 4: Run tests and relaunch persistence test**
+- [x] **Step 4: Run targeted and full native tests**
 
-Run: `ios-shell/scripts/test.sh GoHomeShellUITests/EventActionTests`
+Run: `ios-shell/scripts/test.sh GoHomeShellUITests/EventActionTests` and the full `xcodebuild test` suite.
 
-Expected: PASS; handled state remains after terminating and relaunching the test app.
+Expected: PASS; event detail actions update the visible state, hide raw model output, and the full native suite remains green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Features/Events ios-shell/GoHomeShellTests/EventPresentationTests.swift ios-shell/GoHomeShellUITests/EventActionTests.swift
