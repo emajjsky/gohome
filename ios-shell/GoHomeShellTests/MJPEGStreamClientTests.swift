@@ -63,4 +63,74 @@ final class MJPEGStreamClientTests: XCTestCase {
 
         XCTAssertEqual(frames, [first, second])
     }
+
+    func testDelegateForwardsEveryNetworkChunkInOrder() async throws {
+        let delegate = MJPEGDataDelegate()
+        let chunks = [
+            Data([0x01, 0x02]),
+            Data([0x03]),
+            Data([0x04, 0x05, 0x06]),
+        ]
+
+        for chunk in chunks {
+            delegate.receiveForTesting(chunk)
+        }
+        delegate.finish(nil)
+
+        var received: [Data] = []
+        for try await chunk in delegate.chunks {
+            received.append(chunk)
+        }
+        XCTAssertEqual(received, chunks)
+    }
+
+    func testDelegateChunksReassembleJPEGWithoutByteLoss() async throws {
+        let delegate = MJPEGDataDelegate()
+        let frame = Data([0xff, 0xd8, 0x10, 0x20, 0x30, 0xff, 0xd9])
+        let chunks = [
+            Data("--frame\r\nContent-Type: image/jpeg\r\n\r\n".utf8) + frame.prefix(1),
+            frame.subdata(in: 1..<5),
+            frame.suffix(2) + Data("\r\n--frame\r\n".utf8),
+        ]
+
+        for chunk in chunks {
+            delegate.receiveForTesting(chunk)
+        }
+        delegate.finish(nil)
+
+        var parser = MJPEGFrameParser()
+        var frames: [Data] = []
+        for try await chunk in delegate.chunks {
+            frames.append(contentsOf: parser.append(chunk))
+        }
+        XCTAssertEqual(frames, [frame])
+    }
+
+    func testDelegateNormalCompletionFinishesChunkStream() async throws {
+        let delegate = MJPEGDataDelegate()
+        var iterator = delegate.chunks.makeAsyncIterator()
+
+        delegate.finish(nil)
+
+        let chunk = try await iterator.next()
+        XCTAssertNil(chunk)
+    }
+
+    func testDelegateErrorCompletionThrowsFromChunkStream() async {
+        let delegate = MJPEGDataDelegate()
+        var iterator = delegate.chunks.makeAsyncIterator()
+
+        delegate.finish(TestStreamError.closed)
+
+        do {
+            _ = try await iterator.next()
+            XCTFail("Expected stream error")
+        } catch {
+            XCTAssertEqual(error as? TestStreamError, .closed)
+        }
+    }
+}
+
+private enum TestStreamError: Error, Equatable {
+    case closed
 }

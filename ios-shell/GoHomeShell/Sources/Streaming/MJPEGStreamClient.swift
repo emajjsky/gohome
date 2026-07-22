@@ -2,14 +2,12 @@ import Foundation
 
 actor MJPEGStreamClient: CameraStreamClient {
     private let apiClient: APIClient
-    private let session: URLSession
     private var streamTask: Task<Void, Never>?
     private var continuation: AsyncThrowingStream<Data, Error>.Continuation?
     private var generation = 0
 
-    init(apiClient: APIClient, session: URLSession = .shared) {
+    init(apiClient: APIClient) {
         self.apiClient = apiClient
-        self.session = session
     }
 
     func frames(cameraID: String, profile: String) async throws -> AsyncThrowingStream<Data, Error> {
@@ -85,34 +83,110 @@ actor MJPEGStreamClient: CameraStreamClient {
         do {
             var request = URLRequest(url: url)
             request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.timeoutInterval = 12
             request.setValue("multipart/x-mixed-replace,image/*,*/*", forHTTPHeaderField: "Accept")
-            let (bytes, response) = try await session.bytes(for: request)
-            guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
-                throw APIError.server(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0, detail: "视频流连接失败")
+
+            let delegate = MJPEGDataDelegate()
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            configuration.timeoutIntervalForRequest = 12
+            configuration.timeoutIntervalForResource = 24 * 60 * 60
+            let delegateQueue = OperationQueue()
+            delegateQueue.maxConcurrentOperationCount = 1
+            let streamSession = URLSession(
+                configuration: configuration,
+                delegate: delegate,
+                delegateQueue: delegateQueue
+            )
+            let dataTask = streamSession.dataTask(with: request)
+            dataTask.resume()
+            defer {
+                dataTask.cancel()
+                streamSession.invalidateAndCancel()
             }
 
             var parser = MJPEGFrameParser()
-            var chunk = Data()
-            chunk.reserveCapacity(16 * 1024)
-            for try await byte in bytes {
+            for try await chunk in delegate.chunks {
                 try Task.checkCancellation()
                 guard generation == self.generation else { throw CancellationError() }
-                chunk.append(byte)
-                if chunk.count >= 16 * 1024 {
-                    for frame in parser.append(chunk) {
-                        continuation.yield(frame)
-                    }
-                    chunk.removeAll(keepingCapacity: true)
+                for frame in parser.append(chunk) {
+                    continuation.yield(frame)
                 }
-            }
-            for frame in parser.append(chunk) {
-                continuation.yield(frame)
             }
             continuation.finish()
         } catch is CancellationError {
             continuation.finish()
         } catch {
             continuation.finish(throwing: error)
+        }
+    }
+}
+
+final class MJPEGDataDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var streamContinuation: AsyncThrowingStream<Data, Error>.Continuation?
+    let chunks: AsyncThrowingStream<Data, Error>
+
+    override init() {
+        var continuation: AsyncThrowingStream<Data, Error>.Continuation?
+        chunks = AsyncThrowingStream(bufferingPolicy: .unbounded) {
+            continuation = $0
+        }
+        streamContinuation = continuation
+        super.init()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let response = response as? HTTPURLResponse else {
+            finish(APIError.invalidResponse)
+            completionHandler(.cancel)
+            return
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            finish(APIError.server(statusCode: response.statusCode, detail: "视频流连接失败"))
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        yield(data)
+    }
+
+    private func yield(_ data: Data) {
+        lock.lock()
+        let continuation = streamContinuation
+        lock.unlock()
+        continuation?.yield(data)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error as? URLError, error.code == .cancelled {
+            finish(nil)
+        } else {
+            finish(error)
+        }
+    }
+
+    func receiveForTesting(_ data: Data) {
+        yield(data)
+    }
+
+    func finish(_ error: Error?) {
+        lock.lock()
+        let continuation = streamContinuation
+        streamContinuation = nil
+        lock.unlock()
+        if let error {
+            continuation?.finish(throwing: error)
+        } else {
+            continuation?.finish()
         }
     }
 }
