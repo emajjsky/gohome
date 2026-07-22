@@ -150,14 +150,30 @@ def main() -> None:
             int(event["id"]),
             resolution="person_upright_again",
             resolved_at="2026-07-12T10:05:00+00:00",
-            evidence={"posture": "standing", "confidence": 0.82},
+            evidence={
+                "confirmed": True,
+                "posture": "standing",
+                "confidence": 0.82,
+                "track_id": "c1-p1",
+                "sample_count": 2,
+                "required_samples": 2,
+                "identity_match": "same_track",
+            },
         )
         storage.enqueue_event_state_upload(
             resolved_event,
             state="resolved",
             resolution="person_upright_again",
             observed_at="2026-07-12T10:05:00+00:00",
-            evidence={"posture": "standing", "confidence": 0.82},
+            evidence={
+                "confirmed": True,
+                "posture": "standing",
+                "confidence": 0.82,
+                "track_id": "c1-p1",
+                "sample_count": 2,
+                "required_samples": 2,
+                "identity_match": "same_track",
+            },
         )
         recovery_result = agent.process_once(max_jobs=1)
         verification_status = agent.vision_verification_status(limit=6)

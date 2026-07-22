@@ -930,6 +930,10 @@ async function main() {
                         confidence: 0.84,
                         track_id: "c11-p1",
                         bbox: [100, 20, 190, 250],
+                        confirmed: true,
+                        sample_count: 2,
+                        required_samples: 2,
+                        identity_match: "same_track",
                     },
                 }),
                 headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
@@ -1041,6 +1045,20 @@ async function main() {
             headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "application/json" },
         });
         assert.equal(weakRecovery.status, 400);
+        const transitionalRecovery = await fetch(`${baseUrl}/api/v1/device/events/recovery-validation-1/state`, {
+            method: "POST",
+            body: JSON.stringify({
+                state: "resolved",
+                resolution: "person_upright_again",
+                observed_at: new Date().toISOString(),
+                evidence: {
+                    posture: "squatting", confidence: 0.92, track_id: "c11-p1",
+                    confirmed: true, sample_count: 2, required_samples: 2, identity_match: "same_track",
+                },
+            }),
+            headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "application/json" },
+        });
+        assert.equal(transitionalRecovery.status, 400);
         app.store.db.app_messages.push({
             id: "validation-recovery-open-message",
             message_id: "validation-recovery-open-message",
@@ -1060,7 +1078,10 @@ async function main() {
                 state: "resolved",
                 resolution: "person_upright_again",
                 observed_at: "2026-07-12T10:05:00.000Z",
-                evidence: { posture: "standing", confidence: 0.82, track_id: "c11-p1", bbox: [10, 20, 60, 180] },
+                evidence: {
+                    posture: "standing", confidence: 0.82, track_id: "c11-p1", bbox: [10, 20, 60, 180],
+                    confirmed: true, sample_count: 2, required_samples: 2, identity_match: "same_track",
+                },
             }),
             headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
         });
@@ -1075,7 +1096,10 @@ async function main() {
                 state: "resolved",
                 resolution: "person_upright_again",
                 observed_at: "2026-07-12T10:05:00.000Z",
-                evidence: { posture: "standing", confidence: 0.82, track_id: "c11-p1" },
+                evidence: {
+                    posture: "standing", confidence: 0.82, track_id: "c11-p1",
+                    confirmed: true, sample_count: 2, required_samples: 2, identity_match: "same_track",
+                },
             }),
             headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
         });

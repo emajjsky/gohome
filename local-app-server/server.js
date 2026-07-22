@@ -6434,8 +6434,22 @@ function createLocalAppServer(options = {}) {
         }
         const posture = String(evidence.posture || "");
         const confidence = Number(evidence.confidence || 0);
-        if (!["standing", "sitting", "squatting"].includes(posture) || !Number.isFinite(confidence) || confidence < 0.45) {
-            writeError(res, 400, "credible upright recovery evidence is required");
+        const recoveryConfirmed = evidence.confirmed === true;
+        const recoverySamples = Number(evidence.sample_count || 0);
+        const requiredSamples = Number(evidence.required_samples || 0);
+        const sameTrack = String(evidence.identity_match || "") === "same_track" && Boolean(String(evidence.track_id || ""));
+        if (
+            !["standing", "sitting"].includes(posture)
+            || !Number.isFinite(confidence)
+            || confidence < 0.45
+            || !recoveryConfirmed
+            || !sameTrack
+            || !Number.isFinite(recoverySamples)
+            || !Number.isFinite(requiredSamples)
+            || requiredSamples < 2
+            || recoverySamples < requiredSamples
+        ) {
+            writeError(res, 400, "same-track stable recovery evidence is required");
             return;
         }
         const event = store.db.events.find((item) => {
@@ -6466,6 +6480,9 @@ function createLocalAppServer(options = {}) {
                     confidence: Number(confidence.toFixed(4)),
                     track_id: String(evidence.track_id || ""),
                     bbox: Array.isArray(evidence.bbox) ? evidence.bbox.slice(0, 4) : [],
+                    sample_count: recoverySamples,
+                    required_samples: requiredSamples,
+                    identity_match: "same_track",
                 },
             };
             const linkedIncident = ensureSafetyIncident(linked);

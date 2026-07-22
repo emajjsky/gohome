@@ -199,10 +199,35 @@ class RuleEngine:
         factor_graph = analysis.get("pose_factor_graph") if isinstance(analysis.get("pose_factor_graph"), dict) else {}
         prolonged_tracks = factor_graph.get("prolonged_floor_lying_tracks") if isinstance(factor_graph.get("prolonged_floor_lying_tracks"), list) else []
         current_prolonged_ids = {str(item.get("track_id") or "") for item in prolonged_tracks if item.get("track_id")}
-        previous_prolonged_ids = self.prolonged_floor_tracks.get(camera_id, set())
-        new_prolonged_tracks = [item for item in prolonged_tracks if str(item.get("track_id") or "") not in previous_prolonged_ids]
-        self.prolonged_floor_tracks[camera_id] = current_prolonged_ids
+        physical_recoveries = factor_graph.get("physical_recoveries") if isinstance(factor_graph.get("physical_recoveries"), list) else []
+        recovered_track_ids = {
+            str(item.get("track_id") or "")
+            for item in physical_recoveries
+            if isinstance(item, dict) and item.get("confirmed") and item.get("track_id")
+        }
+        previously_alerted_prolonged_ids = self.prolonged_floor_tracks.get(camera_id, set())
+        alerted_prolonged_ids = previously_alerted_prolonged_ids - recovered_track_ids
+        new_prolonged_tracks = [
+            item for item in prolonged_tracks
+            if str(item.get("track_id") or "") not in alerted_prolonged_ids
+        ]
+        alerted_prolonged_ids.update(current_prolonged_ids)
+        self.prolonged_floor_tracks[camera_id] = alerted_prolonged_ids
         state["prolonged_floor_lying_tracks"] = sorted(current_prolonged_ids)
+        state["prolonged_floor_alerted_tracks"] = sorted(alerted_prolonged_ids)
+        prolonged_recovery = next(
+            (
+                item for item in physical_recoveries
+                if isinstance(item, dict)
+                and item.get("confirmed")
+                and str(item.get("track_id") or "") in previously_alerted_prolonged_ids
+            ),
+            None,
+        )
+        if prolonged_recovery:
+            state["prolonged_floor_recovery"] = prolonged_recovery
+            if not state.get("fall_recovery"):
+                state["fall_recovery"] = prolonged_recovery
         if rules.get("fall_detection_enabled") and new_prolonged_tracks:
             target = max(new_prolonged_tracks, key=lambda item: float(item.get("lying_duration_seconds") or 0.0))
             duration_seconds = float(target.get("lying_duration_seconds") or 0.0)
@@ -471,6 +496,7 @@ class RuleEngine:
         )
         visual_candidate = bool(target) and (fall_candidate or graph_candidate)
         previous = self.fall_tracks.get(camera_id) or {}
+        physical_recovery = self._matching_physical_recovery(previous, factor_graph)
         same_observed_target = bool(previous and target and self._same_fall_target(previous.get("target"), target))
         transition_confirmed = (
             bool(transition.get("confirmed"))
@@ -520,6 +546,7 @@ class RuleEngine:
                     "body_rotation_confirmed": bool(transition.get("body_rotation_confirmed")),
                     "fast_transition_confirmed": fast_transition_confirmed,
                     "confirmation_path": "dynamic_low_position" if dynamic_transition_signal else "standard",
+                    "recovery": None,
                 }
             else:
                 track = {
@@ -541,6 +568,7 @@ class RuleEngine:
                         if dynamic_transition_signal or previous.get("confirmation_path") == "dynamic_low_position"
                         else str(previous.get("confirmation_path") or "standard")
                     ),
+                    "recovery": None,
                 }
             duration = max(0.0, (now - track["started_at"]).total_seconds())
             track["duration_seconds"] = duration
@@ -603,20 +631,50 @@ class RuleEngine:
                     "alert_emitted": False,
                     "duration_seconds": 0.0,
                 }
-            elif track.get("stage") in {"suspect", "confirming", "confirmed"}:
+            elif track.get("stage") in {"suspect", "confirming"}:
                 track["clear_count"] = int(track.get("clear_count") or 0) + 1
                 if track["clear_count"] >= recover_frames:
                     track = {
-                        "stage": "recovered",
-                        "started_at": previous.get("started_at"),
+                        "stage": "clear",
+                        "started_at": None,
                         "last_seen_at": now,
                         "confirm_count": 0,
                         "dynamic_low_count": 0,
                         "clear_count": int(track["clear_count"]),
-                        "target": previous.get("target"),
-                        "alert_emitted": bool(previous.get("alert_emitted")),
-                        "duration_seconds": max(0.0, (now - previous.get("started_at", now)).total_seconds()) if previous.get("started_at") else 0.0,
+                        "target": None,
+                        "alert_emitted": False,
+                        "duration_seconds": 0.0,
+                        "recovery": None,
                     }
+            elif track.get("stage") in {"confirmed", "candidate_cleared"}:
+                track["clear_count"] = int(track.get("clear_count") or 0) + 1
+                track["stage"] = (
+                    "recovered"
+                    if physical_recovery
+                    else "candidate_cleared"
+                    if track["clear_count"] >= recover_frames
+                    else "confirmed"
+                )
+                track["recovery"] = physical_recovery
+                track["last_seen_at"] = now
+                track["duration_seconds"] = (
+                    max(0.0, (now - previous.get("started_at", now)).total_seconds())
+                    if previous.get("started_at")
+                    else 0.0
+                )
+            elif track.get("stage") == "recovered":
+                track = {
+                    "stage": "clear",
+                    "started_at": None,
+                    "last_seen_at": now,
+                    "confirm_count": 0,
+                    "dynamic_low_count": 0,
+                    "clear_count": 0,
+                    "target": None,
+                    "alert_emitted": False,
+                    "duration_seconds": 0.0,
+                    "recovery": None,
+                }
             elif visual_candidate:
                 track = {
                     "stage": "visual_only",
@@ -627,6 +685,7 @@ class RuleEngine:
                     "target": target,
                     "alert_emitted": False,
                     "duration_seconds": 0.0,
+                    "recovery": None,
                 }
             else:
                 track = {
@@ -638,6 +697,7 @@ class RuleEngine:
                     "target": None,
                     "alert_emitted": False,
                     "duration_seconds": 0.0,
+                    "recovery": None,
                 }
             emit_event = False
             self.fall_tracks[camera_id] = track
@@ -671,7 +731,8 @@ class RuleEngine:
             "fast_transition_confirmed": bool(track.get("fast_transition_confirmed")),
             "edge_cloud_review_ready": graph_review_ready,
             "same_target": bool(same_target),
-            "target": target,
+            "target": track.get("target"),
+            "observed_target": target,
             "evidence": fall_evidence,
             "scene_suppressed": scene_suppressed,
             "scene_zone": target.get("scene_zone_label") if target else None,
@@ -698,7 +759,9 @@ class RuleEngine:
                 "fall_confirmation_path": str(track.get("confirmation_path") or "standard"),
                 "fall_clear_count": int(track.get("clear_count") or 0),
                 "fall_alert_emitted": bool(track.get("alert_emitted")),
-                "fall_target": target,
+                "fall_target": track.get("target"),
+                "fall_observed_target": target,
+                "fall_recovery": track.get("recovery"),
                 "fall_scene_suppressed": scene_suppressed,
                 "fall_transition_confirmed": transition_confirmed,
                 "fall_fast_transition_confirmed": bool(track.get("fast_transition_confirmed")),
@@ -718,6 +781,26 @@ class RuleEngine:
                 "fall_threshold": threshold,
             },
         }
+
+    def _matching_physical_recovery(
+        self,
+        previous: Dict[str, Any],
+        factor_graph: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        if not previous.get("alert_emitted") or previous.get("stage") not in {"confirmed", "candidate_cleared"}:
+            return None
+        target = previous.get("target") if isinstance(previous.get("target"), dict) else {}
+        target_track_id = str(target.get("track_id") or "")
+        if not target_track_id:
+            return None
+        recoveries = factor_graph.get("physical_recoveries") if isinstance(factor_graph.get("physical_recoveries"), list) else []
+        for recovery in recoveries:
+            if not isinstance(recovery, dict) or not recovery.get("confirmed"):
+                continue
+            if str(recovery.get("track_id") or "") != target_track_id:
+                continue
+            return dict(recovery)
+        return None
 
     def _dynamic_low_position_signal(
         self,

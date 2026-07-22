@@ -4471,10 +4471,12 @@ class Storage:
         *,
         camera_id: int,
         event_types: list[str],
+        track_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         clean_types = [str(item or "").strip() for item in event_types if str(item or "").strip()]
         if not clean_types:
             return None
+        clean_track_id = str(track_id or "").strip()
         placeholders = ",".join("?" for _ in clean_types)
         with self.connect() as conn:
             row = conn.execute(
@@ -4489,10 +4491,19 @@ class Storage:
                   AND e.type IN ({placeholders})
                   AND e.acknowledged = 0
                   AND COALESCE(json_extract(e.payload, '$.resolution'), '') = ''
+                  AND (
+                    ? = ''
+                    OR json_extract(e.payload, '$.evaluation.state.fall_target.track_id') = ?
+                    OR json_extract(e.payload, '$.rule.observed.track_id') = ?
+                    OR json_extract(e.payload, '$.temporal_evidence_bundle.track_id') = ?
+                    OR json_extract(e.payload, '$.evidence.temporal_evidence_bundle.track_id') = ?
+                    OR json_extract(e.payload, '$.pose_factor_graph.fast_fall_track.track_id') = ?
+                    OR json_extract(e.payload, '$.evidence.pose_factor_graph.fast_fall_track.track_id') = ?
+                  )
                 ORDER BY e.occurred_at DESC, e.id DESC
                 LIMIT 1
                 """,
-                (int(camera_id), *clean_types),
+                (int(camera_id), *clean_types, *([clean_track_id] * 7)),
             ).fetchone()
         return self._event_to_dict(row) if row else None
 

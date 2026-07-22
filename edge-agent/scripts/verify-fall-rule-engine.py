@@ -134,10 +134,51 @@ def main() -> None:
 
     clear_eval = engine.evaluate_snapshot(camera, {"id": 1003}, make_analysis(fall_candidate=False, fall_score=0.0), rules)
     if clear_eval.state["fall_stage"] != "confirmed":
-        raise SystemExit("first clear frame keeps incident open until recovery threshold")
-    recovered_eval = engine.evaluate_snapshot(camera, {"id": 1004}, make_analysis(fall_candidate=False, fall_score=0.0), rules)
-    if recovered_eval.state["fall_confirm_count"] != 0 or recovered_eval.state["fall_stage"] != "recovered":
-        raise SystemExit("second clear frame must recover fall state")
+        raise SystemExit("first clear frame must keep the confirmed incident open")
+    cleared_eval = engine.evaluate_snapshot(camera, {"id": 1004}, make_analysis(fall_candidate=False, fall_score=0.0), rules)
+    if cleared_eval.state["fall_stage"] != "candidate_cleared" or cleared_eval.state.get("fall_recovery"):
+        raise SystemExit("candidate disappearance must not claim physical recovery")
+
+    squatting_eval = engine.evaluate_snapshot(
+        camera,
+        {"id": 1005},
+        make_recovery_analysis("squatting", "person-1", confirmed=False),
+        rules,
+    )
+    if squatting_eval.state["fall_stage"] != "candidate_cleared" or squatting_eval.state.get("fall_recovery"):
+        raise SystemExit("squatting must not resolve a confirmed fall")
+    bystander_eval = engine.evaluate_snapshot(
+        camera,
+        {"id": 1006},
+        make_recovery_analysis("standing", "bystander", confirmed=True),
+        rules,
+    )
+    if bystander_eval.state["fall_stage"] != "candidate_cleared" or bystander_eval.state.get("fall_recovery"):
+        raise SystemExit("an unrelated standing person must not resolve the fallen track")
+    recovered_eval = engine.evaluate_snapshot(
+        camera,
+        {"id": 1007},
+        make_recovery_analysis("standing", "person-1", confirmed=True),
+        rules,
+    )
+    if recovered_eval.state["fall_stage"] != "recovered":
+        raise SystemExit("same-track stable standing must recover the confirmed fall")
+    recovery = recovered_eval.state.get("fall_recovery") or {}
+    if recovery.get("identity_match") != "same_track" or recovery.get("sample_count") != 2:
+        raise SystemExit(f"recovery evidence contract mismatch: {recovery}")
+
+    seated_engine = RuleEngine()
+    seated_engine.evaluate_snapshot(camera, {"id": 1010}, make_upright_analysis(), rules)
+    seated_engine.evaluate_snapshot(camera, {"id": 1011}, make_pose_fall_analysis(normal_lying_zone=False, fast_graph=True), rules)
+    seated_engine.evaluate_snapshot(camera, {"id": 1012}, make_pose_fall_analysis(normal_lying_zone=False, fast_graph=True), rules)
+    seated_recovery = seated_engine.evaluate_snapshot(
+        camera,
+        {"id": 1013},
+        make_recovery_analysis("sitting", "person-1", confirmed=True),
+        rules,
+    )
+    if seated_recovery.state.get("fall_stage") != "recovered":
+        raise SystemExit("same-track stable seated recovery must resolve the fall lifecycle")
 
     scene_engine = RuleEngine()
     scene_first = scene_engine.evaluate_snapshot(
@@ -609,6 +650,7 @@ def main() -> None:
                 "second_frame_candidates": len(second_eval.candidates),
                 "second_frame_confirm_count": second_eval.state["fall_confirm_count"],
                 "clear_stage": clear_eval.state["fall_stage"],
+                "candidate_cleared_stage": cleared_eval.state["fall_stage"],
                 "recovered_stage": recovered_eval.state["fall_stage"],
                 "clear_confirm_count": recovered_eval.state["fall_confirm_count"],
                 "scene_stage": scene_second.state["fall_stage"],
@@ -659,6 +701,7 @@ def make_analysis(*, fall_candidate: bool = True, fall_score: float, normal_lyin
                 "confidence": 0.74,
                 "source": "fall_single_low_body",
                 "method": "low_body_floor_contact",
+                "track_id": "person-1",
                 "fall_candidate": fall_candidate,
                 "presence_candidate": False,
                 **scene_fields,
@@ -691,6 +734,7 @@ def make_analysis(*, fall_candidate: bool = True, fall_score: float, normal_lyin
                         {
                             "method": "low_body_floor_contact",
                             "source": "fall_single_low_body",
+                            "track_id": "person-1",
                             "fall_candidate": fall_candidate,
                             **scene_fields,
                         }
@@ -699,6 +743,7 @@ def make_analysis(*, fall_candidate: bool = True, fall_score: float, normal_lyin
                         "bbox": [80, 180, 230, 238],
                         "method": "low_body_floor_contact",
                         "source": "fall_single_low_body",
+                        "track_id": "person-1",
                         "fall_candidate": True,
                         **scene_fields,
                     } if fall_candidate else None,
@@ -724,6 +769,7 @@ def make_upright_analysis() -> dict:
             "bbox": [100, 20, 190, 250],
             "confidence": 0.82,
             "source": "yolo",
+            "track_id": "person-1",
             "aspect_ratio": 0.39,
             "fall_candidate": False,
             "presence_candidate": False,
@@ -732,6 +778,7 @@ def make_upright_analysis() -> dict:
             "bbox": [100, 20, 190, 250],
             "confidence": 0.78,
             "source": "rtmpose",
+            "track_id": "person-1",
             "posture": "standing_or_sitting",
             "person_evidence_eligible": True,
             "fall_score": 0.10,
@@ -758,6 +805,33 @@ def make_upright_analysis() -> dict:
         },
         "tags": ["person_detected", "pose_detected"],
     }
+
+
+def make_recovery_analysis(posture: str, track_id: str, *, confirmed: bool) -> dict:
+    analysis = make_upright_analysis()
+    for item in [*analysis["people"], *analysis["poses"]]:
+        item["track_id"] = track_id
+    analysis["poses"][0]["posture"] = posture
+    analysis["poses"][0]["posture_confidence"] = 0.82
+    analysis["pose_factor_graph"] = {
+        "fast_fall_candidate": False,
+        "fast_fall_score": 0.0,
+        "fast_fall_track": None,
+        "tracks": [],
+        "physical_recoveries": [{
+            "schema_version": "gohome-physical-recovery-v1",
+            "confirmed": True,
+            "reason": "same_track_stable_upright",
+            "track_id": track_id,
+            "posture": posture,
+            "confidence": 0.82,
+            "bbox": list(analysis["poses"][0]["bbox"]),
+            "sample_count": 2,
+            "required_samples": 2,
+            "identity_match": "same_track",
+        }] if confirmed else [],
+    }
+    return analysis
 
 
 def make_bending_analysis() -> dict:

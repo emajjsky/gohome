@@ -348,10 +348,39 @@ def main() -> None:
 
     engine.reset_camera(1)
     engine.update(1, frame("lying", [220, 220, 540, 350], motion=0.0), monotonic_at=0.0)
-    engine.update(1, frame("standing", [250, 20, 340, 320], motion=0.02), monotonic_at=181.0)
-    recovered = engine.update(1, frame("standing", [252, 20, 342, 320], motion=0.01), monotonic_at=182.0)
+    squatting = engine.update(1, frame("squatting", [250, 170, 350, 350], motion=0.02), monotonic_at=181.0)
+    bending = engine.update(1, frame("bending", [245, 130, 365, 345], motion=0.02), monotonic_at=182.0)
+    resumed_after_low_postures = engine.update(1, frame("lying", [220, 220, 540, 350], motion=0.0), monotonic_at=183.0)
+    if squatting["physical_recoveries"] or bending["physical_recoveries"]:
+        raise SystemExit("transitional low postures must not produce physical recovery evidence")
+    if not resumed_after_low_postures["prolonged_floor_lying_candidate"]:
+        raise SystemExit("squatting and bending must not clear the active floor episode")
+
+    bystander = engine.update(
+        1,
+        frame("standing", [40, 20, 130, 320], track_id="c1-bystander"),
+        monotonic_at=184.0,
+    )
+    if bystander["physical_recoveries"]:
+        raise SystemExit("an unrelated standing track must not recover the floor episode")
+    resumed_after_bystander = engine.update(1, frame("lying", [220, 220, 540, 350], motion=0.0), monotonic_at=185.0)
+    if not resumed_after_bystander["prolonged_floor_lying_candidate"]:
+        raise SystemExit("a standing bystander must not clear another track's floor episode")
+
+    engine.update(1, frame("standing", [250, 20, 340, 320], motion=0.02), monotonic_at=186.0)
+    recovered = engine.update(1, frame("standing", [252, 20, 342, 320], motion=0.01), monotonic_at=187.0)
     if recovered["prolonged_floor_lying_candidate"]:
         raise SystemExit("two upright recovery samples must close prolonged lying state")
+    recovery = recovered["physical_recoveries"][0] if recovered["physical_recoveries"] else {}
+    if recovery.get("track_id") != "c1-p1" or recovery.get("sample_count") != 2:
+        raise SystemExit(f"stable standing must emit same-track recovery evidence: {recovery}")
+
+    seated_recovery_engine = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    seated_recovery_engine.update(1, frame("lying", [220, 220, 540, 350]), monotonic_at=0.0)
+    seated_recovery_engine.update(1, frame("sitting", [250, 120, 360, 340]), monotonic_at=181.0)
+    seated_recovered = seated_recovery_engine.update(1, frame("sitting", [252, 120, 362, 340]), monotonic_at=182.0)
+    if not seated_recovered["physical_recoveries"]:
+        raise SystemExit("stable same-track seated posture must emit recovery evidence")
 
     print(json.dumps({
         "ok": True,
@@ -374,6 +403,8 @@ def main() -> None:
         "edge_occlusion_preserves_lying_state": resumed_floor["prolonged_floor_lying_candidate"],
         "slow_lying_requires_confirmation": not slow_lie_track.get("review_ready"),
         "recovery_verified": True,
+        "transitional_postures_preserve_floor_episode": True,
+        "bystander_recovery_suppressed": True,
     }, ensure_ascii=False, indent=2))
 
 

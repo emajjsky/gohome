@@ -5,6 +5,8 @@ import math
 import time
 from typing import Any, Dict
 
+from .posture_semantics import TRANSITIONAL_LOW_POSTURES, is_physical_recovery_posture
+
 
 IMMEDIATE_BASELINE_POSTURES = {"standing", "standing_or_sitting"}
 STABLE_BASELINE_POSTURES = {
@@ -108,22 +110,16 @@ class PoseFactorGraphEngine:
                 fall_transition_motion_score=fall_transition_motion_score,
             )
 
-            lying = bool(
-                posture == "lying"
-                and posture_confidence >= self.min_posture_confidence
-                and not frame_edge_clipped
+            recovery = self._update_floor_episode(
+                state,
+                target=target,
+                posture=posture,
+                posture_confidence=posture_confidence,
+                normal_lying_zone=normal_lying_zone,
+                frame_edge_clipped=frame_edge_clipped,
+                timestamp=timestamp,
+                now_mono=now_mono,
             )
-            if not frame_edge_clipped:
-                if lying and not normal_lying_zone:
-                    if state.get("lying_started_monotonic") is None:
-                        state["lying_started_monotonic"] = now_mono
-                        state["lying_started_at"] = timestamp
-                    state["recovery_count"] = 0
-                else:
-                    state["recovery_count"] = int(state.get("recovery_count") or 0) + 1
-                    if state["recovery_count"] >= self.recovery_samples:
-                        state.pop("lying_started_monotonic", None)
-                        state.pop("lying_started_at", None)
 
             lying_started = state.get("lying_started_monotonic")
             lying_duration = max(0.0, now_mono - float(lying_started)) if lying_started is not None else 0.0
@@ -136,6 +132,7 @@ class PoseFactorGraphEngine:
                 motion_score=motion_score,
                 lying_duration=lying_duration,
                 lying_started_at=state.get("lying_started_at"),
+                physical_recovery=recovery,
                 fall_min_vertical_drop=fall_min_vertical_drop,
                 fall_transition_motion_score=fall_transition_motion_score,
             ))
@@ -149,6 +146,12 @@ class PoseFactorGraphEngine:
 
         best_fast = max(graphs, key=lambda item: float(item.get("fast_fall_score") or 0.0), default=None)
         prolonged = [item for item in graphs if item.get("prolonged_floor_lying_candidate")]
+        recoveries = [
+            item["physical_recovery"]
+            for item in graphs
+            if isinstance(item.get("physical_recovery"), dict)
+            and item["physical_recovery"].get("confirmed")
+        ]
         result = {
             "schema_version": self.version,
             "camera_id": camera_id,
@@ -159,12 +162,80 @@ class PoseFactorGraphEngine:
             "fast_fall_track": best_fast if best_fast and best_fast.get("fast_fall_candidate") else None,
             "prolonged_floor_lying_candidate": bool(prolonged),
             "prolonged_floor_lying_tracks": prolonged,
+            "physical_recoveries": recoveries,
         }
         analysis["pose_factor_graph"] = result
         return result
 
     def reset_camera(self, camera_id: int) -> None:
         self._states.pop(int(camera_id), None)
+
+    def _update_floor_episode(
+        self,
+        state: Dict[str, Any],
+        *,
+        target: Dict[str, Any],
+        posture: str,
+        posture_confidence: float,
+        normal_lying_zone: bool,
+        frame_edge_clipped: bool,
+        timestamp: str,
+        now_mono: float,
+    ) -> Dict[str, Any]:
+        had_floor_episode = state.get("lying_started_monotonic") is not None
+        lying = bool(
+            posture == "lying"
+            and posture_confidence >= self.min_posture_confidence
+            and not frame_edge_clipped
+            and not normal_lying_zone
+        )
+        recovery = {
+            "schema_version": "gohome-physical-recovery-v1",
+            "confirmed": False,
+            "reason": "no_active_floor_episode",
+            "track_id": str(target.get("track_id") or ""),
+            "posture": posture,
+            "confidence": round(posture_confidence, 4),
+            "bbox": [round(float(value), 1) for value in target.get("bbox") or []],
+            "sample_count": 0,
+            "required_samples": self.recovery_samples,
+            "identity_match": "same_track",
+        }
+        if lying:
+            if not had_floor_episode:
+                state["lying_started_monotonic"] = now_mono
+                state["lying_started_at"] = timestamp
+            state["recovery_count"] = 0
+            recovery["reason"] = "floor_lying_active"
+            return recovery
+        if not had_floor_episode:
+            state["recovery_count"] = 0
+            return recovery
+        if frame_edge_clipped:
+            state["recovery_count"] = 0
+            recovery["reason"] = "frame_edge_clipped"
+            return recovery
+        if not is_physical_recovery_posture(posture, posture_confidence):
+            state["recovery_count"] = 0
+            recovery["reason"] = (
+                "transitional_low_posture"
+                if posture in TRANSITIONAL_LOW_POSTURES
+                else "upright_posture_not_confirmed"
+            )
+            return recovery
+
+        sample_count = int(state.get("recovery_count") or 0) + 1
+        state["recovery_count"] = sample_count
+        recovery.update({
+            "confirmed": sample_count >= self.recovery_samples,
+            "reason": "same_track_stable_upright" if sample_count >= self.recovery_samples else "awaiting_stable_upright",
+            "sample_count": sample_count,
+        })
+        if recovery["confirmed"]:
+            recovery["observed_at"] = timestamp
+            state.pop("lying_started_monotonic", None)
+            state.pop("lying_started_at", None)
+        return recovery
 
     def _update_baseline(
         self,
@@ -305,6 +376,7 @@ class PoseFactorGraphEngine:
         motion_score: float,
         lying_duration: float,
         lying_started_at: Any,
+        physical_recovery: Dict[str, Any],
         fall_min_vertical_drop: float,
         fall_transition_motion_score: float,
     ) -> Dict[str, Any]:
@@ -439,6 +511,7 @@ class PoseFactorGraphEngine:
             ),
             "lying_started_at": lying_started_at,
             "lying_duration_seconds": round(lying_duration, 3),
+            "physical_recovery": physical_recovery,
             "sustained_floor_lying_min_vertical_drop": round(sustained_min_vertical_drop, 4),
             "fall_min_vertical_drop": round(fall_min_vertical_drop, 4),
             "fall_transition_motion_score": round(fall_transition_motion_score, 4),
