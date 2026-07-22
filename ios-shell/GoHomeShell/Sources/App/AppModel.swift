@@ -21,6 +21,8 @@ final class AppModel: ObservableObject {
                 .split(separator: "=", maxSplits: 1).last,
                let step = OnboardingStep(rawValue: String(rawStep)) {
                 route = .onboarding(step)
+            } else if arguments.contains("-uiTestMain") {
+                route = .main
             } else {
                 route = .signedOut
             }
@@ -33,7 +35,7 @@ final class AppModel: ObservableObject {
                     return
                 }
                 if let scope = await self?.sessionContextStore.scope() {
-                    await self?.restore(scope: scope)
+                    self?.restore(scope: scope)
                 } else {
                     await self?.loadAuthenticatedState()
                 }

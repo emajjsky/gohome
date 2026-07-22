@@ -96,7 +96,165 @@ struct BootstrapResponse: Codable, Equatable, Sendable {
 }
 
 struct HomeResponse: Codable, Equatable, Sendable {
+    let family: AppFamily?
+    let weather: HomeWeather?
+    let calendar: [HomeCalendarEvent]
+    let distance: HomeDistance?
+    let criticalAlert: HomeCriticalAlert?
+    let articles: [HomeArticle]
+    let cameras: [HomeCamera]
     let revision: String
+
+    enum CodingKeys: String, CodingKey {
+        case family, weather, calendar, distance, articles, cameras, revision
+        case criticalAlert = "critical_alert"
+    }
+}
+
+struct HomeWeather: Codable, Equatable, Sendable {
+    let city: String
+    let temperature: Double
+    let condition: String
+
+    init(city: String, temperature: Double, condition: String) {
+        self.city = city
+        self.temperature = temperature
+        self.condition = condition
+    }
+
+    enum CodingKeys: String, CodingKey { case city, temperature, condition }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        city = try values.decodeIfPresent(String.self, forKey: .city) ?? ""
+        condition = try values.decodeIfPresent(String.self, forKey: .condition) ?? ""
+        if let number = try? values.decode(Double.self, forKey: .temperature) {
+            temperature = number
+        } else if let text = try? values.decode(String.self, forKey: .temperature), let number = Double(text) {
+            temperature = number
+        } else {
+            throw DecodingError.typeMismatch(
+                Double.self,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Expected numeric weather temperature")
+            )
+        }
+    }
+}
+
+struct HomeCalendarEvent: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let title: String
+    let startsAt: String
+
+    init(id: String, title: String, startsAt: String) {
+        self.id = id
+        self.title = title
+        self.startsAt = startsAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title
+        case startsAt = "starts_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeFlexibleID(forKey: .id)
+        title = try values.decode(String.self, forKey: .title)
+        startsAt = try values.decode(String.self, forKey: .startsAt)
+    }
+}
+
+struct HomeDistance: Codable, Equatable, Sendable {
+    let meters: Double
+    let travelMinutes: Int?
+    let userLatitude: Double?
+    let userLongitude: Double?
+    let homeLatitude: Double?
+    let homeLongitude: Double?
+
+    init(
+        meters: Double,
+        travelMinutes: Int?,
+        userLatitude: Double? = nil,
+        userLongitude: Double? = nil,
+        homeLatitude: Double? = nil,
+        homeLongitude: Double? = nil
+    ) {
+        self.meters = meters
+        self.travelMinutes = travelMinutes
+        self.userLatitude = userLatitude
+        self.userLongitude = userLongitude
+        self.homeLatitude = homeLatitude
+        self.homeLongitude = homeLongitude
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case meters
+        case travelMinutes = "travel_minutes"
+        case userLatitude = "user_latitude"
+        case userLongitude = "user_longitude"
+        case homeLatitude = "home_latitude"
+        case homeLongitude = "home_longitude"
+    }
+}
+
+struct HomeCriticalAlert: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let title: String
+    let level: String
+    let acknowledged: Bool
+
+    init(id: String, title: String, level: String, acknowledged: Bool) {
+        self.id = id
+        self.title = title
+        self.level = level
+        self.acknowledged = acknowledged
+    }
+
+    enum CodingKeys: String, CodingKey { case id, title, level, acknowledged }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeFlexibleID(forKey: .id)
+        title = try values.decodeIfPresent(String.self, forKey: .title) ?? "需要关注"
+        level = try values.decodeIfPresent(String.self, forKey: .level) ?? "critical"
+        acknowledged = try values.decodeIfPresent(Bool.self, forKey: .acknowledged) ?? false
+    }
+}
+
+struct HomeArticle: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let category: String
+    let title: String
+    let summary: String
+    let imageURL: String
+    let sourceName: String
+    let sourceURL: String
+    let publishedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, category, title, summary
+        case imageURL = "image_url"
+        case sourceName = "source_name"
+        case sourceURL = "source_url"
+        case publishedAt = "published_at"
+    }
+}
+
+struct HomeCamera: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let name: String
+    let status: String?
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeFlexibleID(forKey: .id)
+        name = try values.decodeIfPresent(String.self, forKey: .name) ?? "摄像头"
+        status = try values.decodeIfPresent(String.self, forKey: .status)
+    }
+
+    enum CodingKeys: String, CodingKey { case id, name, status }
 }
 
 struct ElderProfile: Codable, Equatable, Sendable {

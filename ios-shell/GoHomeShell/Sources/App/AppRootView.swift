@@ -29,27 +29,19 @@ struct AppRootView: View {
                     onComplete: { model.reloadAfterOnboardingStep() }
                 )
             case .main:
-                MainPlaceholder()
+                if let bootstrap = model.bootstrap.value, let familyID = bootstrap.activeFamilyID {
+                    MainTabView(
+                        repository: environment.repository,
+                        scope: CacheScope(userID: bootstrap.user.id, familyID: familyID),
+                        unreadCount: bootstrap.unreadCount
+                    )
+                } else {
+                    MainTabView.preview
+                }
             }
         }
         .task {
             model.start(authStore: environment.authStore)
         }
-    }
-}
-
-private struct MainPlaceholder: View {
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "house.fill")
-                .font(.system(size: 34, weight: .semibold))
-                .foregroundStyle(Color.yellow.opacity(0.9))
-            Text("回家")
-                .font(.largeTitle.bold())
-            Text("配置已完成")
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.white.ignoresSafeArea())
     }
 }

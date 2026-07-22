@@ -16,9 +16,18 @@ struct AppEnvironment {
         let sessionContextStore = SessionContextStore()
         let cache = try DiskCache()
         let client = APIClient(baseURL: baseURL) { try? await authStore.token() }
-        let repository = AppRepository(cache: cache) {
-            try await client.send(Endpoint(path: "/api/v2/app/bootstrap"))
-        }
+        let repository = AppRepository(
+            cache: cache,
+            bootstrapLoader: {
+                try await client.send(Endpoint(path: "/api/v2/app/bootstrap"))
+            },
+            homeLoader: { familyID in
+                try await client.send(Endpoint(
+                    path: "/api/v2/home",
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                ))
+            }
+        )
         return AppEnvironment(
             authStore: authStore,
             sessionContextStore: sessionContextStore,
