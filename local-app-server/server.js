@@ -557,7 +557,26 @@ function createLocalAppServer(options = {}) {
     const nativeRepository = options.nativeRepository || (store.kind === "postgres"
         ? new PostgresNativeRepository(store.pool)
         : new JsonNativeRepository(store.db));
-    const nativeRouter = options.nativeRouter || new NativeApiRouter(new NativeViewService(nativeRepository));
+    const nativeRouter = options.nativeRouter || new NativeApiRouter(new NativeViewService(nativeRepository, {
+        homeEnricher: async ({ familyId, source }) => {
+            if (source.weather) return source;
+            const profile = source.elder || existingElderProfile(familyId, "elder_primary") || {};
+            const weather = await fetchWeatherSignal({
+                familyId,
+                city: profile.city || "杭州",
+            });
+            return {
+                ...source,
+                weather: weather.available
+                    ? {
+                        city: weather.city || profile.city || "",
+                        temperature: weather.temperature_c,
+                        condition: weather.condition || "",
+                    }
+                    : null,
+            };
+        },
+    }));
     const playbackTickets = new Map();
     const boxAdminSessions = new Map();
     const providerCache = new Map();

@@ -52,4 +52,15 @@ final class MJPEGStreamClientTests: XCTestCase {
 
         XCTAssertEqual(frames, [first, second])
     }
+
+    func testParserExtractsMultipleFramesFromNetworkSizedChunks() {
+        var parser = MJPEGFrameParser()
+        let first = Data([0xff, 0xd8, 0x01, 0xff, 0xd9])
+        let second = Data([0xff, 0xd8, 0x02, 0xff, 0xd9])
+        let payload = Data(repeating: 0x2d, count: 200) + first + Data(repeating: 0x0d, count: 40) + second
+
+        let frames = parser.append(payload)
+
+        XCTAssertEqual(frames, [first, second])
+    }
 }

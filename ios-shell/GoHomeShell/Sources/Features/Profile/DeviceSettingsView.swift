@@ -136,6 +136,36 @@ struct RuleSettingsView: View {
                 }
 
                 if let rules = model.state.value?.rules {
+                    ProfileSection(title: "检测频率") {
+                        ruleNumber(
+                            "抽帧间隔",
+                            value: rules.captureIntervalSeconds,
+                            range: 1...60,
+                            step: 1,
+                            formatted: "\(rules.captureIntervalSeconds) 秒"
+                        ) {
+                            var next = rules; next.captureIntervalSeconds = $0; model.saveRules(next)
+                        }
+                        ruleNumber(
+                            "静止阈值",
+                            value: rules.noMotionSeconds,
+                            range: 10...86_400,
+                            step: 30,
+                            formatted: durationText(rules.noMotionSeconds)
+                        ) {
+                            var next = rules; next.noMotionSeconds = $0; model.saveRules(next)
+                        }
+                        ruleNumber(
+                            "无人阈值",
+                            value: rules.noPersonSeconds,
+                            range: 10...86_400,
+                            step: 30,
+                            formatted: durationText(rules.noPersonSeconds)
+                        ) {
+                            var next = rules; next.noPersonSeconds = $0; model.saveRules(next)
+                        }
+                    }
+
                     ProfileSection(title: "视觉守护") {
                         ruleToggle("人物出现", symbol: "person.fill", value: rules.personDetectionEnabled) {
                             var next = rules; next.personDetectionEnabled = $0; model.saveRules(next)
@@ -200,6 +230,35 @@ struct RuleSettingsView: View {
         .tint(GoHomeTheme.ginger)
         .frame(minHeight: 50)
         .disabled(!model.canEditRules || model.savingRules)
+    }
+
+    private func ruleNumber(
+        _ title: String,
+        value: Int,
+        range: ClosedRange<Int>,
+        step: Int,
+        formatted: String,
+        update: @escaping (Int) -> Void
+    ) -> some View {
+        Stepper(value: Binding(get: { value }, set: update), in: range, step: step) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.ink)
+                Spacer()
+                Text(formatted)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            }
+        }
+        .frame(minHeight: 50)
+        .disabled(!model.canEditRules || model.savingRules)
+    }
+
+    private func durationText(_ seconds: Int) -> String {
+        if seconds >= 3_600, seconds.isMultiple(of: 3_600) { return "\(seconds / 3_600) 小时" }
+        if seconds >= 60, seconds.isMultiple(of: 60) { return "\(seconds / 60) 分钟" }
+        return "\(seconds) 秒"
     }
 }
 

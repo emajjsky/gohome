@@ -40,7 +40,13 @@ test('native bootstrap and home are session-scoped, modular, sourced, and cachea
         weather: { city: '上海', temperature: 28, condition: '晴' },
         calendar: [{ id: 'calendar-1', title: '周末', starts_at: '2026-07-25T00:00:00.000Z' }],
         distance: { meters: 12800, travel_minutes: 35 },
-        critical_alert: null,
+        critical_alert: {
+          id: 'alert-1',
+          summary: '客厅出现需要确认的情况',
+          level: 'critical',
+          acknowledged: false,
+          payload: { raw_pose_evidence: 'must-not-leak-to-home' },
+        },
         cameras: [{ id: 'camera-1', name: '客厅' }],
         articles: [
           { id: 'article-1', title: '城市公园本周开放夜游', url: 'https://news.example.com/a', source_name: '城市发布' },
@@ -84,6 +90,13 @@ test('native bootstrap and home are session-scoped, modular, sourced, and cachea
     assert.deepEqual(home.weather, { city: '上海', temperature: 28, condition: '晴' });
     assert.equal(home.calendar.length, 1);
     assert.equal(home.distance.meters, 12800);
+    assert.deepEqual(home.critical_alert, {
+      id: 'alert-1',
+      title: '客厅出现需要确认的情况',
+      level: 'critical',
+      acknowledged: false,
+    });
+    assert.equal(JSON.stringify(home).includes('raw_pose_evidence'), false);
     assert.equal(home.articles.length, 1);
     assert.equal(home.articles[0].source_url, 'https://news.example.com/a');
 

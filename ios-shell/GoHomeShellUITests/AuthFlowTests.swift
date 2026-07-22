@@ -12,5 +12,9 @@ final class AuthFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["auth-submit-button"].exists)
         XCTAssertTrue(app.segmentedControls["auth-mode-picker"].exists)
         XCTAssertFalse(app.webViews.firstMatch.exists)
+
+        app.textFields["code-input"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["auth-submit-button"].isHittable)
     }
 }

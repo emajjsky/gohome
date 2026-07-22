@@ -2,6 +2,12 @@ import SwiftUI
 
 struct AuthView: View {
     @StateObject private var viewModel: AuthViewModel
+    @FocusState private var focusedField: Field?
+
+    private enum Field: Hashable {
+        case phone
+        case code
+    }
 
     init(viewModel: AuthViewModel) {
         _viewModel = StateObject(wrappedValue: viewModel)
@@ -44,6 +50,7 @@ struct AuthView: View {
                     TextField("输入手机号", text: $viewModel.phone)
                         .keyboardType(.phonePad)
                         .textContentType(.telephoneNumber)
+                        .focused($focusedField, equals: .phone)
                         .padding(.horizontal, 16)
                         .frame(height: 52)
                         .background(Color.black.opacity(0.045), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -58,6 +65,7 @@ struct AuthView: View {
                         TextField("输入验证码", text: $viewModel.code)
                             .keyboardType(.numberPad)
                             .textContentType(.oneTimeCode)
+                            .focused($focusedField, equals: .code)
                             .padding(.horizontal, 16)
                             .frame(height: 52)
                             .background(Color.black.opacity(0.045), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -92,7 +100,17 @@ struct AuthView: View {
                         .accessibilityIdentifier("auth-error")
                 }
 
+                Spacer(minLength: 24)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 36)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(Color.white.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 10) {
                 Button(viewModel.isSubmitting ? "正在进入" : viewModel.mode.title) {
+                    focusedField = nil
                     viewModel.submit()
                 }
                 .font(.system(size: 16, weight: .bold))
@@ -101,20 +119,25 @@ struct AuthView: View {
                 .frame(height: 54)
                 .background(Color.black, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .disabled(!viewModel.canSubmit)
-                .opacity(viewModel.canSubmit ? 1 : 0.35)
-                .padding(.top, 28)
+                .opacity(viewModel.canSubmit ? 1 : 0.55)
                 .accessibilityIdentifier("auth-submit-button")
 
                 Text("登录即表示你同意隐私政策与服务条款")
                     .font(.system(size: 12))
                     .foregroundStyle(Color.black.opacity(0.38))
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 18)
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 36)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            .background(Color.white)
         }
-        .scrollDismissesKeyboard(.interactively)
-        .background(Color.white.ignoresSafeArea())
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("完成") { focusedField = nil }
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.black)
+            }
+        }
     }
 }

@@ -8,6 +8,7 @@ final class AppModel: ObservableObject {
     private let repository: AppRepository
     private let sessionContextStore: SessionContextStore
     private var bootstrapTask: Task<Void, Never>?
+    private var hasStarted = false
 
     init(repository: AppRepository, sessionContextStore: SessionContextStore) {
         self.repository = repository
@@ -15,6 +16,8 @@ final class AppModel: ObservableObject {
     }
 
     func start(authStore: KeychainAuthStore) {
+        guard !hasStarted else { return }
+        hasStarted = true
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("-uiTestState") {
             if let rawStep = arguments.first(where: { $0.hasPrefix("-uiTestOnboardingStep=") })?
@@ -46,6 +49,8 @@ final class AppModel: ObservableObject {
     }
 
     func authenticated() {
+        route = .launching
+        bootstrapTask?.cancel()
         Task { [weak self] in await self?.loadAuthenticatedState() }
     }
 

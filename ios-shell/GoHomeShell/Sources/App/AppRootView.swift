@@ -15,7 +15,9 @@ struct AppRootView: View {
     var body: some View {
         Group {
             switch model.route {
-            case .launching, .signedOut:
+            case .launching:
+                AppLaunchView()
+            case .signedOut:
                 AuthView(viewModel: AuthViewModel(
                     client: environment.apiClient,
                     authStore: environment.authStore,
@@ -49,8 +51,21 @@ struct AppRootView: View {
                 }
             }
         }
+        .animation(.easeOut(duration: 0.18), value: model.route)
         .task {
             model.start(authStore: environment.authStore)
         }
+    }
+}
+
+private struct AppLaunchView: View {
+    var body: some View {
+        ZStack {
+            Color.white.ignoresSafeArea()
+            ProgressView()
+                .tint(.black)
+                .controlSize(.regular)
+        }
+        .accessibilityLabel("正在进入回家")
     }
 }

@@ -33,6 +33,20 @@ function fixture() {
     events: [],
     calendar_events: [],
     content_recommendations: [],
+    care_cards: [{
+      id: 'card-a',
+      family_id: 'family-a',
+      card_date: '2026-07-21',
+      content_recommendations: [{
+        type: 'search_result',
+        module: 'local_hotspots',
+        title: '社区公园本周开放夜游',
+        summary: '官方发布的本周活动安排。',
+        source: 'city.example.com',
+        url: 'https://city.example.com/night',
+        image_url: 'https://city.example.com/night.jpg',
+      }],
+    }],
   };
 }
 
@@ -48,6 +62,7 @@ test('JSON repository isolates every native read and write by family membership'
   assert.throws(() => repo.messagesForFamily('user-a', 'family-b'), /family access denied/);
   assert.throws(() => repo.productsForFamily('user-a', 'family-b'), /family access denied/);
   assert.throws(() => repo.productPreferences('user-a', 'family-b'), /family access denied/);
+  assert.equal(repo.homeForFamily('user-a', 'family-a').articles[0].title, '社区公园本周开放夜游');
 });
 
 test('JSON repository records message actions idempotently', () => {

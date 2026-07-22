@@ -92,12 +92,21 @@ actor MJPEGStreamClient: CameraStreamClient {
             }
 
             var parser = MJPEGFrameParser()
+            var chunk = Data()
+            chunk.reserveCapacity(16 * 1024)
             for try await byte in bytes {
                 try Task.checkCancellation()
                 guard generation == self.generation else { throw CancellationError() }
-                if let frame = parser.append(byte) {
-                    continuation.yield(frame)
+                chunk.append(byte)
+                if chunk.count >= 16 * 1024 {
+                    for frame in parser.append(chunk) {
+                        continuation.yield(frame)
+                    }
+                    chunk.removeAll(keepingCapacity: true)
                 }
+            }
+            for frame in parser.append(chunk) {
+                continuation.yield(frame)
             }
             continuation.finish()
         } catch is CancellationError {
@@ -113,30 +122,33 @@ struct MJPEGFrameParser: Sendable {
     private let maxBufferSize = 4 * 1024 * 1024
 
     mutating func append(_ byte: UInt8) -> Data? {
-        buffer.append(byte)
-        guard buffer.count <= maxBufferSize else {
-            buffer.removeAll(keepingCapacity: true)
-            return nil
-        }
-        guard let start = buffer.range(of: Data([0xff, 0xd8]))?.lowerBound else {
-            trimIfNeeded()
-            return nil
-        }
-        guard let endRange = buffer.range(of: Data([0xff, 0xd9]), in: start..<buffer.endIndex) else {
-            trimIfNeeded(keepingFrom: start)
-            return nil
-        }
-        let end = endRange.upperBound
-        let frame = Data(buffer[start..<end])
-        buffer.removeSubrange(..<end)
-        return frame
+        append(Data([byte])).first
     }
 
-    private mutating func trimIfNeeded(keepingFrom start: Data.Index? = nil) {
-        if let start {
-            if start > 0 { buffer.removeSubrange(..<start) }
-        } else if buffer.count > maxBufferSize {
-            buffer.removeFirst(buffer.count - maxBufferSize)
+    mutating func append(_ data: Data) -> [Data] {
+        guard !data.isEmpty else { return [] }
+        buffer.append(data)
+        if buffer.count > maxBufferSize {
+            buffer = Data(buffer.suffix(maxBufferSize))
         }
+
+        var frames: [Data] = []
+        while let start = buffer.range(of: Data([0xff, 0xd8]))?.lowerBound {
+            if start > buffer.startIndex {
+                buffer.removeSubrange(buffer.startIndex..<start)
+            }
+            guard let endRange = buffer.range(
+                of: Data([0xff, 0xd9]),
+                in: buffer.startIndex..<buffer.endIndex
+            ) else { break }
+            let end = endRange.upperBound
+            frames.append(Data(buffer[buffer.startIndex..<end]))
+            buffer.removeSubrange(buffer.startIndex..<end)
+        }
+
+        if frames.isEmpty, buffer.range(of: Data([0xff, 0xd8])) == nil, buffer.count > 1 {
+            buffer = buffer.last == 0xff ? Data([0xff]) : Data()
+        }
+        return frames
     }
 }

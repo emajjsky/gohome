@@ -41,9 +41,20 @@ function articleView(article) {
     };
 }
 
+function criticalAlertView(event) {
+    if (!event) return null;
+    return {
+        id: String(event.id || ""),
+        title: String(event.summary || event.title || "需要确认一条安全提醒").trim(),
+        level: String(event.level || "critical"),
+        acknowledged: Boolean(event.acknowledged),
+    };
+}
+
 class NativeViewService {
-    constructor(repository) {
+    constructor(repository, { homeEnricher = null } = {}) {
         this.repository = repository;
+        this.homeEnricher = homeEnricher;
     }
 
     async bootstrapForUser(userId) {
@@ -66,13 +77,16 @@ class NativeViewService {
             error.statusCode = 400;
             throw error;
         }
-        const source = await this.repository.homeForFamily(userId, familyId);
+        const baseSource = await this.repository.homeForFamily(userId, familyId);
+        const source = this.homeEnricher
+            ? await this.homeEnricher({ userId, familyId, source: baseSource })
+            : baseSource;
         const payload = {
             family: source.family || null,
             weather: source.weather || null,
             calendar: Array.isArray(source.calendar) ? source.calendar : [],
             distance: source.distance || null,
-            critical_alert: source.critical_alert || null,
+            critical_alert: criticalAlertView(source.critical_alert),
             articles: (source.articles || []).map(articleView).filter((article) => article && article.title),
             cameras: Array.isArray(source.cameras) ? source.cameras : [],
         };
@@ -134,4 +148,4 @@ class NativeViewService {
     }
 }
 
-module.exports = { NativeViewService, articleView, revisionFor };
+module.exports = { NativeViewService, articleView, criticalAlertView, revisionFor };

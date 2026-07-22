@@ -9,15 +9,15 @@ final class ProfilePermissionTests: XCTestCase {
         XCTAssertFalse(FamilyRole.allProductLabels.contains("管理员"))
     }
 
-    func testRulePatchContainsOnlyProductSwitches() throws {
+    func testRulePatchMatchesWebRuleControls() throws {
         let rules = fixtureProfile(canEdit: true).rules
         let data = try JSONEncoder().encode(rules.editablePayload)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         XCTAssertEqual(object["fall_detection_enabled"] as? Bool, true)
-        XCTAssertNil(object["fall_score_threshold"])
-        XCTAssertNil(object["yolo_confidence"])
-        XCTAssertNil(object["capture_interval_seconds"])
+        XCTAssertEqual(object["capture_interval_seconds"] as? Int, 5)
+        XCTAssertEqual(object["no_motion_seconds"] as? Int, 900)
+        XCTAssertEqual(object["no_person_seconds"] as? Int, 900)
     }
 
     @MainActor

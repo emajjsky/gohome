@@ -43,6 +43,33 @@ function dateKeyShanghai(value = new Date()) {
     }).format(value);
 }
 
+function articlesFromCareCards(cards = [], familyId = "") {
+    const seen = new Set();
+    return [...cards]
+        .filter((card) => textId(card.family_id) === textId(familyId))
+        .sort((a, b) => String(b.card_date || b.updated_at || "").localeCompare(String(a.card_date || a.updated_at || "")))
+        .flatMap((card) => Array.isArray(card.content_recommendations) ? card.content_recommendations : [])
+        .filter((item) => item?.type === "search_result" && item.title && item.url)
+        .filter((item) => {
+            const url = String(item.url || "").trim();
+            if (!url || seen.has(url)) return false;
+            seen.add(url);
+            return true;
+        })
+        .slice(0, 30)
+        .map((item, index) => ({
+            id: String(item.id || `care-article-${index}-${Buffer.from(String(item.url)).toString("base64url").slice(0, 12)}`),
+            family_id: textId(familyId),
+            content_type: String(item.module || item.topic || "生活"),
+            title: String(item.title || ""),
+            summary: String(item.summary || ""),
+            source_name: String(item.source || ""),
+            url: String(item.url || ""),
+            metadata: { image_url: String(item.image_url || "") },
+            published_at: item.published_at || null,
+        }));
+}
+
 function actionInput(action = {}, now = Date.now()) {
     const actionType = textId(action.action_type || action.type);
     if (!ACTION_TYPES.has(actionType)) {
@@ -180,7 +207,13 @@ class JsonNativeRepository extends NativeRepository {
         const cameras = Object.values(this.db.cameras || {}).filter((camera) => textId(camera.family_id) === textId(familyId));
         const calendar = (this.db.calendar_events || []).filter((event) => textId(event.family_id) === textId(familyId));
         const events = (this.db.events || []).filter((event) => textId(event.family_id) === textId(familyId));
-        const articles = (this.db.content_recommendations || []).filter((article) => textId(article.family_id) === textId(familyId) || !article.family_id);
+        const published = (this.db.content_recommendations || []).filter((article) => (
+            (textId(article.family_id) === textId(familyId) || !article.family_id)
+            && (article.status || "published") === "published"
+        ));
+        const articles = published.length
+            ? published
+            : articlesFromCareCards(this.db.care_cards || [], familyId);
         return clone({
             family,
             elder,
@@ -313,5 +346,6 @@ module.exports = {
     NativeRepository,
     JsonNativeRepository,
     actionInput,
+    articlesFromCareCards,
     repositoryError,
 };
