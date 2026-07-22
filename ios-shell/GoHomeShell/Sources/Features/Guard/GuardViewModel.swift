@@ -32,20 +32,14 @@ final class GuardViewModel: ObservableObject {
         }
         selectionGeneration += 1
         let generation = selectionGeneration
-        let previousTask = frameTask
-        previousTask?.cancel()
+        frameTask?.cancel()
         selectedCameraID = cameraID
         latestFrame = nil
         streamState = .connecting
         frameTask = Task { [weak self, streamClient] in
-            await previousTask?.value
-            guard
-                let self,
-                !Task.isCancelled,
-                generation == self.selectionGeneration
-            else { return }
             await streamClient.stop()
             guard
+                let self,
                 !Task.isCancelled,
                 generation == self.selectionGeneration
             else { return }
@@ -74,11 +68,8 @@ final class GuardViewModel: ObservableObject {
 
     func stop() {
         selectionGeneration += 1
-        let previousTask = frameTask
-        previousTask?.cancel()
+        frameTask?.cancel()
         frameTask = Task { [streamClient] in
-            await previousTask?.value
-            guard !Task.isCancelled else { return }
             await streamClient.stop()
         }
         streamState = .idle

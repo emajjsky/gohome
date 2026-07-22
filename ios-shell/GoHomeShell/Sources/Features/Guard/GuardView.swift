@@ -58,7 +58,10 @@ struct GuardView: View {
             guard let cameraID = model.selectedCameraID ?? cameras.first?.id else { return }
             model.select(cameraID: cameraID)
         }
-        .onDisappear { isVisible = false }
+        .onDisappear {
+            isVisible = false
+            model.stop()
+        }
         .onChange(of: scenePhase) { phase in
             if phase == .background {
                 model.stop()
