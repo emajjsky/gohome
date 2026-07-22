@@ -92,6 +92,8 @@ class Storage:
         self.detections = 0
         self.evaluations = 0
         self.last_detection_analysis: dict = {}
+        self.presence_upserts = 0
+        self.presence_closes = 0
 
     def create_snapshot(self, **payload: object) -> dict:
         self.snapshots += 1
@@ -115,7 +117,12 @@ class Storage:
         return None
 
     def close_presence_session(self, **payload: object) -> None:
+        self.presence_closes += 1
         return None
+
+    def upsert_presence_session(self, **payload: object) -> dict:
+        self.presence_upserts += 1
+        return {"id": self.presence_upserts, **payload}
 
     def close_observation_log(self, **payload: object) -> None:
         return None
@@ -198,6 +205,46 @@ def main() -> None:
     if not worker._should_persist_analysis(24, confirmed_analysis, {}, rules(), now=100.25):
         raise SystemExit("formal fall candidate was delayed by the persistence throttle")
 
+    presence_snapshot = {
+        "id": 10,
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+    }
+    baseline_presence_upserts = storage.presence_upserts
+    baseline_presence_closes = storage.presence_closes
+    worker._update_presence_session(camera, presence_snapshot, {
+        "person_present": True,
+        "presence_persistence_state": "uncertain",
+    })
+    if (
+        storage.presence_upserts != baseline_presence_upserts
+        or storage.presence_closes != baseline_presence_closes
+    ):
+        raise SystemExit("weak presence must neither open nor close a durable session")
+    worker._update_presence_session(camera, presence_snapshot, {
+        "person_present": True,
+        "person_count": 1,
+        "credible_person_present": True,
+        "credible_person_count": 1,
+        "credible_track_ids": ["c24-p1"],
+        "presence_persistence_state": "visible",
+        "presence_quality": {"schema_version": "presence-evidence-quality-v1"},
+    })
+    worker._update_presence_session(camera, presence_snapshot, {
+        "person_present": True,
+        "presence_persistence_state": "uncertain",
+    })
+    if (
+        storage.presence_upserts != baseline_presence_upserts + 1
+        or storage.presence_closes != baseline_presence_closes
+    ):
+        raise SystemExit("uncertain evidence must not fragment an active credible session")
+    worker._update_presence_session(camera, presence_snapshot, {
+        "person_present": False,
+        "presence_persistence_state": "absent",
+    })
+    if storage.presence_closes != baseline_presence_closes + 1:
+        raise SystemExit("an empty observation must close the durable presence session")
+
     print({
         "ok": True,
         "analysis_calls": 2,
@@ -207,6 +254,7 @@ def main() -> None:
         "jpeg_writes": camera_agent.saved,
         "risk_persistence_interval_seconds": 1.0,
         "formal_candidate_immediate": True,
+        "presence_quality_gate": True,
     })
 
 

@@ -581,7 +581,11 @@ class EdgeWorker:
             brightness=analysis["brightness"],
             motion_score=analysis["motion_score"],
             tags=analysis["tags"],
-            person_count=analysis.get("person_count"),
+            person_count=(
+                temporal.get("credible_person_count")
+                if "credible_person_count" in temporal
+                else analysis.get("person_count")
+            ),
             analysis=analysis,
         )
         self.temporal_engine.attach_snapshot(camera_id, snapshot)
@@ -598,7 +602,11 @@ class EdgeWorker:
             analysis=analysis,
         )
         self.last_persisted_analysis_at[camera_id] = float(persisted_at)
-        self.last_persisted_person_state[camera_id] = int(analysis.get("person_count") or 0) > 0
+        self.last_persisted_person_state[camera_id] = bool(
+            temporal.get("credible_person_present")
+            if "credible_person_present" in temporal
+            else int(analysis.get("person_count") or 0) > 0
+        )
         return snapshot, detection_result
 
     def _ephemeral_snapshot(
@@ -678,18 +686,24 @@ class EdgeWorker:
     ) -> None:
         camera_id = int(camera["id"])
         observed_at = str(snapshot.get("captured_at") or snapshot.get("created_at") or "")
-        if temporal.get("person_present"):
+        persistence_state = str(temporal.get("presence_persistence_state") or "")
+        if not persistence_state:
+            persistence_state = "visible" if temporal.get("person_present") else "absent"
+        if persistence_state == "visible":
             self.storage.upsert_presence_session(
                 camera_id=camera_id,
                 observed_at=observed_at,
-                person_count=int(temporal.get("person_count") or 1),
+                person_count=int(temporal.get("credible_person_count") or temporal.get("person_count") or 1),
                 snapshot_id=int(snapshot["id"]),
                 payload={
-                    "schema_version": "gohome-presence-session-v1",
-                    "track_ids": temporal.get("current_track_ids") or [],
+                    "schema_version": "gohome-presence-session-v2",
+                    "track_ids": temporal.get("credible_track_ids") or temporal.get("current_track_ids") or [],
                     "active_tracks": temporal.get("active_tracks") or [],
+                    "quality": temporal.get("presence_quality") or {},
                 },
             )
+            return
+        if persistence_state == "uncertain":
             return
         self.storage.close_presence_session(
             camera_id=camera_id,
@@ -871,7 +885,11 @@ class EdgeWorker:
         interval = max(1.0, float(rules.get("capture_interval_seconds") or 5.0))
         if elapsed >= interval:
             return True
-        person_present = int(analysis.get("person_count") or 0) > 0
+        person_present = bool(
+            temporal.get("credible_person_present")
+            if "credible_person_present" in temporal
+            else int(analysis.get("person_count") or 0) > 0
+        )
         if (
             elapsed >= 1.0
             and

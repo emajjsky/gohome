@@ -51,6 +51,8 @@ def main() -> None:
         raise SystemExit("nearby detections must keep the same track id")
     if second["people"][0].get("track_id") != track_id:
         raise SystemExit("analysis person must be annotated with track id")
+    if second_result.get("presence_persistence_state") != "visible":
+        raise SystemExit(f"credible person must be eligible for durable presence: {second_result}")
     engine.attach_snapshot(1, {"id": 12, "image_path": "snapshots/camera-1/12.jpg"})
     bundle = engine.evidence_bundle(1, event_type="fall_candidate", track_id=track_id)
     if bundle["snapshots"][-1]["snapshot_id"] != 12 or bundle["track_id"] != track_id:
@@ -71,6 +73,22 @@ def main() -> None:
         raise SystemExit(f"ring buffer must remain bounded, got {len(history)}")
     if engine.update(1, analysis(), monotonic_at=40.0)["active_tracks"]:
         raise SystemExit("expired tracks must be removed")
+
+    weak_presence = TemporalObservationEngine(history_size=8, track_ttl_seconds=10)
+    weak_first = weak_presence.update(
+        25,
+        analysis(person([610, 100, 640, 250], confidence=0.22, posture="unknown")),
+        monotonic_at=1.0,
+    )
+    if weak_first.get("presence_persistence_state") != "uncertain" or weak_first.get("credible_person_present"):
+        raise SystemExit(f"one-frame weak edge detection must stay out of durable presence: {weak_first}")
+    weak_second_payload = analysis(person([608, 101, 640, 252], confidence=0.30, posture="unknown"))
+    weak_second = weak_presence.update(25, weak_second_payload, monotonic_at=2.0)
+    if weak_second.get("presence_persistence_state") != "visible":
+        raise SystemExit(f"repeated model evidence above the tracked floor should become credible: {weak_second}")
+    weak_absent = weak_presence.update(25, analysis(), monotonic_at=3.0)
+    if weak_absent.get("presence_persistence_state") != "absent":
+        raise SystemExit(f"empty frame must close durable presence: {weak_absent}")
 
     evidence_engine = TemporalObservationEngine(
         history_size=12,
@@ -253,6 +271,8 @@ def main() -> None:
         "history_capacity": 8,
         "recent_evidence_snapshot_ids": [2, 3, 4],
         "dynamic_evidence_track": dynamic_evidence_track,
+        "weak_presence_first_state": weak_first.get("presence_persistence_state"),
+        "weak_presence_second_state": weak_second.get("presence_persistence_state"),
     }, ensure_ascii=False, indent=2))
 
 

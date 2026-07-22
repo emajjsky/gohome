@@ -776,6 +776,32 @@ class Storage:
         with self.connect() as conn:
             conn.execute("PRAGMA foreign_keys = OFF")
 
+            deleted["presence_sessions"] = conn.execute(
+                """
+                DELETE FROM presence_sessions
+                WHERE id IN (
+                    SELECT id FROM presence_sessions
+                    WHERE status = 'closed' AND updated_at < ?
+                    ORDER BY id
+                    LIMIT ?
+                )
+                """,
+                (cutoff, limit),
+            ).rowcount
+
+            deleted["posture_episodes"] = conn.execute(
+                """
+                DELETE FROM posture_episodes
+                WHERE id IN (
+                    SELECT id FROM posture_episodes
+                    WHERE status = 'closed' AND updated_at < ?
+                    ORDER BY id
+                    LIMIT ?
+                )
+                """,
+                (cutoff, limit),
+            ).rowcount
+
             deleted["upload_jobs"] = conn.execute(
                 """
                 DELETE FROM upload_jobs

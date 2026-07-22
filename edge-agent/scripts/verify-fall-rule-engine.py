@@ -46,6 +46,24 @@ def main() -> None:
     if no_transition_eval.candidates or no_transition_eval.state["fall_stage"] != "awaiting_transition":
         raise SystemExit("strong single-frame fall without prior upright state must wait for transition evidence")
 
+    presence_quality_engine = RuleEngine()
+    weak_presence_analysis = make_upright_analysis()
+    weak_presence_analysis["temporal_observation"] = {
+        "person_present": True,
+        "person_count": 1,
+        "credible_person_present": False,
+        "credible_person_count": 0,
+        "presence_persistence_state": "uncertain",
+    }
+    weak_presence_eval = presence_quality_engine.evaluate_snapshot(
+        camera,
+        {"id": 999},
+        weak_presence_analysis,
+        rules,
+    )
+    if weak_presence_eval.state.get("person_state") != "not_visible":
+        raise SystemExit("weak person evidence must not reset the long-absence clock")
+
     engine = RuleEngine()
     engine.evaluate_snapshot(camera, {"id": 1000}, make_upright_analysis(), rules)
     first_eval = engine.evaluate_snapshot(camera, snapshot, make_analysis(fall_score=0.62), rules)
@@ -76,6 +94,43 @@ def main() -> None:
     history_first = history_engine.evaluate_snapshot(camera, {"id": 1102}, make_analysis(fall_score=0.88), rules)
     if not history_first.state.get("fall_transition_confirmed") or history_first.state.get("fall_stage") != "suspect":
         raise SystemExit("bending transition frames must not overwrite the recent standing/sitting baseline")
+
+    real_graph = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    real_engine = RuleEngine()
+    real_upright = make_upright_analysis()
+    real_upright["image_height"] = 540
+    for item in [*real_upright["people"], *real_upright["poses"]]:
+        item["bbox"] = [416.9, 60.4, 478.7, 268.3]
+        item["track_id"] = "c24-p758"
+        item["confidence"] = 0.768
+    real_upright["poses"][0]["posture"] = "standing"
+    real_upright["poses"][0]["posture_confidence"] = 0.768
+    real_graph.update(24, real_upright, monotonic_at=0.0)
+    real_engine.evaluate_snapshot({"id": 24, "name": "冰箱上"}, {"id": 1200}, real_upright, rules)
+
+    real_lying = make_pose_fall_analysis(normal_lying_zone=False)
+    real_lying["image_height"] = 540
+    real_lying["motion_score"] = 0.0114
+    for item in [*real_lying["people"], *real_lying["poses"]]:
+        item["bbox"] = [398.0, 279.0, 527.5, 360.0]
+        item["track_id"] = "c24-p758"
+        item["confidence"] = 0.6552
+        item["posture"] = "lying"
+        item["normal_lying_zone"] = False
+    real_lying["poses"][0]["posture_confidence"] = 0.6552
+    real_graph.update(24, real_lying, monotonic_at=1.2)
+    real_review = real_engine.evaluate_snapshot(
+        {"id": 24, "name": "冰箱上"},
+        {"id": 1201},
+        real_lying,
+        rules,
+    )
+    if len(real_review.candidates) != 1:
+        raise SystemExit(f"real rapid descent must create one cloud-review event immediately: {real_review.state}")
+    if real_review.state.get("fall_confirmation_path") != "edge_cloud_review":
+        raise SystemExit(f"real rapid descent did not use the auditable cloud-review path: {real_review.state}")
+    if "云端复核" not in real_review.candidates[0].summary:
+        raise SystemExit(f"product copy must not claim final confirmation before cloud review: {real_review.candidates[0]}")
 
     clear_eval = engine.evaluate_snapshot(camera, {"id": 1003}, make_analysis(fall_candidate=False, fall_score=0.0), rules)
     if clear_eval.state["fall_stage"] != "confirmed":

@@ -19,6 +19,8 @@ def frame(
     motion: float = 0.03,
     track_id: str = "c1-p1",
     confidence: float = 0.92,
+    image_height: int = 360,
+    frame_edge_clipped: bool = False,
 ) -> dict:
     pose = {
         "track_id": track_id,
@@ -30,10 +32,11 @@ def frame(
         "normal_lying_zone": normal_zone,
         "scene_zone_id": "couch-1" if normal_zone else None,
         "scene_zone_label": "沙发" if normal_zone else None,
+        "frame_edge_clipped": frame_edge_clipped,
     }
     return {
         "image_width": 640,
-        "image_height": 360,
+        "image_height": image_height,
         "motion_score": motion,
         "people": [],
         "poses": [pose],
@@ -171,6 +174,85 @@ def main() -> None:
     if different_track["fast_fall_candidate"]:
         raise SystemExit("a distant replacement track must not inherit another person's upright history")
 
+    # Production miss from camera 24 on 2026-07-22: geometry and track continuity
+    # were strong, but the 0.6552 posture confidence previously capped the score.
+    real_sequence = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    real_sequence.update(
+        24,
+        frame(
+            "standing",
+            [416.9, 60.4, 478.7, 268.3],
+            track_id="c24-p758",
+            confidence=0.768,
+            image_height=540,
+        ),
+        monotonic_at=0.0,
+    )
+    real_fall = real_sequence.update(
+        24,
+        frame(
+            "lying",
+            [398.0, 279.0, 527.5, 360.0],
+            motion=0.0114,
+            track_id="c24-p758",
+            confidence=0.6552,
+            image_height=540,
+        ),
+        monotonic_at=1.2,
+    )
+    if not real_fall["fast_fall_candidate"]:
+        raise SystemExit(f"real rapid-descent sequence must enter cloud review: {real_fall}")
+    real_track = real_fall["fast_fall_track"] or {}
+    if not real_track.get("review_ready") or real_track.get("posture_reliability", 0) < 0.55:
+        raise SystemExit(f"real sequence must expose auditable review quality: {real_track}")
+
+    sit_engine = PoseFactorGraphEngine()
+    sit_engine.update(1, frame("standing", [250, 20, 340, 320]), monotonic_at=0.0)
+    deliberate_sit = sit_engine.update(
+        1,
+        frame("sitting", [220, 150, 360, 340], motion=0.04, confidence=0.88),
+        monotonic_at=1.0,
+    )
+    if deliberate_sit["fast_fall_candidate"]:
+        raise SystemExit("ordinary sitting must not enter fall review")
+
+    squat_engine = PoseFactorGraphEngine()
+    squat_engine.update(1, frame("standing", [250, 20, 340, 320]), monotonic_at=0.0)
+    crouch = squat_engine.update(
+        1,
+        frame("squatting", [250, 170, 350, 350], motion=0.04, confidence=0.86),
+        monotonic_at=1.0,
+    )
+    if crouch["fast_fall_candidate"]:
+        raise SystemExit("upright-to-squat movement without a horizontal body must not enter fall review")
+
+    clipped_engine = PoseFactorGraphEngine()
+    clipped_engine.update(1, frame("standing", [520, 30, 620, 320]), monotonic_at=0.0)
+    clipped = clipped_engine.update(
+        1,
+        frame(
+            "lying",
+            [500, 260, 640, 360],
+            motion=0.05,
+            confidence=0.32,
+            frame_edge_clipped=True,
+        ),
+        monotonic_at=1.0,
+    )
+    if clipped["fast_fall_candidate"]:
+        raise SystemExit("edge-clipped low-confidence person must not enter fall review")
+
+    slow_lie_engine = PoseFactorGraphEngine()
+    slow_lie_engine.update(1, frame("standing", [250, 20, 340, 320]), monotonic_at=0.0)
+    slow_lie = slow_lie_engine.update(
+        1,
+        frame("lying", [220, 220, 540, 350], motion=0.001, confidence=0.88),
+        monotonic_at=10.0,
+    )
+    slow_lie_track = slow_lie["fast_fall_track"] or slow_lie["tracks"][0]
+    if slow_lie_track.get("review_ready"):
+        raise SystemExit("slow intentional lying without current motion must require temporal confirmation")
+
     engine.reset_camera(1)
     engine.update(1, frame("lying", [220, 220, 540, 350], motion=0.0), monotonic_at=0.0)
     engine.update(1, frame("standing", [250, 20, 340, 320], motion=0.02), monotonic_at=181.0)
@@ -190,6 +272,11 @@ def main() -> None:
         "sustained_couch_suppressed": not sustained_couch["fast_fall_candidate"],
         "traversed_fast_fall": traversed_fall["fast_fall_candidate"],
         "different_track_suppressed": not different_track["fast_fall_candidate"],
+        "real_sequence_review_ready": real_track.get("review_ready"),
+        "deliberate_sit_suppressed": not deliberate_sit["fast_fall_candidate"],
+        "crouch_suppressed": not crouch["fast_fall_candidate"],
+        "edge_clipped_suppressed": not clipped["fast_fall_candidate"],
+        "slow_lying_requires_confirmation": not slow_lie_track.get("review_ready"),
         "recovery_verified": True,
     }, ensure_ascii=False, indent=2))
 

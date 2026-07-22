@@ -19,6 +19,10 @@ DEFAULT_MIN_SHAPE_SIMILARITY = 0.28
 LOW_POSTURE_CONTINUITY_SCORE_BONUS = 0.12
 DIRECTION_REVERSAL_MIN_OBSERVED_IOU = 0.30
 TRACK_MATCH_SCHEDULER_JITTER_SECONDS = 0.15
+PRESENCE_DIRECT_MIN_CONFIDENCE = 0.35
+PRESENCE_TRACKED_MIN_CONFIDENCE = 0.30
+PRESENCE_TRACKED_MIN_SAMPLES = 2
+PRESENCE_POSE_MIN_CONFIDENCE = 0.45
 
 
 class TemporalObservationEngine:
@@ -112,9 +116,14 @@ class TemporalObservationEngine:
                 "sample_count": int(track.get("sample_count") or 0) + 1,
                 "bbox_velocity": velocity,
             })
-            assigned.append({**detection, "track_id": track_id})
+            assigned.append({
+                **detection,
+                "track_id": track_id,
+                "track_sample_count": int(track["sample_count"]),
+            })
 
         self._annotate_analysis(people, poses, assigned, frame_width, frame_height)
+        credible_assigned, presence_quality = self._credible_presence(assigned)
         episode_updates, switched_closures = self._update_posture_states(camera_id, assigned, timestamp, now_mono)
         episode_closures.extend(switched_closures)
         active_tracks = [self._public_track(item) for item in tracks.values() if now_mono - float(item.get("last_seen_monotonic") or 0.0) <= self.track_ttl_seconds]
@@ -123,6 +132,13 @@ class TemporalObservationEngine:
             "observed_at": timestamp,
             "person_present": bool(assigned),
             "person_count": len(assigned),
+            "credible_person_present": bool(credible_assigned),
+            "credible_person_count": len(credible_assigned),
+            "credible_track_ids": [str(item["track_id"]) for item in credible_assigned],
+            "presence_persistence_state": (
+                "visible" if credible_assigned else "uncertain" if assigned else "absent"
+            ),
+            "presence_quality": presence_quality,
             "track_ids": current_track_ids,
             "postures": sorted({str(item.get("posture") or "unknown") for item in assigned}),
             "tracks": [self._history_track(item) for item in assigned],
@@ -140,6 +156,11 @@ class TemporalObservationEngine:
             "camera_id": camera_id,
             "person_present": observation["person_present"],
             "person_count": observation["person_count"],
+            "credible_person_present": observation["credible_person_present"],
+            "credible_person_count": observation["credible_person_count"],
+            "credible_track_ids": observation["credible_track_ids"],
+            "presence_persistence_state": observation["presence_persistence_state"],
+            "presence_quality": observation["presence_quality"],
             "current_track_ids": current_track_ids,
             "active_tracks": sorted(active_tracks, key=lambda item: item["track_id"]),
             "history_sample_count": len(history),
@@ -149,6 +170,49 @@ class TemporalObservationEngine:
         }
         analysis["temporal_observation"] = result
         return result
+
+    def _credible_presence(
+        self,
+        assigned: list[Dict[str, Any]],
+    ) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
+        credible: list[Dict[str, Any]] = []
+        decisions: list[Dict[str, Any]] = []
+        for item in assigned:
+            confidence = float(item.get("confidence") or 0.0)
+            posture = str(item.get("posture") or "unknown")
+            posture_confidence = float(item.get("posture_confidence") or 0.0)
+            sample_count = int(item.get("track_sample_count") or 0)
+            direct_model = confidence >= PRESENCE_DIRECT_MIN_CONFIDENCE
+            pose_supported = posture != "unknown" and posture_confidence >= PRESENCE_POSE_MIN_CONFIDENCE
+            repeated_model = bool(
+                sample_count >= PRESENCE_TRACKED_MIN_SAMPLES
+                and confidence >= PRESENCE_TRACKED_MIN_CONFIDENCE
+            )
+            accepted = bool(direct_model or pose_supported or repeated_model)
+            if accepted:
+                credible.append(item)
+            decisions.append({
+                "track_id": str(item.get("track_id") or ""),
+                "accepted": accepted,
+                "confidence": round(confidence, 4),
+                "posture_confidence": round(posture_confidence, 4),
+                "sample_count": sample_count,
+                "evidence": {
+                    "direct_model": direct_model,
+                    "pose_supported": pose_supported,
+                    "repeated_model": repeated_model,
+                },
+            })
+        return credible, {
+            "schema_version": "presence-evidence-quality-v1",
+            "thresholds": {
+                "direct_confidence": PRESENCE_DIRECT_MIN_CONFIDENCE,
+                "tracked_confidence": PRESENCE_TRACKED_MIN_CONFIDENCE,
+                "tracked_samples": PRESENCE_TRACKED_MIN_SAMPLES,
+                "pose_confidence": PRESENCE_POSE_MIN_CONFIDENCE,
+            },
+            "tracks": decisions,
+        }
 
     def attach_snapshot(self, camera_id: int, snapshot: Dict[str, Any]) -> None:
         history = self._histories.get(int(camera_id))

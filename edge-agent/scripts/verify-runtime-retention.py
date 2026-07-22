@@ -101,12 +101,42 @@ def main() -> None:
         )
         assert event["snapshot_id"] == protected[0]["id"]
 
+        storage.upsert_presence_session(
+            camera_id=int(camera["id"]),
+            observed_at=old,
+            person_count=1,
+            snapshot_id=int(routine[0]["id"]),
+        )
+        storage.close_presence_session(camera_id=int(camera["id"]), ended_at=old)
+        storage.upsert_posture_episode(
+            camera_id=int(camera["id"]),
+            track_id="expired-track",
+            posture="standing",
+            started_at=old,
+            confirmed_at=old,
+            last_seen_at=old,
+            sample_count=2,
+            mean_confidence=0.8,
+            max_confidence=0.9,
+            snapshot_id=int(routine[0]["id"]),
+        )
+        storage.close_posture_episode(
+            camera_id=int(camera["id"]),
+            track_id="expired-track",
+            ended_at=old,
+        )
+        with storage.connect() as conn:
+            conn.execute("UPDATE presence_sessions SET created_at = ?, updated_at = ?", (old, old))
+            conn.execute("UPDATE posture_episodes SET created_at = ?, updated_at = ?", (old, old))
+
         result = storage.prune_runtime_history(
             snapshot_dir=snapshot_dir,
             retention_hours=24,
             batch_size=100,
         )
         assert result["deleted"]["snapshots"] == 1, result
+        assert result["deleted"]["presence_sessions"] == 1, result
+        assert result["deleted"]["posture_episodes"] == 1, result
         assert not (snapshot_dir / "camera_1/routine.jpg").exists()
         assert (snapshot_dir / "camera_1/event.jpg").exists()
         assert (snapshot_dir / "camera_1/recent.jpg").exists()

@@ -15,12 +15,16 @@ SUSTAINED_FLOOR_LYING_MIN_CONFIDENCE = 0.70
 DEFAULT_FAST_FALL_MIN_VERTICAL_DROP = 0.12
 SUSTAINED_FLOOR_LYING_DROP_TOLERANCE = 0.90
 DEFAULT_FALL_TRANSITION_MOTION_SCORE = 0.02
+FAST_FALL_MIN_EVIDENCE_SCORE = 0.72
+FAST_FALL_MIN_POSTURE_RELIABILITY = 0.55
+EVIDENCE_RELIABILITY_FLOOR = 0.75
+FAST_FALL_IMMEDIATE_REVIEW_WINDOW_SECONDS = 3.0
 
 
 class PoseFactorGraphEngine:
     """Build explainable per-track temporal factors without owning alert policy."""
 
-    version = "pose-factor-graph-v1"
+    version = "pose-factor-graph-v2"
 
     def __init__(
         self,
@@ -159,7 +163,11 @@ class PoseFactorGraphEngine:
         horizontal_distance = 1.0
         recent_upright_ok = False
         if recent_upright:
-            upright_age = max(0.0, now_mono - float(recent_upright.get("monotonic_at") or now_mono))
+            upright_monotonic = recent_upright.get("monotonic_at")
+            upright_age = max(
+                0.0,
+                now_mono - float(now_mono if upright_monotonic is None else upright_monotonic),
+            )
             upright_center = recent_upright.get("center") or center
             vertical_drop = float(center[1]) - float(upright_center[1])
             horizontal_distance = abs(float(center[0]) - float(upright_center[0]))
@@ -199,12 +207,38 @@ class PoseFactorGraphEngine:
             "low_posture": 0.20, "horizontal_body": 0.10, "motion": 0.10,
             "non_normal_lying_surface": 0.0,
         }
-        score = sum(weights[name] for name, matched in factors.items() if matched)
-        score *= max(0.55, min(1.0, confidence if confidence > 0 else 0.55))
+        factor_score = sum(weights[name] for name, matched in factors.items() if matched)
+        posture_reliability = max(0.0, min(1.0, confidence))
+        reliability_modifier = EVIDENCE_RELIABILITY_FLOOR + (
+            (1.0 - EVIDENCE_RELIABILITY_FLOOR) * posture_reliability
+        )
+        score = factor_score * reliability_modifier
+        required_factors = {
+            "recent_upright": factors["recent_upright"],
+            "vertical_drop": factors["vertical_drop"],
+            "track_or_spatial_continuity": bool(
+                factors["same_track_continuity"] or factors["spatial_consistency"]
+            ),
+            "low_posture": factors["low_posture"],
+            "horizontal_body": factors["horizontal_body"],
+            "motion_or_sustained_descent": factors["motion"],
+        }
+        quality_gate = bool(
+            posture_reliability >= FAST_FALL_MIN_POSTURE_RELIABILITY
+            and not bool(target.get("frame_edge_clipped"))
+        )
         fast_candidate = bool(
-            score >= 0.72 and factors["recent_upright"] and factors["vertical_drop"]
-            and (factors["spatial_consistency"] or factors["same_track_continuity"])
-            and factors["low_posture"]
+            score >= FAST_FALL_MIN_EVIDENCE_SCORE
+            and quality_gate
+            and all(required_factors.values())
+        )
+        immediate_review_evidence = bool(
+            motion_score >= fall_transition_motion_score
+            or (
+                upright_age is not None
+                and upright_age <= FAST_FALL_IMMEDIATE_REVIEW_WINDOW_SECONDS
+                and vertical_drop >= fall_min_vertical_drop * 1.5
+            )
         )
         prolonged_candidate = bool(
             posture == "lying" and confidence >= self.min_posture_confidence
@@ -241,6 +275,20 @@ class PoseFactorGraphEngine:
             ),
             "factors": factors,
             "factor_weights": weights,
+            "factor_score": round(factor_score, 4),
+            "posture_reliability": round(posture_reliability, 4),
+            "reliability_modifier": round(reliability_modifier, 4),
+            "quality_gate": quality_gate,
+            "required_factors": required_factors,
+            "required_factors_confirmed": all(required_factors.values()),
+            "immediate_review_evidence": immediate_review_evidence,
+            "immediate_review_window_seconds": FAST_FALL_IMMEDIATE_REVIEW_WINDOW_SECONDS,
+            "review_ready": bool(fast_candidate and immediate_review_evidence),
+            "review_policy": (
+                "immediate_cloud_verification"
+                if fast_candidate and immediate_review_evidence
+                else "temporal_confirmation_then_cloud_verification"
+            ),
             "fast_fall_score": round(score, 4),
             "fast_fall_candidate": fast_candidate,
             "prolonged_floor_lying_candidate": prolonged_candidate,
