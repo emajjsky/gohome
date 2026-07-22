@@ -6,6 +6,7 @@ actor AppRepository {
     typealias HomeLoader = @Sendable (String) async throws -> HomeResponse
     typealias HomeUpdate = @Sendable (Loadable<HomeResponse>) async -> Void
     typealias EventsLoader = @Sendable (String) async throws -> [AppEvent]
+    typealias ProductsLoader = @Sendable (String) async throws -> ProductRecommendationsResponse
     typealias EventLoader = @Sendable (String) async throws -> AppEvent
     typealias EventActionLoader = @Sendable (String, String) async throws -> AppEvent
     typealias ProfileLoader = @Sendable (String) async throws -> ProfileData
@@ -16,6 +17,7 @@ actor AppRepository {
     private let bootstrapLoader: BootstrapLoader
     private let homeLoader: HomeLoader
     private let eventsLoader: EventsLoader
+    private let productsLoader: ProductsLoader
     private let eventLoader: EventLoader
     private let eventActionLoader: EventActionLoader
     private let profileLoader: ProfileLoader
@@ -24,6 +26,7 @@ actor AppRepository {
     private var bootstrapTasks: [CacheScope: Task<BootstrapResponse, Error>] = [:]
     private var homeTasks: [CacheScope: Task<HomeResponse, Error>] = [:]
     private var eventsTasks: [CacheScope: Task<[AppEvent], Error>] = [:]
+    private var productsTasks: [CacheScope: Task<ProductRecommendationsResponse, Error>] = [:]
     private var eventTasks: [String: Task<AppEvent, Error>] = [:]
     private var profileTasks: [CacheScope: Task<ProfileData, Error>] = [:]
 
@@ -32,6 +35,7 @@ actor AppRepository {
         bootstrapLoader: @escaping BootstrapLoader,
         homeLoader: @escaping HomeLoader = { _ in throw APIError.invalidResponse },
         eventsLoader: @escaping EventsLoader = { _ in throw APIError.invalidResponse },
+        productsLoader: @escaping ProductsLoader = { _ in throw APIError.invalidResponse },
         eventLoader: @escaping EventLoader = { _ in throw APIError.invalidResponse },
         eventActionLoader: @escaping EventActionLoader = { _, _ in throw APIError.invalidResponse },
         profileLoader: @escaping ProfileLoader = { _ in throw APIError.invalidResponse },
@@ -42,6 +46,7 @@ actor AppRepository {
         self.bootstrapLoader = bootstrapLoader
         self.homeLoader = homeLoader
         self.eventsLoader = eventsLoader
+        self.productsLoader = productsLoader
         self.eventLoader = eventLoader
         self.eventActionLoader = eventActionLoader
         self.profileLoader = profileLoader
@@ -110,6 +115,28 @@ actor AppRepository {
                 value: cached,
                 isRefreshing: false,
                 staleReason: cached == nil ? error.localizedDescription : "暂时无法更新"
+            ))
+        }
+    }
+
+    func products(
+        scope: CacheScope,
+        onUpdate: @escaping @Sendable (Loadable<ProductRecommendationsResponse>) async -> Void
+    ) async {
+        let cached = try? await cache.read(ProductRecommendationsResponse.self, key: "products", scope: scope)
+        await onUpdate(Loadable(value: cached, isRefreshing: true, staleReason: nil))
+
+        do {
+            let refreshed = try await refreshProducts(scope: scope)
+            try await cache.write(refreshed, key: "products", scope: scope, ttl: 24 * 60 * 60)
+            await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
+        } catch is CancellationError {
+            await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
+        } catch {
+            await onUpdate(Loadable(
+                value: cached,
+                isRefreshing: false,
+                staleReason: cached == nil ? "推荐暂时无法更新" : "当前显示上次更新的推荐"
             ))
         }
     }
@@ -183,6 +210,14 @@ actor AppRepository {
         let task = Task { try await eventsLoader(scope.familyID) }
         eventsTasks[scope] = task
         defer { eventsTasks[scope] = nil }
+        return try await task.value
+    }
+
+    private func refreshProducts(scope: CacheScope) async throws -> ProductRecommendationsResponse {
+        if let task = productsTasks[scope] { return try await task.value }
+        let task = Task { try await productsLoader(scope.familyID) }
+        productsTasks[scope] = task
+        defer { productsTasks[scope] = nil }
         return try await task.value
     }
 

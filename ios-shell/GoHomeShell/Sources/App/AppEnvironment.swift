@@ -36,6 +36,12 @@ struct AppEnvironment {
                     ]
                 ))
             },
+            productsLoader: { familyID in
+                try await client.send(Endpoint(
+                    path: "/api/v2/products",
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                ))
+            },
             eventLoader: { eventID in
                 try await client.send(Endpoint(path: "/api/v1/events/\(eventID)"))
             },

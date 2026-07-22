@@ -10,6 +10,7 @@ struct MainTabView: View {
     let onSignOut: () -> Void
     @StateObject private var homeModel: HomeViewModel
     @StateObject private var eventsModel: EventsViewModel
+    @StateObject private var recommendationsModel: ProductRecommendationsViewModel
     @StateObject private var profileModel: ProfileViewModel
     @State private var selection: GoHomeTab = .home
     @State private var homePath = NavigationPath()
@@ -49,6 +50,7 @@ struct MainTabView: View {
         _homeModel = StateObject(wrappedValue: HomeViewModel(repository: repository, scope: scope))
         let seedEvents = ProcessInfo.processInfo.arguments.contains("-uiTestEvent") ? Self.uiTestEvents : []
         _eventsModel = StateObject(wrappedValue: EventsViewModel(repository: repository, scope: scope, seedEvents: seedEvents))
+        _recommendationsModel = StateObject(wrappedValue: ProductRecommendationsViewModel(repository: repository, scope: scope))
         let seedProfile = ProcessInfo.processInfo.arguments.contains("-uiTestProfile")
             ? Self.uiTestProfile(familyID: family.id)
             : nil
@@ -73,11 +75,7 @@ struct MainTabView: View {
                 EventsView(model: eventsModel, apiClient: apiClient)
             }
             GoHomeTabRoot(tab: .discover, path: $discoverPath) {
-                MainTabEmptyState(
-                    tab: .discover,
-                    title: "今日精选",
-                    detail: "今天还没有新的推荐"
-                )
+                ProductRecommendationsView(model: recommendationsModel)
             }
             GoHomeTabRoot(tab: .profile, path: $profilePath) {
                 ProfileView(model: profileModel, onSignOut: onSignOut)
@@ -86,7 +84,10 @@ struct MainTabView: View {
         .tint(GoHomeTheme.ink)
         .background(GoHomeTheme.paper)
         .accessibilityIdentifier("main-tab-shell")
-        .task { homeModel.start() }
+        .task {
+            homeModel.start()
+            recommendationsModel.start()
+        }
     }
 
     private static var uiTestEvents: [AppEvent] {

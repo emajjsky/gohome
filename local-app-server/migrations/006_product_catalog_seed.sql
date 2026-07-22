@@ -1,0 +1,115 @@
+begin;
+
+insert into product_catalog (
+    id,
+    category,
+    brand,
+    name,
+    summary,
+    image_url,
+    source_name,
+    source_url,
+    suitability,
+    disclosure,
+    status,
+    verified_at
+) values
+    (
+        'xiaomi-night-light-2',
+        '照明与视野',
+        '米家',
+        '米家夜灯2',
+        '暗光下感应亮起，无需摸索墙面开关。',
+        'https://i01.appmifile.com/v1/MI_18455B3E4DA706226CF7535A58E875F0267/pms_1598871831.74756530.png?thumb=1&q=85',
+        '小米商城',
+        'https://www.mi.com/mj-nightlight2',
+        '["夜间照明", "感应亮起", "无需复杂操作"]'::jsonb,
+        '无赞助或返佣关系',
+        'active',
+        now()
+    ),
+    (
+        'ikea-stopp-filt-30550208',
+        '居家防滑与安全',
+        'IKEA',
+        'STOPP FILT 地毯防滑垫',
+        '固定地毯位置，并可按地毯尺寸剪裁。',
+        'https://file.app.ikea.cn/cn/zh/images/products/stopp-filt-shi-tuo-pu-fei-ao-te-di-tan-fang-hua-dian__39410_pe097520_s5.jpg',
+        'IKEA 宜家家居',
+        'https://www.ikea.cn/cn/zh/p/stopp-filt-shi-tuo-pu-fei-ao-te-di-tan-fang-hua-dian-30550208',
+        '["地毯固定", "减少滑动", "可按需剪裁"]'::jsonb,
+        '无赞助或返佣关系',
+        'active',
+        now()
+    ),
+    (
+        'ikea-kuggis-s59561287',
+        '日常生活与收纳',
+        'IKEA',
+        'KUGGIS 附盖储物盒',
+        '适合归纳桌面小物，可叠放并减少积灰。',
+        'https://file.app.ikea.cn/cn/zh/images/products/kuggis-ku-ji-si-fu-gai-chu-wu-he-bai-se-zhu__1289721_pe934413_s5.jpg',
+        'IKEA 宜家家居',
+        'https://www.ikea.cn/cn/zh/p/kuggis-ku-ji-si-fu-gai-chu-wu-he-bai-se-zhu-s59561287',
+        '["小物归类", "带盖防尘", "便于叠放"]'::jsonb,
+        '无赞助或返佣关系',
+        'active',
+        now()
+    ),
+    (
+        'ikea-tisken-20381254',
+        '日常生活与收纳',
+        'IKEA',
+        'TISKEN 带吸盘篮筐',
+        '无需钻孔即可安装，底部排水孔便于保持干爽。',
+        'https://file.app.ikea.cn/cn/zh/images/products/tisken-ti-si-ke-en-dai-xi-pan-lan-kuang-bai-se__0749052_pe745413_s5.jpg',
+        'IKEA 宜家家居',
+        'https://www.ikea.cn/cn/zh/p/tisken-basket-with-suction-cup-white-20381254',
+        '["免打孔安装", "浴室收纳", "常用物品易取"]'::jsonb,
+        '无赞助或返佣关系',
+        'active',
+        now()
+    ),
+    (
+        'ikea-hosvans-80609635',
+        '日常生活与收纳',
+        'IKEA',
+        'HOSVANS 竹制鞋拔',
+        '40 厘米长度，穿鞋时更容易够到鞋跟位置。',
+        'https://file.app.ikea.cn/cn/zh/images/products/hoesvans-he-si-wan-si-xie-ba-zi-zhu__1467507_pe995745_s5.jpg',
+        'IKEA 宜家家居',
+        'https://www.ikea.cn/cn/zh/p/80609635',
+        '["日常穿鞋", "易于取用", "操作直接"]'::jsonb,
+        '无赞助或返佣关系',
+        'active',
+        now()
+    ),
+    (
+        'ikea-samla-s19440848',
+        '日常生活与收纳',
+        'IKEA',
+        'SAMLA 透明附盖储物盒',
+        '透明盒体可直接看到内容，带盖叠放便于查找。',
+        'https://file.app.ikea.cn/cn/zh/images/products/samla-sa-mu-la-fu-gai-chu-wu-he-tou-ming__0711815_pe728494_s5.jpg',
+        'IKEA 宜家家居',
+        'https://www.ikea.cn/cn/zh/p/samla-sa-mu-la-fu-gai-chu-wu-he-tou-ming-s19440848',
+        '["内容可见", "带盖防尘", "物品归类"]'::jsonb,
+        '无赞助或返佣关系',
+        'active',
+        now()
+    )
+on conflict (id) do update set
+    category = excluded.category,
+    brand = excluded.brand,
+    name = excluded.name,
+    summary = excluded.summary,
+    image_url = excluded.image_url,
+    source_name = excluded.source_name,
+    source_url = excluded.source_url,
+    suitability = excluded.suitability,
+    disclosure = excluded.disclosure,
+    status = excluded.status,
+    verified_at = excluded.verified_at,
+    updated_at = now();
+
+commit;

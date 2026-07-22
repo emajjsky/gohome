@@ -26,4 +26,15 @@ final class TabStateTests: XCTestCase {
         app.tabBars.buttons["首页"].tap()
         XCTAssertTrue(home.waitForExistence(timeout: 2))
     }
+
+    func testDiscoverTabOpensNativeProductRecommendations() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTestState", "-uiTestMain"]
+        app.launch()
+
+        app.tabBars.buttons["精选"].tap()
+
+        XCTAssertTrue(app.scrollViews["product-recommendations-content"].waitForExistence(timeout: 2))
+        XCTAssertFalse(app.webViews.firstMatch.exists)
+    }
 }
