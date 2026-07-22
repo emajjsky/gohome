@@ -16,6 +16,7 @@ final class AuthViewModel: ObservableObject {
     @Published private(set) var isRequestingCode = false
     @Published private(set) var isSubmitting = false
     @Published private(set) var codeSent = false
+    @Published private(set) var deliveryMessage: String?
     @Published var errorMessage: String?
     @Published private(set) var challengeID: String?
 
@@ -48,7 +49,14 @@ final class AuthViewModel: ObservableObject {
                 let challenge = try await client.send(Endpoint<AuthChallengeResponse>(method: .post, path: "/api/auth/request-code", body: body))
                 challengeID = challenge.challengeID
                 codeSent = true
+                if challenge.delivery == "demo", let demoCode = challenge.demoCode {
+                    code = demoCode
+                    deliveryMessage = "测试环境验证码：\(demoCode)"
+                } else {
+                    deliveryMessage = "验证码已发送，请查收短信"
+                }
             } catch {
+                deliveryMessage = nil
                 errorMessage = error.localizedDescription
             }
         }

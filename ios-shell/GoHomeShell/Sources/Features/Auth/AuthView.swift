@@ -76,6 +76,14 @@ struct AuthView: View {
                 }
                 .padding(.top, 18)
 
+                if let deliveryMessage = viewModel.deliveryMessage {
+                    Text(deliveryMessage)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.black.opacity(0.62))
+                        .padding(.top, 12)
+                        .accessibilityIdentifier("auth-delivery-status")
+                }
+
                 if let errorMessage = viewModel.errorMessage {
                     Text(errorMessage)
                         .font(.system(size: 13))

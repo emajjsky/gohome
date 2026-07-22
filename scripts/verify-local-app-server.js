@@ -919,6 +919,26 @@ async function main() {
             assert.equal(verificationEvent.event.evidence_media.length, 3);
             assert.deepEqual(verificationEvent.event.evidence_media.map((item) => item.role), ["before", "transition", "current"]);
             assert.equal(verificationEvent.verification.status, "pending");
+            assert.equal(verificationEvent.message, null);
+            assert.equal(verificationEvent.deliveries.length, 0);
+            const recoveredBeforeVerification = await requestJson(baseUrl, "/api/v1/device/events/43/state", {
+                method: "POST",
+                body: JSON.stringify({
+                    state: "resolved",
+                    resolution: "person_upright_again",
+                    observed_at: "2026-07-05T10:00:08.000Z",
+                    evidence: {
+                        posture: "standing",
+                        confidence: 0.84,
+                        track_id: "c11-p1",
+                        bbox: [100, 20, 190, 250],
+                    },
+                }),
+                headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+            });
+            assert.equal(recoveredBeforeVerification.event.acknowledged, false);
+            assert.equal(recoveredBeforeVerification.event.resolution, "");
+            assert.equal(recoveredBeforeVerification.event.payload.edge_recovery.evidence.posture, "standing");
             await new Promise((resolve) => setTimeout(resolve, 100));
             const retryingEvent = await requestJson(baseUrl, `/api/v1/events/${verificationEvent.event.id}`, {
                 headers: { Authorization: `Bearer ${appSessionToken}` },
@@ -938,12 +958,16 @@ async function main() {
             assert.equal(verifiedEvent.payload.verification.result.surface, "floor");
             assert.equal(verifiedEvent.payload.verification.attempt_count, 2);
             assert.equal(verifiedEvent.payload.incident.status, "confirmed");
+            assert.equal(verifiedEvent.payload.incident.recovery_status, "person_upright_again");
+            assert.equal(verifiedEvent.acknowledged, false);
+            assert.equal(verifiedEvent.resolution, "");
             const verificationOutcomeMessage = app.store.db.app_messages.find((message) => (
                 message.generated_by === "vision-verification-orchestrator"
                 && String(message.event_id) === String(verificationEvent.event.id)
                 && message.metadata?.verification_status === "confirmed"
             ));
             assert.ok(verificationOutcomeMessage);
+            assert.equal(verificationOutcomeMessage.status, "open");
             assert.ok(app.store.db.notification_deliveries.some((delivery) => (
                 String(delivery.message_id) === String(verificationOutcomeMessage.message_id)
             )));
@@ -1042,11 +1066,11 @@ async function main() {
             }),
             headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
         });
-        assert.equal(recoveredValidation.event.acknowledged, true);
-        assert.equal(recoveredValidation.event.resolution, "person_upright_again");
-        assert.equal(recoveredValidation.event.payload.incident.status, "resolved");
+        assert.equal(recoveredValidation.event.acknowledged, false);
+        assert.equal(recoveredValidation.event.resolution, "");
+        assert.equal(recoveredValidation.event.payload.incident.recovery_status, "person_upright_again");
         assert.ok(recoveredValidation.event.payload.incident.transitions.some((item) => item.source === "edge_recovery"));
-        assert.equal(app.store.db.app_messages.find((message) => message.message_id === "validation-recovery-open-message").status, "archived");
+        assert.equal(app.store.db.app_messages.find((message) => message.message_id === "validation-recovery-open-message").status, "open");
         const repeatedRecovery = await requestJson(baseUrl, "/api/v1/device/events/recovery-validation-1/state", {
             method: "POST",
             body: JSON.stringify({
@@ -1058,10 +1082,7 @@ async function main() {
             headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
         });
         assert.equal(repeatedRecovery.event.payload.incident.transitions.filter((item) => item.source === "edge_recovery").length, 1);
-        assert.ok(app.store.db.app_messages.every((message) => (
-            !(message.source_event_ids || []).some((eventId) => String(eventId) === String(recoveryValidation.event.id))
-            || message.status === "archived"
-        )));
+        assert.equal(app.store.db.app_messages.find((message) => message.message_id === "validation-recovery-open-message").status, "open");
 
         const secondCamera = await requestJson(baseUrl, "/api/cameras", {
             method: "POST",
@@ -1134,10 +1155,11 @@ async function main() {
                 }))),
             );
             const validationEventIds = new Set(app.store.db.events.filter((event) => event.payload?.validation?.test_event).map((event) => String(event.id)));
-            assert.ok(app.store.db.app_messages.every((message) => (
-                !(message.source_event_ids || []).some((eventId) => validationEventIds.has(String(eventId)))
-                || message.status === "archived"
-            )));
+            assert.ok(validationEventIds.size > 0);
+            assert.equal(
+                app.store.db.app_messages.find((message) => message.message_id === "validation-recovery-open-message").status,
+                "open",
+            );
             const longAbsenceEvent = app.store.db.events.find((event) => event.event_type === "long_absence");
             assert.ok(longAbsenceEvent);
             assert.equal(longAbsenceEvent.payload.incident.status, "confirmed");

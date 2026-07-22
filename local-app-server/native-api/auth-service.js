@@ -112,6 +112,7 @@ class AuthService {
             challenge_id: challengeId,
             expires_at: new Date(expiresAt).toISOString(),
             delivery: this.mode === "demo" ? "demo" : "sms",
+            ...(this.mode === "demo" ? { demo_code: code } : {}),
         };
     }
 

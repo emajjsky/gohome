@@ -25,8 +25,11 @@ test('production auth rejects fixed OTP and requires an SMS provider', async () 
   );
 });
 
-test('demo auth accepts only the configured OTP', () => {
+test('demo auth returns its explicit test code and accepts only that OTP', async () => {
   const service = new AuthService({ mode: 'demo', demoOtp: '246810' });
+  const challenge = await service.requestCode('13800138000');
+  assert.equal(challenge.delivery, 'demo');
+  assert.equal(challenge.demo_code, '246810');
   assert.equal(service.verifyCode('13800138000', '246810').mode, 'demo');
   assert.throws(() => service.verifyCode('13800138000', '000000'), /验证码不正确/);
 });

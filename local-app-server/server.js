@@ -1704,9 +1704,9 @@ function createLocalAppServer(options = {}) {
 
     function streamProfileConfig(profile) {
         const normalized = String(profile || "mobile").trim().toLowerCase();
-        if (normalized === "detail") return { fps: 5, width: 1280, height: 720, quality: 78, drop: 4 };
-        if (normalized === "monitor") return { fps: 4, width: 960, height: 540, quality: 70, drop: 5 };
-        return { fps: 3, width: 720, height: 405, quality: 64, drop: 6 };
+        if (normalized === "detail") return { fps: 8, width: 1280, height: 720, quality: 78, drop: 1 };
+        if (normalized === "monitor") return { fps: 8, width: 960, height: 540, quality: 70, drop: 1 };
+        return { fps: 8, width: 720, height: 405, quality: 64, drop: 1 };
     }
 
     function cameraStreamProxyTarget(req, cameraId) {
@@ -2580,7 +2580,7 @@ function createLocalAppServer(options = {}) {
         return store.db.events.find((item) => String(item.id) === String(primaryId)) || event;
     }
 
-    function appendIncidentTransition(event, status, source, details = {}) {
+    function appendIncidentTransition(event, status, source, details = {}, options = {}) {
         const incident = ensureSafetyIncident(event);
         if (!incident) return null;
         const transitions = Array.isArray(incident.transitions) ? incident.transitions : [];
@@ -2593,7 +2593,7 @@ function createLocalAppServer(options = {}) {
             ...details,
         });
         incident.transitions = transitions.slice(-24);
-        incident.status = status;
+        if (!options.preserve_status) incident.status = status;
         return incident;
     }
 
@@ -2643,6 +2643,8 @@ function createLocalAppServer(options = {}) {
             started_at: existing.started_at || event.occurred_at || event.created_at || nowIso(),
             acknowledged_at: existing.acknowledged_at || "",
             resolved_at: existing.resolved_at || "",
+            recovery_status: existing.recovery_status || "",
+            recovered_at: existing.recovered_at || "",
             last_reminder_bucket: existing.last_reminder_bucket || "",
             reminder_count: Number(existing.reminder_count || 0),
             source_event_ids: [...new Set([...(existing.source_event_ids || []), event.id])],
@@ -6360,9 +6362,10 @@ function createLocalAppServer(options = {}) {
         const correlatedPrimary = correlateSafetyIncident(event);
         ensureSafetyIncident(event);
         store.db.events.push(event);
+        const verificationJob = queueVisionVerification(event, asset);
         let message = null;
         let deliveries = [];
-        if (event.family_id && !isValidationEvent(event) && !correlatedPrimary) {
+        if (event.family_id && !isValidationEvent(event) && !correlatedPrimary && !verificationJob) {
             message = upsertAppMessage({
                 message_id: `edge-event-${event.idempotency_key}`,
                 family_id: event.family_id,
@@ -6386,7 +6389,6 @@ function createLocalAppServer(options = {}) {
                 deliveries = queueNotificationDelivery(message);
             }
         }
-        const verificationJob = queueVisionVerification(event, asset);
         if (!verificationJob && event.payload?.verification) {
             applyIncidentVerificationOutcome(event);
         }
@@ -6570,8 +6572,6 @@ function createLocalAppServer(options = {}) {
         const linkedEvents = incident ? incidentEvents(incident.incident_id) : [event];
         const resolvedAt = String(payload.observed_at || nowIso());
         for (const linked of linkedEvents) {
-            linked.acknowledged = true;
-            linked.resolution = resolution;
             linked.payload = linked.payload && typeof linked.payload === "object" ? linked.payload : {};
             linked.payload.edge_recovery = {
                 observed_at: resolvedAt,
@@ -6583,18 +6583,17 @@ function createLocalAppServer(options = {}) {
                 },
             };
             const linkedIncident = ensureSafetyIncident(linked);
-            linkedIncident.status = "resolved";
-            linkedIncident.resolved_at = resolvedAt;
+            linkedIncident.recovery_status = resolution;
+            linkedIncident.recovered_at = resolvedAt;
             linked.updated_at = nowIso();
         }
         if (incident) {
-            appendIncidentTransition(incidentPrimaryEvent(event), "resolved", "edge_recovery", {
+            appendIncidentTransition(incidentPrimaryEvent(event), "recovered", "edge_recovery", {
                 resolution,
                 observed_at: resolvedAt,
                 posture,
                 confidence: Number(confidence.toFixed(4)),
-            });
-            archiveIncidentMessages(incident.incident_id);
+            }, { preserve_status: true });
         }
         await store.save();
         write(res, 200, { ok: true, event: publicEvent(event) });

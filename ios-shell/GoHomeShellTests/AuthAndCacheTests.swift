@@ -6,6 +6,14 @@ final class AuthAndCacheTests: XCTestCase {
         let title: String
     }
 
+    func testDemoChallengeDecodesExplicitTestCode() throws {
+        let data = Data(#"{"challenge_id":"otp_test","expires_at":"2026-07-22T12:00:00.000Z","delivery":"demo","demo_code":"246810"}"#.utf8)
+        let challenge = try JSONDecoder().decode(AuthChallengeResponse.self, from: data)
+        XCTAssertEqual(challenge.challengeID, "otp_test")
+        XCTAssertEqual(challenge.delivery, "demo")
+        XCTAssertEqual(challenge.demoCode, "246810")
+    }
+
     func testKeychainTokenRoundTripAndLogoutDeletion() async throws {
         let store = KeychainAuthStore(service: "com.gohome.family.tests.\(UUID().uuidString)")
         let emptyToken = try await store.token()
