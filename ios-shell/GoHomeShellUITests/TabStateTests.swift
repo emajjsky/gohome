@@ -21,7 +21,8 @@ final class TabStateTests: XCTestCase {
         let home = app.scrollViews["home-content-anchor"]
         XCTAssertTrue(home.waitForExistence(timeout: 5))
         app.tabBars.buttons["守护"].tap()
-        XCTAssertTrue(app.staticTexts["守护画面"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.scrollViews["guard-content"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)["guard-camera-stage"].exists)
         app.tabBars.buttons["首页"].tap()
         XCTAssertTrue(home.waitForExistence(timeout: 2))
     }

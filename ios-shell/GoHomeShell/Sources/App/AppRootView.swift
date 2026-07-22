@@ -33,7 +33,8 @@ struct AppRootView: View {
                     MainTabView(
                         repository: environment.repository,
                         scope: CacheScope(userID: bootstrap.user.id, familyID: familyID),
-                        unreadCount: bootstrap.unreadCount
+                        unreadCount: bootstrap.unreadCount,
+                        apiClient: environment.apiClient
                     )
                 } else {
                     MainTabView.preview

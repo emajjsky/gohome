@@ -1,12 +1,12 @@
 import SwiftUI
 
 struct HomeView: View {
-    @StateObject private var model: HomeViewModel
+    @ObservedObject var model: HomeViewModel
     let unreadCount: Int
     private let referenceDate: Date
 
-    init(repository: AppRepository?, scope: CacheScope?, unreadCount: Int, referenceDate: Date = Date()) {
-        _model = StateObject(wrappedValue: HomeViewModel(repository: repository, scope: scope))
+    init(model: HomeViewModel, unreadCount: Int, referenceDate: Date = Date()) {
+        self.model = model
         self.unreadCount = unreadCount
         self.referenceDate = referenceDate
     }
@@ -36,7 +36,6 @@ struct HomeView: View {
         }
         .background(GoHomeTheme.paper)
         .accessibilityIdentifier("home-content-anchor")
-        .task { model.start() }
     }
 
     private var header: some View {

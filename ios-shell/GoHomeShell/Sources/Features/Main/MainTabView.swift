@@ -4,6 +4,8 @@ struct MainTabView: View {
     let repository: AppRepository?
     let scope: CacheScope?
     let unreadCount: Int
+    let apiClient: APIClient?
+    @StateObject private var homeModel: HomeViewModel
     @State private var selection: GoHomeTab = .home
     @State private var homePath = NavigationPath()
     @State private var guardPath = NavigationPath()
@@ -12,20 +14,24 @@ struct MainTabView: View {
     @State private var profilePath = NavigationPath()
 
     static var preview: MainTabView {
-        MainTabView(repository: nil, scope: nil, unreadCount: 0)
+        MainTabView(repository: nil, scope: nil, unreadCount: 0, apiClient: nil)
+    }
+
+    init(repository: AppRepository?, scope: CacheScope?, unreadCount: Int, apiClient: APIClient?) {
+        self.repository = repository
+        self.scope = scope
+        self.unreadCount = unreadCount
+        self.apiClient = apiClient
+        _homeModel = StateObject(wrappedValue: HomeViewModel(repository: repository, scope: scope))
     }
 
     var body: some View {
         TabView(selection: $selection) {
             GoHomeTabRoot(tab: .home, path: $homePath) {
-                HomeView(repository: repository, scope: scope, unreadCount: unreadCount)
+                HomeView(model: homeModel, unreadCount: unreadCount)
             }
             GoHomeTabRoot(tab: .guardView, path: $guardPath) {
-                MainTabEmptyState(
-                    tab: .guardView,
-                    title: "守护画面",
-                    detail: "暂无可显示的画面"
-                )
+                GuardView(cameras: homeModel.state.value?.cameras ?? [], apiClient: apiClient)
             }
             GoHomeTabRoot(tab: .events, path: $eventsPath) {
                 MainTabEmptyState(
@@ -52,5 +58,6 @@ struct MainTabView: View {
         .tint(GoHomeTheme.ink)
         .background(GoHomeTheme.paper)
         .accessibilityIdentifier("main-tab-shell")
+        .task { homeModel.start() }
     }
 }
