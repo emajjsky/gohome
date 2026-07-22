@@ -8,17 +8,22 @@
 
 /* Begin PBXBuildFile section */
 		0020062684B57893A0F1D834 /* AuthAndCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42DDFD5335CD648168DD8760 /* AuthAndCacheTests.swift */; };
+		1A1D96EC0F04E537A108B0A5 /* AppRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F64A165BB4BB29570BE5FFD /* AppRepositoryTests.swift */; };
 		23F245CC31AE82B7921C5886 /* GoHomeShellWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C91ECB575819076A3325F82 /* GoHomeShellWebView.swift */; };
 		44FCCD307E547535444FFAF1 /* APIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A166F07C9E3E29754D62C633 /* APIClientTests.swift */; };
 		51FBE67F5F279B4917217D2E /* AppSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBD54AB746D00CA01186A345 /* AppSmokeTests.swift */; };
+		5FF590BFEDBB2BCCA3398400 /* AppRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3334DDE3CC653FD1541523C /* AppRepository.swift */; };
 		70F06EE866583BBFCA696C62 /* DiskCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCAFEAC63D4BAB2911F6E0A8 /* DiskCache.swift */; };
+		73BE27BB604BEB397C168554 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72AB06FBD1E27C2FC881CC7E /* AppEnvironment.swift */; };
 		809BC57A72314D36F0FB3B12 /* AppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D4A21A561B17A4972C5E71 /* AppRoute.swift */; };
+		92D1D2D314210AC6510C695E /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3564B0E8D8EEF82789F18FD9 /* AppModel.swift */; };
 		9B92A863465C0268BDF06FF8 /* KeychainAuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133FEB218A86BD650E7A4F08 /* KeychainAuthStore.swift */; };
 		B0CDCED7D6A5959EA9F04A2B /* GoHomeShellRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91C24A55A123E7BC7B7A8210 /* GoHomeShellRuntime.swift */; };
 		BB93EEC11571A3993186E568 /* Endpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748C4BBD1C9C334B3C126EDA /* Endpoint.swift */; };
 		E02FC8ECDB02D2A42CBF558B /* GoHomeShellApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FE057158722526CC639E04C /* GoHomeShellApp.swift */; };
 		E7E65E15AED50A8CEA9E0EC2 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABAB1BF12E491F9CDD1865F /* APIError.swift */; };
 		E823592EBE6783C8C449E06A /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE166B0C27414D0408D563F7 /* LaunchTests.swift */; };
+		F04355C863AA3286EF57DEF3 /* AppModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC18C86B265D5E9C147D9F6B /* AppModels.swift */; };
 		FD4E4E4BA72E5F4A5A5F822F /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8915B898A43BA9BA950395F9 /* APIClient.swift */; };
 /* End PBXBuildFile section */
 
@@ -42,15 +47,20 @@
 /* Begin PBXFileReference section */
 		10D4A21A561B17A4972C5E71 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoute.swift; sourceTree = "<group>"; };
 		133FEB218A86BD650E7A4F08 /* KeychainAuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainAuthStore.swift; sourceTree = "<group>"; };
+		1F64A165BB4BB29570BE5FFD /* AppRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRepositoryTests.swift; sourceTree = "<group>"; };
+		3564B0E8D8EEF82789F18FD9 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		42DDFD5335CD648168DD8760 /* AuthAndCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthAndCacheTests.swift; sourceTree = "<group>"; };
 		4C91ECB575819076A3325F82 /* GoHomeShellWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoHomeShellWebView.swift; sourceTree = "<group>"; };
 		4FE057158722526CC639E04C /* GoHomeShellApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoHomeShellApp.swift; sourceTree = "<group>"; };
+		72AB06FBD1E27C2FC881CC7E /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 		748C4BBD1C9C334B3C126EDA /* Endpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Endpoint.swift; sourceTree = "<group>"; };
 		8915B898A43BA9BA950395F9 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		91C24A55A123E7BC7B7A8210 /* GoHomeShellRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoHomeShellRuntime.swift; sourceTree = "<group>"; };
 		930B8EAC49AC96E7F4AF14E1 /* GoHomeShell.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GoHomeShell.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A166F07C9E3E29754D62C633 /* APIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientTests.swift; sourceTree = "<group>"; };
+		A3334DDE3CC653FD1541523C /* AppRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRepository.swift; sourceTree = "<group>"; };
 		AABAB1BF12E491F9CDD1865F /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
+		AC18C86B265D5E9C147D9F6B /* AppModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModels.swift; sourceTree = "<group>"; };
 		BBD54AB746D00CA01186A345 /* AppSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSmokeTests.swift; sourceTree = "<group>"; };
 		CE166B0C27414D0408D563F7 /* LaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
 		E3C5B56549E211F6B746E441 /* GoHomeShellTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GoHomeShellTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -68,12 +78,30 @@
 			path = Storage;
 			sourceTree = "<group>";
 		};
+		50A5E70B26B1395ECA746997 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				AC18C86B265D5E9C147D9F6B /* AppModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
 		6264E5DF73877DB3CC1DE369 /* App */ = {
 			isa = PBXGroup;
 			children = (
+				72AB06FBD1E27C2FC881CC7E /* AppEnvironment.swift */,
+				3564B0E8D8EEF82789F18FD9 /* AppModel.swift */,
 				10D4A21A561B17A4972C5E71 /* AppRoute.swift */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		67E67B468F07DDC363A00D80 /* Repository */ = {
+			isa = PBXGroup;
+			children = (
+				A3334DDE3CC653FD1541523C /* AppRepository.swift */,
+			);
+			path = Repository;
 			sourceTree = "<group>";
 		};
 		7DACC599CA3CBAA0498621E7 /* Sources */ = {
@@ -83,7 +111,9 @@
 				91C24A55A123E7BC7B7A8210 /* GoHomeShellRuntime.swift */,
 				4C91ECB575819076A3325F82 /* GoHomeShellWebView.swift */,
 				6264E5DF73877DB3CC1DE369 /* App */,
+				50A5E70B26B1395ECA746997 /* Models */,
 				96169D5FD56A949069CD5262 /* Networking */,
+				67E67B468F07DDC363A00D80 /* Repository */,
 				02F26E4575A1876AFEE56619 /* Storage */,
 			);
 			name = Sources;
@@ -94,6 +124,7 @@
 			isa = PBXGroup;
 			children = (
 				A166F07C9E3E29754D62C633 /* APIClientTests.swift */,
+				1F64A165BB4BB29570BE5FFD /* AppRepositoryTests.swift */,
 				BBD54AB746D00CA01186A345 /* AppSmokeTests.swift */,
 				42DDFD5335CD648168DD8760 /* AuthAndCacheTests.swift */,
 			);
@@ -235,6 +266,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				44FCCD307E547535444FFAF1 /* APIClientTests.swift in Sources */,
+				1A1D96EC0F04E537A108B0A5 /* AppRepositoryTests.swift in Sources */,
 				51FBE67F5F279B4917217D2E /* AppSmokeTests.swift in Sources */,
 				0020062684B57893A0F1D834 /* AuthAndCacheTests.swift in Sources */,
 			);
@@ -254,6 +286,10 @@
 			files = (
 				FD4E4E4BA72E5F4A5A5F822F /* APIClient.swift in Sources */,
 				E7E65E15AED50A8CEA9E0EC2 /* APIError.swift in Sources */,
+				73BE27BB604BEB397C168554 /* AppEnvironment.swift in Sources */,
+				92D1D2D314210AC6510C695E /* AppModel.swift in Sources */,
+				F04355C863AA3286EF57DEF3 /* AppModels.swift in Sources */,
+				5FF590BFEDBB2BCCA3398400 /* AppRepository.swift in Sources */,
 				809BC57A72314D36F0FB3B12 /* AppRoute.swift in Sources */,
 				70F06EE866583BBFCA696C62 /* DiskCache.swift in Sources */,
 				BB93EEC11571A3993186E568 /* Endpoint.swift in Sources */,

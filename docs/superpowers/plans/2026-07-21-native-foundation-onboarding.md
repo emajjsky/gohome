@@ -217,15 +217,15 @@ git commit -m "feat(ios): add secure auth and scoped cache"
 - Create: `Sources/App/AppEnvironment.swift`
 - Test: `GoHomeShellTests/AppRepositoryTests.swift`
 
-- [ ] **Step 1: Write stale-while-revalidate tests**
+- [x] **Step 1: Write stale-while-revalidate tests**
 
 Seed cached bootstrap/home data, delay the network response, and assert the first emitted state is cached while the second is refreshed. Assert a refresh error preserves content and sets only `staleReason`.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Expected: FAIL because repository types are undefined.
 
-- [ ] **Step 3: Implement state contract**
+- [x] **Step 3: Implement state contract**
 
 ```swift
 struct Loadable<Value: Equatable>: Equatable {
@@ -242,13 +242,13 @@ struct Loadable<Value: Equatable>: Equatable {
 
 `AppRepository.bootstrap()` reads cache first and revalidates once. Concurrent views share the same in-flight task.
 
-- [ ] **Step 4: Run repository tests**
+- [x] **Step 4: Run repository tests**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellTests/AppRepositoryTests`
 
 Expected: PASS; no state transition clears a non-nil value during refresh.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Models ios-shell/GoHomeShell/Sources/Repository ios-shell/GoHomeShell/Sources/App ios-shell/GoHomeShellTests/AppRepositoryTests.swift

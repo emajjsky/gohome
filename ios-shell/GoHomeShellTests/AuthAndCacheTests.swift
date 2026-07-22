@@ -41,7 +41,7 @@ final class AuthAndCacheTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let clock = LockedClock(Date(timeIntervalSince1970: 1_000))
-        let cache = try DiskCache(rootURL: root, clock: clock.value)
+        let cache = try DiskCache(rootURL: root) { clock.value() }
         let scope = CacheScope(userID: "user", familyID: "family")
         try await cache.write(CachedValue(title: "temporary"), key: "home", scope: scope, ttl: 10)
         clock.advance(by: 11)
