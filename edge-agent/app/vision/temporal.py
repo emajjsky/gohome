@@ -13,6 +13,9 @@ LOW_POSTURES = {"lying", "low_body"}
 UPRIGHT_POSTURES = {
     "standing", "sitting", "squatting", "bending", "upper_body", "standing_or_sitting",
 }
+EVIDENCE_BASELINE_POSTURES = {
+    "standing", "sitting", "standing_or_sitting", "seated_or_half_body",
+}
 POSTURE_TRANSITION_MIN_SHAPE_SIMILARITY = 0.16
 LOW_POSTURE_CONTINUITY_MIN_SHAPE_SIMILARITY = 0.22
 DEFAULT_MIN_SHAPE_SIMILARITY = 0.28
@@ -246,10 +249,15 @@ class TemporalObservationEngine:
                 ]
             except (TypeError, ValueError):
                 pass
-        snapshots = [item for item in history if item.get("snapshot_id")]
-        selected = self._representative_samples(snapshots, max(1, min(3, int(limit))))
+        evidence_limit = max(1, min(3, int(limit)))
+        selected = self._role_aware_evidence_samples(
+            history,
+            track_id=track_id,
+            limit=evidence_limit,
+        )
         return {
             "schema_version": "temporal-evidence-bundle-v1",
+            "selection_policy": "role-aware-pose-transition-v2",
             "event_type": str(event_type),
             "track_id": str(track_id or ""),
             "window_started_at": history[0].get("observed_at") if history else None,
@@ -263,6 +271,7 @@ class TemporalObservationEngine:
                     "observed_at": item.get("observed_at"),
                     "postures": item.get("postures") or [],
                     "motion_score": item.get("motion_score"),
+                    "role": item.get("_evidence_role") or "evidence",
                 }
                 for item in selected
             ],
@@ -682,9 +691,125 @@ class TemporalObservationEngine:
             "posture": str(item.get("posture") or "unknown"),
             "posture_confidence": round(float(item.get("posture_confidence") or 0.0), 4),
             "normal_lying_zone": bool(item.get("normal_lying_zone")),
+            "frame_edge_clipped": bool(item.get("frame_edge_clipped")),
             "scene_zone_id": item.get("scene_zone_id"),
             "scene_zone_label": item.get("scene_zone_label"),
         }
+
+    def _role_aware_evidence_samples(
+        self,
+        history: list[Dict[str, Any]],
+        *,
+        track_id: str | None,
+        limit: int,
+    ) -> list[Dict[str, Any]]:
+        snapshots = [(index, item) for index, item in enumerate(history) if item.get("snapshot_id")]
+        if not snapshots:
+            return []
+
+        postures = [self._observation_posture(item, track_id) for item in history]
+        transition_index = None
+        for index in range(1, len(postures)):
+            if postures[index] in LOW_POSTURES and postures[index - 1] not in LOW_POSTURES:
+                transition_index = index
+        if transition_index is None:
+            representatives = self._representative_samples(
+                [item for _index, item in snapshots],
+                limit,
+            )
+            roles = (
+                ["current"]
+                if len(representatives) == 1
+                else ["before", "current"]
+                if len(representatives) == 2
+                else ["before", "transition", "current"]
+            )
+            return [
+                {**item, "_evidence_role": roles[index]}
+                for index, item in enumerate(representatives)
+            ]
+
+        current_index, current = next(
+            ((index, item) for index, item in reversed(snapshots) if index >= transition_index),
+            snapshots[-1],
+        )
+        baseline_candidates = [
+            (index, item)
+            for index, item in snapshots
+            if index < transition_index
+            and postures[index] in EVIDENCE_BASELINE_POSTURES
+            and not self._observation_edge_clipped(item, track_id)
+        ]
+        if not baseline_candidates:
+            baseline_candidates = [
+                (index, item)
+                for index, item in snapshots
+                if index < transition_index
+                and postures[index] in UPRIGHT_POSTURES
+                and not self._observation_edge_clipped(item, track_id)
+            ]
+        before_pair = baseline_candidates[-1] if baseline_candidates else None
+        before_index = before_pair[0] if before_pair else -1
+
+        transition_candidates = [
+            (index, item)
+            for index, item in snapshots
+            if before_index < index < current_index
+            and (before_pair is None or item.get("snapshot_id") != before_pair[1].get("snapshot_id"))
+        ]
+        transition_pair = max(
+            transition_candidates,
+            key=lambda pair: (
+                -abs(pair[0] - transition_index),
+                float(pair[1].get("motion_score") or 0.0),
+            ),
+            default=None,
+        )
+
+        selected: dict[str, Dict[str, Any]] = {"current": current}
+        if before_pair is not None:
+            selected["before"] = before_pair[1]
+        if transition_pair is not None:
+            selected["transition"] = transition_pair[1]
+
+        used_ids = {item.get("snapshot_id") for item in selected.values()}
+        remaining = [item for _index, item in snapshots if item.get("snapshot_id") not in used_ids]
+        for role in ("before", "transition"):
+            if role in selected or not remaining:
+                continue
+            candidate = remaining.pop(0 if role == "before" else -1)
+            selected[role] = candidate
+
+        role_order = (
+            ("current",)
+            if limit == 1
+            else ("before", "current")
+            if limit == 2 and "before" in selected
+            else ("transition", "current")
+            if limit == 2
+            else ("before", "transition", "current")
+        )
+        return [
+            {**selected[role], "_evidence_role": role}
+            for role in role_order
+            if role in selected
+        ]
+
+    def _observation_posture(self, observation: Dict[str, Any], track_id: str | None) -> str:
+        tracks = observation.get("tracks") if isinstance(observation.get("tracks"), list) else []
+        track = next(
+            (item for item in tracks if not track_id or str(item.get("track_id") or "") == str(track_id)),
+            None,
+        )
+        return str((track or {}).get("posture") or "unknown")
+
+    def _observation_edge_clipped(self, observation: Dict[str, Any], track_id: str | None) -> bool:
+        tracks = observation.get("tracks") if isinstance(observation.get("tracks"), list) else []
+        track = next(
+            (item for item in tracks if not track_id or str(item.get("track_id") or "") == str(track_id)),
+            None,
+        )
+        return bool((track or {}).get("frame_edge_clipped"))
 
     def _representative_samples(self, items: list[Dict[str, Any]], limit: int) -> list[Dict[str, Any]]:
         if len(items) <= limit:

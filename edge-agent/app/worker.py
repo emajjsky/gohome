@@ -651,7 +651,7 @@ class EdgeWorker:
             camera_id,
             event_type="pose_safety_candidate",
             track_id=str((evidence_track or {}).get("track_id") or "") or None,
-            max_age_seconds=10,
+            max_age_seconds=15,
         )
 
     def _requires_durable_candidate(self, evaluation: RuleEvaluation) -> bool:

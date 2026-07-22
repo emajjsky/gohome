@@ -2605,6 +2605,92 @@ class Storage:
             row = conn.execute("SELECT * FROM event_candidates WHERE id = ?", (candidate_id,)).fetchone()
         return self._event_candidate_to_dict(row) if row else None
 
+    def aggregate_event_candidate_into_recent_event(
+        self,
+        *,
+        candidate_id: int,
+        camera_id: Optional[int],
+        event_type: str,
+        seconds: int,
+    ) -> Optional[Dict[str, Any]]:
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=max(1, int(seconds)))).isoformat()
+        timestamp = now_iso()
+        event_id: Optional[int] = None
+        with self.connect() as conn:
+            event_row = conn.execute(
+                """
+                SELECT id, payload
+                FROM events
+                WHERE camera_id IS ? AND type = ? AND occurred_at >= ?
+                ORDER BY occurred_at DESC, id DESC
+                LIMIT 1
+                """,
+                (camera_id, str(event_type or ""), cutoff),
+            ).fetchone()
+            candidate_row = conn.execute(
+                "SELECT * FROM event_candidates WHERE id = ? LIMIT 1",
+                (int(candidate_id),),
+            ).fetchone()
+            if event_row is None or candidate_row is None:
+                return None
+
+            event_id = int(event_row["id"])
+            payload = json.loads(event_row["payload"] or "{}")
+            aggregation = (
+                payload.get("candidate_aggregation")
+                if isinstance(payload.get("candidate_aggregation"), dict)
+                else {}
+            )
+            occurrences = (
+                list(aggregation.get("occurrences") or [])
+                if isinstance(aggregation.get("occurrences"), list)
+                else []
+            )
+            if not any(int(item.get("candidate_id") or 0) == int(candidate_id) for item in occurrences if isinstance(item, dict)):
+                snapshot_ids = json.loads(candidate_row["evidence_snapshot_ids_json"] or "[]")
+                occurrences.append({
+                    "candidate_id": int(candidate_id),
+                    "observed_at": str(candidate_row["started_at"] or timestamp),
+                    "snapshot_ids": [int(item) for item in snapshot_ids if item],
+                    "rule_evaluation_id": candidate_row["rule_evaluation_id"],
+                    "summary": str(candidate_row["summary"] or ""),
+                })
+            payload["candidate_aggregation"] = {
+                "schema_version": "gohome-event-candidate-aggregation-v1",
+                "repeat_count": len(occurrences),
+                "total_candidate_count": len(occurrences) + 1,
+                "last_observed_at": str(candidate_row["started_at"] or timestamp),
+                "occurrences": occurrences[-24:],
+            }
+            conn.execute(
+                "UPDATE events SET payload = ? WHERE id = ?",
+                (json.dumps(payload, ensure_ascii=False), event_id),
+            )
+            upload_rows = conn.execute(
+                """
+                SELECT id, payload_json
+                FROM upload_jobs
+                WHERE event_id = ? AND job_type = 'event_upload' AND status IN ('pending', 'failed')
+                """,
+                (event_id,),
+            ).fetchall()
+            for upload_row in upload_rows:
+                upload_payload = json.loads(upload_row["payload_json"] or "{}")
+                upload_payload["payload"] = payload
+                conn.execute(
+                    "UPDATE upload_jobs SET payload_json = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(upload_payload, ensure_ascii=False), timestamp, int(upload_row["id"])),
+                )
+            conn.execute(
+                """
+                UPDATE event_candidates
+                SET status = 'aggregated', promoted_event_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (event_id, timestamp, int(candidate_id)),
+            )
+        return self.get_event(event_id) if event_id is not None else None
+
     def list_event_candidates(self, limit: int = 20, status: Optional[str] = None) -> list[Dict[str, Any]]:
         where = ""
         params: list[Any] = []
@@ -3984,6 +4070,19 @@ class Storage:
         }
         validation = base_payload["payload"].get("validation") if isinstance(base_payload["payload"], dict) else {}
         evidence_purpose = "validation_evidence" if isinstance(validation, dict) and validation.get("test_event") else "event_evidence"
+        evidence = base_payload["payload"].get("evidence") if isinstance(base_payload["payload"], dict) else {}
+        temporal_bundle = evidence.get("temporal_evidence_bundle") if isinstance(evidence, dict) else {}
+        temporal_snapshots = temporal_bundle.get("snapshots") if isinstance(temporal_bundle, dict) else []
+        if not isinstance(temporal_snapshots, list):
+            temporal_snapshots = []
+        current_evidence = next(
+            (
+                item for item in temporal_snapshots
+                if isinstance(item, dict) and int(item.get("snapshot_id") or 0) == int(snapshot_id or 0)
+            ),
+            {},
+        )
+        evidence_selection_policy = str(temporal_bundle.get("selection_policy") or "")
         jobs = [
             self.enqueue_upload_job(
                 job_type="event_upload",
@@ -4016,12 +4115,15 @@ class Storage:
                         "content_type": "image/jpeg",
                         "purpose": evidence_purpose,
                         "evidence_frame_role": "current",
+                        "evidence_selection_policy": evidence_selection_policy,
+                        "postures": (
+                            current_evidence.get("postures")
+                            if isinstance(current_evidence.get("postures"), list)
+                            else []
+                        ),
                     },
                 )
             )
-        evidence = base_payload["payload"].get("evidence") if isinstance(base_payload["payload"], dict) else {}
-        temporal_bundle = evidence.get("temporal_evidence_bundle") if isinstance(evidence, dict) else {}
-        temporal_snapshots = temporal_bundle.get("snapshots") if isinstance(temporal_bundle, dict) else []
         unique_frames: list[Dict[str, Any]] = []
         seen_snapshot_ids = {snapshot_id} if snapshot_id else set()
         for item in temporal_snapshots if isinstance(temporal_snapshots, list) else []:
@@ -4037,9 +4139,12 @@ class Storage:
                 "snapshot_path": frame_snapshot_path,
                 "observed_at": str(item.get("observed_at") or ""),
                 "postures": item.get("postures") if isinstance(item.get("postures"), list) else [],
+                "role": str(item.get("role") or ""),
             })
         for index, frame in enumerate(unique_frames[:2]):
-            role = "before" if index == 0 else "transition"
+            role = frame["role"] if frame["role"] in {"before", "transition"} else (
+                "before" if index == 0 else "transition"
+            )
             jobs.append(
                 self.enqueue_upload_job(
                     job_type="media_upload",
@@ -4058,6 +4163,7 @@ class Storage:
                         "content_type": "image/jpeg",
                         "purpose": f"{evidence_purpose}_keyframe",
                         "evidence_frame_role": role,
+                        "evidence_selection_policy": evidence_selection_policy,
                         "postures": frame["postures"],
                     },
                 )

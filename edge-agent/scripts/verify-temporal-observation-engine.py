@@ -115,6 +115,53 @@ def main() -> None:
     if [item["snapshot_id"] for item in recent_bundle["snapshots"]] != [2, 3, 4]:
         raise SystemExit(f"event evidence must use the recent action window: {recent_bundle}")
 
+    role_engine = TemporalObservationEngine(
+        history_size=12,
+        track_ttl_seconds=20,
+        max_match_age_seconds=5,
+    )
+    role_track = ""
+    role_samples = [
+        (101, 0.0, "standing", [240, 30, 340, 330], 0.01),
+        (102, 0.6, "bending", [230, 100, 360, 335], 0.08),
+        (103, 1.2, "lying", [210, 220, 520, 350], 0.05),
+    ]
+    for snapshot_id, seconds, posture, bbox, motion in role_samples:
+        payload = analysis(person(bbox, posture=posture))
+        payload["motion_score"] = motion
+        role_engine.update(
+            13,
+            payload,
+            observed_at=f"2026-07-11T10:03:0{int(seconds)}+00:00",
+            monotonic_at=seconds,
+        )
+        role_track = str(payload["people"][0]["track_id"])
+        role_engine.attach_snapshot(
+            13,
+            {"id": snapshot_id, "image_path": f"camera-13/{snapshot_id}.jpg"},
+        )
+    role_bundle = role_engine.evidence_bundle(
+        13,
+        event_type="pose_safety_candidate",
+        track_id=role_track,
+        max_age_seconds=15,
+    )
+    role_sequence = [
+        (item["snapshot_id"], item["role"])
+        for item in role_bundle["snapshots"]
+    ]
+    if role_sequence != [(101, "before"), (102, "transition"), (103, "current")]:
+        raise SystemExit(f"fall evidence must preserve before/transition/current roles: {role_bundle}")
+    current_only = role_engine.evidence_bundle(
+        13,
+        event_type="pose_safety_candidate",
+        track_id=role_track,
+        limit=1,
+        max_age_seconds=15,
+    )
+    if [(item["snapshot_id"], item["role"]) for item in current_only["snapshots"]] != [(103, "current")]:
+        raise SystemExit(f"single-frame evidence must keep the current frame: {current_only}")
+
     class RecordingTemporalEngine:
         def __init__(self) -> None:
             self.track_id = None
@@ -270,6 +317,7 @@ def main() -> None:
         "replacement_track": newcomer_track,
         "history_capacity": 8,
         "recent_evidence_snapshot_ids": [2, 3, 4],
+        "role_aware_evidence": role_sequence,
         "dynamic_evidence_track": dynamic_evidence_track,
         "weak_presence_first_state": weak_first.get("presence_persistence_state"),
         "weak_presence_second_state": weak_second.get("presence_persistence_state"),

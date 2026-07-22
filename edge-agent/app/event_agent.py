@@ -24,10 +24,18 @@ class EventAgent:
     ) -> Optional[Dict[str, Any]]:
         camera_id = camera["id"] if camera else None
         throttle_seconds = self._throttle_seconds(event_type)
-        if not force and self.storage.event_exists_recent(camera_id, event_type, throttle_seconds):
+        if not force:
             if candidate_id is not None:
-                self.storage.update_event_candidate_status(candidate_id, "suppressed")
-            return None
+                aggregated = self.storage.aggregate_event_candidate_into_recent_event(
+                    candidate_id=int(candidate_id),
+                    camera_id=camera_id,
+                    event_type=event_type,
+                    seconds=throttle_seconds,
+                )
+                if aggregated is not None:
+                    return None
+            elif self.storage.event_exists_recent(camera_id, event_type, throttle_seconds):
+                return None
 
         event = self.storage.create_event(
             event_type=event_type,
@@ -62,6 +70,10 @@ class EventAgent:
         return event
 
     def _throttle_seconds(self, event_type: str) -> int:
+        if event_type == "fall_candidate":
+            return max(3, min(self.throttle_seconds, 8))
+        if event_type == "prolonged_floor_lying":
+            return max(30, min(self.throttle_seconds, 60))
         if event_type in {"no_motion", "no_person"}:
             return max(self.throttle_seconds, 3600)
         if event_type == "fire_candidate":
