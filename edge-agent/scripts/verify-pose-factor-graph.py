@@ -155,20 +155,20 @@ def main() -> None:
         raise SystemExit("normal lying surfaces must still suppress prolonged-floor-lying alerts")
 
     engine.reset_camera(1)
-    engine.update(1, frame("standing", [505, 80, 638, 358]), monotonic_at=100.0)
+    engine.update(1, frame("standing", [504, 80, 637, 357]), monotonic_at=100.0)
     traversed_fall = engine.update(
         1,
-        frame("lying", [0, 252, 206, 360], normal_zone=True, motion=0.056, confidence=0.81),
+        frame("lying", [3, 249, 209, 357], normal_zone=True, motion=0.056, confidence=0.81),
         monotonic_at=114.0,
     )
     if not traversed_fall["fast_fall_candidate"]:
         raise SystemExit("same-track continuity must survive a large in-frame traversal before a fall")
 
     engine.reset_camera(1)
-    engine.update(1, frame("standing", [505, 80, 638, 358], track_id="c1-p1"), monotonic_at=100.0)
+    engine.update(1, frame("standing", [504, 80, 637, 357], track_id="c1-p1"), monotonic_at=100.0)
     different_track = engine.update(
         1,
-        frame("lying", [0, 252, 206, 360], normal_zone=True, motion=0.056, track_id="c1-p2", confidence=0.81),
+        frame("lying", [3, 249, 209, 357], normal_zone=True, motion=0.056, track_id="c1-p2", confidence=0.81),
         monotonic_at=114.0,
     )
     if different_track["fast_fall_candidate"]:
@@ -242,6 +242,44 @@ def main() -> None:
     if clipped["fast_fall_candidate"]:
         raise SystemExit("edge-clipped low-confidence person must not enter fall review")
 
+    closeup_engine = PoseFactorGraphEngine()
+    closeup_engine.update(
+        1,
+        frame("standing", [52.0, 50.0, 155.0, 320.0], track_id="c24-p23"),
+        monotonic_at=0.0,
+    )
+    closeup = closeup_engine.update(
+        1,
+        frame(
+            "lying",
+            [0.0, 239.0, 313.1, 360.0],
+            motion=0.0911,
+            confidence=0.8154,
+            track_id="c24-p23",
+        ),
+        monotonic_at=1.2,
+    )
+    closeup_track = closeup["tracks"][0]
+    if closeup["fast_fall_candidate"]:
+        raise SystemExit("high-confidence close-up crop must not enter fall review")
+    if not closeup_track.get("frame_edge_clipped") or closeup_track.get("quality_gate"):
+        raise SystemExit(f"close-up crop must fail the edge quality gate: {closeup_track}")
+
+    occluded_lying_engine = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    floor_lying = frame("lying", [220, 220, 540, 350], motion=0.0, track_id="c1-floor")
+    occluded_lying_engine.update(1, floor_lying, monotonic_at=0.0)
+    clipped_floor = frame(
+        "lying",
+        [0.0, 250.0, 320.0, 360.0],
+        motion=0.0,
+        track_id="c1-floor",
+    )
+    occluded_lying_engine.update(1, clipped_floor, monotonic_at=60.0)
+    occluded_lying_engine.update(1, clipped_floor, monotonic_at=120.0)
+    resumed_floor = occluded_lying_engine.update(1, floor_lying, monotonic_at=181.0)
+    if not resumed_floor["prolonged_floor_lying_candidate"]:
+        raise SystemExit("temporary edge clipping must not erase an established floor-lying state")
+
     slow_lie_engine = PoseFactorGraphEngine()
     slow_lie_engine.update(1, frame("standing", [250, 20, 340, 320]), monotonic_at=0.0)
     slow_lie = slow_lie_engine.update(
@@ -276,6 +314,8 @@ def main() -> None:
         "deliberate_sit_suppressed": not deliberate_sit["fast_fall_candidate"],
         "crouch_suppressed": not crouch["fast_fall_candidate"],
         "edge_clipped_suppressed": not clipped["fast_fall_candidate"],
+        "closeup_crop_suppressed": not closeup["fast_fall_candidate"],
+        "edge_occlusion_preserves_lying_state": resumed_floor["prolonged_floor_lying_candidate"],
         "slow_lying_requires_confirmation": not slow_lie_track.get("review_ready"),
         "recovery_verified": True,
     }, ensure_ascii=False, indent=2))

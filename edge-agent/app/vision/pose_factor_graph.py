@@ -19,6 +19,7 @@ FAST_FALL_MIN_EVIDENCE_SCORE = 0.72
 FAST_FALL_MIN_POSTURE_RELIABILITY = 0.55
 EVIDENCE_RELIABILITY_FLOOR = 0.75
 FAST_FALL_IMMEDIATE_REVIEW_WINDOW_SECONDS = 3.0
+FRAME_EDGE_MARGIN_PIXELS = 2.0
 
 
 class PoseFactorGraphEngine:
@@ -67,7 +68,7 @@ class PoseFactorGraphEngine:
                 or DEFAULT_FALL_TRANSITION_MOTION_SCORE
             ),
         )
-        targets = self._track_targets(analysis)
+        targets = self._track_targets(analysis, width=width, height=height)
         states = self._states.setdefault(camera_id, {})
         graphs: list[Dict[str, Any]] = []
 
@@ -78,8 +79,13 @@ class PoseFactorGraphEngine:
             posture_confidence = float(target.get("posture_confidence") or target.get("confidence") or 0.0)
             center = self._center(target["bbox"], width, height)
             normal_lying_zone = bool(target.get("normal_lying_zone"))
+            frame_edge_clipped = bool(target.get("frame_edge_clipped"))
             recent_upright = state.get("upright") if isinstance(state.get("upright"), dict) else None
-            if posture in UPRIGHT_POSTURES and posture_confidence >= self.min_posture_confidence:
+            if (
+                posture in UPRIGHT_POSTURES
+                and posture_confidence >= self.min_posture_confidence
+                and not frame_edge_clipped
+            ):
                 recent_upright = {
                     "observed_at": timestamp,
                     "monotonic_at": now_mono,
@@ -89,17 +95,22 @@ class PoseFactorGraphEngine:
                 }
                 state["upright"] = recent_upright
 
-            lying = posture == "lying" and posture_confidence >= self.min_posture_confidence
-            if lying and not normal_lying_zone:
-                if state.get("lying_started_monotonic") is None:
-                    state["lying_started_monotonic"] = now_mono
-                    state["lying_started_at"] = timestamp
-                state["recovery_count"] = 0
-            else:
-                state["recovery_count"] = int(state.get("recovery_count") or 0) + 1
-                if state["recovery_count"] >= self.recovery_samples:
-                    state.pop("lying_started_monotonic", None)
-                    state.pop("lying_started_at", None)
+            lying = bool(
+                posture == "lying"
+                and posture_confidence >= self.min_posture_confidence
+                and not frame_edge_clipped
+            )
+            if not frame_edge_clipped:
+                if lying and not normal_lying_zone:
+                    if state.get("lying_started_monotonic") is None:
+                        state["lying_started_monotonic"] = now_mono
+                        state["lying_started_at"] = timestamp
+                    state["recovery_count"] = 0
+                else:
+                    state["recovery_count"] = int(state.get("recovery_count") or 0) + 1
+                    if state["recovery_count"] >= self.recovery_samples:
+                        state.pop("lying_started_monotonic", None)
+                        state.pop("lying_started_at", None)
 
             lying_started = state.get("lying_started_monotonic")
             lying_duration = max(0.0, now_mono - float(lying_started)) if lying_started is not None else 0.0
@@ -209,6 +220,7 @@ class PoseFactorGraphEngine:
         }
         factor_score = sum(weights[name] for name, matched in factors.items() if matched)
         posture_reliability = max(0.0, min(1.0, confidence))
+        frame_edge_clipped = bool(target.get("frame_edge_clipped"))
         reliability_modifier = EVIDENCE_RELIABILITY_FLOOR + (
             (1.0 - EVIDENCE_RELIABILITY_FLOOR) * posture_reliability
         )
@@ -225,8 +237,13 @@ class PoseFactorGraphEngine:
         }
         quality_gate = bool(
             posture_reliability >= FAST_FALL_MIN_POSTURE_RELIABILITY
-            and not bool(target.get("frame_edge_clipped"))
+            and not frame_edge_clipped
         )
+        quality_gate_reasons = []
+        if posture_reliability < FAST_FALL_MIN_POSTURE_RELIABILITY:
+            quality_gate_reasons.append("low_posture_reliability")
+        if frame_edge_clipped:
+            quality_gate_reasons.append("frame_edge_clipped")
         fast_candidate = bool(
             score >= FAST_FALL_MIN_EVIDENCE_SCORE
             and quality_gate
@@ -242,7 +259,8 @@ class PoseFactorGraphEngine:
         )
         prolonged_candidate = bool(
             posture == "lying" and confidence >= self.min_posture_confidence
-            and not normal_lying_zone and lying_duration >= self.prolonged_lying_seconds
+            and not normal_lying_zone and not frame_edge_clipped
+            and lying_duration >= self.prolonged_lying_seconds
         )
         return {
             "track_id": str(target.get("track_id") or ""),
@@ -252,6 +270,7 @@ class PoseFactorGraphEngine:
             "posture_confidence": round(confidence, 4),
             "posture_factors": target.get("posture_factors") or {},
             "body_aspect": round(body_aspect, 4),
+            "frame_edge_clipped": frame_edge_clipped,
             "normal_lying_zone": normal_lying_zone,
             "scene_zone_id": target.get("scene_zone_id"),
             "scene_zone_label": target.get("scene_zone_label"),
@@ -279,6 +298,7 @@ class PoseFactorGraphEngine:
             "posture_reliability": round(posture_reliability, 4),
             "reliability_modifier": round(reliability_modifier, 4),
             "quality_gate": quality_gate,
+            "quality_gate_reasons": quality_gate_reasons,
             "required_factors": required_factors,
             "required_factors_confirmed": all(required_factors.values()),
             "immediate_review_evidence": immediate_review_evidence,
@@ -294,7 +314,13 @@ class PoseFactorGraphEngine:
             "prolonged_floor_lying_candidate": prolonged_candidate,
         }
 
-    def _track_targets(self, analysis: Dict[str, Any]) -> list[Dict[str, Any]]:
+    def _track_targets(
+        self,
+        analysis: Dict[str, Any],
+        *,
+        width: float,
+        height: float,
+    ) -> list[Dict[str, Any]]:
         poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
         people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
         targets: dict[str, Dict[str, Any]] = {}
@@ -315,7 +341,32 @@ class PoseFactorGraphEngine:
                 }
             else:
                 targets[track_id] = dict(person)
-        return [{**item, "track_id": track_id} for track_id, item in targets.items()]
+        return [
+            {
+                **item,
+                "track_id": track_id,
+                "frame_edge_clipped": bool(
+                    item.get("frame_edge_clipped")
+                    or self._frame_edge_clipped(item["bbox"], width, height)
+                ),
+            }
+            for track_id, item in targets.items()
+        ]
+
+    def _frame_edge_clipped(
+        self,
+        bbox: list[float],
+        width: float,
+        height: float,
+    ) -> bool:
+        x1, y1, x2, y2 = [float(value) for value in bbox]
+        margin = FRAME_EDGE_MARGIN_PIXELS
+        return bool(
+            x1 <= margin
+            or y1 <= margin
+            or x2 >= width - margin
+            or y2 >= height - margin
+        )
 
     def _body_aspect(self, target: Dict[str, Any]) -> float:
         factors = target.get("posture_factors") if isinstance(target.get("posture_factors"), dict) else {}
