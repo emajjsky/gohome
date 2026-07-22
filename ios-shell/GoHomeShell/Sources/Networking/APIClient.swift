@@ -3,7 +3,7 @@ import Foundation
 actor APIClient {
     typealias TokenProvider = @Sendable () async -> String?
 
-    private let baseURL: URL
+    nonisolated let baseURL: URL
     private let session: URLSession
     private let tokenProvider: TokenProvider
 

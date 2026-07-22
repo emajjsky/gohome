@@ -13,6 +13,14 @@ actor AppRepository {
         self.bootstrapLoader = bootstrapLoader
     }
 
+    func fetchBootstrap() async throws -> BootstrapResponse {
+        try await bootstrapLoader()
+    }
+
+    func cacheBootstrap(_ value: BootstrapResponse, scope: CacheScope) async {
+        try? await cache.write(value, key: "bootstrap", scope: scope, ttl: 24 * 60 * 60)
+    }
+
     func bootstrap(scope: CacheScope, onUpdate: @escaping BootstrapUpdate) async {
         let cached = try? await cache.read(BootstrapResponse.self, key: "bootstrap", scope: scope)
         await onUpdate(Loadable(value: cached, isRefreshing: true, staleReason: nil))

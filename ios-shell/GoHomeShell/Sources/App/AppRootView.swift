@@ -6,7 +6,10 @@ struct AppRootView: View {
 
     init(environment: AppEnvironment) {
         self.environment = environment
-        _model = StateObject(wrappedValue: AppModel(repository: environment.repository))
+        _model = StateObject(wrappedValue: AppModel(
+            repository: environment.repository,
+            sessionContextStore: environment.sessionContextStore
+        ))
     }
 
     var body: some View {
@@ -19,49 +22,34 @@ struct AppRootView: View {
                     onAuthenticated: { model.authenticated() }
                 ))
             case let .onboarding(step):
-                OnboardingPlaceholder(step: step)
+                OnboardingCoordinatorView(
+                    step: step,
+                    familyID: model.bootstrap.value?.activeFamilyID,
+                    service: OnboardingService(client: environment.apiClient),
+                    onComplete: { model.reloadAfterOnboardingStep() }
+                )
             case .main:
                 MainPlaceholder()
             }
         }
         .task {
-            model.start()
+            model.start(authStore: environment.authStore)
         }
-    }
-}
-
-private struct OnboardingPlaceholder: View {
-    let step: OnboardingStep
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("开始配置")
-                .font(.largeTitle.bold())
-            Text(step.title)
-                .font(.title3)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(24)
     }
 }
 
 private struct MainPlaceholder: View {
     var body: some View {
-        Text("回家")
-            .font(.largeTitle.bold())
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-private extension OnboardingStep {
-    var title: String {
-        switch self {
-        case .family: return "创建家庭"
-        case .profile: return "添加家庭成员"
-        case .device: return "绑定守护盒子"
-        case .camera: return "配置摄像头"
-        case .complete: return "即将完成"
+        VStack(spacing: 12) {
+            Image(systemName: "house.fill")
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(Color.yellow.opacity(0.9))
+            Text("回家")
+                .font(.largeTitle.bold())
+            Text("配置已完成")
+                .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.white.ignoresSafeArea())
     }
 }

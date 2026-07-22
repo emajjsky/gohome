@@ -297,7 +297,7 @@ Run: `ios-shell/scripts/test.sh GoHomeShellUITests/AuthFlowTests`
 
 Expected: PASS for signed-out launch and authentication routing.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/GoHomeShellApp.swift ios-shell/GoHomeShell/Sources/App ios-shell/GoHomeShell/Sources/Features/Auth ios-shell/GoHomeShellUITests/AuthFlowTests.swift
@@ -315,19 +315,19 @@ git commit -m "feat(ios): replace web root with native authentication"
 - Create: `Sources/Services/BoxDiscoveryService.swift`
 - Test: `GoHomeShellUITests/OnboardingFlowTests.swift`
 
-- [ ] **Step 1: Write one UI test per server next step**
+- [x] **Step 1: Write one UI test per server next step**
 
 Stub bootstrap responses for `family`, `profile`, `device`, `camera`, and `complete`; assert each opens exactly its matching native screen and incomplete users cannot access tabs.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Expected: FAIL because onboarding views do not exist.
 
-- [ ] **Step 3: Implement native steps**
+- [x] **Step 3: Implement native steps**
 
 Family supports create/join. Profile requires display name and at least one validated contact number. Device binding uses `NWBrowser` for `_gohome._tcp` and exchanges the cloud one-time credential. Camera setup writes cloud configuration and waits for versioned edge sync without blocking navigation.
 
-- [ ] **Step 4: Run onboarding and legacy cloud verification**
+- [x] **Step 4: Run onboarding and legacy cloud verification**
 
 Run:
 
@@ -338,7 +338,7 @@ cd .. && npm run verify:cloud-onboarding
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Features/Onboarding ios-shell/GoHomeShell/Sources/Services/BoxDiscoveryService.swift ios-shell/GoHomeShellUITests/OnboardingFlowTests.swift
