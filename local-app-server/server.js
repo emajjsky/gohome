@@ -6080,6 +6080,9 @@ function createLocalAppServer(options = {}) {
 
     function writeLatestFrameMjpegStream(req, res, cameraId) {
         const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
+        const profile = new URL(req.url, "http://local").searchParams.get("profile") || "mobile";
+        const relayFps = profile === "mobile" ? 5 : streamProfileConfig(profile).fps;
+        const relayIntervalMs = Math.ceil(1000 / Math.max(1, relayFps));
         let closed = false;
 
         if (typeof req.setTimeout === "function") req.setTimeout(0);
@@ -6100,7 +6103,7 @@ function createLocalAppServer(options = {}) {
             getLatestFrame: () => latestRelayFrame(cameraId),
         });
         writer.writeLatest({ force: true });
-        const timer = setInterval(writer.writeLatest, 120);
+        const timer = setInterval(writer.writeLatest, relayIntervalMs);
         function closeStream() {
             if (closed) return;
             closed = true;

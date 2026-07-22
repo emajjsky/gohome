@@ -52,13 +52,49 @@ final class GuardViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRetryStartsTheSelectedCameraAgainAfterFailure() async throws {
+    func testStreamFailureReconnectsTheSelectedCamera() async throws {
         let client = RecordingStreamClient()
-        let model = GuardViewModel(streamClient: client)
+        let model = GuardViewModel(
+            streamClient: client,
+            reconnectDelayNanoseconds: 1_000_000
+        )
 
         model.select(cameraID: "camera-a")
         try await waitUntil { await client.startCount(cameraID: "camera-a") == 1 }
         await client.fail(cameraID: "camera-a")
+        try await waitUntil { await client.startCount(cameraID: "camera-a") == 2 }
+
+        XCTAssertEqual(model.selectedCameraID, "camera-a")
+        XCTAssertEqual(model.streamState, .connecting)
+    }
+
+    @MainActor
+    func testFrameWatchdogReconnectsAStalledStream() async throws {
+        let client = RecordingStreamClient()
+        let model = GuardViewModel(
+            streamClient: client,
+            frameTimeoutNanoseconds: 20_000_000,
+            reconnectDelayNanoseconds: 1_000_000
+        )
+
+        model.select(cameraID: "camera-a")
+        try await waitUntil { await client.startCount(cameraID: "camera-a") == 1 }
+        try await waitUntil { await client.startCount(cameraID: "camera-a") == 2 }
+
+        let stopCount = await client.stopCount
+        XCTAssertGreaterThanOrEqual(stopCount, 2)
+    }
+
+    @MainActor
+    func testRepeatedConnectionFailuresStopAfterTheRetryLimit() async throws {
+        let client = FailingStreamClient()
+        let model = GuardViewModel(
+            streamClient: client,
+            reconnectDelayNanoseconds: 1_000_000,
+            maxReconnectAttempts: 2
+        )
+
+        model.select(cameraID: "camera-a")
         try await waitUntil {
             await MainActor.run {
                 if case .failed = model.streamState { return true }
@@ -66,11 +102,20 @@ final class GuardViewModelTests: XCTestCase {
             }
         }
 
-        model.retry()
-        try await waitUntil { await client.startCount(cameraID: "camera-a") == 2 }
-
-        XCTAssertEqual(model.selectedCameraID, "camera-a")
+        let startCount = await client.startCount
+        XCTAssertEqual(startCount, 3)
     }
+}
+
+private actor FailingStreamClient: CameraStreamClient {
+    private(set) var startCount = 0
+
+    func frames(cameraID: String, profile: String) async throws -> AsyncThrowingStream<Data, Error> {
+        startCount += 1
+        throw URLError(.cannotConnectToHost)
+    }
+
+    func stop() async {}
 }
 
 private actor RecordingStreamClient: CameraStreamClient {
