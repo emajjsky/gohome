@@ -51,6 +51,36 @@ function criticalAlertView(event) {
     };
 }
 
+function careMessageView(message) {
+    if (!message) return null;
+    const metadata = message.metadata && typeof message.metadata === "object" ? message.metadata : {};
+    return {
+        message_id: String(message.message_id || message.id || ""),
+        message_type: String(message.message_type || "care"),
+        title: String(message.title || "").trim(),
+        subtitle: String(message.subtitle || "").trim(),
+        body: String(message.body || "").trim(),
+        facts: Array.isArray(message.facts) ? message.facts.map(String).filter(Boolean).slice(0, 4) : [],
+        actions: Array.isArray(message.actions)
+            ? message.actions.map((action) => ({
+                type: String(action?.type || action?.key || ""),
+                label: action?.label ? String(action.label) : null,
+            })).filter((action) => action.type)
+            : [],
+        status: String(message.status || "open"),
+        metadata: {
+            trigger_reason: String(metadata.trigger_reason || ""),
+            topics: Array.isArray(metadata.topics) ? metadata.topics.map(String).filter(Boolean).slice(0, 3) : [],
+            message_variants: Array.isArray(metadata.message_variants)
+                ? metadata.message_variants.map(String).filter(Boolean).slice(0, 3)
+                : [],
+            snoozed_until: metadata.snoozed_until || null,
+        },
+        created_at: message.created_at || null,
+        updated_at: message.updated_at || null,
+    };
+}
+
 class NativeViewService {
     constructor(repository, { homeEnricher = null } = {}) {
         this.repository = repository;
@@ -87,6 +117,7 @@ class NativeViewService {
             calendar: Array.isArray(source.calendar) ? source.calendar : [],
             distance: source.distance || null,
             critical_alert: criticalAlertView(source.critical_alert),
+            care_message: careMessageView(source.care_message),
             articles: (source.articles || []).map(articleView).filter((article) => article && article.title),
             cameras: Array.isArray(source.cameras) ? source.cameras : [],
         };
@@ -148,4 +179,4 @@ class NativeViewService {
     }
 }
 
-module.exports = { NativeViewService, articleView, criticalAlertView, revisionFor };
+module.exports = { NativeViewService, articleView, careMessageView, criticalAlertView, revisionFor };

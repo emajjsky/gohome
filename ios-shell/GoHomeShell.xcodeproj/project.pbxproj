@@ -26,6 +26,7 @@
 		473B4CF57C81EC02EA2E02E8 /* EventDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCBC9A488B26D294184EF5C7 /* EventDetailView.swift */; };
 		51FBE67F5F279B4917217D2E /* AppSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBD54AB746D00CA01186A345 /* AppSmokeTests.swift */; };
 		5FF590BFEDBB2BCCA3398400 /* AppRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3334DDE3CC653FD1541523C /* AppRepository.swift */; };
+		66DBFC376E46F1B98BEAC2FB /* CareMessageCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBBA32F7917F6F0495B49EF /* CareMessageCard.swift */; };
 		67041597E06E2008623365F9 /* CameraStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748FA19F9C6A88D3512B1119 /* CameraStreamClient.swift */; };
 		6BDCF5B3E6DCBF102FD6E291 /* EventsViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2849E8DC39050E6E6187E138 /* EventsViewModelTests.swift */; };
 		6CE974EA45EB32AC617AF37B /* EventPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2730983A40D8FA9915BB8BE /* EventPresentationTests.swift */; };
@@ -147,6 +148,7 @@
 		7C7B4F227DC854C64746106C /* BoxDiscoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoxDiscoveryService.swift; sourceTree = "<group>"; };
 		88E6E4010D3EE24DEC0AAA29 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		8915B898A43BA9BA950395F9 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		8DBBA32F7917F6F0495B49EF /* CareMessageCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareMessageCard.swift; sourceTree = "<group>"; };
 		8ED0A30A15762CD0C8DE58BA /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
 		91C24A55A123E7BC7B7A8210 /* GoHomeShellRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoHomeShellRuntime.swift; sourceTree = "<group>"; };
 		930B8EAC49AC96E7F4AF14E1 /* GoHomeShell.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GoHomeShell.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -363,6 +365,7 @@
 				77CFCDAA5CFFC8B26D1B9F25 /* ArticleCard.swift */,
 				DB14E97EA80F980629836AB4 /* ArticleDetailRoute.swift */,
 				3CB2D7242BCF65C76BDFB204 /* CalendarStripView.swift */,
+				8DBBA32F7917F6F0495B49EF /* CareMessageCard.swift */,
 				6E2484C2E61F757B95DDFA59 /* DistanceMapView.swift */,
 				07F18362615012A08B508843 /* EditorialFeed.swift */,
 				88E6E4010D3EE24DEC0AAA29 /* HomeView.swift */,
@@ -582,6 +585,7 @@
 				21CA1072E1B79122DDC40D1A /* CameraStageView.swift in Sources */,
 				67041597E06E2008623365F9 /* CameraStreamClient.swift in Sources */,
 				BE8D1DAFCC41C5A73DB0D7A3 /* CameraThumbnailStrip.swift in Sources */,
+				66DBFC376E46F1B98BEAC2FB /* CareMessageCard.swift in Sources */,
 				C1D6B8CBD96CDD7E3C607EA4 /* Components.swift in Sources */,
 				E172FE0125998B4E94FE22FA /* ContentPreferencesView.swift in Sources */,
 				E8A0D6DAC831FFF9F5776F48 /* DeviceBindingView.swift in Sources */,

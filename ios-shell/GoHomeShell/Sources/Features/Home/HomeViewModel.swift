@@ -72,6 +72,9 @@ enum HomePresentation {
 @MainActor
 final class HomeViewModel: ObservableObject {
     @Published private(set) var state = Loadable<HomeResponse>()
+    @Published private(set) var careMessage: CareMessage?
+    @Published private(set) var pendingCareAction: String?
+    @Published private(set) var careActionError: String?
 
     private let repository: AppRepository?
     private let scope: CacheScope?
@@ -88,9 +91,45 @@ final class HomeViewModel: ObservableObject {
         hasStarted = true
         loadTask = Task { [repository, scope] in
             await repository.home(scope: scope) { next in
-                await MainActor.run { self.state = next }
+                await MainActor.run {
+                    self.state = next
+                    if self.pendingCareAction == nil { self.careMessage = next.value?.careMessage }
+                }
             }
         }
+    }
+
+    func recordCareAction(type: String, payload: [String: String] = [:]) async -> Bool {
+        guard pendingCareAction == nil, let repository, let scope, let message = careMessage else { return false }
+        pendingCareAction = type
+        careActionError = nil
+        let request = CareMessageActionRequest(
+            actionType: type,
+            payload: payload,
+            idempotencyKey: "ios-\(message.messageID)-\(type)-\(UUID().uuidString.lowercased())"
+        )
+        do {
+            let response = try await repository.recordMessageAction(
+                familyID: scope.familyID,
+                messageID: message.messageID,
+                request: request
+            )
+            if ["closed", "dismissed"].contains(response.message.status) || type == "snoozed" {
+                careMessage = nil
+            } else {
+                careMessage = response.message
+            }
+            pendingCareAction = nil
+            return true
+        } catch {
+            pendingCareAction = nil
+            careActionError = "操作没有保存，请稍后重试"
+            return false
+        }
+    }
+
+    func clearCareActionError() {
+        careActionError = nil
     }
 
     deinit { loadTask?.cancel() }

@@ -18,6 +18,9 @@ struct HomeView: View {
                 if let alert = HomePresentation.activeAlert(model.state.value?.criticalAlert) {
                     CriticalAlertStrip(alert: alert)
                 }
+                if let message = model.careMessage {
+                    CareMessageCard(message: message, model: model)
+                }
                 CalendarStripView(
                     days: HomePresentation.calendarDays(reference: referenceDate),
                     nextEvent: model.state.value?.calendar.first

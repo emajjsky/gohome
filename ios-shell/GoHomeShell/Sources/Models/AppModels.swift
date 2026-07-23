@@ -111,6 +111,7 @@ struct HomeResponse: Codable, Equatable, Sendable {
     let calendar: [HomeCalendarEvent]
     let distance: HomeDistance?
     let criticalAlert: HomeCriticalAlert?
+    let careMessage: CareMessage?
     let articles: [HomeArticle]
     let cameras: [HomeCamera]
     let revision: String
@@ -118,7 +119,82 @@ struct HomeResponse: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case family, weather, calendar, distance, articles, cameras, revision
         case criticalAlert = "critical_alert"
+        case careMessage = "care_message"
     }
+}
+
+struct CareMessage: Codable, Equatable, Sendable, Identifiable {
+    let messageID: String
+    let messageType: String
+    let title: String
+    let subtitle: String
+    let body: String
+    let facts: [String]
+    let actions: [CareMessageActionOption]
+    let status: String
+    let metadata: CareMessageMetadata
+    let createdAt: String?
+    let updatedAt: String?
+
+    var id: String { messageID }
+
+    enum CodingKeys: String, CodingKey {
+        case title, subtitle, body, facts, actions, status, metadata
+        case messageID = "message_id"
+        case messageType = "message_type"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct CareMessageMetadata: Codable, Equatable, Sendable {
+    let triggerReason: String
+    let topics: [String]
+    let messageVariants: [String]
+    let snoozedUntil: String?
+
+    enum CodingKeys: String, CodingKey {
+        case topics
+        case triggerReason = "trigger_reason"
+        case messageVariants = "message_variants"
+        case snoozedUntil = "snoozed_until"
+    }
+}
+
+struct CareMessageActionOption: Codable, Equatable, Sendable {
+    let type: String
+    let label: String?
+
+    enum CodingKeys: String, CodingKey { case type, key, label }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        type = try values.decodeIfPresent(String.self, forKey: .type)
+            ?? values.decode(String.self, forKey: .key)
+        label = try values.decodeIfPresent(String.self, forKey: .label)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(type, forKey: .type)
+        try values.encodeIfPresent(label, forKey: .label)
+    }
+}
+
+struct CareMessageActionRequest: Encodable, Equatable, Sendable {
+    let actionType: String
+    let payload: [String: String]
+    let idempotencyKey: String
+
+    enum CodingKeys: String, CodingKey {
+        case payload
+        case actionType = "action_type"
+        case idempotencyKey = "idempotency_key"
+    }
+}
+
+struct CareMessageActionResponse: Decodable, Equatable, Sendable {
+    let message: CareMessage
 }
 
 struct HomeWeather: Codable, Equatable, Sendable {

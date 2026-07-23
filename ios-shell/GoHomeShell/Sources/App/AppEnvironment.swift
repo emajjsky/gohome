@@ -101,6 +101,15 @@ struct AppEnvironment {
                     body: patch
                 )
                 return try await client.send(endpoint)
+            },
+            messageActionLoader: { familyID, messageID, request in
+                let endpoint: Endpoint<CareMessageActionResponse> = try .jsonBody(
+                    method: .post,
+                    path: "/api/v2/messages/\(messageID)/actions",
+                    body: request,
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                )
+                return try await client.send(endpoint)
             }
         )
         return AppEnvironment(

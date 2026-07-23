@@ -47,6 +47,22 @@ test('native bootstrap and home are session-scoped, modular, sourced, and cachea
           acknowledged: false,
           payload: { raw_pose_evidence: 'must-not-leak-to-home' },
         },
+        care_message: {
+          message_id: 'return-home-family-native-1',
+          message_type: 'return_home',
+          title: '找个轻松的话题聊聊',
+          subtitle: '根据最近的联系节奏整理',
+          body: '今天可以从公园夜游聊起。',
+          facts: ['距离上次联系已有一段时间'],
+          actions: [{ key: 'shared', label: '分享' }],
+          status: 'open',
+          metadata: {
+            trigger_reason: 'days_since_last_visit',
+            topics: ['公园夜游', '周末安排'],
+            message_variants: ['最近公园开放夜游了，周末想不想一起去看看？'],
+          },
+          created_at: '2026-07-23T08:00:00.000Z',
+        },
         cameras: [{ id: 'camera-1', name: '客厅' }],
         articles: [
           { id: 'article-1', title: '城市公园本周开放夜游', url: 'https://news.example.com/a', source_name: '城市发布' },
@@ -97,6 +113,9 @@ test('native bootstrap and home are session-scoped, modular, sourced, and cachea
       acknowledged: false,
     });
     assert.equal(JSON.stringify(home).includes('raw_pose_evidence'), false);
+    assert.equal(home.care_message.message_id, 'return-home-family-native-1');
+    assert.deepEqual(home.care_message.metadata.topics, ['公园夜游', '周末安排']);
+    assert.deepEqual(home.care_message.actions, [{ type: 'shared', label: '分享' }]);
     assert.equal(home.articles.length, 1);
     assert.equal(home.articles[0].source_url, 'https://news.example.com/a');
 

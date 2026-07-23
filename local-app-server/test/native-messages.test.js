@@ -94,6 +94,19 @@ test('native return-home messages support idempotent actions without claiming We
     assert.equal(firstShare.body.action.payload.channel, 'system-share');
     assert.equal('wechat_delivered' in firstShare.body.action.payload, false);
 
+    const contacted = await requestJson(baseUrl, `/api/v2/messages/${messageId}/actions?family_id=${familyId}`, {
+      method: 'POST',
+      headers: { ...authorization, 'Idempotency-Key': 'contacted-return-home-1' },
+      body: JSON.stringify({
+        action_type: 'contacted',
+        payload: { selected_text: '  今天有空聊聊周末安排吗？  ', topic: '  周末安排  ' },
+      }),
+    });
+    assert.equal(contacted.response.status, 200);
+    assert.equal(contacted.body.message.status, 'closed');
+    assert.equal(contacted.body.action.payload.selected_text, '今天有空聊聊周末安排吗？');
+    assert.equal(contacted.body.action.payload.topic, '周末安排');
+
     const invalidSnooze = await requestJson(baseUrl, `/api/v2/messages/${messageId}/actions?family_id=${familyId}`, {
       method: 'POST',
       headers: { ...authorization, 'Idempotency-Key': 'past-snooze' },
@@ -113,10 +126,10 @@ test('native return-home messages support idempotent actions without claiming We
       /^\d{4}-\d{2}-\d{2}$/,
     );
     assert.equal(app.store.db.care_preferences[familyId].metadata.care_card_schedule.visit_reminder.next_visit_at, '');
-    assert.equal(app.store.db.app_message_actions.length, 2);
+    assert.equal(app.store.db.app_message_actions.length, 3);
     const persistedAfterAction = JSON.parse(fs.readFileSync(path.join(dataDir, 'db.json'), 'utf8'));
     assert.equal(persistedAfterAction.app_messages[0].status, 'closed');
-    assert.equal(persistedAfterAction.app_message_actions.length, 2);
+    assert.equal(persistedAfterAction.app_message_actions.length, 3);
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(dataDir, { recursive: true, force: true });

@@ -111,7 +111,7 @@ class PostgresNativeRepository extends NativeRepository {
     async homeForFamily(userId, familyId) {
         await this.assertFamilyAccess(this.pool, userId, familyId);
         const id = textId(familyId);
-        const [familyResult, elderResult, camerasResult, calendarResult, eventsResult, articleResult, careCardResult] = await Promise.all([
+        const [familyResult, elderResult, camerasResult, calendarResult, eventsResult, articleResult, careCardResult, careMessageResult] = await Promise.all([
             this.pool.query(`select ${FAMILY_COLUMNS} from family_members fm join families f on f.id = fm.family_id where fm.user_id = $1 and fm.family_id = $2 and fm.status = 'active'`, [textId(userId), id]),
             this.pool.query(`select * from elder_profiles where family_id = $1 order by created_at asc limit 1`, [id]),
             this.pool.query(`select * from cameras where family_id = $1 order by created_at asc`, [id]),
@@ -119,6 +119,19 @@ class PostgresNativeRepository extends NativeRepository {
             this.pool.query(`select * from events where family_id = $1 and acknowledged = false order by occurred_at desc limit 20`, [id]),
             this.pool.query(`select * from content_recommendations where (family_id = $1 or family_id is null) and status = 'published' order by created_at desc limit 30`, [id]),
             this.pool.query(`select family_id, card_date, updated_at, content_recommendations from care_cards where family_id = $1 and jsonb_array_length(content_recommendations) > 0 order by card_date desc limit 14`, [id]),
+            this.pool.query(
+                `select * from app_messages
+                 where family_id = $1
+                   and message_type in ('return_home', 'care_card')
+                   and status = 'open'
+                   and (
+                       nullif(metadata->>'snoozed_until', '') is null
+                       or (metadata->>'snoozed_until')::timestamptz <= now()
+                   )
+                 order by case when message_type = 'return_home' then 0 else 1 end, created_at desc
+                 limit 1`,
+                [id],
+            ),
         ]);
         const events = rows(eventsResult);
         const publishedArticles = rows(articleResult);
@@ -128,6 +141,7 @@ class PostgresNativeRepository extends NativeRepository {
             cameras: rows(camerasResult),
             calendar: rows(calendarResult),
             critical_alert: events.find((event) => ["critical", "emergency"].includes(event.level)) || null,
+            care_message: row(careMessageResult),
             articles: publishedArticles.length ? publishedArticles : articlesFromCareCards(rows(careCardResult), id),
             weather: null,
             distance: null,
@@ -195,7 +209,7 @@ class PostgresNativeRepository extends NativeRepository {
                         read_at = case when $3 = 'opened' then coalesce(read_at, now()) else read_at end,
                         status = case
                             when $3 = 'dismissed' then 'dismissed'
-                            when $3 = 'returned_home' then 'closed'
+                            when $3 in ('contacted', 'returned_home') then 'closed'
                             else status
                         end,
                         metadata = case

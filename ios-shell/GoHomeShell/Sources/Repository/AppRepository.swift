@@ -12,6 +12,7 @@ actor AppRepository {
     typealias ProfileLoader = @Sendable (String) async throws -> ProfileData
     typealias RulesUpdater = @Sendable (String, RulePatch) async throws -> FamilyRules
     typealias CarePreferencesUpdater = @Sendable (String, CarePreferencesPatch) async throws -> CarePreferences
+    typealias MessageActionLoader = @Sendable (String, String, CareMessageActionRequest) async throws -> CareMessageActionResponse
 
     private let cache: DiskCache
     private let bootstrapLoader: BootstrapLoader
@@ -23,6 +24,7 @@ actor AppRepository {
     private let profileLoader: ProfileLoader
     private let rulesUpdater: RulesUpdater
     private let carePreferencesUpdater: CarePreferencesUpdater
+    private let messageActionLoader: MessageActionLoader
     private var bootstrapTasks: [CacheScope: Task<BootstrapResponse, Error>] = [:]
     private var homeTasks: [CacheScope: Task<HomeResponse, Error>] = [:]
     private var eventsTasks: [CacheScope: Task<[AppEvent], Error>] = [:]
@@ -40,7 +42,8 @@ actor AppRepository {
         eventActionLoader: @escaping EventActionLoader = { _, _ in throw APIError.invalidResponse },
         profileLoader: @escaping ProfileLoader = { _ in throw APIError.invalidResponse },
         rulesUpdater: @escaping RulesUpdater = { _, _ in throw APIError.invalidResponse },
-        carePreferencesUpdater: @escaping CarePreferencesUpdater = { _, _ in throw APIError.invalidResponse }
+        carePreferencesUpdater: @escaping CarePreferencesUpdater = { _, _ in throw APIError.invalidResponse },
+        messageActionLoader: @escaping MessageActionLoader = { _, _, _ in throw APIError.invalidResponse }
     ) {
         self.cache = cache
         self.bootstrapLoader = bootstrapLoader
@@ -52,6 +55,7 @@ actor AppRepository {
         self.profileLoader = profileLoader
         self.rulesUpdater = rulesUpdater
         self.carePreferencesUpdater = carePreferencesUpdater
+        self.messageActionLoader = messageActionLoader
     }
 
     func fetchBootstrap() async throws -> BootstrapResponse {
@@ -183,6 +187,14 @@ actor AppRepository {
 
     func updateCarePreferences(familyID: String, patch: CarePreferencesPatch) async throws -> CarePreferences {
         try await carePreferencesUpdater(familyID, patch)
+    }
+
+    func recordMessageAction(
+        familyID: String,
+        messageID: String,
+        request: CareMessageActionRequest
+    ) async throws -> CareMessageActionResponse {
+        try await messageActionLoader(familyID, messageID, request)
     }
 
     func cacheProfile(_ profile: ProfileData, scope: CacheScope) async {

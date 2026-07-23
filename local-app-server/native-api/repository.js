@@ -80,6 +80,11 @@ function actionInput(action = {}, now = Date.now()) {
     const payload = action.payload && typeof action.payload === "object" && !Array.isArray(action.payload)
         ? clone(action.payload)
         : {};
+    for (const key of ["selected_text", "topic"]) {
+        if (payload[key] === undefined) continue;
+        payload[key] = String(payload[key] || "").trim().slice(0, key === "selected_text" ? 1000 : 200);
+    }
+    if (payload.channel !== undefined) payload.channel = String(payload.channel || "").trim().slice(0, 40);
     if (actionType === "snoozed") {
         const snoozedUntil = Date.parse(payload.snoozed_until || payload.until || "");
         if (!Number.isFinite(snoozedUntil) || snoozedUntil <= now) throw repositoryError("snooze time must be in the future", 400);
@@ -214,12 +219,28 @@ class JsonNativeRepository extends NativeRepository {
         const articles = published.length
             ? published
             : articlesFromCareCards(this.db.care_cards || [], familyId);
+        const now = Date.parse(this.clock());
+        const careMessage = this.db.app_messages
+            .filter((message) => (
+                textId(message.family_id) === textId(familyId)
+                && ["return_home", "care_card"].includes(textId(message.message_type))
+                && textId(message.status || "open") === "open"
+            ))
+            .filter((message) => {
+                const snoozedUntil = Date.parse(message.metadata?.snoozed_until || "");
+                return !Number.isFinite(snoozedUntil) || snoozedUntil <= now;
+            })
+            .sort((a, b) => {
+                const priority = (message) => textId(message.message_type) === "return_home" ? 0 : 1;
+                return priority(a) - priority(b) || Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0);
+            })[0] || null;
         return clone({
             family,
             elder,
             cameras,
             calendar,
             critical_alert: events.find((event) => !event.acknowledged && ["critical", "emergency"].includes(event.level)) || null,
+            care_message: careMessage,
             articles,
             weather: null,
             distance: null,
@@ -266,7 +287,7 @@ class JsonNativeRepository extends NativeRepository {
         this.db.app_message_actions.push(row);
         if (input.action_type === "opened") message.read_at = message.read_at || timestamp;
         if (input.action_type === "dismissed") message.status = "dismissed";
-        if (input.action_type === "returned_home") message.status = "closed";
+        if (["contacted", "returned_home"].includes(input.action_type)) message.status = "closed";
         if (input.action_type === "snoozed") {
             message.metadata = { ...(message.metadata || {}), snoozed_until: input.payload.snoozed_until || input.payload.until };
         }

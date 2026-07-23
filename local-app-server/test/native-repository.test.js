@@ -75,6 +75,22 @@ test('JSON repository records message actions idempotently', () => {
   assert.throws(() => repo.recordMessageAction('user-a', 'family-b', 'message-b', input), /family access denied/);
 });
 
+test('JSON repository prefers actionable return-home copy over a newer daily care card', () => {
+  const repo = new JsonNativeRepository(fixture());
+  repo.db.app_messages.push(
+    {
+      message_id: 'return-home-a', family_id: 'family-a', message_type: 'return_home', status: 'open',
+      created_at: '2026-07-22T08:00:00.000Z', metadata: { topics: ['周末安排'] },
+    },
+    {
+      message_id: 'daily-care-a', family_id: 'family-a', message_type: 'care_card', status: 'open',
+      created_at: '2026-07-23T08:00:00.000Z', metadata: {},
+    },
+  );
+
+  assert.equal(repo.homeForFamily('user-a', 'family-a').care_message.message_id, 'return-home-a');
+});
+
 test('JSON repository keeps product preferences family-scoped and returns copies', () => {
   const repo = new JsonNativeRepository(fixture());
   const saved = repo.updateProductPreferences('user-a', 'family-a', {
