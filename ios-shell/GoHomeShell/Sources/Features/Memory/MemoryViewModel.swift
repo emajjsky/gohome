@@ -42,15 +42,24 @@ final class MemoryViewModel: ObservableObject {
         isPublishing = true
         errorMessage = nil
         do {
-            var assetIDs = retainedMediaIDs
-            for image in newImages {
-                let uploaded = try await repository.uploadMemoryMedia(
-                    familyID: scope.familyID,
-                    data: image.data,
-                    contentType: image.contentType
-                )
-                assetIDs.append(uploaded.id)
+            let retainedIDs = Array(retainedMediaIDs.prefix(9))
+            let uploadCandidates = Array(newImages.prefix(max(0, 9 - retainedIDs.count)))
+            let uploadedIDs = try await withThrowingTaskGroup(of: (Int, String).self) { group in
+                for (index, image) in uploadCandidates.enumerated() {
+                    group.addTask { [repository, familyID = scope.familyID] in
+                        let uploaded = try await repository.uploadMemoryMedia(
+                            familyID: familyID,
+                            data: image.data,
+                            contentType: image.contentType
+                        )
+                        return (index, uploaded.id)
+                    }
+                }
+                var ordered = Array<String?>(repeating: nil, count: uploadCandidates.count)
+                for try await (index, assetID) in group { ordered[index] = assetID }
+                return ordered.compactMap { $0 }
             }
+            let assetIDs = retainedIDs + uploadedIDs
             let request = MemoryDraftRequest(
                 body: body.trimmingCharacters(in: .whitespacesAndNewlines),
                 happenedAt: ISO8601DateFormatter().string(from: happenedAt),
