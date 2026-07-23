@@ -81,6 +81,40 @@ function careMessageView(message) {
     };
 }
 
+function memoryView(memory) {
+    const media = Array.isArray(memory?.media) ? memory.media : [];
+    const comments = Array.isArray(memory?.comments) ? memory.comments : [];
+    return {
+        id: String(memory?.id || ""),
+        family_id: String(memory?.family_id || ""),
+        author: memory?.author ? {
+            id: String(memory.author.id || ""),
+            display_name: String(memory.author.display_name || "家庭成员"),
+        } : null,
+        body: String(memory?.body || "").trim(),
+        happened_at: memory?.happened_at || memory?.created_at || null,
+        location_name: String(memory?.location_name || "").trim(),
+        people: Array.isArray(memory?.people) ? memory.people.map(String).filter(Boolean).slice(0, 20) : [],
+        media: media.map((item) => ({
+            id: String(item.id || ""),
+            asset_id: String(item.asset_id || ""),
+            image_url: String(item.image_url || `/api/v1/video/assets/${item.asset_id || ""}`),
+            sort_order: Number(item.sort_order || 0),
+            alt_text: String(item.alt_text || ""),
+        })).filter((item) => item.asset_id),
+        comments: comments.map((item) => ({
+            id: String(item.id || ""),
+            author_user_id: String(item.author_user_id || ""),
+            body: String(item.body || "").trim(),
+            created_at: item.created_at || null,
+        })).filter((item) => item.id && item.body),
+        favorite_count: Math.max(0, Number(memory?.favorite_count || 0)),
+        is_favorite: Boolean(memory?.is_favorite),
+        created_at: memory?.created_at || null,
+        updated_at: memory?.updated_at || null,
+    };
+}
+
 class NativeViewService {
     constructor(repository, { homeEnricher = null } = {}) {
         this.repository = repository;
@@ -177,6 +211,47 @@ class NativeViewService {
         );
         return { preferences };
     }
+
+    async memoriesForFamily(userId, familyId, options = {}) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const memories = await this.repository.memoriesForFamily(userId, familyId, options);
+        const payload = { memories: memories.map(memoryView).filter((memory) => memory.id) };
+        return { ...payload, revision: revisionFor(payload) };
+    }
+
+    async createMemory(userId, familyId, input) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        return { memory: memoryView(await this.repository.createMemory(userId, familyId, input)) };
+    }
+
+    async updateMemory(userId, familyId, memoryId, input) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const result = await this.repository.updateMemory(userId, familyId, memoryId, input);
+        return {
+            memory: memoryView(result.memory),
+            cleanup_asset_ids: result.cleanup_asset_ids || [],
+        };
+    }
+
+    async deleteMemory(userId, familyId, memoryId) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        return await this.repository.deleteMemory(userId, familyId, memoryId);
+    }
+
+    async addMemoryComment(userId, familyId, memoryId, input) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        return { memory: memoryView(await this.repository.addMemoryComment(userId, familyId, memoryId, input)) };
+    }
+
+    async deleteMemoryComment(userId, familyId, memoryId, commentId) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        return { memory: memoryView(await this.repository.deleteMemoryComment(userId, familyId, memoryId, commentId)) };
+    }
+
+    async setMemoryFavorite(userId, familyId, memoryId, favorite) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        return { memory: memoryView(await this.repository.setMemoryFavorite(userId, familyId, memoryId, favorite)) };
+    }
 }
 
-module.exports = { NativeViewService, articleView, careMessageView, criticalAlertView, revisionFor };
+module.exports = { NativeViewService, articleView, careMessageView, criticalAlertView, memoryView, revisionFor };

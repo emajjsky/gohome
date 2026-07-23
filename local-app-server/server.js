@@ -6348,6 +6348,82 @@ function createLocalAppServer(options = {}) {
         write(res, 200, { ok: true, asset });
     }
 
+    async function handleMemoryMediaUpload(req, res, url) {
+        if (!requireNativeApp(req, res)) return;
+        const familyId = String(url.searchParams.get("family_id") || "");
+        if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+        const contentType = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+        const extensions = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "image/heic": ".heic",
+            "image/heif": ".heif",
+        };
+        const extension = extensions[contentType];
+        if (!extension) {
+            writeError(res, 415, "unsupported memory image type");
+            return;
+        }
+        const content = await readBody(req, 10 * 1024 * 1024);
+        if (!content.length) {
+            writeError(res, 400, "memory image required");
+            return;
+        }
+        const assetId = stableId("memory-asset-");
+        const dateDir = path.join("memories", new Date().toISOString().slice(0, 10));
+        const fileName = `${assetId}${extension}`;
+        const relativePath = path.join(dateDir, fileName);
+        const target = path.join(mediaDir, relativePath);
+        ensureDir(path.dirname(target));
+        fs.writeFileSync(target, content, { mode: 0o600 });
+        const timestamp = nowIso();
+        const asset = {
+            id: assetId,
+            family_id: familyId,
+            device_id: "",
+            camera_id: null,
+            file_name: fileName,
+            content_type: contentType,
+            snapshot_path: relativePath,
+            relative_path: relativePath,
+            storage_provider: "local",
+            storage_key: relativePath,
+            edge_event_id: "",
+            purpose: "family_memory",
+            size: content.length,
+            metadata: { purpose: "family_memory", uploaded_by: String(req.appUserId || "") },
+            created_at: timestamp,
+            updated_at: timestamp,
+            url: `/api/v1/video/assets/${encodeURIComponent(assetId)}`,
+        };
+        store.db.assets.push(asset);
+        await store.save();
+        write(res, 201, {
+            asset: {
+                id: asset.id,
+                content_type: asset.content_type,
+                image_url: asset.url,
+                size_bytes: asset.size,
+            },
+        });
+    }
+
+    function cleanupMemoryAssets(assetIds = []) {
+        const ids = new Set(assetIds.map(String));
+        if (!ids.size) return;
+        const retained = [];
+        for (const asset of store.db.assets) {
+            if (!ids.has(String(asset.id)) || String(asset.purpose || asset.metadata?.purpose || "") !== "family_memory") {
+                retained.push(asset);
+                continue;
+            }
+            const filePath = assetAbsolutePath(asset);
+            if (filePath && fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+        }
+        store.db.assets = retained;
+    }
+
     async function handleDeviceEvent(req, res) {
         if (!requireDevice(req, res)) return;
         const issuedToken = issuedDeviceTokenFromRequest(req);
@@ -6837,7 +6913,7 @@ function createLocalAppServer(options = {}) {
 
     function serveAsset(req, res, assetId) {
         if (!requireApp(req, res)) return;
-        const asset = store.db.assets.find((item) => Number(item.id) === Number(assetId));
+        const asset = store.db.assets.find((item) => String(item.id) === String(assetId));
         const filePath = assetAbsolutePath(asset);
         if (!asset || !filePath || !fs.existsSync(filePath)) {
             writeError(res, 404, "media asset not found");
@@ -6916,6 +6992,10 @@ function createLocalAppServer(options = {}) {
         }
 
         try {
+            if (req.method === "POST" && pathname === "/api/v2/memory-media") {
+                await handleMemoryMediaUpload(req, res, url);
+                return;
+            }
             if (pathname.startsWith("/api/v2/")) {
                 if (!requireNativeApp(req, res)) return;
                 const result = await nativeRouter.dispatch({
@@ -6926,6 +7006,11 @@ function createLocalAppServer(options = {}) {
                     body: ["POST", "PUT", "PATCH"].includes(req.method) ? await parseJsonBody(req) : {},
                 });
                 if (result) {
+                    const cleanupAssetIds = result.body?.cleanup_asset_ids;
+                    if (Array.isArray(cleanupAssetIds)) {
+                        cleanupMemoryAssets(cleanupAssetIds);
+                        delete result.body.cleanup_asset_ids;
+                    }
                     if (req.method !== "GET" && req.method !== "HEAD") await store.save();
                     if (result.status === 304) {
                         res.writeHead(304, {

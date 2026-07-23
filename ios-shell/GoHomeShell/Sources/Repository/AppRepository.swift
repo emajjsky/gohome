@@ -13,6 +13,13 @@ actor AppRepository {
     typealias RulesUpdater = @Sendable (String, RulePatch) async throws -> FamilyRules
     typealias CarePreferencesUpdater = @Sendable (String, CarePreferencesPatch) async throws -> CarePreferences
     typealias MessageActionLoader = @Sendable (String, String, CareMessageActionRequest) async throws -> CareMessageActionResponse
+    typealias MemoriesLoader = @Sendable (String) async throws -> FamilyMemoriesResponse
+    typealias MemoryCreator = @Sendable (String, MemoryDraftRequest) async throws -> FamilyMemoryEnvelope
+    typealias MemoryUpdater = @Sendable (String, String, MemoryDraftRequest) async throws -> FamilyMemoryEnvelope
+    typealias MemoryCommentCreator = @Sendable (String, String, MemoryCommentRequest) async throws -> FamilyMemoryEnvelope
+    typealias MemoryFavoriteUpdater = @Sendable (String, String, Bool) async throws -> FamilyMemoryEnvelope
+    typealias MemoryDeleter = @Sendable (String, String) async throws -> MemoryDeleteResponse
+    typealias MemoryMediaUploader = @Sendable (String, Data, String) async throws -> MemoryMediaUploadResponse
 
     private let cache: DiskCache
     private let bootstrapLoader: BootstrapLoader
@@ -25,12 +32,20 @@ actor AppRepository {
     private let rulesUpdater: RulesUpdater
     private let carePreferencesUpdater: CarePreferencesUpdater
     private let messageActionLoader: MessageActionLoader
+    private let memoriesLoader: MemoriesLoader
+    private let memoryCreator: MemoryCreator
+    private let memoryUpdater: MemoryUpdater
+    private let memoryCommentCreator: MemoryCommentCreator
+    private let memoryFavoriteUpdater: MemoryFavoriteUpdater
+    private let memoryDeleter: MemoryDeleter
+    private let memoryMediaUploader: MemoryMediaUploader
     private var bootstrapTasks: [CacheScope: Task<BootstrapResponse, Error>] = [:]
     private var homeTasks: [CacheScope: Task<HomeResponse, Error>] = [:]
     private var eventsTasks: [CacheScope: Task<[AppEvent], Error>] = [:]
     private var productsTasks: [CacheScope: Task<ProductRecommendationsResponse, Error>] = [:]
     private var eventTasks: [String: Task<AppEvent, Error>] = [:]
     private var profileTasks: [CacheScope: Task<ProfileData, Error>] = [:]
+    private var memoriesTasks: [CacheScope: Task<FamilyMemoriesResponse, Error>] = [:]
 
     init(
         cache: DiskCache,
@@ -43,7 +58,14 @@ actor AppRepository {
         profileLoader: @escaping ProfileLoader = { _ in throw APIError.invalidResponse },
         rulesUpdater: @escaping RulesUpdater = { _, _ in throw APIError.invalidResponse },
         carePreferencesUpdater: @escaping CarePreferencesUpdater = { _, _ in throw APIError.invalidResponse },
-        messageActionLoader: @escaping MessageActionLoader = { _, _, _ in throw APIError.invalidResponse }
+        messageActionLoader: @escaping MessageActionLoader = { _, _, _ in throw APIError.invalidResponse },
+        memoriesLoader: @escaping MemoriesLoader = { _ in throw APIError.invalidResponse },
+        memoryCreator: @escaping MemoryCreator = { _, _ in throw APIError.invalidResponse },
+        memoryUpdater: @escaping MemoryUpdater = { _, _, _ in throw APIError.invalidResponse },
+        memoryCommentCreator: @escaping MemoryCommentCreator = { _, _, _ in throw APIError.invalidResponse },
+        memoryFavoriteUpdater: @escaping MemoryFavoriteUpdater = { _, _, _ in throw APIError.invalidResponse },
+        memoryDeleter: @escaping MemoryDeleter = { _, _ in throw APIError.invalidResponse },
+        memoryMediaUploader: @escaping MemoryMediaUploader = { _, _, _ in throw APIError.invalidResponse }
     ) {
         self.cache = cache
         self.bootstrapLoader = bootstrapLoader
@@ -56,6 +78,13 @@ actor AppRepository {
         self.rulesUpdater = rulesUpdater
         self.carePreferencesUpdater = carePreferencesUpdater
         self.messageActionLoader = messageActionLoader
+        self.memoriesLoader = memoriesLoader
+        self.memoryCreator = memoryCreator
+        self.memoryUpdater = memoryUpdater
+        self.memoryCommentCreator = memoryCommentCreator
+        self.memoryFavoriteUpdater = memoryFavoriteUpdater
+        self.memoryDeleter = memoryDeleter
+        self.memoryMediaUploader = memoryMediaUploader
     }
 
     func fetchBootstrap() async throws -> BootstrapResponse {
@@ -197,6 +226,48 @@ actor AppRepository {
         try await messageActionLoader(familyID, messageID, request)
     }
 
+    func memories(scope: CacheScope, onUpdate: @escaping @Sendable (Loadable<FamilyMemoriesResponse>) async -> Void) async {
+        let cached = try? await cache.read(FamilyMemoriesResponse.self, key: "memories", scope: scope)
+        await onUpdate(Loadable(value: cached, isRefreshing: true, staleReason: nil))
+        do {
+            let refreshed = try await refreshMemories(scope: scope)
+            try await cache.write(refreshed, key: "memories", scope: scope, ttl: 24 * 60 * 60)
+            await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
+        } catch is CancellationError {
+            await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
+        } catch {
+            await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: cached == nil ? "记忆暂时无法更新" : "当前显示上次内容"))
+        }
+    }
+
+    func createMemory(familyID: String, request: MemoryDraftRequest) async throws -> FamilyMemory {
+        try await memoryCreator(familyID, request).memory
+    }
+
+    func updateMemory(familyID: String, memoryID: String, request: MemoryDraftRequest) async throws -> FamilyMemory {
+        try await memoryUpdater(familyID, memoryID, request).memory
+    }
+
+    func addMemoryComment(familyID: String, memoryID: String, body: String) async throws -> FamilyMemory {
+        try await memoryCommentCreator(familyID, memoryID, MemoryCommentRequest(body: body)).memory
+    }
+
+    func setMemoryFavorite(familyID: String, memoryID: String, favorite: Bool) async throws -> FamilyMemory {
+        try await memoryFavoriteUpdater(familyID, memoryID, favorite).memory
+    }
+
+    func deleteMemory(familyID: String, memoryID: String) async throws {
+        _ = try await memoryDeleter(familyID, memoryID)
+    }
+
+    func uploadMemoryMedia(familyID: String, data: Data, contentType: String) async throws -> MemoryUploadedAsset {
+        try await memoryMediaUploader(familyID, data, contentType).asset
+    }
+
+    func cacheMemories(_ value: FamilyMemoriesResponse, scope: CacheScope) async {
+        try? await cache.write(value, key: "memories", scope: scope, ttl: 24 * 60 * 60)
+    }
+
     func cacheProfile(_ profile: ProfileData, scope: CacheScope) async {
         try? await cache.write(profile, key: "profile", scope: scope, ttl: 24 * 60 * 60)
     }
@@ -238,6 +309,14 @@ actor AppRepository {
         let task = Task { try await profileLoader(scope.familyID) }
         profileTasks[scope] = task
         defer { profileTasks[scope] = nil }
+        return try await task.value
+    }
+
+    private func refreshMemories(scope: CacheScope) async throws -> FamilyMemoriesResponse {
+        if let task = memoriesTasks[scope] { return try await task.value }
+        let task = Task { try await memoriesLoader(scope.familyID) }
+        memoriesTasks[scope] = task
+        defer { memoriesTasks[scope] = nil }
         return try await task.value
     }
 }

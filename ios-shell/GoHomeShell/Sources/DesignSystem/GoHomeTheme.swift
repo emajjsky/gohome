@@ -17,16 +17,16 @@ enum GoHomeTheme {
 enum GoHomeTab: Hashable {
     case home
     case guardView
-    case events
-    case discover
+    case memory
+    case community
     case profile
 
     var title: String {
         switch self {
         case .home: return "首页"
         case .guardView: return "守护"
-        case .events: return "事件"
-        case .discover: return "精选"
+        case .memory: return "记忆"
+        case .community: return "社区"
         case .profile: return "我的"
         }
     }
@@ -35,8 +35,8 @@ enum GoHomeTab: Hashable {
         switch self {
         case .home: return "house"
         case .guardView: return "viewfinder"
-        case .events: return "bell"
-        case .discover: return "sparkles"
+        case .memory: return "photo.on.rectangle.angled"
+        case .community: return "square.grid.2x2"
         case .profile: return "person"
         }
     }

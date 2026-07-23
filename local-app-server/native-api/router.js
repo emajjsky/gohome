@@ -97,6 +97,66 @@ class NativeApiRouter {
             };
         }
 
+        if (url.pathname === "/api/v2/memories") {
+            const familyId = url.searchParams.get("family_id");
+            if (method === "GET") {
+                const responseBody = await this.viewService.memoriesForFamily(userId, familyId, {
+                    limit: url.searchParams.get("limit") || undefined,
+                });
+                const etag = etagFor(responseBody.revision);
+                if (notModified(headers, responseBody.revision)) return { status: 304, headers: { ETag: etag } };
+                return { status: 200, body: responseBody, headers: { ETag: etag } };
+            }
+            if (method === "POST") return { status: 201, body: await this.viewService.createMemory(userId, familyId, body) };
+        }
+
+        const memoryMatch = url.pathname.match(/^\/api\/v2\/memories\/([^/]+)$/);
+        if (memoryMatch) {
+            const memoryId = decodeURIComponent(memoryMatch[1]);
+            const familyId = url.searchParams.get("family_id");
+            if (method === "PATCH") return { status: 200, body: await this.viewService.updateMemory(userId, familyId, memoryId, body) };
+            if (method === "DELETE") return { status: 200, body: await this.viewService.deleteMemory(userId, familyId, memoryId) };
+        }
+
+        const commentCollectionMatch = url.pathname.match(/^\/api\/v2\/memories\/([^/]+)\/comments$/);
+        if (method === "POST" && commentCollectionMatch) {
+            return {
+                status: 201,
+                body: await this.viewService.addMemoryComment(
+                    userId,
+                    url.searchParams.get("family_id"),
+                    decodeURIComponent(commentCollectionMatch[1]),
+                    body,
+                ),
+            };
+        }
+
+        const commentMatch = url.pathname.match(/^\/api\/v2\/memories\/([^/]+)\/comments\/([^/]+)$/);
+        if (method === "DELETE" && commentMatch) {
+            return {
+                status: 200,
+                body: await this.viewService.deleteMemoryComment(
+                    userId,
+                    url.searchParams.get("family_id"),
+                    decodeURIComponent(commentMatch[1]),
+                    decodeURIComponent(commentMatch[2]),
+                ),
+            };
+        }
+
+        const favoriteMatch = url.pathname.match(/^\/api\/v2\/memories\/([^/]+)\/favorite$/);
+        if (favoriteMatch && ["PUT", "DELETE"].includes(method)) {
+            return {
+                status: 200,
+                body: await this.viewService.setMemoryFavorite(
+                    userId,
+                    url.searchParams.get("family_id"),
+                    decodeURIComponent(favoriteMatch[1]),
+                    method === "PUT",
+                ),
+            };
+        }
+
         return null;
     }
 }

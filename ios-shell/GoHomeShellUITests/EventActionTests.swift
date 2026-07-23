@@ -6,8 +6,10 @@ final class EventActionTests: XCTestCase {
         app.launchArguments = ["-uiTestState", "-uiTestMain", "-uiTestEvent"]
         app.launch()
 
-        XCTAssertTrue(app.tabBars.buttons["事件"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["事件"].tap()
+        XCTAssertTrue(app.tabBars.buttons["守护"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["守护"].tap()
+        XCTAssertTrue(app.buttons["guard-events-entry"].waitForExistence(timeout: 3))
+        app.buttons["guard-events-entry"].tap()
         XCTAssertTrue(app.buttons["event-row-ui-test-event-1"].waitForExistence(timeout: 3))
         app.buttons["event-row-ui-test-event-1"].tap()
 

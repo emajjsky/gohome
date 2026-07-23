@@ -1,6 +1,6 @@
 "use strict";
 
-const { NativeRepository, actionInput, articlesFromCareCards, repositoryError } = require("./repository");
+const { NativeRepository, actionInput, articlesFromCareCards, memoryInput, repositoryError } = require("./repository");
 
 const USER_COLUMNS = "id, email, display_name, phone, status, created_at, updated_at";
 const FAMILY_COLUMNS = "f.id, f.name, f.status, f.timezone, f.metadata, f.created_at, f.updated_at, fm.role";
@@ -312,6 +312,248 @@ class PostgresNativeRepository extends NativeRepository {
         const preferences = row(result);
         if (!preferences) throw accessDenied();
         return preferences;
+    }
+
+    async memoryById(client, userId, familyId, memoryId) {
+        const result = await client.query(
+            `select m.*,
+                    jsonb_build_object('id', u.id, 'display_name', coalesce(u.display_name, '家庭成员')) as author,
+                    coalesce((select jsonb_agg(jsonb_build_object(
+                        'id', mm.id, 'asset_id', mm.asset_id, 'sort_order', mm.sort_order,
+                        'alt_text', mm.alt_text, 'image_url', '/api/v1/video/assets/' || mm.asset_id
+                    ) order by mm.sort_order) from family_memory_media mm where mm.memory_id = m.id), '[]'::jsonb) as media,
+                    coalesce((select jsonb_agg(to_jsonb(c) order by c.created_at) from family_memory_comments c where c.memory_id = m.id), '[]'::jsonb) as comments,
+                    (select count(*)::int from family_memory_favorites f where f.memory_id = m.id) as favorite_count,
+                    exists(select 1 from family_memory_favorites f where f.memory_id = m.id and f.user_id = $3) as is_favorite
+             from family_memories m
+             join users u on u.id = m.author_user_id
+             where m.family_id = $1 and m.id = $2 and m.status = 'published'`,
+            [textId(familyId), textId(memoryId), textId(userId)],
+        );
+        const memory = row(result);
+        if (!memory) throw repositoryError("memory not found", 404);
+        return memory;
+    }
+
+    async memoriesForFamily(userId, familyId, options = {}) {
+        await this.assertFamilyAccess(this.pool, userId, familyId);
+        const result = await this.pool.query(
+            `select m.*,
+                    jsonb_build_object('id', u.id, 'display_name', coalesce(u.display_name, '家庭成员')) as author,
+                    coalesce((select jsonb_agg(jsonb_build_object(
+                        'id', mm.id, 'asset_id', mm.asset_id, 'sort_order', mm.sort_order,
+                        'alt_text', mm.alt_text, 'image_url', '/api/v1/video/assets/' || mm.asset_id
+                    ) order by mm.sort_order) from family_memory_media mm where mm.memory_id = m.id), '[]'::jsonb) as media,
+                    coalesce((select jsonb_agg(to_jsonb(c) order by c.created_at) from family_memory_comments c where c.memory_id = m.id), '[]'::jsonb) as comments,
+                    (select count(*)::int from family_memory_favorites f where f.memory_id = m.id) as favorite_count,
+                    exists(select 1 from family_memory_favorites f where f.memory_id = m.id and f.user_id = $2) as is_favorite
+             from family_memories m
+             join users u on u.id = m.author_user_id
+             where m.family_id = $1 and m.status = 'published'
+             order by m.happened_at desc, m.created_at desc
+             limit $3`,
+            [textId(familyId), textId(userId), limitValue(options.limit, 30, 50)],
+        );
+        return rows(result);
+    }
+
+    async createMemory(userId, familyId, input = {}) {
+        const value = memoryInput(input);
+        const client = typeof this.pool.connect === "function" ? await this.pool.connect() : this.pool;
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            await this.assertFamilyAccess(client, userId, familyId);
+            if (value.asset_ids.length) {
+                const assets = await client.query(
+                    `select id from media_assets where family_id = $1 and id::text = any($2::text[]) for share`,
+                    [textId(familyId), value.asset_ids],
+                );
+                if (assets.rowCount !== value.asset_ids.length) throw repositoryError("memory asset not found", 400);
+            }
+            const inserted = await client.query(
+                `insert into family_memories
+                    (family_id, author_user_id, body, happened_at, location_name, people, metadata)
+                 values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+                 returning id`,
+                [textId(familyId), textId(userId), value.body, value.happened_at, value.location_name, JSON.stringify(value.people), JSON.stringify({ media_count: value.asset_ids.length })],
+            );
+            const memoryId = row(inserted).id;
+            for (const [index, assetId] of value.asset_ids.entries()) {
+                await client.query(
+                    `insert into family_memory_media (family_id, memory_id, asset_id, sort_order) values ($1, $2, $3, $4)`,
+                    [textId(familyId), memoryId, assetId, index],
+                );
+            }
+            await client.query("commit");
+            transaction = false;
+            return await this.memoryById(this.pool, userId, familyId, memoryId);
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            if (client !== this.pool && typeof client.release === "function") client.release();
+        }
+    }
+
+    async updateMemory(userId, familyId, memoryId, input = {}) {
+        const value = memoryInput(input, { partial: true });
+        const client = typeof this.pool.connect === "function" ? await this.pool.connect() : this.pool;
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            await this.assertFamilyAccess(client, userId, familyId);
+            const existing = await client.query(
+                `select m.*, fm.role from family_memories m
+                 join family_members fm on fm.family_id = m.family_id and fm.user_id = $2 and fm.status = 'active'
+                 where m.family_id = $1 and m.id = $3 for update`,
+                [textId(familyId), textId(userId), textId(memoryId)],
+            );
+            const memory = row(existing);
+            if (!memory) throw repositoryError("memory not found", 404);
+            if (textId(memory.author_user_id) !== textId(userId) && textId(memory.role) !== "creator") throw repositoryError("memory edit denied", 403);
+            const updated = {
+                body: value.body ?? memory.body,
+                happened_at: value.happened_at ?? memory.happened_at,
+                location_name: value.location_name ?? memory.location_name,
+                people: value.people ?? memory.people,
+            };
+            let cleanupAssetIds = [];
+            if (value.asset_ids !== undefined) {
+                const previousMedia = rows(await client.query(
+                    `select asset_id from family_memory_media where memory_id = $1 order by sort_order`,
+                    [textId(memoryId)],
+                ));
+                const assets = value.asset_ids.length ? await client.query(
+                    `select id from media_assets where family_id = $1 and id::text = any($2::text[]) for share`,
+                    [textId(familyId), value.asset_ids],
+                ) : { rowCount: 0 };
+                if (assets.rowCount !== value.asset_ids.length) throw repositoryError("memory asset not found", 400);
+                const retainedAssetIds = new Set(value.asset_ids.map(textId));
+                cleanupAssetIds = previousMedia
+                    .map((item) => textId(item.asset_id))
+                    .filter((assetId) => !retainedAssetIds.has(assetId));
+                await client.query(`delete from family_memory_media where memory_id = $1`, [textId(memoryId)]);
+                for (const [index, assetId] of value.asset_ids.entries()) {
+                    await client.query(
+                        `insert into family_memory_media (family_id, memory_id, asset_id, sort_order) values ($1, $2, $3, $4)`,
+                        [textId(familyId), textId(memoryId), assetId, index],
+                    );
+                }
+            }
+            const mediaCount = row(await client.query(`select count(*)::int as count from family_memory_media where memory_id = $1`, [textId(memoryId)]))?.count || 0;
+            if (!String(updated.body || "").trim() && !mediaCount) throw repositoryError("memory content required", 400);
+            await client.query(
+                `update family_memories set body = $3, happened_at = $4, location_name = $5, people = $6::jsonb,
+                    metadata = metadata || jsonb_build_object('media_count', $7::int), updated_at = now()
+                 where family_id = $1 and id = $2 and author_user_id is not null`,
+                [textId(familyId), textId(memoryId), updated.body, updated.happened_at, updated.location_name, JSON.stringify(updated.people), mediaCount],
+            );
+            await client.query("commit");
+            transaction = false;
+            return {
+                memory: await this.memoryById(this.pool, userId, familyId, memoryId),
+                cleanup_asset_ids: cleanupAssetIds,
+            };
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            if (client !== this.pool && typeof client.release === "function") client.release();
+        }
+    }
+
+    async deleteMemory(userId, familyId, memoryId) {
+        const client = typeof this.pool.connect === "function" ? await this.pool.connect() : this.pool;
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            await this.assertFamilyAccess(client, userId, familyId);
+            const memory = row(await client.query(
+                `select m.*, fm.role from family_memories m
+                 join family_members fm on fm.family_id = m.family_id and fm.user_id = $3 and fm.status = 'active'
+                 where m.family_id = $1 and m.id = $2 for update`,
+                [textId(familyId), textId(memoryId), textId(userId)],
+            ));
+            if (!memory) throw repositoryError("memory not found", 404);
+            if (textId(memory.author_user_id) !== textId(userId) && textId(memory.role) !== "creator") throw repositoryError("memory delete denied", 403);
+            const media = await client.query(`select asset_id from family_memory_media where memory_id = $1`, [textId(memoryId)]);
+            await client.query(`delete from family_memories where family_id = $1 and id = $2`, [textId(familyId), textId(memoryId)]);
+            await client.query("commit");
+            transaction = false;
+            return { deleted: true, memory_id: textId(memoryId), cleanup_asset_ids: rows(media).map((item) => textId(item.asset_id)) };
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            if (client !== this.pool && typeof client.release === "function") client.release();
+        }
+    }
+
+    async addMemoryComment(userId, familyId, memoryId, input = {}) {
+        const body = String(input.body || "").trim().slice(0, 500);
+        if (!body) throw repositoryError("comment required", 400);
+        const result = await this.pool.query(
+            `insert into family_memory_comments (family_id, memory_id, author_user_id, body)
+             select $1, m.id, $3, $4
+             from family_memories m
+             join family_members fm on fm.family_id = m.family_id and fm.user_id = $3 and fm.status = 'active'
+             where m.family_id = $1 and m.id = $2 and m.status = 'published'
+             returning id`,
+            [textId(familyId), textId(memoryId), textId(userId), body],
+        );
+        if (!result.rowCount) {
+            await this.assertFamilyAccess(this.pool, userId, familyId);
+            throw repositoryError("memory not found", 404);
+        }
+        return await this.memoryById(this.pool, userId, familyId, memoryId);
+    }
+
+    async deleteMemoryComment(userId, familyId, memoryId, commentId) {
+        const result = await this.pool.query(
+            `delete from family_memory_comments c
+             using family_members fm
+             where c.family_id = $1 and c.memory_id = $2 and c.id = $3
+               and fm.family_id = c.family_id and fm.user_id = $4 and fm.status = 'active'
+               and (c.author_user_id = $4 or fm.role = 'creator')
+             returning c.id`,
+            [textId(familyId), textId(memoryId), textId(commentId), textId(userId)],
+        );
+        if (!result.rowCount) {
+            await this.assertFamilyAccess(this.pool, userId, familyId);
+            const comment = await this.pool.query(
+                `select 1 from family_memory_comments where family_id = $1 and memory_id = $2 and id = $3`,
+                [textId(familyId), textId(memoryId), textId(commentId)],
+            );
+            if (!comment.rowCount) throw repositoryError("comment not found", 404);
+            throw repositoryError("comment delete denied", 403);
+        }
+        return await this.memoryById(this.pool, userId, familyId, memoryId);
+    }
+
+    async setMemoryFavorite(userId, familyId, memoryId, favorite) {
+        await this.assertFamilyAccess(this.pool, userId, familyId);
+        const memory = await this.pool.query(
+            `select 1 from family_memories where family_id = $1 and id = $2 and status = 'published'`,
+            [textId(familyId), textId(memoryId)],
+        );
+        if (!memory.rowCount) throw repositoryError("memory not found", 404);
+        if (favorite) {
+            await this.pool.query(
+                `insert into family_memory_favorites (family_id, memory_id, user_id) values ($1, $2, $3)
+                 on conflict (memory_id, user_id) do nothing`,
+                [textId(familyId), textId(memoryId), textId(userId)],
+            );
+        } else {
+            await this.pool.query(
+                `delete from family_memory_favorites where family_id = $1 and memory_id = $2 and user_id = $3`,
+                [textId(familyId), textId(memoryId), textId(userId)],
+            );
+        }
+        return await this.memoryById(this.pool, userId, familyId, memoryId);
     }
 }
 

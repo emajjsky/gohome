@@ -110,6 +110,62 @@ struct AppEnvironment {
                     queryItems: [URLQueryItem(name: "family_id", value: familyID)]
                 )
                 return try await client.send(endpoint)
+            },
+            memoriesLoader: { familyID in
+                try await client.send(Endpoint(
+                    path: "/api/v2/memories",
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                ))
+            },
+            memoryCreator: { familyID, request in
+                let endpoint: Endpoint<FamilyMemoryEnvelope> = try .jsonBody(
+                    method: .post,
+                    path: "/api/v2/memories",
+                    body: request,
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                )
+                return try await client.send(endpoint)
+            },
+            memoryUpdater: { familyID, memoryID, request in
+                let endpoint: Endpoint<FamilyMemoryEnvelope> = try .jsonBody(
+                    method: .patch,
+                    path: "/api/v2/memories/\(memoryID)",
+                    body: request,
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                )
+                return try await client.send(endpoint)
+            },
+            memoryCommentCreator: { familyID, memoryID, request in
+                let endpoint: Endpoint<FamilyMemoryEnvelope> = try .jsonBody(
+                    method: .post,
+                    path: "/api/v2/memories/\(memoryID)/comments",
+                    body: request,
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                )
+                return try await client.send(endpoint)
+            },
+            memoryFavoriteUpdater: { familyID, memoryID, favorite in
+                try await client.send(Endpoint(
+                    method: favorite ? .put : .delete,
+                    path: "/api/v2/memories/\(memoryID)/favorite",
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                ))
+            },
+            memoryDeleter: { familyID, memoryID in
+                try await client.send(Endpoint(
+                    method: .delete,
+                    path: "/api/v2/memories/\(memoryID)",
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                ))
+            },
+            memoryMediaUploader: { familyID, data, contentType in
+                try await client.upload(
+                    path: "/api/v2/memory-media",
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)],
+                    data: data,
+                    contentType: contentType,
+                    response: MemoryMediaUploadResponse.self
+                )
             }
         )
         return AppEnvironment(

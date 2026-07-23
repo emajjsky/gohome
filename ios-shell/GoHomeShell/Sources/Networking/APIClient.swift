@@ -68,6 +68,39 @@ actor APIClient {
         }
     }
 
+    func upload<Response: Decodable>(
+        path: String,
+        queryItems: [URLQueryItem],
+        data: Data,
+        contentType: String,
+        response: Response.Type
+    ) async throws -> Response {
+        var request = try Endpoint<EmptyResponse>(
+            method: .post,
+            path: path,
+            queryItems: queryItems,
+            body: data
+        ).request(baseURL: baseURL)
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        if let token = await tokenProvider(), !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (responseData, urlResponse) = try await session.data(for: request)
+        guard let httpResponse = urlResponse as? HTTPURLResponse else { throw APIError.invalidResponse }
+        if httpResponse.statusCode == 401 { throw APIError.unauthorized }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw APIError.server(
+                statusCode: httpResponse.statusCode,
+                detail: Self.serverDetail(from: responseData, fallback: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode))
+            )
+        }
+        do {
+            return try JSONDecoder().decode(Response.self, from: responseData)
+        } catch {
+            throw APIError.decoding(error.localizedDescription)
+        }
+    }
+
     private static func serverDetail(from data: Data, fallback: String) -> String {
         guard
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

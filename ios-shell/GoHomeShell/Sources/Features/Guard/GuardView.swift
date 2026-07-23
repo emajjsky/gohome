@@ -4,12 +4,14 @@ struct GuardView: View {
     @Environment(\.scenePhase) private var scenePhase
     let cameras: [HomeCamera]
     let apiClient: APIClient?
+    @ObservedObject var eventsModel: EventsViewModel
     @StateObject private var model: GuardViewModel
     @State private var isVisible = false
 
-    init(cameras: [HomeCamera], apiClient: APIClient?) {
+    init(cameras: [HomeCamera], apiClient: APIClient?, eventsModel: EventsViewModel) {
         self.cameras = cameras
         self.apiClient = apiClient
+        self.eventsModel = eventsModel
         _model = StateObject(wrappedValue: GuardViewModel(
             streamClient: apiClient.map { client in
                 MJPEGStreamClient(apiClient: client)
@@ -38,6 +40,31 @@ struct GuardView: View {
                     }
                 }
                 .padding(.top, 2)
+                NavigationLink {
+                    EventsView(model: eventsModel, apiClient: apiClient)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "bell.badge")
+                            .foregroundStyle(GoHomeTheme.ginger)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("守护记录")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(GoHomeTheme.ink)
+                            Text(eventsModel.pendingCount > 0 ? "\(eventsModel.pendingCount) 条待确认" : "查看事件与云端复核证据")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(GoHomeTheme.mutedInk)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(GoHomeTheme.mutedInk)
+                    }
+                    .padding(.vertical, 14)
+                    .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+                    .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("guard-events-entry")
             }
             .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
             .padding(.top, 18)
@@ -55,6 +82,7 @@ struct GuardView: View {
         }
         .onAppear {
             isVisible = true
+            eventsModel.start()
             guard let cameraID = model.selectedCameraID ?? cameras.first?.id else { return }
             model.select(cameraID: cameraID)
         }

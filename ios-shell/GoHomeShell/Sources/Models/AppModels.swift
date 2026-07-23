@@ -197,6 +197,128 @@ struct CareMessageActionResponse: Decodable, Equatable, Sendable {
     let message: CareMessage
 }
 
+struct FamilyMemoriesResponse: Codable, Equatable, Sendable {
+    let memories: [FamilyMemory]
+    let revision: String
+}
+
+struct FamilyMemoryEnvelope: Codable, Equatable, Sendable {
+    let memory: FamilyMemory
+}
+
+struct FamilyMemory: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let familyID: String
+    let author: MemoryAuthor?
+    let body: String
+    let happenedAt: String
+    let locationName: String
+    let people: [String]
+    let media: [MemoryMedia]
+    let comments: [MemoryComment]
+    let favoriteCount: Int
+    let isFavorite: Bool
+    let createdAt: String?
+    let updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, author, body, people, media, comments
+        case familyID = "family_id"
+        case happenedAt = "happened_at"
+        case locationName = "location_name"
+        case favoriteCount = "favorite_count"
+        case isFavorite = "is_favorite"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct MemoryAuthor: Codable, Equatable, Sendable {
+    let id: String
+    let displayName: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case displayName = "display_name"
+    }
+}
+
+struct MemoryMedia: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let assetID: String
+    let imageURL: String
+    let sortOrder: Int
+    let altText: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case assetID = "asset_id"
+        case imageURL = "image_url"
+        case sortOrder = "sort_order"
+        case altText = "alt_text"
+    }
+}
+
+struct MemoryComment: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let authorUserID: String
+    let body: String
+    let createdAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, body
+        case authorUserID = "author_user_id"
+        case createdAt = "created_at"
+    }
+}
+
+struct MemoryDraftRequest: Encodable, Equatable, Sendable {
+    let body: String
+    let happenedAt: String
+    let locationName: String
+    let people: [String]
+    let assetIDs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case body, people
+        case happenedAt = "happened_at"
+        case locationName = "location_name"
+        case assetIDs = "asset_ids"
+    }
+}
+
+struct MemoryCommentRequest: Encodable, Equatable, Sendable {
+    let body: String
+}
+
+struct MemoryMediaUploadResponse: Decodable, Equatable, Sendable {
+    let asset: MemoryUploadedAsset
+}
+
+struct MemoryUploadedAsset: Decodable, Equatable, Sendable {
+    let id: String
+    let contentType: String
+    let imageURL: String
+    let sizeBytes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case contentType = "content_type"
+        case imageURL = "image_url"
+        case sizeBytes = "size_bytes"
+    }
+}
+
+struct MemoryDeleteResponse: Decodable, Equatable, Sendable {
+    let deleted: Bool
+    let memoryID: String
+
+    enum CodingKeys: String, CodingKey {
+        case deleted
+        case memoryID = "memory_id"
+    }
+}
+
 struct HomeWeather: Codable, Equatable, Sendable {
     let city: String
     let temperature: Double

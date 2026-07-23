@@ -10,13 +10,14 @@ struct MainTabView: View {
     let onSignOut: () -> Void
     @StateObject private var homeModel: HomeViewModel
     @StateObject private var eventsModel: EventsViewModel
+    @StateObject private var memoryModel: MemoryViewModel
     @StateObject private var recommendationsModel: ProductRecommendationsViewModel
     @StateObject private var profileModel: ProfileViewModel
     @State private var selection: GoHomeTab = .home
     @State private var homePath = NavigationPath()
     @State private var guardPath = NavigationPath()
-    @State private var eventsPath = NavigationPath()
-    @State private var discoverPath = NavigationPath()
+    @State private var memoryPath = NavigationPath()
+    @State private var communityPath = NavigationPath()
     @State private var profilePath = NavigationPath()
 
     static var preview: MainTabView {
@@ -50,6 +51,7 @@ struct MainTabView: View {
         _homeModel = StateObject(wrappedValue: HomeViewModel(repository: repository, scope: scope))
         let seedEvents = ProcessInfo.processInfo.arguments.contains("-uiTestEvent") ? Self.uiTestEvents : []
         _eventsModel = StateObject(wrappedValue: EventsViewModel(repository: repository, scope: scope, seedEvents: seedEvents))
+        _memoryModel = StateObject(wrappedValue: MemoryViewModel(repository: repository, scope: scope))
         _recommendationsModel = StateObject(wrappedValue: ProductRecommendationsViewModel(repository: repository, scope: scope))
         let seedProfile = ProcessInfo.processInfo.arguments.contains("-uiTestProfile")
             ? Self.uiTestProfile(familyID: family.id)
@@ -69,12 +71,12 @@ struct MainTabView: View {
                 HomeView(model: homeModel, unreadCount: unreadCount)
             }
             GoHomeTabRoot(tab: .guardView, path: $guardPath) {
-                GuardView(cameras: homeModel.state.value?.cameras ?? [], apiClient: apiClient)
+                GuardView(cameras: homeModel.state.value?.cameras ?? [], apiClient: apiClient, eventsModel: eventsModel)
             }
-            GoHomeTabRoot(tab: .events, path: $eventsPath) {
-                EventsView(model: eventsModel, apiClient: apiClient)
+            GoHomeTabRoot(tab: .memory, path: $memoryPath) {
+                MemoryView(model: memoryModel, apiClient: apiClient, user: user, family: family)
             }
-            GoHomeTabRoot(tab: .discover, path: $discoverPath) {
+            GoHomeTabRoot(tab: .community, path: $communityPath) {
                 ProductRecommendationsView(model: recommendationsModel)
             }
             GoHomeTabRoot(tab: .profile, path: $profilePath) {
@@ -86,6 +88,7 @@ struct MainTabView: View {
         .accessibilityIdentifier("main-tab-shell")
         .task {
             homeModel.start()
+            memoryModel.start()
             recommendationsModel.start()
         }
     }

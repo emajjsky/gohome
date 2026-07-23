@@ -104,6 +104,18 @@ test('JSON repository keeps product preferences family-scoped and returns copies
   assert.throws(() => repo.updateProductPreferences('user-a', 'family-b', {}), /family access denied/);
 });
 
+test('JSON memory writes reject cross-family assets without leaving partial records', () => {
+  const data = fixture();
+  data.assets = [{ id: 10, family_id: 'family-b' }];
+  const repo = new JsonNativeRepository(data, { idFactory: () => 'memory-1' });
+
+  assert.throws(
+    () => repo.createMemory('user-a', 'family-a', { body: '家庭记忆', asset_ids: ['10'] }),
+    /memory asset not found/,
+  );
+  assert.deepEqual(repo.db.family_memories, []);
+});
+
 test('PostgreSQL repository stops a denied family read before querying messages', async () => {
   const calls = [];
   const pool = {

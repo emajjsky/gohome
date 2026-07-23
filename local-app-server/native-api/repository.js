@@ -96,6 +96,31 @@ function actionInput(action = {}, now = Date.now()) {
     };
 }
 
+function memoryInput(input = {}, { partial = false } = {}) {
+    const body = input.body === undefined && partial ? undefined : String(input.body || "").trim().slice(0, 4000);
+    const people = input.people === undefined && partial ? undefined : arrayValue(input.people).slice(0, 20);
+    const locationName = input.location_name === undefined && partial
+        ? undefined
+        : String(input.location_name || "").trim().slice(0, 120);
+    let happenedAt;
+    if (input.happened_at !== undefined || !partial) {
+        const timestamp = Date.parse(input.happened_at || new Date().toISOString());
+        if (!Number.isFinite(timestamp)) throw repositoryError("invalid memory date", 400);
+        happenedAt = new Date(timestamp).toISOString();
+    }
+    const assetIds = input.asset_ids === undefined && partial
+        ? undefined
+        : arrayValue(input.asset_ids).slice(0, 9);
+    if (!partial && !body && !assetIds.length) throw repositoryError("memory content required", 400);
+    return {
+        ...(body !== undefined ? { body } : {}),
+        ...(people !== undefined ? { people } : {}),
+        ...(locationName !== undefined ? { location_name: locationName } : {}),
+        ...(happenedAt !== undefined ? { happened_at: happenedAt } : {}),
+        ...(assetIds !== undefined ? { asset_ids: assetIds } : {}),
+    };
+}
+
 class NativeRepository {
     bootstrapForUser(_userId) {
         throw new Error("NativeRepository.bootstrapForUser is not implemented");
@@ -132,6 +157,34 @@ class NativeRepository {
     updateProductPreferences(_userId, _familyId, _input) {
         throw new Error("NativeRepository.updateProductPreferences is not implemented");
     }
+
+    memoriesForFamily(_userId, _familyId, _options = {}) {
+        throw new Error("NativeRepository.memoriesForFamily is not implemented");
+    }
+
+    createMemory(_userId, _familyId, _input) {
+        throw new Error("NativeRepository.createMemory is not implemented");
+    }
+
+    updateMemory(_userId, _familyId, _memoryId, _input) {
+        throw new Error("NativeRepository.updateMemory is not implemented");
+    }
+
+    deleteMemory(_userId, _familyId, _memoryId) {
+        throw new Error("NativeRepository.deleteMemory is not implemented");
+    }
+
+    addMemoryComment(_userId, _familyId, _memoryId, _input) {
+        throw new Error("NativeRepository.addMemoryComment is not implemented");
+    }
+
+    deleteMemoryComment(_userId, _familyId, _memoryId, _commentId) {
+        throw new Error("NativeRepository.deleteMemoryComment is not implemented");
+    }
+
+    setMemoryFavorite(_userId, _familyId, _memoryId, _favorite) {
+        throw new Error("NativeRepository.setMemoryFavorite is not implemented");
+    }
 }
 
 class JsonNativeRepository extends NativeRepository {
@@ -145,6 +198,10 @@ class JsonNativeRepository extends NativeRepository {
         if (!Array.isArray(this.db.app_message_actions)) this.db.app_message_actions = [];
         if (!Array.isArray(this.db.product_catalog)) this.db.product_catalog = [];
         if (!this.db.product_preferences || typeof this.db.product_preferences !== "object") this.db.product_preferences = {};
+        if (!Array.isArray(this.db.family_memories)) this.db.family_memories = [];
+        if (!Array.isArray(this.db.family_memory_media)) this.db.family_memory_media = [];
+        if (!Array.isArray(this.db.family_memory_comments)) this.db.family_memory_comments = [];
+        if (!Array.isArray(this.db.family_memory_favorites)) this.db.family_memory_favorites = [];
     }
 
     user(userId) {
@@ -360,6 +417,167 @@ class JsonNativeRepository extends NativeRepository {
         this.db.product_preferences[family] = row;
         return clone(row);
     }
+
+    memoryView(userId, memory) {
+        const author = (this.db.users || []).find((item) => textId(item.id) === textId(memory.author_user_id));
+        const media = this.db.family_memory_media
+            .filter((item) => textId(item.memory_id) === textId(memory.id))
+            .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+        const comments = this.db.family_memory_comments
+            .filter((item) => textId(item.memory_id) === textId(memory.id))
+            .sort((a, b) => Date.parse(a.created_at || 0) - Date.parse(b.created_at || 0));
+        const favorites = this.db.family_memory_favorites.filter((item) => textId(item.memory_id) === textId(memory.id));
+        return {
+            ...memory,
+            author: author ? { id: textId(author.id), display_name: String(author.display_name || "家庭成员") } : null,
+            media,
+            comments,
+            favorite_count: favorites.length,
+            is_favorite: favorites.some((item) => textId(item.user_id) === textId(userId)),
+        };
+    }
+
+    memoriesForFamily(userId, familyId, options = {}) {
+        this.assertFamilyAccess(userId, familyId);
+        return clone(this.db.family_memories
+            .filter((memory) => textId(memory.family_id) === textId(familyId) && (memory.status || "published") === "published")
+            .sort((a, b) => Date.parse(b.happened_at || b.created_at || 0) - Date.parse(a.happened_at || a.created_at || 0))
+            .slice(0, limitValue(options.limit, 30, 50))
+            .map((memory) => this.memoryView(userId, memory)));
+    }
+
+    createMemory(userId, familyId, input = {}) {
+        this.assertFamilyAccess(userId, familyId);
+        const value = memoryInput(input);
+        const timestamp = this.clock();
+        const assets = value.asset_ids.map((assetId) => {
+            const asset = (this.db.assets || []).find((item) => textId(item.id) === textId(assetId) && textId(item.family_id) === textId(familyId));
+            if (!asset) throw repositoryError("memory asset not found", 400);
+            return asset;
+        });
+        const memory = {
+            id: textId(this.idFactory()).replace(/^action-/, "memory-"),
+            family_id: textId(familyId),
+            author_user_id: textId(userId),
+            body: value.body,
+            happened_at: value.happened_at,
+            location_name: value.location_name,
+            people: value.people,
+            visibility: "family",
+            status: "published",
+            metadata: {},
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+        this.db.family_memories.push(memory);
+        assets.forEach((asset, index) => {
+            this.db.family_memory_media.push({
+                id: `${memory.id}-media-${index}`,
+                family_id: textId(familyId),
+                memory_id: memory.id,
+                asset_id: textId(asset.id),
+                sort_order: index,
+                alt_text: "",
+                created_at: timestamp,
+            });
+        });
+        return clone(this.memoryView(userId, memory));
+    }
+
+    updateMemory(userId, familyId, memoryId, input = {}) {
+        const member = this.assertFamilyAccess(userId, familyId);
+        const memory = this.db.family_memories.find((item) => textId(item.id) === textId(memoryId) && textId(item.family_id) === textId(familyId));
+        if (!memory) throw repositoryError("memory not found", 404);
+        if (textId(memory.author_user_id) !== textId(userId) && textId(member.role) !== "creator") throw repositoryError("memory edit denied", 403);
+        const value = memoryInput(input, { partial: true });
+        const assets = value.asset_ids?.map((assetId) => {
+            const asset = (this.db.assets || []).find((item) => textId(item.id) === textId(assetId) && textId(item.family_id) === textId(familyId));
+            if (!asset) throw repositoryError("memory asset not found", 400);
+            return asset;
+        });
+        const nextBody = value.body ?? memory.body;
+        const nextMediaCount = assets === undefined
+            ? this.db.family_memory_media.filter((item) => textId(item.memory_id) === textId(memory.id)).length
+            : assets.length;
+        if (!String(nextBody || "").trim() && !nextMediaCount) throw repositoryError("memory content required", 400);
+        for (const key of ["body", "people", "location_name", "happened_at"]) {
+            if (value[key] !== undefined) memory[key] = value[key];
+        }
+        let cleanupAssetIds = [];
+        if (assets !== undefined) {
+            const nextAssetIds = new Set(assets.map((asset) => textId(asset.id)));
+            cleanupAssetIds = this.db.family_memory_media
+                .filter((item) => textId(item.memory_id) === textId(memory.id) && !nextAssetIds.has(textId(item.asset_id)))
+                .map((item) => textId(item.asset_id));
+            this.db.family_memory_media = this.db.family_memory_media.filter((item) => textId(item.memory_id) !== textId(memory.id));
+            assets.forEach((asset, index) => {
+                this.db.family_memory_media.push({ id: `${memory.id}-media-${index}`, family_id: textId(familyId), memory_id: memory.id, asset_id: textId(asset.id), sort_order: index, alt_text: "", created_at: this.clock() });
+            });
+        }
+        memory.updated_at = this.clock();
+        return { memory: clone(this.memoryView(userId, memory)), cleanup_asset_ids: cleanupAssetIds };
+    }
+
+    deleteMemory(userId, familyId, memoryId) {
+        const member = this.assertFamilyAccess(userId, familyId);
+        const index = this.db.family_memories.findIndex((item) => textId(item.id) === textId(memoryId) && textId(item.family_id) === textId(familyId));
+        if (index < 0) throw repositoryError("memory not found", 404);
+        const memory = this.db.family_memories[index];
+        if (textId(memory.author_user_id) !== textId(userId) && textId(member.role) !== "creator") throw repositoryError("memory delete denied", 403);
+        const assetIds = this.db.family_memory_media
+            .filter((item) => textId(item.memory_id) === textId(memoryId))
+            .map((item) => textId(item.asset_id));
+        this.db.family_memories.splice(index, 1);
+        this.db.family_memory_media = this.db.family_memory_media.filter((item) => textId(item.memory_id) !== textId(memoryId));
+        this.db.family_memory_comments = this.db.family_memory_comments.filter((item) => textId(item.memory_id) !== textId(memoryId));
+        this.db.family_memory_favorites = this.db.family_memory_favorites.filter((item) => textId(item.memory_id) !== textId(memoryId));
+        return { deleted: true, memory_id: textId(memoryId), cleanup_asset_ids: assetIds };
+    }
+
+    addMemoryComment(userId, familyId, memoryId, input = {}) {
+        this.assertFamilyAccess(userId, familyId);
+        const memory = this.db.family_memories.find((item) => textId(item.id) === textId(memoryId) && textId(item.family_id) === textId(familyId));
+        if (!memory) throw repositoryError("memory not found", 404);
+        const body = String(input.body || "").trim().slice(0, 500);
+        if (!body) throw repositoryError("comment required", 400);
+        const timestamp = this.clock();
+        const comment = {
+            id: textId(this.idFactory()).replace(/^action-/, "memory-comment-"),
+            family_id: textId(familyId),
+            memory_id: textId(memoryId),
+            author_user_id: textId(userId),
+            body,
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+        this.db.family_memory_comments.push(comment);
+        return clone(this.memoryView(userId, memory));
+    }
+
+    deleteMemoryComment(userId, familyId, memoryId, commentId) {
+        const member = this.assertFamilyAccess(userId, familyId);
+        const memory = this.db.family_memories.find((item) => textId(item.id) === textId(memoryId) && textId(item.family_id) === textId(familyId));
+        if (!memory) throw repositoryError("memory not found", 404);
+        const index = this.db.family_memory_comments.findIndex((item) => textId(item.id) === textId(commentId) && textId(item.memory_id) === textId(memoryId));
+        if (index < 0) throw repositoryError("comment not found", 404);
+        const comment = this.db.family_memory_comments[index];
+        if (textId(comment.author_user_id) !== textId(userId) && textId(member.role) !== "creator") throw repositoryError("comment delete denied", 403);
+        this.db.family_memory_comments.splice(index, 1);
+        return clone(this.memoryView(userId, memory));
+    }
+
+    setMemoryFavorite(userId, familyId, memoryId, favorite) {
+        this.assertFamilyAccess(userId, familyId);
+        const memory = this.db.family_memories.find((item) => textId(item.id) === textId(memoryId) && textId(item.family_id) === textId(familyId));
+        if (!memory) throw repositoryError("memory not found", 404);
+        const index = this.db.family_memory_favorites.findIndex((item) => textId(item.memory_id) === textId(memoryId) && textId(item.user_id) === textId(userId));
+        if (favorite && index < 0) {
+            this.db.family_memory_favorites.push({ family_id: textId(familyId), memory_id: textId(memoryId), user_id: textId(userId), created_at: this.clock() });
+        } else if (!favorite && index >= 0) {
+            this.db.family_memory_favorites.splice(index, 1);
+        }
+        return clone(this.memoryView(userId, memory));
+    }
 }
 
 module.exports = {
@@ -367,6 +585,7 @@ module.exports = {
     NativeRepository,
     JsonNativeRepository,
     actionInput,
+    memoryInput,
     articlesFromCareCards,
     repositoryError,
 };

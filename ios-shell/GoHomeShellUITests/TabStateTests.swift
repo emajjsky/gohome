@@ -8,8 +8,8 @@ final class TabStateTests: XCTestCase {
 
         XCTAssertTrue(app.tabBars.buttons["首页"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.tabBars.buttons["守护"].exists)
-        XCTAssertTrue(app.tabBars.buttons["事件"].exists)
-        XCTAssertTrue(app.tabBars.buttons["精选"].exists)
+        XCTAssertTrue(app.tabBars.buttons["记忆"].exists)
+        XCTAssertTrue(app.tabBars.buttons["社区"].exists)
         XCTAssertTrue(app.tabBars.buttons["我的"].exists)
     }
 
@@ -27,12 +27,12 @@ final class TabStateTests: XCTestCase {
         XCTAssertTrue(home.waitForExistence(timeout: 2))
     }
 
-    func testDiscoverTabOpensNativeProductRecommendations() {
+    func testCommunityTabOpensNativeProductRecommendations() {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTestState", "-uiTestMain"]
         app.launch()
 
-        app.tabBars.buttons["精选"].tap()
+        app.tabBars.buttons["社区"].tap()
 
         XCTAssertTrue(app.scrollViews["product-recommendations-content"].waitForExistence(timeout: 2))
         XCTAssertFalse(app.webViews.firstMatch.exists)
