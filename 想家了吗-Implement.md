@@ -10912,7 +10912,7 @@ App：
 - Storage 新增 `latest_unresolved_event()`，只查同摄像头未 acknowledged 且没有 resolution 的 fall_candidate/prolonged_floor_lying。
 - `resolve_event_from_edge()` 在本地事件 payload 保存 person_upright_again、resolved_at 和 recovery_evidence。
 - `enqueue_event_state_upload()` 创建 priority=8 的 `event_state_upload`，幂等键包含 event/state/resolution，断网后可重试。
-- Worker 的恢复判定要求 RuleEngine fall_stage=recovered、person_state=visible，并存在 standing/sitting/squatting 姿态，置信度至少 0.45。
+- Worker 的恢复判定要求 RuleEngine fall_stage=recovered、person_state=visible，并存在同一 track 连续稳定 standing/sitting 姿态，置信度至少 0.45；squatting 不属于恢复证据。
 - 无骨架、人物离场、0.44 站姿不会修改事件；0.82 站姿写入一次恢复任务，后续帧不会重复排队。
 
 云端：
@@ -11341,3 +11341,23 @@ P4 风险升频边界：
 部署观察继续暴露两个同源边界：事件 `#2054` 是家具区域未写入目标时的普通沙发坐姿；事件 `#2056` 是跟踪器错误复用同一 ID，目标从画面左侧跳到最右侧，归一化水平位移约 `0.827`，旧下降确认仍被继承。最终增加两道安全门：动态 `sitting / upper_body` 要求 `bottom_y >= 0.88`；同 ID 相邻安全目标的归一化中心距离必须不超过 `0.38`。两条门只收紧宽松动态低位补充路径，不修改标准姿态跌倒、快速因子图、床/沙发排除、恢复和云端复核。
 
 验收服务同时增加 `cloud_confirmed` 检查：当前会话 `f3933a23f16646d787ec16aa35f598bc` 因云端以 0.95 置信度返回 `rejected`，最终状态正确记录为 `failed`，而不是把“事件、三图和模型均有返回”误算为成功。修复后的本地 33 个逻辑/契约回归通过；树莓派规则、时序、验收和视觉运行时回归通过，腾讯云 App Server 闭环回归通过。
+
+## 123. 2026-07-22 视觉算法闭环验收与可信恢复重构
+
+本轮修复的是事件状态语义，不是针对现场样本增加阈值：
+
+- 新增 `edge-agent/app/vision/posture_semantics.py`，集中定义物理恢复姿态和过渡低位姿态，避免 `worker.py`、规则引擎和云端各自维护不同恢复集合。
+- `PoseFactorGraphEngine` 新增 `gohome-physical-recovery-v1` 证据。地面躺卧状态遇到 `squatting/bending` 时保持活动，不清除躺卧计时；只有同轨迹连续稳定 `standing/sitting` 才输出 `confirmed=true`、`sample_count`、`required_samples`、`identity_match=same_track` 和 `track_id`。
+- `RuleEngine` 将跌倒生命周期明确为 `confirmed -> candidate_cleared -> recovered`。候选信号消失不会再直接生成恢复；历史跌倒目标身份保留到可信恢复或新事件替换。
+- 长时间地面躺卧事件使用同一物理恢复语义，短暂漏检或过渡姿态不会重复创建事件；完成真实恢复后才允许同轨迹开启新的躺卧事件。
+- `EdgeWorker` 删除第二套 `_credible_fall_recovery()` 原始姿态扫描，改为只消费规则引擎输出的 `fall_recovery`；日志关闭与事故恢复职责分离。
+- `Storage.latest_unresolved_event()` 增加 `track_id` 精确匹配，避免同一摄像头多个人同时有开放事件时恢复错误事件。
+- 云端 `/api/v1/device/events/{edge_event_id}/state` 只接受 `standing/sitting`、稳定样本、同轨迹身份和 `confirmed` 恢复证据；下蹲恢复请求返回 400。
+
+回归与实机结果：
+
+- 本地核心回归通过：跌倒规则、姿态因子图、长时间地面躺卧、时序观察、日志、上传代理和 App Server 闭环。
+- 树莓派 OpenCV/NumPy 环境回归通过：自适应 worker、连续姿态跟踪、运动门、视觉管线和上述核心回归；`gohome-edge-agent.service=active`。
+- 两路摄像头 `online/synced`，云中继 `8 FPS`，盒子温度约 `67°C`，近 5 分钟无 warning/error；腾讯云 `gohome-app.service=active`，健康检查返回 PostgreSQL store，部署后无 warning/error。
+- 现场三分钟事件结论：`2098/2099` 为弯腰并被云端排除，`2100` 为下蹲并被排除，`2101` 为快速倒地并被确认；模型均为 `Qwen/Qwen3.5-27B`，置信度均为 `0.95`。
+- 提交 `cc0ec5a` 已推送远端并部署边缘端与腾讯云。历史事件保留原始记录，不回写历史判断；新事件使用新的恢复契约。

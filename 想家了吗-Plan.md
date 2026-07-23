@@ -3025,7 +3025,7 @@ P1 用户端：
 
 - 已确认原缺口：盒子 RuleEngine 会进入 recovered，但此前没有把恢复状态上传云端。
 - 已增加本地最近未解决事故查询、edge recovery 持久化和 `event_state_upload` 幂等任务。
-- 已限定只有 recovered + person visible + standing/sitting/squatting + confidence>=0.45 才能提交恢复。
+- 已限定只有 recovered + person visible + 同一 track 连续稳定 standing/sitting + confidence>=0.45 才能提交恢复；squatting 不属于恢复证据。
 - 已增加云端设备事件 state 接口，校验设备归属、事件类型、状态、resolution 和姿态证据。
 - 已把同 incident 关联事件统一置为 resolved/acknowledged，归档开放消息，追加 edge_recovery transition。
 - 已验证人物消失、无姿态、0.44 低置信站姿均不会恢复；0.82 站姿只创建一个恢复任务。
@@ -3144,3 +3144,13 @@ P4.2 多人身份与证据链修正（2026-07-20）：
 5. 修复部署后重新执行边缘回归、盒子健康检查和一次负样本观察，再进行下一次真人动作验收。
 6. 将普通沙发高度但家具漏标、同 ID 跨画面极端跳变加入固定负样本；动态坐姿要求 `bottom_y >= 0.88`，同 ID 目标状态继承要求中心距离不超过 `0.38`。
 7. `simulated_fall` 的最终通过条件增加云端 `confirmed`；三帧上传完成但云端 `rejected` 的会话必须失败，避免把“链路跑通”误写成“跌倒识别通过”。
+
+#### 阶段 24：视觉算法验收与恢复状态机收口（已完成，2026-07-22）
+
+- 根因修复：拆分“跌倒候选信号消失”和“人物物理恢复”，避免规则引擎在连续两帧无低位信号后把事件直接标为恢复。
+- 统一职责：`PoseFactorGraphEngine` 生成同轨迹稳定恢复证据，`RuleEngine` 管理跌倒生命周期，`EdgeWorker` 只负责持久化和上传，云端只接受经过契约校验的恢复状态。
+- 恢复条件：同一 `track_id` 连续稳定 `standing/sitting`；`squatting/bending`、遮挡、人物离开画面和无关旁人均不能恢复事件。多人物事件按轨迹精确选择，不按摄像头最新事件误关闭。
+- 回归覆盖：下蹲、弯腰、旁人站立、同人站起、同人坐起、长时间地面躺卧、临时信号间隙、上传幂等、云端下蹲拒绝和事件轨迹匹配。
+- 实机结果：树莓派两路 `online/synced`，视频中继 8 FPS，温度约 67°C，近 10 分钟无 warning/error；腾讯云 `gohome-app.service` active，PostgreSQL/HTTPS 正常。
+- 真实三分钟动作：`2098/2099` 弯腰排除，`2100` 下蹲排除，`2101` 快速倒地由云端确认；四个事件均有边缘日志与云端复核结果。
+- 代码提交：`cc0ec5a fix: require same-track stable fall recovery`，已推送 `origin/main`。视觉主架构冻结，后续工作转入 App 体验和演示流程；数据集扩充与长期统计不阻塞本阶段验收。
