@@ -115,6 +115,19 @@ function memoryView(memory) {
     };
 }
 
+function activityIntervalView(interval) {
+    return {
+        id: String(interval?.id || ""),
+        camera_id: interval?.camera_id ? String(interval.camera_id) : null,
+        room: String(interval?.room || "").trim(),
+        started_at: interval?.started_at || null,
+        ended_at: interval?.ended_at || null,
+        person_count_max: Math.max(0, Number(interval?.person_count_max || 0)),
+        postures: Array.isArray(interval?.postures) ? interval.postures.map(String).filter(Boolean) : [],
+        confidence: interval?.confidence === null || interval?.confidence === undefined ? null : Number(interval.confidence),
+    };
+}
+
 class NativeViewService {
     constructor(repository, { homeEnricher = null } = {}) {
         this.repository = repository;
@@ -252,6 +265,13 @@ class NativeViewService {
         if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
         return { memory: memoryView(await this.repository.setMemoryFavorite(userId, familyId, memoryId, favorite)) };
     }
+
+    async activityTimelineForFamily(userId, familyId, options = {}) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const intervals = await this.repository.activityTimelineForFamily(userId, familyId, options);
+        const payload = { date: options.date || null, intervals: intervals.map(activityIntervalView).filter((item) => item.id) };
+        return { ...payload, revision: revisionFor(payload) };
+    }
 }
 
-module.exports = { NativeViewService, articleView, careMessageView, criticalAlertView, memoryView, revisionFor };
+module.exports = { NativeViewService, activityIntervalView, articleView, careMessageView, criticalAlertView, memoryView, revisionFor };

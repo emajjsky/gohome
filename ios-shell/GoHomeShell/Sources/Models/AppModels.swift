@@ -197,6 +197,31 @@ struct CareMessageActionResponse: Decodable, Equatable, Sendable {
     let message: CareMessage
 }
 
+struct ActivityTimelineResponse: Codable, Equatable, Sendable {
+    let date: String?
+    let intervals: [ActivityInterval]
+    let revision: String
+}
+
+struct ActivityInterval: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let cameraID: String?
+    let room: String
+    let startedAt: String
+    let endedAt: String
+    let personCountMax: Int
+    let postures: [String]
+    let confidence: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case id, room, postures, confidence
+        case cameraID = "camera_id"
+        case startedAt = "started_at"
+        case endedAt = "ended_at"
+        case personCountMax = "person_count_max"
+    }
+}
+
 struct FamilyMemoriesResponse: Codable, Equatable, Sendable {
     let memories: [FamilyMemory]
     let revision: String

@@ -166,6 +166,15 @@ struct AppEnvironment {
                     contentType: contentType,
                     response: MemoryMediaUploadResponse.self
                 )
+            },
+            activityTimelineLoader: { familyID, date in
+                try await client.send(Endpoint(
+                    path: "/api/v2/activity-timeline",
+                    queryItems: [
+                        URLQueryItem(name: "family_id", value: familyID),
+                        URLQueryItem(name: "date", value: date),
+                    ]
+                ))
             }
         )
         return AppEnvironment(

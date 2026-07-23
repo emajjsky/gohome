@@ -74,6 +74,15 @@ class NativeApiRouter {
             return { status: 200, body: responseBody, headers: { ETag: etag } };
         }
 
+        if (method === "GET" && url.pathname === "/api/v2/activity-timeline") {
+            const responseBody = await this.viewService.activityTimelineForFamily(userId, url.searchParams.get("family_id"), {
+                date: url.searchParams.get("date") || undefined,
+            });
+            const etag = etagFor(responseBody.revision);
+            if (notModified(headers, responseBody.revision)) return { status: 304, headers: { ETag: etag } };
+            return { status: 200, body: responseBody, headers: { ETag: etag } };
+        }
+
         const productMatch = url.pathname.match(/^\/api\/v2\/products\/([^/]+)$/);
         if (method === "GET" && productMatch) {
             const responseBody = await this.viewService.productForFamily(

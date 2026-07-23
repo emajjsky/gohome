@@ -6895,6 +6895,27 @@ function createLocalAppServer(options = {}) {
         });
     }
 
+    async function handleDeviceActivityIntervals(req, res) {
+        if (!requireDevice(req, res)) return;
+        const payload = await parseJsonBody(req);
+        const intervals = Array.isArray(payload.intervals) ? payload.intervals : [];
+        if (!intervals.length || intervals.length > 100) {
+            writeError(res, 400, "activity intervals must contain 1 to 100 items");
+            return;
+        }
+        const issuedToken = issuedDeviceTokenFromRequest(req);
+        const deviceId = String(payload.device_id || issuedToken?.device_id || currentEdgeDeviceId() || "");
+        const device = store.db.devices[deviceId] || {};
+        const familyId = String(issuedToken?.family_id || device.family_id || "");
+        if (!deviceId || !familyId) {
+            writeError(res, 403, "bound device family required");
+            return;
+        }
+        const result = await nativeRepository.ingestActivityIntervals(familyId, deviceId, intervals);
+        await store.save();
+        write(res, 200, { ok: true, ...result });
+    }
+
     function serveMedia(req, res, snapshotPath) {
         if (!requireApp(req, res)) return;
         const asset = latestAssetForSnapshot(decodeURIComponent(snapshotPath || ""));
@@ -7889,6 +7910,11 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "POST" && pathname === "/api/v1/device/sync") {
                 await handleDeviceSync(req, res);
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/device/activity-intervals") {
+                await handleDeviceActivityIntervals(req, res);
                 return;
             }
 

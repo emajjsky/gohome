@@ -121,6 +121,29 @@ function memoryInput(input = {}, { partial = false } = {}) {
     };
 }
 
+function activityIntervalInput(input = {}, now = Date.now()) {
+    const sourceIntervalId = textId(input.source_interval_id).trim().slice(0, 160);
+    if (!sourceIntervalId) throw repositoryError("source_interval_id required", 400);
+    const started = Date.parse(input.started_at || "");
+    const ended = Date.parse(input.ended_at || "");
+    if (!Number.isFinite(started) || !Number.isFinite(ended) || ended <= started) throw repositoryError("invalid activity interval", 400);
+    if (ended - started > 6 * 60 * 60 * 1000) throw repositoryError("activity interval too long", 400);
+    if (ended > now + 5 * 60 * 1000) throw repositoryError("activity interval is in the future", 400);
+    const confidence = input.confidence === undefined || input.confidence === null ? null : Number(input.confidence);
+    if (confidence !== null && (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)) throw repositoryError("invalid activity confidence", 400);
+    return {
+        source_interval_id: sourceIntervalId,
+        camera_id: textId(input.camera_id).trim().slice(0, 120) || null,
+        room: String(input.room || "").trim().slice(0, 80),
+        started_at: new Date(started).toISOString(),
+        ended_at: new Date(ended).toISOString(),
+        person_count_max: Math.max(0, Math.min(20, Number.parseInt(input.person_count_max ?? 1, 10) || 0)),
+        postures: arrayValue(input.postures).slice(0, 12),
+        confidence,
+        metadata: input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata) ? clone(input.metadata) : {},
+    };
+}
+
 class NativeRepository {
     bootstrapForUser(_userId) {
         throw new Error("NativeRepository.bootstrapForUser is not implemented");
@@ -185,6 +208,14 @@ class NativeRepository {
     setMemoryFavorite(_userId, _familyId, _memoryId, _favorite) {
         throw new Error("NativeRepository.setMemoryFavorite is not implemented");
     }
+
+    activityTimelineForFamily(_userId, _familyId, _options = {}) {
+        throw new Error("NativeRepository.activityTimelineForFamily is not implemented");
+    }
+
+    ingestActivityIntervals(_familyId, _deviceId, _intervals) {
+        throw new Error("NativeRepository.ingestActivityIntervals is not implemented");
+    }
 }
 
 class JsonNativeRepository extends NativeRepository {
@@ -202,6 +233,7 @@ class JsonNativeRepository extends NativeRepository {
         if (!Array.isArray(this.db.family_memory_media)) this.db.family_memory_media = [];
         if (!Array.isArray(this.db.family_memory_comments)) this.db.family_memory_comments = [];
         if (!Array.isArray(this.db.family_memory_favorites)) this.db.family_memory_favorites = [];
+        if (!Array.isArray(this.db.activity_intervals)) this.db.activity_intervals = [];
     }
 
     user(userId) {
@@ -578,6 +610,28 @@ class JsonNativeRepository extends NativeRepository {
         }
         return clone(this.memoryView(userId, memory));
     }
+
+    activityTimelineForFamily(userId, familyId, options = {}) {
+        this.assertFamilyAccess(userId, familyId);
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(String(options.date || "")) ? String(options.date) : dateKeyShanghai(new Date(this.clock()));
+        return clone(this.db.activity_intervals
+            .filter((item) => textId(item.family_id) === textId(familyId) && dateKeyShanghai(new Date(item.started_at)) === date)
+            .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at)));
+    }
+
+    ingestActivityIntervals(familyId, deviceId, intervals = []) {
+        const family = textId(familyId);
+        const device = textId(deviceId);
+        const values = intervals.slice(0, 100).map((item) => activityIntervalInput(item, Date.parse(this.clock())));
+        let inserted = 0;
+        for (const value of values) {
+            const existing = this.db.activity_intervals.find((item) => textId(item.device_id) === device && item.source_interval_id === value.source_interval_id);
+            if (existing) continue;
+            this.db.activity_intervals.push({ id: textId(this.idFactory()).replace(/^action-/, "activity-"), family_id: family, device_id: device, ...value, received_at: this.clock() });
+            inserted += 1;
+        }
+        return { accepted: values.length, inserted };
+    }
 }
 
 module.exports = {
@@ -586,6 +640,7 @@ module.exports = {
     JsonNativeRepository,
     actionInput,
     memoryInput,
+    activityIntervalInput,
     articlesFromCareCards,
     repositoryError,
 };

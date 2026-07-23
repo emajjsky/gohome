@@ -1,6 +1,6 @@
 "use strict";
 
-const { NativeRepository, actionInput, articlesFromCareCards, memoryInput, repositoryError } = require("./repository");
+const { NativeRepository, actionInput, activityIntervalInput, articlesFromCareCards, memoryInput, repositoryError } = require("./repository");
 
 const USER_COLUMNS = "id, email, display_name, phone, status, created_at, updated_at";
 const FAMILY_COLUMNS = "f.id, f.name, f.status, f.timezone, f.metadata, f.created_at, f.updated_at, fm.role";
@@ -554,6 +554,35 @@ class PostgresNativeRepository extends NativeRepository {
             );
         }
         return await this.memoryById(this.pool, userId, familyId, memoryId);
+    }
+
+    async activityTimelineForFamily(userId, familyId, options = {}) {
+        await this.assertFamilyAccess(this.pool, userId, familyId);
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(String(options.date || "")) ? String(options.date) : dateKeyShanghai(this.clock());
+        return rows(await this.pool.query(
+            `select * from activity_intervals
+             where family_id = $1 and (started_at at time zone 'Asia/Shanghai')::date = $2::date
+             order by started_at asc`,
+            [textId(familyId), date],
+        ));
+    }
+
+    async ingestActivityIntervals(familyId, deviceId, intervals = []) {
+        const values = intervals.slice(0, 100).map((item) => activityIntervalInput(item, new Date(this.clock()).getTime()));
+        let inserted = 0;
+        for (const value of values) {
+            const result = await this.pool.query(
+                `insert into activity_intervals
+                    (family_id, device_id, camera_id, source_interval_id, room, started_at, ended_at, person_count_max, postures, confidence, metadata)
+                 select $1, d.device_id, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb
+                 from devices d where d.device_id = $2 and d.family_id = $1
+                 on conflict (device_id, source_interval_id) do nothing
+                 returning id`,
+                [textId(familyId), textId(deviceId), value.camera_id, value.source_interval_id, value.room, value.started_at, value.ended_at, value.person_count_max, JSON.stringify(value.postures), value.confidence, JSON.stringify(value.metadata)],
+            );
+            if (result.rowCount) inserted += 1;
+        }
+        return { accepted: values.length, inserted };
     }
 }
 

@@ -5,14 +5,16 @@ struct GuardView: View {
     let cameras: [HomeCamera]
     let apiClient: APIClient?
     @ObservedObject var eventsModel: EventsViewModel
+    @ObservedObject var timelineModel: ActivityTimelineViewModel
     @StateObject private var model: GuardViewModel
     @State private var isVisible = false
     @State private var section: GuardSection = .live
 
-    init(cameras: [HomeCamera], apiClient: APIClient?, eventsModel: EventsViewModel) {
+    init(cameras: [HomeCamera], apiClient: APIClient?, eventsModel: EventsViewModel, timelineModel: ActivityTimelineViewModel) {
         self.cameras = cameras
         self.apiClient = apiClient
         self.eventsModel = eventsModel
+        self.timelineModel = timelineModel
         _model = StateObject(wrappedValue: GuardViewModel(
             streamClient: apiClient.map { client in
                 MJPEGStreamClient(apiClient: client)
@@ -38,6 +40,7 @@ struct GuardView: View {
         .background(GoHomeTheme.paper)
         .refreshable {
             if section == .events { eventsModel.refresh() }
+            if section == .timeline { timelineModel.refresh() }
         }
         .onChange(of: cameras) { next in
             guard let first = next.first else {
@@ -53,6 +56,7 @@ struct GuardView: View {
         .onAppear {
             isVisible = true
             eventsModel.start()
+            timelineModel.start()
             startLiveStreamIfNeeded()
         }
         .onDisappear {
@@ -82,7 +86,7 @@ struct GuardView: View {
         case .live:
             liveContent
         case .timeline:
-            GuardTimelineEmptyState()
+            ActivityTimelineView(model: timelineModel)
         case .events:
             EventsListContent(model: eventsModel, apiClient: apiClient)
         }
@@ -174,27 +178,6 @@ enum GuardSection: String, CaseIterable, Identifiable {
         case .timeline: return "今日轨迹"
         case .events: return "安全事件"
         }
-    }
-}
-
-private struct GuardTimelineEmptyState: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                .font(.system(size: 26, weight: .medium))
-                .foregroundStyle(GoHomeTheme.ginger)
-            Text("今日还没有活动轨迹")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(GoHomeTheme.ink)
-            Text("轨迹只记录房间、时间和可验证的活动区间，不根据一次出现推断吃饭、睡眠或健康状态。")
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(GoHomeTheme.mutedInk)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 28)
-        .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
-        .accessibilityIdentifier("guard-timeline-empty")
     }
 }
 

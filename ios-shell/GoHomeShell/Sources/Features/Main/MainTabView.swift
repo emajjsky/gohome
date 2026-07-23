@@ -10,6 +10,7 @@ struct MainTabView: View {
     let onSignOut: () -> Void
     @StateObject private var homeModel: HomeViewModel
     @StateObject private var eventsModel: EventsViewModel
+    @StateObject private var timelineModel: ActivityTimelineViewModel
     @StateObject private var memoryModel: MemoryViewModel
     @StateObject private var recommendationsModel: ProductRecommendationsViewModel
     @StateObject private var profileModel: ProfileViewModel
@@ -51,6 +52,7 @@ struct MainTabView: View {
         _homeModel = StateObject(wrappedValue: HomeViewModel(repository: repository, scope: scope))
         let seedEvents = ProcessInfo.processInfo.arguments.contains("-uiTestEvent") ? Self.uiTestEvents : []
         _eventsModel = StateObject(wrappedValue: EventsViewModel(repository: repository, scope: scope, seedEvents: seedEvents))
+        _timelineModel = StateObject(wrappedValue: ActivityTimelineViewModel(repository: repository, scope: scope))
         _memoryModel = StateObject(wrappedValue: MemoryViewModel(repository: repository, scope: scope))
         _recommendationsModel = StateObject(wrappedValue: ProductRecommendationsViewModel(repository: repository, scope: scope))
         let seedProfile = ProcessInfo.processInfo.arguments.contains("-uiTestProfile")
@@ -77,7 +79,8 @@ struct MainTabView: View {
                     GuardView(
                         cameras: homeModel.state.value?.cameras ?? [],
                         apiClient: apiClient,
-                        eventsModel: eventsModel
+                        eventsModel: eventsModel,
+                        timelineModel: timelineModel
                     )
                 }
             }
