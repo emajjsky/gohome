@@ -20,6 +20,7 @@ actor AppRepository {
     typealias MemoryFavoriteUpdater = @Sendable (String, String, Bool) async throws -> FamilyMemoryEnvelope
     typealias MemoryDeleter = @Sendable (String, String) async throws -> MemoryDeleteResponse
     typealias MemoryMediaUploader = @Sendable (String, Data, String) async throws -> MemoryMediaUploadResponse
+    typealias MemoryMediaBatchUploader = @Sendable (String, [MemoryUploadImage]) async throws -> MemoryMediaBatchUploadResponse
     typealias ActivityTimelineLoader = @Sendable (String, String) async throws -> ActivityTimelineResponse
 
     private let cache: DiskCache
@@ -40,6 +41,7 @@ actor AppRepository {
     private let memoryFavoriteUpdater: MemoryFavoriteUpdater
     private let memoryDeleter: MemoryDeleter
     private let memoryMediaUploader: MemoryMediaUploader
+    private let memoryMediaBatchUploader: MemoryMediaBatchUploader
     private let activityTimelineLoader: ActivityTimelineLoader
     private var bootstrapTasks: [CacheScope: Task<BootstrapResponse, Error>] = [:]
     private var homeTasks: [CacheScope: Task<HomeResponse, Error>] = [:]
@@ -69,6 +71,7 @@ actor AppRepository {
         memoryFavoriteUpdater: @escaping MemoryFavoriteUpdater = { _, _, _ in throw APIError.invalidResponse },
         memoryDeleter: @escaping MemoryDeleter = { _, _ in throw APIError.invalidResponse },
         memoryMediaUploader: @escaping MemoryMediaUploader = { _, _, _ in throw APIError.invalidResponse },
+        memoryMediaBatchUploader: MemoryMediaBatchUploader? = nil,
         activityTimelineLoader: @escaping ActivityTimelineLoader = { _, _ in throw APIError.invalidResponse }
     ) {
         self.cache = cache
@@ -89,6 +92,13 @@ actor AppRepository {
         self.memoryFavoriteUpdater = memoryFavoriteUpdater
         self.memoryDeleter = memoryDeleter
         self.memoryMediaUploader = memoryMediaUploader
+        self.memoryMediaBatchUploader = memoryMediaBatchUploader ?? { familyID, images in
+            var assets: [MemoryUploadedAsset] = []
+            for image in images {
+                assets.append(try await memoryMediaUploader(familyID, image.data, image.contentType).asset)
+            }
+            return MemoryMediaBatchUploadResponse(assets: assets)
+        }
         self.activityTimelineLoader = activityTimelineLoader
     }
 
@@ -267,6 +277,10 @@ actor AppRepository {
 
     func uploadMemoryMedia(familyID: String, data: Data, contentType: String) async throws -> MemoryUploadedAsset {
         try await memoryMediaUploader(familyID, data, contentType).asset
+    }
+
+    func uploadMemoryMediaBatch(familyID: String, images: [MemoryUploadImage]) async throws -> [MemoryUploadedAsset] {
+        try await memoryMediaBatchUploader(familyID, images).assets
     }
 
     func cacheMemories(_ value: FamilyMemoriesResponse, scope: CacheScope) async {

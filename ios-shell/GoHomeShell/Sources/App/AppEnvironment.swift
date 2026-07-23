@@ -167,6 +167,23 @@ struct AppEnvironment {
                     response: MemoryMediaUploadResponse.self
                 )
             },
+            memoryMediaBatchUploader: { familyID, images in
+                let request = MemoryMediaBatchRequest(images: images.map {
+                    MemoryMediaBatchItemRequest(
+                        data: $0.data,
+                        contentType: $0.contentType,
+                        pixelWidth: $0.pixelWidth,
+                        pixelHeight: $0.pixelHeight
+                    )
+                })
+                let endpoint: Endpoint<MemoryMediaBatchUploadResponse> = try .jsonBody(
+                    method: .post,
+                    path: "/api/v2/memory-media-batch",
+                    body: request,
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                )
+                return try await client.send(endpoint)
+            },
             activityTimelineLoader: { familyID, date in
                 try await client.send(Endpoint(
                     path: "/api/v2/activity-timeline",

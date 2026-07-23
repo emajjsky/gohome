@@ -320,6 +320,35 @@ struct MemoryMediaUploadResponse: Decodable, Equatable, Sendable {
     let asset: MemoryUploadedAsset
 }
 
+struct MemoryMediaBatchUploadResponse: Decodable, Equatable, Sendable {
+    let assets: [MemoryUploadedAsset]
+}
+
+struct MemoryUploadImage: Equatable, Sendable {
+    let data: Data
+    let contentType: String
+    let pixelWidth: Int
+    let pixelHeight: Int
+}
+
+struct MemoryMediaBatchRequest: Encodable, Equatable, Sendable {
+    let images: [MemoryMediaBatchItemRequest]
+}
+
+struct MemoryMediaBatchItemRequest: Encodable, Equatable, Sendable {
+    let data: Data
+    let contentType: String
+    let pixelWidth: Int
+    let pixelHeight: Int
+
+    enum CodingKeys: String, CodingKey {
+        case data
+        case contentType = "content_type"
+        case pixelWidth = "pixel_width"
+        case pixelHeight = "pixel_height"
+    }
+}
+
 struct MemoryUploadedAsset: Decodable, Equatable, Sendable {
     let id: String
     let contentType: String

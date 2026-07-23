@@ -21,6 +21,56 @@ async function request(baseURL, pathname, options = {}) {
   return { response, body: text ? JSON.parse(text) : null };
 }
 
+test('native memory media batch persists nine-grid images in one save', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-native-memory-batch-'));
+  const app = createLocalAppServer({ rootDir: path.join(__dirname, '..', '..'), dataDir, authMode: 'demo', demoOtp: '246810' });
+  const baseURL = await listen(app.server);
+  try {
+    const registered = await request(baseURL, '/api/auth/register', {
+      method: 'POST', body: JSON.stringify({ phone: '13800138008', code: '246810', display_name: '批量测试' }),
+    });
+    const authorization = { Authorization: `Bearer ${registered.body.token}` };
+    const family = await request(baseURL, '/api/families', {
+      method: 'POST', headers: authorization, body: JSON.stringify({ name: '批量图片家庭' }),
+    });
+    const familyID = String(family.body.id);
+    const originalSave = app.store.save.bind(app.store);
+    let saveCount = 0;
+    app.store.save = async () => {
+      saveCount += 1;
+      return originalSave();
+    };
+    const images = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((value) => ({
+      content_type: 'image/jpeg',
+      data: Buffer.from([0xff, 0xd8, value, 0xff, 0xd9]).toString('base64'),
+      pixel_width: 1280,
+      pixel_height: 960,
+    }));
+
+    const uploaded = await request(baseURL, `/api/v2/memory-media-batch?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ images }),
+    });
+
+    assert.equal(uploaded.response.status, 201);
+    assert.equal(uploaded.body.assets.length, 9);
+    assert.equal(saveCount, 1);
+    assert.deepEqual(
+      uploaded.body.assets.map((asset) => asset.size_bytes),
+      images.map((image) => Buffer.from(image.data, 'base64').length),
+    );
+    const persistedAssets = uploaded.body.assets.map((asset) => app.store.db.assets.find((item) => item.id === asset.id));
+    assert.deepEqual(persistedAssets.map((asset) => asset.metadata.pixel_width), images.map(() => 1280));
+    const tooMany = await request(baseURL, `/api/v2/memory-media-batch?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ images: [...images, images[0]] }),
+    });
+    assert.equal(tooMany.response.status, 400);
+    assert.equal(saveCount, 1);
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('native memories form a private family timeline with editable durable records', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-native-memories-'));
   const app = createLocalAppServer({ rootDir: path.join(__dirname, '..', '..'), dataDir, authMode: 'demo', demoOtp: '246810' });

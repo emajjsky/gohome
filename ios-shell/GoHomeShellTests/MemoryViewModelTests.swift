@@ -71,11 +71,12 @@ final class MemoryViewModelTests: XCTestCase {
             memoryDeleter: { _, memoryID in
                 await recorder.recordDeleted(memoryID)
                 return MemoryDeleteResponse(deleted: true, memoryID: memoryID)
-            }
+            },
+            memoryMediaBatchUploader: { _, _ in throw APIError.invalidResponse }
         )
         let model = MemoryViewModel(repository: repository, scope: scope)
 
-        let didSave = await model.save(
+        let outcome = await model.save(
             existing: nil,
             body: "  第一次记录  ",
             happenedAt: Date(timeIntervalSince1970: 1_753_257_600),
@@ -84,7 +85,7 @@ final class MemoryViewModelTests: XCTestCase {
             retainedMediaIDs: [],
             newImages: []
         )
-        XCTAssertTrue(didSave)
+        XCTAssertNotNil(outcome)
         XCTAssertEqual(model.memories.map(\.id), ["memory-1"])
         var writes = await recorder.snapshot()
         XCTAssertEqual(writes.createdBody, "第一次记录")
@@ -108,7 +109,7 @@ final class MemoryViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testParallelMediaUploadsPreserveSelectionOrder() async throws {
+    func testBatchMediaUploadPreservesSelectionOrder() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let cache = try DiskCache(rootURL: root)
@@ -121,30 +122,32 @@ final class MemoryViewModelTests: XCTestCase {
                 await requestRecorder.record(request)
                 return FamilyMemoryEnvelope(memory: self.makeMemory(id: "memory-ordered", body: request.body))
             },
-            memoryMediaUploader: { _, data, _ in
-                let index = Int(data.first ?? 0)
-                try await Task.sleep(nanoseconds: UInt64(3 - index) * 20_000_000)
-                return MemoryMediaUploadResponse(asset: MemoryUploadedAsset(
-                    id: "asset-\(index)",
-                    contentType: "image/jpeg",
-                    imageURL: "/assets/\(index)",
-                    sizeBytes: data.count
-                ))
+            memoryMediaBatchUploader: { _, images in
+                MemoryMediaBatchUploadResponse(assets: images.map { image in
+                    let index = Int(image.data.first ?? 0)
+                    return MemoryUploadedAsset(
+                        id: "asset-\(index)",
+                        contentType: image.contentType,
+                        imageURL: "/assets/\(index)",
+                        sizeBytes: image.data.count
+                    )
+                })
             }
         )
         let model = MemoryViewModel(repository: repository, scope: scope)
 
-        let didSave = await model.save(
+        let outcome = await model.save(
             existing: nil,
             body: "按选择顺序发布",
             happenedAt: Date(),
             locationName: "",
             people: [],
             retainedMediaIDs: ["retained"],
-            newImages: [1, 2, 3].map { (Data([$0]), "image/jpeg") }
+            newImages: [1, 2, 3].map(memoryUpload)
         )
 
-        XCTAssertTrue(didSave)
+        XCTAssertNotNil(outcome)
+        XCTAssertEqual(outcome?.uploadedAssets.map(\.id), ["asset-1", "asset-2", "asset-3"])
         let request = await requestRecorder.value
         XCTAssertEqual(request?.assetIDs, ["retained", "asset-1", "asset-2", "asset-3"])
     }
@@ -163,32 +166,43 @@ final class MemoryViewModelTests: XCTestCase {
                 await requestRecorder.record(request)
                 return FamilyMemoryEnvelope(memory: self.makeMemory(id: "memory-capped", body: request.body))
             },
-            memoryMediaUploader: { _, data, _ in
-                let index = Int(data.first ?? 0)
-                return MemoryMediaUploadResponse(asset: MemoryUploadedAsset(
-                    id: "asset-\(index)",
-                    contentType: "image/jpeg",
-                    imageURL: "/assets/\(index)",
-                    sizeBytes: data.count
-                ))
+            memoryMediaBatchUploader: { _, images in
+                MemoryMediaBatchUploadResponse(assets: images.map { image in
+                    let index = Int(image.data.first ?? 0)
+                    return MemoryUploadedAsset(
+                        id: "asset-\(index)",
+                        contentType: image.contentType,
+                        imageURL: "/assets/\(index)",
+                        sizeBytes: image.data.count
+                    )
+                })
             }
         )
         let model = MemoryViewModel(repository: repository, scope: scope)
 
-        let didSave = await model.save(
+        let outcome = await model.save(
             existing: nil,
             body: "最多九张",
             happenedAt: Date(),
             locationName: "",
             people: [],
             retainedMediaIDs: (1...7).map { "retained-\($0)" },
-            newImages: [8, 9, 10].map { (Data([$0]), "image/jpeg") }
+            newImages: [8, 9, 10].map(memoryUpload)
         )
 
-        XCTAssertTrue(didSave)
+        XCTAssertNotNil(outcome)
         let request = await requestRecorder.value
         XCTAssertEqual(request?.assetIDs.count, 9)
         XCTAssertEqual(request?.assetIDs.suffix(2), ["asset-8", "asset-9"])
+    }
+
+    private func memoryUpload(_ value: Int) -> MemoryUploadImage {
+        MemoryUploadImage(
+            data: Data([UInt8(value)]),
+            contentType: "image/jpeg",
+            pixelWidth: 1280,
+            pixelHeight: 960
+        )
     }
 
     private func makeMemory(

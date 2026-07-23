@@ -2,6 +2,11 @@ import Foundation
 
 @MainActor
 final class MemoryViewModel: ObservableObject {
+    struct SaveOutcome: Sendable {
+        let memory: FamilyMemory
+        let uploadedAssets: [MemoryUploadedAsset]
+    }
+
     @Published private(set) var state = Loadable<FamilyMemoriesResponse>()
     @Published private(set) var pendingIDs: Set<String> = []
     @Published private(set) var isPublishing = false
@@ -36,30 +41,23 @@ final class MemoryViewModel: ObservableObject {
         locationName: String,
         people: [String],
         retainedMediaIDs: [String],
-        newImages: [(data: Data, contentType: String)]
-    ) async -> Bool {
-        guard !isPublishing, let repository, let scope else { return false }
+        newImages: [MemoryUploadImage]
+    ) async -> SaveOutcome? {
+        guard !isPublishing, let repository, let scope else { return nil }
         isPublishing = true
         errorMessage = nil
         do {
             let retainedIDs = Array(retainedMediaIDs.prefix(9))
             let uploadCandidates = Array(newImages.prefix(max(0, 9 - retainedIDs.count)))
-            let uploadedIDs = try await withThrowingTaskGroup(of: (Int, String).self) { group in
-                for (index, image) in uploadCandidates.enumerated() {
-                    group.addTask { [repository, familyID = scope.familyID] in
-                        let uploaded = try await repository.uploadMemoryMedia(
-                            familyID: familyID,
-                            data: image.data,
-                            contentType: image.contentType
-                        )
-                        return (index, uploaded.id)
-                    }
-                }
-                var ordered = Array<String?>(repeating: nil, count: uploadCandidates.count)
-                for try await (index, assetID) in group { ordered[index] = assetID }
-                return ordered.compactMap { $0 }
+            let uploadedAssets = if uploadCandidates.isEmpty {
+                [MemoryUploadedAsset]()
+            } else {
+                try await repository.uploadMemoryMediaBatch(
+                    familyID: scope.familyID,
+                    images: uploadCandidates
+                )
             }
-            let assetIDs = retainedIDs + uploadedIDs
+            let assetIDs = retainedIDs + uploadedAssets.map(\.id)
             let request = MemoryDraftRequest(
                 body: body.trimmingCharacters(in: .whitespacesAndNewlines),
                 happenedAt: ISO8601DateFormatter().string(from: happenedAt),
@@ -75,11 +73,11 @@ final class MemoryViewModel: ObservableObject {
             replace(saved, prependIfMissing: existing == nil)
             await persist()
             isPublishing = false
-            return true
+            return SaveOutcome(memory: saved, uploadedAssets: uploadedAssets)
         } catch {
             isPublishing = false
             errorMessage = "这条记忆没有保存，请检查网络后重试"
-            return false
+            return nil
         }
     }
 

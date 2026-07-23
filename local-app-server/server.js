@@ -4990,6 +4990,38 @@ function createLocalAppServer(options = {}) {
         }
     }
 
+    function optimizedMemoryImageFile(asset, filePath, variant) {
+        const purpose = String(asset?.purpose || asset?.metadata?.purpose || "");
+        if (purpose !== "family_memory" || variant !== "grid") return null;
+        const width = Number(asset?.metadata?.pixel_width || 0);
+        const height = Number(asset?.metadata?.pixel_height || 0);
+        const contentType = String(asset?.content_type || "").toLowerCase();
+        if (Math.max(width, height) <= 1280 && Math.max(width, height) > 0
+            && ["image/jpeg", "image/webp"].includes(contentType)) return null;
+        const stat = fs.statSync(filePath);
+        const outputPath = `${filePath}.grid.webp`;
+        try {
+            const outputStat = fs.existsSync(outputPath) ? fs.statSync(outputPath) : null;
+            if (!outputStat || outputStat.mtimeMs < stat.mtimeMs) {
+                const result = spawnSync("ffmpeg", [
+                    "-y",
+                    "-loglevel", "error",
+                    "-i", filePath,
+                    "-vf", "scale=1280:1280:force_original_aspect_ratio=decrease",
+                    "-c:v", "libwebp",
+                    "-quality", "74",
+                    "-compression_level", "4",
+                    outputPath,
+                ], { timeout: 20_000, maxBuffer: 1024 * 1024 });
+                if (result.status !== 0) return null;
+            }
+            const optimizedStat = fs.statSync(outputPath);
+            return optimizedStat.size > 0 && optimizedStat.size < stat.size ? outputPath : null;
+        } catch (_error) {
+            return null;
+        }
+    }
+
     function storeCareCardImageAsset(card, familyId, imageBuffer, contentType, sourceUrl = "") {
         const optimized = transcodeCareCardImage(imageBuffer, contentType);
         imageBuffer = optimized.buffer;
@@ -6409,6 +6441,107 @@ function createLocalAppServer(options = {}) {
         });
     }
 
+    async function handleMemoryMediaBatchUpload(req, res, url) {
+        if (!requireNativeApp(req, res)) return;
+        const familyId = String(url.searchParams.get("family_id") || "");
+        if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+        const payload = await parseJsonBody(req);
+        const images = Array.isArray(payload.images) ? payload.images : [];
+        if (!images.length || images.length > 9) {
+            writeError(res, 400, "memory images must contain 1 to 9 items");
+            return;
+        }
+        const extensions = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        };
+        const decoded = [];
+        let totalBytes = 0;
+        for (const [index, image] of images.entries()) {
+            const contentType = String(image?.content_type || "").split(";")[0].trim().toLowerCase();
+            const extension = extensions[contentType];
+            const encoded = String(image?.data || "").trim();
+            if (!extension || !encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+                writeError(res, 415, `unsupported memory image at index ${index}`);
+                return;
+            }
+            const content = Buffer.from(encoded, "base64");
+            const canonical = content.toString("base64").replace(/=+$/, "");
+            if (!content.length || canonical !== encoded.replace(/=+$/, "") || content.length > 4 * 1024 * 1024) {
+                writeError(res, 400, `invalid memory image at index ${index}`);
+                return;
+            }
+            totalBytes += content.length;
+            // Base64 adds roughly one third; keep the JSON request below the
+            // production reverse proxy's 20 MB body limit.
+            if (totalBytes > 12 * 1024 * 1024) {
+                writeError(res, 413, "memory image batch too large");
+                return;
+            }
+            const pixelWidth = Math.max(0, Math.min(12_000, Number(image?.pixel_width) || 0));
+            const pixelHeight = Math.max(0, Math.min(12_000, Number(image?.pixel_height) || 0));
+            decoded.push({ content, contentType, extension, pixelWidth, pixelHeight });
+        }
+
+        const dateDir = path.join("memories", new Date().toISOString().slice(0, 10));
+        const timestamp = nowIso();
+        const createdAssets = [];
+        try {
+            for (const image of decoded) {
+                const assetId = stableId("memory-asset-");
+                const fileName = `${assetId}${image.extension}`;
+                const relativePath = path.join(dateDir, fileName);
+                const target = path.join(mediaDir, relativePath);
+                ensureDir(path.dirname(target));
+                fs.writeFileSync(target, image.content, { mode: 0o600 });
+                const asset = {
+                    id: assetId,
+                    family_id: familyId,
+                    device_id: "",
+                    camera_id: null,
+                    file_name: fileName,
+                    content_type: image.contentType,
+                    snapshot_path: relativePath,
+                    relative_path: relativePath,
+                    storage_provider: "local",
+                    storage_key: relativePath,
+                    edge_event_id: "",
+                    purpose: "family_memory",
+                    size: image.content.length,
+                    metadata: {
+                        purpose: "family_memory",
+                        uploaded_by: String(req.appUserId || ""),
+                        pixel_width: image.pixelWidth,
+                        pixel_height: image.pixelHeight,
+                    },
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                    url: `/api/v1/video/assets/${encodeURIComponent(assetId)}`,
+                };
+                createdAssets.push(asset);
+                store.db.assets.push(asset);
+            }
+            await store.save();
+        } catch (error) {
+            const createdIds = new Set(createdAssets.map((asset) => String(asset.id)));
+            store.db.assets = store.db.assets.filter((asset) => !createdIds.has(String(asset.id)));
+            for (const asset of createdAssets) {
+                const filePath = assetAbsolutePath(asset);
+                if (filePath && fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+            }
+            throw error;
+        }
+        write(res, 201, {
+            assets: createdAssets.map((asset) => ({
+                id: asset.id,
+                content_type: asset.content_type,
+                image_url: asset.url,
+                size_bytes: asset.size,
+            })),
+        });
+    }
+
     function cleanupMemoryAssets(assetIds = []) {
         const ids = new Set(assetIds.map(String));
         if (!ids.size) return;
@@ -6932,7 +7065,7 @@ function createLocalAppServer(options = {}) {
         });
     }
 
-    function serveAsset(req, res, assetId) {
+    function serveAsset(req, res, assetId, url) {
         if (!requireApp(req, res)) return;
         const asset = store.db.assets.find((item) => String(item.id) === String(assetId));
         const filePath = assetAbsolutePath(asset);
@@ -6941,10 +7074,26 @@ function createLocalAppServer(options = {}) {
             return;
         }
         if (!requireAssetAccess(req, res, asset)) return;
-        const optimizedPath = optimizedCareCardFile(asset, filePath);
-        write(res, 200, fs.readFileSync(optimizedPath || filePath), {
+        const variant = String(url?.searchParams?.get("variant") || "");
+        const optimizedPath = optimizedMemoryImageFile(asset, filePath, variant) || optimizedCareCardFile(asset, filePath);
+        const servedPath = optimizedPath || filePath;
+        const stat = fs.statSync(servedPath);
+        const etag = `W/\"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}\"`;
+        const headers = {
             "Content-Type": optimizedPath ? "image/webp" : (asset.content_type || "image/jpeg"),
-            "Cache-Control": "private, max-age=300",
+            "Cache-Control": "private, max-age=604800, immutable",
+            "ETag": etag,
+        };
+        if (String(req.headers["if-none-match"] || "") === etag) {
+            res.writeHead(304, {
+                "Access-Control-Allow-Origin": "*",
+                ...headers,
+            });
+            res.end();
+            return;
+        }
+        write(res, 200, fs.readFileSync(servedPath), {
+            ...headers,
         });
     }
 
@@ -7013,6 +7162,10 @@ function createLocalAppServer(options = {}) {
         }
 
         try {
+            if (req.method === "POST" && pathname === "/api/v2/memory-media-batch") {
+                await handleMemoryMediaBatchUpload(req, res, url);
+                return;
+            }
             if (req.method === "POST" && pathname === "/api/v2/memory-media") {
                 await handleMemoryMediaUpload(req, res, url);
                 return;
@@ -7887,7 +8040,7 @@ function createLocalAppServer(options = {}) {
             }
 
             if (req.method === "GET" && pathname.startsWith("/api/v1/video/assets/")) {
-                serveAsset(req, res, pathname.slice("/api/v1/video/assets/".length));
+                serveAsset(req, res, pathname.slice("/api/v1/video/assets/".length), url);
                 return;
             }
 

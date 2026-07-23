@@ -50,6 +50,23 @@ final class APIClientTests: XCTestCase {
         }
     }
 
+    func testBinaryDataKeepsQueryItemsOutOfTheAssetPath() async throws {
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(
+                request.url?.absoluteString,
+                "https://example.com/api/v1/video/assets/asset-1?variant=grid"
+            )
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data([1]))
+        }
+
+        let data = try await makeClient().data(
+            path: "/api/v1/video/assets/asset-1",
+            queryItems: [URLQueryItem(name: "variant", value: "grid")]
+        )
+
+        XCTAssertEqual(data, Data([1]))
+    }
+
     func testCancellationIsPreserved() async {
         URLProtocolStub.handler = { _ in
             try await Task.sleep(nanoseconds: 5_000_000_000)

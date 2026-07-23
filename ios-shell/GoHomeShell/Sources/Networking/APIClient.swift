@@ -44,8 +44,8 @@ actor APIClient {
         }
     }
 
-    func data(path: String) async throws -> Data {
-        let endpoint = Endpoint<EmptyResponse>(path: path)
+    func data(path: String, queryItems: [URLQueryItem] = []) async throws -> Data {
+        let endpoint = Endpoint<EmptyResponse>(path: path, queryItems: queryItems)
         var request = try endpoint.request(baseURL: baseURL)
         if let token = await tokenProvider(), !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

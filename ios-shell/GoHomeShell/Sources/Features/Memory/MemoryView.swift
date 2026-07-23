@@ -262,11 +262,9 @@ private struct MemoryMediaGrid: View {
         LazyVGrid(columns: columns, spacing: 4) {
             ForEach(Array(visibleMedia.enumerated()), id: \.element.id) { index, item in
                 Button { previewIndex = index } label: {
-                    AuthenticatedMemoryImage(path: item.imageURL, apiClient: apiClient)
-                        .aspectRatio(MemoryMediaLayout.aspectRatio(for: visibleMedia.count), contentMode: .fill)
-                        .frame(maxWidth: .infinity)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+                    MemoryImageTile(aspectRatio: MemoryMediaLayout.aspectRatio(for: visibleMedia.count)) {
+                        AuthenticatedMemoryImage(path: item.imageURL, apiClient: apiClient, variant: "grid")
+                    }
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("查看第 \(index + 1) 张照片")
@@ -279,6 +277,10 @@ private struct MemoryMediaGrid: View {
             MemoryMediaPreview(media: visibleMedia, apiClient: apiClient, selectedIndex: previewIndex ?? 0)
         }
     }
+}
+
+private func memoryImageCacheKey(path: String, variant: String? = nil) -> String {
+    variant.map { "\(path)|variant=\($0)" } ?? path
 }
 
 enum MemoryMediaLayout {
@@ -329,8 +331,13 @@ private struct MemoryMediaPreview: View {
 private struct AuthenticatedMemoryImage: View {
     let path: String
     let apiClient: APIClient?
+    var variant: String? = nil
     var contentMode: ContentMode = .fill
     @State private var image: UIImage?
+
+    private var cacheKey: String {
+        memoryImageCacheKey(path: path, variant: variant)
+    }
 
     var body: some View {
         ZStack {
@@ -342,22 +349,18 @@ private struct AuthenticatedMemoryImage: View {
                     .foregroundStyle(GoHomeTheme.mutedInk.opacity(0.5))
             }
         }
-        .task(id: path) {
+        .task(id: cacheKey) {
             guard !path.isEmpty else { return }
-            if let cached = MemoryImageCache.shared.image(for: path) {
-                image = cached
-                return
-            }
-            guard let apiClient, let data = try? await apiClient.data(path: path), let loaded = UIImage(data: data) else { return }
-            MemoryImageCache.shared.insert(loaded, for: path)
-            image = loaded
+            image = await MemoryImageCache.shared.load(path: path, variant: variant, apiClient: apiClient)
         }
     }
 }
 
+@MainActor
 private final class MemoryImageCache {
     static let shared = MemoryImageCache()
     private let cache = NSCache<NSString, UIImage>()
+    private var inFlight: [String: Task<UIImage?, Never>] = [:]
 
     private init() {
         cache.countLimit = 80
@@ -372,6 +375,55 @@ private final class MemoryImageCache {
         let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
         cache.setObject(image, forKey: path as NSString, cost: cost)
     }
+
+    func insert(data: Data, for paths: [String]) {
+        guard let image = UIImage(data: data) else { return }
+        for path in paths where !path.isEmpty { insert(image, for: path) }
+    }
+
+    func load(path: String, variant: String? = nil, apiClient: APIClient?) async -> UIImage? {
+        let key = memoryImageCacheKey(path: path, variant: variant)
+        if let cached = image(for: key) { return cached }
+        if let task = inFlight[key] { return await task.value }
+        guard let apiClient else { return nil }
+        let task = Task<UIImage?, Never> {
+            let queryItems = variant.map { [URLQueryItem(name: "variant", value: $0)] } ?? []
+            guard let data = try? await apiClient.data(path: path, queryItems: queryItems) else { return nil }
+            return await Task.detached(priority: .userInitiated) { UIImage(data: data) }.value
+        }
+        inFlight[key] = task
+        let loaded = await task.value
+        inFlight[key] = nil
+        if let loaded { insert(loaded, for: key) }
+        return loaded
+    }
+}
+
+private struct MemoryImageTile<Content: View>: View {
+    let aspectRatio: CGFloat
+    let content: Content
+
+    init(aspectRatio: CGFloat, @ViewBuilder content: () -> Content) {
+        self.aspectRatio = aspectRatio
+        self.content = content()
+    }
+
+    var body: some View {
+        Color.black.opacity(0.035)
+            .aspectRatio(aspectRatio, contentMode: .fit)
+            .overlay {
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            }
+            .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+    }
+}
+
+private struct MemoryDraftImage: Identifiable {
+    let id = UUID()
+    var upload: MemoryUploadImage?
+    var preview: UIImage?
 }
 
 private struct MemoryComposer: View {
@@ -384,9 +436,10 @@ private struct MemoryComposer: View {
     @State private var peopleText: String
     @State private var happenedAt: Date
     @State private var pickerItems: [PhotosPickerItem] = []
-    @State private var imageData: [Data] = []
+    @State private var newImages: [MemoryDraftImage] = []
     @State private var retainedMedia: [MemoryMedia]
     @State private var isPreparingImages = false
+    @State private var imageSelectionGeneration = UUID()
 
     init(memory: FamilyMemory?, model: MemoryViewModel, apiClient: APIClient?, isPresented: Binding<Bool>) {
         self.memory = memory
@@ -410,15 +463,20 @@ private struct MemoryComposer: View {
                         .frame(minHeight: 150)
                         .padding(12)
                         .background(Color.black.opacity(0.035), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
-                    if !retainedMedia.isEmpty || !imageData.isEmpty {
+                    if !retainedMedia.isEmpty || !newImages.isEmpty {
                         MemoryComposerMediaGrid(
                             retainedMedia: $retainedMedia,
-                            newImageData: $imageData,
+                            newImages: $newImages,
                             apiClient: apiClient
                         )
                     }
                     if retainedMedia.count < 9 {
-                        PhotosPicker(selection: $pickerItems, maxSelectionCount: 9 - retainedMedia.count, matching: .images) {
+                        PhotosPicker(
+                            selection: $pickerItems,
+                            maxSelectionCount: 9 - retainedMedia.count,
+                            matching: .images,
+                            preferredItemEncoding: .current
+                        ) {
                             Label(photoPickerTitle, systemImage: "photo.on.rectangle.angled")
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(GoHomeTheme.ink)
@@ -444,24 +502,47 @@ private struct MemoryComposer: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(model.isPublishing ? "保存中" : "发布") { publish() }
                         .fontWeight(.bold)
-                        .disabled(isPreparingImages || model.isPublishing || (bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && imageData.isEmpty && retainedMedia.isEmpty))
+                        .disabled(isPreparingImages || model.isPublishing || (bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && newImages.isEmpty && retainedMedia.isEmpty))
                 }
             }
             .onChange(of: pickerItems) { items in
-                isPreparingImages = true
-                Task {
-                    let prepared = await MemoryImageProcessor.prepare(items: items)
-                    guard !Task.isCancelled else { return }
-                    imageData = prepared
-                    isPreparingImages = false
-                }
+                preparePhotos(items)
             }
         }
     }
 
     private var photoPickerTitle: String {
         if isPreparingImages { return "正在处理照片" }
-        return imageData.isEmpty ? "添加照片" : "已选择 \(imageData.count) 张"
+        return newImages.isEmpty ? "添加照片" : "已选择 \(newImages.count) 张"
+    }
+
+    private func preparePhotos(_ items: [PhotosPickerItem]) {
+        let selected = Array(items.prefix(max(0, 9 - retainedMedia.count)))
+        let generation = UUID()
+        imageSelectionGeneration = generation
+        let drafts = selected.map { _ in MemoryDraftImage(upload: nil, preview: nil) }
+        newImages = drafts
+        isPreparingImages = !selected.isEmpty
+        Task {
+            await withTaskGroup(of: (UUID, MemoryUploadImage?).self) { group in
+                for (draft, item) in zip(drafts, selected) {
+                    group.addTask { (draft.id, await MemoryImageProcessor.prepare(item: item)) }
+                }
+                for await (draftID, prepared) in group {
+                    await MainActor.run {
+                        guard imageSelectionGeneration == generation,
+                              let index = newImages.firstIndex(where: { $0.id == draftID }) else { return }
+                        newImages[index].upload = prepared
+                        newImages[index].preview = prepared.flatMap { UIImage(data: $0.data) }
+                    }
+                }
+            }
+            await MainActor.run {
+                guard imageSelectionGeneration == generation else { return }
+                newImages.removeAll { $0.upload == nil }
+                isPreparingImages = false
+            }
+        }
     }
 
     private func publish() {
@@ -470,27 +551,39 @@ private struct MemoryComposer: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         Task {
-            let saved = await model.save(
+            let uploads = newImages.compactMap(\.upload)
+            let outcome = await model.save(
                 existing: memory,
                 body: bodyText,
                 happenedAt: happenedAt,
                 locationName: locationName,
                 people: people,
                 retainedMediaIDs: retainedMedia.map(\.assetID),
-                newImages: imageData.map { ($0, "image/jpeg") }
+                newImages: uploads
             )
-            if saved { isPresented = false }
+            if let outcome {
+                for (asset, upload) in zip(outcome.uploadedAssets, uploads) {
+                    MemoryImageCache.shared.insert(
+                        data: upload.data,
+                        for: [
+                            asset.imageURL,
+                            memoryImageCacheKey(path: asset.imageURL, variant: "grid"),
+                        ]
+                    )
+                }
+                isPresented = false
+            }
         }
     }
 }
 
 private struct MemoryComposerMediaGrid: View {
     @Binding var retainedMedia: [MemoryMedia]
-    @Binding var newImageData: [Data]
+    @Binding var newImages: [MemoryDraftImage]
     let apiClient: APIClient?
 
     var body: some View {
-        let count = min(9, retainedMedia.count + newImageData.count)
+        let count = min(9, retainedMedia.count + newImages.count)
         let columns = Array(
             repeating: GridItem(.flexible(), spacing: MemoryMediaLayout.spacing),
             count: MemoryMediaLayout.columnCount(for: count)
@@ -498,19 +591,21 @@ private struct MemoryComposerMediaGrid: View {
         LazyVGrid(columns: columns, spacing: MemoryMediaLayout.spacing) {
             ForEach(Array(retainedMedia.enumerated()), id: \.element.id) { index, media in
                 mediaTile(index: index, count: count) {
-                    AuthenticatedMemoryImage(path: media.imageURL, apiClient: apiClient)
+                    AuthenticatedMemoryImage(path: media.imageURL, apiClient: apiClient, variant: "grid")
                 } onRemove: {
                     retainedMedia.removeAll { $0.id == media.id }
                 }
             }
-            ForEach(Array(newImageData.enumerated()), id: \.offset) { index, data in
+            ForEach(Array(newImages.enumerated()), id: \.element.id) { index, draft in
                 mediaTile(index: retainedMedia.count + index, count: count) {
-                    if let image = UIImage(data: data) {
+                    if let image = draft.preview {
                         Image(uiImage: image).resizable().scaledToFill()
+                    } else {
+                        ProgressView().tint(GoHomeTheme.ginger)
                     }
                 } onRemove: {
-                    guard newImageData.indices.contains(index) else { return }
-                    newImageData.remove(at: index)
+                    guard newImages.indices.contains(index) else { return }
+                    newImages.remove(at: index)
                 }
             }
         }
@@ -523,12 +618,9 @@ private struct MemoryComposerMediaGrid: View {
         onRemove: @escaping () -> Void
     ) -> some View {
         ZStack(alignment: .topTrailing) {
-            content()
-                .aspectRatio(MemoryMediaLayout.aspectRatio(for: count), contentMode: .fill)
-                .frame(maxWidth: .infinity)
-                .clipped()
-                .background(Color.black.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+            MemoryImageTile(aspectRatio: MemoryMediaLayout.aspectRatio(for: count)) {
+                content()
+            }
             Button(action: onRemove) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .bold))
@@ -544,32 +636,28 @@ private struct MemoryComposerMediaGrid: View {
 }
 
 private enum MemoryImageProcessor {
-    static func prepare(items: [PhotosPickerItem]) async -> [Data] {
-        await withTaskGroup(of: (Int, Data?).self) { group in
-            for (index, item) in items.prefix(9).enumerated() {
-                group.addTask {
-                    guard let source = try? await item.loadTransferable(type: Data.self) else { return (index, nil) }
-                    let jpeg = await Task.detached(priority: .userInitiated) { downsampledJPEG(source) }.value
-                    return (index, jpeg)
-                }
-            }
-            var ordered = Array<Data?>(repeating: nil, count: min(9, items.count))
-            for await (index, data) in group { ordered[index] = data }
-            return ordered.compactMap { $0 }
-        }
+    static func prepare(item: PhotosPickerItem) async -> MemoryUploadImage? {
+        guard let source = try? await item.loadTransferable(type: Data.self) else { return nil }
+        return await Task.detached(priority: .userInitiated) { downsampledJPEG(source) }.value
     }
 
-    private static func downsampledJPEG(_ data: Data) -> Data? {
+    private static func downsampledJPEG(_ data: Data) -> MemoryUploadImage? {
         let options = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(data as CFData, options) else { return nil }
         let thumbnailOptions = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 1920,
+            kCGImageSourceThumbnailMaxPixelSize: 1280,
             kCGImageSourceShouldCacheImmediately: true,
         ] as CFDictionary
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) else { return nil }
-        return UIImage(cgImage: image).jpegData(compressionQuality: 0.8)
+        guard let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.7) else { return nil }
+        return MemoryUploadImage(
+            data: jpeg,
+            contentType: "image/jpeg",
+            pixelWidth: image.width,
+            pixelHeight: image.height
+        )
     }
 }
 
