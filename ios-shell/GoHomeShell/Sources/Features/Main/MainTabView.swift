@@ -77,15 +77,8 @@ struct MainTabView: View {
                     GuardView(
                         cameras: homeModel.state.value?.cameras ?? [],
                         apiClient: apiClient,
-                        eventsModel: eventsModel,
-                        onOpenEvents: { guardPath.append(GuardRoute.events) }
+                        eventsModel: eventsModel
                     )
-                    .navigationDestination(for: GuardRoute.self) { route in
-                        switch route {
-                        case .events:
-                            EventsView(model: eventsModel, apiClient: apiClient)
-                        }
-                    }
                 }
             }
             GoHomeTabRoot(tab: .memory, path: $memoryPath) {
@@ -144,8 +137,4 @@ struct MainTabView: View {
             productPreferences: ProductPreferences(categories: ["照明与视野"], needs: ["夜间照明"])
         )
     }
-}
-
-enum GuardRoute: Hashable {
-    case events
 }

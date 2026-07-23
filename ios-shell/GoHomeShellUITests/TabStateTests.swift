@@ -37,4 +37,21 @@ final class TabStateTests: XCTestCase {
         XCTAssertTrue(app.scrollViews["product-recommendations-content"].waitForExistence(timeout: 2))
         XCTAssertFalse(app.webViews.firstMatch.exists)
     }
+
+    func testGuardCombinesLiveTimelineAndEventsWithoutKeepingVideoMounted() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTestState", "-uiTestMain"]
+        app.launch()
+
+        app.tabBars.buttons["守护"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["guard-camera-stage"].waitForExistence(timeout: 3))
+
+        app.buttons["轨迹"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["guard-timeline-empty"].waitForExistence(timeout: 2))
+        XCTAssertFalse(app.descendants(matching: .any)["guard-camera-stage"].exists)
+
+        app.buttons["事件"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["events-list-content"].waitForExistence(timeout: 2))
+        XCTAssertFalse(app.descendants(matching: .any)["guard-camera-stage"].exists)
+    }
 }

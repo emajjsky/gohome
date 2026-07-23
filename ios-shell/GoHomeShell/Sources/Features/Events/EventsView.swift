@@ -12,26 +12,7 @@ struct EventsView: View {
                     title: "守护记录",
                     trailing: model.pendingCount > 0 ? AnyView(pendingCounter) : nil
                 )
-                segmentPicker
-                if model.groups.isEmpty {
-                    EventEmptyState(segment: model.segment)
-                } else {
-                    LazyVStack(spacing: 0) {
-                        ForEach(model.groups) { group in
-                            NavigationLink(value: group.primary.id) {
-                                EventListRow(group: group, apiClient: apiClient)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("event-row-\(group.primary.id)")
-                            Divider().overlay(GoHomeTheme.softLine)
-                        }
-                    }
-                }
-                if let reason = model.state.staleReason, model.state.value != nil {
-                    Label(reason, systemImage: "wifi.exclamationmark")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(GoHomeTheme.mutedInk)
-                }
+                EventsListContent(model: model, apiClient: apiClient)
             }
             .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
             .padding(.top, 18)
@@ -39,11 +20,6 @@ struct EventsView: View {
         }
         .background(GoHomeTheme.paper)
         .refreshable { model.refresh() }
-        .navigationDestination(for: String.self) { eventID in
-            if let fallback = model.state.value?.first(where: { $0.id == eventID }) {
-                EventDetailView(eventID: eventID, fallback: fallback, model: model, apiClient: apiClient)
-            }
-        }
         .task { model.start() }
         .accessibilityIdentifier("events-content")
     }
@@ -55,6 +31,43 @@ struct EventsView: View {
             .frame(minWidth: 30, minHeight: 30)
             .background(GoHomeTheme.ginger, in: Circle())
             .accessibilityLabel("\(model.pendingCount) 条待处理事件")
+    }
+
+}
+
+struct EventsListContent: View {
+    @ObservedObject var model: EventsViewModel
+    let apiClient: APIClient?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            segmentPicker
+            if model.groups.isEmpty {
+                EventEmptyState(segment: model.segment)
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(model.groups) { group in
+                        NavigationLink(value: group.primary.id) {
+                            EventListRow(group: group, apiClient: apiClient)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("event-row-\(group.primary.id)")
+                        Divider().overlay(GoHomeTheme.softLine)
+                    }
+                }
+            }
+            if let reason = model.state.staleReason, model.state.value != nil {
+                Label(reason, systemImage: "wifi.exclamationmark")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            }
+        }
+        .navigationDestination(for: String.self) { eventID in
+            if let fallback = model.state.value?.first(where: { $0.id == eventID }) {
+                EventDetailView(eventID: eventID, fallback: fallback, model: model, apiClient: apiClient)
+            }
+        }
+        .accessibilityIdentifier("events-list-content")
     }
 
     private var segmentPicker: some View {
