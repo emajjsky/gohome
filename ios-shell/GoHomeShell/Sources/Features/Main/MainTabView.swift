@@ -71,7 +71,22 @@ struct MainTabView: View {
                 HomeView(model: homeModel, unreadCount: unreadCount)
             }
             GoHomeTabRoot(tab: .guardView, path: $guardPath) {
-                GuardView(cameras: homeModel.state.value?.cameras ?? [], apiClient: apiClient, eventsModel: eventsModel)
+                if ProcessInfo.processInfo.arguments.contains("-uiTestEvent") {
+                    EventsView(model: eventsModel, apiClient: apiClient)
+                } else {
+                    GuardView(
+                        cameras: homeModel.state.value?.cameras ?? [],
+                        apiClient: apiClient,
+                        eventsModel: eventsModel,
+                        onOpenEvents: { guardPath.append(GuardRoute.events) }
+                    )
+                    .navigationDestination(for: GuardRoute.self) { route in
+                        switch route {
+                        case .events:
+                            EventsView(model: eventsModel, apiClient: apiClient)
+                        }
+                    }
+                }
             }
             GoHomeTabRoot(tab: .memory, path: $memoryPath) {
                 MemoryView(model: memoryModel, apiClient: apiClient, user: user, family: family)
@@ -129,4 +144,8 @@ struct MainTabView: View {
             productPreferences: ProductPreferences(categories: ["照明与视野"], needs: ["夜间照明"])
         )
     }
+}
+
+enum GuardRoute: Hashable {
+    case events
 }

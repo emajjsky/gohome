@@ -5,13 +5,15 @@ struct GuardView: View {
     let cameras: [HomeCamera]
     let apiClient: APIClient?
     @ObservedObject var eventsModel: EventsViewModel
+    let onOpenEvents: () -> Void
     @StateObject private var model: GuardViewModel
     @State private var isVisible = false
 
-    init(cameras: [HomeCamera], apiClient: APIClient?, eventsModel: EventsViewModel) {
+    init(cameras: [HomeCamera], apiClient: APIClient?, eventsModel: EventsViewModel, onOpenEvents: @escaping () -> Void = {}) {
         self.cameras = cameras
         self.apiClient = apiClient
         self.eventsModel = eventsModel
+        self.onOpenEvents = onOpenEvents
         _model = StateObject(wrappedValue: GuardViewModel(
             streamClient: apiClient.map { client in
                 MJPEGStreamClient(apiClient: client)
@@ -40,9 +42,7 @@ struct GuardView: View {
                     }
                 }
                 .padding(.top, 2)
-                NavigationLink {
-                    EventsView(model: eventsModel, apiClient: apiClient)
-                } label: {
+                Button(action: onOpenEvents) {
                     HStack(spacing: 12) {
                         Image(systemName: "bell.badge")
                             .foregroundStyle(GoHomeTheme.ginger)

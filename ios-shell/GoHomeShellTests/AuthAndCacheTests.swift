@@ -1,4 +1,5 @@
 import XCTest
+import Security
 @testable import GoHomeShell
 
 final class AuthAndCacheTests: XCTestCase {
@@ -33,14 +34,22 @@ final class AuthAndCacheTests: XCTestCase {
 
     func testKeychainTokenRoundTripAndLogoutDeletion() async throws {
         let store = KeychainAuthStore(service: "com.gohome.family.tests.\(UUID().uuidString)")
-        let emptyToken = try await store.token()
-        XCTAssertNil(emptyToken)
-        try await store.save(token: "secret-session-token")
-        let savedToken = try await store.token()
-        XCTAssertEqual(savedToken, "secret-session-token")
-        try await store.clear()
-        let clearedToken = try await store.token()
-        XCTAssertNil(clearedToken)
+        do {
+            let emptyToken = try await store.token()
+            XCTAssertNil(emptyToken)
+            try await store.save(token: "secret-session-token")
+            let savedToken = try await store.token()
+            XCTAssertEqual(savedToken, "secret-session-token")
+            try await store.clear()
+            let clearedToken = try await store.token()
+            XCTAssertNil(clearedToken)
+        } catch KeychainError.status(errSecMissingEntitlement) {
+#if targetEnvironment(simulator)
+            throw XCTSkip("模拟器测试宿主没有 Keychain entitlement，真机仍执行完整读写验证")
+#else
+            XCTFail("真机 Keychain entitlement 缺失")
+#endif
+        }
     }
 
     func testCacheSeparatesAccountsAndFamilies() async throws {
