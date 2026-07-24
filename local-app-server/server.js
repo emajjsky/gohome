@@ -592,6 +592,10 @@ function createLocalAppServer(options = {}) {
     const deviceToken = String(options.deviceToken || DEFAULT_DEVICE_TOKEN);
     const appToken = String(options.appToken || DEFAULT_APP_TOKEN);
     const opsToken = String(options.opsToken || DEFAULT_OPS_TOKEN);
+    const { createCosStorage } = require("./cos-storage");
+    const cosStorage = options.cosStorage || createCosStorage();
+    const mediaUploadSecret = String(options.mediaUploadSecret || process.env.GOHOME_MEDIA_UPLOAD_SECRET || "").trim()
+        || crypto.randomBytes(32).toString("hex");
     const { AuthService } = require("./native-api/auth-service");
     const authService = options.authService || new AuthService({
         mode: options.authMode || process.env.GOHOME_AUTH_MODE || "production",
@@ -5829,6 +5833,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function assetAbsolutePath(asset) {
+        if (String(asset?.storage_provider || "local") !== "local") return "";
         if (!asset?.relative_path) return "";
         const filePath = path.resolve(mediaDir, asset.relative_path);
         if (!filePath.startsWith(mediaDir)) return "";
@@ -6542,7 +6547,188 @@ function createLocalAppServer(options = {}) {
         });
     }
 
-    function cleanupMemoryAssets(assetIds = []) {
+    function memoryUploadToken(payload) {
+        const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+        const signature = crypto.createHmac("sha256", mediaUploadSecret).update(encoded).digest("base64url");
+        return `${encoded}.${signature}`;
+    }
+
+    function verifyMemoryUploadToken(token) {
+        const [encoded, signature, extra] = String(token || "").split(".");
+        if (!encoded || !signature || extra) return null;
+        const expected = crypto.createHmac("sha256", mediaUploadSecret).update(encoded).digest();
+        let actual;
+        try {
+            actual = Buffer.from(signature, "base64url");
+        } catch (_error) {
+            return null;
+        }
+        if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
+        const payload = safeJsonParse(Buffer.from(encoded, "base64url").toString("utf8"), null);
+        if (!payload || Number(payload.expires_at || 0) <= Date.now()) return null;
+        return payload;
+    }
+
+    function memoryUploadDescriptor(raw, index) {
+        const contentType = String(raw?.content_type || "").split(";")[0].trim().toLowerCase();
+        const extensions = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        };
+        const extension = extensions[contentType];
+        const sizeBytes = Math.max(0, Number(raw?.size_bytes) || 0);
+        if (!extension || !sizeBytes || sizeBytes > 4 * 1024 * 1024) {
+            throw new Error(`invalid memory image at index ${index}`);
+        }
+        return {
+            contentType,
+            extension,
+            sizeBytes,
+            pixelWidth: Math.max(0, Math.min(12_000, Number(raw?.pixel_width) || 0)),
+            pixelHeight: Math.max(0, Math.min(12_000, Number(raw?.pixel_height) || 0)),
+        };
+    }
+
+    async function handleMemoryMediaUploadIntents(req, res, url) {
+        if (!requireNativeApp(req, res)) return;
+        if (!cosStorage.enabled) {
+            writeError(res, 503, "COS media storage is not configured");
+            return;
+        }
+        const familyId = String(url.searchParams.get("family_id") || "");
+        if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+        const payload = await parseJsonBody(req);
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        if (!items.length || items.length > 9) {
+            writeError(res, 400, "memory images must contain 1 to 9 items");
+            return;
+        }
+        let descriptors;
+        try {
+            descriptors = items.map(memoryUploadDescriptor);
+        } catch (error) {
+            writeError(res, 400, error.message || "invalid memory image");
+            return;
+        }
+        const expiresAt = Date.now() + 10 * 60 * 1000;
+        const datePath = new Date().toISOString().slice(0, 10).replace(/-/g, "/");
+        const safeFamilyId = familyId.replace(/[^A-Za-z0-9_-]+/g, "_");
+        const uploads = descriptors.map((item) => {
+            const assetId = stableId("memory-asset-");
+            const objectKey = `memory-media/${safeFamilyId}/${datePath}/${assetId}${item.extension}`;
+            const tokenPayload = {
+                version: 1,
+                asset_id: assetId,
+                family_id: familyId,
+                user_id: String(req.appUserId || ""),
+                object_key: objectKey,
+                content_type: item.contentType,
+                size_bytes: item.sizeBytes,
+                pixel_width: item.pixelWidth,
+                pixel_height: item.pixelHeight,
+                expires_at: expiresAt,
+            };
+            return {
+                asset_id: assetId,
+                upload_url: cosStorage.signedPutUrl({ key: objectKey, contentType: item.contentType }),
+                upload_token: memoryUploadToken(tokenPayload),
+                content_type: item.contentType,
+                expires_at: new Date(expiresAt).toISOString(),
+            };
+        });
+        write(res, 201, { uploads });
+    }
+
+    async function handleMemoryMediaUploadComplete(req, res, url) {
+        if (!requireNativeApp(req, res)) return;
+        if (!cosStorage.enabled) {
+            writeError(res, 503, "COS media storage is not configured");
+            return;
+        }
+        const familyId = String(url.searchParams.get("family_id") || "");
+        if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+        const payload = await parseJsonBody(req);
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        if (!items.length || items.length > 9) {
+            writeError(res, 400, "memory uploads must contain 1 to 9 items");
+            return;
+        }
+        const verified = [];
+        for (const [index, item] of items.entries()) {
+            const tokenPayload = verifyMemoryUploadToken(item?.upload_token);
+            if (
+                !tokenPayload
+                || String(tokenPayload.asset_id) !== String(item?.asset_id || "")
+                || String(tokenPayload.family_id) !== familyId
+                || String(tokenPayload.user_id) !== String(req.appUserId || "")
+                || !String(tokenPayload.object_key || "").startsWith(`memory-media/${familyId.replace(/[^A-Za-z0-9_-]+/g, "_")}/`)
+            ) {
+                writeError(res, 400, `invalid memory upload token at index ${index}`);
+                return;
+            }
+            const existing = store.db.assets.find((asset) => String(asset.id) === String(tokenPayload.asset_id));
+            if (existing) {
+                verified.push({ existing });
+                continue;
+            }
+            let head;
+            try {
+                head = await cosStorage.headObject({ key: tokenPayload.object_key });
+            } catch (_error) {
+                writeError(res, 409, `memory upload is incomplete at index ${index}`);
+                return;
+            }
+            const contentLength = Number(head?.headers?.["content-length"] || head?.headers?.["Content-Length"] || 0);
+            const contentType = String(head?.headers?.["content-type"] || head?.headers?.["Content-Type"] || "").split(";")[0].toLowerCase();
+            if (contentLength !== Number(tokenPayload.size_bytes) || (contentType && contentType !== tokenPayload.content_type)) {
+                writeError(res, 409, `memory upload metadata mismatch at index ${index}`);
+                return;
+            }
+            verified.push({ tokenPayload, contentLength });
+        }
+
+        const timestamp = nowIso();
+        const createdAssets = verified.map(({ existing, tokenPayload, contentLength }) => existing || {
+            id: tokenPayload.asset_id,
+            family_id: familyId,
+            device_id: "",
+            camera_id: null,
+            file_name: path.posix.basename(tokenPayload.object_key),
+            content_type: tokenPayload.content_type,
+            snapshot_path: tokenPayload.object_key,
+            relative_path: "",
+            storage_provider: "cos",
+            storage_key: tokenPayload.object_key,
+            edge_event_id: "",
+            purpose: "family_memory",
+            size: contentLength,
+            metadata: {
+                purpose: "family_memory",
+                uploaded_by: String(req.appUserId || ""),
+                pixel_width: tokenPayload.pixel_width,
+                pixel_height: tokenPayload.pixel_height,
+            },
+            created_at: timestamp,
+            updated_at: timestamp,
+            url: `/api/v1/video/assets/${encodeURIComponent(tokenPayload.asset_id)}`,
+        });
+        const existingIds = new Set(store.db.assets.map((asset) => String(asset.id)));
+        for (const asset of createdAssets) {
+            if (!existingIds.has(String(asset.id))) store.db.assets.push(asset);
+        }
+        await store.save();
+        write(res, 201, {
+            assets: createdAssets.map((asset) => ({
+                id: asset.id,
+                content_type: asset.content_type,
+                image_url: asset.url,
+                size_bytes: asset.size,
+            })),
+        });
+    }
+
+    async function cleanupMemoryAssets(assetIds = []) {
         const ids = new Set(assetIds.map(String));
         if (!ids.size) return;
         const retained = [];
@@ -6551,8 +6737,18 @@ function createLocalAppServer(options = {}) {
                 retained.push(asset);
                 continue;
             }
-            const filePath = assetAbsolutePath(asset);
-            if (filePath && fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+            if (String(asset.storage_provider || "local") === "cos") {
+                try {
+                    await cosStorage.deleteObject({ key: asset.storage_key });
+                } catch (error) {
+                    console.warn(`COS cleanup failed for ${asset.id}: ${error.code || error.message}`);
+                    retained.push(asset);
+                    continue;
+                }
+            } else {
+                const filePath = assetAbsolutePath(asset);
+                if (filePath && fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+            }
         }
         store.db.assets = retained;
     }
@@ -7068,12 +7264,29 @@ function createLocalAppServer(options = {}) {
     function serveAsset(req, res, assetId, url) {
         if (!requireApp(req, res)) return;
         const asset = store.db.assets.find((item) => String(item.id) === String(assetId));
-        const filePath = assetAbsolutePath(asset);
-        if (!asset || !filePath || !fs.existsSync(filePath)) {
+        if (!asset) {
             writeError(res, 404, "media asset not found");
             return;
         }
         if (!requireAssetAccess(req, res, asset)) return;
+        if (String(asset.storage_provider || "local") === "cos") {
+            if (!cosStorage.enabled || !asset.storage_key) {
+                writeError(res, 503, "media storage unavailable");
+                return;
+            }
+            res.writeHead(302, {
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "private, no-store",
+                Location: cosStorage.signedGetUrl({ key: asset.storage_key }),
+            });
+            res.end();
+            return;
+        }
+        const filePath = assetAbsolutePath(asset);
+        if (!filePath || !fs.existsSync(filePath)) {
+            writeError(res, 404, "media asset not found");
+            return;
+        }
         const variant = String(url?.searchParams?.get("variant") || "");
         const optimizedPath = optimizedMemoryImageFile(asset, filePath, variant) || optimizedCareCardFile(asset, filePath);
         const servedPath = optimizedPath || filePath;
@@ -7162,6 +7375,14 @@ function createLocalAppServer(options = {}) {
         }
 
         try {
+            if (req.method === "POST" && pathname === "/api/v2/memory-media-upload-intents") {
+                await handleMemoryMediaUploadIntents(req, res, url);
+                return;
+            }
+            if (req.method === "POST" && pathname === "/api/v2/memory-media-upload-complete") {
+                await handleMemoryMediaUploadComplete(req, res, url);
+                return;
+            }
             if (req.method === "POST" && pathname === "/api/v2/memory-media-batch") {
                 await handleMemoryMediaBatchUpload(req, res, url);
                 return;
@@ -7182,7 +7403,7 @@ function createLocalAppServer(options = {}) {
                 if (result) {
                     const cleanupAssetIds = result.body?.cleanup_asset_ids;
                     if (Array.isArray(cleanupAssetIds)) {
-                        cleanupMemoryAssets(cleanupAssetIds);
+                        await cleanupMemoryAssets(cleanupAssetIds);
                         delete result.body.cleanup_asset_ids;
                     }
                     if (req.method !== "GET" && req.method !== "HEAD") await store.save();

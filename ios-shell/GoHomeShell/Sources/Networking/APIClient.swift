@@ -101,6 +101,31 @@ actor APIClient {
         }
     }
 
+    func uploadDirectly(to rawURL: String, data: Data, contentType: String) async throws {
+        guard let url = URL(string: rawURL), url.scheme == "https" else { throw APIError.invalidResponse }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.httpBody = data
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        do {
+            let (responseData, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                throw APIError.server(
+                    statusCode: httpResponse.statusCode,
+                    detail: Self.serverDetail(
+                        from: responseData,
+                        fallback: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
+                    )
+                )
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        }
+    }
+
     private static func serverDetail(from data: Data, fallback: String) -> String {
         guard
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

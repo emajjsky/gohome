@@ -67,6 +67,24 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(data, Data([1]))
     }
 
+    func testDirectUploadUsesSignedURLWithoutAppAuthorization() async throws {
+        let payload = Data([1, 2, 3, 4])
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://bucket.cos.ap-shanghai.myqcloud.com/object.jpg?q-sign=temporary")
+            XCTAssertEqual(request.httpMethod, "PUT")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "image/jpeg")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            XCTAssertEqual(requestBodyData(request), payload)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data())
+        }
+
+        try await makeClient(token: "app-token").uploadDirectly(
+            to: "https://bucket.cos.ap-shanghai.myqcloud.com/object.jpg?q-sign=temporary",
+            data: payload,
+            contentType: "image/jpeg"
+        )
+    }
+
     func testCancellationIsPreserved() async {
         URLProtocolStub.handler = { _ in
             try await Task.sleep(nanoseconds: 5_000_000_000)
@@ -87,6 +105,22 @@ final class APIClientTests: XCTestCase {
         configuration.protocolClasses = [URLProtocolStub.self]
         return APIClient(baseURL: URL(string: "https://example.com")!, session: URLSession(configuration: configuration)) { token }
     }
+}
+
+private func requestBodyData(_ request: URLRequest) -> Data? {
+    if let body = request.httpBody { return body }
+    guard let stream = request.httpBodyStream else { return nil }
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 4096)
+    while stream.hasBytesAvailable {
+        let count = stream.read(&buffer, maxLength: buffer.count)
+        if count < 0 { return nil }
+        if count == 0 { break }
+        data.append(buffer, count: count)
+    }
+    return data
 }
 
 private final class URLProtocolStub: URLProtocol, @unchecked Sendable {

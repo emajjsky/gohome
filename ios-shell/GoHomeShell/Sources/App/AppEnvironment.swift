@@ -16,6 +16,23 @@ struct AppEnvironment {
         let sessionContextStore = SessionContextStore()
         let cache = try DiskCache()
         let client = APIClient(baseURL: baseURL) { try? await authStore.token() }
+        let legacyMemoryBatchUpload: AppRepository.MemoryMediaBatchUploader = { familyID, images in
+            let request = MemoryMediaBatchRequest(images: images.map {
+                MemoryMediaBatchItemRequest(
+                    data: $0.data,
+                    contentType: $0.contentType,
+                    pixelWidth: $0.pixelWidth,
+                    pixelHeight: $0.pixelHeight
+                )
+            })
+            let endpoint: Endpoint<MemoryMediaBatchUploadResponse> = try .jsonBody(
+                method: .post,
+                path: "/api/v2/memory-media-batch",
+                body: request,
+                queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+            )
+            return try await client.send(endpoint)
+        }
         let repository = AppRepository(
             cache: cache,
             bootstrapLoader: {
@@ -168,21 +185,51 @@ struct AppEnvironment {
                 )
             },
             memoryMediaBatchUploader: { familyID, images in
-                let request = MemoryMediaBatchRequest(images: images.map {
-                    MemoryMediaBatchItemRequest(
-                        data: $0.data,
+                let intentRequest = MemoryMediaUploadIntentRequest(items: images.map {
+                    MemoryMediaUploadIntentItemRequest(
                         contentType: $0.contentType,
+                        sizeBytes: $0.data.count,
                         pixelWidth: $0.pixelWidth,
                         pixelHeight: $0.pixelHeight
                     )
                 })
-                let endpoint: Endpoint<MemoryMediaBatchUploadResponse> = try .jsonBody(
+                let intentEndpoint: Endpoint<MemoryMediaUploadIntentResponse> = try .jsonBody(
                     method: .post,
-                    path: "/api/v2/memory-media-batch",
-                    body: request,
+                    path: "/api/v2/memory-media-upload-intents",
+                    body: intentRequest,
                     queryItems: [URLQueryItem(name: "family_id", value: familyID)]
                 )
-                return try await client.send(endpoint)
+                let intentResponse: MemoryMediaUploadIntentResponse
+                do {
+                    intentResponse = try await client.send(intentEndpoint)
+                } catch let APIError.server(statusCode, _) where statusCode == 404 || statusCode == 503 {
+                    return try await legacyMemoryBatchUpload(familyID, images)
+                }
+                guard intentResponse.uploads.count == images.count else { throw APIError.invalidResponse }
+
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    for (intent, image) in zip(intentResponse.uploads, images) {
+                        group.addTask {
+                            try await client.uploadDirectly(
+                                to: intent.uploadURL,
+                                data: image.data,
+                                contentType: intent.contentType
+                            )
+                        }
+                    }
+                    try await group.waitForAll()
+                }
+
+                let completeRequest = MemoryMediaUploadCompleteRequest(items: intentResponse.uploads.map {
+                    MemoryMediaUploadCompleteItemRequest(assetID: $0.assetID, uploadToken: $0.uploadToken)
+                })
+                let completeEndpoint: Endpoint<MemoryMediaBatchUploadResponse> = try .jsonBody(
+                    method: .post,
+                    path: "/api/v2/memory-media-upload-complete",
+                    body: completeRequest,
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                )
+                return try await client.send(completeEndpoint)
             },
             activityTimelineLoader: { familyID, date in
                 try await client.send(Endpoint(

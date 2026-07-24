@@ -21,6 +21,98 @@ async function request(baseURL, pathname, options = {}) {
   return { response, body: text ? JSON.parse(text) : null };
 }
 
+test('native memory media uses private COS upload intents and deletes remote objects', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-native-memory-cos-'));
+  const objects = new Map();
+  const deletedKeys = [];
+  const cosStorage = {
+    enabled: true,
+    signedPutUrl({ key }) {
+      return `https://cos.test/upload?key=${encodeURIComponent(key)}`;
+    },
+    signedGetUrl({ key }) {
+      return `https://cos.test/read?key=${encodeURIComponent(key)}`;
+    },
+    async headObject({ key }) {
+      const object = objects.get(key);
+      if (!object) throw new Error('not found');
+      return { headers: { 'content-length': String(object.size), 'content-type': object.contentType } };
+    },
+    async deleteObject({ key }) {
+      deletedKeys.push(key);
+      objects.delete(key);
+    },
+  };
+  const app = createLocalAppServer({
+    rootDir: path.join(__dirname, '..', '..'),
+    dataDir,
+    authMode: 'demo',
+    demoOtp: '246810',
+    cosStorage,
+  });
+  const baseURL = await listen(app.server);
+  try {
+    const registered = await request(baseURL, '/api/auth/register', {
+      method: 'POST', body: JSON.stringify({ phone: '13800138007', code: '246810', display_name: '直传测试' }),
+    });
+    const authorization = { Authorization: `Bearer ${registered.body.token}` };
+    const family = await request(baseURL, '/api/families', {
+      method: 'POST', headers: authorization, body: JSON.stringify({ name: 'COS 图片家庭' }),
+    });
+    const familyID = String(family.body.id);
+    const images = [
+      { content_type: 'image/jpeg', size_bytes: 1200, pixel_width: 1280, pixel_height: 960 },
+      { content_type: 'image/jpeg', size_bytes: 1500, pixel_width: 960, pixel_height: 1280 },
+    ];
+
+    const intents = await request(baseURL, `/api/v2/memory-media-upload-intents?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ items: images }),
+    });
+    assert.equal(intents.response.status, 201);
+    assert.equal(intents.body.uploads.length, 2);
+    for (const [index, upload] of intents.body.uploads.entries()) {
+      const key = new URL(upload.upload_url).searchParams.get('key');
+      assert.match(key, new RegExp(`^memory-media/${familyID}/`));
+      objects.set(key, { size: images[index].size_bytes, contentType: images[index].content_type });
+    }
+
+    const completed = await request(baseURL, `/api/v2/memory-media-upload-complete?family_id=${familyID}`, {
+      method: 'POST',
+      headers: authorization,
+      body: JSON.stringify({
+        items: intents.body.uploads.map((upload) => ({ asset_id: upload.asset_id, upload_token: upload.upload_token })),
+      }),
+    });
+    assert.equal(completed.response.status, 201);
+    assert.deepEqual(completed.body.assets.map((asset) => asset.size_bytes), [1200, 1500]);
+    const persisted = completed.body.assets.map((asset) => app.store.db.assets.find((item) => item.id === asset.id));
+    assert.deepEqual(persisted.map((asset) => asset.storage_provider), ['cos', 'cos']);
+
+    const mediaResponse = await fetch(`${baseURL}${completed.body.assets[0].image_url}`, {
+      headers: authorization,
+      redirect: 'manual',
+    });
+    assert.equal(mediaResponse.status, 302);
+    assert.match(mediaResponse.headers.get('location'), /^https:\/\/cos\.test\/read\?/);
+
+    const memory = await request(baseURL, `/api/v2/memories?family_id=${familyID}`, {
+      method: 'POST',
+      headers: authorization,
+      body: JSON.stringify({ body: 'COS 直传照片', asset_ids: completed.body.assets.map((asset) => asset.id) }),
+    });
+    assert.equal(memory.response.status, 201);
+    const removed = await request(baseURL, `/api/v2/memories/${memory.body.memory.id}?family_id=${familyID}`, {
+      method: 'DELETE', headers: authorization,
+    });
+    assert.equal(removed.response.status, 200);
+    assert.equal(deletedKeys.length, 2);
+    assert.equal(app.store.db.assets.some((asset) => completed.body.assets.some((item) => item.id === asset.id)), false);
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('native memory media batch persists nine-grid images in one save', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-native-memory-batch-'));
   const app = createLocalAppServer({ rootDir: path.join(__dirname, '..', '..'), dataDir, authMode: 'demo', demoOtp: '246810' });

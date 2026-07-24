@@ -349,6 +349,58 @@ struct MemoryMediaBatchItemRequest: Encodable, Equatable, Sendable {
     }
 }
 
+struct MemoryMediaUploadIntentRequest: Encodable, Equatable, Sendable {
+    let items: [MemoryMediaUploadIntentItemRequest]
+}
+
+struct MemoryMediaUploadIntentItemRequest: Encodable, Equatable, Sendable {
+    let contentType: String
+    let sizeBytes: Int
+    let pixelWidth: Int
+    let pixelHeight: Int
+
+    enum CodingKeys: String, CodingKey {
+        case contentType = "content_type"
+        case sizeBytes = "size_bytes"
+        case pixelWidth = "pixel_width"
+        case pixelHeight = "pixel_height"
+    }
+}
+
+struct MemoryMediaUploadIntentResponse: Decodable, Equatable, Sendable {
+    let uploads: [MemoryMediaUploadIntent]
+}
+
+struct MemoryMediaUploadIntent: Decodable, Equatable, Sendable {
+    let assetID: String
+    let uploadURL: String
+    let uploadToken: String
+    let contentType: String
+    let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case assetID = "asset_id"
+        case uploadURL = "upload_url"
+        case uploadToken = "upload_token"
+        case contentType = "content_type"
+        case expiresAt = "expires_at"
+    }
+}
+
+struct MemoryMediaUploadCompleteRequest: Encodable, Equatable, Sendable {
+    let items: [MemoryMediaUploadCompleteItemRequest]
+}
+
+struct MemoryMediaUploadCompleteItemRequest: Encodable, Equatable, Sendable {
+    let assetID: String
+    let uploadToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case assetID = "asset_id"
+        case uploadToken = "upload_token"
+    }
+}
+
 struct MemoryUploadedAsset: Decodable, Equatable, Sendable {
     let id: String
     let contentType: String

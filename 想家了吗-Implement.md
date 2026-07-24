@@ -1,6 +1,6 @@
 # 回家 Implement
 
-更新时间：2026-07-23
+更新时间：2026-07-24
 
 ## 1. 文档目的
 
@@ -11469,3 +11469,35 @@ P4 风险升频边界：
 - 原生单元测试共 64 项，0 失败、1 个模拟器 Keychain entitlement 项按既有设计跳过。
 - 腾讯云 `server.js` 部署前与分支基线 SHA-256 一致；新版本原子替换后 `gohome-app.service=active`，`/health` 返回 PostgreSQL store，既有数据未清理。
 - iPhone 15 Pro Max 真机构建、自动签名、覆盖安装和启动成功；真机 1/4/9 张视觉布局与真实网络发布时延仍以现场手动验收结果为准。
+
+## 128. 2026-07-24 私有 COS 记忆媒体闭环
+
+### 存储边界
+
+- 腾讯云 COS 私有桶为 `gohome-1327392182`，地域为 `ap-shanghai`；记忆媒体使用 `memory-media/*`，盒子事件证据预留 `event-evidence/*`。
+- PostgreSQL 只保存家庭归属、媒体类型、对象键、尺寸、像素信息、排序、事件关系和模型验证结果等结构化数据，不保存 Base64 图片或视频正文。
+- COS 保持私有读写。App、盒子和仓库均不保存永久 SecretId/SecretKey；长期 CAM 密钥只存在腾讯云服务端 `/etc/gohome/gohome.env`，文件权限为 `root:gohome 640`。
+- 当前轻量应用服务器不支持绑定 CVM 实例角色，因此使用只允许上述两个前缀 `PutObject/GetObject/HeadObject/DeleteObject` 的受限 CAM 子用户。后续迁移到支持实例角色的运行环境时应取消长期密钥。
+
+### 记忆图片上传与读取
+
+- 原生 App 先把照片按最长边 1280 px、JPEG 质量 0.7 压缩，再向 `POST /api/v2/memory-media-upload-intents` 申请十分钟有效的私有 PUT 地址。
+- 上传令牌由独立 `GOHOME_MEDIA_UPLOAD_SECRET` 进行 HMAC 签名，并绑定用户、家庭、资产 ID、对象键、内容类型、字节数、像素尺寸和过期时间；不复用 App token 或设备 token。
+- App 最多并发直传 9 张图片到 COS，PUT 请求不携带 App Authorization；全部上传后调用 `POST /api/v2/memory-media-upload-complete`。
+- 服务端对每个对象执行 `HeadObject`，核对签名、家庭、用户、字节数和内容类型后才写入 `media_assets`。申请接口尚未部署时，原生端仅对 404/503 回退旧批量 Base64 接口；COS 上传一旦开始，不再静默切换路径制造重复资产。
+- 家属读取媒体时仍先请求受保护的 `/api/v1/video/assets/:id`。服务端验证登录和家庭权限后返回五分钟私有 GET 地址；数据库和 App 时间流中不保存永久公开链接。
+- 删除记忆或替换不再引用的图片时，服务端先删除对应 COS 对象，再移除媒体记录；远端删除失败时保留记录以便重试，不伪装成已清理。
+
+### 留存与后续媒体
+
+- `memory-media/*` 随家庭记忆保留，由用户删除记忆时清理。普通活动轨迹仍只上传结构化区间，不连续上传监控截图。
+- `event-evidence/*` 用于事件截图、前中后三帧、短片和多模态验证标注。前缀与最小权限已经准备完成，但盒子现有证据上传尚未在本原生 App 支线迁移，因此不能表述为事件证据 COS 已完成。
+- 一分钟内视频仍是下一批：原生端需在上传前转为最高 720p H.264/AAC，限制时长、码率和文件大小，并复用同一套签名直传、完成校验、私有读取和删除生命周期。
+- 仍需为未完成确认的临时对象配置 COS 生命周期或服务端回收任务，避免 App 被终止后留下孤立上传对象；在该清理策略完成前不扩大到视频上传。
+
+### 验证与部署
+
+- 新增隔离的 `local-app-server/cos-storage.js`，COS SDK 固定为 `cos-nodejs-sdk-v5@3.0.0`，没有引入旧 `request` 依赖链。
+- Node 全量 28 项中 27 项通过、1 项因本机未提供 PostgreSQL 测试 URL 跳过；iOS 66 个单元测试和 12 个 UI 测试全部通过。
+- 腾讯云完成真实闭环：申请签名、HTTPS PUT、完成登记、家庭鉴权后的 302 私有读取、字节一致性校验和删除对象均通过。测试账号、家庭、数据库记录和 COS 对象已清理，现有用户数据未清空。
+- 云端 `gohome-app.service` 已部署并恢复 active；真机仍需在 iPhone 重新连接并解锁后覆盖安装，现场验证 4 张图片的即时预览、上传速度和时间流回显。
