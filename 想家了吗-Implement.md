@@ -11543,3 +11543,31 @@ P4 风险升频边界：
 - 首帧使用 SHA-256 资产键写入 App Caches，启用 `completeFileProtectionUntilFirstUserAuthentication`；App 重启后可直接恢复。新视频发布成功后的本地预览也进入同一缓存，不再维护另一套路径键缓存。
 - 新增回归覆盖“封面生成后播放只签发一次地址”和“模拟 App 重启后不联网恢复封面”。iOS 70 个单元测试、12 个 UI 测试全部通过；Node 29 项中 28 项通过、1 项因本机未配置 PostgreSQL 集成 URL 跳过，`verify:app-server` 通过。
 - 当前仍保留真机验收边界：需要在 iPhone 覆盖安装后验证真实 COS 视频的首帧生成耗时、重启恢复、前后台播放和弱网表现；本节不宣称 TestFlight 已验收。
+
+## 132. 2026-07-24 COS 未完成上传持久化回收
+
+### 根因与结构
+
+- 原链路只有带 HMAC 的临时上传令牌。App 在 PUT 成功后被系统终止、尚未来得及调用完成或中止接口时，COS 会留下数据库不可见的孤立对象，服务端也没有可靠的归属和重试依据。
+- 新增 `local-app-server/migrations/009_media_upload_intents.sql` 和 `media_upload_intents` 表，以 `asset_id` 为主键，保存家庭、用户、唯一对象键、媒体规格、过期时间和审计时间；家庭或用户删除时级联清理记录。
+- `PostgresStore`、JSON 默认数据、云端导出和恢复统一支持该表。序列化数据明确不包含 COS 凭证、签名 URL和上传令牌。
+
+### 上传与回收
+
+- `/api/v2/memory-media-upload-intents` 在返回私有 PUT 地址前先持久化意图；`complete` 必须同时匹配登录身份、HMAC 载荷和持久化意图，并通过 COS `HeadObject` 后才写入正式媒体资产。
+- 完成或主动中止后显式删除上传意图。过期回收任务在 COS 启用时默认启动，服务启动后执行一次，随后默认每 5 分钟扫描；间隔可通过 `GOHOME_MEDIA_UPLOAD_CLEANUP_INTERVAL_MS` 配置，但不得低于 60 秒。
+- 未登记对象删除成功后释放意图；删除失败保留意图并在下一轮重试。若资产已登记但因异常仍存在旧意图，只释放意图，不删除正式对象。
+- `/health` 增加 `pending_media_uploads`，只返回待处理数量。日志只记录资产 ID 和脱敏错误，不打印对象签名、令牌或 CAM 密钥。
+
+### PostgreSQL 删除修正
+
+- 原 `cleanupMemoryAssets` 只从进程内数组移除媒体。PostgreSQL 的差量持久化只执行 upsert，不会把数组缺失解释为数据库删除，因此可能出现 COS 已删除而 `media_assets` 行残留。
+- 媒体资产和上传意图现统一经过 `PostgresStore.deleteRow()`，在 advisory lock 保护的事务中使用参数化主键删除，并同步持久化快照；JSON 仓储仍通过同一业务函数删除并保存。
+- 云端部署必须先执行 `009_media_upload_intents.sql`，再启动查询该表的新版服务。当前迁移尚未应用，代码未部署，避免旧 schema 下启动失败。
+
+### 验证
+
+- 服务端全量 32 项：31 通过、0 失败、1 项因本机未配置 PostgreSQL URL 跳过。覆盖申请、完成、中止、删除失败保留、重试成功、服务重启后回收、已登记对象保护、无凭证序列化和参数化行删除。
+- `npm run verify:app-server` 与 `npm test -- --runInBand` 通过。
+- iOS 70 个单元测试、12 个 UI 测试全部通过，确认服务端契约调整没有破坏登录、五栏状态、守护流、记忆媒体、视频封面和事件动作。
+- 尚待回家后完成真机 4 图、60 秒内视频、App 强制退出、前后台、弱网、删除和封面重启恢复验收；通过后才执行云端迁移、组合服务部署与分支推送。

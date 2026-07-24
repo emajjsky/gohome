@@ -19,6 +19,7 @@ const TABLE_ORDER = [
     "model_providers",
     "content_sources",
     "media_assets",
+    "media_upload_intents",
     "events",
     "device_heartbeats",
     "calendar_events",
@@ -50,6 +51,7 @@ const PRIMARY_KEYS = Object.freeze({
     model_providers: "provider_id",
     content_sources: "id",
     media_assets: "id",
+    media_upload_intents: "asset_id",
     events: "id",
     device_heartbeats: "id",
     calendar_events: "id",
@@ -109,6 +111,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         devices: {},
         cameras: {},
         assets: [],
+        media_upload_intents: [],
         events: [],
         heartbeats: [],
         calendar_events: [],
@@ -360,6 +363,23 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             metadata: asset.metadata && typeof asset.metadata === "object" ? asset.metadata : {},
             created_at: iso(asset.created_at, db.created_at),
             updated_at: iso(asset.updated_at, iso(asset.created_at, db.created_at)),
+        });
+    }
+
+    for (const intent of rowsByTable.media_upload_intents || []) {
+        db.media_upload_intents.push({
+            asset_id: intent.asset_id,
+            family_id: intent.family_id,
+            user_id: intent.user_id,
+            object_key: intent.object_key || "",
+            content_type: intent.content_type || "image/jpeg",
+            size_bytes: Number(intent.size_bytes || 0),
+            pixel_width: Number(intent.pixel_width || 0),
+            pixel_height: Number(intent.pixel_height || 0),
+            duration_seconds: Number(intent.duration_seconds || 0),
+            expires_at: iso(intent.expires_at),
+            created_at: iso(intent.created_at, db.created_at),
+            updated_at: iso(intent.updated_at, iso(intent.created_at, db.created_at)),
         });
     }
 

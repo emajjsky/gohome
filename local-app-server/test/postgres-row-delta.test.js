@@ -120,3 +120,36 @@ test('media asset metadata survives PostgreSQL serialization and hydration', () 
   assert.equal(db.assets[0].metadata.pixel_height, 720);
   assert.equal(db.assets[0].purpose, 'family_memory');
 });
+
+test('media upload intents survive PostgreSQL serialization and hydration without credentials', () => {
+  const timestamp = '2026-07-24T02:00:00.000Z';
+  const expiresAt = '2026-07-24T02:10:00.000Z';
+  const bundle = buildCloudSeedBundle({
+    created_at: timestamp,
+    updated_at: timestamp,
+    media_upload_intents: [{
+      asset_id: 'memory-asset-pending',
+      family_id: 'family-1',
+      user_id: 'user-1',
+      object_key: 'memory-media/family-1/2026/07/24/memory-asset-pending.mp4',
+      content_type: 'video/mp4',
+      size_bytes: 2_000_000,
+      pixel_width: 1280,
+      pixel_height: 720,
+      duration_seconds: 42.5,
+      expires_at: expiresAt,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }],
+  }, { exportedAt: timestamp });
+
+  const persisted = bundle.tables.media_upload_intents[0];
+  assert.equal(persisted.asset_id, 'memory-asset-pending');
+  assert.equal(persisted.duration_seconds, 42.5);
+  assert.equal(Object.hasOwn(persisted, 'upload_url'), false);
+  assert.equal(Object.hasOwn(persisted, 'upload_token'), false);
+
+  const db = createDbFromCloudRows(bundle.tables, { created_at: timestamp });
+  assert.equal(db.media_upload_intents[0].object_key, persisted.object_key);
+  assert.equal(db.media_upload_intents[0].expires_at, expiresAt);
+});

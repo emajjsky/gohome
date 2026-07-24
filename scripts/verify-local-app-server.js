@@ -1714,7 +1714,7 @@ async function main() {
         assert.equal(customizedRules.activity_detection_enabled, false);
 
         const seedBundle = buildCloudSeedBundle(app.store.db, { source: "verify-local-app-server" });
-        assert.equal(seedBundle.schema_version, "004_app_sessions");
+        assert.equal(seedBundle.schema_version, "009_media_upload_intents");
         assert.equal(seedBundle.tables.users.length, 3);
         assert.ok(seedBundle.tables.users.some((user) => user.email === phoneAccountEmail));
         assert.ok(seedBundle.tables.app_sessions.length >= 3);

@@ -25,6 +25,7 @@ test('native memory media uses private COS upload intents and deletes remote obj
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-native-memory-cos-'));
   const objects = new Map();
   const deletedKeys = [];
+  const failingDeleteKeys = new Set();
   const cosStorage = {
     enabled: true,
     signedPutUrl({ key }) {
@@ -39,6 +40,7 @@ test('native memory media uses private COS upload intents and deletes remote obj
       return { headers: { 'content-length': String(object.size), 'content-type': object.contentType } };
     },
     async deleteObject({ key }) {
+      if (failingDeleteKeys.has(key)) throw new Error('temporary COS failure');
       deletedKeys.push(key);
       objects.delete(key);
     },
@@ -49,6 +51,7 @@ test('native memory media uses private COS upload intents and deletes remote obj
     authMode: 'demo',
     demoOtp: '246810',
     cosStorage,
+    mediaUploadCleanupEnabled: false,
   });
   const baseURL = await listen(app.server);
   try {
@@ -70,6 +73,7 @@ test('native memory media uses private COS upload intents and deletes remote obj
     });
     assert.equal(intents.response.status, 201);
     assert.equal(intents.body.uploads.length, 2);
+    assert.equal(app.store.db.media_upload_intents.length, 2);
     for (const [index, upload] of intents.body.uploads.entries()) {
       const key = new URL(upload.upload_url).searchParams.get('key');
       assert.match(key, new RegExp(`^memory-media/${familyID}/`));
@@ -85,6 +89,7 @@ test('native memory media uses private COS upload intents and deletes remote obj
     });
     assert.equal(completed.response.status, 201);
     assert.deepEqual(completed.body.assets.map((asset) => asset.size_bytes), [1200, 1500]);
+    assert.equal(app.store.db.media_upload_intents.length, 0);
     const persisted = completed.body.assets.map((asset) => app.store.db.assets.find((item) => item.id === asset.id));
     assert.deepEqual(persisted.map((asset) => asset.storage_provider), ['cos', 'cos']);
 
@@ -130,6 +135,7 @@ test('native memory media uses private COS upload intents and deletes remote obj
       method: 'POST', headers: authorization, body: JSON.stringify({ items: [videoDescriptor] }),
     });
     assert.equal(videoIntentResult.response.status, 201);
+    assert.equal(app.store.db.media_upload_intents.length, 1);
     const videoIntent = videoIntentResult.body.uploads[0];
     const videoKey = new URL(videoIntent.upload_url).searchParams.get('key');
     objects.set(videoKey, { size: videoDescriptor.size_bytes, contentType: videoDescriptor.content_type });
@@ -139,6 +145,7 @@ test('native memory media uses private COS upload intents and deletes remote obj
       }),
     });
     assert.equal(completedVideo.response.status, 201);
+    assert.equal(app.store.db.media_upload_intents.length, 0);
     assert.equal(completedVideo.body.assets[0].media_type, 'video');
     const playback = await request(baseURL, `/api/v2/memory-media-playback/${completedVideo.body.assets[0].id}`, {
       headers: authorization,
@@ -171,7 +178,47 @@ test('native memory media uses private COS upload intents and deletes remote obj
     });
     assert.equal(aborted.response.status, 200);
     assert.equal(aborted.body.deleted, 1);
+    assert.equal(aborted.body.released, 1);
     assert.equal(objects.has(abandonedKey), false);
+    assert.equal(app.store.db.media_upload_intents.length, 0);
+
+    const expiredResult = await request(baseURL, `/api/v2/memory-media-upload-intents?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ items: [images[0]] }),
+    });
+    const expiredUpload = expiredResult.body.uploads[0];
+    const expiredKey = new URL(expiredUpload.upload_url).searchParams.get('key');
+    objects.set(expiredKey, { size: images[0].size_bytes, contentType: images[0].content_type });
+    app.store.db.media_upload_intents[0].expires_at = new Date(Date.now() - 1000).toISOString();
+    await app.store.save();
+
+    failingDeleteKeys.add(expiredKey);
+    const failedCleanup = await app.cleanupExpiredMemoryUploads();
+    assert.deepEqual(failedCleanup, { scanned: 1, deleted: 0, released: 0, failed: 1, running: false });
+    assert.equal(app.store.db.media_upload_intents.length, 1);
+    assert.equal(objects.has(expiredKey), true);
+
+    failingDeleteKeys.delete(expiredKey);
+    const retriedCleanup = await app.cleanupExpiredMemoryUploads();
+    assert.deepEqual(retriedCleanup, { scanned: 1, deleted: 1, released: 1, failed: 0, running: false });
+    assert.equal(app.store.db.media_upload_intents.length, 0);
+    assert.equal(objects.has(expiredKey), false);
+
+    const tamperedResult = await request(baseURL, `/api/v2/memory-media-upload-intents?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ items: [images[0]] }),
+    });
+    const tamperedUpload = tamperedResult.body.uploads[0];
+    const tamperedKey = new URL(tamperedUpload.upload_url).searchParams.get('key');
+    objects.set(tamperedKey, { size: images[0].size_bytes, contentType: images[0].content_type });
+    app.store.db.media_upload_intents[0].pixel_width += 1;
+    await app.store.save();
+    const tamperedComplete = await request(baseURL, `/api/v2/memory-media-upload-complete?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ items: [{
+        asset_id: tamperedUpload.asset_id,
+        upload_token: tamperedUpload.upload_token,
+      }] }),
+    });
+    assert.equal(tamperedComplete.response.status, 409);
+    assert.equal(app.store.db.assets.some((asset) => asset.storage_key === tamperedKey), false);
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(dataDir, { recursive: true, force: true });

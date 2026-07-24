@@ -420,6 +420,7 @@ function createDefaultDb() {
         devices: {},
         cameras: {},
         assets: [],
+        media_upload_intents: [],
         events: [],
         heartbeats: [],
         rules: defaultRules(timestamp),
@@ -536,6 +537,7 @@ function normalizeDb(db) {
     });
     db.cameras = db.cameras && typeof db.cameras === "object" ? db.cameras : {};
     db.assets = Array.isArray(db.assets) ? db.assets : [];
+    db.media_upload_intents = Array.isArray(db.media_upload_intents) ? db.media_upload_intents : [];
     db.events = Array.isArray(db.events) ? db.events : [];
     db.heartbeats = Array.isArray(db.heartbeats) ? db.heartbeats : [];
     db.rules = normalizeRules(db.rules || defaults.rules, defaults.rules);
@@ -638,6 +640,7 @@ function createLocalAppServer(options = {}) {
     const liveFrameSequence = new Map();
     let schedulerRunning = false;
     let visionVerificationRunning = false;
+    let memoryUploadCleanupRunning = false;
     const LIVE_FRAME_TTL_MS = 10000;
 
     ensureDir(mediaDir);
@@ -6609,6 +6612,81 @@ function createLocalAppServer(options = {}) {
         }
     }
 
+    function memoryUploadIntentMatches(intent, tokenPayload) {
+        return Boolean(
+            intent
+            && String(intent.asset_id) === String(tokenPayload.asset_id)
+            && String(intent.family_id) === String(tokenPayload.family_id)
+            && String(intent.user_id) === String(tokenPayload.user_id)
+            && String(intent.object_key) === String(tokenPayload.object_key)
+            && String(intent.content_type) === String(tokenPayload.content_type)
+            && Number(intent.size_bytes) === Number(tokenPayload.size_bytes)
+            && Number(intent.pixel_width) === Number(tokenPayload.pixel_width)
+            && Number(intent.pixel_height) === Number(tokenPayload.pixel_height)
+            && Number(intent.duration_seconds) === Number(tokenPayload.duration_seconds)
+            && Date.parse(intent.expires_at || "") === Number(tokenPayload.expires_at)
+        );
+    }
+
+    async function deleteStoreRows(dbKey, table, ids = []) {
+        const pending = new Set(ids.map(String).filter(Boolean));
+        if (!pending.size) return 0;
+        let deleted = 0;
+        if (store.kind === "postgres" && typeof store.deleteRow === "function") {
+            for (const id of pending) {
+                await store.deleteRow(table, id);
+                store.db[dbKey] = store.db[dbKey].filter((item) => String(item.id ?? item.asset_id) !== id);
+                deleted += 1;
+            }
+            return deleted;
+        }
+        const before = store.db[dbKey].length;
+        store.db[dbKey] = store.db[dbKey].filter((item) => !pending.has(String(item.id ?? item.asset_id)));
+        deleted = before - store.db[dbKey].length;
+        if (deleted) await store.save();
+        return deleted;
+    }
+
+    async function cleanupExpiredMemoryUploads(options = {}) {
+        if (!cosStorage.enabled || memoryUploadCleanupRunning) {
+            return { scanned: 0, deleted: 0, released: 0, failed: 0, running: memoryUploadCleanupRunning };
+        }
+        memoryUploadCleanupRunning = true;
+        try {
+            const nowMs = Number(options.nowMs ?? Date.now());
+            const expired = store.db.media_upload_intents.filter((intent) => {
+                const expiresAt = Date.parse(intent.expires_at || "");
+                return Number.isFinite(expiresAt) && expiresAt <= nowMs;
+            });
+            const releasedIds = [];
+            let deleted = 0;
+            let failed = 0;
+            for (const intent of expired) {
+                const completed = store.db.assets.some((asset) => String(asset.id) === String(intent.asset_id));
+                if (completed) {
+                    releasedIds.push(String(intent.asset_id));
+                    continue;
+                }
+                try {
+                    await cosStorage.deleteObject({ key: intent.object_key });
+                    deleted += 1;
+                    releasedIds.push(String(intent.asset_id));
+                } catch (error) {
+                    failed += 1;
+                    console.warn(`COS expired upload cleanup failed for ${intent.asset_id}: ${error.code || error.message}`);
+                }
+            }
+            const released = await deleteStoreRows(
+                "media_upload_intents",
+                "media_upload_intents",
+                releasedIds,
+            );
+            return { scanned: expired.length, deleted, released, failed, running: false };
+        } finally {
+            memoryUploadCleanupRunning = false;
+        }
+    }
+
     async function handleMemoryMediaUploadIntents(req, res, url) {
         if (!requireNativeApp(req, res)) return;
         if (!cosStorage.enabled) {
@@ -6634,7 +6712,8 @@ function createLocalAppServer(options = {}) {
         const expiresAt = Date.now() + 10 * 60 * 1000;
         const datePath = new Date().toISOString().slice(0, 10).replace(/-/g, "/");
         const safeFamilyId = familyId.replace(/[^A-Za-z0-9_-]+/g, "_");
-        const uploads = descriptors.map((item) => {
+        const timestamp = nowIso();
+        const prepared = descriptors.map((item) => {
             const assetId = stableId("memory-asset-");
             const objectKey = `memory-media/${safeFamilyId}/${datePath}/${assetId}${item.extension}`;
             const tokenPayload = {
@@ -6650,15 +6729,34 @@ function createLocalAppServer(options = {}) {
                 duration_seconds: item.durationSeconds,
                 expires_at: expiresAt,
             };
+            const expiresAtIso = new Date(expiresAt).toISOString();
             return {
-                asset_id: assetId,
-                upload_url: cosStorage.signedPutUrl({ key: objectKey, contentType: item.contentType }),
-                upload_token: memoryUploadToken(tokenPayload),
-                content_type: item.contentType,
-                expires_at: new Date(expiresAt).toISOString(),
+                upload: {
+                    asset_id: assetId,
+                    upload_url: cosStorage.signedPutUrl({ key: objectKey, contentType: item.contentType }),
+                    upload_token: memoryUploadToken(tokenPayload),
+                    content_type: item.contentType,
+                    expires_at: expiresAtIso,
+                },
+                intent: {
+                    asset_id: assetId,
+                    family_id: familyId,
+                    user_id: String(req.appUserId || ""),
+                    object_key: objectKey,
+                    content_type: item.contentType,
+                    size_bytes: item.sizeBytes,
+                    pixel_width: item.pixelWidth,
+                    pixel_height: item.pixelHeight,
+                    duration_seconds: item.durationSeconds,
+                    expires_at: expiresAtIso,
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                },
             };
         });
-        write(res, 201, { uploads });
+        store.db.media_upload_intents.push(...prepared.map((item) => item.intent));
+        await store.save();
+        write(res, 201, { uploads: prepared.map((item) => item.upload) });
     }
 
     async function handleMemoryMediaUploadAbort(req, res, url) {
@@ -6676,6 +6774,7 @@ function createLocalAppServer(options = {}) {
             return;
         }
         let deleted = 0;
+        const releasedIntentIds = [];
         for (const item of items) {
             const tokenPayload = verifyMemoryUploadToken(item?.upload_token);
             if (
@@ -6688,15 +6787,32 @@ function createLocalAppServer(options = {}) {
                 return;
             }
             const completed = store.db.assets.some((asset) => String(asset.id) === String(tokenPayload.asset_id));
-            if (completed) continue;
+            const intent = store.db.media_upload_intents.find((candidate) => (
+                String(candidate.asset_id) === String(tokenPayload.asset_id)
+            ));
+            if (completed) {
+                if (intent) releasedIntentIds.push(String(tokenPayload.asset_id));
+                continue;
+            }
+            if (!intent) continue;
+            if (!memoryUploadIntentMatches(intent, tokenPayload)) {
+                writeError(res, 400, "invalid memory upload intent");
+                return;
+            }
             try {
                 await cosStorage.deleteObject({ key: tokenPayload.object_key });
                 deleted += 1;
+                releasedIntentIds.push(String(tokenPayload.asset_id));
             } catch (error) {
                 console.warn(`COS upload abort failed for ${tokenPayload.asset_id}: ${error.code || error.message}`);
             }
         }
-        write(res, 200, { deleted });
+        const released = await deleteStoreRows(
+            "media_upload_intents",
+            "media_upload_intents",
+            releasedIntentIds,
+        );
+        write(res, 200, { deleted, released });
     }
 
     function handleMemoryMediaPlayback(req, res, assetId) {
@@ -6750,6 +6866,13 @@ function createLocalAppServer(options = {}) {
                 verified.push({ existing });
                 continue;
             }
+            const intent = store.db.media_upload_intents.find((candidate) => (
+                String(candidate.asset_id) === String(tokenPayload.asset_id)
+            ));
+            if (!memoryUploadIntentMatches(intent, tokenPayload)) {
+                writeError(res, 409, `memory upload intent is unavailable at index ${index}`);
+                return;
+            }
             let head;
             try {
                 head = await cosStorage.headObject({ key: tokenPayload.object_key });
@@ -6797,6 +6920,11 @@ function createLocalAppServer(options = {}) {
             if (!existingIds.has(String(asset.id))) store.db.assets.push(asset);
         }
         await store.save();
+        await deleteStoreRows(
+            "media_upload_intents",
+            "media_upload_intents",
+            createdAssets.map((asset) => asset.id),
+        );
         write(res, 201, {
             assets: createdAssets.map((asset) => ({
                 id: asset.id,
@@ -6812,10 +6940,9 @@ function createLocalAppServer(options = {}) {
     async function cleanupMemoryAssets(assetIds = []) {
         const ids = new Set(assetIds.map(String));
         if (!ids.size) return;
-        const retained = [];
+        const deletedIds = [];
         for (const asset of store.db.assets) {
             if (!ids.has(String(asset.id)) || String(asset.purpose || asset.metadata?.purpose || "") !== "family_memory") {
-                retained.push(asset);
                 continue;
             }
             if (String(asset.storage_provider || "local") === "cos") {
@@ -6823,15 +6950,15 @@ function createLocalAppServer(options = {}) {
                     await cosStorage.deleteObject({ key: asset.storage_key });
                 } catch (error) {
                     console.warn(`COS cleanup failed for ${asset.id}: ${error.code || error.message}`);
-                    retained.push(asset);
                     continue;
                 }
             } else {
                 const filePath = assetAbsolutePath(asset);
                 if (filePath && fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
             }
+            deletedIds.push(String(asset.id));
         }
-        store.db.assets = retained;
+        await deleteStoreRows("assets", "media_assets", deletedIds);
     }
 
     async function handleDeviceEvent(req, res) {
@@ -7535,6 +7662,7 @@ function createLocalAppServer(options = {}) {
                     app_server_base_url: process.env.GOHOME_APP_SERVER_BASE_URL || `http://localhost:${DEFAULT_PORT}`,
                     events: store.db.events.length,
                     assets: store.db.assets.length,
+                    pending_media_uploads: store.db.media_upload_intents.length,
                     updated_at: store.db.updated_at,
                 };
                 if (isLocalRequest(req) && process.env.NODE_ENV !== "production") {
@@ -9067,6 +9195,29 @@ function createLocalAppServer(options = {}) {
     const server = http.createServer(route);
     let schedulerTimer = null;
     let visionVerificationTimer = null;
+    let mediaUploadCleanupTimer = null;
+    let initialMediaUploadCleanupTimer = null;
+    const mediaUploadCleanupEnabled = options.mediaUploadCleanupEnabled ?? !["0", "false", "no"].includes(
+        String(process.env.GOHOME_MEDIA_UPLOAD_CLEANUP_ENABLED || "1").trim().toLowerCase(),
+    );
+    if (cosStorage.enabled && mediaUploadCleanupEnabled) {
+        const intervalMs = Math.max(
+            60000,
+            normalizeNumber(process.env.GOHOME_MEDIA_UPLOAD_CLEANUP_INTERVAL_MS, 5 * 60 * 1000),
+        );
+        const runCleanup = () => {
+            cleanupExpiredMemoryUploads()
+                .catch((error) => console.error(`media upload cleanup failed: ${error.message || error}`));
+        };
+        mediaUploadCleanupTimer = setInterval(runCleanup, intervalMs);
+        mediaUploadCleanupTimer.unref?.();
+        initialMediaUploadCleanupTimer = setTimeout(runCleanup, 1000);
+        initialMediaUploadCleanupTimer.unref?.();
+        server.on("close", () => {
+            clearInterval(mediaUploadCleanupTimer);
+            clearTimeout(initialMediaUploadCleanupTimer);
+        });
+    }
     if (normalizeBool(process.env.GOHOME_SCHEDULER_ENABLED)) {
         const intervalMs = Math.max(60000, normalizeNumber(process.env.GOHOME_SCHEDULER_INTERVAL_MS, 60000));
         schedulerTimer = setInterval(() => {
@@ -9096,7 +9247,15 @@ function createLocalAppServer(options = {}) {
             clearTimeout(initialTimer);
         });
     }
-    return { server, store, dataDir, appToken, deviceToken, nativeRepository };
+    return {
+        server,
+        store,
+        dataDir,
+        appToken,
+        deviceToken,
+        nativeRepository,
+        cleanupExpiredMemoryUploads,
+    };
 }
 
 function appServerStoreKind(options = {}) {

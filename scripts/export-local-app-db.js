@@ -420,6 +420,28 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(asset.updated_at, iso(asset.created_at, exportedAt)),
     }));
 
+    const mediaUploadIntents = toArray(db.media_upload_intents).map((intent) => ({
+        asset_id: textId(intent.asset_id),
+        family_id: textId(intent.family_id, fallbackFamilyId),
+        user_id: textId(intent.user_id),
+        object_key: String(intent.object_key || ""),
+        content_type: String(intent.content_type || "image/jpeg"),
+        size_bytes: numberOrNull(intent.size_bytes) || 0,
+        pixel_width: numberOrNull(intent.pixel_width) || 0,
+        pixel_height: numberOrNull(intent.pixel_height) || 0,
+        duration_seconds: numberOrNull(intent.duration_seconds) || 0,
+        expires_at: iso(intent.expires_at),
+        created_at: iso(intent.created_at, exportedAt),
+        updated_at: iso(intent.updated_at, iso(intent.created_at, exportedAt)),
+    })).filter((intent) => (
+        intent.asset_id
+        && intent.family_id
+        && intent.user_id
+        && intent.object_key.startsWith("memory-media/")
+        && intent.size_bytes > 0
+        && intent.expires_at
+    ));
+
     const events = sourceEvents.filter((event) => !validationEventIds.has(textId(event.id))).map((event) => ({
         id: textId(event.id),
         family_id: nullableTextId(event.family_id || fallbackFamilyId),
@@ -646,6 +668,7 @@ function buildCloudSeedBundle(db, options = {}) {
         model_providers: modelProviders,
         content_sources: contentSources,
         media_assets: mediaAssets,
+        media_upload_intents: mediaUploadIntents,
         events,
         device_heartbeats: deviceHeartbeats,
         calendar_events: calendarEvents,
@@ -663,7 +686,7 @@ function buildCloudSeedBundle(db, options = {}) {
     const counts = Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, rows.length]));
 
     return {
-        schema_version: "004_app_sessions",
+        schema_version: "009_media_upload_intents",
         exported_at: exportedAt,
         source: options.source || "local-app-server-json",
         counts,
