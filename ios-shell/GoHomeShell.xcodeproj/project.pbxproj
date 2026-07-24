@@ -39,6 +39,7 @@
 		73BE27BB604BEB397C168554 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72AB06FBD1E27C2FC881CC7E /* AppEnvironment.swift */; };
 		7D37BE05F00FDD53368AECA9 /* MJPEGStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC983BB541A2B1A1322861BA /* MJPEGStreamClient.swift */; };
 		809BC57A72314D36F0FB3B12 /* AppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D4A21A561B17A4972C5E71 /* AppRoute.swift */; };
+		80A34BCEA955131C387EF269 /* MemoryVideoPlaybackStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30D8586D6890FD8DB9425D6 /* MemoryVideoPlaybackStore.swift */; };
 		862742375DA7477B5EF05AD8 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20C569630615539E10B554B8 /* ProfileView.swift */; };
 		87A4A479A68867881BD96404 /* ArticleDetailRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB14E97EA80F980629836AB4 /* ArticleDetailRoute.swift */; };
 		87D2755E44DCC315C52ABE85 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ED0A30A15762CD0C8DE58BA /* AuthViewModel.swift */; };
@@ -88,6 +89,7 @@
 		F680B2EAD6A1E8AA285C8810 /* AuthFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47A339FCF089033CD1A85EB1 /* AuthFlowTests.swift */; };
 		FD4E4E4BA72E5F4A5A5F822F /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8915B898A43BA9BA950395F9 /* APIClient.swift */; };
 		FDFA83FBC4444312C36942AE /* GoHomeAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 404872E385D000813D39D7C8 /* GoHomeAppDelegate.swift */; };
+		FE108A087F223229E5347327 /* MemoryVideoPlaybackStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B027CDDB2165FD2C73F0FD2F /* MemoryVideoPlaybackStoreTests.swift */; };
 		FE962E512A7C4726AFF78D8F /* AuthModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E249198316E705827F8BC0B /* AuthModels.swift */; };
 /* End PBXBuildFile section */
 
@@ -167,11 +169,13 @@
 		9C7F5564D6AE495B1EF00A43 /* DeviceBindingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceBindingView.swift; sourceTree = "<group>"; };
 		9E249198316E705827F8BC0B /* AuthModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthModels.swift; sourceTree = "<group>"; };
 		A166F07C9E3E29754D62C633 /* APIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientTests.swift; sourceTree = "<group>"; };
+		A30D8586D6890FD8DB9425D6 /* MemoryVideoPlaybackStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryVideoPlaybackStore.swift; sourceTree = "<group>"; };
 		A3334DDE3CC653FD1541523C /* AppRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRepository.swift; sourceTree = "<group>"; };
 		A5B8FB39A94C21683DD79C50 /* ProfileViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileViewModel.swift; sourceTree = "<group>"; };
 		AABAB1BF12E491F9CDD1865F /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
 		AB4F8D88CD928BF1002B6483 /* MasonryLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasonryLayout.swift; sourceTree = "<group>"; };
 		AC18C86B265D5E9C147D9F6B /* AppModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModels.swift; sourceTree = "<group>"; };
+		B027CDDB2165FD2C73F0FD2F /* MemoryVideoPlaybackStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryVideoPlaybackStoreTests.swift; sourceTree = "<group>"; };
 		B5A5A2D38A5BF6057F7B71D0 /* ProfileFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileFlowTests.swift; sourceTree = "<group>"; };
 		B5B93473F4F02FF55CBFF3B8 /* MemoryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryViewModel.swift; sourceTree = "<group>"; };
 		BA91D5DB50293F3C81AA77D6 /* EventsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventsViewModel.swift; sourceTree = "<group>"; };
@@ -224,6 +228,7 @@
 			isa = PBXGroup;
 			children = (
 				FC4C00CBEB47F6CB3567079D /* MemoryMediaProcessor.swift */,
+				A30D8586D6890FD8DB9425D6 /* MemoryVideoPlaybackStore.swift */,
 				E1A73F7D469FE583CB8FC59A /* MemoryView.swift */,
 				B5B93473F4F02FF55CBFF3B8 /* MemoryViewModel.swift */,
 			);
@@ -345,6 +350,7 @@
 				2849E8DC39050E6E6187E138 /* EventsViewModelTests.swift */,
 				F11948718D182C31312EF0F0 /* GuardViewModelTests.swift */,
 				2759F178F978589AE1353C84 /* HomeViewModelTests.swift */,
+				B027CDDB2165FD2C73F0FD2F /* MemoryVideoPlaybackStoreTests.swift */,
 				1B58D029742116912B1429B4 /* MemoryViewModelTests.swift */,
 				33ED013B507F369CA3D90AA7 /* MJPEGStreamClientTests.swift */,
 				CE91B1212BE195D3FC142BA2 /* OnboardingModelTests.swift */,
@@ -572,6 +578,7 @@
 				AA01C071F85F043A7248CF7D /* GuardViewModelTests.swift in Sources */,
 				21B21DC0A604910B2F10B6B0 /* HomeViewModelTests.swift in Sources */,
 				EEF0A6806D61A87C3C96C7E6 /* MJPEGStreamClientTests.swift in Sources */,
+				FE108A087F223229E5347327 /* MemoryVideoPlaybackStoreTests.swift in Sources */,
 				5D928E7C69CD6E019C8A0887 /* MemoryViewModelTests.swift in Sources */,
 				F5A19D9F4350E6540207F02D /* OnboardingModelTests.swift in Sources */,
 				D401FA8BB9BBF634E298B084 /* ProductRecommendationsTests.swift in Sources */,
@@ -647,6 +654,7 @@
 				C9FDEBFB899A0B8A3315542B /* MainTabView.swift in Sources */,
 				9483F8E98E952EAEEF061ACA /* MasonryLayout.swift in Sources */,
 				F288D47C24305037AE7035E6 /* MemoryMediaProcessor.swift in Sources */,
+				80A34BCEA955131C387EF269 /* MemoryVideoPlaybackStore.swift in Sources */,
 				C3C171A712FF8E3A82631203 /* MemoryView.swift in Sources */,
 				6707311DE7DC983040D8636B /* MemoryViewModel.swift in Sources */,
 				E51DA65A8EAF55CC4345C2C0 /* OnboardingCoordinatorView.swift in Sources */,

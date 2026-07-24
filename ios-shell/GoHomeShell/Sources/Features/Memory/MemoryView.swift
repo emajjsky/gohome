@@ -145,7 +145,11 @@ private struct AnniversaryStrip: View {
             if let media = memory.media.first {
                 Group {
                     if media.isVideo {
-                        MemoryVideoPoster(path: media.playbackURL, duration: media.durationSeconds)
+                        MemoryVideoPoster(
+                            assetID: media.assetID,
+                            duration: media.durationSeconds,
+                            apiClient: apiClient
+                        )
                     } else {
                         AuthenticatedMemoryImage(path: media.imageURL, apiClient: apiClient)
                     }
@@ -271,7 +275,11 @@ private struct MemoryMediaGrid: View {
                 Button { previewIndex = index } label: {
                     MemoryImageTile(aspectRatio: MemoryMediaLayout.aspectRatio(for: visibleMedia.count)) {
                         if item.isVideo {
-                            MemoryVideoPoster(path: item.playbackURL, duration: item.durationSeconds)
+                            MemoryVideoPoster(
+                                assetID: item.assetID,
+                                duration: item.durationSeconds,
+                                apiClient: apiClient
+                            )
                         } else {
                             AuthenticatedMemoryImage(path: item.imageURL, apiClient: apiClient, variant: "grid")
                         }
@@ -417,8 +425,9 @@ private final class MemoryImageCache {
 }
 
 private struct MemoryVideoPoster: View {
-    let path: String
+    let assetID: String
     let duration: Double?
+    let apiClient: APIClient?
     @State private var image: UIImage?
 
     var body: some View {
@@ -443,7 +452,9 @@ private struct MemoryVideoPoster: View {
                     .padding(8)
             }
         }
-        .task(id: path) { image = MemoryImageCache.shared.image(for: path) }
+        .task(id: assetID) {
+            image = await MemoryVideoPlaybackStore.shared.poster(assetID: assetID, apiClient: apiClient)
+        }
     }
 }
 
@@ -473,13 +484,11 @@ private struct AuthenticatedMemoryVideo: View {
         guard player == nil, let apiClient, !assetID.isEmpty else { return }
         failed = false
         do {
-            let response = try await apiClient.send(Endpoint<MemoryMediaPlaybackResponse>(
-                path: "/api/v2/memory-media-playback/\(assetID)"
-            ))
+            let url = try await MemoryVideoPlaybackStore.shared.playbackURL(
+                assetID: assetID,
+                apiClient: apiClient
+            )
             try Task.checkCancellation()
-            guard let url = URL(string: response.url), url.scheme == "https" else {
-                throw APIError.invalidResponse
-            }
             let nextPlayer = AVPlayer(url: url)
             nextPlayer.automaticallyWaitsToMinimizeStalling = true
             player = nextPlayer
@@ -742,7 +751,7 @@ private struct MemoryComposer: View {
                     )
                 }
                 if let video = newVideo, let asset = outcome.uploadedAssets.first, let preview = video.preview {
-                    MemoryImageCache.shared.insert(preview, for: asset.mediaURL ?? asset.imageURL)
+                    MemoryVideoPlaybackStore.shared.insert(preview, assetID: asset.id)
                 }
                 isPresented = false
             }
@@ -766,7 +775,11 @@ private struct MemoryComposerMediaGrid: View {
             ForEach(Array(retainedMedia.enumerated()), id: \.element.id) { index, media in
                 mediaTile(index: index, count: count) {
                     if media.isVideo {
-                        MemoryVideoPoster(path: media.playbackURL, duration: media.durationSeconds)
+                        MemoryVideoPoster(
+                            assetID: media.assetID,
+                            duration: media.durationSeconds,
+                            apiClient: apiClient
+                        )
                     } else {
                         AuthenticatedMemoryImage(path: media.imageURL, apiClient: apiClient, variant: "grid")
                     }
