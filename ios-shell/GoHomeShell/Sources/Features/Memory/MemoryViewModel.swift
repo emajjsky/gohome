@@ -41,20 +41,26 @@ final class MemoryViewModel: ObservableObject {
         locationName: String,
         people: [String],
         retainedMediaIDs: [String],
-        newImages: [MemoryUploadImage]
+        newMedia: [MemoryUploadAsset]
     ) async -> SaveOutcome? {
         guard !isPublishing, let repository, let scope else { return nil }
         isPublishing = true
         errorMessage = nil
         do {
             let retainedIDs = Array(retainedMediaIDs.prefix(9))
-            let uploadCandidates = Array(newImages.prefix(max(0, 9 - retainedIDs.count)))
+            let containsVideo = newMedia.contains(where: \.isVideo)
+            guard !containsVideo || (newMedia.count == 1 && retainedIDs.isEmpty) else {
+                throw APIError.invalidResponse
+            }
+            let uploadCandidates = containsVideo
+                ? Array(newMedia.prefix(1))
+                : Array(newMedia.prefix(max(0, 9 - retainedIDs.count)))
             let uploadedAssets = if uploadCandidates.isEmpty {
                 [MemoryUploadedAsset]()
             } else {
                 try await repository.uploadMemoryMediaBatch(
                     familyID: scope.familyID,
-                    images: uploadCandidates
+                    media: uploadCandidates
                 )
             }
             let assetIDs = retainedIDs + uploadedAssets.map(\.id)

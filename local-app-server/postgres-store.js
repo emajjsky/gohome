@@ -357,6 +357,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             captured_at: iso(metadataValue(asset, "captured_at", null)),
             size: Number(asset.size_bytes || 0),
             url: metadataValue(asset, "url", ""),
+            metadata: asset.metadata && typeof asset.metadata === "object" ? asset.metadata : {},
             created_at: iso(asset.created_at, db.created_at),
             updated_at: iso(asset.updated_at, iso(asset.created_at, db.created_at)),
         });

@@ -408,10 +408,13 @@ function buildCloudSeedBundle(db, options = {}) {
         edge_event_id: String(asset.edge_event_id || ""),
         size_bytes: numberOrNull(asset.size || asset.size_bytes) || 0,
         metadata: {
-            url: asset.url || "",
-            purpose: String(asset.purpose || ""),
-            local_camera_id: nullableTextId(asset.local_camera_id),
-            captured_at: iso(asset.captured_at),
+            ...(asset.metadata && typeof asset.metadata === "object" && !Array.isArray(asset.metadata)
+                ? asset.metadata
+                : {}),
+            url: asset.url || asset.metadata?.url || "",
+            purpose: String(asset.purpose || asset.metadata?.purpose || ""),
+            local_camera_id: nullableTextId(asset.local_camera_id || asset.metadata?.local_camera_id),
+            captured_at: iso(asset.captured_at || asset.metadata?.captured_at),
         },
         created_at: iso(asset.created_at, exportedAt),
         updated_at: iso(asset.updated_at, iso(asset.created_at, exportedAt)),

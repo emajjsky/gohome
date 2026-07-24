@@ -16,8 +16,9 @@ struct AppEnvironment {
         let sessionContextStore = SessionContextStore()
         let cache = try DiskCache()
         let client = APIClient(baseURL: baseURL) { try? await authStore.token() }
-        let legacyMemoryBatchUpload: AppRepository.MemoryMediaBatchUploader = { familyID, images in
-            let request = MemoryMediaBatchRequest(images: images.map {
+        let legacyMemoryBatchUpload: AppRepository.MemoryMediaBatchUploader = { familyID, media in
+            guard media.allSatisfy({ !$0.isVideo }) else { throw APIError.invalidResponse }
+            let request = MemoryMediaBatchRequest(images: media.map {
                 MemoryMediaBatchItemRequest(
                     data: $0.data,
                     contentType: $0.contentType,
@@ -184,13 +185,14 @@ struct AppEnvironment {
                     response: MemoryMediaUploadResponse.self
                 )
             },
-            memoryMediaBatchUploader: { familyID, images in
-                let intentRequest = MemoryMediaUploadIntentRequest(items: images.map {
+            memoryMediaBatchUploader: { familyID, media in
+                let intentRequest = MemoryMediaUploadIntentRequest(items: media.map {
                     MemoryMediaUploadIntentItemRequest(
                         contentType: $0.contentType,
                         sizeBytes: $0.data.count,
                         pixelWidth: $0.pixelWidth,
-                        pixelHeight: $0.pixelHeight
+                        pixelHeight: $0.pixelHeight,
+                        durationSeconds: $0.durationSeconds
                     )
                 })
                 let intentEndpoint: Endpoint<MemoryMediaUploadIntentResponse> = try .jsonBody(
@@ -203,33 +205,48 @@ struct AppEnvironment {
                 do {
                     intentResponse = try await client.send(intentEndpoint)
                 } catch let APIError.server(statusCode, _) where statusCode == 404 || statusCode == 503 {
-                    return try await legacyMemoryBatchUpload(familyID, images)
+                    return try await legacyMemoryBatchUpload(familyID, media)
                 }
-                guard intentResponse.uploads.count == images.count else { throw APIError.invalidResponse }
+                guard intentResponse.uploads.count == media.count else { throw APIError.invalidResponse }
 
-                try await withThrowingTaskGroup(of: Void.self) { group in
-                    for (intent, image) in zip(intentResponse.uploads, images) {
-                        group.addTask {
-                            try await client.uploadDirectly(
-                                to: intent.uploadURL,
-                                data: image.data,
-                                contentType: intent.contentType
-                            )
+                do {
+                    try await withThrowingTaskGroup(of: Void.self) { group in
+                        for (intent, item) in zip(intentResponse.uploads, media) {
+                            group.addTask {
+                                try await client.uploadDirectly(
+                                    to: intent.uploadURL,
+                                    data: item.data,
+                                    contentType: intent.contentType
+                                )
+                            }
                         }
+                        try await group.waitForAll()
                     }
-                    try await group.waitForAll()
-                }
 
-                let completeRequest = MemoryMediaUploadCompleteRequest(items: intentResponse.uploads.map {
-                    MemoryMediaUploadCompleteItemRequest(assetID: $0.assetID, uploadToken: $0.uploadToken)
-                })
-                let completeEndpoint: Endpoint<MemoryMediaBatchUploadResponse> = try .jsonBody(
-                    method: .post,
-                    path: "/api/v2/memory-media-upload-complete",
-                    body: completeRequest,
-                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
-                )
-                return try await client.send(completeEndpoint)
+                    let completeRequest = MemoryMediaUploadCompleteRequest(items: intentResponse.uploads.map {
+                        MemoryMediaUploadCompleteItemRequest(assetID: $0.assetID, uploadToken: $0.uploadToken)
+                    })
+                    let completeEndpoint: Endpoint<MemoryMediaBatchUploadResponse> = try .jsonBody(
+                        method: .post,
+                        path: "/api/v2/memory-media-upload-complete",
+                        body: completeRequest,
+                        queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                    )
+                    return try await client.send(completeEndpoint)
+                } catch {
+                    let abortRequest = MemoryMediaUploadCompleteRequest(items: intentResponse.uploads.map {
+                        MemoryMediaUploadCompleteItemRequest(assetID: $0.assetID, uploadToken: $0.uploadToken)
+                    })
+                    if let abortEndpoint: Endpoint<MemoryMediaUploadAbortResponse> = try? .jsonBody(
+                        method: .post,
+                        path: "/api/v2/memory-media-upload-abort",
+                        body: abortRequest,
+                        queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                    ) {
+                        _ = try? await client.send(abortEndpoint)
+                    }
+                    throw error
+                }
             },
             activityTimelineLoader: { familyID, date in
                 try await client.send(Endpoint(

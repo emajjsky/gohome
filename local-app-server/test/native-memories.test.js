@@ -107,6 +107,71 @@ test('native memory media uses private COS upload intents and deletes remote obj
     assert.equal(removed.response.status, 200);
     assert.equal(deletedKeys.length, 2);
     assert.equal(app.store.db.assets.some((asset) => completed.body.assets.some((item) => item.id === asset.id)), false);
+
+    const rejectedMixed = await request(baseURL, `/api/v2/memory-media-upload-intents?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ items: [
+        images[0],
+        { content_type: 'video/mp4', size_bytes: 4_000_000, pixel_width: 1280, pixel_height: 720, duration_seconds: 20 },
+      ] }),
+    });
+    assert.equal(rejectedMixed.response.status, 400);
+
+    const rejectedLongVideo = await request(baseURL, `/api/v2/memory-media-upload-intents?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ items: [
+        { content_type: 'video/mp4', size_bytes: 4_000_000, pixel_width: 1280, pixel_height: 720, duration_seconds: 61 },
+      ] }),
+    });
+    assert.equal(rejectedLongVideo.response.status, 400);
+
+    const videoDescriptor = {
+      content_type: 'video/mp4', size_bytes: 6_000_000, pixel_width: 1280, pixel_height: 720, duration_seconds: 42.5,
+    };
+    const videoIntentResult = await request(baseURL, `/api/v2/memory-media-upload-intents?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ items: [videoDescriptor] }),
+    });
+    assert.equal(videoIntentResult.response.status, 201);
+    const videoIntent = videoIntentResult.body.uploads[0];
+    const videoKey = new URL(videoIntent.upload_url).searchParams.get('key');
+    objects.set(videoKey, { size: videoDescriptor.size_bytes, contentType: videoDescriptor.content_type });
+    const completedVideo = await request(baseURL, `/api/v2/memory-media-upload-complete?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({
+        items: [{ asset_id: videoIntent.asset_id, upload_token: videoIntent.upload_token }],
+      }),
+    });
+    assert.equal(completedVideo.response.status, 201);
+    assert.equal(completedVideo.body.assets[0].media_type, 'video');
+    const playback = await request(baseURL, `/api/v2/memory-media-playback/${completedVideo.body.assets[0].id}`, {
+      headers: authorization,
+    });
+    assert.equal(playback.response.status, 200);
+    assert.match(playback.body.url, /^https:\/\/cos\.test\/read\?/);
+    const videoMemory = await request(baseURL, `/api/v2/memories?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({
+        body: 'COS 直传视频', asset_ids: [completedVideo.body.assets[0].id],
+      }),
+    });
+    assert.equal(videoMemory.response.status, 201);
+    assert.equal(videoMemory.body.memory.media[0].media_type, 'video');
+    assert.equal(videoMemory.body.memory.media[0].duration_seconds, 42.5);
+    await request(baseURL, `/api/v2/memories/${videoMemory.body.memory.id}?family_id=${familyID}`, {
+      method: 'DELETE', headers: authorization,
+    });
+    assert.ok(deletedKeys.includes(videoKey));
+
+    const abandonedIntentResult = await request(baseURL, `/api/v2/memory-media-upload-intents?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ items: [images[0]] }),
+    });
+    const abandonedIntent = abandonedIntentResult.body.uploads[0];
+    const abandonedKey = new URL(abandonedIntent.upload_url).searchParams.get('key');
+    objects.set(abandonedKey, { size: images[0].size_bytes, contentType: images[0].content_type });
+    const aborted = await request(baseURL, `/api/v2/memory-media-upload-abort?family_id=${familyID}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ items: [{
+        asset_id: abandonedIntent.asset_id, upload_token: abandonedIntent.upload_token,
+      }] }),
+    });
+    assert.equal(aborted.response.status, 200);
+    assert.equal(aborted.body.deleted, 1);
+    assert.equal(objects.has(abandonedKey), false);
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(dataDir, { recursive: true, force: true });

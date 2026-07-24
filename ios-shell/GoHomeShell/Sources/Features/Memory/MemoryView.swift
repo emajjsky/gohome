@@ -2,6 +2,7 @@ import ImageIO
 import PhotosUI
 import SwiftUI
 import UIKit
+import AVKit
 
 struct MemoryView: View {
     @ObservedObject var model: MemoryViewModel
@@ -142,7 +143,13 @@ private struct AnniversaryStrip: View {
     var body: some View {
         HStack(spacing: 14) {
             if let media = memory.media.first {
-                AuthenticatedMemoryImage(path: media.imageURL, apiClient: apiClient)
+                Group {
+                    if media.isVideo {
+                        MemoryVideoPoster(path: media.playbackURL, duration: media.durationSeconds)
+                    } else {
+                        AuthenticatedMemoryImage(path: media.imageURL, apiClient: apiClient)
+                    }
+                }
                     .frame(width: 82, height: 82)
                     .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
             }
@@ -263,11 +270,15 @@ private struct MemoryMediaGrid: View {
             ForEach(Array(visibleMedia.enumerated()), id: \.element.id) { index, item in
                 Button { previewIndex = index } label: {
                     MemoryImageTile(aspectRatio: MemoryMediaLayout.aspectRatio(for: visibleMedia.count)) {
-                        AuthenticatedMemoryImage(path: item.imageURL, apiClient: apiClient, variant: "grid")
+                        if item.isVideo {
+                            MemoryVideoPoster(path: item.playbackURL, duration: item.durationSeconds)
+                        } else {
+                            AuthenticatedMemoryImage(path: item.imageURL, apiClient: apiClient, variant: "grid")
+                        }
                     }
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("查看第 \(index + 1) 张照片")
+                .accessibilityLabel(item.isVideo ? "播放视频" : "查看第 \(index + 1) 张照片")
             }
         }
         .fullScreenCover(isPresented: Binding(
@@ -308,9 +319,15 @@ private struct MemoryMediaPreview: View {
             Color.black.ignoresSafeArea()
             TabView(selection: $selectedIndex) {
                 ForEach(Array(media.enumerated()), id: \.element.id) { index, item in
-                    AuthenticatedMemoryImage(path: item.imageURL, apiClient: apiClient, contentMode: .fit)
-                        .padding(.vertical, 70)
-                        .tag(index)
+                    Group {
+                        if item.isVideo {
+                            AuthenticatedMemoryVideo(assetID: item.assetID, apiClient: apiClient)
+                        } else {
+                            AuthenticatedMemoryImage(path: item.imageURL, apiClient: apiClient, contentMode: .fit)
+                        }
+                    }
+                    .padding(.vertical, 70)
+                    .tag(index)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: media.count > 1 ? .automatic : .never))
@@ -399,6 +416,93 @@ private final class MemoryImageCache {
     }
 }
 
+private struct MemoryVideoPoster: View {
+    let path: String
+    let duration: Double?
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.82)
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+            }
+            Image(systemName: "play.fill")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 42, height: 42)
+                .background(.black.opacity(0.58), in: Circle())
+            if let duration, duration > 0 {
+                Text(videoDurationText(duration))
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.62), in: Capsule())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(8)
+            }
+        }
+        .task(id: path) { image = MemoryImageCache.shared.image(for: path) }
+    }
+}
+
+private struct AuthenticatedMemoryVideo: View {
+    let assetID: String
+    let apiClient: APIClient?
+    @State private var player: AVPlayer?
+    @State private var failed = false
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let player {
+                VideoPlayer(player: player)
+            } else if failed {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.white.opacity(0.8))
+            } else {
+                ProgressView().tint(.white)
+            }
+        }
+        .task(id: assetID) { await load() }
+        .onDisappear { cleanup() }
+    }
+
+    private func load() async {
+        guard player == nil, let apiClient, !assetID.isEmpty else { return }
+        failed = false
+        do {
+            let response = try await apiClient.send(Endpoint<MemoryMediaPlaybackResponse>(
+                path: "/api/v2/memory-media-playback/\(assetID)"
+            ))
+            try Task.checkCancellation()
+            guard let url = URL(string: response.url), url.scheme == "https" else {
+                throw APIError.invalidResponse
+            }
+            let nextPlayer = AVPlayer(url: url)
+            nextPlayer.automaticallyWaitsToMinimizeStalling = true
+            player = nextPlayer
+            nextPlayer.play()
+        } catch is CancellationError {
+            cleanup()
+        } catch {
+            failed = true
+        }
+    }
+
+    private func cleanup() {
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+        player = nil
+    }
+}
+
+private func videoDurationText(_ duration: Double) -> String {
+    let seconds = max(0, Int(duration.rounded()))
+    return String(format: "%d:%02d", seconds / 60, seconds % 60)
+}
+
 private struct MemoryImageTile<Content: View>: View {
     let aspectRatio: CGFloat
     let content: Content
@@ -422,8 +526,13 @@ private struct MemoryImageTile<Content: View>: View {
 
 private struct MemoryDraftImage: Identifiable {
     let id = UUID()
-    var upload: MemoryUploadImage?
+    var upload: MemoryUploadAsset?
     var preview: UIImage?
+}
+
+private struct MemoryDraftVideo {
+    let upload: MemoryUploadAsset
+    let preview: UIImage?
 }
 
 private struct MemoryComposer: View {
@@ -436,9 +545,13 @@ private struct MemoryComposer: View {
     @State private var peopleText: String
     @State private var happenedAt: Date
     @State private var pickerItems: [PhotosPickerItem] = []
+    @State private var videoPickerItem: PhotosPickerItem?
     @State private var newImages: [MemoryDraftImage] = []
+    @State private var newVideo: MemoryDraftVideo?
     @State private var retainedMedia: [MemoryMedia]
     @State private var isPreparingImages = false
+    @State private var isPreparingVideo = false
+    @State private var mediaPreparationError: String?
     @State private var imageSelectionGeneration = UUID()
 
     init(memory: FamilyMemory?, model: MemoryViewModel, apiClient: APIClient?, isPresented: Binding<Bool>) {
@@ -463,17 +576,18 @@ private struct MemoryComposer: View {
                         .frame(minHeight: 150)
                         .padding(12)
                         .background(Color.black.opacity(0.035), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
-                    if !retainedMedia.isEmpty || !newImages.isEmpty {
+                    if !retainedMedia.isEmpty || !newImages.isEmpty || newVideo != nil {
                         MemoryComposerMediaGrid(
                             retainedMedia: $retainedMedia,
                             newImages: $newImages,
+                            newVideo: $newVideo,
                             apiClient: apiClient
                         )
                     }
-                    if retainedMedia.count < 9 {
+                    if canAddImages {
                         PhotosPicker(
                             selection: $pickerItems,
-                            maxSelectionCount: 9 - retainedMedia.count,
+                            maxSelectionCount: MemoryMediaPolicy.maximumImageCount - retainedMedia.count,
                             matching: .images,
                             preferredItemEncoding: .current
                         ) {
@@ -485,6 +599,26 @@ private struct MemoryComposer: View {
                                 .background(GoHomeTheme.paleGinger.opacity(0.55), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
                         }
                         .allowsHitTesting(!isPreparingImages)
+                    }
+                    if canAddVideo {
+                        PhotosPicker(
+                            selection: $videoPickerItem,
+                            matching: .videos,
+                            preferredItemEncoding: .current
+                        ) {
+                            Label(isPreparingVideo ? "正在处理视频" : "添加视频（60 秒内）", systemImage: "video")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(GoHomeTheme.ink)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(14)
+                                .background(Color.black.opacity(0.035), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+                        }
+                        .allowsHitTesting(!isPreparingVideo)
+                    }
+                    if let mediaPreparationError {
+                        Text(mediaPreparationError)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.red)
                     }
                     DatePicker("发生时间", selection: $happenedAt)
                     TextField("地点（选填）", text: $locationName)
@@ -502,13 +636,26 @@ private struct MemoryComposer: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(model.isPublishing ? "保存中" : "发布") { publish() }
                         .fontWeight(.bold)
-                        .disabled(isPreparingImages || model.isPublishing || (bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && newImages.isEmpty && retainedMedia.isEmpty))
+                        .disabled(isPreparingImages || isPreparingVideo || model.isPublishing || (bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && newImages.isEmpty && newVideo == nil && retainedMedia.isEmpty))
                 }
             }
             .onChange(of: pickerItems) { items in
                 preparePhotos(items)
             }
+            .onChange(of: videoPickerItem) { item in
+                prepareVideo(item)
+            }
         }
+    }
+
+    private var canAddImages: Bool {
+        newVideo == nil
+            && !retainedMedia.contains(where: \.isVideo)
+            && retainedMedia.count < MemoryMediaPolicy.maximumImageCount
+    }
+
+    private var canAddVideo: Bool {
+        retainedMedia.isEmpty && newImages.isEmpty && newVideo == nil
     }
 
     private var photoPickerTitle: String {
@@ -517,6 +664,7 @@ private struct MemoryComposer: View {
     }
 
     private func preparePhotos(_ items: [PhotosPickerItem]) {
+        mediaPreparationError = nil
         let selected = Array(items.prefix(max(0, 9 - retainedMedia.count)))
         let generation = UUID()
         imageSelectionGeneration = generation
@@ -524,7 +672,7 @@ private struct MemoryComposer: View {
         newImages = drafts
         isPreparingImages = !selected.isEmpty
         Task {
-            await withTaskGroup(of: (UUID, MemoryUploadImage?).self) { group in
+            await withTaskGroup(of: (UUID, MemoryUploadAsset?).self) { group in
                 for (draft, item) in zip(drafts, selected) {
                     group.addTask { (draft.id, await MemoryImageProcessor.prepare(item: item)) }
                 }
@@ -545,13 +693,35 @@ private struct MemoryComposer: View {
         }
     }
 
+    private func prepareVideo(_ item: PhotosPickerItem?) {
+        guard let item else { return }
+        mediaPreparationError = nil
+        isPreparingVideo = true
+        Task {
+            do {
+                let prepared = try await MemoryVideoProcessor.prepare(item: item)
+                await MainActor.run {
+                    newVideo = MemoryDraftVideo(upload: prepared.upload, preview: prepared.preview)
+                    isPreparingVideo = false
+                }
+            } catch {
+                await MainActor.run {
+                    videoPickerItem = nil
+                    newVideo = nil
+                    isPreparingVideo = false
+                    mediaPreparationError = (error as? LocalizedError)?.errorDescription ?? "视频处理失败，请重新选择"
+                }
+            }
+        }
+    }
+
     private func publish() {
         let people = peopleText
             .components(separatedBy: CharacterSet(charactersIn: "、,，"))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         Task {
-            let uploads = newImages.compactMap(\.upload)
+            let uploads = newVideo.map { [$0.upload] } ?? newImages.compactMap(\.upload)
             let outcome = await model.save(
                 existing: memory,
                 body: bodyText,
@@ -559,10 +729,10 @@ private struct MemoryComposer: View {
                 locationName: locationName,
                 people: people,
                 retainedMediaIDs: retainedMedia.map(\.assetID),
-                newImages: uploads
+                newMedia: uploads
             )
             if let outcome {
-                for (asset, upload) in zip(outcome.uploadedAssets, uploads) {
+                for (asset, upload) in zip(outcome.uploadedAssets, uploads) where !upload.isVideo {
                     MemoryImageCache.shared.insert(
                         data: upload.data,
                         for: [
@@ -570,6 +740,9 @@ private struct MemoryComposer: View {
                             memoryImageCacheKey(path: asset.imageURL, variant: "grid"),
                         ]
                     )
+                }
+                if let video = newVideo, let asset = outcome.uploadedAssets.first, let preview = video.preview {
+                    MemoryImageCache.shared.insert(preview, for: asset.mediaURL ?? asset.imageURL)
                 }
                 isPresented = false
             }
@@ -580,10 +753,11 @@ private struct MemoryComposer: View {
 private struct MemoryComposerMediaGrid: View {
     @Binding var retainedMedia: [MemoryMedia]
     @Binding var newImages: [MemoryDraftImage]
+    @Binding var newVideo: MemoryDraftVideo?
     let apiClient: APIClient?
 
     var body: some View {
-        let count = min(9, retainedMedia.count + newImages.count)
+        let count = min(9, retainedMedia.count + newImages.count + (newVideo == nil ? 0 : 1))
         let columns = Array(
             repeating: GridItem(.flexible(), spacing: MemoryMediaLayout.spacing),
             count: MemoryMediaLayout.columnCount(for: count)
@@ -591,7 +765,11 @@ private struct MemoryComposerMediaGrid: View {
         LazyVGrid(columns: columns, spacing: MemoryMediaLayout.spacing) {
             ForEach(Array(retainedMedia.enumerated()), id: \.element.id) { index, media in
                 mediaTile(index: index, count: count) {
-                    AuthenticatedMemoryImage(path: media.imageURL, apiClient: apiClient, variant: "grid")
+                    if media.isVideo {
+                        MemoryVideoPoster(path: media.playbackURL, duration: media.durationSeconds)
+                    } else {
+                        AuthenticatedMemoryImage(path: media.imageURL, apiClient: apiClient, variant: "grid")
+                    }
                 } onRemove: {
                     retainedMedia.removeAll { $0.id == media.id }
                 }
@@ -606,6 +784,23 @@ private struct MemoryComposerMediaGrid: View {
                 } onRemove: {
                     guard newImages.indices.contains(index) else { return }
                     newImages.remove(at: index)
+                }
+            }
+            if let video = newVideo {
+                mediaTile(index: retainedMedia.count + newImages.count, count: count) {
+                    ZStack {
+                        if let preview = video.preview {
+                            Image(uiImage: preview).resizable().scaledToFill()
+                        } else {
+                            Color.black.opacity(0.82)
+                        }
+                        Image(systemName: "play.fill")
+                            .foregroundStyle(.white)
+                            .frame(width: 42, height: 42)
+                            .background(.black.opacity(0.58), in: Circle())
+                    }
+                } onRemove: {
+                    newVideo = nil
                 }
             }
         }
@@ -630,18 +825,18 @@ private struct MemoryComposerMediaGrid: View {
             }
             .buttonStyle(.plain)
             .padding(6)
-            .accessibilityLabel("移除第 \(index + 1) 张照片")
+            .accessibilityLabel("移除第 \(index + 1) 个媒体")
         }
     }
 }
 
 private enum MemoryImageProcessor {
-    static func prepare(item: PhotosPickerItem) async -> MemoryUploadImage? {
+    static func prepare(item: PhotosPickerItem) async -> MemoryUploadAsset? {
         guard let source = try? await item.loadTransferable(type: Data.self) else { return nil }
         return await Task.detached(priority: .userInitiated) { downsampledJPEG(source) }.value
     }
 
-    private static func downsampledJPEG(_ data: Data) -> MemoryUploadImage? {
+    private static func downsampledJPEG(_ data: Data) -> MemoryUploadAsset? {
         let options = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(data as CFData, options) else { return nil }
         let thumbnailOptions = [
@@ -652,11 +847,12 @@ private enum MemoryImageProcessor {
         ] as CFDictionary
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) else { return nil }
         guard let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.7) else { return nil }
-        return MemoryUploadImage(
+        return MemoryUploadAsset(
             data: jpeg,
             contentType: "image/jpeg",
             pixelWidth: image.width,
-            pixelHeight: image.height
+            pixelHeight: image.height,
+            durationSeconds: nil
         )
     }
 }

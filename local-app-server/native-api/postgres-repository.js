@@ -42,6 +42,13 @@ function accessDenied() {
     return repositoryError("family access denied", 403);
 }
 
+function validateMemoryAssets(assets) {
+    const videoCount = assets.filter((asset) => String(asset?.content_type || "").startsWith("video/")).length;
+    if (videoCount > 1 || (videoCount === 1 && assets.length !== 1)) {
+        throw repositoryError("memory media must contain either one video or up to nine images", 400);
+    }
+}
+
 class PostgresNativeRepository extends NativeRepository {
     constructor(pool, { clock = () => new Date() } = {}) {
         super();
@@ -320,8 +327,13 @@ class PostgresNativeRepository extends NativeRepository {
                     jsonb_build_object('id', u.id, 'display_name', coalesce(u.display_name, '家庭成员')) as author,
                     coalesce((select jsonb_agg(jsonb_build_object(
                         'id', mm.id, 'asset_id', mm.asset_id, 'sort_order', mm.sort_order,
-                        'alt_text', mm.alt_text, 'image_url', '/api/v1/video/assets/' || mm.asset_id
-                    ) order by mm.sort_order) from family_memory_media mm where mm.memory_id = m.id), '[]'::jsonb) as media,
+                        'alt_text', mm.alt_text, 'content_type', a.content_type,
+                        'media_type', case when a.content_type like 'video/%' then 'video' else 'image' end,
+                        'image_url', '/api/v1/video/assets/' || mm.asset_id,
+                        'media_url', '/api/v1/video/assets/' || mm.asset_id,
+                        'duration_seconds', coalesce(a.metadata->'duration_seconds', '0'::jsonb)
+                    ) order by mm.sort_order) from family_memory_media mm
+                    join media_assets a on a.id = mm.asset_id where mm.memory_id = m.id), '[]'::jsonb) as media,
                     coalesce((select jsonb_agg(to_jsonb(c) order by c.created_at) from family_memory_comments c where c.memory_id = m.id), '[]'::jsonb) as comments,
                     (select count(*)::int from family_memory_favorites f where f.memory_id = m.id) as favorite_count,
                     exists(select 1 from family_memory_favorites f where f.memory_id = m.id and f.user_id = $3) as is_favorite
@@ -342,8 +354,13 @@ class PostgresNativeRepository extends NativeRepository {
                     jsonb_build_object('id', u.id, 'display_name', coalesce(u.display_name, '家庭成员')) as author,
                     coalesce((select jsonb_agg(jsonb_build_object(
                         'id', mm.id, 'asset_id', mm.asset_id, 'sort_order', mm.sort_order,
-                        'alt_text', mm.alt_text, 'image_url', '/api/v1/video/assets/' || mm.asset_id
-                    ) order by mm.sort_order) from family_memory_media mm where mm.memory_id = m.id), '[]'::jsonb) as media,
+                        'alt_text', mm.alt_text, 'content_type', a.content_type,
+                        'media_type', case when a.content_type like 'video/%' then 'video' else 'image' end,
+                        'image_url', '/api/v1/video/assets/' || mm.asset_id,
+                        'media_url', '/api/v1/video/assets/' || mm.asset_id,
+                        'duration_seconds', coalesce(a.metadata->'duration_seconds', '0'::jsonb)
+                    ) order by mm.sort_order) from family_memory_media mm
+                    join media_assets a on a.id = mm.asset_id where mm.memory_id = m.id), '[]'::jsonb) as media,
                     coalesce((select jsonb_agg(to_jsonb(c) order by c.created_at) from family_memory_comments c where c.memory_id = m.id), '[]'::jsonb) as comments,
                     (select count(*)::int from family_memory_favorites f where f.memory_id = m.id) as favorite_count,
                     exists(select 1 from family_memory_favorites f where f.memory_id = m.id and f.user_id = $2) as is_favorite
@@ -367,10 +384,11 @@ class PostgresNativeRepository extends NativeRepository {
             await this.assertFamilyAccess(client, userId, familyId);
             if (value.asset_ids.length) {
                 const assets = await client.query(
-                    `select id from media_assets where family_id = $1 and id::text = any($2::text[]) for share`,
+                    `select id, content_type from media_assets where family_id = $1 and id::text = any($2::text[]) for share`,
                     [textId(familyId), value.asset_ids],
                 );
                 if (assets.rowCount !== value.asset_ids.length) throw repositoryError("memory asset not found", 400);
+                validateMemoryAssets(rows(assets));
             }
             const inserted = await client.query(
                 `insert into family_memories
@@ -427,10 +445,11 @@ class PostgresNativeRepository extends NativeRepository {
                     [textId(memoryId)],
                 ));
                 const assets = value.asset_ids.length ? await client.query(
-                    `select id from media_assets where family_id = $1 and id::text = any($2::text[]) for share`,
+                    `select id, content_type from media_assets where family_id = $1 and id::text = any($2::text[]) for share`,
                     [textId(familyId), value.asset_ids],
                 ) : { rowCount: 0 };
                 if (assets.rowCount !== value.asset_ids.length) throw repositoryError("memory asset not found", 400);
+                validateMemoryAssets(rows(assets));
                 const retainedAssetIds = new Set(value.asset_ids.map(textId));
                 cleanupAssetIds = previousMedia
                     .map((item) => textId(item.asset_id))

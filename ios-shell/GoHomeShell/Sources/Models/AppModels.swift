@@ -272,13 +272,24 @@ struct MemoryMedia: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let assetID: String
     let imageURL: String
+    let mediaURL: String?
+    let mediaType: String?
+    let contentType: String?
+    let durationSeconds: Double?
     let sortOrder: Int
     let altText: String
+
+    var isVideo: Bool { mediaType == "video" || contentType?.hasPrefix("video/") == true }
+    var playbackURL: String { mediaURL ?? imageURL }
 
     enum CodingKeys: String, CodingKey {
         case id
         case assetID = "asset_id"
         case imageURL = "image_url"
+        case mediaURL = "media_url"
+        case mediaType = "media_type"
+        case contentType = "content_type"
+        case durationSeconds = "duration_seconds"
         case sortOrder = "sort_order"
         case altText = "alt_text"
     }
@@ -324,11 +335,14 @@ struct MemoryMediaBatchUploadResponse: Decodable, Equatable, Sendable {
     let assets: [MemoryUploadedAsset]
 }
 
-struct MemoryUploadImage: Equatable, Sendable {
+struct MemoryUploadAsset: Equatable, Sendable {
     let data: Data
     let contentType: String
     let pixelWidth: Int
     let pixelHeight: Int
+    let durationSeconds: Double?
+
+    var isVideo: Bool { contentType.hasPrefix("video/") }
 }
 
 struct MemoryMediaBatchRequest: Encodable, Equatable, Sendable {
@@ -358,12 +372,14 @@ struct MemoryMediaUploadIntentItemRequest: Encodable, Equatable, Sendable {
     let sizeBytes: Int
     let pixelWidth: Int
     let pixelHeight: Int
+    let durationSeconds: Double?
 
     enum CodingKeys: String, CodingKey {
         case contentType = "content_type"
         case sizeBytes = "size_bytes"
         case pixelWidth = "pixel_width"
         case pixelHeight = "pixel_height"
+        case durationSeconds = "duration_seconds"
     }
 }
 
@@ -405,13 +421,31 @@ struct MemoryUploadedAsset: Decodable, Equatable, Sendable {
     let id: String
     let contentType: String
     let imageURL: String
+    let mediaURL: String?
+    let mediaType: String?
     let sizeBytes: Int
 
     enum CodingKeys: String, CodingKey {
         case id
         case contentType = "content_type"
         case imageURL = "image_url"
+        case mediaURL = "media_url"
+        case mediaType = "media_type"
         case sizeBytes = "size_bytes"
+    }
+}
+
+struct MemoryMediaUploadAbortResponse: Decodable, Equatable, Sendable {
+    let deleted: Int
+}
+
+struct MemoryMediaPlaybackResponse: Decodable, Equatable, Sendable {
+    let url: String
+    let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case url
+        case expiresAt = "expires_at"
     }
 }
 

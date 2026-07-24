@@ -6575,19 +6575,35 @@ function createLocalAppServer(options = {}) {
             "image/jpeg": ".jpg",
             "image/png": ".png",
             "image/webp": ".webp",
+            "video/mp4": ".mp4",
         };
         const extension = extensions[contentType];
         const sizeBytes = Math.max(0, Number(raw?.size_bytes) || 0);
-        if (!extension || !sizeBytes || sizeBytes > 4 * 1024 * 1024) {
+        const mediaType = contentType === "video/mp4" ? "video" : "image";
+        const sizeLimit = mediaType === "video" ? 24 * 1024 * 1024 : 4 * 1024 * 1024;
+        const durationSeconds = Math.max(0, Number(raw?.duration_seconds) || 0);
+        if (!extension || !sizeBytes || sizeBytes > sizeLimit) {
             throw new Error(`invalid memory image at index ${index}`);
+        }
+        if (mediaType === "video" && (!durationSeconds || durationSeconds > 60.5)) {
+            throw new Error(`invalid memory video duration at index ${index}`);
         }
         return {
             contentType,
             extension,
+            mediaType,
             sizeBytes,
             pixelWidth: Math.max(0, Math.min(12_000, Number(raw?.pixel_width) || 0)),
             pixelHeight: Math.max(0, Math.min(12_000, Number(raw?.pixel_height) || 0)),
+            durationSeconds: mediaType === "video" ? durationSeconds : 0,
         };
+    }
+
+    function validateMemoryUploadBatch(descriptors) {
+        const videoCount = descriptors.filter((item) => item.mediaType === "video").length;
+        if (videoCount > 1 || (videoCount === 1 && descriptors.length !== 1)) {
+            throw new Error("memory media must contain either one video or up to nine images");
+        }
     }
 
     async function handleMemoryMediaUploadIntents(req, res, url) {
@@ -6607,6 +6623,7 @@ function createLocalAppServer(options = {}) {
         let descriptors;
         try {
             descriptors = items.map(memoryUploadDescriptor);
+            validateMemoryUploadBatch(descriptors);
         } catch (error) {
             writeError(res, 400, error.message || "invalid memory image");
             return;
@@ -6627,6 +6644,7 @@ function createLocalAppServer(options = {}) {
                 size_bytes: item.sizeBytes,
                 pixel_width: item.pixelWidth,
                 pixel_height: item.pixelHeight,
+                duration_seconds: item.durationSeconds,
                 expires_at: expiresAt,
             };
             return {
@@ -6638,6 +6656,63 @@ function createLocalAppServer(options = {}) {
             };
         });
         write(res, 201, { uploads });
+    }
+
+    async function handleMemoryMediaUploadAbort(req, res, url) {
+        if (!requireNativeApp(req, res)) return;
+        if (!cosStorage.enabled) {
+            writeError(res, 503, "COS media storage is not configured");
+            return;
+        }
+        const familyId = String(url.searchParams.get("family_id") || "");
+        if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+        const payload = await parseJsonBody(req);
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        if (!items.length || items.length > 9) {
+            writeError(res, 400, "memory uploads must contain 1 to 9 items");
+            return;
+        }
+        let deleted = 0;
+        for (const item of items) {
+            const tokenPayload = verifyMemoryUploadToken(item?.upload_token);
+            if (
+                !tokenPayload
+                || String(tokenPayload.asset_id) !== String(item?.asset_id || "")
+                || String(tokenPayload.family_id) !== familyId
+                || String(tokenPayload.user_id) !== String(req.appUserId || "")
+            ) {
+                writeError(res, 400, "invalid memory upload token");
+                return;
+            }
+            const completed = store.db.assets.some((asset) => String(asset.id) === String(tokenPayload.asset_id));
+            if (completed) continue;
+            try {
+                await cosStorage.deleteObject({ key: tokenPayload.object_key });
+                deleted += 1;
+            } catch (error) {
+                console.warn(`COS upload abort failed for ${tokenPayload.asset_id}: ${error.code || error.message}`);
+            }
+        }
+        write(res, 200, { deleted });
+    }
+
+    function handleMemoryMediaPlayback(req, res, assetId) {
+        if (!requireNativeApp(req, res)) return;
+        const asset = store.db.assets.find((item) => String(item.id) === String(assetId));
+        if (!asset) {
+            writeError(res, 404, "media asset not found");
+            return;
+        }
+        if (!requireAssetAccess(req, res, asset)) return;
+        if (String(asset.storage_provider || "local") !== "cos" || !cosStorage.enabled || !asset.storage_key) {
+            writeError(res, 409, "direct media playback is unavailable");
+            return;
+        }
+        const expiresSeconds = 5 * 60;
+        write(res, 200, {
+            url: cosStorage.signedGetUrl({ key: asset.storage_key, expiresSeconds }),
+            expires_at: new Date(Date.now() + expiresSeconds * 1000).toISOString(),
+        });
     }
 
     async function handleMemoryMediaUploadComplete(req, res, url) {
@@ -6708,6 +6783,7 @@ function createLocalAppServer(options = {}) {
                 uploaded_by: String(req.appUserId || ""),
                 pixel_width: tokenPayload.pixel_width,
                 pixel_height: tokenPayload.pixel_height,
+                duration_seconds: tokenPayload.duration_seconds || 0,
             },
             created_at: timestamp,
             updated_at: timestamp,
@@ -6723,6 +6799,8 @@ function createLocalAppServer(options = {}) {
                 id: asset.id,
                 content_type: asset.content_type,
                 image_url: asset.url,
+                media_url: asset.url,
+                media_type: String(asset.content_type || "").startsWith("video/") ? "video" : "image",
                 size_bytes: asset.size,
             })),
         });
@@ -7381,6 +7459,14 @@ function createLocalAppServer(options = {}) {
             }
             if (req.method === "POST" && pathname === "/api/v2/memory-media-upload-complete") {
                 await handleMemoryMediaUploadComplete(req, res, url);
+                return;
+            }
+            if (req.method === "POST" && pathname === "/api/v2/memory-media-upload-abort") {
+                await handleMemoryMediaUploadAbort(req, res, url);
+                return;
+            }
+            if (req.method === "GET" && pathname.startsWith("/api/v2/memory-media-playback/")) {
+                handleMemoryMediaPlayback(req, res, decodeURIComponent(pathname.slice("/api/v2/memory-media-playback/".length)));
                 return;
             }
             if (req.method === "POST" && pathname === "/api/v2/memory-media-batch") {

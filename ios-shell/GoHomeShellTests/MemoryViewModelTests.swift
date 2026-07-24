@@ -9,6 +9,17 @@ final class MemoryViewModelTests: XCTestCase {
         XCTAssertEqual(MemoryMediaLayout.columnCount(for: 12), 3)
     }
 
+    func testMemoryMediaPolicyKeepsVideoSeparateFromImageGrid() {
+        let image = memoryUpload(1)
+        let video = MemoryUploadAsset(
+            data: Data([2]), contentType: "video/mp4", pixelWidth: 1280, pixelHeight: 720, durationSeconds: 30
+        )
+        XCTAssertTrue(MemoryMediaPolicy.accepts(retained: [], newMedia: Array(repeating: image, count: 9)))
+        XCTAssertFalse(MemoryMediaPolicy.accepts(retained: [], newMedia: Array(repeating: image, count: 10)))
+        XCTAssertTrue(MemoryMediaPolicy.accepts(retained: [], newMedia: [video]))
+        XCTAssertFalse(MemoryMediaPolicy.accepts(retained: [], newMedia: [video, image]))
+    }
+
     func testMemoryResponseDecodesPrivateTimelineFields() throws {
         let response = try JSONDecoder().decode(FamilyMemoriesResponse.self, from: Data(#"{"memories":[{"id":"memory-1","family_id":"family-1","author":{"id":"user-1","display_name":"小林"},"body":"一起看晚霞。","happened_at":"2026-07-20T02:00:00Z","location_name":"滨江步道","people":["爸爸","小林"],"media":[{"id":"media-1","asset_id":"asset-1","image_url":"/api/v1/video/assets/asset-1","sort_order":0,"alt_text":""}],"comments":[],"favorite_count":1,"is_favorite":true,"created_at":"2026-07-20T02:00:00Z","updated_at":"2026-07-20T02:00:00Z"}],"revision":"r1"}"#.utf8))
 
@@ -16,6 +27,37 @@ final class MemoryViewModelTests: XCTestCase {
         XCTAssertEqual(response.memories.first?.media.first?.assetID, "asset-1")
         XCTAssertEqual(response.memories.first?.people, ["爸爸", "小林"])
         XCTAssertTrue(response.memories.first?.isFavorite == true)
+    }
+
+    func testMemoryVideoContractDecodesTypeAndEncodesDuration() throws {
+        let response = try JSONDecoder().decode(FamilyMemoriesResponse.self, from: Data(#"{"memories":[{"id":"memory-video","family_id":"family-1","body":"家庭短片","happened_at":"2026-07-24T02:00:00Z","location_name":"","people":[],"media":[{"id":"media-video","asset_id":"asset-video","image_url":"/api/v1/video/assets/asset-video","media_url":"/api/v1/video/assets/asset-video","media_type":"video","content_type":"video/mp4","duration_seconds":42.5,"sort_order":0,"alt_text":""}],"comments":[],"favorite_count":0,"is_favorite":false}],"revision":"video-r1"}"#.utf8))
+        let media = try XCTUnwrap(response.memories.first?.media.first)
+        XCTAssertTrue(media.isVideo)
+        XCTAssertEqual(media.playbackURL, "/api/v1/video/assets/asset-video")
+        XCTAssertEqual(media.durationSeconds, 42.5)
+
+        let request = MemoryMediaUploadIntentRequest(items: [
+            MemoryMediaUploadIntentItemRequest(
+                contentType: "video/mp4",
+                sizeBytes: 2_000_000,
+                pixelWidth: 1280,
+                pixelHeight: 720,
+                durationSeconds: 42.5
+            )
+        ])
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        let item = try XCTUnwrap((json["items"] as? [[String: Any]])?.first)
+        XCTAssertEqual(item["duration_seconds"] as? Double, 42.5)
+    }
+
+    func testMemoryPlaybackResponseDecodesSignedURL() throws {
+        let response = try JSONDecoder().decode(
+            MemoryMediaPlaybackResponse.self,
+            from: Data(#"{"url":"https://example.cos.ap-shanghai.myqcloud.com/memory.mp4?q-signature=test","expires_at":"2026-07-24T12:05:00.000Z"}"#.utf8)
+        )
+
+        XCTAssertEqual(response.url, "https://example.cos.ap-shanghai.myqcloud.com/memory.mp4?q-signature=test")
+        XCTAssertEqual(response.expiresAt, "2026-07-24T12:05:00.000Z")
     }
 
     func testMemoryCacheIsDeliveredBeforeRefresh() async throws {
@@ -83,7 +125,7 @@ final class MemoryViewModelTests: XCTestCase {
             locationName: "家里",
             people: ["小林"],
             retainedMediaIDs: [],
-            newImages: []
+            newMedia: []
         )
         XCTAssertNotNil(outcome)
         XCTAssertEqual(model.memories.map(\.id), ["memory-1"])
@@ -129,6 +171,8 @@ final class MemoryViewModelTests: XCTestCase {
                         id: "asset-\(index)",
                         contentType: image.contentType,
                         imageURL: "/assets/\(index)",
+                        mediaURL: nil,
+                        mediaType: "image",
                         sizeBytes: image.data.count
                     )
                 })
@@ -143,7 +187,7 @@ final class MemoryViewModelTests: XCTestCase {
             locationName: "",
             people: [],
             retainedMediaIDs: ["retained"],
-            newImages: [1, 2, 3].map(memoryUpload)
+            newMedia: [1, 2, 3].map(memoryUpload)
         )
 
         XCTAssertNotNil(outcome)
@@ -173,6 +217,8 @@ final class MemoryViewModelTests: XCTestCase {
                         id: "asset-\(index)",
                         contentType: image.contentType,
                         imageURL: "/assets/\(index)",
+                        mediaURL: nil,
+                        mediaType: "image",
                         sizeBytes: image.data.count
                     )
                 })
@@ -187,7 +233,7 @@ final class MemoryViewModelTests: XCTestCase {
             locationName: "",
             people: [],
             retainedMediaIDs: (1...7).map { "retained-\($0)" },
-            newImages: [8, 9, 10].map(memoryUpload)
+            newMedia: [8, 9, 10].map(memoryUpload)
         )
 
         XCTAssertNotNil(outcome)
@@ -196,12 +242,13 @@ final class MemoryViewModelTests: XCTestCase {
         XCTAssertEqual(request?.assetIDs.suffix(2), ["asset-8", "asset-9"])
     }
 
-    private func memoryUpload(_ value: Int) -> MemoryUploadImage {
-        MemoryUploadImage(
+    private func memoryUpload(_ value: Int) -> MemoryUploadAsset {
+        MemoryUploadAsset(
             data: Data([UInt8(value)]),
             contentType: "image/jpeg",
             pixelWidth: 1280,
-            pixelHeight: 960
+            pixelHeight: 960,
+            durationSeconds: nil
         )
     }
 

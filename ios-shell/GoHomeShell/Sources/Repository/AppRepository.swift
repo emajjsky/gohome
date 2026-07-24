@@ -20,7 +20,7 @@ actor AppRepository {
     typealias MemoryFavoriteUpdater = @Sendable (String, String, Bool) async throws -> FamilyMemoryEnvelope
     typealias MemoryDeleter = @Sendable (String, String) async throws -> MemoryDeleteResponse
     typealias MemoryMediaUploader = @Sendable (String, Data, String) async throws -> MemoryMediaUploadResponse
-    typealias MemoryMediaBatchUploader = @Sendable (String, [MemoryUploadImage]) async throws -> MemoryMediaBatchUploadResponse
+    typealias MemoryMediaBatchUploader = @Sendable (String, [MemoryUploadAsset]) async throws -> MemoryMediaBatchUploadResponse
     typealias ActivityTimelineLoader = @Sendable (String, String) async throws -> ActivityTimelineResponse
 
     private let cache: DiskCache
@@ -279,8 +279,8 @@ actor AppRepository {
         try await memoryMediaUploader(familyID, data, contentType).asset
     }
 
-    func uploadMemoryMediaBatch(familyID: String, images: [MemoryUploadImage]) async throws -> [MemoryUploadedAsset] {
-        try await memoryMediaBatchUploader(familyID, images).assets
+    func uploadMemoryMediaBatch(familyID: String, media: [MemoryUploadAsset]) async throws -> [MemoryUploadedAsset] {
+        try await memoryMediaBatchUploader(familyID, media).assets
     }
 
     func cacheMemories(_ value: FamilyMemoriesResponse, scope: CacheScope) async {

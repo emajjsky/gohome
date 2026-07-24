@@ -121,6 +121,14 @@ function memoryInput(input = {}, { partial = false } = {}) {
     };
 }
 
+function validateMemoryAssets(assets) {
+    const items = Array.isArray(assets) ? assets : [];
+    const videoCount = items.filter((asset) => String(asset?.content_type || "").startsWith("video/")).length;
+    if (videoCount > 1 || (videoCount === 1 && items.length !== 1)) {
+        throw repositoryError("memory media must contain either one video or up to nine images", 400);
+    }
+}
+
 function activityIntervalInput(input = {}, now = Date.now()) {
     const sourceIntervalId = textId(input.source_interval_id).trim().slice(0, 160);
     if (!sourceIntervalId) throw repositoryError("source_interval_id required", 400);
@@ -454,7 +462,20 @@ class JsonNativeRepository extends NativeRepository {
         const author = (this.db.users || []).find((item) => textId(item.id) === textId(memory.author_user_id));
         const media = this.db.family_memory_media
             .filter((item) => textId(item.memory_id) === textId(memory.id))
-            .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+            .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0))
+            .map((item) => {
+                const asset = (this.db.assets || []).find((candidate) => textId(candidate.id) === textId(item.asset_id));
+                const contentType = String(asset?.content_type || "image/jpeg");
+                const mediaURL = `/api/v1/video/assets/${encodeURIComponent(item.asset_id)}`;
+                return {
+                    ...item,
+                    content_type: contentType,
+                    media_type: contentType.startsWith("video/") ? "video" : "image",
+                    image_url: mediaURL,
+                    media_url: mediaURL,
+                    duration_seconds: Number(asset?.metadata?.duration_seconds || 0),
+                };
+            });
         const comments = this.db.family_memory_comments
             .filter((item) => textId(item.memory_id) === textId(memory.id))
             .sort((a, b) => Date.parse(a.created_at || 0) - Date.parse(b.created_at || 0));
@@ -487,6 +508,7 @@ class JsonNativeRepository extends NativeRepository {
             if (!asset) throw repositoryError("memory asset not found", 400);
             return asset;
         });
+        validateMemoryAssets(assets);
         const memory = {
             id: textId(this.idFactory()).replace(/^action-/, "memory-"),
             family_id: textId(familyId),
@@ -527,6 +549,7 @@ class JsonNativeRepository extends NativeRepository {
             if (!asset) throw repositoryError("memory asset not found", 400);
             return asset;
         });
+        if (assets !== undefined) validateMemoryAssets(assets);
         const nextBody = value.body ?? memory.body;
         const nextMediaCount = assets === undefined
             ? this.db.family_memory_media.filter((item) => textId(item.memory_id) === textId(memory.id)).length
