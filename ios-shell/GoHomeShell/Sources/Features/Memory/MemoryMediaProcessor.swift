@@ -1,8 +1,5 @@
 import AVFoundation
-import CoreTransferable
-import PhotosUI
-import SwiftUI
-import UniformTypeIdentifiers
+import ImageIO
 import UIKit
 
 struct PreparedMemoryVideo: Sendable {
@@ -20,7 +17,7 @@ enum MemoryVideoPreparationError: LocalizedError {
         switch self {
         case .unavailable: return "无法读取这个视频"
         case .tooLong: return "视频需控制在 60 秒以内"
-        case .tooLarge: return "视频压缩后仍然过大，请选择更短的视频"
+        case .tooLarge: return "视频压缩后仍超过 24 MB，请裁剪后重试"
         case .exportFailed: return "视频处理失败，请重新选择"
         }
     }
@@ -42,14 +39,18 @@ enum MemoryMediaPolicy {
     }
 }
 
-enum MemoryVideoProcessor {
-    static func prepare(item: PhotosPickerItem) async throws -> PreparedMemoryVideo {
-        guard let imported = try await item.loadTransferable(type: ImportedMemoryVideo.self) else {
-            throw MemoryVideoPreparationError.unavailable
+enum MemoryVideoCompressionPlan {
+    static func presets(for durationSeconds: Double) -> [String] {
+        if durationSeconds <= 18 {
+            return [AVAssetExportPreset1280x720, AVAssetExportPresetMediumQuality, AVAssetExportPresetLowQuality]
         }
-        defer { try? FileManager.default.removeItem(at: imported.url) }
+        return [AVAssetExportPresetMediumQuality, AVAssetExportPresetLowQuality]
+    }
+}
 
-        let sourceAsset = AVURLAsset(url: imported.url)
+enum MemoryVideoProcessor {
+    static func prepare(sourceURL: URL) async throws -> PreparedMemoryVideo {
+        let sourceAsset = AVURLAsset(url: sourceURL)
         let sourceDuration = try await sourceAsset.load(.duration)
         let durationSeconds = CMTimeGetSeconds(sourceDuration)
         guard durationSeconds.isFinite, durationSeconds > 0 else {
@@ -59,27 +60,13 @@ enum MemoryVideoProcessor {
             throw MemoryVideoPreparationError.tooLong
         }
 
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("memory-video-\(UUID().uuidString)")
-            .appendingPathExtension("mp4")
+        let outputURL = try await exportWithinSizeLimit(
+            asset: sourceAsset,
+            presets: MemoryVideoCompressionPlan.presets(for: durationSeconds)
+        )
         defer { try? FileManager.default.removeItem(at: outputURL) }
-        guard let exporter = AVAssetExportSession(asset: sourceAsset, presetName: AVAssetExportPreset1280x720) else {
-            throw MemoryVideoPreparationError.exportFailed
-        }
-        exporter.outputURL = outputURL
-        exporter.outputFileType = AVFileType.mp4
-        exporter.shouldOptimizeForNetworkUse = true
-        await withCheckedContinuation { continuation in
-            exporter.exportAsynchronously { continuation.resume() }
-        }
-        guard exporter.status == AVAssetExportSession.Status.completed else {
-            throw MemoryVideoPreparationError.exportFailed
-        }
 
         let data = try Data(contentsOf: outputURL, options: .mappedIfSafe)
-        guard data.count <= MemoryMediaPolicy.maximumVideoBytes else {
-            throw MemoryVideoPreparationError.tooLarge
-        }
         let exportedAsset = AVURLAsset(url: outputURL)
         let dimensions = try await videoDimensions(asset: exportedAsset)
         let preview = firstFrame(asset: exportedAsset)
@@ -93,6 +80,39 @@ enum MemoryVideoProcessor {
             ),
             preview: preview
         )
+    }
+
+    private static func exportWithinSizeLimit(asset: AVAsset, presets: [String]) async throws -> URL {
+        var completedOversizedExport = false
+
+        for preset in presets {
+            let outputURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("memory-video-\(UUID().uuidString)")
+                .appendingPathExtension("mp4")
+            guard let exporter = AVAssetExportSession(asset: asset, presetName: preset),
+                  exporter.supportedFileTypes.contains(.mp4) else {
+                continue
+            }
+            exporter.outputURL = outputURL
+            exporter.outputFileType = .mp4
+            exporter.shouldOptimizeForNetworkUse = true
+            await withCheckedContinuation { continuation in
+                exporter.exportAsynchronously { continuation.resume() }
+            }
+            guard exporter.status == .completed else {
+                try? FileManager.default.removeItem(at: outputURL)
+                continue
+            }
+
+            let fileSize = (try? outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? Int.max
+            if fileSize <= MemoryMediaPolicy.maximumVideoBytes {
+                return outputURL
+            }
+            completedOversizedExport = true
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        throw completedOversizedExport ? MemoryVideoPreparationError.tooLarge : MemoryVideoPreparationError.exportFailed
     }
 
     private static func videoDimensions(asset: AVAsset) async throws -> (width: Int, height: Int) {
@@ -112,18 +132,31 @@ enum MemoryVideoProcessor {
     }
 }
 
-private struct ImportedMemoryVideo: Transferable {
-    let url: URL
+enum MemoryImageProcessor {
+    static func prepare(sourceURL: URL) async -> MemoryUploadAsset? {
+        await Task.detached(priority: .userInitiated) {
+            guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, [
+                kCGImageSourceShouldCache: false,
+            ] as CFDictionary) else { return nil }
+            return downsampledJPEG(source)
+        }.value
+    }
 
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(contentType: .movie) { video in
-            SentTransferredFile(video.url)
-        } importing: { received in
-            let destination = FileManager.default.temporaryDirectory
-                .appendingPathComponent("memory-source-\(UUID().uuidString)")
-                .appendingPathExtension(received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension)
-            try FileManager.default.copyItem(at: received.file, to: destination)
-            return ImportedMemoryVideo(url: destination)
-        }
+    private static func downsampledJPEG(_ source: CGImageSource) -> MemoryUploadAsset? {
+        let thumbnailOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 1280,
+            kCGImageSourceShouldCacheImmediately: true,
+        ] as CFDictionary
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) else { return nil }
+        guard let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.7) else { return nil }
+        return MemoryUploadAsset(
+            data: jpeg,
+            contentType: "image/jpeg",
+            pixelWidth: image.width,
+            pixelHeight: image.height,
+            durationSeconds: nil
+        )
     }
 }

@@ -1,8 +1,14 @@
-import ImageIO
-import PhotosUI
 import SwiftUI
 import UIKit
 import AVKit
+
+private enum MemoryPickerRoute: String, Identifiable {
+    case libraryImages
+    case libraryVideo
+    case camera
+
+    var id: String { rawValue }
+}
 
 struct MemoryView: View {
     @ObservedObject var model: MemoryViewModel
@@ -12,6 +18,11 @@ struct MemoryView: View {
     @State private var editorMemory: FamilyMemory?
     @State private var isComposerPresented = false
     @State private var commentMemory: FamilyMemory?
+    @State private var pickerRoute: MemoryPickerRoute?
+    @State private var pendingComposerSeed: MemoryComposerSeed?
+    @State private var composerSeed = MemoryComposerSeed.empty
+    @State private var composerSessionID = UUID()
+    @State private var mediaPickerError: String?
 
     var body: some View {
         ScrollView {
@@ -29,12 +40,15 @@ struct MemoryView: View {
                         MemoryTimelineItem(
                             memory: memory,
                             apiClient: apiClient,
+                            currentUserID: user.id,
+                            currentUserDisplayName: user.displayName,
                             canManage: memory.author?.id == user.id || family.role == "creator",
                             isPending: model.pendingIDs.contains(memory.id),
                             onFavorite: { Task { await model.toggleFavorite(memory) } },
                             onComment: { commentMemory = memory },
                             onEdit: {
                                 editorMemory = memory
+                                composerSessionID = UUID()
                                 isComposerPresented = true
                             },
                             onDelete: { Task { _ = await model.delete(memory) } }
@@ -54,8 +68,45 @@ struct MemoryView: View {
             .padding(.bottom, 36)
         }
         .background(GoHomeTheme.paper)
-        .sheet(isPresented: $isComposerPresented, onDismiss: { editorMemory = nil }) {
-            MemoryComposer(memory: editorMemory, model: model, apiClient: apiClient, isPresented: $isComposerPresented)
+        .sheet(item: $pickerRoute, onDismiss: presentPendingComposer) { route in
+            Group {
+                switch route {
+                case .libraryImages:
+                    MemoryLibraryPicker(
+                        mode: .images,
+                        onComplete: receivePickedMedia,
+                        onCancel: { pickerRoute = nil },
+                        onError: handlePickerError
+                    )
+                case .libraryVideo:
+                    MemoryLibraryPicker(
+                        mode: .video,
+                        onComplete: receivePickedMedia,
+                        onCancel: { pickerRoute = nil },
+                        onError: handlePickerError
+                    )
+                case .camera:
+                    MemoryCameraPicker(
+                        onComplete: { receivePickedMedia([$0]) },
+                        onCancel: { pickerRoute = nil },
+                        onError: handlePickerError
+                    )
+                    .ignoresSafeArea()
+                }
+            }
+        }
+        .sheet(isPresented: $isComposerPresented, onDismiss: {
+            editorMemory = nil
+            composerSeed = .empty
+        }) {
+            MemoryComposer(
+                memory: editorMemory,
+                seed: composerSeed,
+                model: model,
+                apiClient: apiClient,
+                isPresented: $isComposerPresented
+            )
+            .id(composerSessionID)
         }
         .sheet(item: $commentMemory) { memory in
             MemoryCommentComposer(memory: memory, model: model, isPresented: Binding(
@@ -64,12 +115,17 @@ struct MemoryView: View {
             ))
         }
         .alert("未能完成", isPresented: Binding(
-            get: { model.errorMessage != nil },
-            set: { if !$0 { model.errorMessage = nil } }
+            get: { mediaPickerError != nil || model.errorMessage != nil },
+            set: {
+                if !$0 {
+                    mediaPickerError = nil
+                    model.errorMessage = nil
+                }
+            }
         )) {
             Button("知道了", role: .cancel) {}
         } message: {
-            Text(model.errorMessage ?? "请稍后重试")
+            Text(mediaPickerError ?? model.errorMessage ?? "请稍后重试")
         }
         .accessibilityIdentifier("memory-content-anchor")
     }
@@ -88,18 +144,18 @@ struct MemoryView: View {
                     .foregroundStyle(GoHomeTheme.mutedInk)
             }
             Spacer()
-            Button {
-                editorMemory = nil
-                isComposerPresented = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 17, weight: .bold))
+            MemorySourceMenu(openPhotos: openPhotos, openVideo: openVideo, openCamera: openCamera) {
+                Image(systemName: "camera")
+                    .symbolVariant(.none)
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(GoHomeTheme.ink)
                     .frame(width: 42, height: 42)
                     .background(GoHomeTheme.ginger, in: Circle())
             }
             .accessibilityLabel("发布记忆")
+            .accessibilityIdentifier("memory-create-camera")
         }
+        .zIndex(20)
     }
 
     private var emptyState: some View {
@@ -111,15 +167,14 @@ struct MemoryView: View {
                 .font(.system(size: 14))
                 .foregroundStyle(GoHomeTheme.mutedInk)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("写下第一条") {
-                editorMemory = nil
-                isComposerPresented = true
+            MemorySourceMenu(openPhotos: openPhotos, openVideo: openVideo, openCamera: openCamera) {
+                Text("发布第一条")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(GoHomeTheme.ink)
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 10)
+                    .background(GoHomeTheme.ginger, in: RoundedRectangle(cornerRadius: GoHomeTheme.controlRadius, style: .continuous))
             }
-            .font(.system(size: 14, weight: .bold))
-            .foregroundStyle(GoHomeTheme.ink)
-            .padding(.horizontal, 15)
-            .padding(.vertical, 10)
-            .background(GoHomeTheme.ginger, in: RoundedRectangle(cornerRadius: GoHomeTheme.controlRadius, style: .continuous))
         }
         .padding(.vertical, 30)
     }
@@ -132,6 +187,130 @@ struct MemoryView: View {
             return calendar.component(.month, from: date) == calendar.component(.month, from: Date())
                 && calendar.component(.day, from: date) == calendar.component(.day, from: Date())
                 && !calendar.isDate(date, equalTo: Date(), toGranularity: .year)
+        }
+    }
+
+    private func openPhotos() {
+        editorMemory = nil
+        pickerRoute = .libraryImages
+    }
+
+    private func openVideo() {
+        editorMemory = nil
+        pickerRoute = .libraryVideo
+    }
+
+    private func openCamera() {
+        guard MemoryCameraPicker.isAvailable else {
+            mediaPickerError = MemoryMediaPickerError.cameraUnavailable.localizedDescription
+            return
+        }
+        editorMemory = nil
+        pickerRoute = .camera
+    }
+
+    private func receivePickedMedia(_ media: [MemoryPickedMedia]) {
+        pendingComposerSeed = MemoryComposerSeed(media: media)
+        pickerRoute = nil
+    }
+
+    private func handlePickerError(_ message: String) {
+        mediaPickerError = message
+        pickerRoute = nil
+    }
+
+    private func presentPendingComposer() {
+        guard let seed = pendingComposerSeed else { return }
+        pendingComposerSeed = nil
+        composerSeed = seed
+        composerSessionID = UUID()
+        isComposerPresented = true
+    }
+}
+
+private struct MemorySourceMenu<Label: View>: View {
+    let openPhotos: () -> Void
+    let openVideo: () -> Void
+    let openCamera: () -> Void
+    let label: Label
+    @State private var isPresented = false
+
+    init(
+        openPhotos: @escaping () -> Void,
+        openVideo: @escaping () -> Void,
+        openCamera: @escaping () -> Void,
+        @ViewBuilder label: () -> Label
+    ) {
+        self.openPhotos = openPhotos
+        self.openVideo = openVideo
+        self.openCamera = openCamera
+        self.label = label()
+    }
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            label
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+            MemorySourcePopover(
+                openPhotos: { perform(openPhotos) },
+                openVideo: { perform(openVideo) },
+                openCamera: { perform(openCamera) }
+            )
+        }
+        .zIndex(20)
+    }
+
+    private func perform(_ action: @escaping () -> Void) {
+        isPresented = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: action)
+    }
+}
+
+private struct MemorySourcePopover: View {
+    let openPhotos: () -> Void
+    let openVideo: () -> Void
+    let openCamera: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            actionButton("选择照片", systemImage: "photo.on.rectangle", action: openPhotos)
+            Divider().overlay(GoHomeTheme.softLine)
+            actionButton("选择视频", systemImage: "video", action: openVideo)
+            Divider().overlay(GoHomeTheme.softLine)
+            actionButton("拍摄", systemImage: "camera", action: openCamera)
+        }
+        .frame(width: 190)
+        .padding(.vertical, 6)
+        .background(GoHomeTheme.paper)
+        .memoryPopoverAdaptation()
+    }
+
+    private func actionButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(GoHomeTheme.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 48)
+                .padding(.horizontal, 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func memoryPopoverAdaptation() -> some View {
+        if #available(iOS 16.4, *) {
+            presentationCompactAdaptation(.popover)
+        } else {
+            self
         }
     }
 }
@@ -176,35 +355,29 @@ private struct AnniversaryStrip: View {
 private struct MemoryTimelineItem: View {
     let memory: FamilyMemory
     let apiClient: APIClient?
+    let currentUserID: String
+    let currentUserDisplayName: String?
     let canManage: Bool
     let isPending: Bool
     let onFavorite: () -> Void
     let onComment: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
+    @State private var isManagementPresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
+            HStack(spacing: 11) {
+                MemoryAuthorAvatar(initial: authorInitial)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(memory.author?.displayName ?? "家庭成员")
+                    Text(authorDisplayName)
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(GoHomeTheme.ink)
-                    Text(metaText)
+                    Text(publishedTimeText)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(GoHomeTheme.mutedInk)
                 }
                 Spacer()
-                if canManage {
-                    Menu {
-                        Button("编辑", systemImage: "pencil", action: onEdit)
-                        Button("删除", systemImage: "trash", role: .destructive, action: onDelete)
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .foregroundStyle(GoHomeTheme.mutedInk)
-                            .frame(width: 34, height: 30)
-                    }
-                }
             }
             if !memory.body.isEmpty {
                 Text(memory.body)
@@ -215,47 +388,194 @@ private struct MemoryTimelineItem: View {
             if !memory.media.isEmpty {
                 MemoryMediaGrid(media: memory.media, apiClient: apiClient)
             }
-            if !memory.people.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "person.2")
-                    Text(memory.people.joined(separator: " · "))
-                }
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(GoHomeTheme.mutedInk)
-            }
             HStack(spacing: 22) {
-                Button(action: onFavorite) {
-                    Label(memory.favoriteCount > 0 ? "\(memory.favoriteCount)" : "收藏", systemImage: memory.isFavorite ? "bookmark.fill" : "bookmark")
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    onFavorite()
+                } label: {
+                    Label(
+                        memory.favoriteCount > 0 ? "\(memory.favoriteCount)" : "喜欢",
+                        systemImage: memory.isFavorite ? "heart.fill" : "heart"
+                    )
                 }
+                .foregroundStyle(memory.isFavorite ? GoHomeTheme.ginger : GoHomeTheme.ink)
+                .accessibilityIdentifier("memory-like-\(memory.id)")
                 Button(action: onComment) {
-                    Label(memory.comments.isEmpty ? "回应" : "\(memory.comments.count)", systemImage: "bubble.left")
+                    Label(memory.comments.isEmpty ? "评论" : "\(memory.comments.count)", systemImage: "bubble.left")
+                }
+                .foregroundStyle(GoHomeTheme.ink)
+                .accessibilityIdentifier("memory-comment-\(memory.id)")
+                Spacer()
+                if canManage {
+                    Button {
+                        isManagementPresented.toggle()
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(GoHomeTheme.mutedInk)
+                            .frame(width: 44, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isPending)
+                    .popover(isPresented: $isManagementPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                        MemoryManagementPopover(
+                            onEdit: { performManagementAction(onEdit) },
+                            onDelete: { performManagementAction(onDelete) }
+                        )
+                    }
+                    .zIndex(20)
+                    .accessibilityLabel("管理记忆")
+                    .accessibilityIdentifier("memory-actions-\(memory.id)")
                 }
             }
             .buttonStyle(.plain)
             .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(GoHomeTheme.ink)
             .disabled(isPending)
+            if !memory.locationName.isEmpty {
+                Label(memory.locationName, systemImage: "mappin.and.ellipse")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            }
             if !memory.comments.isEmpty {
                 VStack(alignment: .leading, spacing: 7) {
                     ForEach(memory.comments.prefix(3)) { comment in
-                        Text(comment.body)
-                            .font(.system(size: 12))
-                            .foregroundStyle(GoHomeTheme.mutedInk)
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(comment.authorUserID == currentUserID ? "我" : "家庭成员")
+                                .fontWeight(.semibold)
+                                .foregroundStyle(GoHomeTheme.ink)
+                            Text(comment.body)
+                                .foregroundStyle(GoHomeTheme.mutedInk)
+                        }
+                        .font(.system(size: 12))
                     }
                 }
-                .padding(.leading, 11)
-                .overlay(alignment: .leading) { Rectangle().fill(GoHomeTheme.ginger).frame(width: 2) }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.black.opacity(0.032), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
             }
         }
+        .zIndex(isManagementPresented ? 10 : 0)
     }
 
-    private var metaText: String {
-        let formatter = ISO8601DateFormatter()
-        let dateFormatter = DateFormatter()
-        dateFormatter.locale = Locale(identifier: "zh_CN")
-        dateFormatter.dateFormat = "yyyy年M月d日"
-        let date = formatter.date(from: memory.happenedAt).map(dateFormatter.string) ?? ""
-        return [date, memory.locationName].filter { !$0.isEmpty }.joined(separator: " · ")
+    private var publishedTimeText: String {
+        MemoryDateFormatting.publishedText(memory.createdAt ?? memory.updatedAt ?? memory.happenedAt)
+    }
+
+    private var authorDisplayName: String {
+        guard let author = memory.author else { return "家庭成员" }
+        if author.id == currentUserID { return "我" }
+
+        let name = author.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let genericNames: Set<String> = ["家属", "回家用户", "家庭成员"]
+        return name.isEmpty || genericNames.contains(name) ? "家庭成员" : name
+    }
+
+    private var authorInitial: String? {
+        let rawName: String
+        if memory.author?.id == currentUserID {
+            rawName = currentUserDisplayName ?? memory.author?.displayName ?? ""
+        } else {
+            rawName = memory.author?.displayName ?? ""
+        }
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let genericNames: Set<String> = ["家属", "回家用户", "家庭成员"]
+        guard !name.isEmpty, !genericNames.contains(name), let first = name.first else { return nil }
+        return String(first)
+    }
+
+    private func performManagementAction(_ action: @escaping () -> Void) {
+        isManagementPresented = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: action)
+    }
+}
+
+private struct MemoryAuthorAvatar: View {
+    let initial: String?
+
+    var body: some View {
+        ZStack {
+            Circle().fill(GoHomeTheme.paleGinger)
+            if let initial {
+                Text(initial)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(GoHomeTheme.ink)
+            } else {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.ink.opacity(0.72))
+            }
+        }
+        .frame(width: 38, height: 38)
+        .accessibilityHidden(true)
+    }
+}
+
+enum MemoryDateFormatting {
+    static func publishedText(
+        _ value: String?,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        guard let value, let date = date(from: value) else { return "发布时间未知" }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = calendar.timeZone
+        if calendar.isDate(date, inSameDayAs: now) {
+            formatter.dateFormat = "HH:mm"
+            return "发布于 今天 \(formatter.string(from: date))"
+        }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(date, inSameDayAs: yesterday) {
+            formatter.dateFormat = "HH:mm"
+            return "发布于 昨天 \(formatter.string(from: date))"
+        }
+        formatter.dateFormat = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+            ? "M月d日 HH:mm"
+            : "yyyy年M月d日 HH:mm"
+        return "发布于 \(formatter.string(from: date))"
+    }
+
+    static func date(from value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+}
+
+private struct MemoryManagementPopover: View {
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            actionButton("编辑", systemImage: "pencil", color: GoHomeTheme.ink, action: onEdit)
+            Divider().overlay(GoHomeTheme.softLine)
+            actionButton("删除", systemImage: "trash", color: .red, action: onDelete)
+        }
+        .frame(width: 176)
+        .padding(.vertical, 6)
+        .background(GoHomeTheme.paper)
+        .memoryPopoverAdaptation()
+    }
+
+    private func actionButton(
+        _ title: String,
+        systemImage: String,
+        color: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 46)
+                .padding(.horizontal, 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -286,6 +606,8 @@ private struct MemoryMediaGrid: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .clipped()
                 .accessibilityLabel(item.isVideo ? "播放视频" : "查看第 \(index + 1) 张照片")
             }
         }
@@ -535,6 +857,7 @@ private struct MemoryImageTile<Content: View>: View {
 
 private struct MemoryDraftImage: Identifiable {
     let id = UUID()
+    let sourceURL: URL?
     var upload: MemoryUploadAsset?
     var preview: UIImage?
 }
@@ -546,197 +869,198 @@ private struct MemoryDraftVideo {
 
 private struct MemoryComposer: View {
     let memory: FamilyMemory?
+    let seed: MemoryComposerSeed
     @ObservedObject var model: MemoryViewModel
     let apiClient: APIClient?
     @Binding var isPresented: Bool
     @State private var bodyText: String
     @State private var locationName: String
-    @State private var peopleText: String
-    @State private var happenedAt: Date
-    @State private var pickerItems: [PhotosPickerItem] = []
-    @State private var videoPickerItem: PhotosPickerItem?
     @State private var newImages: [MemoryDraftImage] = []
     @State private var newVideo: MemoryDraftVideo?
+    @State private var pendingVideoURL: URL?
     @State private var retainedMedia: [MemoryMedia]
     @State private var isPreparingImages = false
     @State private var isPreparingVideo = false
     @State private var mediaPreparationError: String?
     @State private var imageSelectionGeneration = UUID()
+    @State private var didPrepareSeed = false
+    @StateObject private var locationProvider = MemoryLocationProvider()
 
-    init(memory: FamilyMemory?, model: MemoryViewModel, apiClient: APIClient?, isPresented: Binding<Bool>) {
+    init(
+        memory: FamilyMemory?,
+        seed: MemoryComposerSeed,
+        model: MemoryViewModel,
+        apiClient: APIClient?,
+        isPresented: Binding<Bool>
+    ) {
         self.memory = memory
+        self.seed = seed
         self.model = model
         self.apiClient = apiClient
         _isPresented = isPresented
         _bodyText = State(initialValue: memory?.body ?? "")
         _locationName = State(initialValue: memory?.locationName ?? "")
-        _peopleText = State(initialValue: memory?.people.joined(separator: "、") ?? "")
-        _happenedAt = State(initialValue: memory.flatMap { ISO8601DateFormatter().date(from: $0.happenedAt) } ?? Date())
         _retainedMedia = State(initialValue: memory?.media ?? [])
+        _newImages = State(initialValue: seed.media.compactMap { item in
+            guard item.kind == .image else { return nil }
+            return MemoryDraftImage(sourceURL: item.localURL, upload: nil, preview: nil)
+        })
+        _pendingVideoURL = State(initialValue: seed.media.first(where: { $0.kind == .video })?.localURL)
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    TextEditor(text: $bodyText)
-                        .font(.system(size: 18))
-                        .scrollContentBackground(.hidden)
-                        .frame(minHeight: 150)
-                        .padding(12)
-                        .background(Color.black.opacity(0.035), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
-                    if !retainedMedia.isEmpty || !newImages.isEmpty || newVideo != nil {
+                VStack(alignment: .leading, spacing: 0) {
+                    if hasMedia {
                         MemoryComposerMediaGrid(
                             retainedMedia: $retainedMedia,
                             newImages: $newImages,
                             newVideo: $newVideo,
+                            pendingVideoURL: $pendingVideoURL,
+                            isProcessing: isPreparingImages || isPreparingVideo,
                             apiClient: apiClient
                         )
+                        .padding(.bottom, 22)
                     }
-                    if canAddImages {
-                        PhotosPicker(
-                            selection: $pickerItems,
-                            maxSelectionCount: MemoryMediaPolicy.maximumImageCount - retainedMedia.count,
-                            matching: .images,
-                            preferredItemEncoding: .current
-                        ) {
-                            Label(photoPickerTitle, systemImage: "photo.on.rectangle.angled")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(GoHomeTheme.ink)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(14)
-                                .background(GoHomeTheme.paleGinger.opacity(0.55), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+                    ZStack(alignment: .topLeading) {
+                        if bodyText.isEmpty {
+                            Text("这一刻的想法...")
+                                .font(.system(size: 17))
+                                .foregroundStyle(GoHomeTheme.mutedInk.opacity(0.72))
+                                .padding(.top, 8)
+                                .allowsHitTesting(false)
                         }
-                        .allowsHitTesting(!isPreparingImages)
-                    }
-                    if canAddVideo {
-                        PhotosPicker(
-                            selection: $videoPickerItem,
-                            matching: .videos,
-                            preferredItemEncoding: .current
-                        ) {
-                            Label(isPreparingVideo ? "正在处理视频" : "添加视频（60 秒内）", systemImage: "video")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(GoHomeTheme.ink)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(14)
-                                .background(Color.black.opacity(0.035), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
-                        }
-                        .allowsHitTesting(!isPreparingVideo)
+                        TextEditor(text: $bodyText)
+                            .font(.system(size: 17))
+                            .foregroundStyle(GoHomeTheme.ink)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 132)
+                            .padding(.horizontal, -5)
                     }
                     if let mediaPreparationError {
                         Text(mediaPreparationError)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.red)
+                            .padding(.bottom, 12)
                     }
-                    DatePicker("发生时间", selection: $happenedAt)
-                    TextField("地点（选填）", text: $locationName)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("人物，用顿号分隔（选填）", text: $peopleText)
-                        .textFieldStyle(.roundedBorder)
+                    MemoryComposerDetails(
+                        locationName: $locationName,
+                        isLocating: locationProvider.isLocating,
+                        locationError: locationProvider.errorMessage,
+                        requestLocation: locationProvider.requestLocation
+                    )
                 }
                 .padding(GoHomeTheme.pageHorizontalPadding)
             }
+            .scrollDismissesKeyboard(.interactively)
             .background(GoHomeTheme.paper)
-            .navigationTitle(memory == nil ? "新记忆" : "编辑记忆")
+            .navigationTitle(memory == nil ? "发布记忆" : "编辑记忆")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { isPresented = false } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(model.isPublishing ? "保存中" : "发布") { publish() }
+                    Button(model.isPublishing ? model.publishPhase.toolbarTitle : "发布") { publish() }
                         .fontWeight(.bold)
                         .disabled(isPreparingImages || isPreparingVideo || model.isPublishing || (bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && newImages.isEmpty && newVideo == nil && retainedMedia.isEmpty))
                 }
             }
-            .onChange(of: pickerItems) { items in
-                preparePhotos(items)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if model.isPublishing {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                            .tint(GoHomeTheme.ginger)
+                        Text(model.publishPhase.statusText)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(GoHomeTheme.ink)
+                        Spacer()
+                    }
+                    .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
+                    .frame(height: 52)
+                    .background(.ultraThinMaterial)
+                    .overlay(alignment: .top) { Divider().overlay(GoHomeTheme.softLine) }
+                        .accessibilityIdentifier("memory-publish-status")
+                }
             }
-            .onChange(of: videoPickerItem) { item in
-                prepareVideo(item)
+            .task {
+                await prepareSeedMediaIfNeeded()
+            }
+            .onChange(of: locationProvider.placeName) { placeName in
+                guard let placeName else { return }
+                locationName = placeName
+            }
+            .onDisappear {
+                cleanupSeedFiles()
             }
         }
     }
 
-    private var canAddImages: Bool {
-        newVideo == nil
-            && !retainedMedia.contains(where: \.isVideo)
-            && retainedMedia.count < MemoryMediaPolicy.maximumImageCount
+    private var hasMedia: Bool {
+        !retainedMedia.isEmpty || !newImages.isEmpty || newVideo != nil || pendingVideoURL != nil
     }
 
-    private var canAddVideo: Bool {
-        retainedMedia.isEmpty && newImages.isEmpty && newVideo == nil
-    }
-
-    private var photoPickerTitle: String {
-        if isPreparingImages { return "正在处理照片" }
-        return newImages.isEmpty ? "添加照片" : "已选择 \(newImages.count) 张"
-    }
-
-    private func preparePhotos(_ items: [PhotosPickerItem]) {
+    private func prepareSeedMediaIfNeeded() async {
+        guard !didPrepareSeed else { return }
+        didPrepareSeed = true
         mediaPreparationError = nil
-        let selected = Array(items.prefix(max(0, 9 - retainedMedia.count)))
-        let generation = UUID()
-        imageSelectionGeneration = generation
-        let drafts = selected.map { _ in MemoryDraftImage(upload: nil, preview: nil) }
-        newImages = drafts
-        isPreparingImages = !selected.isEmpty
-        Task {
+        if !newImages.isEmpty {
+            let generation = UUID()
+            imageSelectionGeneration = generation
+            let drafts = newImages
+            isPreparingImages = true
             await withTaskGroup(of: (UUID, MemoryUploadAsset?).self) { group in
-                for (draft, item) in zip(drafts, selected) {
-                    group.addTask { (draft.id, await MemoryImageProcessor.prepare(item: item)) }
-                }
-                for await (draftID, prepared) in group {
-                    await MainActor.run {
-                        guard imageSelectionGeneration == generation,
-                              let index = newImages.firstIndex(where: { $0.id == draftID }) else { return }
-                        newImages[index].upload = prepared
-                        newImages[index].preview = prepared.flatMap { UIImage(data: $0.data) }
+                for draft in drafts {
+                    group.addTask {
+                        guard let sourceURL = draft.sourceURL else { return (draft.id, nil) }
+                        defer { try? FileManager.default.removeItem(at: sourceURL) }
+                        return (draft.id, await MemoryImageProcessor.prepare(sourceURL: sourceURL))
                     }
                 }
+                for await (draftID, prepared) in group {
+                    guard imageSelectionGeneration == generation,
+                          let index = newImages.firstIndex(where: { $0.id == draftID }) else { continue }
+                    newImages[index].upload = prepared
+                    newImages[index].preview = prepared.flatMap { UIImage(data: $0.data) }
+                }
             }
-            await MainActor.run {
-                guard imageSelectionGeneration == generation else { return }
-                newImages.removeAll { $0.upload == nil }
-                isPreparingImages = false
+            guard imageSelectionGeneration == generation else { return }
+            let failedCount = newImages.filter { $0.upload == nil }.count
+            newImages.removeAll { $0.upload == nil }
+            isPreparingImages = false
+            if failedCount > 0 {
+                mediaPreparationError = "有 \(failedCount) 张照片无法读取，请重新选择"
+            }
+        }
+        if let sourceURL = pendingVideoURL {
+            isPreparingVideo = true
+            do {
+                defer { try? FileManager.default.removeItem(at: sourceURL) }
+                let prepared = try await MemoryVideoProcessor.prepare(sourceURL: sourceURL)
+                newVideo = MemoryDraftVideo(upload: prepared.upload, preview: prepared.preview)
+                pendingVideoURL = nil
+                isPreparingVideo = false
+            } catch {
+                pendingVideoURL = nil
+                newVideo = nil
+                isPreparingVideo = false
+                mediaPreparationError = (error as? LocalizedError)?.errorDescription ?? "视频处理失败，请重新选择"
             }
         }
     }
 
-    private func prepareVideo(_ item: PhotosPickerItem?) {
-        guard let item else { return }
-        mediaPreparationError = nil
-        isPreparingVideo = true
-        Task {
-            do {
-                let prepared = try await MemoryVideoProcessor.prepare(item: item)
-                await MainActor.run {
-                    newVideo = MemoryDraftVideo(upload: prepared.upload, preview: prepared.preview)
-                    isPreparingVideo = false
-                }
-            } catch {
-                await MainActor.run {
-                    videoPickerItem = nil
-                    newVideo = nil
-                    isPreparingVideo = false
-                    mediaPreparationError = (error as? LocalizedError)?.errorDescription ?? "视频处理失败，请重新选择"
-                }
-            }
-        }
+    private func cleanupSeedFiles() {
+        seed.media.forEach { try? FileManager.default.removeItem(at: $0.localURL) }
     }
 
     private func publish() {
-        let people = peopleText
-            .components(separatedBy: CharacterSet(charactersIn: "、,，"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
         Task {
             let uploads = newVideo.map { [$0.upload] } ?? newImages.compactMap(\.upload)
             let outcome = await model.save(
                 existing: memory,
                 body: bodyText,
-                happenedAt: happenedAt,
+                happenedAt: memory.flatMap { MemoryDateFormatting.date(from: $0.happenedAt) } ?? Date(),
                 locationName: locationName,
-                people: people,
+                people: memory?.people ?? [],
                 retainedMediaIDs: retainedMedia.map(\.assetID),
                 newMedia: uploads
             )
@@ -759,14 +1083,73 @@ private struct MemoryComposer: View {
     }
 }
 
+private struct MemoryComposerDetails: View {
+    @Binding var locationName: String
+    let isLocating: Bool
+    let locationError: String?
+    let requestLocation: () -> Void
+
+    var body: some View {
+        locationRow
+        .padding(.horizontal, 14)
+        .background(Color.black.opacity(0.032), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+    }
+
+    private var locationRow: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.ginger)
+                    .frame(width: 22)
+                Text("地点")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(GoHomeTheme.ink)
+                TextField("添加地点", text: $locationName)
+                    .font(.system(size: 14))
+                    .multilineTextAlignment(.trailing)
+                    .foregroundStyle(GoHomeTheme.ink)
+                Button(action: requestLocation) {
+                    Group {
+                        if isLocating {
+                            ProgressView().tint(GoHomeTheme.ginger)
+                        } else {
+                            Image(systemName: "location.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(GoHomeTheme.ginger)
+                        }
+                    }
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isLocating)
+                .accessibilityLabel("获取当前位置")
+            }
+            .frame(minHeight: 52)
+            if let locationError {
+                Text(locationError)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.bottom, 9)
+            }
+        }
+    }
+
+}
+
 private struct MemoryComposerMediaGrid: View {
     @Binding var retainedMedia: [MemoryMedia]
     @Binding var newImages: [MemoryDraftImage]
     @Binding var newVideo: MemoryDraftVideo?
+    @Binding var pendingVideoURL: URL?
+    let isProcessing: Bool
     let apiClient: APIClient?
 
     var body: some View {
-        let count = min(9, retainedMedia.count + newImages.count + (newVideo == nil ? 0 : 1))
+        let videoCount = newVideo == nil && pendingVideoURL == nil ? 0 : 1
+        let count = min(9, retainedMedia.count + newImages.count + videoCount)
         let columns = Array(
             repeating: GridItem(.flexible(), spacing: MemoryMediaLayout.spacing),
             count: MemoryMediaLayout.columnCount(for: count)
@@ -795,8 +1178,7 @@ private struct MemoryComposerMediaGrid: View {
                         ProgressView().tint(GoHomeTheme.ginger)
                     }
                 } onRemove: {
-                    guard newImages.indices.contains(index) else { return }
-                    newImages.remove(at: index)
+                    newImages.removeAll { $0.id == draft.id }
                 }
             }
             if let video = newVideo {
@@ -814,6 +1196,18 @@ private struct MemoryComposerMediaGrid: View {
                     }
                 } onRemove: {
                     newVideo = nil
+                }
+            } else if pendingVideoURL != nil {
+                mediaTile(index: retainedMedia.count + newImages.count, count: count) {
+                    ZStack {
+                        Color.black.opacity(0.78)
+                        ProgressView().tint(.white)
+                    }
+                } onRemove: {
+                    if let url = pendingVideoURL {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                    pendingVideoURL = nil
                 }
             }
         }
@@ -837,36 +1231,13 @@ private struct MemoryComposerMediaGrid: View {
                     .background(.black.opacity(0.72), in: Circle())
             }
             .buttonStyle(.plain)
-            .padding(6)
+            .frame(width: 36, height: 36)
+            .padding(4)
+            .contentShape(Rectangle())
+            .disabled(isProcessing)
             .accessibilityLabel("移除第 \(index + 1) 个媒体")
         }
-    }
-}
-
-private enum MemoryImageProcessor {
-    static func prepare(item: PhotosPickerItem) async -> MemoryUploadAsset? {
-        guard let source = try? await item.loadTransferable(type: Data.self) else { return nil }
-        return await Task.detached(priority: .userInitiated) { downsampledJPEG(source) }.value
-    }
-
-    private static func downsampledJPEG(_ data: Data) -> MemoryUploadAsset? {
-        let options = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard let source = CGImageSourceCreateWithData(data as CFData, options) else { return nil }
-        let thumbnailOptions = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 1280,
-            kCGImageSourceShouldCacheImmediately: true,
-        ] as CFDictionary
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) else { return nil }
-        guard let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.7) else { return nil }
-        return MemoryUploadAsset(
-            data: jpeg,
-            contentType: "image/jpeg",
-            pixelWidth: image.width,
-            pixelHeight: image.height,
-            durationSeconds: nil
-        )
+        .contentShape(Rectangle())
     }
 }
 
@@ -875,37 +1246,47 @@ private struct MemoryCommentComposer: View {
     @ObservedObject var model: MemoryViewModel
     @Binding var isPresented: Bool
     @State private var bodyText = ""
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(memory.body)
-                    .font(.system(size: 15))
-                    .foregroundStyle(GoHomeTheme.mutedInk)
-                    .lineLimit(3)
-                TextEditor(text: $bodyText)
-                    .font(.system(size: 17))
-                    .scrollContentBackground(.hidden)
-                    .padding(10)
-                    .background(Color.black.opacity(0.035), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+            VStack(alignment: .leading, spacing: 14) {
+                if !memory.body.isEmpty {
+                    Text(memory.body)
+                        .font(.system(size: 13))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                        .lineLimit(2)
+                }
+                TextField("写下评论", text: $bodyText, axis: .vertical)
+                    .font(.system(size: 16))
+                    .lineLimit(2...4)
+                    .focused($isFocused)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(Color.black.opacity(0.04), in: RoundedRectangle(cornerRadius: GoHomeTheme.controlRadius, style: .continuous))
                 Spacer()
             }
             .padding(GoHomeTheme.pageHorizontalPadding)
-            .navigationTitle("回应")
+            .navigationTitle("评论")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { isPresented = false } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("发布") {
+                        let submittedBody = bodyText
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        isPresented = false
                         Task {
-                            if await model.addComment(bodyText, to: memory) { isPresented = false }
+                            _ = await model.addComment(submittedBody, to: memory)
                         }
                     }
                     .fontWeight(.bold)
                     .disabled(bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .onAppear { isFocused = true }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.height(230)])
+        .presentationDragIndicator(.visible)
     }
 }

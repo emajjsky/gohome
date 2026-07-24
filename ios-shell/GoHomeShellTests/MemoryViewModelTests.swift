@@ -1,12 +1,36 @@
+import AVFoundation
 import XCTest
 @testable import GoHomeShell
 
 final class MemoryViewModelTests: XCTestCase {
+    func testMemoryPublishPhaseUsesConciseProductStatus() {
+        XCTAssertEqual(MemoryPublishPhase.idle.toolbarTitle, "发布")
+        XCTAssertEqual(MemoryPublishPhase.uploading(itemCount: 4).toolbarTitle, "上传中")
+        XCTAssertEqual(MemoryPublishPhase.uploading(itemCount: 4).statusText, "正在上传 4 项内容")
+        XCTAssertEqual(MemoryPublishPhase.saving.toolbarTitle, "保存中")
+        XCTAssertEqual(MemoryPublishPhase.saving.statusText, "正在保存记忆")
+    }
+
     func testMemoryMediaLayoutMatchesMomentsGridRules() {
         XCTAssertEqual((1...9).map(MemoryMediaLayout.columnCount), [1, 2, 3, 2, 3, 3, 3, 3, 3])
         XCTAssertEqual(MemoryMediaLayout.aspectRatio(for: 1), 4 / 3)
         XCTAssertEqual(MemoryMediaLayout.aspectRatio(for: 4), 1)
         XCTAssertEqual(MemoryMediaLayout.columnCount(for: 12), 3)
+    }
+
+    func testMemoryTimelineShowsActualPublishedTime() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-24T13:30:00Z"))
+
+        XCTAssertEqual(
+            MemoryDateFormatting.publishedText("2026-07-24T13:05:00.000Z", now: now, calendar: calendar),
+            "发布于 今天 21:05"
+        )
+        XCTAssertEqual(
+            MemoryDateFormatting.publishedText("2026-07-23T12:00:00Z", now: now, calendar: calendar),
+            "发布于 昨天 20:00"
+        )
     }
 
     func testMemoryMediaPolicyKeepsVideoSeparateFromImageGrid() {
@@ -18,6 +42,34 @@ final class MemoryViewModelTests: XCTestCase {
         XCTAssertFalse(MemoryMediaPolicy.accepts(retained: [], newMedia: Array(repeating: image, count: 10)))
         XCTAssertTrue(MemoryMediaPolicy.accepts(retained: [], newMedia: [video]))
         XCTAssertFalse(MemoryMediaPolicy.accepts(retained: [], newMedia: [video, image]))
+    }
+
+    func testMemoryVideoCompressionPlanUsesFallbacksWithinUploadLimit() {
+        XCTAssertEqual(
+            MemoryVideoCompressionPlan.presets(for: 12),
+            [AVAssetExportPreset1280x720, AVAssetExportPresetMediumQuality, AVAssetExportPresetLowQuality]
+        )
+        XCTAssertEqual(
+            MemoryVideoCompressionPlan.presets(for: 50),
+            [AVAssetExportPresetMediumQuality, AVAssetExportPresetLowQuality]
+        )
+        XCTAssertEqual(MemoryMediaPolicy.maximumVideoBytes, 24 * 1024 * 1024)
+    }
+
+    func testMemoryPickerAcceptsNinePhotosOrOneVideoOnly() {
+        XCTAssertTrue(MemoryMediaSelectionPolicy.accepts(Array(repeating: .image, count: 9)))
+        XCTAssertFalse(MemoryMediaSelectionPolicy.accepts(Array(repeating: .image, count: 10)))
+        XCTAssertTrue(MemoryMediaSelectionPolicy.accepts([.video]))
+        XCTAssertFalse(MemoryMediaSelectionPolicy.accepts([.image, .video]))
+        XCTAssertFalse(MemoryMediaSelectionPolicy.accepts([.video, .video]))
+        XCTAssertFalse(MemoryMediaSelectionPolicy.accepts([]))
+    }
+
+    func testMemoryLibraryPickerEnforcesLimitsBeforeSubmission() {
+        XCTAssertEqual(MemoryLibrarySelectionMode.images.selectionLimit, 9)
+        XCTAssertEqual(MemoryLibrarySelectionMode.images.kind, .image)
+        XCTAssertEqual(MemoryLibrarySelectionMode.video.selectionLimit, 1)
+        XCTAssertEqual(MemoryLibrarySelectionMode.video.kind, .video)
     }
 
     func testMemoryResponseDecodesPrivateTimelineFields() throws {
