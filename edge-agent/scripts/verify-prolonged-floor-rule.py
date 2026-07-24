@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 from app.rule_engine import RuleEngine, build_event_evidence, event_category
 
 
-def analysis(*, prolonged: bool) -> dict:
+def analysis(*, prolonged: bool, recovered: bool = False) -> dict:
     track = {
         "track_id": "c1-p1",
         "bbox": [80, 220, 500, 350],
@@ -58,6 +58,18 @@ def analysis(*, prolonged: bool) -> dict:
             "fast_fall_track": None,
             "prolonged_floor_lying_candidate": prolonged,
             "prolonged_floor_lying_tracks": [track] if prolonged else [],
+            "physical_recoveries": [{
+                "schema_version": "gohome-physical-recovery-v1",
+                "confirmed": True,
+                "reason": "same_track_stable_upright",
+                "track_id": "c1-p1",
+                "posture": "standing",
+                "confidence": 0.88,
+                "bbox": [250, 20, 340, 320],
+                "sample_count": 2,
+                "required_samples": 2,
+                "identity_match": "same_track",
+            }] if recovered else [],
         },
         "temporal_evidence_bundle": {
             "schema_version": "temporal-evidence-bundle-v1",
@@ -93,8 +105,14 @@ def main() -> None:
         raise SystemExit("same prolonged-floor episode must not create duplicate candidates")
     engine.evaluate_snapshot(camera, snapshot, analysis(prolonged=False), rules)
     resumed = engine.evaluate_snapshot(camera, snapshot, analysis(prolonged=True), rules)
-    if not any(item.event_type == "prolonged_floor_lying" for item in resumed.candidates):
-        raise SystemExit("a recovered then repeated episode must create a new candidate")
+    if any(item.event_type == "prolonged_floor_lying" for item in resumed.candidates):
+        raise SystemExit("a temporary signal gap must not duplicate the same prolonged-floor episode")
+    recovered = engine.evaluate_snapshot(camera, snapshot, analysis(prolonged=False, recovered=True), rules)
+    if (recovered.state.get("fall_recovery") or {}).get("track_id") != "c1-p1":
+        raise SystemExit("same-track physical recovery must close the prolonged-floor episode")
+    repeated_episode = engine.evaluate_snapshot(camera, snapshot, analysis(prolonged=True), rules)
+    if not any(item.event_type == "prolonged_floor_lying" for item in repeated_episode.candidates):
+        raise SystemExit("a new prolonged-floor episode after physical recovery must create a candidate")
     if event_category("prolonged_floor_lying") != "safety_alert":
         raise SystemExit("prolonged-floor event must be categorized as safety alert")
     evidence = build_event_evidence(
@@ -109,6 +127,7 @@ def main() -> None:
         "event_category": evidence["event_category"],
         "factor_graph_version": evidence["pose_factor_graph"]["schema_version"],
         "dedupe_verified": True,
+        "signal_gap_does_not_reset_episode": True,
     }, ensure_ascii=False, indent=2))
 
 

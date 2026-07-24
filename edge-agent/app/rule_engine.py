@@ -123,7 +123,16 @@ class RuleEngine:
                 )
             )
 
-        person_count = analysis.get("person_count")
+        temporal_observation = (
+            analysis.get("temporal_observation")
+            if isinstance(analysis.get("temporal_observation"), dict)
+            else {}
+        )
+        person_count = (
+            temporal_observation.get("credible_person_count")
+            if "credible_person_count" in temporal_observation
+            else analysis.get("person_count")
+        )
         if person_count is not None and rules.get("person_detection_enabled"):
             if person_count > 0:
                 self.last_person_seen_at[camera_id] = now
@@ -157,17 +166,26 @@ class RuleEngine:
         state.update(fall_runtime["state"])
         if rules.get("fall_detection_enabled") and fall_runtime["emit_event"]:
             state["activity_state"] = "fall_candidate"
+            immediate_review = state.get("fall_confirmation_path") == "edge_cloud_review"
             candidates.append(
                 self._candidate(
                     event_type="fall_candidate",
-                    summary=f"{camera.get('name', '摄像头')} 连续复核确认疑似跌倒。",
+                    summary=(
+                        f"{camera.get('name', '摄像头')} 检测到快速倒地过程，已进入云端复核。"
+                        if immediate_review
+                        else f"{camera.get('name', '摄像头')} 检测到疑似跌倒，已进入云端复核。"
+                    ),
                     level="critical",
                     snapshot_id=snapshot_id,
                     analysis=analysis,
                     rule={
                         "id": "fall_candidate",
                         "label": "跌倒应急报警",
-                        "reason": "同一人体先出现站坐状态，随后快速下降，并达到连续姿态证据、帧数、持续时间和置信度阈值。",
+                        "reason": (
+                            "同一人体由站坐状态快速下降至水平低位，边缘端已保全动作证据并提交云端视觉复核。"
+                            if immediate_review
+                            else "同一人体由站坐状态下降至低位，并达到连续姿态证据、帧数、持续时间和置信度阈值。"
+                        ),
                         "observed": {
                             **fall_runtime["observed"],
                             "people": analysis.get("people", []),
@@ -181,10 +199,35 @@ class RuleEngine:
         factor_graph = analysis.get("pose_factor_graph") if isinstance(analysis.get("pose_factor_graph"), dict) else {}
         prolonged_tracks = factor_graph.get("prolonged_floor_lying_tracks") if isinstance(factor_graph.get("prolonged_floor_lying_tracks"), list) else []
         current_prolonged_ids = {str(item.get("track_id") or "") for item in prolonged_tracks if item.get("track_id")}
-        previous_prolonged_ids = self.prolonged_floor_tracks.get(camera_id, set())
-        new_prolonged_tracks = [item for item in prolonged_tracks if str(item.get("track_id") or "") not in previous_prolonged_ids]
-        self.prolonged_floor_tracks[camera_id] = current_prolonged_ids
+        physical_recoveries = factor_graph.get("physical_recoveries") if isinstance(factor_graph.get("physical_recoveries"), list) else []
+        recovered_track_ids = {
+            str(item.get("track_id") or "")
+            for item in physical_recoveries
+            if isinstance(item, dict) and item.get("confirmed") and item.get("track_id")
+        }
+        previously_alerted_prolonged_ids = self.prolonged_floor_tracks.get(camera_id, set())
+        alerted_prolonged_ids = previously_alerted_prolonged_ids - recovered_track_ids
+        new_prolonged_tracks = [
+            item for item in prolonged_tracks
+            if str(item.get("track_id") or "") not in alerted_prolonged_ids
+        ]
+        alerted_prolonged_ids.update(current_prolonged_ids)
+        self.prolonged_floor_tracks[camera_id] = alerted_prolonged_ids
         state["prolonged_floor_lying_tracks"] = sorted(current_prolonged_ids)
+        state["prolonged_floor_alerted_tracks"] = sorted(alerted_prolonged_ids)
+        prolonged_recovery = next(
+            (
+                item for item in physical_recoveries
+                if isinstance(item, dict)
+                and item.get("confirmed")
+                and str(item.get("track_id") or "") in previously_alerted_prolonged_ids
+            ),
+            None,
+        )
+        if prolonged_recovery:
+            state["prolonged_floor_recovery"] = prolonged_recovery
+            if not state.get("fall_recovery"):
+                state["fall_recovery"] = prolonged_recovery
         if rules.get("fall_detection_enabled") and new_prolonged_tracks:
             target = max(new_prolonged_tracks, key=lambda item: float(item.get("lying_duration_seconds") or 0.0))
             duration_seconds = float(target.get("lying_duration_seconds") or 0.0)
@@ -277,7 +320,7 @@ class RuleEngine:
             no_motion_seconds = int((now - last_motion_at).total_seconds())
             state["motion_state"] = "still"
             state["no_motion_seconds"] = no_motion_seconds
-            person_present = int(analysis.get("person_count") or 0) > 0
+            person_present = int(person_count or 0) > 0
             if rules.get("no_motion_enabled") and person_present and no_motion_seconds >= int(rules["no_motion_seconds"]):
                 candidates.append(
                     self._candidate(
@@ -434,6 +477,13 @@ class RuleEngine:
         factor_graph = analysis.get("pose_factor_graph") if isinstance(analysis.get("pose_factor_graph"), dict) else {}
         graph_candidate = bool(factor_graph.get("fast_fall_candidate"))
         graph_score = float(factor_graph.get("fast_fall_score") or 0.0)
+        graph_target = factor_graph.get("fast_fall_track") if isinstance(factor_graph.get("fast_fall_track"), dict) else {}
+        graph_review_ready = bool(
+            graph_candidate
+            and graph_target.get("review_ready")
+            and graph_target.get("quality_gate")
+            and graph_target.get("required_factors_confirmed")
+        )
         upright_before = self.fall_upright_states.get(camera_id) or {}
         upright_targets = self._upright_targets(analysis)
         transition = self._fall_transition(target, upright_before, now, analysis, rules)
@@ -446,6 +496,7 @@ class RuleEngine:
         )
         visual_candidate = bool(target) and (fall_candidate or graph_candidate)
         previous = self.fall_tracks.get(camera_id) or {}
+        physical_recovery = self._matching_physical_recovery(previous, factor_graph)
         same_observed_target = bool(previous and target and self._same_fall_target(previous.get("target"), target))
         transition_confirmed = (
             bool(transition.get("confirmed"))
@@ -456,13 +507,19 @@ class RuleEngine:
             graph_candidate
             or (previous.get("fast_transition_confirmed") and same_observed_target)
         )
-        dynamic_scene_override = bool(normal_lying_zone and pose_score_ok and transition_confirmed)
+        dynamic_scene_override = bool(normal_lying_zone and graph_candidate)
         scene_suppressed = bool(normal_lying_zone and not dynamic_scene_override)
         strong_candidate = strong_visual_candidate and transition_confirmed and not scene_suppressed
+        inference_runtime = (
+            analysis.get("inference_runtime")
+            if isinstance(analysis.get("inference_runtime"), dict)
+            else {}
+        )
         dynamic_low_position = self._dynamic_low_position_signal(
             target,
             transition_confirmed=transition_confirmed,
             transition=transition,
+            recent_rapid_descent=bool(inference_runtime.get("recent_rapid_descent")),
         )
         dynamic_transition_signal = bool(
             transition_confirmed
@@ -489,6 +546,7 @@ class RuleEngine:
                     "body_rotation_confirmed": bool(transition.get("body_rotation_confirmed")),
                     "fast_transition_confirmed": fast_transition_confirmed,
                     "confirmation_path": "dynamic_low_position" if dynamic_transition_signal else "standard",
+                    "recovery": None,
                 }
             else:
                 track = {
@@ -510,12 +568,16 @@ class RuleEngine:
                         if dynamic_transition_signal or previous.get("confirmation_path") == "dynamic_low_position"
                         else str(previous.get("confirmation_path") or "standard")
                     ),
+                    "recovery": None,
                 }
             duration = max(0.0, (now - track["started_at"]).total_seconds())
             track["duration_seconds"] = duration
             fast_path_confirmed = bool(
-                track.get("fast_transition_confirmed")
-                and int(track.get("confirm_count") or 0) >= confirm_frames
+                graph_review_ready
+                or (
+                    track.get("fast_transition_confirmed")
+                    and int(track.get("confirm_count") or 0) >= confirm_frames
+                )
             )
             dynamic_path_confirmed = bool(
                 track.get("confirmation_path") == "dynamic_low_position"
@@ -529,7 +591,9 @@ class RuleEngine:
             if fast_path_confirmed or dynamic_path_confirmed or standard_path_confirmed:
                 track["stage"] = "confirmed"
                 track["confirmation_path"] = (
-                    "fast_factor_graph"
+                    "edge_cloud_review"
+                    if graph_review_ready
+                    else "fast_factor_graph"
                     if fast_path_confirmed
                     else "dynamic_low_position"
                     if dynamic_path_confirmed
@@ -567,20 +631,50 @@ class RuleEngine:
                     "alert_emitted": False,
                     "duration_seconds": 0.0,
                 }
-            elif track.get("stage") in {"suspect", "confirming", "confirmed"}:
+            elif track.get("stage") in {"suspect", "confirming"}:
                 track["clear_count"] = int(track.get("clear_count") or 0) + 1
                 if track["clear_count"] >= recover_frames:
                     track = {
-                        "stage": "recovered",
-                        "started_at": previous.get("started_at"),
+                        "stage": "clear",
+                        "started_at": None,
                         "last_seen_at": now,
                         "confirm_count": 0,
                         "dynamic_low_count": 0,
                         "clear_count": int(track["clear_count"]),
-                        "target": previous.get("target"),
-                        "alert_emitted": bool(previous.get("alert_emitted")),
-                        "duration_seconds": max(0.0, (now - previous.get("started_at", now)).total_seconds()) if previous.get("started_at") else 0.0,
+                        "target": None,
+                        "alert_emitted": False,
+                        "duration_seconds": 0.0,
+                        "recovery": None,
                     }
+            elif track.get("stage") in {"confirmed", "candidate_cleared"}:
+                track["clear_count"] = int(track.get("clear_count") or 0) + 1
+                track["stage"] = (
+                    "recovered"
+                    if physical_recovery
+                    else "candidate_cleared"
+                    if track["clear_count"] >= recover_frames
+                    else "confirmed"
+                )
+                track["recovery"] = physical_recovery
+                track["last_seen_at"] = now
+                track["duration_seconds"] = (
+                    max(0.0, (now - previous.get("started_at", now)).total_seconds())
+                    if previous.get("started_at")
+                    else 0.0
+                )
+            elif track.get("stage") == "recovered":
+                track = {
+                    "stage": "clear",
+                    "started_at": None,
+                    "last_seen_at": now,
+                    "confirm_count": 0,
+                    "dynamic_low_count": 0,
+                    "clear_count": 0,
+                    "target": None,
+                    "alert_emitted": False,
+                    "duration_seconds": 0.0,
+                    "recovery": None,
+                }
             elif visual_candidate:
                 track = {
                     "stage": "visual_only",
@@ -591,6 +685,7 @@ class RuleEngine:
                     "target": target,
                     "alert_emitted": False,
                     "duration_seconds": 0.0,
+                    "recovery": None,
                 }
             else:
                 track = {
@@ -602,6 +697,7 @@ class RuleEngine:
                     "target": None,
                     "alert_emitted": False,
                     "duration_seconds": 0.0,
+                    "recovery": None,
                 }
             emit_event = False
             self.fall_tracks[camera_id] = track
@@ -633,8 +729,10 @@ class RuleEngine:
             "duration_seconds": round(duration_seconds, 3),
             "confirmation_path": str(track.get("confirmation_path") or "standard"),
             "fast_transition_confirmed": bool(track.get("fast_transition_confirmed")),
+            "edge_cloud_review_ready": graph_review_ready,
             "same_target": bool(same_target),
-            "target": target,
+            "target": track.get("target"),
+            "observed_target": target,
             "evidence": fall_evidence,
             "scene_suppressed": scene_suppressed,
             "scene_zone": target.get("scene_zone_label") if target else None,
@@ -661,10 +759,13 @@ class RuleEngine:
                 "fall_confirmation_path": str(track.get("confirmation_path") or "standard"),
                 "fall_clear_count": int(track.get("clear_count") or 0),
                 "fall_alert_emitted": bool(track.get("alert_emitted")),
-                "fall_target": target,
+                "fall_target": track.get("target"),
+                "fall_observed_target": target,
+                "fall_recovery": track.get("recovery"),
                 "fall_scene_suppressed": scene_suppressed,
                 "fall_transition_confirmed": transition_confirmed,
                 "fall_fast_transition_confirmed": bool(track.get("fast_transition_confirmed")),
+                "fall_edge_cloud_review_ready": graph_review_ready,
                 "fall_transition": {
                     **transition,
                     "confirmed": transition_confirmed,
@@ -681,12 +782,33 @@ class RuleEngine:
             },
         }
 
+    def _matching_physical_recovery(
+        self,
+        previous: Dict[str, Any],
+        factor_graph: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        if not previous.get("alert_emitted") or previous.get("stage") not in {"confirmed", "candidate_cleared"}:
+            return None
+        target = previous.get("target") if isinstance(previous.get("target"), dict) else {}
+        target_track_id = str(target.get("track_id") or "")
+        if not target_track_id:
+            return None
+        recoveries = factor_graph.get("physical_recoveries") if isinstance(factor_graph.get("physical_recoveries"), list) else []
+        for recovery in recoveries:
+            if not isinstance(recovery, dict) or not recovery.get("confirmed"):
+                continue
+            if str(recovery.get("track_id") or "") != target_track_id:
+                continue
+            return dict(recovery)
+        return None
+
     def _dynamic_low_position_signal(
         self,
         target: Dict[str, Any] | None,
         *,
         transition_confirmed: bool,
         transition: Dict[str, Any],
+        recent_rapid_descent: bool,
     ) -> bool:
         if not target or not transition_confirmed or bool(target.get("normal_lying_zone")):
             return False
@@ -703,6 +825,8 @@ class RuleEngine:
         if posture in {"sitting", "upper_body"} and float(target.get("bottom_y") or 0.0) < DYNAMIC_FLOOR_BOTTOM_Y:
             return False
         if posture in {"sitting", "upper_body"}:
+            if not recent_rapid_descent:
+                return False
             motion_score = float(transition.get("motion_score") or 0.0)
             motion_threshold = float(transition.get("motion_threshold") or 0.02)
             if motion_score < motion_threshold:
@@ -766,7 +890,7 @@ class RuleEngine:
                 4,
             ),
             "frame_edge_clipped": bool(
-                x1 <= 2.0 or x2 >= width - 2.0
+                x1 <= 2.0 or y1 <= 2.0 or x2 >= width - 2.0 or y2 >= height - 2.0
             ),
         }
 

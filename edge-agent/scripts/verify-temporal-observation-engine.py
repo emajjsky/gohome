@@ -51,6 +51,8 @@ def main() -> None:
         raise SystemExit("nearby detections must keep the same track id")
     if second["people"][0].get("track_id") != track_id:
         raise SystemExit("analysis person must be annotated with track id")
+    if second_result.get("presence_persistence_state") != "visible":
+        raise SystemExit(f"credible person must be eligible for durable presence: {second_result}")
     engine.attach_snapshot(1, {"id": 12, "image_path": "snapshots/camera-1/12.jpg"})
     bundle = engine.evidence_bundle(1, event_type="fall_candidate", track_id=track_id)
     if bundle["snapshots"][-1]["snapshot_id"] != 12 or bundle["track_id"] != track_id:
@@ -71,6 +73,22 @@ def main() -> None:
         raise SystemExit(f"ring buffer must remain bounded, got {len(history)}")
     if engine.update(1, analysis(), monotonic_at=40.0)["active_tracks"]:
         raise SystemExit("expired tracks must be removed")
+
+    weak_presence = TemporalObservationEngine(history_size=8, track_ttl_seconds=10)
+    weak_first = weak_presence.update(
+        25,
+        analysis(person([610, 100, 640, 250], confidence=0.22, posture="unknown")),
+        monotonic_at=1.0,
+    )
+    if weak_first.get("presence_persistence_state") != "uncertain" or weak_first.get("credible_person_present"):
+        raise SystemExit(f"one-frame weak edge detection must stay out of durable presence: {weak_first}")
+    weak_second_payload = analysis(person([608, 101, 640, 252], confidence=0.30, posture="unknown"))
+    weak_second = weak_presence.update(25, weak_second_payload, monotonic_at=2.0)
+    if weak_second.get("presence_persistence_state") != "visible":
+        raise SystemExit(f"repeated model evidence above the tracked floor should become credible: {weak_second}")
+    weak_absent = weak_presence.update(25, analysis(), monotonic_at=3.0)
+    if weak_absent.get("presence_persistence_state") != "absent":
+        raise SystemExit(f"empty frame must close durable presence: {weak_absent}")
 
     evidence_engine = TemporalObservationEngine(
         history_size=12,
@@ -96,6 +114,53 @@ def main() -> None:
     )
     if [item["snapshot_id"] for item in recent_bundle["snapshots"]] != [2, 3, 4]:
         raise SystemExit(f"event evidence must use the recent action window: {recent_bundle}")
+
+    role_engine = TemporalObservationEngine(
+        history_size=12,
+        track_ttl_seconds=20,
+        max_match_age_seconds=5,
+    )
+    role_track = ""
+    role_samples = [
+        (101, 0.0, "standing", [240, 30, 340, 330], 0.01),
+        (102, 0.6, "bending", [230, 100, 360, 335], 0.08),
+        (103, 1.2, "lying", [210, 220, 520, 350], 0.05),
+    ]
+    for snapshot_id, seconds, posture, bbox, motion in role_samples:
+        payload = analysis(person(bbox, posture=posture))
+        payload["motion_score"] = motion
+        role_engine.update(
+            13,
+            payload,
+            observed_at=f"2026-07-11T10:03:0{int(seconds)}+00:00",
+            monotonic_at=seconds,
+        )
+        role_track = str(payload["people"][0]["track_id"])
+        role_engine.attach_snapshot(
+            13,
+            {"id": snapshot_id, "image_path": f"camera-13/{snapshot_id}.jpg"},
+        )
+    role_bundle = role_engine.evidence_bundle(
+        13,
+        event_type="pose_safety_candidate",
+        track_id=role_track,
+        max_age_seconds=15,
+    )
+    role_sequence = [
+        (item["snapshot_id"], item["role"])
+        for item in role_bundle["snapshots"]
+    ]
+    if role_sequence != [(101, "before"), (102, "transition"), (103, "current")]:
+        raise SystemExit(f"fall evidence must preserve before/transition/current roles: {role_bundle}")
+    current_only = role_engine.evidence_bundle(
+        13,
+        event_type="pose_safety_candidate",
+        track_id=role_track,
+        limit=1,
+        max_age_seconds=15,
+    )
+    if [(item["snapshot_id"], item["role"]) for item in current_only["snapshots"]] != [(103, "current")]:
+        raise SystemExit(f"single-frame evidence must keep the current frame: {current_only}")
 
     class RecordingTemporalEngine:
         def __init__(self) -> None:
@@ -218,6 +283,37 @@ def main() -> None:
         "normal inference scheduling jitter must not split a continuous person track",
     )
 
+    # A detector box and its pose-refined box describe one person even when
+    # their overlap is below the old duplicate-suppression threshold.
+    pose_box_shift = TemporalObservationEngine(history_size=12, track_ttl_seconds=10)
+    before_shift = analysis(person([396.5, 71.3, 510.2, 359.0], posture="standing"))
+    pose_box_shift.update(24, before_shift, monotonic_at=1.0)
+    shifted_track = str(before_shift["people"][0]["track_id"])
+    shifted = analysis(person([396.5, 71.3, 510.2, 359.0], posture="unknown"))
+    shifted["poses"] = [{
+        "bbox": [352.1, 145.9, 451.3, 332.2],
+        "confidence": 0.688,
+        "posture": "sitting",
+        "posture_confidence": 0.7384,
+    }]
+    shifted_result = pose_box_shift.update(24, shifted, monotonic_at=1.4)
+    if shifted_result["current_track_ids"] != [shifted_track]:
+        raise SystemExit(
+            "one person with a shifted pose box must produce one continuous temporal track"
+        )
+    if shifted["poses"][0].get("track_id") != shifted_track:
+        raise SystemExit("matched pose must inherit the detector person's track identity")
+    shifted_low = analysis(person([367.0, 196.6, 454.2, 293.9], posture="unknown"))
+    shifted_low["poses"] = [{
+        "bbox": [367.0, 196.6, 454.2, 293.9],
+        "confidence": 0.5902,
+        "posture": "squatting",
+        "posture_confidence": 0.6959,
+    }]
+    pose_box_shift.update(24, shifted_low, monotonic_at=2.7)
+    if shifted_low["people"][0].get("track_id") != shifted_track:
+        raise SystemExit("sitting-to-squatting box deformation must preserve the same identity")
+
     # A new person after a long absence must never inherit the previous safety history.
     replacement = TemporalObservationEngine(
         history_size=12,
@@ -249,10 +345,14 @@ def main() -> None:
         "fast_transition_track": fast_track,
         "body_rotation_track": rotation_track,
         "scheduling_jitter_track": jitter_track,
+        "shifted_pose_box_track": shifted_track,
         "replacement_track": newcomer_track,
         "history_capacity": 8,
         "recent_evidence_snapshot_ids": [2, 3, 4],
+        "role_aware_evidence": role_sequence,
         "dynamic_evidence_track": dynamic_evidence_track,
+        "weak_presence_first_state": weak_first.get("presence_persistence_state"),
+        "weak_presence_second_state": weak_second.get("presence_persistence_state"),
     }, ensure_ascii=False, indent=2))
 
 

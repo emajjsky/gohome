@@ -109,7 +109,7 @@ def main() -> None:
         if upload_summary["pending"] != 0:
             raise SystemExit(f"life observation should not enqueue uploads: {upload_summary}")
 
-        worker._close_recovered_observations(
+        worker._close_observation_logs(
             camera,
             RuleEvaluation(
                 camera_id=int(camera["id"]),
@@ -130,39 +130,77 @@ def main() -> None:
             camera_id=int(camera["id"]),
             room="客厅",
             snapshot_id=int(snapshot["id"]),
-            payload={"evidence": {"schema_version": "gohome-event-evidence-v1"}},
+            payload={
+                "evidence": {"schema_version": "gohome-event-evidence-v1"},
+                "evaluation": {"state": {"fall_target": {"track_id": "c1-p1"}}},
+            },
         )
-        recovered_evaluation = RuleEvaluation(
+        unrelated_event = storage.create_event(
+            event_type="fall_candidate",
+            summary="旁人轨迹的独立事件",
+            level="critical",
+            camera_id=int(camera["id"]),
+            room="客厅",
+            snapshot_id=int(snapshot["id"]),
+            payload={"evaluation": {"state": {"fall_target": {"track_id": "c1-bystander"}}}},
+        )
+        unresolved_evaluation = RuleEvaluation(
             camera_id=int(camera["id"]),
             snapshot_id=int(snapshot["id"]),
             evaluated_at=(start + timedelta(seconds=780)).isoformat(),
             candidates=[],
-            state={"person_state": "visible", "motion_state": "moving", "fall_stage": "recovered"},
+            state={"person_state": "visible", "motion_state": "moving", "fall_stage": "candidate_cleared"},
         )
-        worker._close_recovered_observations(camera, recovered_evaluation, {"poses": []})
+        worker._resolve_recovered_fall_incident(camera, unresolved_evaluation)
         if storage.get_event(int(fall_event["id"]))["payload"].get("resolution"):
-            raise SystemExit("missing pose must not resolve a fall incident")
-        worker._close_recovered_observations(
-            camera,
-            recovered_evaluation,
-            {"poses": [{"posture": "standing", "posture_confidence": 0.44, "track_id": "c1-p1"}]},
+            raise SystemExit("candidate disappearance must not resolve a fall incident")
+        weak_recovery = RuleEvaluation(
+            camera_id=int(camera["id"]),
+            snapshot_id=int(snapshot["id"]),
+            evaluated_at=(start + timedelta(seconds=780)).isoformat(),
+            candidates=[],
+            state={
+                "fall_stage": "candidate_cleared",
+                "fall_recovery": {
+                    "confirmed": False,
+                    "posture": "standing",
+                    "confidence": 0.44,
+                    "track_id": "c1-p1",
+                },
+            },
         )
+        worker._resolve_recovered_fall_incident(camera, weak_recovery)
         if storage.get_event(int(fall_event["id"]))["payload"].get("resolution"):
-            raise SystemExit("weak upright pose must not resolve a fall incident")
-        worker._close_recovered_observations(
-            camera,
-            recovered_evaluation,
-            {"poses": [{"posture": "standing", "posture_confidence": 0.82, "track_id": "c1-p1"}]},
+            raise SystemExit("unconfirmed recovery evidence must not resolve a fall incident")
+        recovered_evaluation = RuleEvaluation(
+            camera_id=int(camera["id"]),
+            snapshot_id=int(snapshot["id"]),
+            evaluated_at=(start + timedelta(seconds=781)).isoformat(),
+            candidates=[],
+            state={
+                "fall_stage": "recovered",
+                "fall_recovery": {
+                    "schema_version": "gohome-physical-recovery-v1",
+                    "confirmed": True,
+                    "reason": "same_track_stable_upright",
+                    "posture": "standing",
+                    "confidence": 0.82,
+                    "track_id": "c1-p1",
+                    "bbox": [100, 20, 190, 250],
+                    "sample_count": 2,
+                    "required_samples": 2,
+                    "identity_match": "same_track",
+                },
+            },
         )
+        worker._resolve_recovered_fall_incident(camera, recovered_evaluation)
         resolved_fall = storage.get_event(int(fall_event["id"]))
         recovery_jobs = storage.list_upload_jobs(job_type="event_state_upload", limit=10)
         if resolved_fall["payload"].get("resolution") != "person_upright_again" or len(recovery_jobs) != 1:
             raise SystemExit(f"credible upright pose must enqueue one recovery upload: event={resolved_fall} jobs={recovery_jobs}")
-        worker._close_recovered_observations(
-            camera,
-            recovered_evaluation,
-            {"poses": [{"posture": "standing", "posture_confidence": 0.82, "track_id": "c1-p1"}]},
-        )
+        if storage.get_event(int(unrelated_event["id"]))["payload"].get("resolution"):
+            raise SystemExit("same-camera recovery must not resolve an unrelated person's event")
+        worker._resolve_recovered_fall_incident(camera, recovered_evaluation)
         if len(storage.list_upload_jobs(job_type="event_state_upload", limit=10)) != 1:
             raise SystemExit("repeated recovery frames must remain idempotent")
 

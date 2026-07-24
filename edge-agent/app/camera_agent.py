@@ -539,7 +539,6 @@ class CameraAgent:
                     last_good_frame = frame.copy()
                     display_frame = frame
 
-                self._store_latest_frame(camera, display_frame, source_label)
                 output_frame = self._resize_for_stream(cv2, display_frame, max_width=max_width, max_height=max_height)
                 ok, encoded = cv2.imencode(".jpg", output_frame, encode_params)
                 if not ok:

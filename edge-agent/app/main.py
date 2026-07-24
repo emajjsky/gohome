@@ -91,6 +91,7 @@ from .video_service import (
 from .adaptive_inference_scheduler import AdaptiveInferenceScheduler
 from .eacp_acceptance import EacpAcceptanceService
 from .worker import EdgeWorker
+from .vision.synchronized_pose_stream import SynchronizedPoseStream
 
 bearer_scheme = HTTPBearer(auto_error=False)
 SETUP_NETWORK_PAGE = "/setup/network.html"
@@ -1228,6 +1229,7 @@ worker = EdgeWorker(
         max_starvation_seconds=settings.inference_max_starvation_seconds,
     ),
 )
+synchronized_pose_stream = SynchronizedPoseStream(camera_agent, worker.continual_pose_tracker)
 video_distribution_service = VideoDistributionService(
     storage=storage,
     settings=settings,
@@ -3235,6 +3237,40 @@ def camera_mjpeg_stream(
             "Pragma": "no-cache",
             "Expires": "0",
             "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/cameras/{camera_id}/continual-pose/stream.mjpg")
+def synchronized_camera_pose_stream(
+    camera_id: int,
+    fps: int = 8,
+    width: int = 960,
+    height: int = 540,
+    quality: int = 72,
+) -> StreamingResponse:
+    camera = storage.get_camera(camera_id, include_secret=True)
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    fps = max(1, min(int(fps), 10))
+    width = max(320, min(int(width), 1280))
+    height = max(180, min(int(height), 720))
+    quality = max(40, min(int(quality), 90))
+    return StreamingResponse(
+        synchronized_pose_stream.mjpeg_frames(
+            camera,
+            fps=fps,
+            jpeg_quality=quality,
+            max_width=width,
+            max_height=height,
+        ),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Accel-Buffering": "no",
+            "X-GoHome-Pose-Stream": "synchronized",
         },
     )
 

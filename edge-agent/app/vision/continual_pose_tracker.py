@@ -64,6 +64,7 @@ class ContinualPoseTracker:
         max_age_seconds: float = 0.6,
         max_display_age_seconds: float = 1.2,
         minimum_interval_seconds: float = 0.1,
+        tracking_scale: float = 0.5,
         min_tracked_points: int = 6,
         min_tracked_ratio: float = 0.55,
         max_forward_backward_error: float = 1.8,
@@ -74,6 +75,7 @@ class ContinualPoseTracker:
         self.max_age_seconds = max(0.1, float(max_age_seconds))
         self.max_display_age_seconds = max(self.max_age_seconds, float(max_display_age_seconds))
         self.minimum_interval_seconds = max(0.02, float(minimum_interval_seconds))
+        self.tracking_scale = max(0.35, min(1.0, float(tracking_scale)))
         self.min_tracked_points = max(3, int(min_tracked_points))
         self.min_tracked_ratio = max(0.2, min(1.0, float(min_tracked_ratio)))
         self.max_forward_backward_error = max(0.2, float(max_forward_backward_error))
@@ -341,6 +343,7 @@ class ContinualPoseTracker:
                 "max_age_seconds": self.max_age_seconds,
                 "max_display_age_seconds": self.max_display_age_seconds,
                 "minimum_interval_seconds": self.minimum_interval_seconds,
+                "tracking_scale": self.tracking_scale,
                 "cameras": [
                     {
                         "camera_id": camera_id,
@@ -376,7 +379,7 @@ class ContinualPoseTracker:
         points = np.asarray(
             [[float(keypoints[index]["x"]), float(keypoints[index]["y"])] for index in indices],
             dtype=np.float32,
-        ).reshape(-1, 1, 2)
+        ).reshape(-1, 1, 2) * self.tracking_scale
         return {
             "pose": deepcopy(pose),
             "points": points,
@@ -445,7 +448,9 @@ class ContinualPoseTracker:
         for point_offset, keypoint_index in enumerate(point_indices):
             point = dict(keypoints[keypoint_index])
             if bool(valid[point_offset]):
-                x, y = next_points.reshape(-1, 2)[point_offset]
+                tracked_x, tracked_y = next_points.reshape(-1, 2)[point_offset]
+                x = tracked_x / self.tracking_scale
+                y = tracked_y / self.tracking_scale
                 point.update({
                     "x": round(float(x), 2),
                     "y": round(float(y), 2),
@@ -453,12 +458,12 @@ class ContinualPoseTracker:
                     "visible": True,
                 })
                 valid_indices.append(keypoint_index)
-                valid_points.append([float(x), float(y)])
+                valid_points.append([float(tracked_x), float(tracked_y)])
             else:
                 point.update({"visible": False, "confidence": 0.0})
             keypoints[keypoint_index] = point
 
-        displacement = np.median(new_valid - old_valid, axis=0)
+        displacement = np.median(new_valid - old_valid, axis=0) / self.tracking_scale
         pose["bbox"] = self._shift_bbox(pose.get("bbox"), displacement, frame)
         frame_height = max(1.0, float(frame.shape[0]))
         downward_displacement_ratio = max(0.0, float(displacement[1]) / frame_height)
@@ -703,7 +708,17 @@ class ContinualPoseTracker:
         }
 
     def _gray(self, cv2: Any, frame: Any) -> Any:
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if self.tracking_scale >= 0.999:
+            return gray
+        return cv2.resize(
+            gray,
+            (
+                max(1, int(round(gray.shape[1] * self.tracking_scale))),
+                max(1, int(round(gray.shape[0] * self.tracking_scale))),
+            ),
+            interpolation=cv2.INTER_AREA,
+        )
 
     def _display_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
         return {

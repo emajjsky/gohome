@@ -677,6 +677,8 @@ function createLocalAppServer(options = {}) {
         "suggested_event_type 只能是 fall_candidate、prolonged_floor_lying、fire_candidate、none、uncertain。",
         "如果图片模糊、遮挡、无人或不足以判断，使用 unknown/uncertain，不能强行确认。",
         "床或沙发上的正常躺卧通常不应判为紧急；持续时长以结构化边缘证据为准，不从单图猜测。",
+        "多张证据图按 before、transition、current 的时间顺序输入，必须比较同一人物的高度、身体方向、位移和最终落点。",
+        "跌倒应有动作前站立或坐姿、快速下降过程和动作后倒地证据；只有低位静态姿势、近镜头裁切或人物出画不能确认跌倒。",
         "必须区分人物与猫狗。猫狗不计入 person_count，宠物在地面、床或沙发上不能当作人物躺倒或跌倒证据。",
     ].join("\n");
 
@@ -3739,6 +3741,7 @@ function createLocalAppServer(options = {}) {
                             type: "text",
                             text: [
                                 `请按时间顺序复核这条家庭守护事件的 ${images.length} 张证据图。严格按系统约定只输出 JSON。`,
+                                `证据图角色顺序：${assets.map((asset) => String(asset.evidence_frame_role || "evidence")).join(" -> ")}。`,
                                 JSON.stringify(context),
                             ].join("\n\n"),
                         },
@@ -7086,8 +7089,22 @@ function createLocalAppServer(options = {}) {
         }
         const posture = String(evidence.posture || "");
         const confidence = Number(evidence.confidence || 0);
-        if (!["standing", "sitting", "squatting"].includes(posture) || !Number.isFinite(confidence) || confidence < 0.45) {
-            writeError(res, 400, "credible upright recovery evidence is required");
+        const recoveryConfirmed = evidence.confirmed === true;
+        const recoverySamples = Number(evidence.sample_count || 0);
+        const requiredSamples = Number(evidence.required_samples || 0);
+        const sameTrack = String(evidence.identity_match || "") === "same_track" && Boolean(String(evidence.track_id || ""));
+        if (
+            !["standing", "sitting"].includes(posture)
+            || !Number.isFinite(confidence)
+            || confidence < 0.45
+            || !recoveryConfirmed
+            || !sameTrack
+            || !Number.isFinite(recoverySamples)
+            || !Number.isFinite(requiredSamples)
+            || requiredSamples < 2
+            || recoverySamples < requiredSamples
+        ) {
+            writeError(res, 400, "same-track stable recovery evidence is required");
             return;
         }
         const event = store.db.events.find((item) => {
@@ -7118,6 +7135,9 @@ function createLocalAppServer(options = {}) {
                     confidence: Number(confidence.toFixed(4)),
                     track_id: String(evidence.track_id || ""),
                     bbox: Array.isArray(evidence.bbox) ? evidence.bbox.slice(0, 4) : [],
+                    sample_count: recoverySamples,
+                    required_samples: requiredSamples,
+                    identity_match: "same_track",
                 },
             };
             const linkedIncident = ensureSafetyIncident(linked);

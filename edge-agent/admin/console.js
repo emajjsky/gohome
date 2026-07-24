@@ -26,10 +26,14 @@ const state = {
   liveAnalysisErrorShown: false,
   liveAnalysisGeneration: 0,
   lastAnalysisCapturedAt: 0,
+  lastAnalysisFrameId: "",
+  serverAnnotated: false,
   liveEvaluationUpdatedAt: 0,
   candidateRecords: [],
   observationLogs: [],
   cloudVerifications: null,
+  cameraConfigAuthority: null,
+  runtimeStatus: null,
   eventLogRecords: [],
   eventLogStatusFilter: "all",
   eventLogTypeFilter: "all",
@@ -299,6 +303,7 @@ function prefillCameraForm() {
 async function loadDevice() {
   const device = await api("/api/device");
   state.device = device;
+  state.cameraConfigAuthority = device.camera_config_authority || null;
   state.detectorBackend = device.detector_backend || "basic";
   setText("detectorBackend", device.detector_backend || "-");
   setText("notifyChannel", device.notify_channel || "off");
@@ -311,8 +316,25 @@ async function loadDevice() {
   setText("setupDeviceName", device.name || "本地盒子");
   setText("setupDeviceUrl", device.api_base_url || "-");
   renderYoloState();
+  renderCameraConfigAuthority();
   renderAlgorithmDemo();
   prefillCameraForm();
+}
+
+function cameraConfigIsCloudManaged() {
+  return state.cameraConfigAuthority?.mode === "cloud_managed";
+}
+
+function renderCameraConfigAuthority() {
+  if (pageName !== "cameras") return;
+  const managed = cameraConfigIsCloudManaged();
+  setText(
+    "cameraSourceHint",
+    managed
+      ? "正式摄像头列表由回家 App 统一管理；本页只用于局域网扫描和连接测试。"
+      : "盒子尚未绑定云端，可在本页完成安装调试。"
+  );
+  updateCameraLimitState();
 }
 
 async function loadSetupNetwork() {
@@ -501,14 +523,22 @@ async function loadCameras(options = {}) {
 function updateCameraLimitState() {
   const count = physicalCameras().length;
   const remaining = Math.max(0, state.maxCameras - count);
-  setText("cameraLimitHint", `已接入 ${count}/${state.maxCameras} 路摄像头，还可新增 ${remaining} 路。`);
+  const managed = cameraConfigIsCloudManaged();
+  setText(
+    "cameraLimitHint",
+    managed
+      ? `云端已同步 ${count} 路摄像头；增删和启停请在回家 App 操作。`
+      : `已接入 ${count}/${state.maxCameras} 路摄像头，还可新增 ${remaining} 路。`
+  );
   const submit = $("cameraForm")?.querySelector('button[type="submit"]');
   const target = normalizeStreamUrl(cameraPayloadPreviewUrl());
   const editingExisting = physicalCameras().some((camera) => normalizeStreamUrl(camera.stream_url) === target);
   if (submit) {
-    submit.disabled = count >= state.maxCameras && !editingExisting;
+    submit.disabled = managed || (count >= state.maxCameras && !editingExisting);
     submit.innerHTML = submit.disabled
-      ? '<span class="material-symbols-outlined">block</span>已达 3 路上限'
+      ? managed
+        ? '<span class="material-symbols-outlined">cloud_sync</span>请在 App 配置'
+        : '<span class="material-symbols-outlined">block</span>已达 3 路上限'
       : '<span class="material-symbols-outlined">check_circle</span>保存启用';
   }
 }
@@ -566,8 +596,10 @@ function renderCameraList() {
         </div>
         <div class="row-actions">
           <button class="secondary-button" type="button" data-action="test" data-id="${camera.id}">测试</button>
-          <button class="ghost-button" type="button" data-action="toggle" data-id="${camera.id}" data-enabled="${camera.enabled ? "1" : "0"}">${camera.enabled ? "禁用" : "启用"}</button>
-          <button class="ghost-button danger" type="button" data-action="delete" data-id="${camera.id}">删除</button>
+          ${cameraConfigIsCloudManaged()
+            ? '<span class="camera-badge">云端同步</span>'
+            : `<button class="ghost-button" type="button" data-action="toggle" data-id="${camera.id}" data-enabled="${camera.enabled ? "1" : "0"}">${camera.enabled ? "禁用" : "启用"}</button>
+               <button class="ghost-button danger" type="button" data-action="delete" data-id="${camera.id}">删除</button>`}
         </div>
       </article>
     `;
@@ -692,6 +724,9 @@ async function testCameraConnection(button) {
 }
 
 async function saveCamera(payload) {
+  if (cameraConfigIsCloudManaged()) {
+    throw new Error("摄像头配置由回家 App 统一管理");
+  }
   const target = normalizeStreamUrl(payload.stream_url);
   const existing = state.cameras.find((camera) => normalizeStreamUrl(camera.stream_url) === target);
   if (!existing && !isDemoStreamUrl(payload.stream_url) && physicalCameras().length >= state.maxCameras) {
@@ -740,9 +775,11 @@ function renderStream({ retry = false } = {}) {
   if (pageName === "algorithms" && !retry) {
     stream.style.display = "block";
     state.lastAnalysisCapturedAt = 0;
+    state.lastAnalysisFrameId = "";
   }
   if (!camera) {
     stopLiveAnalysisLoop();
+    state.serverAnnotated = false;
     stream.removeAttribute("src");
     if (empty) {
       empty.style.display = "grid";
@@ -776,9 +813,13 @@ function renderStream({ retry = false } = {}) {
     setText("streamStatus", "实时视频已连接");
   };
   const streamProfile = pageName === "algorithms"
-    ? { fps: 10, width: 640, height: 360, quality: 52, drop: 1, label: "连续实时视频" }
+    ? { fps: 8, width: 640, height: 360, quality: 68, drop: 0, label: "同步姿态视频" }
     : { fps: 8, width: 1280, height: 720, quality: 64, drop: 1, label: "720p 低延迟视频" };
-  stream.src = `/api/cameras/${camera.id}/stream.mjpg?fps=${streamProfile.fps}&width=${streamProfile.width}&height=${streamProfile.height}&quality=${streamProfile.quality}&drop=${streamProfile.drop}&t=${Date.now()}`;
+  state.serverAnnotated = pageName === "algorithms";
+  const streamPath = state.serverAnnotated
+    ? `/api/cameras/${camera.id}/continual-pose/stream.mjpg`
+    : `/api/cameras/${camera.id}/stream.mjpg`;
+  stream.src = `${streamPath}?fps=${streamProfile.fps}&width=${streamProfile.width}&height=${streamProfile.height}&quality=${streamProfile.quality}&drop=${streamProfile.drop}&t=${Date.now()}`;
   state.streamMaskTimer = setTimeout(() => {
     if (stream.getAttribute("src") && empty) empty.style.display = "none";
   }, 900);
@@ -895,10 +936,7 @@ function algorithmNormalTagLabel(mode = state.previewAlgorithm || "quality", sna
   const analysis = snapshot?.analysis || {};
   if (!snapshot) return "-";
   if (mode === "unified") {
-    if (analysis.black_screen) return "画面异常";
-    if (analysis.fire_candidate || analysis.fire_event_candidate) return "火灾线索复核中";
-    if (["suspect", "confirming", "confirmed"].includes(latestFallRuntime().stage)) return "跌倒过程复核中";
-    return Number(snapshot.person_count ?? analysis.person_count ?? 0) > 0 ? "人物活动正常" : "当前无人";
+    return unifiedSafetyState(snapshot).title;
   }
   if (mode === "person") return Number(snapshot.person_count ?? analysis.person_count ?? 0) > 0 ? "有人" : "无人";
   if (mode === "fall") return "未出现跌倒候选";
@@ -908,6 +946,49 @@ function algorithmNormalTagLabel(mode = state.previewAlgorithm || "quality", sna
   if (mode === "fire") return "未确认火灾线索";
   if (mode === "camera") return analysis.black_screen ? "摄像头异常" : "链路正常";
   return analysis.black_screen ? "质量异常" : "质量正常";
+}
+
+function hasConfirmedFireEvent() {
+  const candidates = Array.isArray(state.latestEvaluation?.candidates) ? state.latestEvaluation.candidates : [];
+  const evaluationState = state.latestEvaluation?.state || {};
+  return evaluationState.activity_state === "fire_candidate"
+    || candidates.some((candidate) => candidate?.event_type === "fire_candidate");
+}
+
+function unifiedSafetyState(snapshot) {
+  const analysis = snapshot?.analysis || {};
+  const people = snapshotPeople(snapshot);
+  const poses = snapshotPoses(snapshot);
+  const pets = snapshotPets(snapshot);
+  const personCount = Number(snapshot?.person_count ?? analysis.person_count ?? people.length ?? 0);
+  const fallRuntime = latestFallRuntime();
+  const fallReview = ["suspect", "confirming"].includes(fallRuntime.stage);
+  const postureSummary = [...new Set(poses.map((pose) => postureLabel(pose.posture)).filter(Boolean))].join("、");
+  const sceneSummary = [...new Set(unifiedSceneTargets(snapshot).map(sceneLabel).filter(Boolean))].join("、");
+  const context = [
+    postureSummary ? `姿态 ${postureSummary}` : "",
+    sceneSummary ? `场景 ${sceneSummary}` : "",
+  ].filter(Boolean).join(" · ");
+
+  if (!snapshot) return { level: "idle", title: "等待检测", detail: "等待当前视频帧" };
+  if (analysis.black_screen) return { level: "critical", title: "摄像头画面异常", detail: "画面亮度或对比度异常" };
+  if (fallRuntime.stage === "confirmed") {
+    return { level: "critical", title: "跌倒事件已触发", detail: fallStageInfo(fallRuntime.stage, { personCount }).detail };
+  }
+  if (fallReview) {
+    return { level: "watch", title: "跌倒过程复核中", detail: fallStageInfo(fallRuntime.stage, { personCount }).detail };
+  }
+  if (hasConfirmedFireEvent()) return { level: "critical", title: "火灾事件已触发", detail: "连续视觉证据已满足事件规则" };
+  if (analysis.fire_event_candidate) return { level: "watch", title: "火灾过程复核中", detail: "动态火焰线索等待连续帧确认" };
+  if (personCount > 0 || poses.length > 0) {
+    return { level: "hit", title: `人物活动正常`, detail: context || `持续跟踪 ${personCount || poses.length} 人` };
+  }
+  if (pets.length > 0) return { level: "hit", title: "当前未看到人", detail: `检测到 ${pets.length} 只宠物` };
+  return {
+    level: "idle",
+    title: "当前画面无人",
+    detail: analysis.fire_candidate ? "存在弱火焰视觉线索，未形成事件" : (sceneSummary ? `场景 ${sceneSummary}` : "持续巡检中"),
+  };
 }
 
 function overlayPeopleForMode(snapshot, mode = state.previewAlgorithm || "quality") {
@@ -1010,6 +1091,11 @@ function imageFitRect(snapshot) {
 function renderDetectionOverlay(snapshot) {
   const overlay = $("detectionOverlay");
   if (!overlay) return;
+  if (pageName === "algorithms" && state.serverAnnotated) {
+    overlay.innerHTML = "";
+    overlay.removeAttribute("style");
+    return;
+  }
   const rect = imageFitRect(snapshot);
   const mode = state.previewAlgorithm || "quality";
   const people = overlayPeopleForMode(snapshot, mode);
@@ -1080,13 +1166,8 @@ function renderDetectionOverlay(snapshot) {
     `;
   }).join("");
   const analysis = snapshot?.analysis || {};
-  const alerts = [];
-  if (analysis.black_screen) alerts.push({ level: "critical", text: "摄像头画面异常" });
-  if (analysis.fire_event_candidate || analysis.fire_candidate) alerts.push({ level: "critical", text: analysis.fire_event_candidate ? "火灾事件候选" : "火灾线索复核中" });
-  if (fallActive) alerts.push({ level: "critical", text: fallRuntime.stage === "confirmed" ? "跌倒事件已确认" : "跌倒过程复核中" });
-  const alertMarkup = alerts.length
-    ? `<div class="perception-frame-alerts">${alerts.map((alert) => `<span class="${escapeHtml(alert.level)}">${escapeHtml(alert.text)}</span>`).join("")}</div>`
-    : '<div class="perception-frame-alerts"><span class="normal">安全状态正常</span></div>';
+  const safetyState = unifiedSafetyState(snapshot);
+  const alertMarkup = `<div class="perception-frame-alerts"><span class="${escapeHtml(safetyState.level === "critical" ? "critical" : safetyState.level === "watch" ? "watch" : "normal")}">${escapeHtml(safetyState.title)}</span></div>`;
   overlay.innerHTML = `${poseMarkup}${boxMarkup}${alertMarkup}`;
 }
 
@@ -1226,9 +1307,9 @@ function renderContinualPoseStatus(snapshot) {
   const tracking = snapshot?.analysis?.continual_pose || {};
   const trackingState = String(tracking.state || "empty");
   const sourceLabels = {
-    observed: "模型锚点",
-    tracked: "连续跟踪",
-    coasting: "等待模型锚点",
+    observed: "连续姿态",
+    tracked: "连续姿态",
+    coasting: "短暂补偿",
     expired: "跟踪已清除",
     empty: "等待人物",
   };
@@ -1469,18 +1550,14 @@ function algorithmHitState(snapshot) {
   if (!snapshot) return { hit, level, title, detail, score, scoreLabel, model: backendLabel(snapshot), latency: "-" };
 
   if (mode === "unified") {
-    const fallRuntime = latestFallRuntime();
-    const fallCandidate = ["suspect", "confirming", "confirmed"].includes(fallRuntime.stage);
-    const fireCandidate = Boolean(analysis.fire_candidate || analysis.fire_event_candidate);
-    const cameraAbnormal = Boolean(analysis.black_screen);
+    const safetyState = unifiedSafetyState(snapshot);
     hit = personCount > 0 || poses.length > 0 || pets.length > 0;
-    level = fallCandidate || fireCandidate || cameraAbnormal ? "critical" : hit ? "hit" : "idle";
-    title = fallCandidate
-      ? fallStageInfo(fallRuntime.stage, { personCount }).title
-      : fireCandidate ? "火灾线索复核中" : cameraAbnormal ? "摄像头画面异常" : personCount > 0 || poses.length > 0 ? `检测到 ${personCount || poses.length} 人` : pets.length ? `当前未看到人，检测到 ${pets.length} 只宠物` : "当前画面无人";
-    const postureSummary = [...new Set(poses.map((pose) => postureLabel(pose.posture)).filter(Boolean))].join("、");
-    const sceneSummary = [...new Set(unifiedSceneTargets(snapshot).map(sceneLabel).filter(Boolean))].join("、");
-    detail = [postureSummary ? `姿态 ${postureSummary}` : "姿态待识别", sceneSummary ? `场景 ${sceneSummary}` : "场景学习中"].join(" · ");
+    level = safetyState.level;
+    title = safetyState.title;
+    detail = safetyState.detail;
+    if (analysis.fire_candidate && !analysis.fire_event_candidate && level !== "critical") {
+      detail = `${detail} · 弱火焰线索未形成事件`;
+    }
     scoreLabel = "当前目标";
     score = `${personCount || poses.length || 0} 人 / ${pets.length} 只宠物`;
   } else if (mode === "person") {
@@ -1610,6 +1687,39 @@ function renderAlgorithmHitStrip(snapshot = state.latestSnapshot) {
   `;
 }
 
+function runtimeModeLabel(mode) {
+  const labels = {
+    idle: "巡检",
+    active: "感知",
+    risk: "高频",
+  };
+  return labels[String(mode || "")] || "-";
+}
+
+function renderRuntimeStatus(payload = state.runtimeStatus) {
+  if (pageName !== "algorithms") return;
+  const scheduler = payload?.inference_scheduler || {};
+  const cameras = Array.isArray(scheduler.cameras) ? scheduler.cameras : [];
+  const selected = cameras.find((camera) => Number(camera.camera_id) === Number(state.selectedCameraId)) || cameras[0] || {};
+  const resource = scheduler.resource || {};
+  const streams = payload?.camera_streams || {};
+  const poseRunning = payload?.continual_pose_running;
+  const fps = Number(selected.effective_fps);
+  const temp = Number(resource.temperature_c);
+  setText("runtimeMode", runtimeModeLabel(selected.mode));
+  setText("runtimeFps", Number.isFinite(fps) && fps > 0 ? fps.toFixed(1) : "-");
+  setText("runtimeTemp", Number.isFinite(temp) ? `${temp.toFixed(0)}°` : "-");
+  setText("runtimeStreams", streams.managed_stream_count === undefined ? "-" : `${streams.managed_stream_count} 路`);
+  setText("runtimePose", poseRunning ? "姿态跟踪" : "姿态待命");
+}
+
+async function loadRuntimeStatus() {
+  if (pageName !== "algorithms") return;
+  const payload = await api("/api/rules/runtime");
+  state.runtimeStatus = payload;
+  renderRuntimeStatus(payload);
+}
+
 function renderEmptySnapshot() {
   state.latestSnapshot = null;
   if ($("snapshotImage")) $("snapshotImage").removeAttribute("src");
@@ -1648,7 +1758,7 @@ async function loadSnapshot(cameraId) {
 }
 
 function liveAnalysisDelay() {
-  return 140;
+  return 500;
 }
 
 function stopLiveAnalysisLoop() {
@@ -1671,6 +1781,7 @@ function startLiveAnalysisLoop() {
   state.liveAnalysisGeneration += 1;
   const generation = state.liveAnalysisGeneration;
   state.lastAnalysisCapturedAt = 0;
+  state.lastAnalysisFrameId = "";
   if (!state.selectedCameraId) {
     renderAlgorithmHitStrip(null);
     return;
@@ -1705,13 +1816,34 @@ async function loadLiveAnalysis(generation = state.liveAnalysisGeneration) {
       ...(result.snapshot || {}),
       analysis: result.analysis || result.snapshot?.analysis || {},
       live_elapsed_ms: result.analysis_elapsed_ms ?? result.elapsed_ms ?? 0,
-      frame_id: result.frame_id || result.snapshot?.frame_id || "",
+      frame_id: result.frame_id || result.snapshot?.frame_id || result.tracking?.frame_id || "",
     };
+    const frameId = String(snapshot.frame_id || "").trim();
     const capturedAt = Date.parse(snapshot.captured_at || result.captured_at || "");
-    if (Number.isFinite(capturedAt) && capturedAt <= state.lastAnalysisCapturedAt) return;
+    const duplicateFrame = Boolean(frameId && frameId === state.lastAnalysisFrameId);
+    const duplicateTimestamp = !frameId && Number.isFinite(capturedAt) && capturedAt <= state.lastAnalysisCapturedAt;
+    if (duplicateFrame || duplicateTimestamp) return;
+    if (frameId) state.lastAnalysisFrameId = frameId;
     if (Number.isFinite(capturedAt)) {
       state.lastAnalysisCapturedAt = capturedAt;
       snapshot.frame_age_ms = Math.max(0, Date.now() - capturedAt);
+    }
+    if (Number.isFinite(Number(snapshot.frame_age_ms)) && Number(snapshot.frame_age_ms) > 2500) {
+      const staleTracking = snapshot.analysis?.continual_pose || result.tracking || {};
+      snapshot.analysis = {
+        ...snapshot.analysis,
+        people: [],
+        person_count: 0,
+        poses: [],
+        pose_count: 0,
+        continual_pose: {
+          ...staleTracking,
+          state: "expired",
+          reason: staleTracking.reason || "display_stale",
+          poses: [],
+        },
+      };
+      snapshot.person_count = 0;
     }
     state.liveAnalysisErrorShown = false;
     renderSnapshot(snapshot);
@@ -1719,9 +1851,9 @@ async function loadLiveAnalysis(generation = state.liveAnalysisGeneration) {
       state.liveEvaluationUpdatedAt = Date.now();
       loadEvaluation(cameraId).catch(renderEmptyEvaluation);
     }
-    setText("streamStatus", "后台连续感知");
   } catch (error) {
-    setText("streamStatus", "识别暂不可用");
+    setText("continualPoseSource", "姿态暂不可用");
+    if ($("continualPoseStatus")) $("continualPoseStatus").dataset.state = "expired";
     if (!state.liveAnalysisErrorShown) {
       showToast(userSafeError(error.message || "实时识别失败"));
       state.liveAnalysisErrorShown = true;
@@ -2305,6 +2437,9 @@ function renderEventLog() {
     const resultReason = eventLogVerificationReason(record);
     const incidentId = cloud?.incident?.incident_id || "";
     const uploadError = record.sync?.event_upload?.last_error || record.sync?.media_upload?.last_error || "";
+    const thumbnail = local.snapshot_url
+      ? `<button class="event-evidence-thumb" type="button" data-event-log-action="snapshot" data-url="${escapeHtml(local.snapshot_url)}"><img src="${escapeHtml(local.snapshot_url)}" alt=""><span>证据帧</span></button>`
+      : '<div class="event-evidence-thumb empty"><span>无证据帧</span></div>';
     return `
       <article class="event-log-card ${escapeHtml(lifecycle.tone || "")}">
         <header>
@@ -2315,17 +2450,19 @@ function renderEventLog() {
           </div>
           <span class="status-pill ${escapeHtml(lifecycle.tone || "")}">${escapeHtml(lifecycle.label)}</span>
         </header>
-        <div class="event-chain">
-          ${eventLogStage("盒子已触发", "规则形成正式事件", "done")}
-          ${eventLogStage(syncStage.label, uploadError || (local.snapshot_url ? "事件与截图证据" : "事件结构化数据"), syncStage.state)}
-          ${eventLogStage(cloudStage.label, cloud ? "edge_event_id 已匹配" : "保持本地事件等待同步", cloudStage.state)}
-          ${eventLogStage(lifecycle.label, resultReason || (incidentId ? `事故 ${incidentId}` : "等待后续状态"), ["confirmed", "attention"].includes(lifecycle.key) ? "failed" : ["rejected", "closed", "synced"].includes(lifecycle.key) ? "done" : "active")}
+        <div class="event-log-media-row">
+          ${thumbnail}
+          <div class="event-chain">
+            ${eventLogStage("盒子触发", "规则事件", "done")}
+            ${eventLogStage(syncStage.label, uploadError || (local.snapshot_url ? "事件 + 截图" : "结构化数据"), syncStage.state)}
+            ${eventLogStage(cloudStage.label, cloud ? "ID 已匹配" : "等待入库", cloudStage.state)}
+            ${eventLogStage(lifecycle.label, resultReason || (incidentId ? `事故 ${incidentId}` : "等待状态"), ["confirmed", "attention"].includes(lifecycle.key) ? "failed" : ["rejected", "closed", "synced"].includes(lifecycle.key) ? "done" : "active")}
+          </div>
         </div>
         ${pills.length ? `<div class="candidate-evidence">${pills.slice(0, 6).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
         <footer>
-          <span>${incidentId ? `Incident ${escapeHtml(incidentId)}` : "云端状态会自动回写到此处"}</span>
+          <span>${incidentId ? `事件 ${escapeHtml(incidentId)}` : "云端状态会自动回写到此处"}</span>
           <div class="event-log-actions">
-            ${local.snapshot_url ? `<button class="ghost-button" type="button" data-event-log-action="snapshot" data-url="${escapeHtml(local.snapshot_url)}">查看证据</button>` : ""}
             ${cloud && !["rejected", "closed"].includes(lifecycle.key) ? `<button class="ghost-button danger-text" type="button" data-event-log-action="false_positive" data-id="${local.id}">标记算法误报</button>` : ""}
           </div>
         </footer>
@@ -2540,8 +2677,11 @@ function renderCandidatePanel(candidates = state.candidateRecords) {
           <strong>${escapeHtml(explanation)}</strong>
           <span>${escapeHtml(candidateStatusLabel(candidate.status))}</span>
         </div>
-        <p>${escapeHtml(category)} · ${escapeHtml(meta || `记录 #${candidate.id || "-"}`)}</p>
-        ${detail ? `<p>${escapeHtml(detail)}</p>` : ""}
+        <div class="cinema-card-meta">
+          <span>${escapeHtml(category)}</span>
+          <span>${escapeHtml(meta || `#${candidate.id || "-"}`)}</span>
+          ${detail ? `<span>${escapeHtml(detail)}</span>` : ""}
+        </div>
         ${pills.length ? `<div class="candidate-evidence">${pills.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
       </article>
     `;
@@ -2611,8 +2751,10 @@ function renderObservationPanel(logs = state.observationLogs) {
           <strong>${escapeHtml(explanation)}</strong>
           <span>${escapeHtml(observationStatusLabel(log.status))}</span>
         </div>
-        <p>${escapeHtml(meta)}</p>
-        ${log.status === "open" ? `<p>最后更新 ${escapeHtml(fmtTime(log.last_seen_at))}</p>` : `<p>恢复时间 ${escapeHtml(fmtTime(log.ended_at))}</p>`}
+        <div class="cinema-card-meta">
+          <span>${escapeHtml(meta)}</span>
+          <span>${escapeHtml(log.status === "open" ? fmtTime(log.last_seen_at) : fmtTime(log.ended_at))}</span>
+        </div>
         ${pills.length ? `<div class="candidate-evidence">${pills.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
       </article>
     `;
@@ -2683,8 +2825,10 @@ function renderCloudVerifications(payload = state.cloudVerifications) {
           <strong>${escapeHtml(record.summary || eventTypeLabel(record.event_type))}</strong>
           <span>${escapeHtml(verificationStatusLabel(status))}</span>
         </div>
-        <p>${escapeHtml([record.room, fmtTime(record.updated_at || record.occurred_at), record.job?.model].filter(Boolean).join(" · "))}</p>
-        <p>${escapeHtml(reason)}</p>
+        <div class="cinema-card-meta">
+          <span>${escapeHtml([record.room, fmtTime(record.updated_at || record.occurred_at), record.job?.model].filter(Boolean).join(" · "))}</span>
+          <span>${escapeHtml(reason)}</span>
+        </div>
         ${pills.length ? `<div class="candidate-evidence">${pills.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
       </article>
     `;
@@ -2813,6 +2957,7 @@ async function refreshAll() {
       loadRules().catch(() => null),
     ]);
     await loadCameras();
+    await loadRuntimeStatus().catch(() => null);
     await loadCandidates().catch(() => null);
     await loadObservationLogs().catch(() => null);
     await loadUploadQueueSummary().catch(() => null);
@@ -2866,6 +3011,7 @@ function bindEvents() {
       await loadSnapshot(state.selectedCameraId).catch(renderEmptySnapshot);
     }
     await loadEvaluation(state.selectedCameraId).catch(renderEmptyEvaluation);
+    await loadRuntimeStatus().catch(() => null);
     startLiveAnalysisLoop();
   });
   on("modeLan", "click", () => setCameraMode("lan"));
@@ -3009,6 +3155,7 @@ document.addEventListener("DOMContentLoaded", () => {
       loadEvaluation(state.selectedCameraId).catch(() => null);
     }
     if (pageName === "home" || pageName === "algorithms") {
+      if (pageName === "algorithms") loadRuntimeStatus().catch(() => null);
       loadCandidates().catch(() => null);
       loadObservationLogs().catch(() => null);
       loadUploadQueueSummary().catch(() => null);
@@ -3016,4 +3163,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (pageName === "events") loadEventLog().catch(() => null);
   }, 6000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopLiveAnalysisLoop();
+      return;
+    }
+    if (pageName === "algorithms") startLiveAnalysisLoop();
+  });
 });

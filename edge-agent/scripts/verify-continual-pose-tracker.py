@@ -19,6 +19,7 @@ def main() -> None:
     tracker = ContinualPoseTracker(
         max_age_seconds=0.6,
         max_display_age_seconds=0.6,
+        tracking_scale=0.5,
         min_tracked_points=6,
         monotonic_clock=lambda: clock["now"],
     )
@@ -228,6 +229,8 @@ def main() -> None:
         raise SystemExit(f"bounded coasting did not expire: {coast_expired}")
 
     runtime = tracker.status([24, 25])
+    if runtime.get("tracking_scale") != 0.5:
+        raise SystemExit(f"continual pose runtime did not expose reduced-resolution tracking: {runtime}")
     camera_24_runtime = next(item for item in runtime["cameras"] if item["camera_id"] == 24)
     if camera_24_runtime["observed_count"] != 2 or camera_24_runtime["tracked_count"] < 1:
         raise SystemExit(f"continual pose runtime counters are incomplete: {runtime}")

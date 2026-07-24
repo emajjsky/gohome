@@ -10,8 +10,12 @@ from typing import Any, Dict
 
 
 LOW_POSTURES = {"lying", "low_body"}
+TRACK_TRANSITION_POSTURES = LOW_POSTURES | {"squatting", "bending"}
 UPRIGHT_POSTURES = {
     "standing", "sitting", "squatting", "bending", "upper_body", "standing_or_sitting",
+}
+EVIDENCE_BASELINE_POSTURES = {
+    "standing", "sitting", "standing_or_sitting", "seated_or_half_body",
 }
 POSTURE_TRANSITION_MIN_SHAPE_SIMILARITY = 0.16
 LOW_POSTURE_CONTINUITY_MIN_SHAPE_SIMILARITY = 0.22
@@ -19,6 +23,10 @@ DEFAULT_MIN_SHAPE_SIMILARITY = 0.28
 LOW_POSTURE_CONTINUITY_SCORE_BONUS = 0.12
 DIRECTION_REVERSAL_MIN_OBSERVED_IOU = 0.30
 TRACK_MATCH_SCHEDULER_JITTER_SECONDS = 0.15
+PRESENCE_DIRECT_MIN_CONFIDENCE = 0.35
+PRESENCE_TRACKED_MIN_CONFIDENCE = 0.30
+PRESENCE_TRACKED_MIN_SAMPLES = 2
+PRESENCE_POSE_MIN_CONFIDENCE = 0.45
 
 
 class TemporalObservationEngine:
@@ -112,9 +120,14 @@ class TemporalObservationEngine:
                 "sample_count": int(track.get("sample_count") or 0) + 1,
                 "bbox_velocity": velocity,
             })
-            assigned.append({**detection, "track_id": track_id})
+            assigned.append({
+                **detection,
+                "track_id": track_id,
+                "track_sample_count": int(track["sample_count"]),
+            })
 
         self._annotate_analysis(people, poses, assigned, frame_width, frame_height)
+        credible_assigned, presence_quality = self._credible_presence(assigned)
         episode_updates, switched_closures = self._update_posture_states(camera_id, assigned, timestamp, now_mono)
         episode_closures.extend(switched_closures)
         active_tracks = [self._public_track(item) for item in tracks.values() if now_mono - float(item.get("last_seen_monotonic") or 0.0) <= self.track_ttl_seconds]
@@ -123,6 +136,13 @@ class TemporalObservationEngine:
             "observed_at": timestamp,
             "person_present": bool(assigned),
             "person_count": len(assigned),
+            "credible_person_present": bool(credible_assigned),
+            "credible_person_count": len(credible_assigned),
+            "credible_track_ids": [str(item["track_id"]) for item in credible_assigned],
+            "presence_persistence_state": (
+                "visible" if credible_assigned else "uncertain" if assigned else "absent"
+            ),
+            "presence_quality": presence_quality,
             "track_ids": current_track_ids,
             "postures": sorted({str(item.get("posture") or "unknown") for item in assigned}),
             "tracks": [self._history_track(item) for item in assigned],
@@ -140,6 +160,11 @@ class TemporalObservationEngine:
             "camera_id": camera_id,
             "person_present": observation["person_present"],
             "person_count": observation["person_count"],
+            "credible_person_present": observation["credible_person_present"],
+            "credible_person_count": observation["credible_person_count"],
+            "credible_track_ids": observation["credible_track_ids"],
+            "presence_persistence_state": observation["presence_persistence_state"],
+            "presence_quality": observation["presence_quality"],
             "current_track_ids": current_track_ids,
             "active_tracks": sorted(active_tracks, key=lambda item: item["track_id"]),
             "history_sample_count": len(history),
@@ -149,6 +174,49 @@ class TemporalObservationEngine:
         }
         analysis["temporal_observation"] = result
         return result
+
+    def _credible_presence(
+        self,
+        assigned: list[Dict[str, Any]],
+    ) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
+        credible: list[Dict[str, Any]] = []
+        decisions: list[Dict[str, Any]] = []
+        for item in assigned:
+            confidence = float(item.get("confidence") or 0.0)
+            posture = str(item.get("posture") or "unknown")
+            posture_confidence = float(item.get("posture_confidence") or 0.0)
+            sample_count = int(item.get("track_sample_count") or 0)
+            direct_model = confidence >= PRESENCE_DIRECT_MIN_CONFIDENCE
+            pose_supported = posture != "unknown" and posture_confidence >= PRESENCE_POSE_MIN_CONFIDENCE
+            repeated_model = bool(
+                sample_count >= PRESENCE_TRACKED_MIN_SAMPLES
+                and confidence >= PRESENCE_TRACKED_MIN_CONFIDENCE
+            )
+            accepted = bool(direct_model or pose_supported or repeated_model)
+            if accepted:
+                credible.append(item)
+            decisions.append({
+                "track_id": str(item.get("track_id") or ""),
+                "accepted": accepted,
+                "confidence": round(confidence, 4),
+                "posture_confidence": round(posture_confidence, 4),
+                "sample_count": sample_count,
+                "evidence": {
+                    "direct_model": direct_model,
+                    "pose_supported": pose_supported,
+                    "repeated_model": repeated_model,
+                },
+            })
+        return credible, {
+            "schema_version": "presence-evidence-quality-v1",
+            "thresholds": {
+                "direct_confidence": PRESENCE_DIRECT_MIN_CONFIDENCE,
+                "tracked_confidence": PRESENCE_TRACKED_MIN_CONFIDENCE,
+                "tracked_samples": PRESENCE_TRACKED_MIN_SAMPLES,
+                "pose_confidence": PRESENCE_POSE_MIN_CONFIDENCE,
+            },
+            "tracks": decisions,
+        }
 
     def attach_snapshot(self, camera_id: int, snapshot: Dict[str, Any]) -> None:
         history = self._histories.get(int(camera_id))
@@ -182,10 +250,15 @@ class TemporalObservationEngine:
                 ]
             except (TypeError, ValueError):
                 pass
-        snapshots = [item for item in history if item.get("snapshot_id")]
-        selected = self._representative_samples(snapshots, max(1, min(3, int(limit))))
+        evidence_limit = max(1, min(3, int(limit)))
+        selected = self._role_aware_evidence_samples(
+            history,
+            track_id=track_id,
+            limit=evidence_limit,
+        )
         return {
             "schema_version": "temporal-evidence-bundle-v1",
+            "selection_policy": "role-aware-pose-transition-v2",
             "event_type": str(event_type),
             "track_id": str(track_id or ""),
             "window_started_at": history[0].get("observed_at") if history else None,
@@ -199,6 +272,7 @@ class TemporalObservationEngine:
                     "observed_at": item.get("observed_at"),
                     "postures": item.get("postures") or [],
                     "motion_score": item.get("motion_score"),
+                    "role": item.get("_evidence_role") or "evidence",
                 }
                 for item in selected
             ],
@@ -219,22 +293,47 @@ class TemporalObservationEngine:
 
     def _detections(self, people: list[Dict[str, Any]], poses: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
         detections = []
-        for person in people:
-            if not self._valid_bbox(person.get("bbox")):
-                continue
-            matching_pose = self._best_overlapping_pose(person.get("bbox"), poses)
+        valid_people = [person for person in people if self._valid_bbox(person.get("bbox"))]
+        valid_poses = [pose for pose in poses if self._valid_bbox(pose.get("bbox"))]
+        pose_assignments = self._match_people_to_poses(valid_people, valid_poses)
+        matched_pose_indices = set(pose_assignments.values())
+        for person_index, person in enumerate(valid_people):
+            pose_index = pose_assignments.get(person_index)
+            matching_pose = valid_poses[pose_index] if pose_index is not None else None
             item = self._detection(person, "person", posture_source=matching_pose)
             if item is not None:
                 detections.append(item)
-        for pose in poses:
-            if not self._valid_bbox(pose.get("bbox")):
-                continue
-            if any(self._iou(pose.get("bbox"), item.get("bbox")) >= 0.35 for item in detections):
+        for pose_index, pose in enumerate(valid_poses):
+            if pose_index in matched_pose_indices:
                 continue
             item = self._detection(pose, "pose", posture_source=pose)
             if item is not None:
                 detections.append(item)
         return detections
+
+    def _match_people_to_poses(
+        self,
+        people: list[Dict[str, Any]],
+        poses: list[Dict[str, Any]],
+    ) -> dict[int, int]:
+        candidates = sorted(
+            (
+                (self._iou(person["bbox"], pose["bbox"]), person_index, pose_index)
+                for person_index, person in enumerate(people)
+                for pose_index, pose in enumerate(poses)
+            ),
+            reverse=True,
+        )
+        assignments: dict[int, int] = {}
+        used_pose_indices: set[int] = set()
+        for overlap, person_index, pose_index in candidates:
+            if overlap < 0.20:
+                break
+            if person_index in assignments or pose_index in used_pose_indices:
+                continue
+            assignments[person_index] = pose_index
+            used_pose_indices.add(pose_index)
+        return assignments
 
     def _detection(
         self,
@@ -255,16 +354,14 @@ class TemporalObservationEngine:
             "scene_zone_id": posture_item.get("scene_zone_id") or item.get("scene_zone_id"),
             "scene_zone_label": posture_item.get("scene_zone_label") or item.get("scene_zone_label"),
             "source": source,
+            "track_id_hint": str(
+                item.get("_continual_track_id_hint")
+                or posture_item.get("_continual_track_id_hint")
+                or ""
+            ),
             "source_item": item,
             "pose_item": posture_source,
         }
-
-    def _best_overlapping_pose(self, bbox: Any, poses: list[Dict[str, Any]]) -> Dict[str, Any] | None:
-        candidates = [pose for pose in poses if self._valid_bbox(pose.get("bbox"))]
-        if not candidates:
-            return None
-        best = max(candidates, key=lambda pose: self._iou(bbox, pose.get("bbox")))
-        return best if self._iou(bbox, best.get("bbox")) >= 0.20 else None
 
     def _assign_tracks(
         self,
@@ -287,25 +384,42 @@ class TemporalObservationEngine:
         ]
         if not candidate_ids:
             return {}
+        assignments: dict[int, str] = {}
+        used_track_ids: set[str] = set()
+        for detection_index, detection in enumerate(detections):
+            hint = str(detection.get("track_id_hint") or "")
+            if hint and hint in candidate_ids and hint not in used_track_ids:
+                assignments[detection_index] = hint
+                used_track_ids.add(hint)
+
+        remaining_detection_indices = [
+            index for index in range(len(detections)) if index not in assignments
+        ]
+        remaining_candidate_ids = [
+            track_id for track_id in candidate_ids if track_id not in used_track_ids
+        ]
+        if not remaining_detection_indices or not remaining_candidate_ids:
+            return assignments
         scores = [
             [
                 self._assignment_score(
-                    detection,
+                    detections[detection_index],
                     tracks[track_id],
                     now_mono=now_mono,
                     frame_width=frame_width,
                     frame_height=frame_height,
                 )
-                for track_id in candidate_ids
+                for track_id in remaining_candidate_ids
             ]
-            for detection in detections
+            for detection_index in remaining_detection_indices
         ]
         pairs = self._maximum_score_assignment(scores)
-        return {
-            detection_index: candidate_ids[track_index]
+        assignments.update({
+            remaining_detection_indices[detection_index]: remaining_candidate_ids[track_index]
             for detection_index, track_index in pairs
             if scores[detection_index][track_index] > 0.0
-        }
+        })
+        return assignments
 
     def _assignment_score(
         self,
@@ -355,6 +469,7 @@ class TemporalObservationEngine:
             direction < -0.65
             and predicted_iou < 0.30
             and observed_iou < DIRECTION_REVERSAL_MIN_OBSERVED_IOU
+            and not transition
         ):
             return -math.inf
         distance_score = max(0.0, 1.0 - predicted_distance / max(distance_gate, 0.01))
@@ -512,7 +627,7 @@ class TemporalObservationEngine:
     def _credible_posture_transition(self, previous: Any, current: Any) -> bool:
         return bool(
             str(previous or "").lower() in UPRIGHT_POSTURES
-            and str(current or "").lower() in LOW_POSTURES
+            and str(current or "").lower() in TRACK_TRANSITION_POSTURES
         )
 
     def _credible_low_posture_continuity(self, previous: Any, current: Any) -> bool:
@@ -548,6 +663,9 @@ class TemporalObservationEngine:
             best = self._nearest_assignment(person["bbox"], assigned, frame_width, frame_height)
             if best is not None:
                 person["track_id"] = best["track_id"]
+        for item in [*people, *poses]:
+            if isinstance(item, dict):
+                item.pop("_continual_track_id_hint", None)
 
     def _nearest_assignment(self, bbox: Any, assigned: list[Dict[str, Any]], width: float, height: float) -> Dict[str, Any] | None:
         if not assigned:
@@ -593,9 +711,125 @@ class TemporalObservationEngine:
             "posture": str(item.get("posture") or "unknown"),
             "posture_confidence": round(float(item.get("posture_confidence") or 0.0), 4),
             "normal_lying_zone": bool(item.get("normal_lying_zone")),
+            "frame_edge_clipped": bool(item.get("frame_edge_clipped")),
             "scene_zone_id": item.get("scene_zone_id"),
             "scene_zone_label": item.get("scene_zone_label"),
         }
+
+    def _role_aware_evidence_samples(
+        self,
+        history: list[Dict[str, Any]],
+        *,
+        track_id: str | None,
+        limit: int,
+    ) -> list[Dict[str, Any]]:
+        snapshots = [(index, item) for index, item in enumerate(history) if item.get("snapshot_id")]
+        if not snapshots:
+            return []
+
+        postures = [self._observation_posture(item, track_id) for item in history]
+        transition_index = None
+        for index in range(1, len(postures)):
+            if postures[index] in LOW_POSTURES and postures[index - 1] not in LOW_POSTURES:
+                transition_index = index
+        if transition_index is None:
+            representatives = self._representative_samples(
+                [item for _index, item in snapshots],
+                limit,
+            )
+            roles = (
+                ["current"]
+                if len(representatives) == 1
+                else ["before", "current"]
+                if len(representatives) == 2
+                else ["before", "transition", "current"]
+            )
+            return [
+                {**item, "_evidence_role": roles[index]}
+                for index, item in enumerate(representatives)
+            ]
+
+        current_index, current = next(
+            ((index, item) for index, item in reversed(snapshots) if index >= transition_index),
+            snapshots[-1],
+        )
+        baseline_candidates = [
+            (index, item)
+            for index, item in snapshots
+            if index < transition_index
+            and postures[index] in EVIDENCE_BASELINE_POSTURES
+            and not self._observation_edge_clipped(item, track_id)
+        ]
+        if not baseline_candidates:
+            baseline_candidates = [
+                (index, item)
+                for index, item in snapshots
+                if index < transition_index
+                and postures[index] in UPRIGHT_POSTURES
+                and not self._observation_edge_clipped(item, track_id)
+            ]
+        before_pair = baseline_candidates[-1] if baseline_candidates else None
+        before_index = before_pair[0] if before_pair else -1
+
+        transition_candidates = [
+            (index, item)
+            for index, item in snapshots
+            if before_index < index < current_index
+            and (before_pair is None or item.get("snapshot_id") != before_pair[1].get("snapshot_id"))
+        ]
+        transition_pair = max(
+            transition_candidates,
+            key=lambda pair: (
+                -abs(pair[0] - transition_index),
+                float(pair[1].get("motion_score") or 0.0),
+            ),
+            default=None,
+        )
+
+        selected: dict[str, Dict[str, Any]] = {"current": current}
+        if before_pair is not None:
+            selected["before"] = before_pair[1]
+        if transition_pair is not None:
+            selected["transition"] = transition_pair[1]
+
+        used_ids = {item.get("snapshot_id") for item in selected.values()}
+        remaining = [item for _index, item in snapshots if item.get("snapshot_id") not in used_ids]
+        for role in ("before", "transition"):
+            if role in selected or not remaining:
+                continue
+            candidate = remaining.pop(0 if role == "before" else -1)
+            selected[role] = candidate
+
+        role_order = (
+            ("current",)
+            if limit == 1
+            else ("before", "current")
+            if limit == 2 and "before" in selected
+            else ("transition", "current")
+            if limit == 2
+            else ("before", "transition", "current")
+        )
+        return [
+            {**selected[role], "_evidence_role": role}
+            for role in role_order
+            if role in selected
+        ]
+
+    def _observation_posture(self, observation: Dict[str, Any], track_id: str | None) -> str:
+        tracks = observation.get("tracks") if isinstance(observation.get("tracks"), list) else []
+        track = next(
+            (item for item in tracks if not track_id or str(item.get("track_id") or "") == str(track_id)),
+            None,
+        )
+        return str((track or {}).get("posture") or "unknown")
+
+    def _observation_edge_clipped(self, observation: Dict[str, Any], track_id: str | None) -> bool:
+        tracks = observation.get("tracks") if isinstance(observation.get("tracks"), list) else []
+        track = next(
+            (item for item in tracks if not track_id or str(item.get("track_id") or "") == str(track_id)),
+            None,
+        )
+        return bool((track or {}).get("frame_edge_clipped"))
 
     def _representative_samples(self, items: list[Dict[str, Any]], limit: int) -> list[Dict[str, Any]]:
         if len(items) <= limit:

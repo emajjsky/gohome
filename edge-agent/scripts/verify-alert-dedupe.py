@@ -14,10 +14,21 @@ from app.event_agent import EventAgent
 from app.storage import Storage
 
 
+class SilentNotifier:
+    def send(self, **_kwargs) -> None:
+        return None
+
+
 def candidate(event_type: str, snapshot_id: int, score: float) -> dict:
+    if event_type == "fire_candidate":
+        summary = "客厅摄像头 检测到疑似明火视觉线索。"
+    elif event_type == "fall_candidate":
+        summary = "客厅摄像头 检测到快速倒地过程。"
+    else:
+        summary = "客厅摄像头 画面疑似黑屏或遮挡。"
     return {
         "event_type": event_type,
-        "summary": "客厅摄像头 检测到疑似明火视觉线索。" if event_type == "fire_candidate" else "客厅摄像头 画面疑似黑屏或遮挡。",
+        "summary": summary,
         "level": "critical" if event_type == "fire_candidate" else "warning",
         "snapshot_id": snapshot_id,
         "payload": {
@@ -72,9 +83,87 @@ def main() -> None:
         if int(fire_rows[0]["id"]) != promoted_ids[-1]:
             raise SystemExit(f"expected latest fire candidate {promoted_ids[-1]}, got {fire_rows[0]['id']}")
 
-        event_agent = EventAgent(storage, notifier=None, throttle_seconds=300)
+        event_agent = EventAgent(storage, notifier=SilentNotifier(), throttle_seconds=300)
         if event_agent._throttle_seconds("fire_candidate") < 1800:
             raise SystemExit("fire throttle should be at least 30 minutes")
+
+        first_fall_candidate = storage.create_event_candidate(
+            camera_id=int(camera["id"]),
+            detection_result_id=None,
+            rule_evaluation_id=None,
+            candidate=candidate("fall_candidate", 21, 0.91),
+            evaluated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        first_fall = event_agent.emit(
+            event_type="fall_candidate",
+            summary="客厅摄像头 检测到快速倒地过程。",
+            level="critical",
+            camera=camera,
+            candidate_id=int(first_fall_candidate["id"]),
+            payload={"rule": {"id": "fall_candidate"}},
+        )
+        if not first_fall:
+            raise SystemExit("first fall candidate must create an event")
+
+        repeated_fall_candidate = storage.create_event_candidate(
+            camera_id=int(camera["id"]),
+            detection_result_id=None,
+            rule_evaluation_id=None,
+            candidate=candidate("fall_candidate", 22, 0.93),
+            evaluated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        repeated_fall = event_agent.emit(
+            event_type="fall_candidate",
+            summary="客厅摄像头 连续命中快速倒地过程。",
+            level="critical",
+            camera=camera,
+            candidate_id=int(repeated_fall_candidate["id"]),
+            payload={"rule": {"id": "fall_candidate"}},
+        )
+        if repeated_fall is not None:
+            raise SystemExit("same-action fall evidence must aggregate into the recent event")
+        aggregated_rows = storage.list_event_candidates(limit=10, status="aggregated")
+        aggregated = next(
+            (row for row in aggregated_rows if int(row["id"]) == int(repeated_fall_candidate["id"])),
+            None,
+        )
+        if not aggregated or int(aggregated.get("promoted_event_id") or 0) != int(first_fall["id"]):
+            raise SystemExit(f"repeated fall candidate was not linked to its incident: {aggregated_rows}")
+        aggregated_event = storage.get_event(int(first_fall["id"])) or {}
+        aggregation = (aggregated_event.get("payload") or {}).get("candidate_aggregation") or {}
+        if aggregation.get("repeat_count") != 1 or aggregation.get("total_candidate_count") != 2:
+            raise SystemExit(f"event aggregation audit data is incomplete: {aggregation}")
+        event_upload = next(
+            (
+                job for job in storage.list_upload_jobs(limit=20, job_type="event_upload")
+                if int(job.get("event_id") or 0) == int(first_fall["id"])
+            ),
+            None,
+        )
+        uploaded_aggregation = ((event_upload or {}).get("payload") or {}).get("payload", {}).get("candidate_aggregation") or {}
+        if uploaded_aggregation.get("repeat_count") != 1:
+            raise SystemExit(f"pending cloud event did not receive aggregate evidence: {event_upload}")
+
+        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=9)).isoformat()
+        with storage.connect() as conn:
+            conn.execute("UPDATE events SET occurred_at = ? WHERE id = ?", (expired_at, int(first_fall["id"])))
+        later_fall_candidate = storage.create_event_candidate(
+            camera_id=int(camera["id"]),
+            detection_result_id=None,
+            rule_evaluation_id=None,
+            candidate=candidate("fall_candidate", 23, 0.95),
+            evaluated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        later_fall = event_agent.emit(
+            event_type="fall_candidate",
+            summary="客厅摄像头 检测到新的快速倒地过程。",
+            level="critical",
+            camera=camera,
+            candidate_id=int(later_fall_candidate["id"]),
+            payload={"rule": {"id": "fall_candidate"}},
+        )
+        if not later_fall or int(later_fall["id"]) == int(first_fall["id"]):
+            raise SystemExit("a distinct later fall must create a new cloud-review event")
 
         print(
             json.dumps(
@@ -83,6 +172,9 @@ def main() -> None:
                     "active_count": len(active),
                     "latest_fire_candidate_id": fire_rows[0]["id"],
                     "fire_throttle_seconds": event_agent._throttle_seconds("fire_candidate"),
+                    "fall_aggregation_window_seconds": event_agent._throttle_seconds("fall_candidate"),
+                    "aggregated_candidate_id": repeated_fall_candidate["id"],
+                    "later_event_id": later_fall["id"],
                 },
                 ensure_ascii=False,
                 indent=2,
