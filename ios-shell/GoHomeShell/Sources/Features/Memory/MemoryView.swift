@@ -15,13 +15,9 @@ struct MemoryView: View {
     let apiClient: APIClient?
     let user: AppUser
     let family: AppFamily
-    @State private var editorMemory: FamilyMemory?
-    @State private var isComposerPresented = false
     @State private var commentMemory: FamilyMemory?
     @State private var pickerRoute: MemoryPickerRoute?
-    @State private var pendingComposerSeed: MemoryComposerSeed?
-    @State private var composerSeed = MemoryComposerSeed.empty
-    @State private var composerSessionID = UUID()
+    @State private var composerPresentation = MemoryComposerPresentationState()
     @State private var mediaPickerError: String?
 
     var body: some View {
@@ -46,11 +42,7 @@ struct MemoryView: View {
                             isPending: model.pendingIDs.contains(memory.id),
                             onFavorite: { Task { await model.toggleFavorite(memory) } },
                             onComment: { commentMemory = memory },
-                            onEdit: {
-                                editorMemory = memory
-                                composerSessionID = UUID()
-                                isComposerPresented = true
-                            },
+                            onEdit: { composerPresentation.presentEditor(for: memory) },
                             onDelete: { Task { _ = await model.delete(memory) } }
                         )
                         Divider().overlay(GoHomeTheme.softLine)
@@ -95,18 +87,14 @@ struct MemoryView: View {
                 }
             }
         }
-        .sheet(isPresented: $isComposerPresented, onDismiss: {
-            editorMemory = nil
-            composerSeed = .empty
-        }) {
+        .sheet(item: composerRequestBinding) { request in
             MemoryComposer(
-                memory: editorMemory,
-                seed: composerSeed,
+                memory: request.memory,
+                seed: request.seed,
                 model: model,
                 apiClient: apiClient,
-                isPresented: $isComposerPresented
+                isPresented: composerIsPresentedBinding
             )
-            .id(composerSessionID)
         }
         .sheet(item: $commentMemory) { memory in
             MemoryCommentComposer(memory: memory, model: model, isPresented: Binding(
@@ -126,6 +114,9 @@ struct MemoryView: View {
             Button("知道了", role: .cancel) {}
         } message: {
             Text(mediaPickerError ?? model.errorMessage ?? "请稍后重试")
+        }
+        .onDisappear {
+            composerPresentation.discardPending()
         }
         .accessibilityIdentifier("memory-content-anchor")
     }
@@ -191,12 +182,12 @@ struct MemoryView: View {
     }
 
     private func openPhotos() {
-        editorMemory = nil
+        composerPresentation.discardPending()
         pickerRoute = .libraryImages
     }
 
     private func openVideo() {
-        editorMemory = nil
+        composerPresentation.discardPending()
         pickerRoute = .libraryVideo
     }
 
@@ -205,26 +196,41 @@ struct MemoryView: View {
             mediaPickerError = MemoryMediaPickerError.cameraUnavailable.localizedDescription
             return
         }
-        editorMemory = nil
+        composerPresentation.discardPending()
         pickerRoute = .camera
     }
 
     private func receivePickedMedia(_ media: [MemoryPickedMedia]) {
-        pendingComposerSeed = MemoryComposerSeed(media: media)
+        composerPresentation.stage(media)
         pickerRoute = nil
     }
 
     private func handlePickerError(_ message: String) {
+        composerPresentation.discardPending()
         mediaPickerError = message
         pickerRoute = nil
     }
 
     private func presentPendingComposer() {
-        guard let seed = pendingComposerSeed else { return }
-        pendingComposerSeed = nil
-        composerSeed = seed
-        composerSessionID = UUID()
-        isComposerPresented = true
+        composerPresentation.promotePending()
+    }
+
+    private var composerRequestBinding: Binding<MemoryComposerRequest?> {
+        Binding(
+            get: { composerPresentation.activeRequest },
+            set: { request in
+                if request == nil { composerPresentation.dismissActive() }
+            }
+        )
+    }
+
+    private var composerIsPresentedBinding: Binding<Bool> {
+        Binding(
+            get: { composerPresentation.activeRequest != nil },
+            set: { isPresented in
+                if !isPresented { composerPresentation.dismissActive() }
+            }
+        )
     }
 }
 
@@ -1049,7 +1055,7 @@ private struct MemoryComposer: View {
     }
 
     private func cleanupSeedFiles() {
-        seed.media.forEach { try? FileManager.default.removeItem(at: $0.localURL) }
+        seed.removeStagedFiles()
     }
 
     private func publish() {

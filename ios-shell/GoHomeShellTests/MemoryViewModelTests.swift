@@ -72,6 +72,58 @@ final class MemoryViewModelTests: XCTestCase {
         XCTAssertEqual(MemoryLibrarySelectionMode.video.kind, .video)
     }
 
+    func testFirstPickerSelectionPromotesTheExactMediaRequest() throws {
+        let url = try makeStagedMediaFile()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let media = MemoryPickedMedia(kind: .image, localURL: url)
+        var presentation = MemoryComposerPresentationState()
+
+        presentation.stage([media])
+        let pendingID = try XCTUnwrap(presentation.pendingRequest?.id)
+        presentation.promotePending()
+
+        XCTAssertEqual(presentation.activeRequest?.id, pendingID)
+        XCTAssertEqual(presentation.activeRequest?.seed.media.map(\.localURL), [url])
+        XCTAssertNil(presentation.pendingRequest)
+    }
+
+    func testReplacingPendingPickerSelectionRemovesAbandonedFiles() throws {
+        let abandonedURL = try makeStagedMediaFile()
+        let retainedURL = try makeStagedMediaFile()
+        defer { try? FileManager.default.removeItem(at: retainedURL) }
+        var presentation = MemoryComposerPresentationState()
+
+        presentation.stage([MemoryPickedMedia(kind: .image, localURL: abandonedURL)])
+        presentation.stage([MemoryPickedMedia(kind: .image, localURL: retainedURL)])
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: abandonedURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: retainedURL.path))
+        XCTAssertEqual(presentation.pendingRequest?.seed.media.map(\.localURL), [retainedURL])
+    }
+
+    func testCancellingPendingPickerSelectionLeavesNoComposerRequest() throws {
+        let url = try makeStagedMediaFile()
+        var presentation = MemoryComposerPresentationState()
+
+        presentation.stage([MemoryPickedMedia(kind: .video, localURL: url)])
+        presentation.discardPending()
+
+        XCTAssertNil(presentation.pendingRequest)
+        XCTAssertNil(presentation.activeRequest)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testEditingMemoryPresentsAnEmptySeed() {
+        let memory = makeMemory(id: "memory-edit", body: "准备修改")
+        var presentation = MemoryComposerPresentationState()
+
+        presentation.presentEditor(for: memory)
+
+        XCTAssertEqual(presentation.activeRequest?.memory, memory)
+        XCTAssertTrue(presentation.activeRequest?.seed.media.isEmpty == true)
+        XCTAssertNil(presentation.pendingRequest)
+    }
+
     func testMemoryResponseDecodesPrivateTimelineFields() throws {
         let response = try JSONDecoder().decode(FamilyMemoriesResponse.self, from: Data(#"{"memories":[{"id":"memory-1","family_id":"family-1","author":{"id":"user-1","display_name":"小林"},"body":"一起看晚霞。","happened_at":"2026-07-20T02:00:00Z","location_name":"滨江步道","people":["爸爸","小林"],"media":[{"id":"media-1","asset_id":"asset-1","image_url":"/api/v1/video/assets/asset-1","sort_order":0,"alt_text":""}],"comments":[],"favorite_count":1,"is_favorite":true,"created_at":"2026-07-20T02:00:00Z","updated_at":"2026-07-20T02:00:00Z"}],"revision":"r1"}"#.utf8))
 
@@ -302,6 +354,13 @@ final class MemoryViewModelTests: XCTestCase {
             pixelHeight: 960,
             durationSeconds: nil
         )
+    }
+
+    private func makeStagedMediaFile() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("memory-presentation-test-\(UUID().uuidString)")
+        try Data([1, 2, 3]).write(to: url, options: .atomic)
+        return url
     }
 
     private func makeMemory(

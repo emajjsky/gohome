@@ -37,6 +37,55 @@ struct MemoryComposerSeed: Sendable {
     let media: [MemoryPickedMedia]
 
     static let empty = MemoryComposerSeed(media: [])
+
+    func removeStagedFiles() {
+        media.forEach { try? FileManager.default.removeItem(at: $0.localURL) }
+    }
+}
+
+struct MemoryComposerRequest: Identifiable, Sendable {
+    let id: UUID
+    let memory: FamilyMemory?
+    let seed: MemoryComposerSeed
+
+    init(id: UUID = UUID(), memory: FamilyMemory?, seed: MemoryComposerSeed) {
+        self.id = id
+        self.memory = memory
+        self.seed = seed
+    }
+}
+
+struct MemoryComposerPresentationState {
+    private(set) var activeRequest: MemoryComposerRequest?
+    private(set) var pendingRequest: MemoryComposerRequest?
+
+    mutating func stage(_ media: [MemoryPickedMedia]) {
+        discardPending()
+        pendingRequest = MemoryComposerRequest(
+            memory: nil,
+            seed: MemoryComposerSeed(media: media)
+        )
+    }
+
+    mutating func promotePending() {
+        guard activeRequest == nil, let pendingRequest else { return }
+        activeRequest = pendingRequest
+        self.pendingRequest = nil
+    }
+
+    mutating func presentEditor(for memory: FamilyMemory) {
+        discardPending()
+        activeRequest = MemoryComposerRequest(memory: memory, seed: .empty)
+    }
+
+    mutating func dismissActive() {
+        activeRequest = nil
+    }
+
+    mutating func discardPending() {
+        pendingRequest?.seed.removeStagedFiles()
+        pendingRequest = nil
+    }
 }
 
 enum MemoryMediaSelectionPolicy {

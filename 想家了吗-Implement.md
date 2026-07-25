@@ -11613,3 +11613,22 @@ P4 风险升频边界：
 - 本地 `npm run test:native-server` 共 32 项：31 通过、0 失败、1 项因未设置 PostgreSQL 集成 URL 跳过；`npm test` 的前端缓存与 App Server 闭环通过。
 - 腾讯云 `gohome-app.service`、PostgreSQL、Nginx HTTPS 和盒子心跳正常，`/health` 返回 `store=postgres / pending_media_uploads=0`。
 - 服务端自动回收已经实证完成。仍需在 iPhone 真机做一次普通照片/视频发布回归，以及通过 App 强制退出或弱网制造真实未完成上传；这两项通过后再推送分支并进入 APNs/TestFlight。
+
+## 135. 2026-07-25 冷启动首次选择媒体丢失修复
+
+### 根因
+
+- 原 `MemoryView` 分别维护发布页布尔值、编辑对象、待处理媒体种子、活动媒体种子和会话 UUID。系统选择器关闭时先复制种子，再切换发布页布尔值；SwiftUI 首次批处理这组变化时，发布页可能捕获旧的空种子。
+- 第二次选择之所以正常，是旧状态已经完成一次展示周期，并不代表系统相册读取或媒体压缩在第二次才成功。使用任意固定延时只能降低复现概率，不能保证状态与页面一一对应。
+
+### 实现
+
+- 新增 `MemoryComposerRequest` 和 `MemoryComposerPresentationState`。一次选择生成一个同时持有请求 ID、编辑目标和媒体种子的对象；选择器关闭后将该对象原样从 pending 提升为 active，发布页改用 `.sheet(item:)` 直接消费该请求。
+- 删除原来并行的 `editorMemory / isComposerPresented / pendingComposerSeed / composerSeed / composerSessionID`。编辑已有记忆通过同一状态机创建空种子请求，不继承新建媒体。
+- 临时文件所有权进入状态机：替换或取消未消费选择时立即删除旧文件；发布器继续在预处理完成、失败或关闭时清理已消费文件。没有增加延时、第二套选择器或旁路媒体缓存。
+
+### 验证状态
+
+- 新增首次选择原请求提升、替换待处理选择清理旧文件、取消不打开发布页、编辑使用空种子 4 项回归。记忆模块 18 项测试全部通过。
+- 完整 iOS 回归为 79 个单元测试和 12 个 UI 测试，0 失败；签名真机构建成功，新版本已覆盖安装并启动到 iPhone 15 Pro Max。
+- 仍待用户完成一次冷启动后的首次照片或视频选择，确认发布页立即出现预览。现场确认前本节不宣称真机验收完成，也不推送分支。
