@@ -1,5 +1,7 @@
 "use strict";
 
+const { dayBoundsShanghai } = require("./activity-reporting");
+
 const ACTION_TYPES = new Set([
     "opened",
     "shared",
@@ -41,6 +43,11 @@ function dateKeyShanghai(value = new Date()) {
         month: "2-digit",
         day: "2-digit",
     }).format(value);
+}
+
+function activityTrackingEnabled(metadata = {}) {
+    const value = metadata?.activity_history?.tracking_enabled;
+    return value === undefined ? true : Boolean(value);
 }
 
 function articlesFromCareCards(cards = [], familyId = "") {
@@ -221,6 +228,18 @@ class NativeRepository {
         throw new Error("NativeRepository.activityTimelineForFamily is not implemented");
     }
 
+    activityIntervalsForFamily(_userId, _familyId, _options = {}) {
+        throw new Error("NativeRepository.activityIntervalsForFamily is not implemented");
+    }
+
+    deleteActivityHistory(_userId, _familyId) {
+        throw new Error("NativeRepository.deleteActivityHistory is not implemented");
+    }
+
+    cleanupExpiredActivityIntervals() {
+        throw new Error("NativeRepository.cleanupExpiredActivityIntervals is not implemented");
+    }
+
     ingestActivityIntervals(_familyId, _deviceId, _intervals) {
         throw new Error("NativeRepository.ingestActivityIntervals is not implemented");
     }
@@ -260,6 +279,14 @@ class JsonNativeRepository extends NativeRepository {
             (item.status || "active") === "active"
         ));
         if (!member) throw repositoryError("family access denied", 403);
+        return member;
+    }
+
+    assertFamilyManager(userId, familyId) {
+        const member = this.assertFamilyAccess(userId, familyId);
+        if (!["owner", "creator"].includes(textId(member.role).toLowerCase())) {
+            throw repositoryError("family management permission required", 403);
+        }
         return member;
     }
 
@@ -637,15 +664,61 @@ class JsonNativeRepository extends NativeRepository {
     activityTimelineForFamily(userId, familyId, options = {}) {
         this.assertFamilyAccess(userId, familyId);
         const date = /^\d{4}-\d{2}-\d{2}$/.test(String(options.date || "")) ? String(options.date) : dateKeyShanghai(new Date(this.clock()));
+        const [rangeStart, rangeEnd] = dayBoundsShanghai(date);
         return clone(this.db.activity_intervals
-            .filter((item) => textId(item.family_id) === textId(familyId) && dateKeyShanghai(new Date(item.started_at)) === date)
+            .filter((item) => (
+                textId(item.family_id) === textId(familyId)
+                && Date.parse(item.ended_at || "") > rangeStart
+                && Date.parse(item.started_at || "") < rangeEnd
+            ))
             .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at)));
+    }
+
+    activityIntervalsForFamily(userId, familyId, options = {}) {
+        this.assertFamilyAccess(userId, familyId);
+        const startDate = String(options.start_date || "");
+        const endDate = String(options.end_date || "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+            throw repositoryError("invalid activity date range", 400);
+        }
+        const [rangeStart] = dayBoundsShanghai(startDate);
+        const [, rangeEnd] = dayBoundsShanghai(endDate);
+        if (rangeEnd <= rangeStart) throw repositoryError("invalid activity date range", 400);
+        return clone(this.db.activity_intervals
+            .filter((item) => {
+                if (textId(item.family_id) !== textId(familyId)) return false;
+                return Date.parse(item.ended_at || "") > rangeStart && Date.parse(item.started_at || "") < rangeEnd;
+            })
+            .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at)));
+    }
+
+    deleteActivityHistory(userId, familyId) {
+        this.assertFamilyManager(userId, familyId);
+        const before = this.db.activity_intervals.length;
+        this.db.activity_intervals = this.db.activity_intervals.filter((item) => textId(item.family_id) !== textId(familyId));
+        return { deleted: before - this.db.activity_intervals.length };
+    }
+
+    cleanupExpiredActivityIntervals() {
+        const now = Date.parse(this.clock());
+        const before = this.db.activity_intervals.length;
+        this.db.activity_intervals = this.db.activity_intervals.filter((item) => {
+            const preferences = this.db.care_preferences?.[textId(item.family_id)] || {};
+            const configured = Number(preferences.metadata?.activity_history?.retention_days);
+            const retentionDays = Number.isInteger(configured) ? Math.max(7, Math.min(365, configured)) : 30;
+            return Date.parse(item.ended_at || item.started_at || 0) >= now - retentionDays * 24 * 60 * 60 * 1000;
+        });
+        return { deleted: before - this.db.activity_intervals.length };
     }
 
     ingestActivityIntervals(familyId, deviceId, intervals = []) {
         const family = textId(familyId);
         const device = textId(deviceId);
         const values = intervals.slice(0, 100).map((item) => activityIntervalInput(item, Date.parse(this.clock())));
+        const preferences = this.db.care_preferences?.[family] || {};
+        if (!activityTrackingEnabled(preferences.metadata)) {
+            return { accepted: 0, inserted: 0, skipped: values.length, reason: "activity_tracking_disabled" };
+        }
         let inserted = 0;
         for (const value of values) {
             const existing = this.db.activity_intervals.find((item) => textId(item.device_id) === device && item.source_interval_id === value.source_interval_id);
@@ -664,6 +737,7 @@ module.exports = {
     actionInput,
     memoryInput,
     activityIntervalInput,
+    activityTrackingEnabled,
     articlesFromCareCards,
     repositoryError,
 };

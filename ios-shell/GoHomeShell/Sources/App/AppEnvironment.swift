@@ -259,6 +259,22 @@ struct AppEnvironment {
                         URLQueryItem(name: "date", value: date),
                     ]
                 ))
+            },
+            activityOverviewLoader: { familyID, date in
+                try await client.send(Endpoint(
+                    path: "/api/v2/activity-overview",
+                    queryItems: [
+                        URLQueryItem(name: "family_id", value: familyID),
+                        URLQueryItem(name: "date", value: date),
+                    ]
+                ))
+            },
+            activityHistoryDeleter: { familyID in
+                try await client.send(Endpoint(
+                    method: .delete,
+                    path: "/api/v2/activity-history",
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                ))
             }
         )
         return AppEnvironment(

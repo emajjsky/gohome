@@ -61,6 +61,16 @@ struct ProfileView: View {
                             value: model.canEditRules ? "可配置" : "仅查看"
                         )
                     }
+
+                    NavigationLink {
+                        ActivityDataSettingsView(model: model)
+                    } label: {
+                        ProfileNavigationRow(
+                            symbol: "chart.xyaxis.line",
+                            title: "活动数据与报告",
+                            value: activityDataSummary
+                        )
+                    }
                 }
 
                 ProfileSection(title: "消息与内容") {
@@ -161,6 +171,11 @@ struct ProfileView: View {
     private var preferenceSummary: String {
         guard let value = model.state.value else { return "待同步" }
         return value.carePreferences.contentRecommendationsEnabled ? "已开启" : "已关闭"
+    }
+
+    private var activityDataSummary: String {
+        guard let settings = model.state.value?.carePreferences.metadata.activityHistory else { return "待同步" }
+        return settings.trackingEnabled ? "已开启" : "已关闭"
     }
 
     private var familySummary: String {

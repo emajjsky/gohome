@@ -2,10 +2,20 @@ import SwiftUI
 
 struct ActivityTimelineView: View {
     @ObservedObject var model: ActivityTimelineViewModel
+    @State private var confirmingClear = false
 
     var body: some View {
-        Group {
-            if let intervals = model.state.value?.intervals, !intervals.isEmpty {
+        VStack(alignment: .leading, spacing: 22) {
+            if let overview = model.overviewState.value,
+               overview.today.hasData || overview.sevenDayTrend.contains(where: { $0.hasData }) {
+                ActivityOverviewHeader(overview: overview)
+            }
+            if model.state.value == nil {
+                Color.clear
+                    .frame(height: 96)
+                    .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+                    .accessibilityHidden(true)
+            } else if let intervals = model.state.value?.intervals, !intervals.isEmpty {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(intervals) { interval in
                         ActivityTimelineRow(interval: interval)
@@ -14,7 +24,21 @@ struct ActivityTimelineView: View {
             } else {
                 emptyState
             }
+            if model.canManageHistory, hasHistory {
+                Button(role: .destructive) { confirmingClear = true } label: {
+                    Label(model.clearingHistory ? "正在清空" : "清空活动记录", systemImage: "trash")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .disabled(model.clearingHistory)
+            }
+            if let actionError = model.actionError {
+                Label(actionError, systemImage: "exclamationmark.circle")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("activity-timeline-content")
         .overlay(alignment: .bottomLeading) {
             if let reason = model.state.staleReason, model.state.value != nil {
                 Label(reason, systemImage: "wifi.exclamationmark")
@@ -23,6 +47,17 @@ struct ActivityTimelineView: View {
                     .offset(y: 24)
             }
         }
+        .confirmationDialog("清空普通活动记录？", isPresented: $confirmingClear, titleVisibility: .visible) {
+            Button("清空活动记录", role: .destructive) { model.clearHistory() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("安全事件与告警证据不会被删除。")
+        }
+    }
+
+    private var hasHistory: Bool {
+        model.state.value?.intervals.isEmpty == false
+            || (model.overviewState.value?.sevenDayTrend.contains { $0.hasData }) == true
     }
 
     private var emptyState: some View {
@@ -43,6 +78,93 @@ struct ActivityTimelineView: View {
         .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
         .accessibilityIdentifier("guard-timeline-empty")
     }
+}
+
+private struct ActivityOverviewHeader: View {
+    let overview: ActivityOverviewResponse
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("今日活动")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                    Text("\(overview.today.activeMinutes) 分钟")
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                        .foregroundStyle(GoHomeTheme.ink)
+                }
+                Spacer()
+                if let room = overview.today.rooms.first {
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text("主要区域")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(GoHomeTheme.mutedInk)
+                        Text(room.room)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(GoHomeTheme.ink)
+                    }
+                }
+            }
+            ActivityWeekTrend(days: overview.sevenDayTrend)
+            ForEach(overview.facts.prefix(2), id: \.self) { fact in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Circle().fill(GoHomeTheme.ginger).frame(width: 5, height: 5)
+                    Text(fact)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                }
+            }
+        }
+        .padding(.vertical, 18)
+        .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+        .accessibilityIdentifier("activity-overview")
+    }
+}
+
+private struct ActivityWeekTrend: View {
+    let days: [ActivityDaySummary]
+
+    var body: some View {
+        let maximum = max(1, days.map(\.activeMinutes).max() ?? 1)
+        HStack(alignment: .bottom, spacing: 8) {
+            ForEach(days) { day in
+                VStack(spacing: 6) {
+                    Spacer(minLength: 0)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(day.hasData ? GoHomeTheme.ginger : GoHomeTheme.softLine)
+                        .frame(height: day.hasData ? max(4, 42 * CGFloat(day.activeMinutes) / CGFloat(maximum)) : 2)
+                    Text(weekday(day.date))
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                }
+                .frame(maxWidth: .infinity, minHeight: 62, maxHeight: 62)
+            }
+        }
+    }
+
+    private func weekday(_ date: String) -> String {
+        guard let value = Self.dateFormatter.date(from: date) else { return "-" }
+        return Self.weekdayFormatter.string(from: value)
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static let weekdayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "EE"
+        return formatter
+    }()
 }
 
 private struct ActivityTimelineRow: View {

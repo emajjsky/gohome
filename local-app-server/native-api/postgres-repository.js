@@ -1,5 +1,6 @@
 "use strict";
 
+const { dayBoundsShanghai } = require("./activity-reporting");
 const { NativeRepository, actionInput, activityIntervalInput, articlesFromCareCards, memoryInput, repositoryError } = require("./repository");
 
 const USER_COLUMNS = "id, email, display_name, phone, status, created_at, updated_at";
@@ -63,6 +64,19 @@ class PostgresNativeRepository extends NativeRepository {
             [textId(familyId), textId(userId)],
         );
         if (!result.rowCount) throw accessDenied();
+    }
+
+    async assertFamilyManager(client, userId, familyId) {
+        const result = await client.query(
+            `select role from family_members
+             where family_id = $1 and user_id = $2 and status = 'active'
+             limit 1 for share`,
+            [textId(familyId), textId(userId)],
+        );
+        const role = textId(row(result)?.role).toLowerCase();
+        if (!["owner", "creator"].includes(role)) {
+            throw repositoryError(result.rowCount ? "family management permission required" : "family access denied", 403);
+        }
     }
 
     async bootstrapForUser(userId) {
@@ -578,16 +592,86 @@ class PostgresNativeRepository extends NativeRepository {
     async activityTimelineForFamily(userId, familyId, options = {}) {
         await this.assertFamilyAccess(this.pool, userId, familyId);
         const date = /^\d{4}-\d{2}-\d{2}$/.test(String(options.date || "")) ? String(options.date) : dateKeyShanghai(this.clock());
+        dayBoundsShanghai(date);
         return rows(await this.pool.query(
             `select * from activity_intervals
-             where family_id = $1 and (started_at at time zone 'Asia/Shanghai')::date = $2::date
+             where family_id = $1
+               and ended_at > ($2::date::timestamp at time zone 'Asia/Shanghai')
+               and started_at < (($2::date + 1)::timestamp at time zone 'Asia/Shanghai')
              order by started_at asc`,
             [textId(familyId), date],
         ));
     }
 
+    async activityIntervalsForFamily(userId, familyId, options = {}) {
+        await this.assertFamilyAccess(this.pool, userId, familyId);
+        const startDate = String(options.start_date || "");
+        const endDate = String(options.end_date || "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+            throw repositoryError("invalid activity date range", 400);
+        }
+        const [rangeStart] = dayBoundsShanghai(startDate);
+        const [, rangeEnd] = dayBoundsShanghai(endDate);
+        if (rangeEnd <= rangeStart) throw repositoryError("invalid activity date range", 400);
+        return rows(await this.pool.query(
+            `select * from activity_intervals
+             where family_id = $1
+               and ended_at > ($2::date::timestamp at time zone 'Asia/Shanghai')
+               and started_at < (($3::date + 1)::timestamp at time zone 'Asia/Shanghai')
+             order by started_at asc`,
+            [textId(familyId), startDate, endDate],
+        ));
+    }
+
+    async deleteActivityHistory(userId, familyId) {
+        const client = await this.pool.connect();
+        try {
+            await client.query("begin");
+            await this.assertFamilyManager(client, userId, familyId);
+            const result = await client.query(
+                "delete from activity_intervals where family_id = $1",
+                [textId(familyId)],
+            );
+            await client.query("commit");
+            return { deleted: result.rowCount };
+        } catch (error) {
+            await client.query("rollback");
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    async cleanupExpiredActivityIntervals() {
+        const result = await this.pool.query(
+            `delete from activity_intervals ai
+             using families f
+             left join care_preferences cp on cp.family_id = f.id
+             where ai.family_id = f.id
+               and ai.ended_at < now() - make_interval(days =>
+                   case
+                       when coalesce(cp.metadata->'activity_history'->>'retention_days', '') ~ '^\\d{1,3}$'
+                           then greatest(7, least(365, (cp.metadata->'activity_history'->>'retention_days')::integer))
+                       else 30
+                   end
+               )`,
+        );
+        return { deleted: result.rowCount };
+    }
+
     async ingestActivityIntervals(familyId, deviceId, intervals = []) {
         const values = intervals.slice(0, 100).map((item) => activityIntervalInput(item, new Date(this.clock()).getTime()));
+        const permission = row(await this.pool.query(
+            `select coalesce(cp.metadata->'activity_history'->>'tracking_enabled', 'true') as tracking_enabled
+             from devices d
+             left join care_preferences cp on cp.family_id = d.family_id
+             where d.device_id = $1 and d.family_id = $2
+             limit 1`,
+            [textId(deviceId), textId(familyId)],
+        ));
+        if (String(permission?.tracking_enabled || "true").toLowerCase() === "false") {
+            return { accepted: 0, inserted: 0, skipped: values.length, reason: "activity_tracking_disabled" };
+        }
         let inserted = 0;
         for (const value of values) {
             const result = await this.pool.query(

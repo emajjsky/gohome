@@ -30,6 +30,7 @@ function hasNonEmptyPlistString(source, key) {
 ].forEach((key) => assert.ok(hasNonEmptyPlistString(info, key), `${key} must be declared`));
 
 assert.match(info, /<key>GoHomeAPIBaseURL<\/key>\s*<string>https:\/\//, "production API must use HTTPS");
+assert.match(info, /<key>CFBundleIconName<\/key>\s*<string>AppIcon<\/string>/, "the built app must declare AppIcon");
 assert.match(info, /<key>GoHomePushEnabled<\/key>\s*<false\/>/, "push must remain disabled for the Personal Team build");
 assert.doesNotMatch(info, /GoHomeWebAppURL/, "the removed WebView runtime must not return");
 assert.doesNotMatch(entitlements, /aps-environment/, "free-signed builds must not claim APNs entitlement");

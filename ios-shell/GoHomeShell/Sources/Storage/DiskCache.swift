@@ -67,6 +67,11 @@ actor DiskCache {
         if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
     }
 
+    func remove(key: String, scope: CacheScope) throws {
+        let url = fileURL(key: key, scope: scope)
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+    }
+
     func clearAll() throws {
         if FileManager.default.fileExists(atPath: rootURL.path) { try FileManager.default.removeItem(at: rootURL) }
         try FileManager.default.createDirectory(

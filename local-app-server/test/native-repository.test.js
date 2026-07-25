@@ -104,6 +104,21 @@ test('JSON repository keeps product preferences family-scoped and returns copies
   assert.throws(() => repo.updateProductPreferences('user-a', 'family-b', {}), /family access denied/);
 });
 
+test('JSON activity deletion is creator-only and retention follows family settings', () => {
+  const data = fixture();
+  data.family_members.push({ id: 'member-a-2', family_id: 'family-a', user_id: 'user-b', role: 'member', status: 'active' });
+  data.care_preferences = { 'family-a': { metadata: { activity_history: { retention_days: 7 } } } };
+  data.activity_intervals = [
+    { id: 'old', family_id: 'family-a', started_at: '2026-07-01T01:00:00.000Z', ended_at: '2026-07-01T01:10:00.000Z' },
+    { id: 'fresh', family_id: 'family-a', started_at: '2026-07-24T01:00:00.000Z', ended_at: '2026-07-24T01:10:00.000Z' },
+  ];
+  const repo = new JsonNativeRepository(data, { clock: () => '2026-07-25T01:00:00.000Z' });
+  assert.throws(() => repo.deleteActivityHistory('user-b', 'family-a'), /management permission/);
+  assert.deepEqual(repo.cleanupExpiredActivityIntervals(), { deleted: 1 });
+  assert.deepEqual(repo.db.activity_intervals.map((item) => item.id), ['fresh']);
+  assert.deepEqual(repo.deleteActivityHistory('user-a', 'family-a'), { deleted: 1 });
+});
+
 test('JSON memory writes reject cross-family assets without leaving partial records', () => {
   const data = fixture();
   data.assets = [{ id: 10, family_id: 'family-b' }];

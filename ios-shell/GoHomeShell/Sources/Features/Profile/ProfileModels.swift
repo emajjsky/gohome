@@ -128,6 +128,78 @@ struct QuietHours: Codable, Equatable, Sendable {
     var end: String
 }
 
+struct ActivityHistorySettings: Codable, Equatable, Sendable {
+    var trackingEnabled: Bool
+    var dailySummaryEnabled: Bool
+    var weeklyReportEnabled: Bool
+    var anomalyRemindersEnabled: Bool
+    var multimodalReviewEnabled: Bool
+    var retentionDays: Int
+
+    enum CodingKeys: String, CodingKey {
+        case trackingEnabled = "tracking_enabled"
+        case dailySummaryEnabled = "daily_summary_enabled"
+        case weeklyReportEnabled = "weekly_report_enabled"
+        case anomalyRemindersEnabled = "anomaly_reminders_enabled"
+        case multimodalReviewEnabled = "multimodal_review_enabled"
+        case retentionDays = "retention_days"
+    }
+
+    init(
+        trackingEnabled: Bool = true,
+        dailySummaryEnabled: Bool = true,
+        weeklyReportEnabled: Bool = true,
+        anomalyRemindersEnabled: Bool = true,
+        multimodalReviewEnabled: Bool = true,
+        retentionDays: Int = 30
+    ) {
+        self.trackingEnabled = trackingEnabled
+        self.dailySummaryEnabled = dailySummaryEnabled
+        self.weeklyReportEnabled = weeklyReportEnabled
+        self.anomalyRemindersEnabled = anomalyRemindersEnabled
+        self.multimodalReviewEnabled = multimodalReviewEnabled
+        self.retentionDays = min(365, max(7, retentionDays))
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            trackingEnabled: try values.decodeIfPresent(Bool.self, forKey: .trackingEnabled) ?? true,
+            dailySummaryEnabled: try values.decodeIfPresent(Bool.self, forKey: .dailySummaryEnabled) ?? true,
+            weeklyReportEnabled: try values.decodeIfPresent(Bool.self, forKey: .weeklyReportEnabled) ?? true,
+            anomalyRemindersEnabled: try values.decodeIfPresent(Bool.self, forKey: .anomalyRemindersEnabled) ?? true,
+            multimodalReviewEnabled: try values.decodeIfPresent(Bool.self, forKey: .multimodalReviewEnabled) ?? true,
+            retentionDays: try values.decodeIfPresent(Int.self, forKey: .retentionDays) ?? 30
+        )
+    }
+
+    static let standard = ActivityHistorySettings(
+        trackingEnabled: true,
+        dailySummaryEnabled: true,
+        weeklyReportEnabled: true,
+        anomalyRemindersEnabled: true,
+        multimodalReviewEnabled: true,
+        retentionDays: 30
+    )
+}
+
+struct CarePreferencesMetadata: Codable, Equatable, Sendable {
+    var activityHistory: ActivityHistorySettings
+
+    enum CodingKeys: String, CodingKey {
+        case activityHistory = "activity_history"
+    }
+
+    init(activityHistory: ActivityHistorySettings = .standard) {
+        self.activityHistory = activityHistory
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        activityHistory = try values.decodeIfPresent(ActivityHistorySettings.self, forKey: .activityHistory) ?? .standard
+    }
+}
+
 struct CarePreferences: Codable, Equatable, Sendable {
     let familyID: String
     let elderID: String?
@@ -138,6 +210,7 @@ struct CarePreferences: Codable, Equatable, Sendable {
     var imageGenerationEnabled: Bool
     var contentRecommendationsEnabled: Bool
     var contentSourcesEnabled: Bool
+    var metadata: CarePreferencesMetadata
 
     enum CodingKeys: String, CodingKey {
         case familyID = "family_id"
@@ -149,6 +222,7 @@ struct CarePreferences: Codable, Equatable, Sendable {
         case imageGenerationEnabled = "image_generation_enabled"
         case contentRecommendationsEnabled = "content_recommendations_enabled"
         case contentSourcesEnabled = "content_sources_enabled"
+        case metadata
     }
 
     init(
@@ -160,7 +234,8 @@ struct CarePreferences: Codable, Equatable, Sendable {
         textModelEnabled: Bool = false,
         imageGenerationEnabled: Bool = false,
         contentRecommendationsEnabled: Bool = true,
-        contentSourcesEnabled: Bool = true
+        contentSourcesEnabled: Bool = true,
+        metadata: CarePreferencesMetadata = CarePreferencesMetadata()
     ) {
         self.familyID = familyID
         self.elderID = elderID
@@ -171,6 +246,7 @@ struct CarePreferences: Codable, Equatable, Sendable {
         self.imageGenerationEnabled = imageGenerationEnabled
         self.contentRecommendationsEnabled = contentRecommendationsEnabled
         self.contentSourcesEnabled = contentSourcesEnabled
+        self.metadata = metadata
     }
 
     init(from decoder: Decoder) throws {
@@ -184,6 +260,7 @@ struct CarePreferences: Codable, Equatable, Sendable {
         imageGenerationEnabled = try values.decodeIfPresent(Bool.self, forKey: .imageGenerationEnabled) ?? false
         contentRecommendationsEnabled = try values.decodeIfPresent(Bool.self, forKey: .contentRecommendationsEnabled) ?? true
         contentSourcesEnabled = try values.decodeIfPresent(Bool.self, forKey: .contentSourcesEnabled) ?? true
+        metadata = try values.decodeIfPresent(CarePreferencesMetadata.self, forKey: .metadata) ?? CarePreferencesMetadata()
     }
 
     var editablePayload: CarePreferencesPatch {
@@ -194,7 +271,8 @@ struct CarePreferences: Codable, Equatable, Sendable {
             textModelEnabled: textModelEnabled,
             imageGenerationEnabled: imageGenerationEnabled,
             contentRecommendationsEnabled: contentRecommendationsEnabled,
-            contentSourcesEnabled: contentSourcesEnabled
+            contentSourcesEnabled: contentSourcesEnabled,
+            metadata: metadata
         )
     }
 }
@@ -207,6 +285,7 @@ struct CarePreferencesPatch: Encodable, Equatable, Sendable {
     let imageGenerationEnabled: Bool
     let contentRecommendationsEnabled: Bool
     let contentSourcesEnabled: Bool
+    let metadata: CarePreferencesMetadata
 
     enum CodingKeys: String, CodingKey {
         case frequency
@@ -216,6 +295,7 @@ struct CarePreferencesPatch: Encodable, Equatable, Sendable {
         case imageGenerationEnabled = "image_generation_enabled"
         case contentRecommendationsEnabled = "content_recommendations_enabled"
         case contentSourcesEnabled = "content_sources_enabled"
+        case metadata
     }
 }
 

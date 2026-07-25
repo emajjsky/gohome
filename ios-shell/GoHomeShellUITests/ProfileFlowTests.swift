@@ -25,4 +25,24 @@ final class ProfileFlowTests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
+
+    func testCreatorCanOpenActivityDataSettingsWithoutTechnicalFields() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTestState", "-uiTestMain", "-uiTestProfile"]
+        app.launch()
+
+        XCTAssertTrue(app.tabBars.buttons["我的"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["我的"].tap()
+        app.buttons["活动数据与报告, 已开启"].tap()
+
+        XCTAssertTrue(app.navigationBars["活动数据与报告"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.switches["记录活动轨迹"].exists)
+        XCTAssertTrue(app.staticTexts["保留时间"].exists)
+        XCTAssertFalse(app.switches["每日活动摘要"].exists)
+        XCTAssertFalse(app.switches["每周活动趋势"].exists)
+        XCTAssertFalse(app.switches["规律异常提醒"].exists)
+        XCTAssertFalse(app.switches["多模态复核"].exists)
+        XCTAssertFalse(app.staticTexts["activity_history"].exists)
+        XCTAssertFalse(app.staticTexts["retention_days"].exists)
+    }
 }

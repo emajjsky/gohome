@@ -11682,7 +11682,31 @@ P4 风险升频边界：
 ### 自动校验与结果
 
 - 新增 `scripts/verify-ios-release.js`，检查权限说明、生产 HTTPS、已删除 WebView 配置、隐私类型、无跟踪、`CA92.1`、资源阶段、版本、图标尺寸和 alpha；同时固定免费 Personal Team 包必须保持 `GoHomePushEnabled=false` 且无 `aps-environment`。
-- `npm run verify:ios-release` 已通过并纳入 `npm test`。Xcode 模拟器执行 84 个单元测试，83 个通过、1 个 Keychain 用例因模拟器无 entitlement 按既有规则跳过，0 失败。
-- Release 模拟器构建成功，产物确认为 `1.0.0 (1)`，包含 `PrivacyInfo.xcprivacy`、`Assets.car` 和 `CFBundleIconName=AppIcon`；`actool` 无透明通道错误。
+- `npm run verify:ios-release` 已通过并纳入 `npm test`。本次活动批次收口后，Xcode 模拟器执行 88 个单元测试，87 个通过、1 个 Keychain 用例因模拟器无 entitlement 按既有规则跳过，0 失败；13 个 UI 测试全部通过。
+- Release 模拟器构建成功，产物确认为 `1.0.0 (1)`，包含 `PrivacyInfo.xcprivacy`、`Assets.car` 和 `CFBundleIconName=AppIcon`；`actool` 无透明通道错误。发布预检同时固定检查源 `Info.plist` 的图标名，防止 XcodeGen 重建后只编译图标资源却缺失包元数据。
 - iPhone 15 Pro Max 的免费 Personal Team 真机构建同时成功；签名产物包含隐私清单和图标资源，`GoHomePushEnabled=false`，entitlements 只有 application/team identifier 与调试许可，不含 `aps-environment`。本批只构建，没有覆盖安装或修改手机数据。
 - 本批没有部署腾讯云、没有修改盒子视觉代码、没有启用 APNs entitlement，也没有生成可上传 TestFlight 的 Archive。真实发布仍等待付费 Apple Developer Team 与 `.p8`。
+
+## 139. 2026-07-25 原生活动概览、留存与删除收口
+
+### 服务端与统计
+
+- 新增独立 `native-api/activity-reporting.js`，集中拥有上海日期边界、跨午夜裁剪、重叠区间合并、每日事实汇总和七日概览，避免在路由、仓储和页面各自实现一套统计。
+- `GET /api/v2/activity-overview` 返回今日、七日趋势、可比较天数和仅基于真实区间的事实文案。家庭多摄像头重叠时段不会重复累计总活动分钟；房间分钟数继续按房间分别合并。
+- JSON 与 PostgreSQL 仓储都改为查询“结束时间晚于范围开始且开始时间早于范围结束”的相交区间。视图层在上海自然日边界裁剪后再输出时间线和概览，因此 23:50 至次日 00:20 分别记为 10 分钟和 20 分钟。
+- 设备上传在家庭关闭 `tracking_enabled` 时返回明确跳过原因，不继续落库。留存默认 30 天并限制在 7 至 365 天；周期清理按每个家庭设置删除过期普通活动区间。
+- `DELETE /api/v2/activity-history` 只允许家庭 `owner/creator`，删除普通 `activity_intervals`，不删除安全事件、告警或媒体证据。JSON 和 PostgreSQL 都执行服务端权限校验。
+
+### 原生 iOS
+
+- `ActivityTimelineViewModel` 同时读取今日时间线和七日概览，继续使用账号/家庭隔离的缓存优先与后台刷新；清空后同步失效两个缓存并重新加载。
+- 轨迹页面新增今日分钟、主要区域、七日趋势、创建者清空确认及离线陈旧提示。稳定根容器用于分段切换和 UI 回归，实时画面离开“实时”分段后仍保持卸载。
+- “我的 -> 活动数据与报告”当前只展示真实工作的记录开关与保留天数。数据契约暂时兼容未来分析字段，但每日摘要、每周报告、异常提醒和多模态复核没有可见入口。
+- 家庭角色决定可编辑和可删除能力；普通成员只读。清空确认明确说明安全事件与告警证据不会删除。
+
+### 验证与未完成项
+
+- 服务端专项覆盖跨摄像头重叠、跨上海午夜裁剪、事实文案、幂等设备上传、关闭记录、留存和创建者删除。PostgreSQL 实库迁移测试仍依赖外部测试连接，未配置时按既有规则跳过。
+- 本批完整回归结果为：原生服务端 45 项中 44 项通过、1 项因未配置 PostgreSQL 集成 URL 跳过；前端缓存、App Server 与 iOS 发布预检全部通过；iOS 单元测试 88 项中 87 项通过、1 项按既有 Keychain 环境规则跳过；iOS UI 测试 13 项全部通过；Release 模拟器构建和产物资源、版本、图标与无 APNs entitlement 检查通过。
+- 盒子侧活动区间生产器、断网持久化队列和补传尚未在本原生分支实现；日终/周度定时任务、规律异常消息、多模态活动复核也尚未完成。因此本批是活动 P2 云端与原生消费收口，不标记 P3 完成。
+- 本批不修改树莓派视觉算法，不部署腾讯云。APNs 与 TestFlight 继续等待付费 Apple Developer Team 审核和 `.p8`，当前 `GoHomePushEnabled=false`。

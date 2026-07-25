@@ -2210,6 +2210,20 @@ function createLocalAppServer(options = {}) {
         return {
             ...source,
             care_card_schedule: normalizeCareSchedule(source.care_card_schedule),
+            activity_history: normalizeActivityHistory(source.activity_history),
+        };
+    }
+
+    function normalizeActivityHistory(value = {}) {
+        const source = value && typeof value === "object" ? value : {};
+        const retentionDays = normalizeNumber(source.retention_days, 30);
+        return {
+            tracking_enabled: "tracking_enabled" in source ? normalizeBool(source.tracking_enabled) : true,
+            daily_summary_enabled: "daily_summary_enabled" in source ? normalizeBool(source.daily_summary_enabled) : true,
+            weekly_report_enabled: "weekly_report_enabled" in source ? normalizeBool(source.weekly_report_enabled) : true,
+            anomaly_reminders_enabled: "anomaly_reminders_enabled" in source ? normalizeBool(source.anomaly_reminders_enabled) : true,
+            multimodal_review_enabled: "multimodal_review_enabled" in source ? normalizeBool(source.multimodal_review_enabled) : true,
+            retention_days: Math.max(7, Math.min(365, retentionDays)),
         };
     }
 
@@ -8742,8 +8756,9 @@ function createLocalAppServer(options = {}) {
                 if (!requireFamilyAccess(req, res, familyId)) return;
                 const payload = await parseJsonBody(req);
                 const existing = carePreferences(familyId);
-                if (payload.metadata?.presence_monitoring && !userCanManageFamily(activeAppUser(req).id, familyId)) {
-                    writeError(res, 403, "只有家庭创建者可以修改外出与暂停守护设置。");
+                if ((payload.metadata?.presence_monitoring || payload.metadata?.activity_history)
+                    && !userCanManageFamily(activeAppUser(req).id, familyId)) {
+                    writeError(res, 403, "只有家庭创建者可以修改守护与活动数据设置。");
                     return;
                 }
                 const nextMetadata = payload.metadata && typeof payload.metadata === "object"
@@ -9307,6 +9322,8 @@ function createLocalAppServer(options = {}) {
     let initialMediaUploadCleanupTimer = null;
     let apnsDispatchTimer = null;
     let initialApnsDispatchTimer = null;
+    let activityCleanupTimer = null;
+    let initialActivityCleanupTimer = null;
     const mediaUploadCleanupEnabled = options.mediaUploadCleanupEnabled ?? !["0", "false", "no"].includes(
         String(process.env.GOHOME_MEDIA_UPLOAD_CLEANUP_ENABLED || "1").trim().toLowerCase(),
     );
@@ -9341,6 +9358,26 @@ function createLocalAppServer(options = {}) {
         server.on("close", () => {
             clearInterval(apnsDispatchTimer);
             clearTimeout(initialApnsDispatchTimer);
+        });
+    }
+    const activityCleanupEnabled = options.activityCleanupEnabled ?? !["0", "false", "no"].includes(
+        String(process.env.GOHOME_ACTIVITY_CLEANUP_ENABLED || "1").trim().toLowerCase(),
+    );
+    if (activityCleanupEnabled && typeof nativeRepository.cleanupExpiredActivityIntervals === "function") {
+        const intervalMs = Math.max(
+            60 * 60 * 1000,
+            normalizeNumber(process.env.GOHOME_ACTIVITY_CLEANUP_INTERVAL_MS, 6 * 60 * 60 * 1000),
+        );
+        const cleanup = () => Promise.resolve(nativeRepository.cleanupExpiredActivityIntervals())
+            .then(() => (store.kind === "postgres" ? undefined : store.save()))
+            .catch((error) => console.error(`activity history cleanup failed: ${error.message || error}`));
+        activityCleanupTimer = setInterval(cleanup, intervalMs);
+        activityCleanupTimer.unref?.();
+        initialActivityCleanupTimer = setTimeout(cleanup, 1000);
+        initialActivityCleanupTimer.unref?.();
+        server.on("close", () => {
+            clearInterval(activityCleanupTimer);
+            clearTimeout(initialActivityCleanupTimer);
         });
     }
     if (normalizeBool(process.env.GOHOME_SCHEDULER_ENABLED)) {
@@ -9380,6 +9417,7 @@ function createLocalAppServer(options = {}) {
         deviceToken,
         nativeRepository,
         cleanupExpiredMemoryUploads,
+        cleanupExpiredActivityIntervals: () => nativeRepository.cleanupExpiredActivityIntervals(),
         dispatchQueuedPushDeliveries,
     };
 }

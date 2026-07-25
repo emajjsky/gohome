@@ -22,6 +22,8 @@ actor AppRepository {
     typealias MemoryMediaUploader = @Sendable (String, Data, String) async throws -> MemoryMediaUploadResponse
     typealias MemoryMediaBatchUploader = @Sendable (String, [MemoryUploadAsset]) async throws -> MemoryMediaBatchUploadResponse
     typealias ActivityTimelineLoader = @Sendable (String, String) async throws -> ActivityTimelineResponse
+    typealias ActivityOverviewLoader = @Sendable (String, String) async throws -> ActivityOverviewResponse
+    typealias ActivityHistoryDeleter = @Sendable (String) async throws -> ActivityHistoryDeleteResponse
 
     private let cache: DiskCache
     private let bootstrapLoader: BootstrapLoader
@@ -43,6 +45,8 @@ actor AppRepository {
     private let memoryMediaUploader: MemoryMediaUploader
     private let memoryMediaBatchUploader: MemoryMediaBatchUploader
     private let activityTimelineLoader: ActivityTimelineLoader
+    private let activityOverviewLoader: ActivityOverviewLoader
+    private let activityHistoryDeleter: ActivityHistoryDeleter
     private var bootstrapTasks: [CacheScope: Task<BootstrapResponse, Error>] = [:]
     private var homeTasks: [CacheScope: Task<HomeResponse, Error>] = [:]
     private var eventsTasks: [CacheScope: Task<[AppEvent], Error>] = [:]
@@ -51,6 +55,7 @@ actor AppRepository {
     private var profileTasks: [CacheScope: Task<ProfileData, Error>] = [:]
     private var memoriesTasks: [CacheScope: Task<FamilyMemoriesResponse, Error>] = [:]
     private var activityTimelineTasks: [String: Task<ActivityTimelineResponse, Error>] = [:]
+    private var activityOverviewTasks: [String: Task<ActivityOverviewResponse, Error>] = [:]
 
     init(
         cache: DiskCache,
@@ -72,7 +77,9 @@ actor AppRepository {
         memoryDeleter: @escaping MemoryDeleter = { _, _ in throw APIError.invalidResponse },
         memoryMediaUploader: @escaping MemoryMediaUploader = { _, _, _ in throw APIError.invalidResponse },
         memoryMediaBatchUploader: MemoryMediaBatchUploader? = nil,
-        activityTimelineLoader: @escaping ActivityTimelineLoader = { _, _ in throw APIError.invalidResponse }
+        activityTimelineLoader: @escaping ActivityTimelineLoader = { _, _ in throw APIError.invalidResponse },
+        activityOverviewLoader: @escaping ActivityOverviewLoader = { _, _ in throw APIError.invalidResponse },
+        activityHistoryDeleter: @escaping ActivityHistoryDeleter = { _ in throw APIError.invalidResponse }
     ) {
         self.cache = cache
         self.bootstrapLoader = bootstrapLoader
@@ -100,6 +107,8 @@ actor AppRepository {
             return MemoryMediaBatchUploadResponse(assets: assets)
         }
         self.activityTimelineLoader = activityTimelineLoader
+        self.activityOverviewLoader = activityOverviewLoader
+        self.activityHistoryDeleter = activityHistoryDeleter
     }
 
     func fetchBootstrap() async throws -> BootstrapResponse {
@@ -317,6 +326,41 @@ actor AppRepository {
         } catch {
             await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: cached == nil ? "轨迹暂时无法更新" : "当前显示上次活动轨迹"))
         }
+    }
+
+    func activityOverview(
+        scope: CacheScope,
+        date: String,
+        onUpdate: @escaping @Sendable (Loadable<ActivityOverviewResponse>) async -> Void
+    ) async {
+        let key = "activity-overview-\(date)"
+        let cached = try? await cache.read(ActivityOverviewResponse.self, key: key, scope: scope)
+        await onUpdate(Loadable(value: cached, isRefreshing: true, staleReason: nil))
+        do {
+            let taskKey = "\(scope.userID):\(scope.familyID):\(date)"
+            let refreshed: ActivityOverviewResponse
+            if let task = activityOverviewTasks[taskKey] {
+                refreshed = try await task.value
+            } else {
+                let task = Task { try await activityOverviewLoader(scope.familyID, date) }
+                activityOverviewTasks[taskKey] = task
+                defer { activityOverviewTasks[taskKey] = nil }
+                refreshed = try await task.value
+            }
+            try await cache.write(refreshed, key: key, scope: scope, ttl: 24 * 60 * 60)
+            await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
+        } catch is CancellationError {
+            await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
+        } catch {
+            await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: cached == nil ? "活动摘要暂时无法更新" : "当前显示上次活动摘要"))
+        }
+    }
+
+    func deleteActivityHistory(scope: CacheScope, date: String) async throws -> Int {
+        let response = try await activityHistoryDeleter(scope.familyID)
+        try? await cache.remove(key: "activity-timeline-\(date)", scope: scope)
+        try? await cache.remove(key: "activity-overview-\(date)", scope: scope)
+        return response.deleted
     }
 
     private func refreshBootstrap(scope: CacheScope) async throws -> BootstrapResponse {

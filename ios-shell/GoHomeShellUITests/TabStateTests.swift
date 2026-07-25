@@ -47,7 +47,7 @@ final class TabStateTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["guard-camera-stage"].waitForExistence(timeout: 3))
 
         app.buttons["轨迹"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["guard-timeline-empty"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)["activity-timeline-content"].waitForExistence(timeout: 2))
         XCTAssertFalse(app.descendants(matching: .any)["guard-camera-stage"].exists)
 
         app.buttons["事件"].tap()

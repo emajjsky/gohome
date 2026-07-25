@@ -1,6 +1,13 @@
 "use strict";
 
 const crypto = require("crypto");
+const {
+    buildActivityOverview,
+    clipIntervalToDate,
+    dateKeyShanghai,
+    dateKeysEndingAt,
+    groupIntervalsByDate,
+} = require("./activity-reporting");
 const { normalizeProductPreferences, productView } = require("./product-policy");
 
 const ONBOARDING_STEPS = new Set(["family", "profile", "device", "camera", "complete"]);
@@ -272,9 +279,39 @@ class NativeViewService {
 
     async activityTimelineForFamily(userId, familyId, options = {}) {
         if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
-        const intervals = await this.repository.activityTimelineForFamily(userId, familyId, options);
-        const payload = { date: options.date || null, intervals: intervals.map(activityIntervalView).filter((item) => item.id) };
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(String(options.date || ""))
+            ? String(options.date)
+            : dateKeyShanghai();
+        const intervals = await this.repository.activityTimelineForFamily(userId, familyId, { ...options, date });
+        const payload = {
+            date,
+            intervals: intervals
+                .map((interval) => clipIntervalToDate(interval, date))
+                .filter(Boolean)
+                .map(activityIntervalView)
+                .filter((item) => item.id),
+        };
         return { ...payload, revision: revisionFor(payload) };
+    }
+
+    async activityOverviewForFamily(userId, familyId, options = {}) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(String(options.date || ""))
+            ? String(options.date)
+            : dateKeyShanghai();
+        const dates = dateKeysEndingAt(date, 7);
+        const intervals = await this.repository.activityIntervalsForFamily(userId, familyId, {
+            start_date: dates[0],
+            end_date: dates[dates.length - 1],
+        });
+        const grouped = groupIntervalsByDate(dates, intervals);
+        const payload = buildActivityOverview(date, grouped);
+        return { ...payload, revision: revisionFor(payload) };
+    }
+
+    async deleteActivityHistory(userId, familyId) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        return await this.repository.deleteActivityHistory(userId, familyId);
     }
 }
 

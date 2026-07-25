@@ -62,7 +62,11 @@ struct MainTabView: View {
         _homeModel = StateObject(wrappedValue: HomeViewModel(repository: repository, scope: scope))
         let seedEvents = ProcessInfo.processInfo.arguments.contains("-uiTestEvent") ? Self.uiTestEvents : []
         _eventsModel = StateObject(wrappedValue: EventsViewModel(repository: repository, scope: scope, seedEvents: seedEvents))
-        _timelineModel = StateObject(wrappedValue: ActivityTimelineViewModel(repository: repository, scope: scope))
+        _timelineModel = StateObject(wrappedValue: ActivityTimelineViewModel(
+            repository: repository,
+            scope: scope,
+            canManageHistory: FamilyRole.resolve(familyRole: family.role, canEdit: false) == .creator
+        ))
         _memoryModel = StateObject(wrappedValue: MemoryViewModel(repository: repository, scope: scope))
         _recommendationsModel = StateObject(wrappedValue: ProductRecommendationsViewModel(repository: repository, scope: scope))
         let seedProfile = ProcessInfo.processInfo.arguments.contains("-uiTestProfile")

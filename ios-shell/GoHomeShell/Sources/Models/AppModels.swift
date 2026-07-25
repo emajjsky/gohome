@@ -203,6 +203,71 @@ struct ActivityTimelineResponse: Codable, Equatable, Sendable {
     let revision: String
 }
 
+struct ActivityOverviewResponse: Codable, Equatable, Sendable {
+    let date: String
+    let today: ActivityDaySummary
+    let sevenDayTrend: [ActivityDaySummary]
+    let baseline: ActivityBaseline
+    let facts: [String]
+    let revision: String
+
+    enum CodingKeys: String, CodingKey {
+        case date, today, baseline, facts, revision
+        case sevenDayTrend = "seven_day_trend"
+    }
+}
+
+struct ActivityDaySummary: Codable, Equatable, Sendable, Identifiable {
+    var id: String { date }
+    let date: String
+    let hasData: Bool
+    let activeMinutes: Int
+    let intervalCount: Int
+    let personCountMax: Int
+    let firstActivityAt: String?
+    let lastActivityAt: String?
+    let observedPostures: [String]
+    let rooms: [ActivityRoomSummary]
+
+    enum CodingKeys: String, CodingKey {
+        case date, rooms
+        case hasData = "has_data"
+        case activeMinutes = "active_minutes"
+        case intervalCount = "interval_count"
+        case personCountMax = "person_count_max"
+        case firstActivityAt = "first_activity_at"
+        case lastActivityAt = "last_activity_at"
+        case observedPostures = "observed_postures"
+    }
+}
+
+struct ActivityRoomSummary: Codable, Equatable, Sendable, Identifiable {
+    var id: String { room }
+    let room: String
+    let activeMinutes: Int
+    let intervalCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case room
+        case activeMinutes = "active_minutes"
+        case intervalCount = "interval_count"
+    }
+}
+
+struct ActivityBaseline: Codable, Equatable, Sendable {
+    let comparableDays: Int
+    let averageActiveMinutes: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case comparableDays = "comparable_days"
+        case averageActiveMinutes = "average_active_minutes"
+    }
+}
+
+struct ActivityHistoryDeleteResponse: Codable, Equatable, Sendable {
+    let deleted: Int
+}
+
 struct ActivityInterval: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let cameraID: String?
