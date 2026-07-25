@@ -3236,3 +3236,15 @@ P4 当前状态：家庭私密时间流、最多 9 张照片或 1 个 60 秒内�
 5. 上述通过后再 Archive、上传 App Store Connect、配置 TestFlight 内测；免费 Personal Team 构建不能作为 TestFlight 交付。
 
 当前阻塞仅是付费 Apple Team 与 `.p8` 尚未提供。代码未部署到腾讯云，现有真机版本继续以推送关闭状态运行。
+
+### 15.10 P8 发布元数据与隐私预检
+
+当前已完成且不依赖付费账号的部分：
+
+1. 新增并打包 `PrivacyInfo.xcprivacy`，按原生 App 当前真实数据路径声明收集类型、App 功能用途、无跟踪，以及 `UserDefaults` 的 `CA92.1` required reason。
+2. Xcode 工程新增正式 Resources phase；`Assets.xcassets` 和隐私清单不再只是仓库文件，而是由构建系统编译或复制进入 App 包。
+3. App Icon 保持原视觉内容，转换为 App Store 接受的 1024x1024 RGB PNG；发布版本设为 `1.0.0 (1)`。
+4. 推送登记不再上传用户自定义的设备名称，只上传通用设备型号；稳定安装 ID 仍作为撤销单台安装实例的必要标识。
+5. 新增 `npm run verify:ios-release` 并纳入全量 `npm test`，固定检查 HTTPS、系统权限说明、隐私类型、无跟踪、图标尺寸/alpha、资源阶段、版本号和免费签名不得声明 APNs。
+
+剩余顺序不变：取得付费个人 Apple Team -> 开启 Push capability -> 创建 `.p8` -> 部署迁移 010 和 APNs provider -> 真机推送回归 -> Archive 与 TestFlight。发布元数据通过不能越过上述真实签名和投递验收。

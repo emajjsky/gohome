@@ -2255,3 +2255,11 @@ EACP P3a.2 已于 2026-07-18 完成：多摄推理增加全局资源预算与树
 - APNs 返回 200 只表示 Apple 已接收，投递状态记为 `sent`，不能写成设备已展示或用户已收到。`notification_deliveries.delivered_at` 只有取得可验证的设备侧回执时才允许填写；当前 `app_messages.delivered_at` 仅表示消息已经进入 App 内收件箱。
 - 临时网络错误采用有界重试，过期或 topic 不匹配的 token 自动撤销；计划消息不得早于 `scheduled_for` 发送。通知点击按原生 route 打开首页或切换到“守护 / 事件”，并尽可能进入指定事件详情。
 - 当前构建继续关闭 `GoHomePushEnabled`，且不声明 `aps-environment`。原因是现有 Apple 账号属于免费 Personal Team，不支持 APNs capability 和 TestFlight。加入付费 Apple Developer Program 的个人账号即可，不要求公司主体；完成前不得把模拟投递写成真推送。
+
+### 18.13 iOS 发布隐私与包资源基线
+
+- 原生 App 必须随包携带 `PrivacyInfo.xcprivacy`，并按当前真实功能声明账户姓名、手机号、照护地址、粗略地点、家庭照片视频、用户文案、用户 ID、安装实例、产品操作和家庭守护敏感信息；所有用途仅为 App 功能，不用于跨 App 跟踪或广告。
+- 原生定位只在用户主动选择时获取，并在本机反向解析为地点文字后用于家庭记忆；当前发布清单不宣称上传持续定位轨迹。若后续新增精确坐标上传、分析 SDK、广告或第三方统计，必须先更新实现、隐私清单和 App Store 隐私问卷。
+- `UserDefaults` 只保存 App 自身的安装 ID 和非敏感会话上下文，使用 required-reason `CA92.1`；登录 token 仍保存在 Keychain，媒体缓存继续使用系统文件保护。
+- App Icon 必须由资源目录编译进入应用包，源图为不带 alpha 的 1024x1024 RGB PNG。发布版本从 `1.0.0 (1)` 起递增，不允许以 `0.1.0` 或缺少图标、隐私清单的草稿包提交比赛或 TestFlight。
+- 免费 Personal Team 构建继续保持推送关闭和空 APNs entitlement；发布元数据就绪不等于真实 APNs、Archive 签名或 TestFlight 已完成。

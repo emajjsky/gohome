@@ -66,7 +66,7 @@ final class PushNotificationCoordinator: ObservableObject {
         self.registerForRemoteNotifications = registerForRemoteNotifications ?? {
             UIApplication.shared.registerForRemoteNotifications()
         }
-        self.deviceName = deviceName ?? UIDevice.current.name
+        self.deviceName = deviceName ?? UIDevice.current.model
         self.appVersion = appVersion
         let key = "gohome.app-install-id"
         if let existing = defaults.string(forKey: key), !existing.isEmpty {

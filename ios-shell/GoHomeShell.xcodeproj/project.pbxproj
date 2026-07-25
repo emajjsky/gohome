@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0A11C2D3E4F5061728394A5B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1B22D3E4F5061728394A5B6C /* Assets.xcassets */; };
+		0A11C2D3E4F5061728394A5C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1B22D3E4F5061728394A5B6D /* PrivacyInfo.xcprivacy */; };
 		0020062684B57893A0F1D834 /* AuthAndCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42DDFD5335CD648168DD8760 /* AuthAndCacheTests.swift */; };
 		002D18D11FFCF980A68A3A17 /* DistanceMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E2484C2E61F757B95DDFA59 /* DistanceMapView.swift */; };
 		03269A3F37424FF044C4F83B /* EventActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 034F8DF1B2469B3F726E21D5 /* EventActionTests.swift */; };
@@ -113,6 +115,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		1B22D3E4F5061728394A5B6C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		1B22D3E4F5061728394A5B6D /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		034F8DF1B2469B3F726E21D5 /* EventActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventActionTests.swift; sourceTree = "<group>"; };
 		07F18362615012A08B508843 /* EditorialFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorialFeed.swift; sourceTree = "<group>"; };
 		10D4A21A561B17A4972C5E71 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoute.swift; sourceTree = "<group>"; };
@@ -264,6 +268,16 @@
 				0E29CE0C490F6D7163D0173F /* Profile */,
 			);
 			path = Features;
+			sourceTree = "<group>";
+		};
+		2C33E4F5061728394A5B6C7D /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				1B22D3E4F5061728394A5B6C /* Assets.xcassets */,
+				1B22D3E4F5061728394A5B6D /* PrivacyInfo.xcprivacy */,
+			);
+			name = Resources;
+			path = GoHomeShell/Resources;
 			sourceTree = "<group>";
 		};
 		3C8D7F2180AAB727C26CE9EF /* Onboarding */ = {
@@ -450,6 +464,7 @@
 				850682500EFF110998043564 /* GoHomeShellTests */,
 				A97453064E4ED1A5CAF99D8F /* GoHomeShellUITests */,
 				7DACC599CA3CBAA0498621E7 /* Sources */,
+				2C33E4F5061728394A5B6C7D /* Resources */,
 				F4405CF78F3AA284C69204B2 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -521,6 +536,7 @@
 			buildConfigurationList = C9F49FC169604F699A36D750 /* Build configuration list for PBXNativeTarget "GoHomeShell" */;
 			buildPhases = (
 				F5B5444E62EB23A2F54B23DC /* Sources */,
+				3D44F5061728394A5B6C7D8E /* Resources */,
 			);
 			buildRules = (
 			);
@@ -567,6 +583,18 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		3D44F5061728394A5B6C7D8E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0A11C2D3E4F5061728394A5B /* Assets.xcassets in Resources */,
+				0A11C2D3E4F5061728394A5C /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		62BF56435B7237ABAB7E2B05 /* Sources */ = {
@@ -777,7 +805,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.gohome.family;
@@ -898,7 +926,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

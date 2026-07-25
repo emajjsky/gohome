@@ -11669,3 +11669,20 @@ P4 风险升频边界：
 - iOS 完整回归为 84 个单元测试和 12 个 UI 测试，0 失败；覆盖通知 route、稳定安装 ID、缓存外事件加载和现有全部原生流程。
 - 当前账号为免费 Personal Team `CPRVX9XK47`，不具备 APNs 和 TestFlight。关闭推送能力的免费签名真机目标已使用现有 provisioning profile 构建通过，产物不含 `aps-environment`；真实推送必须等付费个人 Apple Developer Team、Push capability 和 `.p8` 到位后再启用。
 - 腾讯云尚未部署迁移 010、provider 文件或 APNs 环境变量。后续密钥只放服务器受限路径，禁止提交仓库；激活前保持现有生产服务和 App 推送关闭。
+
+## 138. 2026-07-25 iOS 发布隐私与资源预检
+
+### 发布包修正
+
+- 原工程只有 Sources build phase，`Assets.xcassets` 没有进入资源编译阶段，隐私清单也不存在。现新增唯一的 Resources phase，将 App Icon 交给 `actool` 编译，并把 `PrivacyInfo.xcprivacy` 复制到 App 根目录。
+- 隐私清单按当前原生功能声明姓名、手机号、照护地址、粗略地点、照片视频、文案、用户 ID、安装 ID、产品操作和家庭守护敏感信息；用途均为 App 功能，`NSPrivacyTracking=false`，不声明广告或跨 App 跟踪。
+- `UserDefaults` 只用于本 App 自身安装 ID 与会话上下文，required-reason 使用 `CA92.1`。推送设备说明改用通用 `UIDevice.model`，不再把用户给手机设置的名称上传服务器。
+- App Icon 原文件为 RGBA，现保持同一图形与颜色转为 1024x1024 RGB PNG，避免 App Store 的 alpha 通道拒绝。Marketing Version 从 `0.1.0` 收口为 `1.0.0`，Build 保持 `1`。
+
+### 自动校验与结果
+
+- 新增 `scripts/verify-ios-release.js`，检查权限说明、生产 HTTPS、已删除 WebView 配置、隐私类型、无跟踪、`CA92.1`、资源阶段、版本、图标尺寸和 alpha；同时固定免费 Personal Team 包必须保持 `GoHomePushEnabled=false` 且无 `aps-environment`。
+- `npm run verify:ios-release` 已通过并纳入 `npm test`。Xcode 模拟器执行 84 个单元测试，83 个通过、1 个 Keychain 用例因模拟器无 entitlement 按既有规则跳过，0 失败。
+- Release 模拟器构建成功，产物确认为 `1.0.0 (1)`，包含 `PrivacyInfo.xcprivacy`、`Assets.car` 和 `CFBundleIconName=AppIcon`；`actool` 无透明通道错误。
+- iPhone 15 Pro Max 的免费 Personal Team 真机构建同时成功；签名产物包含隐私清单和图标资源，`GoHomePushEnabled=false`，entitlements 只有 application/team identifier 与调试许可，不含 `aps-environment`。本批只构建，没有覆盖安装或修改手机数据。
+- 本批没有部署腾讯云、没有修改盒子视觉代码、没有启用 APNs entitlement，也没有生成可上传 TestFlight 的 Archive。真实发布仍等待付费 Apple Developer Team 与 `.p8`。
