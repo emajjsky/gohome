@@ -11592,3 +11592,24 @@ P4 风险升频边界：
 - iPhone 15 Pro Max 已验收照片数量限制、单视频限制、当前位置、发布回显、真实发布时间、编辑保留媒体、删除、喜欢/评论和此前因体积失败的视频自适应压缩。
 - 本轮清理前后全量回归均为 75 个单元测试和 12 个 UI 测试全部通过，其中记忆模块 14 项；`git diff --check` 和未跟踪文件审计同时通过。
 - 强制退出、弱网、上传意图过期回收和迁移后的云端删除仍属于部署后验收，不得提前写成已完成；未经确认不推送、不部署。
+
+## 134. 2026-07-25 腾讯云迁移 009、组合服务部署与真实回收
+
+### 迁移与部署
+
+- 部署前确认腾讯云 `gohome-app.service` 为 active、存储为 PostgreSQL，现有业务计数为 `memories=10 / media_assets=473 / events=240`，盒子 `edge-042714be475b91da` 为 online。
+- 远端 `activity_intervals` 表、索引和约束与本地 `008_activity_intervals.sql` 一致，但历史手工执行未写入 `schema_migrations`。本次迁移器幂等执行 `008` 补登记，再执行 `009_media_upload_intents.sql` 新建上传意图表和索引。
+- 部署前建立 `/opt/gohome/backups/pre-009-20260725-1105/` 检查点，包含 PostgreSQL custom-format dump 和原运行文件。没有清空、导入或改写现有业务数据。
+- 运行文件只受控替换 `local-app-server/server.js`、`postgres-store.js`、迁移 `008/009` 和 `scripts/export-local-app-db.js`；没有上传 iOS 工程、盒子算法、测试数据或长期密钥。服务端 `server.js` SHA-256 为 `aff8abcee22ced65d54f761e37ae5f1019c172fa440d467074c37c2a331d5fa8`。
+
+### 真实回收探针
+
+- 在 `memory-media/cleanup-probe/` 创建一个 4 字节隔离 COS 对象，并写入一条已过期上传意图；它不关联家庭记忆、事件或正式媒体资产。
+- 重启服务后，PostgreSQL 先恢复该意图，后台清理完成 COS `DeleteObject` 和参数化行删除。真实环境中本次首次清理约耗时 28 秒，因此健康检查短暂显示 `pending_media_uploads=1` 属于运行中状态，最终必须回到 0。
+- 回收后 COS `HeadObject` 返回对象不存在，数据库探针意图为 0；正式计数仍为 `memories=10 / media_assets=473 / events=240`。服务日志无 warning/error，公网 `/health` 和首页返回 200，未认证原生接口按预期返回 401。
+
+### 回归与剩余验收
+
+- 本地 `npm run test:native-server` 共 32 项：31 通过、0 失败、1 项因未设置 PostgreSQL 集成 URL 跳过；`npm test` 的前端缓存与 App Server 闭环通过。
+- 腾讯云 `gohome-app.service`、PostgreSQL、Nginx HTTPS 和盒子心跳正常，`/health` 返回 `store=postgres / pending_media_uploads=0`。
+- 服务端自动回收已经实证完成。仍需在 iPhone 真机做一次普通照片/视频发布回归，以及通过 App 强制退出或弱网制造真实未完成上传；这两项通过后再推送分支并进入 APNs/TestFlight。
