@@ -158,6 +158,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         db.families.push({
             id: family.id,
             name: family.name || "默认家庭",
+            metadata: family.metadata && typeof family.metadata === "object" ? family.metadata : {},
             member_count: Number(metadataValue(family, "member_count", 1)) || 1,
             created_by_user_id: metadataValue(family, "created_by_user_id", null),
             presence_state: metadataValue(family, "presence_state", {}),

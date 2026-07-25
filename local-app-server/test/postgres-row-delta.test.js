@@ -86,6 +86,28 @@ test('postgres date values retain their Shanghai calendar day after hydration', 
   assert.equal(db.care_cards[0].card_date, '2026-07-22');
 });
 
+test('family metadata survives PostgreSQL hydration and serialization', () => {
+  const rows = emptyTables();
+  rows.families = [{
+    id: 'family-1',
+    name: 'Home',
+    metadata: {
+      member_count: 1,
+      created_by_user_id: 'user-1',
+      onboarding_completed_at: '2026-07-25T09:00:00.000Z',
+      custom_setting: { enabled: true },
+    },
+  }];
+
+  const db = createDbFromCloudRows(rows, { created_at: '2026-07-25T09:00:00.000Z' });
+  assert.equal(db.families[0].metadata.onboarding_completed_at, '2026-07-25T09:00:00.000Z');
+  assert.deepEqual(db.families[0].metadata.custom_setting, { enabled: true });
+
+  const persisted = buildCloudSeedBundle(db, { exportedAt: '2026-07-25T09:00:00.000Z' }).tables.families[0];
+  assert.equal(persisted.metadata.onboarding_completed_at, '2026-07-25T09:00:00.000Z');
+  assert.deepEqual(persisted.metadata.custom_setting, { enabled: true });
+});
+
 test('media asset metadata survives PostgreSQL serialization and hydration', () => {
   const timestamp = '2026-07-24T02:00:00.000Z';
   const bundle = buildCloudSeedBundle({

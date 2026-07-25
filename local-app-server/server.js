@@ -611,9 +611,15 @@ function createLocalAppServer(options = {}) {
     const { PostgresNativeRepository } = require("./native-api/postgres-repository");
     const { NativeViewService } = require("./native-api/view-service");
     const { NativeApiRouter } = require("./native-api/router");
+    const onFamilyMetadataChange = (familyId, patch) => {
+        const family = store.db.families.find((item) => String(item.id) === String(familyId));
+        if (!family) return;
+        family.metadata = { ...objectValue(family.metadata), ...objectValue(patch) };
+        if (store.kind === "json") store.save();
+    };
     const nativeRepository = options.nativeRepository || (store.kind === "postgres"
-        ? new PostgresNativeRepository(store.pool)
-        : new JsonNativeRepository(store.db));
+        ? new PostgresNativeRepository(store.pool, { onFamilyMetadataChange })
+        : new JsonNativeRepository(store.db, { onFamilyMetadataChange }));
     const nativeRouter = options.nativeRouter || new NativeApiRouter(new NativeViewService(nativeRepository, {
         homeEnricher: async ({ familyId, source }) => {
             if (source.weather) return source;

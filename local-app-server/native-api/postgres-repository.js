@@ -51,11 +51,12 @@ function validateMemoryAssets(assets) {
 }
 
 class PostgresNativeRepository extends NativeRepository {
-    constructor(pool, { clock = () => new Date() } = {}) {
+    constructor(pool, { clock = () => new Date(), onFamilyMetadataChange = () => {} } = {}) {
         super();
         if (!pool || typeof pool.query !== "function") throw new Error("postgres pool required");
         this.pool = pool;
         this.clock = clock;
+        this.onFamilyMetadataChange = onFamilyMetadataChange;
     }
 
     async assertFamilyAccess(client, userId, familyId) {
@@ -119,12 +120,31 @@ class PostgresNativeRepository extends NativeRepository {
         await this.assertFamilyAccess(this.pool, userId, familyId);
         const result = await this.pool.query(
             `select
+                coalesce(f.metadata->>'onboarding_completed_at', '') as onboarding_completed_at,
                 exists(select 1 from elder_profiles where family_id = $1) as has_profile,
                 exists(select 1 from devices where family_id = $1 and status <> 'revoked') as has_device,
-                exists(select 1 from cameras where family_id = $1 and status <> 'deleted') as has_camera`,
+                exists(select 1 from cameras where family_id = $1 and status <> 'deleted') as has_camera,
+                exists(select 1 from events where family_id = $1) as has_camera_history
+             from families f
+             where f.id = $1`,
             [textId(familyId)],
         );
         const state = row(result) || {};
+        if (textId(state.onboarding_completed_at)) {
+            return { next_step: "complete", complete: true };
+        }
+        if (state.has_profile && ((state.has_device && state.has_camera) || state.has_camera_history)) {
+            const completedAt = new Date(this.clock()).toISOString();
+            await this.pool.query(
+                `update families
+                 set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('onboarding_completed_at', $2::text),
+                     updated_at = now()
+                 where id = $1 and coalesce(metadata->>'onboarding_completed_at', '') = ''`,
+                [textId(familyId), completedAt],
+            );
+            this.onFamilyMetadataChange(textId(familyId), { onboarding_completed_at: completedAt });
+            return { next_step: "complete", complete: true };
+        }
         const nextStep = !state.has_profile ? "profile" : !state.has_device ? "device" : !state.has_camera ? "camera" : "complete";
         return { next_step: nextStep, complete: nextStep === "complete" };
     }

@@ -157,6 +157,7 @@ function buildCloudSeedBundle(db, options = {}) {
         status: String(family.status || "active"),
         timezone: String(family.timezone || "Asia/Shanghai"),
         metadata: {
+            ...((family.metadata && typeof family.metadata === "object" && !Array.isArray(family.metadata)) ? family.metadata : {}),
             member_count: numberOrNull(family.member_count),
             created_by_user_id: nullableTextId(family.created_by_user_id),
             presence_state: family.presence_state && typeof family.presence_state === "object" ? family.presence_state : {},

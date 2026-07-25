@@ -246,11 +246,16 @@ class NativeRepository {
 }
 
 class JsonNativeRepository extends NativeRepository {
-    constructor(db, { idFactory = () => `action-${Date.now()}-${Math.random().toString(16).slice(2)}`, clock = () => new Date().toISOString() } = {}) {
+    constructor(db, {
+        idFactory = () => `action-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        clock = () => new Date().toISOString(),
+        onFamilyMetadataChange = () => {},
+    } = {}) {
         super();
         this.db = db || {};
         this.idFactory = idFactory;
         this.clock = clock;
+        this.onFamilyMetadataChange = onFamilyMetadataChange;
         if (!Array.isArray(this.db.family_members)) this.db.family_members = [];
         if (!Array.isArray(this.db.app_messages)) this.db.app_messages = [];
         if (!Array.isArray(this.db.app_message_actions)) this.db.app_message_actions = [];
@@ -322,9 +327,28 @@ class JsonNativeRepository extends NativeRepository {
 
     onboardingForFamily(userId, familyId) {
         this.assertFamilyAccess(userId, familyId);
+        const family = (this.db.families || []).find((item) => textId(item.id) === textId(familyId));
+        const metadata = family?.metadata && typeof family.metadata === "object" && !Array.isArray(family.metadata)
+            ? family.metadata
+            : {};
+        if (textId(metadata.onboarding_completed_at)) {
+            return { next_step: "complete", complete: true };
+        }
         const hasProfile = Object.values(this.db.elder_profiles || {}).some((profile) => textId(profile.family_id) === textId(familyId));
-        const hasDevice = Object.values(this.db.devices || {}).some((device) => textId(device.family_id) === textId(familyId));
-        const hasCamera = Object.values(this.db.cameras || {}).some((camera) => textId(camera.family_id) === textId(familyId));
+        const hasDevice = Object.values(this.db.devices || {}).some((device) => (
+            textId(device.family_id) === textId(familyId) && textId(device.status).toLowerCase() !== "revoked"
+        ));
+        const hasCamera = Object.values(this.db.cameras || {}).some((camera) => (
+            textId(camera.family_id) === textId(familyId) && textId(camera.status).toLowerCase() !== "deleted"
+        ));
+        const hasCameraHistory = (this.db.events || []).some((event) => textId(event.family_id) === textId(familyId));
+        if (hasProfile && ((hasDevice && hasCamera) || hasCameraHistory)) {
+            if (family) {
+                family.metadata = { ...metadata, onboarding_completed_at: this.clock() };
+                this.onFamilyMetadataChange(textId(familyId), family.metadata);
+            }
+            return { next_step: "complete", complete: true };
+        }
         const nextStep = !hasProfile ? "profile" : !hasDevice ? "device" : !hasCamera ? "camera" : "complete";
         return { next_step: nextStep, complete: nextStep === "complete" };
     }

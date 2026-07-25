@@ -65,6 +65,70 @@ test('JSON repository isolates every native read and write by family membership'
   assert.equal(repo.homeForFamily('user-a', 'family-a').articles[0].title, '社区公园本周开放夜游');
 });
 
+test('JSON onboarding remains complete after the last camera is deleted', () => {
+  const data = fixture();
+  data.elder_profiles['profile-a'] = { id: 'profile-a', family_id: 'family-a' };
+  data.devices['device-a'] = { id: 'device-a', family_id: 'family-a', status: 'online' };
+  data.cameras['camera-a'] = { id: 'camera-a', family_id: 'family-a', status: 'online' };
+  const repo = new JsonNativeRepository(data, { clock: () => '2026-07-25T09:00:00.000Z' });
+
+  assert.deepEqual(repo.onboardingForFamily('user-a', 'family-a'), { next_step: 'complete', complete: true });
+  assert.equal(data.families[0].metadata.onboarding_completed_at, '2026-07-25T09:00:00.000Z');
+
+  delete data.cameras['camera-a'];
+  assert.deepEqual(repo.onboardingForFamily('user-a', 'family-a'), { next_step: 'complete', complete: true });
+});
+
+test('JSON onboarding still requires a first camera for a genuinely new family', () => {
+  const data = fixture();
+  data.elder_profiles['profile-a'] = { id: 'profile-a', family_id: 'family-a' };
+  data.devices['device-a'] = { id: 'device-a', family_id: 'family-a', status: 'online' };
+  const repo = new JsonNativeRepository(data);
+
+  assert.deepEqual(repo.onboardingForFamily('user-a', 'family-a'), { next_step: 'camera', complete: false });
+  assert.equal(data.families[0].metadata, undefined);
+});
+
+test('JSON onboarding backfills completion from retained event history', () => {
+  const data = fixture();
+  data.elder_profiles['profile-a'] = { id: 'profile-a', family_id: 'family-a' };
+  data.events.push({ id: 'event-a', family_id: 'family-a', camera_id: null });
+  const repo = new JsonNativeRepository(data, { clock: () => '2026-07-25T09:00:00.000Z' });
+
+  assert.deepEqual(repo.onboardingForFamily('user-a', 'family-a'), { next_step: 'complete', complete: true });
+  assert.equal(data.families[0].metadata.onboarding_completed_at, '2026-07-25T09:00:00.000Z');
+});
+
+test('PostgreSQL onboarding backfills an established family after its box is unbound', async () => {
+  let metadataChange = null;
+  const pool = {
+    async query(text, values) {
+      if (/from family_members/i.test(text)) return { rowCount: 1, rows: [{ role: 'owner' }] };
+      if (/update families/i.test(text)) return { rowCount: 1, rows: [] };
+      return {
+        rowCount: 1,
+        rows: [{
+          onboarding_completed_at: '',
+          has_profile: true,
+          has_device: false,
+          has_camera: false,
+          has_camera_history: true,
+        }],
+      };
+    },
+  };
+  const repo = new PostgresNativeRepository(pool, {
+    clock: () => new Date('2026-07-25T09:00:00.000Z'),
+    onFamilyMetadataChange: (familyId, metadata) => { metadataChange = { familyId, metadata }; },
+  });
+
+  assert.deepEqual(await repo.onboardingForFamily('user-a', 'family-a'), { next_step: 'complete', complete: true });
+  assert.deepEqual(metadataChange, {
+    familyId: 'family-a',
+    metadata: { onboarding_completed_at: '2026-07-25T09:00:00.000Z' },
+  });
+});
+
 test('JSON repository records message actions idempotently', () => {
   const repo = new JsonNativeRepository(fixture(), { idFactory: () => 'action-1' });
   const input = { action_type: 'shared', idempotency_key: 'share-1', payload: { channel: 'system-share' } };
@@ -178,4 +242,45 @@ test('PostgreSQL preference update authorizes and writes in one parameterized st
     'user-a',
   ]);
   assert.equal(result.family_id, 'family-a');
+});
+
+test('PostgreSQL onboarding persists completion and does not depend on current cameras afterward', async () => {
+  const calls = [];
+  const metadataChanges = [];
+  let completedAt = '';
+  let hasCamera = true;
+  const pool = {
+    async query(text, values) {
+      calls.push({ text, values });
+      if (/from family_members/i.test(text)) return { rowCount: 1, rows: [{ role: 'owner' }] };
+      if (/update families/i.test(text)) {
+        completedAt = values[1];
+        return { rowCount: 1, rows: [] };
+      }
+      return {
+        rowCount: 1,
+        rows: [{
+          onboarding_completed_at: completedAt,
+          has_profile: true,
+          has_device: true,
+          has_camera: hasCamera,
+          has_camera_history: false,
+        }],
+      };
+    },
+  };
+  const repo = new PostgresNativeRepository(pool, {
+    clock: () => new Date('2026-07-25T09:00:00.000Z'),
+    onFamilyMetadataChange: (familyId, metadata) => metadataChanges.push({ familyId, metadata }),
+  });
+
+  assert.deepEqual(await repo.onboardingForFamily('user-a', 'family-a'), { next_step: 'complete', complete: true });
+  assert.equal(completedAt, '2026-07-25T09:00:00.000Z');
+  assert.deepEqual(metadataChanges, [{
+    familyId: 'family-a',
+    metadata: { onboarding_completed_at: '2026-07-25T09:00:00.000Z' },
+  }]);
+  hasCamera = false;
+  assert.deepEqual(await repo.onboardingForFamily('user-a', 'family-a'), { next_step: 'complete', complete: true });
+  assert.equal(calls.filter((call) => /update families/i.test(call.text)).length, 1);
 });
