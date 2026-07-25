@@ -53,8 +53,13 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["设备与守护"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["演示守护盒子"].exists)
         XCTAssertTrue(app.buttons["添加家庭盒子"].exists)
-        XCTAssertTrue(app.buttons["解除演示守护盒子绑定"].exists)
+        XCTAssertTrue(app.buttons["解除绑定：演示守护盒子"].exists)
         XCTAssertTrue(app.buttons["添加摄像头"].exists)
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Native device management"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
 
         app.staticTexts["客厅主视"].tap()
         XCTAssertTrue(app.navigationBars["编辑摄像头"].waitForExistence(timeout: 3))
@@ -72,7 +77,7 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["演示守护盒子"].exists)
         XCTAssertTrue(app.staticTexts["客厅主视"].exists)
         XCTAssertFalse(app.buttons["添加家庭盒子"].exists)
-        XCTAssertFalse(app.buttons["解除演示守护盒子绑定"].exists)
+        XCTAssertFalse(app.buttons["解除绑定：演示守护盒子"].exists)
         XCTAssertFalse(app.buttons["添加摄像头"].exists)
         XCTAssertFalse(app.navigationBars["编辑摄像头"].exists)
     }

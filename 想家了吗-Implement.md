@@ -11742,3 +11742,5 @@ P4 风险升频边界：
 - 随后仅将提交 `e86b910` 中的设备管理差异应用到生产基线，产物只修改 `server.js` 和兼容 Web 调用，不包含 APNs、活动报告定时器或数据库迁移。隔离工作树设备专项 1 项通过，远端语法检查通过。
 - 最小版本已部署，远端 `server.js` SHA-256 为 `930d18fde97d2498eb20f18463d20b56a391da08ecd7b91280213b386904b58e`；`gohome-app.service` 为 active，PostgreSQL、127.0.0.1:8788、公网 HTTPS、首页和未认证 401 边界正常，部署后无 warning 日志。
 - 原生 App 使用同一 `com.gohome.family` Bundle ID 完成免费 Personal Team 签名、覆盖安装并启动，原登录和 App 数据保留，`GoHomePushEnabled=false`。创建者真机操作和盒子同步回传仍待用户现场点验，未提前记录为完成。
+- 首次真机查看时解绑按钮不可见，根因不是家庭角色或接口权限：线上绑定家庭成员为 `owner`，而 UI 使用的 SF Symbol `link.badge.minus` 在目标系统不存在，SwiftUI 因而留下空白点击区域。按钮已改为有效的 `shippingbox.and.arrow.backward` 加“解除绑定”文字，并继续保留破坏性二次确认。
+- iPhone SE 创建者设备管理 UI 专项通过并人工核对截图，文字、图标和摄像头行无重叠；修复版已再次覆盖安装到真机。普通成员回归继续确认不显示该动作。

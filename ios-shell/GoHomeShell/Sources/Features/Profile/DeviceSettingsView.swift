@@ -114,14 +114,14 @@ struct DeviceSettingsView: View {
                             Spacer()
                             if model.canManageDevices {
                                 Button(role: .destructive) { bindingToRemove = binding } label: {
-                                    Image(systemName: "link.badge.minus")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .frame(width: 36, height: 36)
+                                    Label("解除绑定", systemImage: "shippingbox.and.arrow.backward")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .padding(.vertical, 10)
                                 }
                                 .buttonStyle(.plain)
                                 .foregroundStyle(.red)
                                 .disabled(model.deviceActionID != nil)
-                                .accessibilityLabel("解除\(binding.deviceName)绑定")
+                                .accessibilityLabel("解除绑定：\(binding.deviceName)")
                             }
                         }
                         .frame(minHeight: 64)
