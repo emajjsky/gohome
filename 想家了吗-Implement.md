@@ -11734,4 +11734,11 @@ P4 风险升频边界：
 - iOS 设备专项 9 项单元测试通过，覆盖旧响应解码、请求字段白名单、成员 mutation 短路、创建者创建/编辑/删除/解绑后的页面状态和缓存一致性；3 项 UI 测试通过，覆盖首次摄像头步骤、创建者管理入口和普通成员只读入口。
 - 本批完整自动化结果为：`npm run test:native-server` 46 项中 45 项通过、1 项因未配置 PostgreSQL 集成 URL 跳过、0 失败；前端缓存、App Server 与 iOS 发布预检全部通过；iOS 单元测试 91 项中 90 项通过、1 项按既有 Keychain entitlement 环境规则跳过、0 失败；完整 iOS UI 测试 15 项全部通过。
 - iPhone SE 小屏补充执行首次摄像头配置和创建者设备管理 2 项关键 UI 流程，均通过；Release 模拟器构建成功，产物资源、版本、图标与无 APNs entitlement 检查通过，`GoHomePushEnabled=false` 保持不变。
-- 本批未修改树莓派视觉算法、EACP、跌倒状态机或多模态复核，也未部署腾讯云。真实 iPhone 与盒子同一 Wi-Fi 下的 mDNS 发现、摄像头扫描、凭证接入和盒子同步回传仍需现场验收；自动化不能替代该项。
+- 本批未修改树莓派视觉算法、EACP、跌倒状态机或多模态复核。真实 iPhone 与盒子同一 Wi-Fi 下的 mDNS 发现、摄像头扫描、凭证接入和盒子同步回传仍需现场验收；自动化不能替代该项。
+
+### 云端最小部署与真机安装
+
+- 腾讯云生产基线精确对应 `2e55476`。直接替换分支最新整份 `server.js` 时发现其包含尚未激活的 APNs 模块依赖，服务因缺少 `apns-provider` 无法启动；该尝试立即回滚到原文件，PostgreSQL 数据未修改，服务和公网健康检查恢复正常。
+- 随后仅将提交 `e86b910` 中的设备管理差异应用到生产基线，产物只修改 `server.js` 和兼容 Web 调用，不包含 APNs、活动报告定时器或数据库迁移。隔离工作树设备专项 1 项通过，远端语法检查通过。
+- 最小版本已部署，远端 `server.js` SHA-256 为 `930d18fde97d2498eb20f18463d20b56a391da08ecd7b91280213b386904b58e`；`gohome-app.service` 为 active，PostgreSQL、127.0.0.1:8788、公网 HTTPS、首页和未认证 401 边界正常，部署后无 warning 日志。
+- 原生 App 使用同一 `com.gohome.family` Bundle ID 完成免费 Personal Team 签名、覆盖安装并启动，原登录和 App 数据保留，`GoHomePushEnabled=false`。创建者真机操作和盒子同步回传仍待用户现场点验，未提前记录为完成。
