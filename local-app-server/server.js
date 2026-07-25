@@ -1409,6 +1409,15 @@ function createLocalAppServer(options = {}) {
         ));
     }
 
+    function activeDeviceBindingForFamily(familyId, deviceId = "") {
+        const requestedDeviceId = String(deviceId || "").trim();
+        return store.db.device_bindings.find((item) => (
+            Number(item.family_id) === Number(familyId)
+            && String(item.status || "active") !== "revoked"
+            && (!requestedDeviceId || String(item.device_id || "") === requestedDeviceId)
+        )) || null;
+    }
+
     function deviceBoundToOtherFamily(deviceId, familyId) {
         return store.db.device_bindings.some((item) => (
             String(item.device_id || "") === String(deviceId || "")
@@ -7943,7 +7952,10 @@ function createLocalAppServer(options = {}) {
                     return;
                 }
                 if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
-                const bindings = store.db.device_bindings.filter((item) => Number(item.family_id) === Number(familyId));
+                const bindings = store.db.device_bindings.filter((item) => (
+                    Number(item.family_id) === Number(familyId)
+                    && String(item.status || "active") !== "revoked"
+                ));
                 write(res, 200, bindings.map(publicBinding));
                 return;
             }
@@ -7983,6 +7995,10 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "GET" && pathname === "/api/device-claims/available") {
                 if (!requireApp(req, res)) return;
+                const user = activeAppUser(req);
+                const userFamilies = familiesForUser(user.id);
+                const familyId = normalizeNumber(url.searchParams.get("family_id"), userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyOwner(req, res, familyId)) return;
                 if (!cloudDeviceClaimsEnabled()) {
                     write(res, 200, []);
                     return;
@@ -8010,7 +8026,7 @@ function createLocalAppServer(options = {}) {
                 const user = activeAppUser(req);
                 const userFamilies = familiesForUser(user.id);
                 const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
-                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                if (!familyId || !requireFamilyOwner(req, res, familyId)) return;
                 const claimCode = payload.claim_code || payload.code || payload.serial_number || payload.serial || "";
                 const requestedSerial = normalizeClaimCode(payload.serial_number || payload.serial || "");
                 const requestedDeviceId = normalizeClaimCode(payload.device_id || "");
@@ -8064,7 +8080,7 @@ function createLocalAppServer(options = {}) {
                     const user = activeAppUser(req);
                     const userFamilies = familiesForUser(user.id);
                     const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
-                    if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                    if (!familyId || !requireFamilyOwner(req, res, familyId)) return;
                     const claimCode = payload.claim_code || payload.code || payload.serial_number || payload.serial || "";
                     const device = Object.values(store.db.devices).find((item) => claimCodeMatchesDevice(item, claimCode));
                     if (!device) {
@@ -8479,8 +8495,20 @@ function createLocalAppServer(options = {}) {
                 const payload = await parseJsonBody(req);
                 const userFamilies = familiesForUser(activeAppUser(req).id);
                 const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
-                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
-                const camera = normalizeCameraPayload({ ...payload, family_id: familyId });
+                if (!familyId || !requireFamilyOwner(req, res, familyId)) return;
+                const requestedDeviceId = String(payload.device_id || "").trim();
+                const binding = activeDeviceBindingForFamily(familyId, requestedDeviceId);
+                if (!binding) {
+                    writeError(res, 409, requestedDeviceId
+                        ? "所选盒子没有绑定到当前家庭，请重新搜索并绑定。"
+                        : "请先绑定家庭盒子，再添加摄像头。");
+                    return;
+                }
+                const camera = normalizeCameraPayload({
+                    ...payload,
+                    family_id: familyId,
+                    device_id: String(binding.device_id || ""),
+                });
                 store.db.cameras[String(camera.id)] = camera;
                 await store.save();
                 write(res, 200, publicCamera(camera));
@@ -8490,6 +8518,13 @@ function createLocalAppServer(options = {}) {
             if (req.method === "POST" && pathname === "/api/cameras/test-connection") {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
+                const userFamilies = familiesForUser(activeAppUser(req).id);
+                const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyOwner(req, res, familyId)) return;
+                if (!activeDeviceBindingForFamily(familyId, payload.device_id)) {
+                    writeError(res, 409, "请先绑定家庭盒子，再配置摄像头。");
+                    return;
+                }
                 const streamUrl = String(payload.stream_url || "").trim();
                 write(res, 200, {
                     ok: true,
@@ -8513,9 +8548,19 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "camera not found");
                     return;
                 }
-                if (!existing.family_id || !requireFamilyAccess(req, res, existing.family_id)) return;
+                if (!existing.family_id || !requireFamilyOwner(req, res, existing.family_id)) return;
                 const patch = await parseJsonBody(req);
-                const camera = normalizeCameraPayload({ ...existing, ...patch, id: existing.id }, existing);
+                if ("family_id" in patch || "device_id" in patch) {
+                    writeError(res, 400, "摄像头不能通过编辑迁移家庭或盒子，请删除后重新添加。");
+                    return;
+                }
+                const camera = normalizeCameraPayload({
+                    ...existing,
+                    ...patch,
+                    id: existing.id,
+                    family_id: existing.family_id,
+                    device_id: existing.device_id,
+                }, existing);
                 store.db.cameras[cameraId] = camera;
                 await store.save();
                 write(res, 200, publicCamera(camera));
@@ -8529,7 +8574,7 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "camera not found");
                     return;
                 }
-                if (!store.db.cameras[cameraId].family_id || !requireFamilyAccess(req, res, store.db.cameras[cameraId].family_id)) return;
+                if (!store.db.cameras[cameraId].family_id || !requireFamilyOwner(req, res, store.db.cameras[cameraId].family_id)) return;
                 detachCameraReferences([cameraId]);
                 delete store.db.cameras[cameraId];
                 await deletePersistedRows([{ table: "cameras", id: cameraId }]);
@@ -8546,7 +8591,7 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "camera not found");
                     return;
                 }
-                if (!camera.family_id || !requireFamilyAccess(req, res, camera.family_id)) return;
+                if (!camera.family_id || !requireFamilyOwner(req, res, camera.family_id)) return;
                 camera.status = camera.stream_url ? "pending_edge_verify" : "pending_edge_setup";
                 camera.sync_status = "pending_edge_sync";
                 camera.last_error = "";

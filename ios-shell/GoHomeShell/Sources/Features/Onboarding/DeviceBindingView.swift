@@ -1,9 +1,15 @@
 import SwiftUI
 
+enum DeviceBindingPresentation {
+    case onboarding
+    case management
+}
+
 struct DeviceBindingView: View {
     let familyID: String?
     let service: OnboardingService
     let onComplete: @MainActor () -> Void
+    var presentation: DeviceBindingPresentation = .onboarding
     @StateObject private var discovery = BoxDiscoveryService()
     @State private var cloudDevices: [ClaimableDevice] = []
     @State private var isLoadingCloud = false
@@ -11,8 +17,33 @@ struct DeviceBindingView: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        OnboardingPage(index: 3, title: "连接守护盒子", subtitle: "手机与盒子连接同一 Wi-Fi，系统会自动发现它。") {
-            VStack(alignment: .leading, spacing: 18) {
+        Group {
+            switch presentation {
+            case .onboarding:
+                OnboardingPage(index: 3, title: "连接守护盒子", subtitle: "手机与盒子连接同一 Wi-Fi，系统会自动发现它。") {
+                    bindingContent
+                }
+            case .management:
+                ScrollView {
+                    bindingContent
+                        .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
+                        .padding(.top, 18)
+                        .padding(.bottom, 28)
+                }
+                .background(GoHomeTheme.paper)
+                .profileNavigationTitle("添加家庭盒子")
+            }
+        }
+        .accessibilityIdentifier("onboarding-device")
+        .onAppear {
+            discovery.start()
+            loadCloudDevices()
+        }
+        .onDisappear { discovery.stop() }
+    }
+
+    private var bindingContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 12) {
                     Image(systemName: discovery.isSearching ? "dot.radiowaves.left.and.right" : "wifi")
                         .font(.title3.weight(.semibold))
@@ -81,14 +112,7 @@ struct DeviceBindingView: View {
                 .disabled(isBinding)
 
                 OnboardingError(message: errorMessage)
-            }
         }
-        .accessibilityIdentifier("onboarding-device")
-        .onAppear {
-            discovery.start()
-            loadCloudDevices()
-        }
-        .onDisappear { discovery.stop() }
     }
 
     private var allDevices: [DiscoveredBox] {
@@ -101,11 +125,11 @@ struct DeviceBindingView: View {
     }
 
     private func loadCloudDevices() {
-        guard !isLoadingCloud else { return }
+        guard let familyID, !isLoadingCloud else { return }
         isLoadingCloud = true
         Task {
             defer { isLoadingCloud = false }
-            cloudDevices = (try? await service.availableDevices()) ?? []
+            cloudDevices = (try? await service.availableDevices(familyID: familyID)) ?? []
         }
     }
 

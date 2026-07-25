@@ -24,7 +24,9 @@ final class OnboardingFlowTests: XCTestCase {
     func testCameraStepIsReachableOnlyAsItsOwnStep() {
         let app = launch(step: "camera")
         XCTAssertTrue(app.staticTexts["添加第一路画面"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["测试并保存"].exists)
+        XCTAssertTrue(app.buttons["保存并同步"].exists)
+        XCTAssertFalse(app.staticTexts["视频地址"].exists)
+        XCTAssertFalse(app.textFields.matching(NSPredicate(format: "value CONTAINS[c] 'rtsp' OR placeholderValue CONTAINS[c] 'rtsp'")).firstMatch.exists)
     }
 
     private func launch(step: String) -> XCUIApplication {

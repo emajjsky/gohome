@@ -275,6 +275,28 @@ struct AppEnvironment {
                     path: "/api/v2/activity-history",
                     queryItems: [URLQueryItem(name: "family_id", value: familyID)]
                 ))
+            },
+            cameraCreator: { request in
+                let endpoint: Endpoint<CameraConfig> = try .jsonBody(
+                    method: .post,
+                    path: "/api/cameras",
+                    body: request
+                )
+                return try await client.send(endpoint)
+            },
+            cameraUpdater: { cameraID, request in
+                let endpoint: Endpoint<CameraConfig> = try .jsonBody(
+                    method: .patch,
+                    path: "/api/cameras/\(cameraID)",
+                    body: request
+                )
+                return try await client.send(endpoint)
+            },
+            cameraDeleter: { cameraID in
+                try await client.send(Endpoint(method: .delete, path: "/api/cameras/\(cameraID)"))
+            },
+            deviceUnbinder: { bindingID in
+                try await client.send(Endpoint(method: .delete, path: "/api/device-bindings/\(bindingID)"))
             }
         )
         return AppEnvironment(

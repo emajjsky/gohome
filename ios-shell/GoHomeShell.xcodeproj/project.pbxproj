@@ -47,6 +47,7 @@
 		862742375DA7477B5EF05AD8 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20C569630615539E10B554B8 /* ProfileView.swift */; };
 		87A4A479A68867881BD96404 /* ArticleDetailRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB14E97EA80F980629836AB4 /* ArticleDetailRoute.swift */; };
 		87D2755E44DCC315C52ABE85 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ED0A30A15762CD0C8DE58BA /* AuthViewModel.swift */; };
+		8A4E1F3FFF74010642D6B076 /* CameraConfigurationForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FC781823FDC35BF91DF1803 /* CameraConfigurationForm.swift */; };
 		922AEC2FEEF01923B88C589E /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88E6E4010D3EE24DEC0AAA29 /* HomeView.swift */; };
 		92D1D2D314210AC6510C695E /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3564B0E8D8EEF82789F18FD9 /* AppModel.swift */; };
 		9483F8E98E952EAEEF061ACA /* MasonryLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB4F8D88CD928BF1002B6483 /* MasonryLayout.swift */; };
@@ -72,6 +73,7 @@
 		C782529B9D0BDAE941836633 /* ArticleCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77CFCDAA5CFFC8B26D1B9F25 /* ArticleCard.swift */; };
 		C930FC58AE4B834EF07A1C3E /* CalendarStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CB2D7242BCF65C76BDFB204 /* CalendarStripView.swift */; };
 		C9FDEBFB899A0B8A3315542B /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1DCE746C7C4C2A5C814445 /* MainTabView.swift */; };
+		D3EED6D6FD42A2E941FEBC61 /* CameraManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD074E340C4AFECF2D73FFC /* CameraManagementView.swift */; };
 		D401FA8BB9BBF634E298B084 /* ProductRecommendationsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 406032DDDD73BE44A3BA41BC /* ProductRecommendationsTests.swift */; };
 		D4863B6BBFE635B6E725250D /* OnboardingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 741C8D22BE26A66E33D63C6D /* OnboardingService.swift */; };
 		E02FC8ECDB02D2A42CBF558B /* GoHomeShellApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FE057158722526CC639E04C /* GoHomeShellApp.swift */; };
@@ -169,6 +171,7 @@
 		8915B898A43BA9BA950395F9 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		8DBBA32F7917F6F0495B49EF /* CareMessageCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareMessageCard.swift; sourceTree = "<group>"; };
 		8ED0A30A15762CD0C8DE58BA /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
+		8FC781823FDC35BF91DF1803 /* CameraConfigurationForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraConfigurationForm.swift; sourceTree = "<group>"; };
 		930B8EAC49AC96E7F4AF14E1 /* GoHomeShell.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GoHomeShell.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		96FD654314F93143EC2FD572 /* ProfilePermissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilePermissionTests.swift; sourceTree = "<group>"; };
 		9C7F5564D6AE495B1EF00A43 /* DeviceBindingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceBindingView.swift; sourceTree = "<group>"; };
@@ -202,6 +205,7 @@
 		E5EC34A06B9B64F2A81E3A18 /* HomeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeViewModel.swift; sourceTree = "<group>"; };
 		E61E6F6BAE7CFEF1E2973E6C /* ActivityDataSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityDataSettingsView.swift; sourceTree = "<group>"; };
 		EF1852331ED6E508981328DF /* MemoryLocationProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryLocationProvider.swift; sourceTree = "<group>"; };
+		EFD074E340C4AFECF2D73FFC /* CameraManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraManagementView.swift; sourceTree = "<group>"; };
 		F11948718D182C31312EF0F0 /* GuardViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuardViewModelTests.swift; sourceTree = "<group>"; };
 		F39487C3C9C1738C8D3B6951 /* CameraThumbnailStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraThumbnailStrip.swift; sourceTree = "<group>"; };
 		F6B5C1BFEBEA14F8F8636CAB /* EventsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventsView.swift; sourceTree = "<group>"; };
@@ -235,6 +239,7 @@
 			isa = PBXGroup;
 			children = (
 				E61E6F6BAE7CFEF1E2973E6C /* ActivityDataSettingsView.swift */,
+				EFD074E340C4AFECF2D73FFC /* CameraManagementView.swift */,
 				57F10EB712D69E2E714CCE59 /* ContentPreferencesView.swift */,
 				70A83566580A0F78EDC30D76 /* DeviceSettingsView.swift */,
 				BFD2CF59E07AE70E40FC1C00 /* FamilyMembersView.swift */,
@@ -286,6 +291,7 @@
 		3C8D7F2180AAB727C26CE9EF /* Onboarding */ = {
 			isa = PBXGroup;
 			children = (
+				8FC781823FDC35BF91DF1803 /* CameraConfigurationForm.swift */,
 				2314D73B8E3B7E21585AEB9D /* CameraSetupView.swift */,
 				9C7F5564D6AE495B1EF00A43 /* DeviceBindingView.swift */,
 				3E5D643974E4D0CA851DD413 /* FamilySetupView.swift */,
@@ -660,6 +666,8 @@
 				87D2755E44DCC315C52ABE85 /* AuthViewModel.swift in Sources */,
 				B1F27F31EC4AE33898907C89 /* BoxDiscoveryService.swift in Sources */,
 				C930FC58AE4B834EF07A1C3E /* CalendarStripView.swift in Sources */,
+				8A4E1F3FFF74010642D6B076 /* CameraConfigurationForm.swift in Sources */,
+				D3EED6D6FD42A2E941FEBC61 /* CameraManagementView.swift in Sources */,
 				F40FFC014EDD5A49AD8E65C1 /* CameraSetupView.swift in Sources */,
 				21CA1072E1B79122DDC40D1A /* CameraStageView.swift in Sources */,
 				67041597E06E2008623365F9 /* CameraStreamClient.swift in Sources */,

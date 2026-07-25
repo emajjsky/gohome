@@ -308,6 +308,30 @@ struct ProductPreferencesEnvelope: Codable, Equatable, Sendable {
     let preferences: ProductPreferences
 }
 
+struct CameraCreateRequest: Encodable, Equatable, Sendable {
+    let familyID: String
+    let deviceID: String
+    let name: String
+    let room: String
+    let streamURL: String
+    let username: String
+    let password: String
+    let enabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case familyID = "family_id"
+        case deviceID = "device_id"
+        case name, room, username, password, enabled
+        case streamURL = "stream_url"
+    }
+}
+
+struct CameraUpdateRequest: Encodable, Equatable, Sendable {
+    let name: String
+    let room: String
+    let enabled: Bool
+}
+
 struct ProfileData: Codable, Equatable, Sendable {
     var elder: ElderProfile?
     var bindings: [DeviceBinding]

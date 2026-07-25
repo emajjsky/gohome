@@ -18,8 +18,11 @@ struct OnboardingService: Sendable {
         return try await client.send(Endpoint<ElderProfile>(method: .put, path: "/api/v1/families/\(familyID)/elders/\(elderID)/profile", body: body))
     }
 
-    func availableDevices() async throws -> [ClaimableDevice] {
-        try await client.send(Endpoint<[ClaimableDevice]>(path: "/api/device-claims/available"))
+    func availableDevices(familyID: String) async throws -> [ClaimableDevice] {
+        try await client.send(Endpoint<[ClaimableDevice]>(
+            path: "/api/device-claims/available",
+            queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+        ))
     }
 
     func bindings(familyID: String) async throws -> [DeviceBinding] {
@@ -48,13 +51,24 @@ struct OnboardingService: Sendable {
         return try await client.send(Endpoint<DeviceClaimResponse>(method: .post, path: "/api/device-claims/claim", body: body))
     }
 
-    func testCamera(familyID: String, streamURL: String) async throws -> CameraConnectionResult {
-        let body = try JSONEncoder().encode(CameraTestPayload(streamURL: streamURL))
-        return try await client.send(Endpoint<CameraConnectionResult>(method: .post, path: "/api/cameras/test-connection", body: body))
-    }
-
-    func saveCamera(familyID: String, deviceID: String?, name: String, room: String, streamURL: String) async throws -> CameraConfig {
-        let payload = CameraPayload(familyID: familyID, deviceID: deviceID, name: name, room: room, streamURL: streamURL)
+    func saveCamera(
+        familyID: String,
+        deviceID: String,
+        name: String,
+        room: String,
+        streamURL: String,
+        username: String,
+        password: String
+    ) async throws -> CameraConfig {
+        let payload = CameraPayload(
+            familyID: familyID,
+            deviceID: deviceID,
+            name: name,
+            room: room,
+            streamURL: streamURL,
+            username: username,
+            password: password
+        )
         let body = try JSONEncoder().encode(payload)
         return try await client.send(Endpoint<CameraConfig>(method: .post, path: "/api/cameras", body: body))
     }
@@ -103,22 +117,19 @@ private struct BindingCodePayload: Encodable, Sendable {
     }
 }
 
-private struct CameraTestPayload: Encodable, Sendable {
-    let streamURL: String
-    enum CodingKeys: String, CodingKey { case streamURL = "stream_url" }
-}
-
 private struct CameraPayload: Encodable, Sendable {
     let familyID: String
-    let deviceID: String?
+    let deviceID: String
     let name: String
     let room: String
     let streamURL: String
+    let username: String
+    let password: String
 
     enum CodingKeys: String, CodingKey {
         case familyID = "family_id"
         case deviceID = "device_id"
-        case name, room
+        case name, room, username, password
         case streamURL = "stream_url"
     }
 }

@@ -320,7 +320,7 @@ async function main() {
             headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
         });
         assert.equal(claimHeartbeat.ok, true);
-        const claimableDevices = await requestJson(baseUrl, "/api/device-claims/available", {
+        const claimableDevices = await requestJson(baseUrl, `/api/device-claims/available?family_id=${claimFamily.id}`, {
             headers: { Authorization: `Bearer ${phoneRegistered.token}` },
         });
         assert.ok(claimableDevices.some((item) => item.device_id === "edge-claimable" && item.serial_number === "GH-CLAIM001"));
@@ -409,7 +409,7 @@ async function main() {
             }),
             headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
         });
-        const claimableAfterUnbind = await requestJson(baseUrl, "/api/device-claims/available", {
+        const claimableAfterUnbind = await requestJson(baseUrl, `/api/device-claims/available?family_id=${claimFamily.id}`, {
             headers: { Authorization: `Bearer ${phoneRegistered.token}` },
         });
         assert.ok(claimableAfterUnbind.some((item) => item.device_id === "edge-transferable"));
@@ -1829,7 +1829,7 @@ async function main() {
         assert.equal(restoredDb.model_providers.length, 0);
 
         process.env.GOHOME_ALLOW_CLOUD_DEVICE_CLAIMS = "0";
-        const hiddenClaimableDevices = await requestJson(baseUrl, "/api/device-claims/available", {
+        const hiddenClaimableDevices = await requestJson(baseUrl, `/api/device-claims/available?family_id=${claimFamily.id}`, {
             headers: { Authorization: `Bearer ${phoneRegistered.token}` },
         });
         assert.deepEqual(hiddenClaimableDevices, []);

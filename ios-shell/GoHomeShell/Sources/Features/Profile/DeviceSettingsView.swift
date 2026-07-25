@@ -2,6 +2,12 @@ import SwiftUI
 
 struct DeviceSettingsView: View {
     @ObservedObject var model: ProfileViewModel
+    let onboardingService: OnboardingService?
+
+    @State private var showingBoxBinding = false
+    @State private var bindingToRemove: DeviceBinding?
+    @State private var cameraBindingToAdd: DeviceBinding?
+    @State private var choosingCameraBox = false
 
     var body: some View {
         ScrollView {
@@ -26,31 +32,103 @@ struct DeviceSettingsView: View {
         }
         .background(GoHomeTheme.paper)
         .profileNavigationTitle("设备与守护")
+        .sheet(isPresented: $showingBoxBinding) {
+            if let onboardingService {
+                NavigationStack {
+                    DeviceBindingView(
+                        familyID: model.family.id,
+                        service: onboardingService,
+                        onComplete: {
+                            showingBoxBinding = false
+                            model.refresh()
+                        },
+                        presentation: .management
+                    )
+                }
+            }
+        }
+        .sheet(item: $cameraBindingToAdd) { binding in
+            NavigationStack {
+                CameraManagementView(model: model, binding: binding, camera: nil)
+            }
+        }
+        .confirmationDialog(
+            "选择摄像头连接的盒子",
+            isPresented: $choosingCameraBox,
+            titleVisibility: .visible
+        ) {
+            ForEach(model.state.value?.bindings ?? []) { binding in
+                Button(binding.deviceName) { cameraBindingToAdd = binding }
+            }
+            Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "解除这台盒子的家庭绑定？",
+            isPresented: Binding(
+                get: { bindingToRemove != nil },
+                set: { if !$0 { bindingToRemove = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: bindingToRemove
+        ) { binding in
+            Button("解除绑定", role: .destructive) { unbind(binding) }
+            Button("取消", role: .cancel) {}
+        } message: { binding in
+            Text("“\(binding.deviceName)”下的摄像头配置会同时移除，历史安全事件仍保留。")
+        }
     }
 
     private var boxSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            GoHomeSectionHeader(title: "家庭盒子")
-            if let binding = model.state.value?.bindings.first {
-                HStack(spacing: 13) {
-                    Image(systemName: "shippingbox.fill")
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(GoHomeTheme.ink)
-                        .frame(width: 44, height: 44)
-                        .background(GoHomeTheme.paleGinger, in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(binding.deviceName)
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(GoHomeTheme.ink)
-                        Label(deviceStatus(binding), systemImage: "circle.fill")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(deviceOnline(binding) ? Color.green : GoHomeTheme.mutedInk)
+            HStack {
+                GoHomeSectionHeader(title: "家庭盒子")
+                Spacer()
+                if model.canManageDevices, onboardingService != nil {
+                    Button { showingBoxBinding = true } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 14, weight: .bold))
+                            .frame(width: 34, height: 34)
                     }
-                    Spacer()
+                    .buttonStyle(.plain)
+                    .foregroundStyle(GoHomeTheme.ink)
+                    .accessibilityLabel("添加家庭盒子")
                 }
-                .padding(.vertical, 12)
+            }
+            if let bindings = model.state.value?.bindings, !bindings.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(bindings) { binding in
+                        HStack(spacing: 13) {
+                            Image(systemName: "shippingbox.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(GoHomeTheme.ink)
+                                .frame(width: 42, height: 42)
+                                .background(GoHomeTheme.paleGinger, in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(binding.deviceName)
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(GoHomeTheme.ink)
+                                Label(deviceStatus(binding), systemImage: "circle.fill")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(deviceOnline(binding) ? Color.green : GoHomeTheme.mutedInk)
+                            }
+                            Spacer()
+                            if model.canManageDevices {
+                                Button(role: .destructive) { bindingToRemove = binding } label: {
+                                    Image(systemName: "link.badge.minus")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .frame(width: 36, height: 36)
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.red)
+                                .disabled(model.deviceActionID != nil)
+                                .accessibilityLabel("解除\(binding.deviceName)绑定")
+                            }
+                        }
+                        .frame(minHeight: 64)
+                        Divider().overlay(GoHomeTheme.softLine)
+                    }
+                }
                 .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
-                .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
             } else {
                 ProfileEmptyRow(symbol: "shippingbox", title: "尚未绑定家庭盒子")
             }
@@ -59,14 +137,36 @@ struct DeviceSettingsView: View {
 
     private var cameraSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            GoHomeSectionHeader(
-                title: "摄像头",
-                detail: model.state.value.map { "\($0.cameras.count) 路" }
-            )
+            HStack {
+                GoHomeSectionHeader(
+                    title: "摄像头",
+                    detail: model.state.value.map { "\($0.cameras.count) 路" }
+                )
+                Spacer()
+                if model.canManageDevices, !(model.state.value?.bindings.isEmpty ?? true) {
+                    Button(action: addCamera) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 14, weight: .bold))
+                            .frame(width: 34, height: 34)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(GoHomeTheme.ink)
+                    .accessibilityLabel("添加摄像头")
+                }
+            }
             if let cameras = model.state.value?.cameras, !cameras.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(Array(cameras.enumerated()), id: \.element.id) { index, camera in
-                        cameraRow(camera)
+                        if model.canManageDevices, let binding = binding(for: camera) {
+                            NavigationLink {
+                                CameraManagementView(model: model, binding: binding, camera: camera)
+                            } label: {
+                                cameraRow(camera, showsDisclosure: true)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            cameraRow(camera, showsDisclosure: false)
+                        }
                         if index < cameras.count - 1 {
                             Rectangle().fill(GoHomeTheme.softLine).frame(height: 1)
                                 .padding(.leading, 44)
@@ -81,7 +181,7 @@ struct DeviceSettingsView: View {
         }
     }
 
-    private func cameraRow(_ camera: CameraConfig) -> some View {
+    private func cameraRow(_ camera: CameraConfig, showsDisclosure: Bool) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "video.fill")
                 .font(.system(size: 14, weight: .semibold))
@@ -100,6 +200,11 @@ struct DeviceSettingsView: View {
             Text(cameraStatus(camera))
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(camera.status.lowercased() == "online" ? Color.green : GoHomeTheme.mutedInk)
+            if showsDisclosure {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            }
         }
         .frame(minHeight: 58)
     }
@@ -113,10 +218,30 @@ struct DeviceSettingsView: View {
     }
 
     private func cameraStatus(_ camera: CameraConfig) -> String {
+        if !camera.enabled { return "已暂停" }
         switch camera.status.lowercased() {
         case "online", "active", "connected": return "在线"
-        case "pending", "syncing": return "配置中"
+        case "pending", "syncing", "pending_edge_sync", "pending_edge_verify", "pending_edge_setup": return "配置中"
         default: return "离线"
+        }
+    }
+
+    private func binding(for camera: CameraConfig) -> DeviceBinding? {
+        let bindings = model.state.value?.bindings ?? []
+        return bindings.first(where: { $0.deviceID == camera.deviceID }) ?? bindings.first
+    }
+
+    private func unbind(_ binding: DeviceBinding) {
+        Task { _ = await model.unbindDevice(binding) }
+    }
+
+    private func addCamera() {
+        let bindings = model.state.value?.bindings ?? []
+        guard !bindings.isEmpty else { return }
+        if bindings.count == 1 {
+            cameraBindingToAdd = bindings[0]
+        } else {
+            choosingCameraBox = true
         }
     }
 }

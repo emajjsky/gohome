@@ -24,6 +24,10 @@ actor AppRepository {
     typealias ActivityTimelineLoader = @Sendable (String, String) async throws -> ActivityTimelineResponse
     typealias ActivityOverviewLoader = @Sendable (String, String) async throws -> ActivityOverviewResponse
     typealias ActivityHistoryDeleter = @Sendable (String) async throws -> ActivityHistoryDeleteResponse
+    typealias CameraCreator = @Sendable (CameraCreateRequest) async throws -> CameraConfig
+    typealias CameraUpdater = @Sendable (String, CameraUpdateRequest) async throws -> CameraConfig
+    typealias CameraDeleter = @Sendable (String) async throws -> CameraDeleteResponse
+    typealias DeviceUnbinder = @Sendable (String) async throws -> DeviceUnbindResponse
 
     private let cache: DiskCache
     private let bootstrapLoader: BootstrapLoader
@@ -47,6 +51,10 @@ actor AppRepository {
     private let activityTimelineLoader: ActivityTimelineLoader
     private let activityOverviewLoader: ActivityOverviewLoader
     private let activityHistoryDeleter: ActivityHistoryDeleter
+    private let cameraCreator: CameraCreator
+    private let cameraUpdater: CameraUpdater
+    private let cameraDeleter: CameraDeleter
+    private let deviceUnbinder: DeviceUnbinder
     private var bootstrapTasks: [CacheScope: Task<BootstrapResponse, Error>] = [:]
     private var homeTasks: [CacheScope: Task<HomeResponse, Error>] = [:]
     private var eventsTasks: [CacheScope: Task<[AppEvent], Error>] = [:]
@@ -79,7 +87,11 @@ actor AppRepository {
         memoryMediaBatchUploader: MemoryMediaBatchUploader? = nil,
         activityTimelineLoader: @escaping ActivityTimelineLoader = { _, _ in throw APIError.invalidResponse },
         activityOverviewLoader: @escaping ActivityOverviewLoader = { _, _ in throw APIError.invalidResponse },
-        activityHistoryDeleter: @escaping ActivityHistoryDeleter = { _ in throw APIError.invalidResponse }
+        activityHistoryDeleter: @escaping ActivityHistoryDeleter = { _ in throw APIError.invalidResponse },
+        cameraCreator: @escaping CameraCreator = { _ in throw APIError.invalidResponse },
+        cameraUpdater: @escaping CameraUpdater = { _, _ in throw APIError.invalidResponse },
+        cameraDeleter: @escaping CameraDeleter = { _ in throw APIError.invalidResponse },
+        deviceUnbinder: @escaping DeviceUnbinder = { _ in throw APIError.invalidResponse }
     ) {
         self.cache = cache
         self.bootstrapLoader = bootstrapLoader
@@ -109,6 +121,10 @@ actor AppRepository {
         self.activityTimelineLoader = activityTimelineLoader
         self.activityOverviewLoader = activityOverviewLoader
         self.activityHistoryDeleter = activityHistoryDeleter
+        self.cameraCreator = cameraCreator
+        self.cameraUpdater = cameraUpdater
+        self.cameraDeleter = cameraDeleter
+        self.deviceUnbinder = deviceUnbinder
     }
 
     func fetchBootstrap() async throws -> BootstrapResponse {
@@ -361,6 +377,22 @@ actor AppRepository {
         try? await cache.remove(key: "activity-timeline-\(date)", scope: scope)
         try? await cache.remove(key: "activity-overview-\(date)", scope: scope)
         return response.deleted
+    }
+
+    func createCamera(_ request: CameraCreateRequest) async throws -> CameraConfig {
+        try await cameraCreator(request)
+    }
+
+    func updateCamera(id: String, request: CameraUpdateRequest) async throws -> CameraConfig {
+        try await cameraUpdater(id, request)
+    }
+
+    func deleteCamera(id: String) async throws {
+        _ = try await cameraDeleter(id)
+    }
+
+    func unbindDevice(bindingID: String) async throws -> DeviceUnbindResponse {
+        try await deviceUnbinder(bindingID)
     }
 
     private func refreshBootstrap(scope: CacheScope) async throws -> BootstrapResponse {

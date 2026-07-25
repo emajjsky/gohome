@@ -25,15 +25,17 @@ struct MainTabView: View {
     @State private var notificationRouteTask: Task<Void, Never>?
 
     static var preview: MainTabView {
-        MainTabView(
+        let isMember = ProcessInfo.processInfo.arguments.contains("-uiTestMember")
+        let client = APIClient(baseURL: URL(string: "https://example.invalid")!)
+        return MainTabView(
             repository: nil,
             scope: nil,
             unreadCount: 0,
-            apiClient: nil,
+            apiClient: ProcessInfo.processInfo.arguments.contains("-uiTestProfile") ? client : nil,
             user: AppUser(id: "preview", phone: "13800138000", displayName: "回家用户"),
-            family: AppFamily(id: "preview", name: "我的家庭", role: "owner"),
+            family: AppFamily(id: "preview", name: "我的家庭", role: isMember ? "member" : "owner"),
             pushNotifications: PushNotificationCoordinator(
-                client: APIClient(baseURL: URL(string: "https://example.invalid")!),
+                client: client,
                 enabled: false,
                 environment: "sandbox"
             ),
@@ -70,7 +72,7 @@ struct MainTabView: View {
         _memoryModel = StateObject(wrappedValue: MemoryViewModel(repository: repository, scope: scope))
         _recommendationsModel = StateObject(wrappedValue: ProductRecommendationsViewModel(repository: repository, scope: scope))
         let seedProfile = ProcessInfo.processInfo.arguments.contains("-uiTestProfile")
-            ? Self.uiTestProfile(familyID: family.id)
+            ? Self.uiTestProfile(familyID: family.id, canEdit: family.role != "member")
             : nil
         _profileModel = StateObject(wrappedValue: ProfileViewModel(
             user: user,
@@ -106,7 +108,11 @@ struct MainTabView: View {
                 ProductRecommendationsView(model: recommendationsModel)
             }
             GoHomeTabRoot(tab: .profile, path: $profilePath) {
-                ProfileView(model: profileModel, onSignOut: onSignOut)
+                ProfileView(
+                    model: profileModel,
+                    onboardingService: apiClient.map(OnboardingService.init(client:)),
+                    onSignOut: onSignOut
+                )
             }
         }
         .tint(GoHomeTheme.ink)
@@ -161,13 +167,32 @@ struct MainTabView: View {
         )]
     }
 
-    private static func uiTestProfile(familyID: String) -> ProfileData {
+    private static func uiTestProfile(familyID: String, canEdit: Bool) -> ProfileData {
         ProfileData(
             elder: nil,
-            bindings: [],
-            cameras: [],
+            bindings: [DeviceBinding(
+                id: "ui-test-binding",
+                familyID: familyID,
+                deviceID: "ui-test-box",
+                deviceName: "演示守护盒子",
+                status: "online",
+                lastSeenAt: "2026-07-25T12:00:00+08:00"
+            )],
+            cameras: [CameraConfig(
+                id: "ui-test-camera",
+                familyID: familyID,
+                deviceID: "ui-test-box",
+                name: "客厅主视",
+                room: "客厅",
+                status: "online",
+                syncStatus: "synced",
+                connectionOwner: "edge_agent",
+                hasStreamConfig: true,
+                passwordSet: true,
+                enabled: true
+            )],
             rules: FamilyRules(
-                canEdit: true,
+                canEdit: canEdit,
                 offlineEnabled: true,
                 blackScreenEnabled: true,
                 noMotionEnabled: true,

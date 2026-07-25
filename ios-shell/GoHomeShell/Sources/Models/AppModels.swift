@@ -1092,7 +1092,7 @@ struct ElderProfile: Codable, Equatable, Sendable {
     }
 }
 
-struct DeviceBinding: Codable, Equatable, Sendable {
+struct DeviceBinding: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let familyID: String
     let deviceID: String
@@ -1107,6 +1107,15 @@ struct DeviceBinding: Codable, Equatable, Sendable {
         case deviceName = "device_name"
         case status
         case lastSeenAt = "last_seen_at"
+    }
+
+    init(id: String, familyID: String, deviceID: String, deviceName: String, status: String, lastSeenAt: String? = nil) {
+        self.id = id
+        self.familyID = familyID
+        self.deviceID = deviceID
+        self.deviceName = deviceName
+        self.status = status
+        self.lastSeenAt = lastSeenAt
     }
 
     init(from decoder: Decoder) throws {
@@ -1188,6 +1197,8 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
     let syncStatus: String?
     let connectionOwner: String?
     let hasStreamConfig: Bool?
+    let passwordSet: Bool
+    let enabled: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1197,6 +1208,34 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
         case syncStatus = "sync_status"
         case connectionOwner = "connection_owner"
         case hasStreamConfig = "has_stream_config"
+        case passwordSet = "password_set"
+        case enabled
+    }
+
+    init(
+        id: String,
+        familyID: String?,
+        deviceID: String?,
+        name: String,
+        room: String,
+        status: String,
+        syncStatus: String? = nil,
+        connectionOwner: String? = nil,
+        hasStreamConfig: Bool? = nil,
+        passwordSet: Bool = false,
+        enabled: Bool = true
+    ) {
+        self.id = id
+        self.familyID = familyID
+        self.deviceID = deviceID
+        self.name = name
+        self.room = room
+        self.status = status
+        self.syncStatus = syncStatus
+        self.connectionOwner = connectionOwner
+        self.hasStreamConfig = hasStreamConfig
+        self.passwordSet = passwordSet
+        self.enabled = enabled
     }
 
 
@@ -1211,23 +1250,33 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
         syncStatus = try values.decodeIfPresent(String.self, forKey: .syncStatus)
         connectionOwner = try values.decodeIfPresent(String.self, forKey: .connectionOwner)
         hasStreamConfig = try values.decodeIfPresent(Bool.self, forKey: .hasStreamConfig)
+        passwordSet = try values.decodeIfPresent(Bool.self, forKey: .passwordSet) ?? false
+        enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
     }
 }
 
-struct CameraConnectionResult: Codable, Equatable, Sendable {
+struct CameraDeleteResponse: Codable, Equatable, Sendable {
     let ok: Bool
-    let status: String
-    let connectionOwner: String
-    let hasStreamConfig: Bool
-    let latencyMS: Int?
-    let message: String?
+    let deleted: String
+
+    enum CodingKeys: String, CodingKey { case ok, deleted }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try values.decode(Bool.self, forKey: .ok)
+        deleted = try values.decodeFlexibleID(forKey: .deleted)
+    }
+}
+
+struct DeviceUnbindResponse: Codable, Equatable, Sendable {
+    let ok: Bool
+    let binding: DeviceBinding
+    let removedCameraCount: Int
+    let next: String?
 
     enum CodingKeys: String, CodingKey {
-        case ok, status
-        case connectionOwner = "connection_owner"
-        case hasStreamConfig = "has_stream_config"
-        case latencyMS = "latency_ms"
-        case message
+        case ok, binding, next
+        case removedCameraCount = "removed_camera_count"
     }
 }
 

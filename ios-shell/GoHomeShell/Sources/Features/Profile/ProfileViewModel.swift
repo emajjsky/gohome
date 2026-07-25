@@ -5,6 +5,7 @@ final class ProfileViewModel: ObservableObject {
     @Published private(set) var state: Loadable<ProfileData>
     @Published private(set) var savingRules = false
     @Published private(set) var savingPreferences = false
+    @Published private(set) var deviceActionID: String?
     @Published private(set) var inlineError: String?
 
     let user: AppUser
@@ -34,6 +35,7 @@ final class ProfileViewModel: ObservableObject {
     }
 
     var canEditRules: Bool { role == .creator }
+    var canManageDevices: Bool { role == .creator }
 
     func start() {
         guard !hasStarted else { return }
@@ -64,7 +66,7 @@ final class ProfileViewModel: ObservableObject {
             do {
                 let updated = try await repository.updateRules(familyID: scope.familyID, patch: rules.editablePayload)
                 replaceRules(updated)
-                persist()
+                await persist()
             } catch {
                 if let original { state.value = original }
                 inlineError = "守护规则未能保存，请重试"
@@ -87,7 +89,7 @@ final class ProfileViewModel: ObservableObject {
                     patch: preferences.editablePayload
                 )
                 replacePreferences(updated)
-                persist()
+                await persist()
             } catch {
                 if let original { state.value = original }
                 inlineError = "内容偏好未能保存，请重试"
@@ -98,6 +100,94 @@ final class ProfileViewModel: ObservableObject {
 
     func clearError() {
         inlineError = nil
+    }
+
+    func createCamera(
+        binding: DeviceBinding,
+        name: String,
+        room: String,
+        streamURL: String,
+        username: String,
+        password: String
+    ) async -> Bool {
+        guard canManageDevices, deviceActionID == nil, let repository, let scope else { return false }
+        deviceActionID = "camera-new"
+        inlineError = nil
+        defer { deviceActionID = nil }
+        do {
+            let camera = try await repository.createCamera(CameraCreateRequest(
+                familyID: scope.familyID,
+                deviceID: binding.deviceID,
+                name: name,
+                room: room,
+                streamURL: streamURL,
+                username: username,
+                password: password,
+                enabled: true
+            ))
+            replaceCamera(camera)
+            await persist()
+            return true
+        } catch {
+            inlineError = error.localizedDescription
+            return false
+        }
+    }
+
+    func updateCamera(_ camera: CameraConfig, name: String, room: String, enabled: Bool) async -> Bool {
+        guard canManageDevices, deviceActionID == nil, let repository else { return false }
+        deviceActionID = "camera-\(camera.id)"
+        inlineError = nil
+        defer { deviceActionID = nil }
+        do {
+            let updated = try await repository.updateCamera(
+                id: camera.id,
+                request: CameraUpdateRequest(name: name, room: room, enabled: enabled)
+            )
+            replaceCamera(updated)
+            await persist()
+            return true
+        } catch {
+            inlineError = error.localizedDescription
+            return false
+        }
+    }
+
+    func deleteCamera(_ camera: CameraConfig) async -> Bool {
+        guard canManageDevices, deviceActionID == nil, let repository else { return false }
+        deviceActionID = "camera-\(camera.id)"
+        inlineError = nil
+        defer { deviceActionID = nil }
+        do {
+            try await repository.deleteCamera(id: camera.id)
+            guard var value = state.value else { return true }
+            value.cameras.removeAll { $0.id == camera.id }
+            state.value = value
+            await persist()
+            return true
+        } catch {
+            inlineError = error.localizedDescription
+            return false
+        }
+    }
+
+    func unbindDevice(_ binding: DeviceBinding) async -> Bool {
+        guard canManageDevices, deviceActionID == nil, let repository else { return false }
+        deviceActionID = "binding-\(binding.id)"
+        inlineError = nil
+        defer { deviceActionID = nil }
+        do {
+            _ = try await repository.unbindDevice(bindingID: binding.id)
+            guard var value = state.value else { return true }
+            value.bindings.removeAll { $0.id == binding.id }
+            value.cameras.removeAll { $0.deviceID == binding.deviceID }
+            state.value = value
+            await persist()
+            return true
+        } catch {
+            inlineError = error.localizedDescription
+            return false
+        }
     }
 
     private func replaceRules(_ rules: FamilyRules) {
@@ -112,9 +202,19 @@ final class ProfileViewModel: ObservableObject {
         state.value = value
     }
 
-    private func persist() {
+    private func replaceCamera(_ camera: CameraConfig) {
+        guard var value = state.value else { return }
+        if let index = value.cameras.firstIndex(where: { $0.id == camera.id }) {
+            value.cameras[index] = camera
+        } else {
+            value.cameras.append(camera)
+        }
+        state.value = value
+    }
+
+    private func persist() async {
         guard let repository, let scope, let value = state.value else { return }
-        Task { await repository.cacheProfile(value, scope: scope) }
+        await repository.cacheProfile(value, scope: scope)
     }
 
     deinit {

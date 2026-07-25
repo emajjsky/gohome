@@ -2,10 +2,12 @@ import SwiftUI
 
 struct ProfileView: View {
     @ObservedObject private var model: ProfileViewModel
+    let onboardingService: OnboardingService?
     let onSignOut: () -> Void
 
-    init(model: ProfileViewModel, onSignOut: @escaping () -> Void) {
+    init(model: ProfileViewModel, onboardingService: OnboardingService?, onSignOut: @escaping () -> Void) {
         self.model = model
+        self.onboardingService = onboardingService
         self.onSignOut = onSignOut
     }
 
@@ -43,7 +45,7 @@ struct ProfileView: View {
 
                 ProfileSection(title: "设备与守护") {
                     NavigationLink {
-                        DeviceSettingsView(model: model)
+                        DeviceSettingsView(model: model, onboardingService: onboardingService)
                     } label: {
                         ProfileNavigationRow(
                             symbol: "shippingbox",

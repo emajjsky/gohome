@@ -38,6 +38,32 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(binding.familyID, "12")
         XCTAssertEqual(camera.id, "9")
         XCTAssertEqual(camera.familyID, "12")
+        XCTAssertTrue(camera.enabled)
+        XCTAssertFalse(camera.passwordSet)
+    }
+
+    func testCameraMutationPayloadsExposeOnlyIntendedFields() throws {
+        let create = CameraCreateRequest(
+            familyID: "family-1",
+            deviceID: "edge-1",
+            name: "客厅主视",
+            room: "客厅",
+            streamURL: "rtsp://192.168.1.20:554/1/2",
+            username: "admin",
+            password: "secret",
+            enabled: true
+        )
+        let createObject = try jsonObject(create)
+        XCTAssertEqual(createObject["family_id"] as? String, "family-1")
+        XCTAssertEqual(createObject["device_id"] as? String, "edge-1")
+        XCTAssertEqual(createObject["stream_url"] as? String, "rtsp://192.168.1.20:554/1/2")
+        XCTAssertEqual(Set(createObject.keys), ["family_id", "device_id", "name", "room", "stream_url", "username", "password", "enabled"])
+
+        let updateObject = try jsonObject(CameraUpdateRequest(name: "卧室主视", room: "卧室", enabled: false))
+        XCTAssertEqual(Set(updateObject.keys), ["name", "room", "enabled"])
+        XCTAssertNil(updateObject["family_id"])
+        XCTAssertNil(updateObject["device_id"])
+        XCTAssertNil(updateObject["stream_url"])
     }
 
     func testBindingCodeAcceptsNumericIdentifiers() throws {
@@ -50,5 +76,9 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(code.id, "4")
         XCTAssertEqual(code.familyID, "12")
         XCTAssertEqual(code.code, "GH-123456")
+    }
+
+    private func jsonObject<Value: Encodable>(_ value: Value) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
     }
 }

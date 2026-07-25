@@ -32,6 +32,17 @@ struct DiscoveredBox: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+struct DiscoveredCamera: Codable, Equatable, Sendable, Identifiable {
+    let host: String
+    let port: Int
+    let path: String
+    let label: String
+
+    var id: String { "\(host):\(port)\(path)" }
+
+    enum CodingKeys: String, CodingKey { case host, port, path, label }
+}
+
 @MainActor
 final class BoxDiscoveryService: ObservableObject {
     @Published private(set) var boxes: [DiscoveredBox] = []
@@ -96,6 +107,14 @@ final class BoxDiscoveryService: ObservableObject {
         }
     }
 
+    func discoverCameras(box: DiscoveredBox, limit: Int = 24) async throws -> [DiscoveredCamera] {
+        guard let endpoint = endpoints[box.deviceID] else { throw BoxDiscoveryError.endpointUnavailable }
+        let boundedLimit = max(1, min(48, limit))
+        let response = try await LANHTTPClient.get(endpoint: endpoint, path: "/api/cameras/discover?limit=\(boundedLimit)")
+        guard response.statusCode == 200 else { throw BoxDiscoveryError.cameraDiscoveryFailed(response.statusCode) }
+        return try JSONDecoder().decode(CameraDiscoveryPayload.self, from: response.body).cameras
+    }
+
     deinit { browser?.cancel() }
 
     private func probe(_ result: NWBrowser.Result) {
@@ -138,6 +157,10 @@ private struct LANDiscoveryPayload: Decodable {
         case apiPort = "api_port"
         case pairingWindowOpen = "pairing_window_open"
     }
+}
+
+private struct CameraDiscoveryPayload: Decodable {
+    let cameras: [DiscoveredCamera]
 }
 
 private struct LANHTTPResponse: Sendable {
@@ -235,6 +258,7 @@ enum BoxDiscoveryError: LocalizedError {
     case endpointUnavailable
     case pairingWindowClosed
     case pairingFailed(Int)
+    case cameraDiscoveryFailed(Int)
     case invalidResponse
     case timeout
 
@@ -243,6 +267,7 @@ enum BoxDiscoveryError: LocalizedError {
         case .endpointUnavailable: return "盒子已离开局域网，请重新搜索。"
         case .pairingWindowClosed: return "安全配对时间已结束，请重启盒子后重试。"
         case let .pairingFailed(status): return "盒子绑定失败（\(status)），请检查网络后重试。"
+        case let .cameraDiscoveryFailed(status): return "摄像头搜索失败（\(status)），请稍后重试。"
         case .invalidResponse: return "盒子返回了无法识别的数据。"
         case .timeout: return "连接盒子超时，请确认手机和盒子在同一 Wi-Fi。"
         }
