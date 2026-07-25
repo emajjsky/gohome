@@ -11646,3 +11646,26 @@ P4 风险升频边界：
 
 - App 被强制终止并重新打开后，用户确认 11:18 发布、文案为“哈哈”的 20 秒私有视频直接显示真实封面并可正常播放，验证受保护的磁盘封面缓存和短时播放授权可跨进程恢复。
 - 冷启动首次选择、正常发布、异常中断回收、重启封面和视频播放均完成真机验收。云端最终健康状态为 PostgreSQL store、`media_assets=476 / pending_media_uploads=0`；本原生记忆媒体批次完成，可以进入分支推送、APNs 和 TestFlight。
+
+## 137. 2026-07-25 APNs 安全投递基础与原生路由
+
+### 服务端
+
+- 新增 `local-app-server/apns-provider.js`：使用 Apple token-based authentication 生成 ES256 JWT，通过 HTTP/2 调用 sandbox 或 production APNs；网络错误、429 和 5xx 可重试，`BadDeviceToken / DeviceTokenNotForTopic / Unregistered` 会撤销设备 token。
+- 新增迁移 `010_apns_delivery.sql`，为 `app_push_tokens` 增加 `provider / environment / token_ciphertext`。明文 token 只在一次注册请求内存在，落库使用 AES-256-GCM 密文，公开接口仅返回 preview；云端导出保留密文用于迁移，不包含明文。
+- 推送 dispatcher 默认每 5 秒处理到期队列，忽略未来 `scheduled_for`，最多尝试 3 次。APNs 200 后状态只写 `sent` 和 `sent_at`，`delivered_at` 保持空；App 内消息自身的 `delivered_at` 表示已发布到收件箱，不表示系统通知已到设备。
+- 推送 payload 增加稳定的 `gohome.route / message_id / event_id / camera_id`，同时暂保旧 deep link 字段兼容历史 Web 客户端。敏感 token、密文、JWT 和私钥不进入错误响应或投递公开结构。
+
+### 原生 iOS
+
+- 新增唯一的 `PushNotificationCoordinator`：生成并复用稳定安装 ID，在完成登录和家庭引导后按开关申请权限、注册 APNs token；家庭、token、环境或 App 版本变化时重新登记，退出登录先撤销服务端安装实例再清理会话。
+- `GoHomeAppDelegate` 缓存协调器就绪前到达的 token、注册错误和通知点击。普通通知进入首页；事件通知切换到守护的事件分段，补取不在摘要缓存中的事件后打开对应详情，多条通知切换时取消旧路由任务。
+- 删除无入口的 `GoHomeShellRuntime.swift`、`GoHomeShellWebView.swift` 及 `GoHomeWebAppURL`，避免旧 WebView push、第二套安装 ID 和原生路由并存。
+- 当前 `GoHomePushEnabled=false`，entitlements 为空。该状态下不会申请通知权限或调用 APNs，但原生 App、登录、五栏、守护和记忆不受影响。
+
+### 验证与激活边界
+
+- 服务端 APNs 专项覆盖密文往返、sandbox/production、Apple 接收、临时重试、失效 token、未来计划消息、事件精确路由和导出无明文。`npm run test:native-server` 为 39 项中 38 通过、1 项因本机未配置 PostgreSQL URL 跳过；`npm test` 全部通过。
+- iOS 完整回归为 84 个单元测试和 12 个 UI 测试，0 失败；覆盖通知 route、稳定安装 ID、缓存外事件加载和现有全部原生流程。
+- 当前账号为免费 Personal Team `CPRVX9XK47`，不具备 APNs 和 TestFlight。关闭推送能力的免费签名真机目标已使用现有 provisioning profile 构建通过，产物不含 `aps-environment`；真实推送必须等付费个人 Apple Developer Team、Push capability 和 `.p8` 到位后再启用。
+- 腾讯云尚未部署迁移 010、provider 文件或 APNs 环境变量。后续密钥只放服务器受限路径，禁止提交仓库；激活前保持现有生产服务和 App 推送关闭。

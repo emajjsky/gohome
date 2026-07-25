@@ -30,12 +30,12 @@ function quoteIdentifier(value) {
 function copyNativeMigrations(targetDir) {
   const files = fs
     .readdirSync(migrationsDir)
-    .filter((file) => /^(001|002|003|004|005)_.+\.sql$/.test(file))
+    .filter((file) => /^(001|002|003|004|005|010)_.+\.sql$/.test(file))
     .sort();
 
   assert.deepEqual(
     files.map((file) => file.slice(0, 3)),
-    ['001', '002', '003', '004', '005'],
+    ['001', '002', '003', '004', '005', '010'],
   );
 
   for (const file of files) {
@@ -139,6 +139,7 @@ test(
           ['003', 'applied'],
           ['004', 'applied'],
           ['005', 'applied'],
+          ['010', 'applied'],
         ],
       );
       assert.deepEqual(
@@ -149,6 +150,7 @@ test(
           ['003', 'skipped'],
           ['004', 'skipped'],
           ['005', 'skipped'],
+          ['010', 'skipped'],
         ],
       );
 
@@ -228,6 +230,28 @@ test(
         `insert into family_members (family_id, user_id, role, status)
          values ($1, $2, 'creator', 'active'), ($3, $4, 'creator', 'active')`,
         [familyA, userA, familyB, userB],
+      );
+      const encryptedToken = 'v1:fixture-iv:fixture-tag:fixture-ciphertext';
+      await client.query(
+        `insert into app_push_tokens (
+           family_id, user_id, app_install_id, provider, environment,
+           push_token_hash, token_ciphertext
+         ) values ($1, $2, 'ios-install-a', 'apns', 'sandbox', $3, $4)`,
+        [familyA, userA, crypto.createHash('sha256').update('device-token').digest('hex'), encryptedToken],
+      );
+      const storedToken = await client.query(
+        `select provider, environment, token_ciphertext from app_push_tokens where app_install_id = 'ios-install-a'`,
+      );
+      assert.deepEqual(storedToken.rows[0], {
+        provider: 'apns',
+        environment: 'sandbox',
+        token_ciphertext: encryptedToken,
+      });
+      await assertCheckViolation(
+        client.query(
+          `update app_push_tokens set environment = 'development' where app_install_id = 'ios-install-a'`,
+        ),
+        'unsupported APNs environment should be rejected',
       );
       await client.query(
         `

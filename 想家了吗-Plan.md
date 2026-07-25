@@ -3217,3 +3217,22 @@ P4 当前状态：家庭私密时间流、最多 9 张照片或 1 个 60 秒内�
 - 待发布请求被替换或取消时立即清理其临时文件；编辑请求固定为空种子。禁止以固定延时作为主要修复，也不再保留发布布尔值、编辑对象、媒体种子和会话 ID 四套并行状态。
 - 自动验收已覆盖首次提升、替换清理、取消和编辑四条路径。完整 iOS 回归通过后覆盖安装真机，最后以冷启动后第一次选择立即出现预览作为完成门槛。
 - 冷启动首次选择已在 iPhone 15 Pro Max 通过，发布页第一次即显示预览；该项已完成。
+
+### 15.9 APNs 与 TestFlight 激活计划
+
+当前已完成但保持关闭的基础：
+
+1. 服务端 APNs HTTP/2 provider、ES256 provider token、sandbox/production 分流、AES-256-GCM token 密文、计划时间门、三次有界重试和失效 token 撤销。
+2. PostgreSQL 迁移 `010_apns_delivery.sql`，统一 JSON/PostgreSQL 导出与恢复字段；明文 device token 不进入业务数据库或云端 seed。
+3. 原生 `PushNotificationCoordinator` 统一安装 ID、权限申请、token 登记、退出撤销和通知点击路由；事件通知进入“守护 / 事件 / 详情”。旧 `GoHomeShellRuntime`、`GoHomeShellWebView` 和 `GoHomeWebAppURL` 已删除。
+4. 发送状态固定为 `queued -> sent/failed`。`sent` 仅表示 APNs 接收，不设置 `delivered_at`，不伪造终端送达。
+
+付费账号到位后的执行顺序：
+
+1. 以个人身份加入 Apple Developer Program，在正式 Team 下为 `com.gohome.family` 开启 Push Notifications，创建 APNs Auth Key 并只下载一次 `.p8`。
+2. Debug 使用 sandbox，Release/TestFlight 使用 production；为目标加入 `aps-environment`，将 `GoHomePushEnabled` 按构建配置开启，不在源码中硬编码生产密钥。
+3. 腾讯云以受限文件权限保存 `.p8`，注入 `GOHOME_PUSH_PROVIDER / GOHOME_APNS_TEAM_ID / GOHOME_APNS_KEY_ID / GOHOME_APNS_AUTH_KEY_PATH / GOHOME_APNS_TOPIC / GOHOME_PUSH_TOKEN_ENCRYPTION_KEY`，先执行迁移 010，再重启组合服务。
+4. 真机重新安装或登录以登记新 token，分别验证前台、后台、App 被终止、事件通知、普通关怀通知、点击详情、退出撤销、无效 token 和 sandbox/production 隔离。
+5. 上述通过后再 Archive、上传 App Store Connect、配置 TestFlight 内测；免费 Personal Team 构建不能作为 TestFlight 交付。
+
+当前阻塞仅是付费 Apple Team 与 `.p8` 尚未提供。代码未部署到腾讯云，现有真机版本继续以推送关闭状态运行。

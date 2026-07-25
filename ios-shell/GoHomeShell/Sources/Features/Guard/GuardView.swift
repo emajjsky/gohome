@@ -6,15 +6,22 @@ struct GuardView: View {
     let apiClient: APIClient?
     @ObservedObject var eventsModel: EventsViewModel
     @ObservedObject var timelineModel: ActivityTimelineViewModel
+    @Binding var section: GuardSection
     @StateObject private var model: GuardViewModel
     @State private var isVisible = false
-    @State private var section: GuardSection = .live
 
-    init(cameras: [HomeCamera], apiClient: APIClient?, eventsModel: EventsViewModel, timelineModel: ActivityTimelineViewModel) {
+    init(
+        cameras: [HomeCamera],
+        apiClient: APIClient?,
+        eventsModel: EventsViewModel,
+        timelineModel: ActivityTimelineViewModel,
+        section: Binding<GuardSection>
+    ) {
         self.cameras = cameras
         self.apiClient = apiClient
         self.eventsModel = eventsModel
         self.timelineModel = timelineModel
+        _section = section
         _model = StateObject(wrappedValue: GuardViewModel(
             streamClient: apiClient.map { client in
                 MJPEGStreamClient(apiClient: client)

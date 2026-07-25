@@ -34,6 +34,30 @@ final class EventsViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testPrepareEventLoadsAnEventOutsideTheCachedSummary() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let event = fixtureEvent()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            eventLoader: { id in
+                XCTAssertEqual(id, event.id)
+                return event
+            }
+        )
+        let model = EventsViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user", familyID: "family")
+        )
+
+        let prepared = await model.prepareEvent(id: event.id)
+        XCTAssertTrue(prepared)
+        XCTAssertEqual(model.state.value?.first?.id, event.id)
+        XCTAssertEqual(model.event(id: event.id, fallback: event), event)
+    }
+
+    @MainActor
     private func waitUntil(
         timeout: TimeInterval = 2,
         condition: @escaping @MainActor () -> Bool

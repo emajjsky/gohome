@@ -10,6 +10,11 @@ final class AppModel: ObservableObject {
     private var bootstrapTask: Task<Void, Never>?
     private var hasStarted = false
 
+    var pushFamilyID: String? {
+        guard route == .main else { return nil }
+        return bootstrap.value?.activeFamilyID
+    }
+
     init(repository: AppRepository, sessionContextStore: SessionContextStore) {
         self.repository = repository
         self.sessionContextStore = sessionContextStore

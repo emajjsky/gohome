@@ -13,6 +13,9 @@ struct GoHomeShellApp: App {
         WindowGroup {
             if let environment {
                 AppRootView(environment: environment)
+                    .task {
+                        appDelegate.notificationCoordinator = environment.pushNotifications
+                    }
             } else {
                 Text("暂时无法启动")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

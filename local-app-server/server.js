@@ -596,6 +596,8 @@ function createLocalAppServer(options = {}) {
     const opsToken = String(options.opsToken || DEFAULT_OPS_TOKEN);
     const { createCosStorage } = require("./cos-storage");
     const cosStorage = options.cosStorage || createCosStorage();
+    const { createApnsProvider } = require("./apns-provider");
+    const apnsProvider = options.apnsProvider || createApnsProvider();
     const mediaUploadSecret = String(options.mediaUploadSecret || process.env.GOHOME_MEDIA_UPLOAD_SECRET || "").trim()
         || crypto.randomBytes(32).toString("hex");
     const { AuthService } = require("./native-api/auth-service");
@@ -641,6 +643,7 @@ function createLocalAppServer(options = {}) {
     let schedulerRunning = false;
     let visionVerificationRunning = false;
     let memoryUploadCleanupRunning = false;
+    let apnsDispatchRunning = false;
     const LIVE_FRAME_TTL_MS = 10000;
 
     ensureDir(mediaDir);
@@ -2352,7 +2355,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function appPushProviderConfigured() {
-        return Boolean(envFirst(["GOHOME_APNS_KEY_ID", "GOHOME_APNS_AUTH_KEY", "GOHOME_PUSH_PROVIDER"]));
+        return apnsProvider.configured === true;
     }
 
     function tokenPreview(value) {
@@ -2435,6 +2438,10 @@ function createLocalAppServer(options = {}) {
                 target.id,
             ].join(":");
             let delivery = store.db.notification_deliveries.find((item) => String(item.idempotency_key || "") === idempotencyKey);
+            if (delivery && ["sent", "delivered"].includes(String(delivery.status || ""))) {
+                deliveries.push(delivery);
+                continue;
+            }
             const hasPushProvider = appPushProviderConfigured();
             const status = target.type === "push_token"
                 ? (hasPushProvider ? "queued" : "simulated")
@@ -2479,6 +2486,99 @@ function createLocalAppServer(options = {}) {
         if (!message.delivered_at) message.delivered_at = timestamp;
         message.updated_at = timestamp;
         return deliveries;
+    }
+
+    function notificationPayload(delivery, message) {
+        const event = message?.event_id
+            ? store.db.events.find((item) => String(item.id) === String(message.event_id))
+            : null;
+        const gohome = {
+            route: message?.event_id ? "event" : "home",
+            message_id: String(message?.message_id || delivery.message_id || ""),
+            event_id: String(message?.event_id || ""),
+            camera_id: String(event?.camera_id || ""),
+            open_deep_link: message?.event_id
+                ? `gohome://open?next=${encodeURIComponent(`event_detail.html?eventId=${message.event_id}`)}`
+                : "gohome://open?next=index.html",
+        };
+        return {
+            aps: {
+                alert: { title: delivery.title || "回家", body: delivery.body || "有一条新的家庭消息" },
+                sound: "default",
+                "thread-id": `family-${delivery.family_id}`,
+            },
+            gohome,
+        };
+    }
+
+    async function dispatchQueuedPushDeliveries({ limit = 20 } = {}) {
+        if (!appPushProviderConfigured() || apnsDispatchRunning) return { attempted: 0, sent: 0, failed: 0 };
+        apnsDispatchRunning = true;
+        const result = { attempted: 0, sent: 0, failed: 0 };
+        try {
+            const now = Date.now();
+            const deliveries = store.db.notification_deliveries
+                .filter((item) => item.provider === "apns" && item.target_type === "push_token" && item.status === "queued")
+                .filter((item) => !item.scheduled_for || Date.parse(item.scheduled_for) <= now)
+                .filter((item) => !item.response_payload?.next_attempt_at || Date.parse(item.response_payload.next_attempt_at) <= now)
+                .slice(0, Math.max(1, Math.min(100, Number(limit) || 20)));
+            for (const delivery of deliveries) {
+                result.attempted += 1;
+                const token = store.db.app_push_tokens.find((item) => (
+                    String(item.id) === String(delivery.target_id) && String(item.status || "active") === "active"
+                ));
+                const attemptCount = Number(delivery.response_payload?.attempt_count || 0) + 1;
+                const timestamp = nowIso();
+                if (!token?.token_ciphertext) {
+                    delivery.status = "failed";
+                    delivery.error_message = "Encrypted APNs token is unavailable; device must register again.";
+                    delivery.response_payload = { attempt_count: attemptCount };
+                    delivery.updated_at = timestamp;
+                    result.failed += 1;
+                    continue;
+                }
+                try {
+                    const message = store.db.app_messages.find((item) => String(item.message_id || item.id) === String(delivery.message_id));
+                    const response = await apnsProvider.send({
+                        tokenCiphertext: token.token_ciphertext,
+                        environment: token.environment || "production",
+                        payload: notificationPayload(delivery, message),
+                        priority: message?.priority === "high" ? 10 : 5,
+                    });
+                    delivery.status = "sent";
+                    delivery.error_message = "";
+                    delivery.sent_at = timestamp;
+                    delivery.response_payload = {
+                        attempt_count: attemptCount,
+                        apns_id: response.apnsId || "",
+                        status_code: response.statusCode || 200,
+                    };
+                    result.sent += 1;
+                } catch (error) {
+                    const invalidToken = ["BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered"].includes(String(error.reason || ""));
+                    if (invalidToken) {
+                        token.status = "revoked";
+                        token.updated_at = timestamp;
+                    }
+                    const retry = error.retryable === true && attemptCount < 3;
+                    delivery.status = retry ? "queued" : "failed";
+                    delivery.error_message = String(error.reason || error.message || "APNs delivery failed").slice(0, 240);
+                    delivery.response_payload = {
+                        attempt_count: attemptCount,
+                        apns_id: String(error.apnsId || ""),
+                        status_code: Number(error.statusCode || 0),
+                        reason: String(error.reason || ""),
+                        ...(retry ? { next_attempt_at: new Date(Date.now() + (2 ** attemptCount) * 5000).toISOString() } : {}),
+                    };
+                    if (!retry) result.failed += 1;
+                }
+                delivery.updated_at = timestamp;
+            }
+            if (result.attempted > 0) await store.save();
+            return result;
+        } finally {
+            apnsDispatchRunning = false;
+        }
     }
 
     function shanghaiTimeParts(date = new Date()) {
@@ -9108,6 +9208,9 @@ function createLocalAppServer(options = {}) {
                     return;
                 }
                 const tokenHash = sha256(pushToken);
+                const environment = ["sandbox", "production"].includes(String(payload.environment || "").toLowerCase())
+                    ? String(payload.environment).toLowerCase()
+                    : "production";
                 let token = store.db.app_push_tokens.find((item) => (
                     String(item.app_install_id || "") === appInstallId
                     && Number(item.user_id) === Number(user.id)
@@ -9118,7 +9221,12 @@ function createLocalAppServer(options = {}) {
                     user_id: user.id,
                     app_install_id: appInstallId,
                     platform: String(payload.platform || "ios").toLowerCase(),
+                    provider: "apns",
+                    environment,
                     push_token_hash: tokenHash,
+                    token_ciphertext: appPushProviderConfigured()
+                        ? apnsProvider.encryptToken(pushToken)
+                        : String(token?.token_ciphertext || ""),
                     token_preview: tokenPreview(pushToken),
                     status: "active",
                     device_name: String(payload.device_name || payload.deviceName || "").slice(0, 80),
@@ -9197,6 +9305,8 @@ function createLocalAppServer(options = {}) {
     let visionVerificationTimer = null;
     let mediaUploadCleanupTimer = null;
     let initialMediaUploadCleanupTimer = null;
+    let apnsDispatchTimer = null;
+    let initialApnsDispatchTimer = null;
     const mediaUploadCleanupEnabled = options.mediaUploadCleanupEnabled ?? !["0", "false", "no"].includes(
         String(process.env.GOHOME_MEDIA_UPLOAD_CLEANUP_ENABLED || "1").trim().toLowerCase(),
     );
@@ -9216,6 +9326,21 @@ function createLocalAppServer(options = {}) {
         server.on("close", () => {
             clearInterval(mediaUploadCleanupTimer);
             clearTimeout(initialMediaUploadCleanupTimer);
+        });
+    }
+    if (appPushProviderConfigured()) {
+        const intervalMs = Math.max(1000, normalizeNumber(process.env.GOHOME_APNS_DISPATCH_INTERVAL_MS, 5000));
+        const dispatch = () => {
+            dispatchQueuedPushDeliveries()
+                .catch((error) => console.error(`APNs dispatch failed: ${error.message || error}`));
+        };
+        apnsDispatchTimer = setInterval(dispatch, intervalMs);
+        apnsDispatchTimer.unref?.();
+        initialApnsDispatchTimer = setTimeout(dispatch, 1000);
+        initialApnsDispatchTimer.unref?.();
+        server.on("close", () => {
+            clearInterval(apnsDispatchTimer);
+            clearTimeout(initialApnsDispatchTimer);
         });
     }
     if (normalizeBool(process.env.GOHOME_SCHEDULER_ENABLED)) {
@@ -9255,6 +9380,7 @@ function createLocalAppServer(options = {}) {
         deviceToken,
         nativeRepository,
         cleanupExpiredMemoryUploads,
+        dispatchQueuedPushDeliveries,
     };
 }
 

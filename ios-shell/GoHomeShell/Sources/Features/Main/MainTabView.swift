@@ -7,6 +7,7 @@ struct MainTabView: View {
     let apiClient: APIClient?
     let user: AppUser
     let family: AppFamily
+    @ObservedObject var pushNotifications: PushNotificationCoordinator
     let onSignOut: () -> Void
     @StateObject private var homeModel: HomeViewModel
     @StateObject private var eventsModel: EventsViewModel
@@ -20,6 +21,8 @@ struct MainTabView: View {
     @State private var memoryPath = NavigationPath()
     @State private var communityPath = NavigationPath()
     @State private var profilePath = NavigationPath()
+    @State private var guardSection: GuardSection = .live
+    @State private var notificationRouteTask: Task<Void, Never>?
 
     static var preview: MainTabView {
         MainTabView(
@@ -29,6 +32,11 @@ struct MainTabView: View {
             apiClient: nil,
             user: AppUser(id: "preview", phone: "13800138000", displayName: "回家用户"),
             family: AppFamily(id: "preview", name: "我的家庭", role: "owner"),
+            pushNotifications: PushNotificationCoordinator(
+                client: APIClient(baseURL: URL(string: "https://example.invalid")!),
+                enabled: false,
+                environment: "sandbox"
+            ),
             onSignOut: {}
         )
     }
@@ -40,6 +48,7 @@ struct MainTabView: View {
         apiClient: APIClient?,
         user: AppUser,
         family: AppFamily,
+        pushNotifications: PushNotificationCoordinator,
         onSignOut: @escaping () -> Void
     ) {
         self.repository = repository
@@ -48,6 +57,7 @@ struct MainTabView: View {
         self.apiClient = apiClient
         self.user = user
         self.family = family
+        self.pushNotifications = pushNotifications
         self.onSignOut = onSignOut
         _homeModel = StateObject(wrappedValue: HomeViewModel(repository: repository, scope: scope))
         let seedEvents = ProcessInfo.processInfo.arguments.contains("-uiTestEvent") ? Self.uiTestEvents : []
@@ -80,7 +90,8 @@ struct MainTabView: View {
                         cameras: homeModel.state.value?.cameras ?? [],
                         apiClient: apiClient,
                         eventsModel: eventsModel,
-                        timelineModel: timelineModel
+                        timelineModel: timelineModel,
+                        section: $guardSection
                     )
                 }
             }
@@ -101,6 +112,32 @@ struct MainTabView: View {
             homeModel.start()
             memoryModel.start()
             recommendationsModel.start()
+        }
+        .onReceive(pushNotifications.$pendingRoute.compactMap { $0 }) { route in
+            open(route)
+        }
+    }
+
+    private func open(_ route: PushNotificationRoute) {
+        switch route {
+        case .home:
+            notificationRouteTask?.cancel()
+            selection = .home
+            homePath = NavigationPath()
+            pushNotifications.consume(route)
+        case let .event(eventID, _):
+            notificationRouteTask?.cancel()
+            selection = .guardView
+            guardSection = .events
+            notificationRouteTask = Task {
+                let ready = await eventsModel.prepareEvent(id: eventID)
+                guard !Task.isCancelled else { return }
+                if ready {
+                    guardPath = NavigationPath()
+                    guardPath.append(eventID)
+                }
+                pushNotifications.consume(route)
+            }
         }
     }
 

@@ -70,6 +70,21 @@ final class EventsViewModel: ObservableObject {
         }
     }
 
+    func prepareEvent(id: String) async -> Bool {
+        if event(id: id) != nil { return true }
+        guard let repository else { return false }
+        do {
+            let event = try await repository.fetchEvent(id)
+            guard !Task.isCancelled else { return false }
+            details[id] = event
+            replace(event)
+            persistCurrentEvents()
+            return true
+        } catch {
+            return false
+        }
+    }
+
     func resolve(_ eventID: String, as resolution: String) {
         guard !pendingActions.contains(eventID) else { return }
         guard let original = event(id: eventID) else { return }

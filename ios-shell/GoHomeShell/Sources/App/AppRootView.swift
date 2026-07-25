@@ -41,9 +41,13 @@ struct AppRootView: View {
                         user: bootstrap.user,
                         family: bootstrap.families.first(where: { $0.id == familyID })
                             ?? AppFamily(id: familyID, name: "我的家庭", role: nil),
+                        pushNotifications: environment.pushNotifications,
                         onSignOut: {
                             model.signOut()
-                            Task { await environment.clearAuthenticatedSession(scope: scope) }
+                            Task {
+                                await environment.pushNotifications.deactivate()
+                                await environment.clearAuthenticatedSession(scope: scope)
+                            }
                         }
                     )
                 } else {
@@ -54,6 +58,10 @@ struct AppRootView: View {
         .animation(.easeOut(duration: 0.18), value: model.route)
         .task {
             model.start(authStore: environment.authStore)
+        }
+        .task(id: model.pushFamilyID) {
+            guard let familyID = model.pushFamilyID else { return }
+            await environment.pushNotifications.activate(familyID: familyID)
         }
     }
 }

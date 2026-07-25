@@ -6,7 +6,9 @@ struct AppEnvironment {
     let cache: DiskCache
     let apiClient: APIClient
     let repository: AppRepository
+    let pushNotifications: PushNotificationCoordinator
 
+    @MainActor
     static func live(bundle: Bundle = .main) throws -> AppEnvironment {
         guard
             let rawURL = bundle.object(forInfoDictionaryKey: "GoHomeAPIBaseURL") as? String,
@@ -16,6 +18,7 @@ struct AppEnvironment {
         let sessionContextStore = SessionContextStore()
         let cache = try DiskCache()
         let client = APIClient(baseURL: baseURL) { try? await authStore.token() }
+        let pushNotifications = PushNotificationCoordinator.live(client: client, bundle: bundle)
         let legacyMemoryBatchUpload: AppRepository.MemoryMediaBatchUploader = { familyID, media in
             guard media.allSatisfy({ !$0.isVideo }) else { throw APIError.invalidResponse }
             let request = MemoryMediaBatchRequest(images: media.map {
@@ -263,7 +266,8 @@ struct AppEnvironment {
             sessionContextStore: sessionContextStore,
             cache: cache,
             apiClient: client,
-            repository: repository
+            repository: repository,
+            pushNotifications: pushNotifications
         )
     }
 

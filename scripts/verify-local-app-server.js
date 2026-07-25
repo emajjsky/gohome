@@ -59,6 +59,15 @@ function schemaColumns(sql, tableName) {
         if (!line || /^(primary|unique|foreign|constraint|check)\b/i.test(line)) continue;
         columns.add(line.split(/\s+/)[0].replace(/"/g, ""));
     }
+    const alterPattern = new RegExp(`alter table ${escapedTable}\\s+([\\s\\S]*?);`, "gi");
+    for (const alter of sql.matchAll(alterPattern)) {
+        for (const added of alter[1].matchAll(/add column(?: if not exists)?\s+"?([a-z_][a-z0-9_]*)"?/gi)) {
+            columns.add(added[1]);
+        }
+        for (const dropped of alter[1].matchAll(/drop column(?: if exists)?\s+"?([a-z_][a-z0-9_]*)"?/gi)) {
+            columns.delete(dropped[1]);
+        }
+    }
     return columns;
 }
 
@@ -1714,7 +1723,7 @@ async function main() {
         assert.equal(customizedRules.activity_detection_enabled, false);
 
         const seedBundle = buildCloudSeedBundle(app.store.db, { source: "verify-local-app-server" });
-        assert.equal(seedBundle.schema_version, "009_media_upload_intents");
+        assert.equal(seedBundle.schema_version, "010_apns_delivery");
         assert.equal(seedBundle.tables.users.length, 3);
         assert.ok(seedBundle.tables.users.some((user) => user.email === phoneAccountEmail));
         assert.ok(seedBundle.tables.app_sessions.length >= 3);
@@ -1764,6 +1773,9 @@ async function main() {
         assert.ok(seedBundle.tables.app_messages.some((message) => message.message_type === "test"));
         assert.equal(seedBundle.tables.app_push_tokens.length, 1);
         assert.equal(seedBundle.tables.app_push_tokens[0].push_token_hash.length, 64);
+        assert.equal(seedBundle.tables.app_push_tokens[0].provider, "apns");
+        assert.equal(seedBundle.tables.app_push_tokens[0].environment, "production");
+        assert.equal(seedBundle.tables.app_push_tokens[0].token_ciphertext, "");
         assert.ok(seedBundle.tables.notification_deliveries.length >= 2);
         assert.ok(seedBundle.tables.notification_deliveries.every((delivery) => (
             !delivery.message_id

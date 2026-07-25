@@ -547,7 +547,10 @@ function buildCloudSeedBundle(db, options = {}) {
         user_id: nullableTextId(token.user_id),
         app_install_id: String(token.app_install_id || ""),
         platform: String(token.platform || "ios"),
+        provider: String(token.provider || "apns"),
+        environment: String(token.environment || "production"),
         push_token_hash: String(token.push_token_hash || ""),
+        token_ciphertext: String(token.token_ciphertext || ""),
         token_preview: String(token.token_preview || ""),
         status: String(token.status || "active"),
         device_name: String(token.device_name || ""),
@@ -686,7 +689,7 @@ function buildCloudSeedBundle(db, options = {}) {
     const counts = Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, rows.length]));
 
     return {
-        schema_version: "009_media_upload_intents",
+        schema_version: "010_apns_delivery",
         exported_at: exportedAt,
         source: options.source || "local-app-server-json",
         counts,

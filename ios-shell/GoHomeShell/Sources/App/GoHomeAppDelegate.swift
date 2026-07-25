@@ -2,14 +2,25 @@ import UIKit
 import UserNotifications
 
 final class GoHomeAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
-    weak var runtime: GoHomeShellRuntime? {
+    weak var notificationCoordinator: PushNotificationCoordinator? {
         didSet {
-            guard let runtime, let payload = pendingNotificationUserInfo else { return }
-            runtime.handleNotificationResponse(userInfo: payload)
-            pendingNotificationUserInfo = nil
+            if let token = pendingDeviceToken {
+                notificationCoordinator?.receiveDeviceToken(token)
+                pendingDeviceToken = nil
+            }
+            if let error = pendingRegistrationError {
+                notificationCoordinator?.receiveRegistrationError(error)
+                pendingRegistrationError = nil
+            }
+            if let payload = pendingNotificationUserInfo {
+                notificationCoordinator?.handleNotification(userInfo: payload)
+                pendingNotificationUserInfo = nil
+            }
         }
     }
     private var pendingNotificationUserInfo: [AnyHashable: Any]?
+    private var pendingDeviceToken: Data?
+    private var pendingRegistrationError: Error?
 
     func application(
         _ application: UIApplication,
@@ -17,18 +28,20 @@ final class GoHomeAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificati
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
         if let payload = launchOptions?[.remoteNotification] as? [AnyHashable: Any] {
-            if let runtime { runtime.handleNotificationResponse(userInfo: payload) }
+            if let notificationCoordinator { notificationCoordinator.handleNotification(userInfo: payload) }
             else { pendingNotificationUserInfo = payload }
         }
         return true
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        Task { @MainActor in runtime?.updatePushToken(deviceToken) }
+        if let notificationCoordinator { notificationCoordinator.receiveDeviceToken(deviceToken) }
+        else { pendingDeviceToken = deviceToken }
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        Task { @MainActor in runtime?.clearPushToken(error: error) }
+        if let notificationCoordinator { notificationCoordinator.receiveRegistrationError(error) }
+        else { pendingRegistrationError = error }
     }
 
     func userNotificationCenter(
@@ -46,7 +59,7 @@ final class GoHomeAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificati
     ) {
         Task { @MainActor in
             let payload = response.notification.request.content.userInfo
-            if let runtime { runtime.handleNotificationResponse(userInfo: payload) }
+            if let notificationCoordinator { notificationCoordinator.handleNotification(userInfo: payload) }
             else { pendingNotificationUserInfo = payload }
             completionHandler()
         }
