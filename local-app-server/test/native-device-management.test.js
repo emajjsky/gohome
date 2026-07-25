@@ -130,3 +130,63 @@ test('native device and camera mutations are creator-only and stay bound to one 
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('LAN pairing returns only a sanitized ownership summary and revoked devices lose cloud access', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-native-pairing-'));
+  const app = createLocalAppServer({
+    rootDir: path.join(__dirname, '..', '..'),
+    dataDir,
+    authMode: 'demo',
+    demoOtp: '246810',
+  });
+  const baseURL = await listen(app.server);
+  try {
+    const owner = await register(baseURL, '13818462550', '家庭创建者');
+    const familyResult = await request(baseURL, '/api/families', {
+      method: 'POST', headers: owner.headers, body: JSON.stringify({ name: '安全配对家庭' }),
+    });
+    const familyID = String(familyResult.body.id);
+    const codeResult = await request(baseURL, '/api/device/binding-codes', {
+      method: 'POST', headers: owner.headers,
+      body: JSON.stringify({ family_id: familyID, expires_in_minutes: 10 }),
+    });
+    assert.equal(codeResult.response.status, 200);
+
+    const paired = await request(baseURL, '/api/device/token/exchange', {
+      method: 'POST',
+      body: JSON.stringify({
+        code: codeResult.body.code,
+        device_id: 'edge-secure-pairing',
+        device_name: '安全配对盒子',
+      }),
+    });
+    assert.equal(paired.response.status, 200);
+    assert.deepEqual(paired.body.binding_summary, {
+      status: 'bound',
+      family_name: '安全配对家庭',
+      owner_account: '138****2550',
+      owner_display_name: '家庭创建者',
+      bound_at: paired.body.binding.bound_at,
+    });
+    assert.equal(JSON.stringify(paired.body.binding_summary).includes('13818462550'), false);
+
+    const config = await request(baseURL, '/api/v1/device/config', {
+      headers: { Authorization: `Bearer ${paired.body.device_token}` },
+    });
+    assert.equal(config.response.status, 200);
+    assert.deepEqual(config.body.binding_summary, paired.body.binding_summary);
+
+    const unbound = await request(baseURL, `/api/device-bindings/${paired.body.binding.id}`, {
+      method: 'DELETE', headers: owner.headers,
+    });
+    assert.equal(unbound.response.status, 200);
+
+    const revokedConfig = await request(baseURL, '/api/v1/device/config', {
+      headers: { Authorization: `Bearer ${paired.body.device_token}` },
+    });
+    assert.equal(revokedConfig.response.status, 401);
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

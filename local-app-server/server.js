@@ -1143,6 +1143,16 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function maskedAccount(user) {
+        const phone = String(user?.phone || phoneFromAccountEmail(user?.email) || "").trim();
+        if (/^\d{11}$/.test(phone)) return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
+        const email = String(user?.email || "").trim();
+        if (!email.includes("@")) return "";
+        const [local, domain] = email.split("@");
+        const visible = local.slice(0, Math.min(2, local.length));
+        return `${visible}${"*".repeat(Math.max(2, Math.min(6, local.length - visible.length)))}@${domain}`;
+    }
+
     function activeAppUser(req = null) {
         const userId = req?.appUserId || store.db.active_user_id;
         return store.db.users.find((item) => Number(item.id) === Number(userId))
@@ -1335,6 +1345,27 @@ function createLocalAppServer(options = {}) {
             status: binding.status || "active",
             bound_at: binding.bound_at,
             last_seen_at: device.last_seen_at || binding.last_seen_at || null,
+        };
+    }
+
+    function bindingSummaryForDevice(deviceId, familyId = null) {
+        const normalizedDeviceId = String(deviceId || "").trim();
+        const binding = store.db.device_bindings.find((item) => (
+            String(item.device_id || "") === normalizedDeviceId
+            && String(item.status || "active") !== "revoked"
+            && (!familyId || Number(item.family_id) === Number(familyId))
+        ));
+        if (!binding) {
+            return { status: "unbound", family_name: "", owner_account: "", owner_display_name: "", bound_at: "" };
+        }
+        const family = selectedFamily(binding.family_id);
+        const owner = store.db.users.find((item) => Number(item.id) === Number(family?.created_by_user_id)) || null;
+        return {
+            status: "bound",
+            family_name: String(family?.name || "已绑定家庭"),
+            owner_account: maskedAccount(owner),
+            owner_display_name: String(owner?.display_name || "家庭创建者"),
+            bound_at: String(binding.bound_at || binding.created_at || ""),
         };
     }
 
@@ -1925,8 +1956,8 @@ function createLocalAppServer(options = {}) {
         return `rules-${crypto.createHash("sha1").update(JSON.stringify(currentRules(familyId))).digest("hex").slice(0, 12)}`;
     }
 
-    function deviceConfigVersion(familyId = null) {
-        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion(familyId)}|${rulesVersion(familyId)}`).digest("hex").slice(0, 12)}`;
+    function deviceConfigVersion(familyId = null, deviceId = currentEdgeDeviceId()) {
+        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion(familyId)}|${rulesVersion(familyId)}|${JSON.stringify(bindingSummaryForDevice(deviceId, familyId))}`).digest("hex").slice(0, 12)}`;
     }
 
     function deviceCameraConfig(camera) {
@@ -1952,16 +1983,18 @@ function createLocalAppServer(options = {}) {
     function deviceConfigPayload(options = {}) {
         const familyId = normalizeNumber(options.family_id ?? options.familyId, null);
         const familyIds = familyId ? new Set([familyId]) : new Set();
-        const device = store.db.devices[String(options.device_id || currentEdgeDeviceId())] || {};
+        const deviceId = String(options.device_id || currentEdgeDeviceId());
+        const device = store.db.devices[deviceId] || {};
         return {
             ok: true,
-            device_id: options.device_id || currentEdgeDeviceId(),
+            device_id: deviceId,
             generated_at: nowIso(),
-            config_version: deviceConfigVersion(familyId),
+            config_version: deviceConfigVersion(familyId, deviceId),
             cameras: appConfigCameras(familyIds).map(deviceCameraConfig),
             rules: currentRules(familyId),
             rules_version: rulesVersion(familyId),
             maintenance: objectValue(objectValue(device.metadata).maintenance_command),
+            binding_summary: bindingSummaryForDevice(deviceId, familyId),
         };
     }
 
@@ -8404,6 +8437,7 @@ function createLocalAppServer(options = {}) {
                     device_id: deviceId,
                     family_id: code.family_id,
                     binding: publicBinding(binding),
+                    binding_summary: bindingSummaryForDevice(deviceId, code.family_id),
                     config: { upload_enabled: true },
                 });
                 return;

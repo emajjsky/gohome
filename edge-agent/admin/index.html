@@ -6,7 +6,7 @@
   <title>首页 - 回家</title>
   <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
   <link rel="stylesheet" href="/admin/styles.css?v=20260704-pose-1">
-  <link rel="stylesheet" href="/admin/console.css?v=20260722-console-7">
+  <link rel="stylesheet" href="/admin/console.css?v=20260725-pairing-1">
 </head>
 <body data-page="home" class="admin-web-page">
   <a class="skip-link" href="#main">跳到内容</a>
@@ -62,6 +62,24 @@
         <div><span class="console-kicker">LIVE VIEW</span><h1>实时视野</h1></div>
         <p>本地低延迟预览</p>
       </header>
+      <section class="device-binding-panel" aria-label="盒子绑定状态">
+        <div class="binding-primary">
+          <span id="bindingStatus" class="status-pill muted">读取绑定状态</span>
+          <div>
+            <strong id="bindingFamily">未绑定家庭</strong>
+            <p id="bindingOwner">可由家庭创建者通过回家 App 绑定</p>
+          </div>
+        </div>
+        <div class="binding-facts">
+          <div><span>绑定时间</span><strong id="bindingTime">-</strong></div>
+          <div><span>云端同步</span><strong id="bindingCloudSync">检查中</strong></div>
+          <div><span>安全配对</span><strong id="pairingWindowState">检查中</strong></div>
+        </div>
+        <button id="openPairingWindow" class="secondary-button" type="button" hidden>
+          <span class="material-symbols-outlined" data-icon="⌁">sensors</span>
+          开启配对 10 分钟
+        </button>
+      </section>
       <section class="home-layout home-monitor-layout">
         <section class="panel hero-monitor">
           <div class="monitor-toolbar">
@@ -89,6 +107,6 @@
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/admin/console.js?v=20260721-console-1"></script>
+  <script src="/admin/console.js?v=20260725-pairing-1"></script>
 </body>
 </html>

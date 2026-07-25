@@ -31,12 +31,14 @@ from .camera_agent import CameraAgent, CameraError
 from .camera_config_authority import camera_config_authority
 from .config_sync_agent import ConfigSyncAgent
 from .detect_agent import DetectAgent
+from .device_binding_state import DeviceBindingState
 from .edge_bootstrap_service import EdgeBootstrapService
 from .event_agent import EventAgent
 from .live_relay_agent import LiveRelayAgent
 from .notifier import Notifier
 from .object_storage_service import ObjectStorageService, build_object_storage_router
 from .package_service import PackageService
+from .pairing_window import PairingWindow
 from .public_pilot_service import PublicPilotService
 from .resource_monitor import SystemResourceMonitor
 from .schemas import (
@@ -97,7 +99,6 @@ bearer_scheme = HTTPBearer(auto_error=False)
 SETUP_NETWORK_PAGE = "/setup/network.html"
 SETUP_HOTSPOT_ORIGIN = "http://10.42.0.1"
 SETUP_HOTSPOT_NETWORK_PAGE = f"{SETUP_HOTSPOT_ORIGIN}{SETUP_NETWORK_PAGE}"
-EDGE_STARTED_AT = datetime.now(timezone.utc)
 
 
 def model_dump(model: Any) -> Dict[str, Any]:
@@ -412,8 +413,7 @@ def write_local_device_token(token: str) -> None:
 
 
 def pairing_window_open() -> bool:
-    elapsed = (datetime.now(timezone.utc) - EDGE_STARTED_AT).total_seconds()
-    return elapsed <= max(60, settings.lan_pairing_window_seconds)
+    return pairing_window.is_open()
 
 
 def validated_pair_return_url(raw_url: str) -> str:
@@ -464,6 +464,8 @@ def cloud_pair_device(code: str) -> Dict[str, Any]:
     if not token:
         raise HTTPException(status_code=502, detail="云端没有返回设备凭证")
     write_local_device_token(token)
+    binding_state.write(result.get("binding_summary"))
+    pairing_window.close()
     return result
 
 
@@ -1166,6 +1168,8 @@ settings.ensure_dirs()
 box_init_service = BoxInitService(settings)
 box_init_service.initialize_if_needed()
 storage = Storage(settings.db_path)
+binding_state = DeviceBindingState(settings.data_dir / "device-binding-summary.json")
+pairing_window = PairingWindow(settings.lan_pairing_window_seconds)
 camera_agent = CameraAgent(settings.snapshot_dir)
 detect_agent = DetectAgent(
     black_brightness_threshold=settings.black_brightness_threshold,
@@ -1265,6 +1269,7 @@ config_sync_agent = ConfigSyncAgent(
     camera_agent=camera_agent,
     device_id_resolver=current_device_id,
     token_resolver=read_local_device_token,
+    binding_summary_writer=binding_state.write,
     runtime_status_resolver=lambda: {
         "worker_running": worker.is_running,
         "lan_url": f"http://{local_ip()}:{settings.port}",
@@ -1335,6 +1340,7 @@ def admin_path_requires_auth(path: str) -> bool:
 
 def admin_api_requires_auth(path: str) -> bool:
     protected_prefixes = (
+        "/api/admin/pairing-window",
         "/api/cameras",
         "/api/events",
         "/api/event-candidates",
@@ -1348,7 +1354,7 @@ def admin_api_requires_auth(path: str) -> bool:
         "/api/eacp-acceptance",
         "/snapshots",
     )
-    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected_prefixes)
+    return path == "/api/device" or any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected_prefixes)
 
 
 def admin_login_redirect(request: Request) -> RedirectResponse:
@@ -1536,6 +1542,8 @@ def health() -> Dict[str, Any]:
 @app.get("/api/device")
 def device() -> Dict[str, Any]:
     device_identity = local_device_identity()
+    pairing = pairing_window.status()
+    binding = binding_state.read()
     return {
         "device_id": device_identity["device_id"],
         "name": socket.gethostname(),
@@ -1564,6 +1572,8 @@ def device() -> Dict[str, Any]:
         "config_sync_agent": config_sync_agent.status(),
         "video_distribution": video_distribution_service.service_info(),
         "app_runtime": app_runtime_guard.status(),
+        "binding": binding,
+        "pairing": pairing,
     }
 
 
@@ -1598,6 +1608,16 @@ def admin_auth_logout(request: Request, response: Response) -> Dict[str, Any]:
     box_init_service.logout(request.cookies.get(ADMIN_SESSION_COOKIE, ""))
     response.delete_cookie(ADMIN_SESSION_COOKIE, path="/")
     return {"authenticated": False}
+
+
+@app.post("/api/admin/pairing-window")
+def admin_open_pairing_window() -> Dict[str, Any]:
+    if binding_state.read().get("status") == "bound":
+        raise HTTPException(status_code=409, detail="盒子已经绑定家庭，请先由家庭创建者在 App 中解除绑定。")
+    return {
+        "ok": True,
+        "pairing": pairing_window.open(600),
+    }
 
 
 @app.post("/api/admin/auth/change-password")
@@ -2080,17 +2100,24 @@ def lan_discovery() -> Dict[str, Any]:
         "device_name": identity["device_name"],
         "lan_ip": identity["lan_ip"],
         "api_port": identity["api_port"],
-        "pairing_window_open": pairing_window_open(),
+        "pairing_window_open": pairing_window_open() and binding_state.read().get("status") != "bound",
     }
 
 
 @app.get("/pair")
 def pair_from_lan(code: str = Query(..., min_length=4, max_length=20), return_url: str = Query(...)) -> RedirectResponse:
     target = validated_pair_return_url(return_url)
+    if binding_state.read().get("status") == "bound":
+        query = urlencode({
+            "pair_status": "error",
+            "pair_message": "盒子已经绑定家庭，请先由家庭创建者在 App 中解除绑定。",
+        })
+        separator = "&" if "?" in target else "?"
+        return RedirectResponse(f"{target}{separator}{query}", status_code=303)
     if not pairing_window_open():
         query = urlencode({
             "pair_status": "window_closed",
-            "pair_message": "盒子的安全配对时间已结束，请重启盒子后在 15 分钟内重试。",
+            "pair_message": "安全配对时间已结束，请在盒子管理端开启 10 分钟安全配对后重试。",
         })
         separator = "&" if "?" in target else "?"
         return RedirectResponse(f"{target}{separator}{query}", status_code=303)

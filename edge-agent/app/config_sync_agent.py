@@ -18,6 +18,7 @@ class ConfigSyncAgent:
         device_id_resolver: Callable[[], str],
         token_resolver: Callable[[], str],
         runtime_status_resolver: Callable[[], Dict[str, Any]] | None = None,
+        binding_summary_writer: Callable[[Dict[str, Any] | None], Any] | None = None,
     ) -> None:
         self.storage = storage
         self.settings = settings
@@ -25,6 +26,7 @@ class ConfigSyncAgent:
         self.device_id_resolver = device_id_resolver
         self.token_resolver = token_resolver
         self.runtime_status_resolver = runtime_status_resolver or (lambda: {})
+        self.binding_summary_writer = binding_summary_writer
         self._stop = Event()
         self._wake = Event()
         self._thread: Thread | None = None
@@ -75,6 +77,8 @@ class ConfigSyncAgent:
         if not configured:
             return {"ok": False, "reason": reason, "applied": 0, "reported": 0}
         config = self._request_json("GET", "/api/v1/device/config")
+        if self.binding_summary_writer is not None and "binding_summary" in config:
+            self.binding_summary_writer(config.get("binding_summary"))
         apply_result = self._apply_config(config)
         report_payload = self._build_report(config, apply_result)
         report_response = self._request_json("POST", "/api/v1/device/sync", json_body=report_payload)
@@ -364,6 +368,8 @@ class ConfigSyncAgent:
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 401 and self.binding_summary_writer is not None:
+                self.binding_summary_writer(None)
             raise RuntimeError(f"{method} {url} failed: HTTP {exc.code} {detail}") from exc
         except URLError as exc:
             raise RuntimeError(f"{method} {url} failed: {exc.reason}") from exc

@@ -33,6 +33,7 @@ const state = {
   observationLogs: [],
   cloudVerifications: null,
   cameraConfigAuthority: null,
+  bindingClosesAt: 0,
   runtimeStatus: null,
   eventLogRecords: [],
   eventLogStatusFilter: "all",
@@ -316,9 +317,58 @@ async function loadDevice() {
   setText("setupDeviceName", device.name || "本地盒子");
   setText("setupDeviceUrl", device.api_base_url || "-");
   renderYoloState();
+  renderDeviceBinding();
   renderCameraConfigAuthority();
   renderAlgorithmDemo();
   prefillCameraForm();
+}
+
+function renderPairingCountdown() {
+  const target = $("pairingWindowState");
+  if (!target) return;
+  const remaining = Math.max(0, Math.ceil((state.bindingClosesAt - Date.now()) / 1000));
+  target.textContent = remaining > 0 ? `已开启 ${fmtDuration(remaining)}` : "未开启";
+}
+
+function renderDeviceBinding() {
+  if (pageName !== "home" || !state.device) return;
+  const binding = state.device.binding || { status: "unbound" };
+  const isBound = binding.status === "bound";
+  const sync = state.device.config_sync_agent || {};
+  const status = $("bindingStatus");
+  setText("bindingStatus", isBound ? "已绑定" : "未绑定");
+  if (status) status.className = `status-pill ${isBound ? "success" : "warning"}`;
+  setText("bindingFamily", isBound ? (binding.family_name || "已绑定家庭") : "未绑定家庭");
+  setText(
+    "bindingOwner",
+    isBound
+      ? `${binding.owner_display_name || "家庭创建者"} · ${binding.owner_account || "账号已保护"}`
+      : "可由家庭创建者通过回家 App 绑定"
+  );
+  setText("bindingTime", isBound ? fmtTime(binding.bound_at) : "-");
+  setText(
+    "bindingCloudSync",
+    sync.last_error ? "同步异常" : sync.last_sync_at ? "已同步" : sync.configured ? "等待同步" : "未连接"
+  );
+  state.bindingClosesAt = Date.parse(state.device.pairing?.closes_at || "") || 0;
+  renderPairingCountdown();
+  const button = $("openPairingWindow");
+  if (button) {
+    button.hidden = isBound;
+  }
+}
+
+async function openPairingWindow(button) {
+  setBusy(button, true);
+  try {
+    const result = await api("/api/admin/pairing-window", { method: "POST" });
+    state.device.pairing = result.pairing;
+    state.bindingClosesAt = Date.parse(result.pairing?.closes_at || "") || 0;
+    renderPairingCountdown();
+    showToast("安全配对已开启 10 分钟，请返回 App 重新搜索盒子");
+  } finally {
+    setBusy(button, false);
+  }
 }
 
 function cameraConfigIsCloudManaged() {
@@ -2970,6 +3020,7 @@ async function refreshAll() {
 
 function bindEvents() {
   on("refreshAll", "click", refreshAll);
+  on("openPairingWindow", "click", (event) => openPairingWindow(event.currentTarget).catch((error) => showToast(userSafeError(error.message))));
   on("refreshEventLog", "click", (event) => {
     setBusy(event.currentTarget, true);
     loadEventLog()
@@ -3163,6 +3214,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (pageName === "events") loadEventLog().catch(() => null);
   }, 6000);
+  setInterval(renderPairingCountdown, 1000);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       stopLiveAnalysisLoop();

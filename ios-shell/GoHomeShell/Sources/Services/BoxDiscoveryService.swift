@@ -265,7 +265,7 @@ enum BoxDiscoveryError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .endpointUnavailable: return "盒子已离开局域网，请重新搜索。"
-        case .pairingWindowClosed: return "安全配对时间已结束，请重启盒子后重试。"
+        case .pairingWindowClosed: return "安全配对时间已结束，请在盒子管理端开启 10 分钟安全配对后重试。"
         case let .pairingFailed(status): return "盒子绑定失败（\(status)），请检查网络后重试。"
         case let .cameraDiscoveryFailed(status): return "摄像头搜索失败（\(status)），请稍后重试。"
         case .invalidResponse: return "盒子返回了无法识别的数据。"

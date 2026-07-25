@@ -110,12 +110,33 @@ body.admin-web-page .algorithm-switch-panel .primary-button { width: 100%; }
 
 /* Home monitor */
 body.admin-web-page .home-layout { max-width: 1480px; margin: 0 auto; }
+body.admin-web-page .device-binding-panel {
+  max-width: 1480px; min-height: 76px; display: grid; grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: center; gap: 22px; margin: 0 auto 16px; border-block: 1px solid var(--console-line);
+  padding: 12px 0; background: transparent;
+}
+body.admin-web-page .binding-primary { min-width: 0; display: flex; align-items: center; gap: 12px; }
+body.admin-web-page .binding-primary > div { min-width: 0; }
+body.admin-web-page .binding-primary strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
+body.admin-web-page .binding-primary p { margin: 4px 0 0; color: var(--console-muted); font-size: 10px; }
+body.admin-web-page .binding-facts { display: grid; grid-template-columns: repeat(3, minmax(88px, auto)); }
+body.admin-web-page .binding-facts > div { min-width: 0; border-left: 1px solid var(--console-line); padding: 0 15px; }
+body.admin-web-page .binding-facts span, body.admin-web-page .binding-facts strong { display: block; }
+body.admin-web-page .binding-facts span { color: var(--console-muted); font-size: 9px; }
+body.admin-web-page .binding-facts strong { margin-top: 4px; font-size: 11px; white-space: nowrap; }
 body.admin-web-page .hero-monitor { padding: 0; background: transparent; }
 body.admin-web-page .monitor-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 0 0 10px; }
 body.admin-web-page .monitor-toolbar label { display: grid; grid-template-columns: auto minmax(180px, 320px); align-items: center; gap: 10px; color: var(--console-muted); font-size: 11px; }
 body.admin-web-page .stream-frame { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border: 0; border-radius: var(--console-radius); background: var(--console-video); }
 body.admin-web-page .stream-frame > img { width: 100%; height: 100%; display: block; object-fit: contain; }
 body.admin-web-page .stream-badge-row { position: absolute; inset: auto 0 0; display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; background: rgba(10,11,11,.82); color: #fff; font-family: ui-monospace, monospace; font-size: 10px; }
+
+@media (max-width: 900px) {
+  body.admin-web-page .device-binding-panel { grid-template-columns: 1fr; align-items: stretch; gap: 12px; }
+  body.admin-web-page .binding-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  body.admin-web-page .binding-facts > div:first-child { border-left: 0; padding-left: 0; }
+  body.admin-web-page .device-binding-panel > button { width: 100%; }
+}
 
 /* Algorithm command bar */
 body.admin-web-page .algorithm-cinema-console { max-width: 1600px; margin: 0 auto; }
