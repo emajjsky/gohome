@@ -30,6 +30,7 @@ def main() -> None:
             config_sync_test_capture_enabled=False,
         )
         camera_agent = SimpleNamespace(capture_frame=lambda *_args, **_kwargs: {"width": 640, "height": 360})
+        monotonic_now = [100.0]
         agent = ConfigSyncAgent(
             storage=storage,
             settings=settings,
@@ -37,7 +38,15 @@ def main() -> None:
             device_id_resolver=lambda: "edge-test",
             token_resolver=lambda: "",
             runtime_status_resolver=lambda: {"worker_running": True},
+            monotonic_clock=lambda: monotonic_now[0],
         )
+
+        if not agent.wake() or agent.wake():
+            raise SystemExit("config sync wake requests must be coalesced for two seconds")
+        monotonic_now[0] += 2.0
+        if not agent.wake():
+            raise SystemExit("config sync wake must become available after the debounce window")
+        agent._wake.clear()
 
         config_holder = {
             "payload": {

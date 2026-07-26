@@ -123,6 +123,12 @@ struct MainTabView: View {
             memoryModel.start()
             recommendationsModel.start()
         }
+        .onChange(of: selection) { next in
+            if next == .guardView { homeModel.refresh() }
+        }
+        .onChange(of: profileModel.deviceConfigurationRevision) { _ in
+            homeModel.reconcileDeviceConfiguration()
+        }
         .onReceive(pushNotifications.$pendingRoute.compactMap { $0 }) { route in
             open(route)
         }

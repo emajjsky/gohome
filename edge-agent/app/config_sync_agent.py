@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from typing import Any, Callable, Dict
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import json
+import time
 
 
 class ConfigSyncAgent:
@@ -19,6 +20,7 @@ class ConfigSyncAgent:
         token_resolver: Callable[[], str],
         runtime_status_resolver: Callable[[], Dict[str, Any]] | None = None,
         binding_summary_writer: Callable[[Dict[str, Any] | None], Any] | None = None,
+        monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.storage = storage
         self.settings = settings
@@ -27,8 +29,11 @@ class ConfigSyncAgent:
         self.token_resolver = token_resolver
         self.runtime_status_resolver = runtime_status_resolver or (lambda: {})
         self.binding_summary_writer = binding_summary_writer
+        self.monotonic_clock = monotonic_clock or time.monotonic
         self._stop = Event()
         self._wake = Event()
+        self._wake_lock = Lock()
+        self._last_wake_requested_at = float("-inf")
         self._thread: Thread | None = None
         self.last_loop_started_at: str | None = None
         self.last_sync_at: str | None = None
@@ -54,8 +59,14 @@ class ConfigSyncAgent:
         if self._thread:
             self._thread.join(timeout=5)
 
-    def wake(self) -> None:
-        self._wake.set()
+    def wake(self) -> bool:
+        now = self.monotonic_clock()
+        with self._wake_lock:
+            if now - self._last_wake_requested_at < 2.0:
+                return False
+            self._last_wake_requested_at = now
+            self._wake.set()
+            return True
 
     def status(self) -> Dict[str, Any]:
         configured, reason = self._configured()

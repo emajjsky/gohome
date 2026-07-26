@@ -6,6 +6,7 @@ final class ProfileViewModel: ObservableObject {
     @Published private(set) var savingRules = false
     @Published private(set) var savingPreferences = false
     @Published private(set) var deviceActionID: String?
+    @Published private(set) var deviceConfigurationRevision = 0
     @Published private(set) var inlineError: String?
 
     let user: AppUser
@@ -127,6 +128,7 @@ final class ProfileViewModel: ObservableObject {
             ))
             replaceCamera(camera)
             await persist()
+            deviceConfigurationRevision += 1
             return true
         } catch {
             inlineError = error.localizedDescription
@@ -146,6 +148,7 @@ final class ProfileViewModel: ObservableObject {
             )
             replaceCamera(updated)
             await persist()
+            deviceConfigurationRevision += 1
             return true
         } catch {
             inlineError = error.localizedDescription
@@ -164,6 +167,7 @@ final class ProfileViewModel: ObservableObject {
             value.cameras.removeAll { $0.id == camera.id }
             state.value = value
             await persist()
+            deviceConfigurationRevision += 1
             return true
         } catch {
             inlineError = error.localizedDescription
@@ -183,6 +187,7 @@ final class ProfileViewModel: ObservableObject {
             value.cameras.removeAll { $0.deviceID == binding.deviceID }
             state.value = value
             await persist()
+            deviceConfigurationRevision += 1
             return true
         } catch {
             inlineError = error.localizedDescription

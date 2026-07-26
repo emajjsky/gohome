@@ -204,6 +204,15 @@ test('LAN pairing returns only a sanitized ownership summary and revoked devices
     assert.equal(rebound.response.status, 200);
     assert.notEqual(rebound.body.binding.bound_at, '2020-01-01T00:00:00.000Z');
     assert.equal(rebound.body.binding_summary.bound_at, rebound.body.binding.bound_at);
+
+    const reboundAt = rebound.body.binding.bound_at;
+    historicalBinding.updated_at = '2030-01-01T00:00:00.000Z';
+    const bindingsAfterSync = await request(baseURL, `/api/device-bindings?family_id=${familyID}`, {
+      headers: owner.headers,
+    });
+    assert.equal(bindingsAfterSync.response.status, 200);
+    assert.equal(bindingsAfterSync.body[0].bound_at, reboundAt);
+    assert.equal(historicalBinding.bound_at, reboundAt);
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(dataDir, { recursive: true, force: true });

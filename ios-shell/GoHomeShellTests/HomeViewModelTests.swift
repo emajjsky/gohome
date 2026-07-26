@@ -46,6 +46,34 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(model.careActionError, "操作没有保存，请稍后重试")
     }
 
+    @MainActor
+    func testRefreshPublishesNewCameraWithoutRecreatingTheViewModel() async throws {
+        let cache = try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let scope = CacheScope(userID: "user-1", familyID: "family-1")
+        let calls = HomeLoadCounter()
+        let repository = AppRepository(
+            cache: cache,
+            bootstrapLoader: { throw APIError.invalidResponse },
+            homeLoader: { _ in
+                let count = await calls.increment()
+                let cameras = count == 1 ? "[]" : #"[{"id":"camera-1","name":"客厅主视","status":"online"}]"#
+                return try JSONDecoder().decode(HomeResponse.self, from: Data("""
+                {"family":null,"weather":null,"calendar":[],"distance":null,"critical_alert":null,
+                 "articles":[],"cameras":\(cameras),"revision":"r\(count)"}
+                """.utf8))
+            }
+        )
+        let model = HomeViewModel(repository: repository, scope: scope)
+
+        model.start()
+        try await waitUntil { model.state.value?.revision == "r1" }
+        XCTAssertEqual(model.state.value?.cameras, [])
+
+        model.refresh()
+        try await waitUntil { model.state.value?.revision == "r2" }
+        XCTAssertEqual(model.state.value?.cameras.first?.id, "camera-1")
+    }
+
     func testWeatherFormattingUsesOnlyServerValues() {
         XCTAssertEqual(
             HomePresentation.weatherText(HomeWeather(city: "上海", temperature: 28, condition: "晴")),
@@ -124,6 +152,15 @@ private struct HomeCareFixture {
 private actor CareActionCounter {
     private(set) var value = 0
     func increment() { value += 1 }
+}
+
+private actor HomeLoadCounter {
+    private var value = 0
+
+    func increment() -> Int {
+        value += 1
+        return value
+    }
 }
 
 @MainActor

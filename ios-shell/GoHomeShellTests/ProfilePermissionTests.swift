@@ -136,14 +136,17 @@ final class ProfilePermissionTests: XCTestCase {
         )
         XCTAssertTrue(didCreate)
         XCTAssertEqual(model.state.value?.cameras, [created])
+        XCTAssertEqual(model.deviceConfigurationRevision, 1)
 
         let didUpdate = await model.updateCamera(created, name: updated.name, room: updated.room, enabled: updated.enabled)
         XCTAssertTrue(didUpdate)
         XCTAssertEqual(model.state.value?.cameras, [updated])
+        XCTAssertEqual(model.deviceConfigurationRevision, 2)
 
         let didDelete = await model.deleteCamera(updated)
         XCTAssertTrue(didDelete)
         XCTAssertEqual(model.state.value?.cameras, [])
+        XCTAssertEqual(model.deviceConfigurationRevision, 3)
 
         let didRecreate = await model.createCamera(
             binding: binding,
@@ -158,6 +161,7 @@ final class ProfilePermissionTests: XCTestCase {
         XCTAssertTrue(didUnbind)
         XCTAssertEqual(model.state.value?.bindings, [])
         XCTAssertEqual(model.state.value?.cameras, [])
+        XCTAssertEqual(model.deviceConfigurationRevision, 5)
 
         let cached = try await cache.read(ProfileData.self, key: "profile", scope: scope)
         XCTAssertEqual(cached?.bindings, [])

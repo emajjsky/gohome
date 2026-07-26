@@ -115,6 +115,14 @@ final class BoxDiscoveryService: ObservableObject {
         return try JSONDecoder().decode(CameraDiscoveryPayload.self, from: response.body).cameras
     }
 
+    func wakeConfigSync(box: DiscoveredBox) async throws {
+        guard let endpoint = endpoints[box.deviceID] else { throw BoxDiscoveryError.endpointUnavailable }
+        let response = try await LANHTTPClient.post(endpoint: endpoint, path: "/api/lan/config-sync/wake")
+        guard response.statusCode == 200 || response.statusCode == 202 else {
+            throw BoxDiscoveryError.configSyncWakeFailed(response.statusCode)
+        }
+    }
+
     deinit { browser?.cancel() }
 
     private func probe(_ result: NWBrowser.Result) {
@@ -170,13 +178,21 @@ private struct LANHTTPResponse: Sendable {
 
 private enum LANHTTPClient {
     static func get(endpoint: NWEndpoint, path: String) async throws -> LANHTTPResponse {
+        try await request(method: "GET", endpoint: endpoint, path: path)
+    }
+
+    static func post(endpoint: NWEndpoint, path: String) async throws -> LANHTTPResponse {
+        try await request(method: "POST", endpoint: endpoint, path: path)
+    }
+
+    private static func request(method: String, endpoint: NWEndpoint, path: String) async throws -> LANHTTPResponse {
         try await withCheckedThrowingContinuation { continuation in
             let connection = NWConnection(to: endpoint, using: .tcp)
             let request = LANRequestState(connection: connection, continuation: continuation)
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    let message = "GET \(path) HTTP/1.1\r\nHost: gohome.local\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
+                    let message = "\(method) \(path) HTTP/1.1\r\nHost: gohome.local\r\nAccept: application/json\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                     connection.send(content: Data(message.utf8), completion: .contentProcessed { error in
                         if let error { request.finish(.failure(error)) } else { request.receive() }
                     })
@@ -259,6 +275,7 @@ enum BoxDiscoveryError: LocalizedError {
     case pairingWindowClosed
     case pairingFailed(Int)
     case cameraDiscoveryFailed(Int)
+    case configSyncWakeFailed(Int)
     case invalidResponse
     case timeout
 
@@ -268,6 +285,7 @@ enum BoxDiscoveryError: LocalizedError {
         case .pairingWindowClosed: return "安全配对时间已结束，请在盒子管理端开启 10 分钟安全配对后重试。"
         case let .pairingFailed(status): return "盒子绑定失败（\(status)），请检查网络后重试。"
         case let .cameraDiscoveryFailed(status): return "摄像头搜索失败（\(status)），请稍后重试。"
+        case let .configSyncWakeFailed(status): return "盒子配置同步唤醒失败（\(status)）。"
         case .invalidResponse: return "盒子返回了无法识别的数据。"
         case .timeout: return "连接盒子超时，请确认手机和盒子在同一 Wi-Fi。"
         }

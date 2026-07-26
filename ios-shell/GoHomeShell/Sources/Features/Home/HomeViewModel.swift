@@ -79,6 +79,7 @@ final class HomeViewModel: ObservableObject {
     private let repository: AppRepository?
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
+    private var reconciliationTask: Task<Void, Never>?
     private var hasStarted = false
 
     init(repository: AppRepository?, scope: CacheScope?) {
@@ -89,6 +90,32 @@ final class HomeViewModel: ObservableObject {
     func start() {
         guard !hasStarted, let repository, let scope else { return }
         hasStarted = true
+        refresh(repository: repository, scope: scope)
+    }
+
+    func refresh() {
+        guard let repository, let scope else { return }
+        refresh(repository: repository, scope: scope)
+    }
+
+    func reconcileDeviceConfiguration() {
+        refresh()
+        reconciliationTask?.cancel()
+        reconciliationTask = Task { [weak self] in
+            for delay in [2, 5] {
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                self?.refresh()
+            }
+        }
+    }
+
+    private func refresh(repository: AppRepository, scope: CacheScope) {
+        loadTask?.cancel()
         loadTask = Task { [repository, scope] in
             await repository.home(scope: scope) { next in
                 await MainActor.run {
@@ -132,5 +159,8 @@ final class HomeViewModel: ObservableObject {
         careActionError = nil
     }
 
-    deinit { loadTask?.cancel() }
+    deinit {
+        loadTask?.cancel()
+        reconciliationTask?.cancel()
+    }
 }

@@ -103,7 +103,7 @@ struct CameraConfigurationForm: View {
             .opacity(!canSave || isSaving ? 0.4 : 1)
             .accessibilityIdentifier("camera-save")
         }
-        .onAppear { if existing == nil { discovery.start() } }
+        .onAppear { discovery.start() }
         .onDisappear { discovery.stop() }
         .onChange(of: discovery.boxes) { boxes in
             guard existing == nil,
@@ -257,6 +257,7 @@ struct CameraConfigurationForm: View {
 
     private func save() {
         guard canSave, !isSaving else { return }
+        let activeBox = discovery.boxes.first(where: { $0.deviceID == binding.deviceID })
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let path = streamPath.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
@@ -274,6 +275,9 @@ struct CameraConfigurationForm: View {
                 password: password,
                 enabled: enabled
             ))
+            if success, let activeBox {
+                try? await discovery.wakeConfigSync(box: activeBox)
+            }
             if !success { errorMessage = "配置未能保存，请检查网络后重试。" }
             isSaving = false
         }

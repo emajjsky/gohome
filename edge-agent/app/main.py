@@ -1357,14 +1357,20 @@ def admin_api_requires_auth(path: str) -> bool:
     return path == "/api/device" or any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected_prefixes)
 
 
-def private_lan_camera_discovery(request: Request) -> bool:
-    if request.method != "GET" or request.url.path != "/api/cameras/discover":
-        return False
+def request_from_private_lan(request: Request) -> bool:
     host = request.client.host if request.client else ""
     try:
         return ipaddress.ip_address(host).is_private
     except ValueError:
         return False
+
+
+def private_lan_camera_discovery(request: Request) -> bool:
+    return (
+        request.method == "GET"
+        and request.url.path == "/api/cameras/discover"
+        and request_from_private_lan(request)
+    )
 
 
 def admin_login_redirect(request: Request) -> RedirectResponse:
@@ -2112,6 +2118,13 @@ def lan_discovery() -> Dict[str, Any]:
         "api_port": identity["api_port"],
         "pairing_window_open": pairing_window_open() and binding_state.read().get("status") != "bound",
     }
+
+
+@app.post("/api/lan/config-sync/wake", status_code=202)
+def wake_config_sync_from_lan(request: Request) -> Dict[str, Any]:
+    if not request_from_private_lan(request):
+        raise HTTPException(status_code=403, detail="仅允许家庭局域网唤醒配置同步。")
+    return {"ok": True, "queued": config_sync_agent.wake()}
 
 
 @app.get("/pair")

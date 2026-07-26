@@ -1343,7 +1343,7 @@ function createLocalAppServer(options = {}) {
             device_name: binding.device_name || device.name || "回家盒子",
             device_type: binding.device_type || "edge-agent",
             status: binding.status || "active",
-            bound_at: binding.updated_at || binding.bound_at,
+            bound_at: binding.bound_at || binding.updated_at,
             last_seen_at: device.last_seen_at || binding.last_seen_at || null,
         };
     }
@@ -1365,7 +1365,7 @@ function createLocalAppServer(options = {}) {
             family_name: String(family?.name || "已绑定家庭"),
             owner_account: maskedAccount(owner),
             owner_display_name: String(owner?.display_name || "家庭创建者"),
-            bound_at: String(binding.updated_at || binding.bound_at || binding.created_at || ""),
+            bound_at: String(binding.bound_at || binding.created_at || binding.updated_at || ""),
         };
     }
 
@@ -1513,7 +1513,7 @@ function createLocalAppServer(options = {}) {
                 updated_at: nowIso(),
             };
             store.db.device_bindings.push(binding);
-        } else {
+        } else if (String(binding.status || "active") === "revoked") {
             const reboundAt = nowIso();
             binding.status = "active";
             binding.device_name = String(deviceName || binding.device_name || "回家盒子");
@@ -1521,6 +1521,8 @@ function createLocalAppServer(options = {}) {
             binding.bound_at = reboundAt;
             binding.updated_at = reboundAt;
             delete binding.unbound_at;
+        } else {
+            binding.status = "active";
         }
 
         const existingDevice = store.db.devices[normalizedDeviceId] || {};
