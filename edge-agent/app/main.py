@@ -1357,6 +1357,16 @@ def admin_api_requires_auth(path: str) -> bool:
     return path == "/api/device" or any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected_prefixes)
 
 
+def private_lan_camera_discovery(request: Request) -> bool:
+    if request.method != "GET" or request.url.path != "/api/cameras/discover":
+        return False
+    host = request.client.host if request.client else ""
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return False
+
+
 def admin_login_redirect(request: Request) -> RedirectResponse:
     target = request.url.path
     if request.url.query:
@@ -1367,7 +1377,7 @@ def admin_login_redirect(request: Request) -> RedirectResponse:
 @app.middleware("http")
 async def enforce_admin_session(request: Request, call_next: Any) -> Response:
     requires_page_auth = admin_path_requires_auth(request.url.path)
-    requires_api_auth = admin_api_requires_auth(request.url.path)
+    requires_api_auth = admin_api_requires_auth(request.url.path) and not private_lan_camera_discovery(request)
     if requires_page_auth or requires_api_auth:
         token = request.cookies.get(ADMIN_SESSION_COOKIE, "")
         session = box_init_service.session_status(token)

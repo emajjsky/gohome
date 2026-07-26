@@ -185,6 +185,25 @@ test('LAN pairing returns only a sanitized ownership summary and revoked devices
       headers: { Authorization: `Bearer ${paired.body.device_token}` },
     });
     assert.equal(revokedConfig.response.status, 401);
+
+    const historicalBinding = app.store.db.device_bindings.find((item) => String(item.id) === String(paired.body.binding.id));
+    historicalBinding.bound_at = '2020-01-01T00:00:00.000Z';
+    historicalBinding.updated_at = '2020-01-01T00:00:00.000Z';
+    const nextCode = await request(baseURL, '/api/device/binding-codes', {
+      method: 'POST', headers: owner.headers,
+      body: JSON.stringify({ family_id: familyID, expires_in_minutes: 10 }),
+    });
+    const rebound = await request(baseURL, '/api/device/token/exchange', {
+      method: 'POST',
+      body: JSON.stringify({
+        code: nextCode.body.code,
+        device_id: 'edge-secure-pairing',
+        device_name: '安全配对盒子',
+      }),
+    });
+    assert.equal(rebound.response.status, 200);
+    assert.notEqual(rebound.body.binding.bound_at, '2020-01-01T00:00:00.000Z');
+    assert.equal(rebound.body.binding_summary.bound_at, rebound.body.binding.bound_at);
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(dataDir, { recursive: true, force: true });
