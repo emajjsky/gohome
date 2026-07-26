@@ -4,6 +4,7 @@ struct GuardView: View {
     @Environment(\.scenePhase) private var scenePhase
     let cameras: [HomeCamera]
     let apiClient: APIClient?
+    let familyID: String
     @ObservedObject var eventsModel: EventsViewModel
     @ObservedObject var timelineModel: ActivityTimelineViewModel
     @Binding var section: GuardSection
@@ -13,19 +14,23 @@ struct GuardView: View {
     init(
         cameras: [HomeCamera],
         apiClient: APIClient?,
+        familyID: String,
         eventsModel: EventsViewModel,
         timelineModel: ActivityTimelineViewModel,
         section: Binding<GuardSection>
     ) {
         self.cameras = cameras
         self.apiClient = apiClient
+        self.familyID = familyID
         self.eventsModel = eventsModel
         self.timelineModel = timelineModel
         _section = section
         _model = StateObject(wrappedValue: GuardViewModel(
             streamClient: apiClient.map { client in
                 MJPEGStreamClient(apiClient: client)
-            } ?? UnavailableStreamClient()
+            } ?? UnavailableStreamClient(),
+            privacyService: apiClient.map(VideoPrivacyService.init(apiClient:)),
+            familyID: familyID
         ))
     }
 
@@ -101,7 +106,12 @@ struct GuardView: View {
 
     private var liveContent: some View {
         VStack(alignment: .leading, spacing: 20) {
-            CameraStageView(frameData: model.latestFrame, state: model.streamState)
+            privacyModeControl
+            CameraStageView(
+                frameData: model.latestFrame,
+                state: model.streamState,
+                privacyMode: model.selectedPrivacyMode
+            )
             CameraThumbnailStrip(cameras: cameras, selectedID: model.selectedCameraID) { cameraID in
                 model.select(cameraID: cameraID)
             }
@@ -131,6 +141,45 @@ struct GuardView: View {
         .accessibilityIdentifier("guard-section-picker")
     }
 
+    private var privacyModeControl: some View {
+        HStack(spacing: 4) {
+            ForEach(VideoPrivacyMode.allCases) { mode in
+                Button {
+                    model.setPrivacyMode(mode)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: mode.symbol)
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(mode.title)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundStyle(model.selectedPrivacyMode == mode ? Color.white : GoHomeTheme.mutedInk)
+                    .frame(maxWidth: .infinity, minHeight: 34)
+                    .background(
+                        model.selectedPrivacyMode == mode ? GoHomeTheme.ink : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(model.privacyPolicy?.canManage != true || model.privacyUpdateInFlight)
+                .accessibilityIdentifier("guard-privacy-\(mode.rawValue)")
+            }
+            if model.privacyPolicy?.canManage == false {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+                    .frame(width: 28)
+                    .accessibilityLabel("由家庭创建者设置")
+            }
+        }
+        .padding(3)
+        .background(Color.black.opacity(0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(GoHomeTheme.line, lineWidth: 1)
+        )
+    }
+
     private var pendingCounter: some View {
         Text("\(min(eventsModel.pendingCount, 99))")
             .font(.system(size: 12, weight: .bold, design: .rounded))
@@ -142,6 +191,7 @@ struct GuardView: View {
 
     private func startLiveStreamIfNeeded() {
         guard isVisible, section == .live else { return }
+        model.startPrivacySync()
         guard let cameraID = model.selectedCameraID ?? cameras.first?.id else { return }
         model.select(cameraID: cameraID)
     }
@@ -189,7 +239,11 @@ enum GuardSection: String, CaseIterable, Identifiable {
 }
 
 private actor UnavailableStreamClient: CameraStreamClient {
-    func frames(cameraID: String, profile: String) async throws -> AsyncThrowingStream<Data, Error> {
+    func frames(
+        cameraID: String,
+        profile: String,
+        privacyMode: VideoPrivacyMode
+    ) async throws -> AsyncThrowingStream<Data, Error> {
         throw APIError.invalidResponse
     }
 

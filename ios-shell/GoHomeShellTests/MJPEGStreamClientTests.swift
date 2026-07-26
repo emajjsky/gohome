@@ -8,7 +8,9 @@ final class MJPEGStreamClientTests: XCTestCase {
             "ticket":"play-1",
             "expires_at":"2026-07-22T12:00:00Z",
             "stream_url":"https://video.example.com/api/v1/video/cameras/2/stream.mjpg",
-            "stream_path":"/api/v1/video/cameras/2/stream.mjpg"
+            "stream_path":"/api/v1/video/cameras/2/stream.mjpg",
+            "privacy_mode":"person_blur",
+            "minimum_privacy_mode":"person_blur"
         }
         """#.utf8)
 
@@ -17,6 +19,8 @@ final class MJPEGStreamClientTests: XCTestCase {
         XCTAssertEqual(session.ticket, "play-1")
         XCTAssertEqual(session.streamURL, "https://video.example.com/api/v1/video/cameras/2/stream.mjpg")
         XCTAssertEqual(session.streamPath, "/api/v1/video/cameras/2/stream.mjpg")
+        XCTAssertEqual(session.privacyMode, .personBlur)
+        XCTAssertEqual(session.minimumPrivacyMode, .personBlur)
     }
 
     func testPlaybackSessionAcceptsCloudProxyResponseWithoutNodeFields() throws {

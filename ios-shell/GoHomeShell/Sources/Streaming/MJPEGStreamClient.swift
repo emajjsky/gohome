@@ -10,7 +10,11 @@ actor MJPEGStreamClient: CameraStreamClient {
         self.apiClient = apiClient
     }
 
-    func frames(cameraID: String, profile: String) async throws -> AsyncThrowingStream<Data, Error> {
+    func frames(
+        cameraID: String,
+        profile: String,
+        privacyMode: VideoPrivacyMode
+    ) async throws -> AsyncThrowingStream<Data, Error> {
         generation += 1
         let requestGeneration = generation
         await stopCurrentStream()
@@ -19,6 +23,7 @@ actor MJPEGStreamClient: CameraStreamClient {
             "resource_type": "stream",
             "camera_id": cameraID,
             "profile": profile,
+            "privacy_mode": privacyMode.rawValue,
         ])
         let playback: CameraPlaybackSession = try await apiClient.send(Endpoint(
             method: .post,
@@ -37,10 +42,11 @@ actor MJPEGStreamClient: CameraStreamClient {
             components?.path = playback.streamPath ?? defaultPath
         }
         var queryItems = components?.queryItems ?? []
-        queryItems.removeAll { $0.name == "playback_ticket" || $0.name == "profile" }
+        queryItems.removeAll { $0.name == "playback_ticket" || $0.name == "profile" || $0.name == "privacy_mode" }
         queryItems.append(contentsOf: [
             URLQueryItem(name: "playback_ticket", value: playback.ticket),
             URLQueryItem(name: "profile", value: profile),
+            URLQueryItem(name: "privacy_mode", value: playback.privacyMode?.rawValue ?? privacyMode.rawValue),
         ])
         components?.queryItems = queryItems
         guard let url = components?.url else { throw APIError.invalidResponse }

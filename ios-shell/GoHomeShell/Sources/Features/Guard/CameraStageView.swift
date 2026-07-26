@@ -4,6 +4,7 @@ import UIKit
 struct CameraStageView: View {
     let frameData: Data?
     let state: GuardStreamState
+    let privacyMode: VideoPrivacyMode
 
     var body: some View {
         ZStack {
@@ -29,6 +30,15 @@ struct CameraStageView: View {
         .overlay(alignment: .topLeading) {
             Text(statusBadge)
                 .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 9)
+                .frame(height: 26)
+                .background(Color.black.opacity(0.55), in: Capsule())
+                .padding(10)
+        }
+        .overlay(alignment: .topTrailing) {
+            Label(privacyMode.title, systemImage: privacyMode.symbol)
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 9)
                 .frame(height: 26)

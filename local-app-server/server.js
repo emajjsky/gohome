@@ -61,6 +61,25 @@ const DEFAULT_OPS_TOKEN = process.env.GOHOME_OPS_TOKEN || "";
 const DEFAULT_BOX_ADMIN_USERNAME = process.env.GOHOME_BOX_ADMIN_USERNAME || "admin";
 const DEFAULT_BOX_ADMIN_PASSWORD = process.env.GOHOME_BOX_ADMIN_PASSWORD || "123456";
 const DEFAULT_STORE_KIND = process.env.GOHOME_APP_STORE || (process.env.GOHOME_DATABASE_URL || process.env.DATABASE_URL ? "postgres" : "json");
+const VIDEO_PRIVACY_MODES = ["original", "person_blur", "skeleton"];
+const VIDEO_PRIVACY_RANK = new Map(VIDEO_PRIVACY_MODES.map((mode, index) => [mode, index]));
+
+function normalizeVideoPrivacyMode(value, fallback = "original") {
+    const mode = String(value || "").trim().toLowerCase();
+    return VIDEO_PRIVACY_RANK.has(mode) ? mode : fallback;
+}
+
+function isVideoPrivacyMode(value) {
+    return VIDEO_PRIVACY_RANK.has(String(value || "").trim().toLowerCase());
+}
+
+function stricterVideoPrivacyMode(first, second) {
+    const resolvedFirst = normalizeVideoPrivacyMode(first);
+    const resolvedSecond = normalizeVideoPrivacyMode(second);
+    return VIDEO_PRIVACY_RANK.get(resolvedFirst) >= VIDEO_PRIVACY_RANK.get(resolvedSecond)
+        ? resolvedFirst
+        : resolvedSecond;
+}
 
 function nowIso() {
     return new Date().toISOString();
@@ -106,6 +125,7 @@ function encodeMjpegFrame(boundary, relayFrame) {
         `Content-Type: ${mjpegHeaderValue(relayFrame.contentType) || "image/jpeg"}`,
         `Content-Length: ${relayFrame.frame.length}`,
         `X-GoHome-Frame-Source: ${mjpegHeaderValue(relayFrame.source) || "live"}`,
+        `X-GoHome-Privacy-Mode: ${mjpegHeaderValue(relayFrame.privacyMode) || "original"}`,
     ];
     if (relayFrame.assetId) headers.push(`X-GoHome-Asset-Id: ${mjpegHeaderValue(relayFrame.assetId)}`);
     if (relayFrame.capturedAt) headers.push(`X-GoHome-Captured-At: ${mjpegHeaderValue(relayFrame.capturedAt)}`);
@@ -1085,12 +1105,23 @@ function createLocalAppServer(options = {}) {
         return true;
     }
 
+    function playbackTicketFromRequest(req) {
+        const url = new URL(req.url, "http://local");
+        const ticketId = url.searchParams.get("playback_ticket") || "";
+        if (!ticketId) return null;
+        const ticket = playbackTickets.get(ticketId) || null;
+        if (!ticket || Number(ticket.expires_at || 0) <= Date.now()) {
+            playbackTickets.delete(ticketId);
+            return null;
+        }
+        return { id: ticketId, ...ticket };
+    }
+
     function requireApp(req, res) {
         const url = new URL(req.url, "http://local");
         const token = tokenFrom(req) || url.searchParams.get("access_token") || "";
-        const playbackTicket = url.searchParams.get("playback_ticket") || "";
-        const ticket = playbackTicket ? playbackTickets.get(playbackTicket) : null;
-        if (ticket && Number(ticket.expires_at || 0) > Date.now()) {
+        const ticket = playbackTicketFromRequest(req);
+        if (ticket) {
             if (ticket.user_id) req.appUserId = ticket.user_id;
             return true;
         }
@@ -1962,7 +1993,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function deviceConfigVersion(familyId = null, deviceId = currentEdgeDeviceId()) {
-        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion(familyId)}|${rulesVersion(familyId)}|${JSON.stringify(bindingSummaryForDevice(deviceId, familyId))}`).digest("hex").slice(0, 12)}`;
+        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion(familyId)}|${rulesVersion(familyId)}|${JSON.stringify(videoPrivacyForFamily(familyId))}|${JSON.stringify(bindingSummaryForDevice(deviceId, familyId))}`).digest("hex").slice(0, 12)}`;
     }
 
     function deviceCameraConfig(camera) {
@@ -1998,6 +2029,7 @@ function createLocalAppServer(options = {}) {
             cameras: appConfigCameras(familyIds).map(deviceCameraConfig),
             rules: currentRules(familyId),
             rules_version: rulesVersion(familyId),
+            video_privacy: videoPrivacyForFamily(familyId),
             maintenance: objectValue(objectValue(device.metadata).maintenance_command),
             binding_summary: bindingSummaryForDevice(deviceId, familyId),
         };
@@ -2264,6 +2296,15 @@ function createLocalAppServer(options = {}) {
             ...source,
             care_card_schedule: normalizeCareSchedule(source.care_card_schedule),
             activity_history: normalizeActivityHistory(source.activity_history),
+            video_privacy: normalizeVideoPrivacy(source.video_privacy),
+        };
+    }
+
+    function normalizeVideoPrivacy(value = {}) {
+        const source = value && typeof value === "object" ? value : {};
+        return {
+            minimum_mode: normalizeVideoPrivacyMode(source.minimum_mode),
+            updated_at: String(source.updated_at || ""),
         };
     }
 
@@ -2317,6 +2358,27 @@ function createLocalAppServer(options = {}) {
         const preferences = store.db.care_preferences[key] || defaultCarePreferences(key);
         preferences.metadata = normalizeCareMetadata(preferences.metadata || {});
         return preferences;
+    }
+
+    function videoPrivacyForFamily(familyId) {
+        return normalizeVideoPrivacy(carePreferences(familyId).metadata?.video_privacy || {});
+    }
+
+    function updateVideoPrivacyForFamily(familyId, mode) {
+        const existing = carePreferences(familyId);
+        const videoPrivacy = normalizeVideoPrivacy({
+            minimum_mode: mode,
+            updated_at: nowIso(),
+        });
+        store.db.care_preferences[String(familyId)] = publicCarePreferences({
+            ...existing,
+            metadata: normalizeCareMetadata({
+                ...(existing.metadata || {}),
+                video_privacy: videoPrivacy,
+            }),
+            updated_at: nowIso(),
+        });
+        return videoPrivacy;
     }
 
     function publicCarePreferences(preferences) {
@@ -6047,6 +6109,26 @@ function createLocalAppServer(options = {}) {
         return null;
     }
 
+    function effectiveVideoPrivacyMode(cameraId, requestedMode = "original") {
+        const familyId = familyIdForCamera(cameraId);
+        const minimumMode = videoPrivacyForFamily(familyId).minimum_mode;
+        return stricterVideoPrivacyMode(minimumMode, requestedMode);
+    }
+
+    function activeVideoPrivacyMode(cameraId) {
+        return videoPrivacyForFamily(familyIdForCamera(cameraId)).minimum_mode;
+    }
+
+    function streamPrivacyMode(req, cameraId) {
+        const ticket = playbackTicketFromRequest(req);
+        if (ticket) {
+            if (String(ticket.payload?.camera_id || "") !== String(cameraId)) return null;
+            return effectiveVideoPrivacyMode(cameraId, ticket.payload?.privacy_mode);
+        }
+        const requested = new URL(req.url, "http://local").searchParams.get("privacy_mode") || "original";
+        return effectiveVideoPrivacyMode(cameraId, requested);
+    }
+
     function requireCameraAccess(req, res, cameraId) {
         const familyId = familyIdForCamera(cameraId);
         if (!familyId) {
@@ -6242,14 +6324,19 @@ function createLocalAppServer(options = {}) {
         return true;
     }
 
-    function latestLiveFrame(cameraId) {
-        const item = liveFrameCache.get(String(cameraId));
+    function liveFrameCacheKey(cameraId, privacyMode = "original") {
+        return `${cameraId}:${normalizeVideoPrivacyMode(privacyMode)}`;
+    }
+
+    function latestLiveFrame(cameraId, privacyMode = "original") {
+        const item = liveFrameCache.get(liveFrameCacheKey(cameraId, privacyMode));
         if (!item?.frame || Date.now() - Number(item.received_at_ms || 0) > LIVE_FRAME_TTL_MS) return null;
         return item;
     }
 
-    function latestRelayFrame(cameraId) {
-        const live = latestLiveFrame(cameraId);
+    function latestRelayFrame(cameraId, privacyMode = "original") {
+        const resolvedPrivacyMode = normalizeVideoPrivacyMode(privacyMode);
+        const live = latestLiveFrame(cameraId, resolvedPrivacyMode);
         if (live) {
             return {
                 key: `live:${live.frame_id}`,
@@ -6258,8 +6345,11 @@ function createLocalAppServer(options = {}) {
                 capturedAt: live.captured_at || live.received_at,
                 source: "live",
                 assetId: "",
+                privacyMode: resolvedPrivacyMode,
             };
         }
+
+        if (resolvedPrivacyMode !== "original") return null;
 
         const asset = latestCameraAsset(cameraId, { purposes: ["live_preview"] });
         const filePath = assetAbsolutePath(asset);
@@ -6285,12 +6375,14 @@ function createLocalAppServer(options = {}) {
             capturedAt: asset.captured_at || asset.created_at,
             source: "asset",
             assetId: asset.id ? String(asset.id) : "",
+            privacyMode: "original",
         };
     }
 
-    function writeLatestFrameMjpegStream(req, res, cameraId) {
+    function writeLatestFrameMjpegStream(req, res, cameraId, privacyMode = "original") {
         const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
         const profile = new URL(req.url, "http://local").searchParams.get("profile") || "mobile";
+        const resolvedPrivacyMode = normalizeVideoPrivacyMode(privacyMode);
         const relayFps = profile === "mobile" ? 5 : streamProfileConfig(profile).fps;
         const relayIntervalMs = Math.ceil(1000 / Math.max(1, relayFps));
         let closed = false;
@@ -6305,12 +6397,13 @@ function createLocalAppServer(options = {}) {
             "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
             "X-Accel-Buffering": "no",
             "X-GoHome-Stream-State": "cloud_relay",
+            "X-GoHome-Privacy-Mode": resolvedPrivacyMode,
         });
         if (typeof res.flushHeaders === "function") res.flushHeaders();
 
         const writer = createLatestFrameMjpegWriter(res, {
             boundary,
-            getLatestFrame: () => latestRelayFrame(cameraId),
+            getLatestFrame: () => latestRelayFrame(cameraId, resolvedPrivacyMode),
         });
         writer.writeLatest({ force: true });
         const timer = setInterval(writer.writeLatest, relayIntervalMs);
@@ -6347,7 +6440,9 @@ function createLocalAppServer(options = {}) {
         const sequence = Number(liveFrameSequence.get(String(cameraId)) || 0) + 1;
         liveFrameSequence.set(String(cameraId), sequence);
         const receivedAt = nowIso();
-        liveFrameCache.set(String(cameraId), {
+        const privacyMode = normalizeVideoPrivacyMode(url.searchParams.get("privacy_mode"));
+        const cacheKey = liveFrameCacheKey(cameraId, privacyMode);
+        liveFrameCache.set(cacheKey, {
             frame_id: `${cameraId}-${Date.now()}-${sequence}`,
             frame: content,
             camera_id: cameraId,
@@ -6358,20 +6453,24 @@ function createLocalAppServer(options = {}) {
             received_at: receivedAt,
             received_at_ms: Date.now(),
             size: content.length,
+            privacy_mode: privacyMode,
         });
         write(res, 200, {
             ok: true,
             camera_id: cameraId,
-            live_frame_id: liveFrameCache.get(String(cameraId)).frame_id,
+            live_frame_id: liveFrameCache.get(cacheKey).frame_id,
             received_at: receivedAt,
+            received_privacy_mode: privacyMode,
+            requested_privacy_mode: activeVideoPrivacyMode(cameraId),
         });
     }
 
-    function applyStreamParams(sourceUrl, req) {
+    function applyStreamParams(sourceUrl, req, privacyMode = "original") {
         const requestedUrl = new URL(req.url, "http://local");
         const profile = requestedUrl.searchParams.get("profile") || "mobile";
         const defaults = streamProfileConfig(profile);
         sourceUrl.searchParams.set("profile", profile);
+        sourceUrl.searchParams.set("privacy_mode", normalizeVideoPrivacyMode(privacyMode));
         for (const [key, value] of Object.entries(defaults)) {
             sourceUrl.searchParams.set(key, String(requestedUrl.searchParams.get(key) || value));
         }
@@ -6474,12 +6573,12 @@ function createLocalAppServer(options = {}) {
         });
     }
 
-    async function proxyCameraMjpeg(req, res, cameraId) {
+    async function proxyCameraMjpeg(req, res, cameraId, privacyMode = "original") {
         const target = cameraStreamProxyTarget(req, cameraId);
         if (!target) return false;
 
         for (const localCameraId of target.localCameraIds) {
-            const deviceUrl = applyStreamParams(new URL(`/api/v1/device/cameras/${localCameraId}/stream.mjpg`, target.base), req);
+            const deviceUrl = applyStreamParams(new URL(`/api/v1/device/cameras/${localCameraId}/stream.mjpg`, target.base), req, privacyMode);
             const deviceProxied = await proxyMjpegRequest(req, res, deviceUrl, {
                 Authorization: `Bearer ${target.token}`,
                 "X-GoHome-Device-Token": target.token,
@@ -6494,7 +6593,7 @@ function createLocalAppServer(options = {}) {
         const adminCookie = await requestBoxAdminCookie(target.base);
         if (!adminCookie) return false;
         for (const localCameraId of target.localCameraIds) {
-            const adminUrl = applyStreamParams(new URL(`/api/cameras/${localCameraId}/stream.mjpg`, target.base), req);
+            const adminUrl = applyStreamParams(new URL(`/api/cameras/${localCameraId}/stream.mjpg`, target.base), req, privacyMode);
             const adminProxied = await proxyMjpegRequest(req, res, adminUrl, { Cookie: adminCookie }, {
                 "X-GoHome-Device-Base": target.base,
                 "X-GoHome-Local-Camera-Id": String(localCameraId),
@@ -6508,9 +6607,18 @@ function createLocalAppServer(options = {}) {
     async function serveCameraMjpeg(req, res, cameraId) {
         if (!requireApp(req, res)) return;
         if (!requireCameraAccess(req, res, cameraId)) return;
-        if (isLocalBrowserRequest(req) && await proxyCameraMjpeg(req, res, cameraId)) return;
-        if (writeLatestFrameMjpegStream(req, res, cameraId)) return;
-        if (await proxyCameraMjpeg(req, res, cameraId)) return;
+        const privacyMode = streamPrivacyMode(req, cameraId);
+        if (!privacyMode) {
+            writeError(res, 403, "playback ticket does not match camera");
+            return;
+        }
+        if (isLocalBrowserRequest(req) && await proxyCameraMjpeg(req, res, cameraId, privacyMode)) return;
+        if (writeLatestFrameMjpegStream(req, res, cameraId, privacyMode)) return;
+        if (await proxyCameraMjpeg(req, res, cameraId, privacyMode)) return;
+        if (privacyMode !== "original") {
+            writeEmptyMjpeg(res);
+            return;
+        }
         if (writeLatestFrameImage(res, cameraId)) return;
         writeEmptyMjpeg(res);
     }
@@ -8677,9 +8785,39 @@ function createLocalAppServer(options = {}) {
             if (req.method === "POST" && (pathname === "/api/v1/video/sessions" || pathname === "/api/app/playback-sessions")) {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
+                const resourceType = String(payload.resource_type || "").trim();
+                const ticketPayload = { ...payload, resource_type: resourceType };
+                let privacyMode = null;
+                if (resourceType === "stream") {
+                    const cameraId = String(payload.camera_id || "").trim();
+                    if (!cameraId) {
+                        writeError(res, 400, "camera_id is required");
+                        return;
+                    }
+                    if (!requireCameraAccess(req, res, cameraId)) return;
+                    privacyMode = videoPrivacyForFamily(familyIdForCamera(cameraId)).minimum_mode;
+                    Object.assign(ticketPayload, {
+                        camera_id: cameraId,
+                        profile: String(payload.profile || "mobile"),
+                        privacy_mode: privacyMode,
+                    });
+                }
                 const ticket = stableId("play-");
-                playbackTickets.set(ticket, { payload, user_id: activeAppUser(req).id, expires_at: Date.now() + 120000 });
-                write(res, 200, { ticket, expires_at: new Date(Date.now() + 120000).toISOString() });
+                const expiresAt = Date.now() + 120000;
+                playbackTickets.set(ticket, {
+                    payload: ticketPayload,
+                    user_id: activeAppUser(req).id,
+                    expires_at: expiresAt,
+                });
+                const response = {
+                    ticket,
+                    expires_at: new Date(expiresAt).toISOString(),
+                };
+                if (privacyMode) {
+                    response.privacy_mode = privacyMode;
+                    response.minimum_privacy_mode = privacyMode;
+                }
+                write(res, 200, response);
                 return;
             }
 
@@ -8717,6 +8855,40 @@ function createLocalAppServer(options = {}) {
                     device_id: deviceId,
                     family_id: issuedToken?.family_id || device.family_id || null,
                 }));
+                return;
+            }
+
+            if ((req.method === "GET" || req.method === "PUT") && pathname === "/api/v1/device/video-privacy") {
+                if (!requireDevice(req, res)) return;
+                const issuedToken = issuedDeviceTokenFromRequest(req);
+                const deviceId = String(issuedToken?.device_id || currentEdgeDeviceId());
+                const familyId = normalizeNumber(
+                    issuedToken?.family_id || store.db.devices[deviceId]?.family_id,
+                    null
+                );
+                if (!familyId) {
+                    writeError(res, 409, "device is not bound to a family");
+                    return;
+                }
+                if (req.method === "GET") {
+                    write(res, 200, {
+                        family_id: familyId,
+                        ...videoPrivacyForFamily(familyId),
+                    });
+                    return;
+                }
+                const payload = await parseJsonBody(req);
+                if (!isVideoPrivacyMode(payload.minimum_mode)) {
+                    writeError(res, 400, "minimum_mode is invalid");
+                    return;
+                }
+                const videoPrivacy = updateVideoPrivacyForFamily(familyId, payload.minimum_mode);
+                await store.save();
+                write(res, 200, {
+                    ok: true,
+                    family_id: familyId,
+                    ...videoPrivacy,
+                });
                 return;
             }
 
@@ -8833,6 +9005,38 @@ function createLocalAppServer(options = {}) {
             }
 
             const carePreferenceMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/care-preferences$/);
+            const videoPrivacyMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/video-privacy$/);
+            if (videoPrivacyMatch && req.method === "GET") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(videoPrivacyMatch[1]);
+                if (!requireFamilyAccess(req, res, familyId)) return;
+                write(res, 200, {
+                    family_id: familyId,
+                    ...videoPrivacyForFamily(familyId),
+                    can_manage: userCanManageFamily(activeAppUser(req).id, familyId),
+                });
+                return;
+            }
+
+            if (videoPrivacyMatch && req.method === "PUT") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(videoPrivacyMatch[1]);
+                if (!requireFamilyOwner(req, res, familyId)) return;
+                const payload = await parseJsonBody(req);
+                if (!isVideoPrivacyMode(payload.minimum_mode)) {
+                    writeError(res, 400, "minimum_mode is invalid");
+                    return;
+                }
+                const videoPrivacy = updateVideoPrivacyForFamily(familyId, payload.minimum_mode);
+                await store.save();
+                write(res, 200, {
+                    family_id: familyId,
+                    ...videoPrivacy,
+                    can_manage: true,
+                });
+                return;
+            }
+
             if (carePreferenceMatch && req.method === "GET") {
                 if (!requireApp(req, res)) return;
                 if (!requireFamilyAccess(req, res, Number(carePreferenceMatch[1]))) return;
@@ -8846,7 +9050,7 @@ function createLocalAppServer(options = {}) {
                 if (!requireFamilyAccess(req, res, familyId)) return;
                 const payload = await parseJsonBody(req);
                 const existing = carePreferences(familyId);
-                if ((payload.metadata?.presence_monitoring || payload.metadata?.activity_history)
+                if ((payload.metadata?.presence_monitoring || payload.metadata?.activity_history || payload.metadata?.video_privacy)
                     && !userCanManageFamily(activeAppUser(req).id, familyId)) {
                     writeError(res, 403, "只有家庭创建者可以修改守护与活动数据设置。");
                     return;

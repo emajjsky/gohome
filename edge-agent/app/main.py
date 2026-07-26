@@ -78,11 +78,14 @@ from .schemas import (
     V1DeviceEventIngest,
     V1DeviceSyncReport,
     V1DeviceSyncTargetUpdate,
+    VideoPrivacyUpdate,
 )
 from .settings import settings
 from .storage import Storage
 from .upload_agent import UploadAgent
 from .video_distribution_service import VideoDistributionService
+from .video_privacy import normalize_privacy_mode, stricter_privacy_mode
+from .vision.privacy_stream import PrivacyFrameRenderer, PrivacyMjpegStream
 from .video_service import (
     VideoService,
     app_snapshot_url,
@@ -1255,14 +1258,6 @@ eacp_acceptance_service = EacpAcceptanceService(
     uploads_resolver=lambda: storage.list_upload_jobs(limit=500),
     cloud_verification_resolver=lambda: upload_agent.vision_verification_status(limit=50),
 )
-live_relay_agent = LiveRelayAgent(
-    storage=storage,
-    settings=settings,
-    camera_agent=camera_agent,
-    device_id_resolver=current_device_id,
-    token_resolver=read_local_device_token,
-    remote_camera_id_resolver=remote_camera_id_for_local_camera,
-)
 config_sync_agent = ConfigSyncAgent(
     storage=storage,
     settings=settings,
@@ -1289,6 +1284,19 @@ config_sync_agent = ConfigSyncAgent(
             "last_cleanup": worker.last_history_cleanup_result,
         },
     },
+)
+privacy_frame_renderer = PrivacyFrameRenderer(worker.continual_pose_tracker)
+privacy_mjpeg_stream = PrivacyMjpegStream(camera_agent, privacy_frame_renderer)
+live_relay_agent = LiveRelayAgent(
+    storage=storage,
+    settings=settings,
+    camera_agent=camera_agent,
+    device_id_resolver=current_device_id,
+    token_resolver=read_local_device_token,
+    remote_camera_id_resolver=remote_camera_id_for_local_camera,
+    privacy_mode_resolver=config_sync_agent.video_privacy_mode,
+    privacy_mode_observer=lambda mode: config_sync_agent.observe_video_privacy_mode(mode, wake=True),
+    privacy_renderer=privacy_frame_renderer,
 )
 package_service = PackageService(storage=storage, settings=settings, object_storage=object_storage_service)
 app_runtime_guard = AppRuntimeGuardService(
@@ -1341,6 +1349,7 @@ def admin_path_requires_auth(path: str) -> bool:
 def admin_api_requires_auth(path: str) -> bool:
     protected_prefixes = (
         "/api/admin/pairing-window",
+        "/api/admin/video-privacy",
         "/api/cameras",
         "/api/events",
         "/api/event-candidates",
@@ -1633,6 +1642,28 @@ def admin_open_pairing_window() -> Dict[str, Any]:
     return {
         "ok": True,
         "pairing": pairing_window.open(600),
+    }
+
+
+@app.get("/api/admin/video-privacy")
+def admin_video_privacy() -> Dict[str, Any]:
+    relay = live_relay_agent.status()
+    return {
+        "ok": True,
+        "minimum_mode": config_sync_agent.video_privacy_mode(),
+        "camera_modes": dict(relay.get("camera_privacy_modes") or {}),
+        "synced": not bool(config_sync_agent.last_error),
+        "updated_at": config_sync_agent.last_sync_at or "",
+    }
+
+
+@app.put("/api/admin/video-privacy")
+def update_admin_video_privacy(payload: VideoPrivacyUpdate) -> Dict[str, Any]:
+    result = config_sync_agent.update_video_privacy(payload.minimum_mode)
+    live_relay_agent.wake()
+    return {
+        **result,
+        "camera_modes": dict(live_relay_agent.status().get("camera_privacy_modes") or {}),
     }
 
 
@@ -3263,6 +3294,7 @@ def camera_mjpeg_stream(
     height: int = 720,
     quality: int = 70,
     drop: int = 1,
+    privacy_mode: str = "original",
 ) -> StreamingResponse:
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
@@ -3272,21 +3304,29 @@ def camera_mjpeg_stream(
     height = max(180, min(int(height), 1080))
     quality = max(35, min(int(quality), 95))
     drop = max(0, min(int(drop), 12))
+    resolved_privacy_mode = stricter_privacy_mode(
+        config_sync_agent.video_privacy_mode(),
+        normalize_privacy_mode(privacy_mode, config_sync_agent.video_privacy_mode()),
+    )
+    frames = privacy_mjpeg_stream.mjpeg_frames(
+        camera,
+        privacy_mode=privacy_mode,
+        privacy_mode_resolver=config_sync_agent.video_privacy_mode,
+        fps=fps,
+        jpeg_quality=quality,
+        max_width=width,
+        max_height=height,
+        drop_stale_frames=drop,
+    )
     return StreamingResponse(
-        camera_agent.mjpeg_frames(
-            camera,
-            fps=fps,
-            jpeg_quality=quality,
-            max_width=width,
-            max_height=height,
-            drop_stale_frames=drop,
-        ),
+        frames,
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
             "X-Accel-Buffering": "no",
+            "X-GoHome-Privacy-Mode": resolved_privacy_mode,
         },
     )
 
@@ -3299,6 +3339,17 @@ def synchronized_camera_pose_stream(
     height: int = 540,
     quality: int = 72,
 ) -> StreamingResponse:
+    active_privacy_mode = config_sync_agent.video_privacy_mode()
+    if active_privacy_mode != "original":
+        return camera_mjpeg_stream(
+            camera_id=camera_id,
+            fps=fps,
+            width=width,
+            height=height,
+            quality=quality,
+            drop=0,
+            privacy_mode=active_privacy_mode,
+        )
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
@@ -3306,14 +3357,20 @@ def synchronized_camera_pose_stream(
     width = max(320, min(int(width), 1280))
     height = max(180, min(int(height), 720))
     quality = max(40, min(int(quality), 90))
-    return StreamingResponse(
-        synchronized_pose_stream.mjpeg_frames(
+    def frames():
+        for chunk in synchronized_pose_stream.mjpeg_frames(
             camera,
             fps=fps,
             jpeg_quality=quality,
             max_width=width,
             max_height=height,
-        ),
+        ):
+            if config_sync_agent.video_privacy_mode() != "original":
+                return
+            yield chunk
+
+    return StreamingResponse(
+        frames(),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -3333,6 +3390,7 @@ def v1_device_camera_mjpeg_stream(
     height: int = 720,
     quality: int = 70,
     drop: int = 1,
+    privacy_mode: str = "original",
     _device_session: Dict[str, Any] = Depends(current_v1_device_stream_session),
 ) -> StreamingResponse:
     return camera_mjpeg_stream(
@@ -3342,6 +3400,7 @@ def v1_device_camera_mjpeg_stream(
         height=height,
         quality=quality,
         drop=drop,
+        privacy_mode=privacy_mode,
     )
 
 

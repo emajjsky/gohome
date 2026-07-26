@@ -95,6 +95,7 @@ struct MainTabView: View {
                     GuardView(
                         cameras: homeModel.state.value?.cameras ?? [],
                         apiClient: apiClient,
+                        familyID: family.id,
                         eventsModel: eventsModel,
                         timelineModel: timelineModel,
                         section: $guardSection

@@ -44,6 +44,7 @@ class Settings:
         self.lan_pairing_window_seconds = int(os.getenv("GOHOME_LAN_PAIRING_WINDOW_SECONDS", "900"))
         self.config_sync_enabled = os.getenv("GOHOME_CONFIG_SYNC_ENABLED", "1") == "1"
         self.config_sync_interval_seconds = float(os.getenv("GOHOME_CONFIG_SYNC_INTERVAL_SECONDS", "10"))
+        self.video_privacy_sync_interval_seconds = float(os.getenv("GOHOME_VIDEO_PRIVACY_SYNC_INTERVAL_SECONDS", "1"))
         self.config_sync_request_timeout_seconds = float(os.getenv("GOHOME_CONFIG_SYNC_REQUEST_TIMEOUT_SECONDS", os.getenv("GOHOME_UPLOAD_REQUEST_TIMEOUT_SECONDS", "12")))
         self.config_sync_test_capture_enabled = os.getenv("GOHOME_CONFIG_SYNC_TEST_CAPTURE_ENABLED", "0") == "1"
         self.upload_worker_enabled = os.getenv("GOHOME_UPLOAD_WORKER_ENABLED", "1") == "1"

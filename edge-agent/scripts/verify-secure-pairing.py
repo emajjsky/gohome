@@ -57,6 +57,7 @@ def main() -> None:
                 config_sync_request_timeout_seconds=2,
                 require_issued_device_token=True,
                 device_api_token="",
+                runtime_dir=Path(tmpdir) / "runtime",
             ),
             camera_agent=SimpleNamespace(),
             device_id_resolver=lambda: "edge-test",

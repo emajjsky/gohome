@@ -104,6 +104,11 @@
                     <strong id="streamCamera">无摄像头</strong>
                   </div>
                   <div>
+                    <div class="segmented-control privacy-mode-control" aria-label="隐私画面模式">
+                      <button type="button" data-privacy-mode="original">原画</button>
+                      <button type="button" data-privacy-mode="person_blur">模糊</button>
+                      <button type="button" data-privacy-mode="skeleton">骨架</button>
+                    </div>
                     <span id="runtimePose">姿态待命</span>
                     <span id="streamFrameTime">-</span>
                   </div>
@@ -191,6 +196,6 @@
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/admin/console.js?v=20260721-console-1"></script>
+  <script src="/admin/console.js?v=20260727-privacy-2"></script>
 </body>
 </html>

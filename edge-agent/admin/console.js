@@ -39,6 +39,9 @@ const state = {
   eventLogStatusFilter: "all",
   eventLogTypeFilter: "all",
   toastTimer: null,
+  videoPrivacyMode: "original",
+  videoPrivacyUpdatedAt: "",
+  privacyTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -101,6 +104,49 @@ function showToast(message) {
   toast.classList.add("show");
   clearTimeout(state.toastTimer);
   state.toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
+}
+
+function normalizeVideoPrivacyMode(value) {
+  return ["original", "person_blur", "skeleton"].includes(String(value || ""))
+    ? String(value)
+    : "original";
+}
+
+function renderVideoPrivacyMode() {
+  document.querySelectorAll("[data-privacy-mode]").forEach((button) => {
+    const active = button.dataset.privacyMode === state.videoPrivacyMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+}
+
+async function loadVideoPrivacyMode({ refreshStream = true } = {}) {
+  const payload = await api("/api/admin/video-privacy");
+  const nextMode = normalizeVideoPrivacyMode(payload?.minimum_mode);
+  const changed = nextMode !== state.videoPrivacyMode;
+  state.videoPrivacyMode = nextMode;
+  state.videoPrivacyUpdatedAt = String(payload?.updated_at || "");
+  renderVideoPrivacyMode();
+  if (changed && refreshStream && state.selectedCameraId) renderStream({ retry: true });
+  return payload;
+}
+
+async function updateVideoPrivacyMode(mode, button) {
+  const nextMode = normalizeVideoPrivacyMode(mode);
+  if (nextMode === state.videoPrivacyMode) return;
+  setBusy(button, true);
+  try {
+    const payload = await api("/api/admin/video-privacy", {
+      method: "PUT",
+      body: JSON.stringify({ minimum_mode: nextMode }),
+    });
+    state.videoPrivacyMode = normalizeVideoPrivacyMode(payload?.minimum_mode);
+    state.videoPrivacyUpdatedAt = String(payload?.updated_at || "");
+    renderVideoPrivacyMode();
+    renderStream({ retry: true });
+  } finally {
+    setBusy(button, false);
+  }
 }
 
 async function hydrateAdminSession() {
@@ -865,11 +911,11 @@ function renderStream({ retry = false } = {}) {
   const streamProfile = pageName === "algorithms"
     ? { fps: 8, width: 640, height: 360, quality: 68, drop: 0, label: "同步姿态视频" }
     : { fps: 8, width: 1280, height: 720, quality: 64, drop: 1, label: "720p 低延迟视频" };
-  state.serverAnnotated = pageName === "algorithms";
+  state.serverAnnotated = pageName === "algorithms" && state.videoPrivacyMode === "original";
   const streamPath = state.serverAnnotated
     ? `/api/cameras/${camera.id}/continual-pose/stream.mjpg`
     : `/api/cameras/${camera.id}/stream.mjpg`;
-  stream.src = `${streamPath}?fps=${streamProfile.fps}&width=${streamProfile.width}&height=${streamProfile.height}&quality=${streamProfile.quality}&drop=${streamProfile.drop}&t=${Date.now()}`;
+  stream.src = `${streamPath}?fps=${streamProfile.fps}&width=${streamProfile.width}&height=${streamProfile.height}&quality=${streamProfile.quality}&drop=${streamProfile.drop}&privacy_mode=${encodeURIComponent(state.videoPrivacyMode)}&t=${Date.now()}`;
   state.streamMaskTimer = setTimeout(() => {
     if (stream.getAttribute("src") && empty) empty.style.display = "none";
   }, 900);
@@ -3019,6 +3065,12 @@ async function refreshAll() {
 }
 
 function bindEvents() {
+  document.querySelectorAll("[data-privacy-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      updateVideoPrivacyMode(button.dataset.privacyMode, button)
+        .catch((error) => showToast(userSafeError(error.message)));
+    });
+  });
   on("refreshAll", "click", refreshAll);
   on("openPairingWindow", "click", (event) => openPairingWindow(event.currentTarget).catch((error) => showToast(userSafeError(error.message))));
   on("refreshEventLog", "click", (event) => {
@@ -3196,7 +3248,9 @@ document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
   if (pageName === "cameras") setCameraMode("lan");
   updatePreviewAlgorithmInfo();
-  refreshAll();
+  loadVideoPrivacyMode({ refreshStream: false })
+    .catch(() => null)
+    .finally(() => refreshAll());
   if (pageName === "cameras" && $("cameraDiscoveryList")) {
     setTimeout(() => discoverCameras($("discoverCameras")).catch(() => renderCameraDiscovery()), 400);
   }
@@ -3214,6 +3268,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (pageName === "events") loadEventLog().catch(() => null);
   }, 6000);
+  state.privacyTimer = setInterval(() => {
+    if (pageName === "home" || pageName === "algorithms") {
+      loadVideoPrivacyMode().catch(() => null);
+    }
+  }, 1000);
   setInterval(renderPairingCountdown, 1000);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
