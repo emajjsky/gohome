@@ -7,12 +7,14 @@ const {
     actionInput,
     activityIntervalInput,
     articlesFromCareCards,
+    familyMemberView,
+    familyJoinCodeForFamily,
     memoryInput,
     repositoryError,
 } = require("./repository");
 
 const USER_COLUMNS = "id, email, display_name, phone, status, created_at, updated_at";
-const FAMILY_COLUMNS = "f.id, f.name, f.status, f.timezone, f.metadata, f.created_at, f.updated_at, fm.role";
+const FAMILY_COLUMNS = "f.id, f.name, f.status, f.timezone, f.metadata, f.created_at, f.updated_at, fm.role, (select count(*)::int from family_members active_members where active_members.family_id = f.id and active_members.status = 'active') as member_count";
 
 function row(result) {
     return result?.rows?.[0] || null;
@@ -59,12 +61,13 @@ function validateMemoryAssets(assets) {
 }
 
 class PostgresNativeRepository extends NativeRepository {
-    constructor(pool, { clock = () => new Date(), onFamilyMetadataChange = () => {} } = {}) {
+    constructor(pool, { clock = () => new Date(), onFamilyMetadataChange = () => {}, onFamilyMembershipChange = () => {} } = {}) {
         super();
         if (!pool || typeof pool.query !== "function") throw new Error("postgres pool required");
         this.pool = pool;
         this.clock = clock;
         this.onFamilyMetadataChange = onFamilyMetadataChange;
+        this.onFamilyMembershipChange = onFamilyMembershipChange;
     }
 
     async assertFamilyAccess(client, userId, familyId) {
@@ -104,6 +107,10 @@ class PostgresNativeRepository extends NativeRepository {
             [textId(userId)],
         );
         const families = rows(familiesResult);
+        for (const family of families) {
+            family.member_count = Number(family.member_count || 0);
+            family.join_code = familyJoinCodeForFamily(family);
+        }
         const activeFamilyId = families[0]?.id || null;
         let onboarding = { next_step: "family", complete: false };
         if (activeFamilyId) onboarding = await this.onboardingForFamily(userId, activeFamilyId);
@@ -122,6 +129,113 @@ class PostgresNativeRepository extends NativeRepository {
             unread_count: Number(row(unread)?.count || 0),
             revision: new Date(this.clock()).toISOString(),
         };
+    }
+
+    async familyMembers(userId, familyId) {
+        await this.assertFamilyAccess(this.pool, userId, familyId);
+        const result = await this.pool.query(
+            `select fm.*, u.email, u.phone, u.display_name
+             from family_members fm join users u on u.id = fm.user_id
+             where fm.family_id = $1 and fm.status = 'active' and u.status = 'active'
+             order by case when fm.role in ('owner', 'creator') then 0 else 1 end, fm.joined_at asc, fm.created_at asc`,
+            [textId(familyId)],
+        );
+        return rows(result).map((member) => familyMemberView(member, member, userId));
+    }
+
+    async removeFamilyMember(userId, familyId, memberId) {
+        const client = await this.pool.connect();
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            await client.query(`select id from families where id = $1 for update`, [textId(familyId)]);
+            await this.assertFamilyManager(client, userId, familyId);
+            const member = row(await client.query(
+                `select * from family_members where id = $1 and family_id = $2 and status = 'active' for update`,
+                [textId(memberId), textId(familyId)],
+            ));
+            if (!member) throw repositoryError("family member not found", 404);
+            if (textId(member.user_id) === textId(userId)) throw repositoryError("creator cannot remove self", 409);
+            if (["owner", "creator"].includes(textId(member.role).toLowerCase())) throw repositoryError("family creator cannot be removed", 409);
+            const updated = row(await client.query(
+                `update family_members set status = 'removed', updated_at = now() where id = $1 returning *`,
+                [textId(memberId)],
+            ));
+            await client.query("commit");
+            transaction = false;
+            this.onFamilyMembershipChange({ family_id: textId(familyId), memberships: [updated] });
+            return { removed: true, member_id: textId(memberId), family_id: textId(familyId) };
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    async leaveFamily(userId, familyId) {
+        const client = await this.pool.connect();
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            await client.query(`select id from families where id = $1 for update`, [textId(familyId)]);
+            const member = row(await client.query(
+                `select * from family_members where family_id = $1 and user_id = $2 and status = 'active' for update`,
+                [textId(familyId), textId(userId)],
+            ));
+            if (!member) throw accessDenied();
+            if (["owner", "creator"].includes(textId(member.role).toLowerCase())) throw repositoryError("transfer family ownership before leaving", 409);
+            const updated = row(await client.query(`update family_members set status = 'left', updated_at = now() where id = $1 returning *`, [textId(member.id)]));
+            await client.query("commit");
+            transaction = false;
+            this.onFamilyMembershipChange({ family_id: textId(familyId), memberships: [updated] });
+            return { left: true, family_id: textId(familyId) };
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    async transferFamilyOwnership(userId, familyId, targetMemberId, input = {}) {
+        if (String(input.confirmation || "") !== "TRANSFER_OWNERSHIP") throw repositoryError("ownership transfer confirmation required", 400);
+        const client = await this.pool.connect();
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            const family = row(await client.query(`select id from families where id = $1 and status = 'active' for update`, [textId(familyId)]));
+            if (!family) throw repositoryError("family not found", 404);
+            const memberships = rows(await client.query(`select * from family_members where family_id = $1 and status = 'active' order by id for update`, [textId(familyId)]));
+            const current = memberships.find((member) => textId(member.user_id) === textId(userId));
+            if (!current || !["owner", "creator"].includes(textId(current.role).toLowerCase())) throw repositoryError("family management permission required", 403);
+            const target = memberships.find((member) => textId(member.id) === textId(targetMemberId));
+            if (!target) throw repositoryError("family member not found", 404);
+            if (textId(target.user_id) === textId(userId)) throw repositoryError("select another family member", 400);
+            const previous = rows(await client.query(
+                `update family_members set role = 'member', updated_at = now()
+                 where family_id = $1 and status = 'active' and id <> $2 and role in ('owner', 'creator')
+                 returning *`,
+                [textId(familyId), textId(target.id)],
+            ));
+            const next = row(await client.query(`update family_members set role = 'owner', updated_at = now() where id = $1 returning *`, [textId(target.id)]));
+            await client.query(
+                `update families set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('created_by_user_id', $2::text), updated_at = now() where id = $1`,
+                [textId(familyId), textId(target.user_id)],
+            );
+            await client.query("commit");
+            transaction = false;
+            this.onFamilyMembershipChange({ family_id: textId(familyId), created_by_user_id: textId(target.user_id), memberships: [...previous, next].filter(Boolean) });
+            return { transferred: true, family_id: textId(familyId), new_owner_member_id: textId(target.id), new_owner_user_id: textId(target.user_id) };
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            client.release();
+        }
     }
 
     async accountExport(userId) {

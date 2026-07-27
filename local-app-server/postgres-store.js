@@ -134,6 +134,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             display_name: user.display_name || "",
             phone: user.phone || "",
             password: "",
+            password_hash: user.password_hash || "",
             created_at: iso(user.created_at, db.created_at),
             updated_at: iso(user.updated_at, iso(user.created_at, db.created_at)),
         });

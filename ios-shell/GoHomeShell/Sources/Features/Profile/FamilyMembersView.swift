@@ -2,6 +2,21 @@ import SwiftUI
 
 struct FamilyMembersView: View {
     @ObservedObject var model: ProfileViewModel
+    @State private var pendingAction: PendingFamilyAction?
+
+    private enum PendingFamilyAction: Identifiable {
+        case transfer(FamilyMember)
+        case remove(FamilyMember)
+        case leave
+
+        var id: String {
+            switch self {
+            case let .transfer(member): "transfer-\(member.id)"
+            case let .remove(member): "remove-\(member.id)"
+            case .leave: "leave"
+            }
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -13,7 +28,25 @@ struct FamilyMembersView: View {
                         title: "家庭成员",
                         detail: model.family.memberCount.map { "\($0) 人" }
                     )
-                    memberRow
+                    ForEach(model.familyMembers) { member in
+                        memberRow(member)
+                    }
+                }
+
+                if let error = model.inlineError {
+                    HStack(spacing: 10) {
+                        Label(error, systemImage: "exclamationmark.circle")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(GoHomeTheme.mutedInk)
+                        Spacer()
+                        Button { model.refreshFamilyMembers() } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .frame(width: 34, height: 34)
+                        }
+                        .buttonStyle(ProfileIconButtonStyle())
+                        .disabled(model.familyActionID != nil)
+                        .accessibilityLabel("重新载入家庭成员")
+                    }
                 }
 
                 if let code = model.family.joinCode, !code.isEmpty, model.canEditRules {
@@ -36,6 +69,16 @@ struct FamilyMembersView: View {
                         .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
                     }
                 }
+
+                if model.role == .member {
+                    Button(role: .destructive) { pendingAction = .leave } label: {
+                        Label("退出这个家庭", systemImage: "rectangle.portrait.and.arrow.right")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.familyActionID != nil)
+                }
             }
             .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
             .padding(.top, 18)
@@ -43,6 +86,25 @@ struct FamilyMembersView: View {
         }
         .background(GoHomeTheme.paper)
         .profileNavigationTitle("家庭")
+        .task { model.refreshFamilyMembers() }
+        .confirmationDialog(
+            confirmationTitle,
+            isPresented: Binding(
+                get: { pendingAction != nil },
+                set: { if !$0 { pendingAction = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let action = pendingAction {
+                Button(confirmationButtonTitle(action), role: .destructive) {
+                    pendingAction = nil
+                    Task { await perform(action) }
+                }
+                Button("取消", role: .cancel) { pendingAction = nil }
+            }
+        } message: {
+            Text(confirmationMessage)
+        }
     }
 
     private var familySummary: some View {
@@ -63,7 +125,7 @@ struct FamilyMembersView: View {
         }
     }
 
-    private var memberRow: some View {
+    private func memberRow(_ member: FamilyMember) -> some View {
         HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -73,21 +135,72 @@ struct FamilyMembersView: View {
                     .foregroundStyle(GoHomeTheme.ginger)
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text(model.user.displayName ?? model.user.phone ?? "回家用户")
+                Text(member.displayName)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(GoHomeTheme.ink)
-                Text("当前账号")
+                Text(member.isCurrentUser ? "当前账号" : member.accountHint)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(GoHomeTheme.mutedInk)
             }
             Spacer()
-            Text(model.role.rawValue)
+            Text(member.isCreator ? "创建者" : "成员")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(GoHomeTheme.ink)
+            if model.canEditRules, !member.isCurrentUser {
+                Menu {
+                    Button { pendingAction = .transfer(member) } label: {
+                        Label("设为创建者", systemImage: "person.badge.key")
+                    }
+                    Button(role: .destructive) { pendingAction = .remove(member) } label: {
+                        Label("移出家庭", systemImage: "person.crop.circle.badge.minus")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: 38, height: 38)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(ProfileIconButtonStyle())
+                .disabled(model.familyActionID != nil)
+                .accessibilityLabel("管理 \(member.displayName)")
+            }
         }
         .padding(.vertical, 12)
         .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
         .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+    }
+
+    private var confirmationTitle: String {
+        guard let pendingAction else { return "确认操作" }
+        switch pendingAction {
+        case .transfer: return "转让创建者身份？"
+        case .remove: return "移出家庭？"
+        case .leave: return "退出这个家庭？"
+        }
+    }
+
+    private var confirmationMessage: String {
+        guard let pendingAction else { return "" }
+        switch pendingAction {
+        case let .transfer(member): return "转让后，\(member.displayName) 将管理盒子、摄像头和守护规则，你将变为普通成员。"
+        case let .remove(member): return "\(member.displayName) 将无法再查看这个家庭的数据，账号本身不会被删除。"
+        case .leave: return "退出后将无法再查看这个家庭的画面、事件和记忆。"
+        }
+    }
+
+    private func confirmationButtonTitle(_ action: PendingFamilyAction) -> String {
+        switch action {
+        case .transfer: "确认转让"
+        case .remove: "确认移出"
+        case .leave: "确认退出"
+        }
+    }
+
+    private func perform(_ action: PendingFamilyAction) async {
+        switch action {
+        case let .transfer(member): _ = await model.transferOwnership(to: member)
+        case let .remove(member): _ = await model.removeFamilyMember(member)
+        case .leave: _ = await model.leaveFamily()
+        }
     }
 }
 

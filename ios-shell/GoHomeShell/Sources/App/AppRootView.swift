@@ -55,6 +55,9 @@ struct AppRootView: View {
                                 await environment.pushNotifications.deactivate()
                                 await environment.clearDeletedAccountSession()
                             }
+                        },
+                        onFamilyChanged: {
+                            model.reloadAfterFamilyChange()
                         }
                     )
                 } else {

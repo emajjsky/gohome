@@ -168,6 +168,49 @@ final class ProfilePermissionTests: XCTestCase {
         XCTAssertEqual(cached?.cameras, [])
     }
 
+    @MainActor
+    func testFamilyManagementHonorsRolesAndRefreshesAfterOwnershipTransfer() async throws {
+        let recorder = FamilyMutationRecorder()
+        let member = FamilyMember(
+            id: "member-2", userID: "user-2", displayName: "家庭成员", accountHint: "139****0000",
+            role: "member", isCurrentUser: false, joinedAt: nil
+        )
+        var refreshCount = 0
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            familyMembersLoader: { _ in FamilyMembersResponse(familyID: "family-1", members: [member], revision: "r1") },
+            familyMemberRemover: { _, memberID in
+                await recorder.record("remove:\(memberID)")
+                return FamilyMemberRemovalResponse(removed: true)
+            },
+            familyOwnershipTransferer: { _, memberID in
+                await recorder.record("transfer:\(memberID)")
+                return FamilyOwnershipTransferResponse(transferred: true)
+            }
+        )
+        let creator = ProfileViewModel(
+            user: AppUser(id: "user-1", phone: "13800138000", displayName: "创建者"),
+            family: AppFamily(id: "family-1", name: "测试家庭", role: "owner"),
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: fixtureProfile(canEdit: true),
+            onFamilyChanged: { refreshCount += 1 }
+        )
+
+        let transferred = await creator.transferOwnership(to: member)
+        let actionsAfterTransfer = await recorder.snapshot()
+        XCTAssertTrue(transferred)
+        XCTAssertEqual(actionsAfterTransfer, ["transfer:member-2"])
+        XCTAssertEqual(refreshCount, 1)
+
+        let ordinaryMember = makeModel(role: "member", repository: repository, seed: fixtureProfile(canEdit: false))
+        let removed = await ordinaryMember.removeFamilyMember(member)
+        let actionsAfterDeniedRemoval = await recorder.snapshot()
+        XCTAssertFalse(removed)
+        XCTAssertEqual(actionsAfterDeniedRemoval, ["transfer:member-2"])
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("ProfilePermissionTests-\(UUID().uuidString)", isDirectory: true)
@@ -196,6 +239,12 @@ private actor RuleUpdateRecorder {
 private actor DeviceMutationRecorder {
     private(set) var actions: [String] = []
     func record(_ action: String) { actions.append(action) }
+}
+
+private actor FamilyMutationRecorder {
+    private(set) var actions: [String] = []
+    func record(_ action: String) { actions.append(action) }
+    func snapshot() -> [String] { actions }
 }
 
 private func fixtureProfile(

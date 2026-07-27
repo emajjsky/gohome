@@ -8,6 +8,8 @@ final class ProfileViewModel: ObservableObject {
     @Published private(set) var deviceActionID: String?
     @Published private(set) var deviceConfigurationRevision = 0
     @Published private(set) var inlineError: String?
+    @Published private(set) var familyMembers: [FamilyMember]
+    @Published private(set) var familyActionID: String?
 
     let user: AppUser
     let family: AppFamily
@@ -16,19 +18,31 @@ final class ProfileViewModel: ObservableObject {
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
     private var hasStarted = false
+    private let onFamilyChanged: () -> Void
 
     init(
         user: AppUser,
         family: AppFamily,
         repository: AppRepository?,
         scope: CacheScope?,
-        seed: ProfileData? = nil
+        seed: ProfileData? = nil,
+        onFamilyChanged: @escaping () -> Void = {}
     ) {
         self.user = user
         self.family = family
         self.repository = repository
         self.scope = scope
+        self.onFamilyChanged = onFamilyChanged
         state = Loadable(value: seed, isRefreshing: false, staleReason: nil)
+        familyMembers = [FamilyMember(
+            id: "current-\(user.id)",
+            userID: user.id,
+            displayName: user.displayName ?? "回家用户",
+            accountHint: user.phone ?? "",
+            role: family.role ?? "member",
+            isCurrentUser: true,
+            joinedAt: nil
+        )]
     }
 
     var role: FamilyRole {
@@ -101,6 +115,65 @@ final class ProfileViewModel: ObservableObject {
 
     func clearError() {
         inlineError = nil
+    }
+
+    func refreshFamilyMembers() {
+        guard let repository, familyActionID == nil else { return }
+        familyActionID = "refresh-members"
+        inlineError = nil
+        Task { [repository, familyID = family.id] in
+            defer { familyActionID = nil }
+            do {
+                familyMembers = try await repository.familyMembers(familyID: familyID).members
+            } catch {
+                inlineError = "家庭成员暂时无法更新"
+            }
+        }
+    }
+
+    func removeFamilyMember(_ member: FamilyMember) async -> Bool {
+        guard canEditRules, !member.isCurrentUser, familyActionID == nil, let repository else { return false }
+        familyActionID = member.id
+        inlineError = nil
+        defer { familyActionID = nil }
+        do {
+            try await repository.removeFamilyMember(familyID: family.id, memberID: member.id)
+            familyMembers.removeAll { $0.id == member.id }
+            return true
+        } catch {
+            inlineError = "成员暂时无法移出，请重试"
+            return false
+        }
+    }
+
+    func leaveFamily() async -> Bool {
+        guard role == .member, familyActionID == nil, let repository else { return false }
+        familyActionID = "leave-family"
+        inlineError = nil
+        defer { familyActionID = nil }
+        do {
+            try await repository.leaveFamily(familyID: family.id)
+            onFamilyChanged()
+            return true
+        } catch {
+            inlineError = "暂时无法退出家庭，请重试"
+            return false
+        }
+    }
+
+    func transferOwnership(to member: FamilyMember) async -> Bool {
+        guard canEditRules, !member.isCurrentUser, familyActionID == nil, let repository else { return false }
+        familyActionID = member.id
+        inlineError = nil
+        defer { familyActionID = nil }
+        do {
+            try await repository.transferFamilyOwnership(familyID: family.id, memberID: member.id)
+            onFamilyChanged()
+            return true
+        } catch {
+            inlineError = "创建者身份暂时无法转让，请重试"
+            return false
+        }
     }
 
     func createCamera(

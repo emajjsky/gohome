@@ -30,6 +30,41 @@ class NativeApiRouter {
             return { status: 200, body: await this.viewService.deleteAccount(userId, body) };
         }
 
+        const familyMembersMatch = url.pathname.match(/^\/api\/v2\/families\/([^/]+)\/members$/);
+        if (method === "GET" && familyMembersMatch) {
+            return { status: 200, body: await this.viewService.familyMembers(userId, decodeURIComponent(familyMembersMatch[1])) };
+        }
+
+        const familyMemberMatch = url.pathname.match(/^\/api\/v2\/families\/([^/]+)\/members\/([^/]+)$/);
+        if (method === "DELETE" && familyMemberMatch) {
+            return {
+                status: 200,
+                body: await this.viewService.removeFamilyMember(
+                    userId,
+                    decodeURIComponent(familyMemberMatch[1]),
+                    decodeURIComponent(familyMemberMatch[2]),
+                ),
+            };
+        }
+
+        const familyLeaveMatch = url.pathname.match(/^\/api\/v2\/families\/([^/]+)\/leave$/);
+        if (method === "POST" && familyLeaveMatch) {
+            return { status: 200, body: await this.viewService.leaveFamily(userId, decodeURIComponent(familyLeaveMatch[1])) };
+        }
+
+        const ownershipTransferMatch = url.pathname.match(/^\/api\/v2\/families\/([^/]+)\/ownership-transfer$/);
+        if (method === "POST" && ownershipTransferMatch) {
+            return {
+                status: 200,
+                body: await this.viewService.transferFamilyOwnership(
+                    userId,
+                    decodeURIComponent(ownershipTransferMatch[1]),
+                    body.target_member_id,
+                    body,
+                ),
+            };
+        }
+
         if (method === "GET" && url.pathname === "/api/v2/app/bootstrap") {
             const body = await this.viewService.bootstrapForUser(userId);
             const etag = etagFor(body.revision);

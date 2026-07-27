@@ -4,6 +4,8 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { AuthPolicyError, AuthService } = require('../native-api/auth-service');
+const { encodePassword, verifyPassword } = require('../native-api/password-credentials');
+const { createDbFromCloudRows } = require('../postgres-store');
 const { createLocalAppServer } = require('../server');
 
 function listen(server) {
@@ -113,6 +115,70 @@ test('production HTTP registration cannot bypass challenges with 000000', async 
       body: JSON.stringify({ phone: '13800138000' }),
     });
     assert.equal(requestCode.status, 503);
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('password credentials reject missing or malformed hashes and verify the correct password', async () => {
+  const encoded = await encodePassword('correct-password');
+  assert.equal(await verifyPassword('correct-password', encoded), true);
+  assert.equal(await verifyPassword('wrong-password', encoded), false);
+  assert.equal(await verifyPassword('anything', ''), false);
+  assert.equal(await verifyPassword('anything', 'not-a-password-hash'), false);
+});
+
+test('PostgreSQL hydration preserves password hashes instead of creating an open fallback', async () => {
+  const passwordHash = await encodePassword('correct-password');
+  const db = createDbFromCloudRows({
+    users: [{ id: 'user-1', email: 'member@example.com', password_hash: passwordHash }],
+  }, { created_at: new Date(0).toISOString() });
+  assert.equal(db.users[0].password, '');
+  assert.equal(db.users[0].password_hash, passwordHash);
+  assert.equal(await verifyPassword('correct-password', db.users[0].password_hash), true);
+  assert.equal(await verifyPassword('wrong-password', db.users[0].password_hash), false);
+});
+
+test('HTTP email login rejects accounts without credentials and persists hashed registrations', async () => {
+  const db = {
+    users: [{ id: 'user-1', email: 'missing@example.com', display_name: 'Missing', password: '', password_hash: '' }],
+    families: [], family_members: [], app_sessions: [], next_ids: { user: 2, app_session: 1 },
+  };
+  const store = {
+    kind: 'json', db,
+    nextId(type) { const value = Number(this.db.next_ids[type] || 1); this.db.next_ids[type] = value + 1; return value; },
+    async save() {},
+  };
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-password-auth-'));
+  const app = createLocalAppServer({ rootDir: path.join(__dirname, '..', '..'), dataDir, store, authMode: 'demo', demoOtp: '246810' });
+  const baseUrl = await listen(app.server);
+  try {
+    const missing = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'missing@example.com', password: 'any-non-empty-password' }),
+    });
+    assert.equal(missing.status, 401);
+
+    const registration = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'secure@example.com', password: 'correct-password' }),
+    });
+    assert.equal(registration.status, 200);
+    const registered = store.db.users.find((user) => user.email === 'secure@example.com');
+    assert.equal(registered.password, '');
+    assert.ok(registered.password_hash);
+
+    const wrong = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'secure@example.com', password: 'wrong-password' }),
+    });
+    assert.equal(wrong.status, 401);
+    const correct = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'secure@example.com', password: 'correct-password' }),
+    });
+    assert.equal(correct.status, 200);
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(dataDir, { recursive: true, force: true });

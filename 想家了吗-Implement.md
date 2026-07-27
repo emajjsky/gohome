@@ -11859,4 +11859,29 @@ P4 风险升频边界：
 - 生产 PostgreSQL 使用一次性临时创建者、成员、家庭和随机哈希会话完成 7 项验收：未认证导出 401、导出无凭证字段、多成员创建者 409 阻断、普通成员注销、唯一创建者注销、两个旧 token 401、正式事件与媒体计数不变。账号和家庭由正式注销接口删除，内部清理器复查所有测试表均为 0；真实账号未参与。
 - 部署后 `gohome-app.service=active`，公网与本机 `/health` 均为 PostgreSQL，保持 `events=256 / assets=496 / pending_media_uploads=0`，近 15 分钟无 warning。生产文件 SHA-256 为 `server 7a6961f1...c07c`、`repository dacf6b63...c38e`、`postgres-repository 19956f1b...adce`、`router f32a395a...a7d`、`view-service 79b28aea...4775`。
 - 下一步是覆盖安装真机版本，使用新建的临时账号验证系统分享面板、导出临时文件回收和注销后返回登录；不得在现有真实家庭账号上点击永久删除。
-- 多成员家庭的创建者转移 API 和原生入口尚未实现；当前产品正确阻断注销并给出原因。该依赖完成前不能宣称多人家庭注销已经完整闭环。
+- 多成员家庭的创建者转让 API 和原生入口已在第 145 节完成；创建者仍有其他成员时继续正确阻断注销，转让并刷新角色后旧创建者可以退出家庭或继续注销本人账号。
+
+## 145. 2026-07-27 登录安全与家庭成员闭环
+
+### 登录安全修复
+
+- 真实漏洞位于 `server.js` 邮箱登录兼容分支：PostgreSQL 水合把 `user.password` 置空，旧逻辑却在密码字段为空时接受任意非空输入。攻击前提仅为知道一个非手机号邮箱账号，服务重启后即可绕过密码验证。
+- 新增 `native-api/password-credentials.js`，使用 Node 标准库异步 `scrypt`、随机 16 字节 salt、64 字节派生值和定时安全比较。异步派生避免登录请求阻塞 Node 主线程；新注册只写 `password_hash`，PostgreSQL 水合保留该字段，缺失或畸形哈希明确失败，不再降级。
+- JSON 开发库中仍存在的旧明文凭证只在正确密码通过定时安全比较后迁移为 `scrypt` 哈希，并立即清空明文。手机号账号继续由 `AuthService.verifyCode` 验证，未改变 OTP 时效、次数和发送策略。
+
+### 家庭域实现
+
+- `NativeRepository` 新增成员读取、成员移除、成员退出和创建者转让四个明确边界；router 和 view-service 只负责 HTTP 契约，JSON/PostgreSQL 仓储负责权限和一致性，不在 SwiftUI 或 9000 行服务文件中复制角色规则。
+- PostgreSQL 转让先锁 `families`，再按固定顺序锁该家庭全部 active memberships；确认当前用户是 owner/creator、目标为另一位 active 成员后，将目标之外所有历史 owner/creator 统一降为 member、目标升为唯一 owner，并在同一事务更新 `families.metadata.created_by_user_id`。
+- 组合服务通过 `onFamilyMembershipChange` 在数据库提交后同步内存成员和家庭快照。移除、退出和转让不删除账号及共享家庭数据；普通成员越权、创建者移除自己和创建者未转让直接退出分别返回 403/409。
+- bootstrap 现在统一返回真实角色、成员数和既有兼容邀请码。原生 `FamilyMembersView` 先展示当前账号，后台加载脱敏成员；创建者菜单提供“设为创建者/移出家庭”，普通成员显示“退出这个家庭”，转让和退出成功后根 App 重载 bootstrap。
+
+### 验证结果与边界
+
+- 密码专项覆盖正确/错误密码、缺失/畸形哈希、PostgreSQL 重启水合、新注册只存哈希和手机号 OTP 原回归。家庭 HTTP 专项使用两个临时手机号完成创建、邀请码加入、成员列表、普通成员越权 403、转让唯一 owner、旧创建者退出，并确认家庭和账号仍保留。
+- 当前完整服务端结果为 `69` 项中 `68` 通过、`1` 项因本机没有 PostgreSQL 集成 URL 跳过、`0` 失败；生产组合副本认证与家庭 HTTP `10/10`、家庭仓储专项 `4/4`。iOS 全量单元测试 `98/98`、UI 测试 `16/16`、无签名 Release `iphoneos` 构建和全仓 `npm test` 均通过。
+- 本批不修改 Raspberry Pi、EACP、姿态、跌倒、火灾、多模态复核、盒子配置或现有生产家庭数据。真机当前不在身边，成员菜单和角色刷新尚未人工点击验收。
+- 现有邀请码是历史兼容机制，仍可完成测试加入，但不是最终安全邀请。后续必须改为主动生成、短时、一次性、可撤销且服务端只存哈希；本批不虚报该项完成。
+- 腾讯云未覆盖开发分支整文件，而是以已部署的账号注销版本为共同基线，将本批差异三方合并到生产定制；组合测试发现并补齐线上旧仓储缺少的集中 `assertFamilyManager`，确保普通成员越权返回 403 而非 500。最终生产 SHA-256 为 `server 6ac2ee52...83c9`、`password-credentials 2b1bd026...e0f5`、`repository a0690be5...3e9d`、`postgres-repository e7045f91...9e26`、`router cceeb587...70e`、`view-service 732d7970...014f`、`postgres-store 3e2b7e5a...59c1`。
+- 公网使用一次性临时创建者、成员和家庭完成成员脱敏、普通成员越权 403、创建者注销阻断、转让后唯一 owner、旧创建者退出、两个账号注销和旧 token 401。另一个临时邮箱账号在 PostgreSQL 中清除密码哈希并重启服务后，任意非空密码登录返回 401，随后使用原会话走正式注销接口清理。
+- 验收结束后临时用户、家庭和成员关系均为 0；本机和公网 `/health` 均为 PostgreSQL，状态为 `events=257 / assets=501 / pending_media_uploads=0`，近 15 分钟无 error/warning。真实家庭、盒子和视觉代码未参与本批操作。

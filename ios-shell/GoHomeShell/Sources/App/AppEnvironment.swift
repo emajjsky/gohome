@@ -311,6 +311,23 @@ struct AppEnvironment {
                     body: AccountDeleteRequest(confirmation: "DELETE_ACCOUNT")
                 )
                 return try await client.send(endpoint)
+            },
+            familyMembersLoader: { familyID in
+                try await client.send(Endpoint(path: "/api/v2/families/\(familyID)/members"))
+            },
+            familyMemberRemover: { familyID, memberID in
+                try await client.send(Endpoint(method: .delete, path: "/api/v2/families/\(familyID)/members/\(memberID)"))
+            },
+            familyLeaver: { familyID in
+                try await client.send(Endpoint(method: .post, path: "/api/v2/families/\(familyID)/leave"))
+            },
+            familyOwnershipTransferer: { familyID, memberID in
+                let endpoint: Endpoint<FamilyOwnershipTransferResponse> = try .jsonBody(
+                    method: .post,
+                    path: "/api/v2/families/\(familyID)/ownership-transfer",
+                    body: FamilyOwnershipTransferRequest(targetMemberID: memberID, confirmation: "TRANSFER_OWNERSHIP")
+                )
+                return try await client.send(endpoint)
             }
         )
         return AppEnvironment(

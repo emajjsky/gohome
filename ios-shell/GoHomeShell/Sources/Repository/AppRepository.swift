@@ -31,6 +31,10 @@ actor AppRepository {
     typealias AccountExporter = @Sendable () async throws -> Data
     typealias AccountDeletionPlanLoader = @Sendable () async throws -> AccountDeletionPlan
     typealias AccountDeleter = @Sendable () async throws -> AccountDeleteResponse
+    typealias FamilyMembersLoader = @Sendable (String) async throws -> FamilyMembersResponse
+    typealias FamilyMemberRemover = @Sendable (String, String) async throws -> FamilyMemberRemovalResponse
+    typealias FamilyLeaver = @Sendable (String) async throws -> FamilyLeaveResponse
+    typealias FamilyOwnershipTransferer = @Sendable (String, String) async throws -> FamilyOwnershipTransferResponse
 
     private let cache: DiskCache
     private let bootstrapLoader: BootstrapLoader
@@ -61,6 +65,10 @@ actor AppRepository {
     private let accountExporter: AccountExporter
     private let accountDeletionPlanLoader: AccountDeletionPlanLoader
     private let accountDeleter: AccountDeleter
+    private let familyMembersLoader: FamilyMembersLoader
+    private let familyMemberRemover: FamilyMemberRemover
+    private let familyLeaver: FamilyLeaver
+    private let familyOwnershipTransferer: FamilyOwnershipTransferer
     private var bootstrapTasks: [CacheScope: Task<BootstrapResponse, Error>] = [:]
     private var homeTasks: [CacheScope: Task<HomeResponse, Error>] = [:]
     private var eventsTasks: [CacheScope: Task<[AppEvent], Error>] = [:]
@@ -100,7 +108,11 @@ actor AppRepository {
         deviceUnbinder: @escaping DeviceUnbinder = { _ in throw APIError.invalidResponse },
         accountExporter: @escaping AccountExporter = { throw APIError.invalidResponse },
         accountDeletionPlanLoader: @escaping AccountDeletionPlanLoader = { throw APIError.invalidResponse },
-        accountDeleter: @escaping AccountDeleter = { throw APIError.invalidResponse }
+        accountDeleter: @escaping AccountDeleter = { throw APIError.invalidResponse },
+        familyMembersLoader: @escaping FamilyMembersLoader = { _ in throw APIError.invalidResponse },
+        familyMemberRemover: @escaping FamilyMemberRemover = { _, _ in throw APIError.invalidResponse },
+        familyLeaver: @escaping FamilyLeaver = { _ in throw APIError.invalidResponse },
+        familyOwnershipTransferer: @escaping FamilyOwnershipTransferer = { _, _ in throw APIError.invalidResponse }
     ) {
         self.cache = cache
         self.bootstrapLoader = bootstrapLoader
@@ -137,6 +149,10 @@ actor AppRepository {
         self.accountExporter = accountExporter
         self.accountDeletionPlanLoader = accountDeletionPlanLoader
         self.accountDeleter = accountDeleter
+        self.familyMembersLoader = familyMembersLoader
+        self.familyMemberRemover = familyMemberRemover
+        self.familyLeaver = familyLeaver
+        self.familyOwnershipTransferer = familyOwnershipTransferer
     }
 
     func fetchBootstrap() async throws -> BootstrapResponse {
@@ -418,6 +434,22 @@ actor AppRepository {
     func deleteAccount() async throws {
         let response = try await accountDeleter()
         guard response.deleted else { throw APIError.invalidResponse }
+    }
+
+    func familyMembers(familyID: String) async throws -> FamilyMembersResponse {
+        try await familyMembersLoader(familyID)
+    }
+
+    func removeFamilyMember(familyID: String, memberID: String) async throws {
+        guard try await familyMemberRemover(familyID, memberID).removed else { throw APIError.invalidResponse }
+    }
+
+    func leaveFamily(familyID: String) async throws {
+        guard try await familyLeaver(familyID).left else { throw APIError.invalidResponse }
+    }
+
+    func transferFamilyOwnership(familyID: String, memberID: String) async throws {
+        guard try await familyOwnershipTransferer(familyID, memberID).transferred else { throw APIError.invalidResponse }
     }
 
     private func refreshBootstrap(scope: CacheScope) async throws -> BootstrapResponse {

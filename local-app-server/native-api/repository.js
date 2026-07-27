@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("crypto");
 const { dayBoundsShanghai } = require("./activity-reporting");
 
 const ACTION_TYPES = new Set([
@@ -169,6 +170,38 @@ function safeUserExport(user = {}) {
         created_at: user.created_at || null,
         updated_at: user.updated_at || null,
     };
+}
+
+function maskedMemberAccount(user = {}) {
+    const phone = String(user.phone || "").replace(/\D/g, "");
+    if (/^1\d{10}$/.test(phone)) return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
+    const email = String(user.email || "").trim();
+    if (!email.includes("@")) return "";
+    const [name, domain] = email.split("@");
+    return `${name.slice(0, 2)}***@${domain}`;
+}
+
+function familyMemberView(member, user, currentUserId) {
+    return {
+        id: textId(member.id),
+        user_id: textId(member.user_id),
+        display_name: String(user?.display_name || "家庭成员"),
+        account_hint: maskedMemberAccount(user),
+        role: String(member.role || "member"),
+        is_current_user: textId(member.user_id) === textId(currentUserId),
+        joined_at: member.joined_at || member.created_at || null,
+    };
+}
+
+function familyJoinCodeForFamily(family = {}) {
+    const id = textId(family.id);
+    if (!id) return "";
+    const digest = crypto.createHash("sha256")
+        .update(`${id}:${family.created_at || ""}:${family.name || ""}`)
+        .digest("hex")
+        .slice(0, 6)
+        .toUpperCase();
+    return `GH-${id}-${digest}`;
 }
 
 function accountDeletionPlanForDb(db, userId) {
@@ -469,6 +502,22 @@ class NativeRepository {
         throw new Error("NativeRepository.bootstrapForUser is not implemented");
     }
 
+    familyMembers(_userId, _familyId) {
+        throw new Error("NativeRepository.familyMembers is not implemented");
+    }
+
+    removeFamilyMember(_userId, _familyId, _memberId) {
+        throw new Error("NativeRepository.removeFamilyMember is not implemented");
+    }
+
+    leaveFamily(_userId, _familyId) {
+        throw new Error("NativeRepository.leaveFamily is not implemented");
+    }
+
+    transferFamilyOwnership(_userId, _familyId, _targetMemberId, _input) {
+        throw new Error("NativeRepository.transferFamilyOwnership is not implemented");
+    }
+
     homeForFamily(_userId, _familyId) {
         throw new Error("NativeRepository.homeForFamily is not implemented");
     }
@@ -567,12 +616,14 @@ class JsonNativeRepository extends NativeRepository {
         idFactory = () => `action-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         clock = () => new Date().toISOString(),
         onFamilyMetadataChange = () => {},
+        onFamilyMembershipChange = () => {},
     } = {}) {
         super();
         this.db = db || {};
         this.idFactory = idFactory;
         this.clock = clock;
         this.onFamilyMetadataChange = onFamilyMetadataChange;
+        this.onFamilyMembershipChange = onFamilyMembershipChange;
         if (!Array.isArray(this.db.family_members)) this.db.family_members = [];
         if (!Array.isArray(this.db.app_messages)) this.db.app_messages = [];
         if (!Array.isArray(this.db.app_message_actions)) this.db.app_message_actions = [];
@@ -624,7 +675,16 @@ class JsonNativeRepository extends NativeRepository {
             .filter((item) => textId(item.user_id) === textId(userId) && (item.status || "active") === "active")
             .sort((a, b) => textId(a.family_id).localeCompare(textId(b.family_id)));
         const families = memberships
-            .map((member) => this.family(member.family_id))
+            .map((member) => {
+                const family = this.family(member.family_id);
+                if (!family) return null;
+                return {
+                    ...family,
+                    role: String(member.role || "member"),
+                    member_count: this.db.family_members.filter((item) => textId(item.family_id) === textId(member.family_id) && String(item.status || "active") === "active").length,
+                    join_code: familyJoinCodeForFamily(family),
+                };
+            })
             .filter(Boolean);
         const activeFamilyId = families[0]?.id || null;
         const onboarding = activeFamilyId
@@ -642,6 +702,67 @@ class JsonNativeRepository extends NativeRepository {
             )).length,
             revision: textId(this.db.updated_at || this.clock()),
         });
+    }
+
+    familyMembers(userId, familyId) {
+        this.assertFamilyAccess(userId, familyId);
+        const users = new Map((this.db.users || []).map((user) => [textId(user.id), user]));
+        return clone(this.db.family_members
+            .filter((member) => textId(member.family_id) === textId(familyId) && String(member.status || "active") === "active")
+            .sort((left, right) => {
+                const rank = (member) => ["owner", "creator"].includes(String(member.role || "").toLowerCase()) ? 0 : 1;
+                return rank(left) - rank(right) || String(left.joined_at || left.created_at || "").localeCompare(String(right.joined_at || right.created_at || ""));
+            })
+            .map((member) => familyMemberView(member, users.get(textId(member.user_id)), userId)));
+    }
+
+    removeFamilyMember(userId, familyId, memberId) {
+        this.assertFamilyManager(userId, familyId);
+        const member = this.db.family_members.find((item) => textId(item.id) === textId(memberId) && textId(item.family_id) === textId(familyId) && String(item.status || "active") === "active");
+        if (!member) throw repositoryError("family member not found", 404);
+        if (textId(member.user_id) === textId(userId)) throw repositoryError("creator cannot remove self", 409);
+        if (["owner", "creator"].includes(String(member.role || "").toLowerCase())) throw repositoryError("family creator cannot be removed", 409);
+        member.status = "removed";
+        member.updated_at = this.clock();
+        this.onFamilyMembershipChange({ family_id: textId(familyId), memberships: [clone(member)] });
+        return { removed: true, member_id: textId(member.id), family_id: textId(familyId) };
+    }
+
+    leaveFamily(userId, familyId) {
+        const member = this.assertFamilyAccess(userId, familyId);
+        if (["owner", "creator"].includes(String(member.role || "").toLowerCase())) throw repositoryError("transfer family ownership before leaving", 409);
+        member.status = "left";
+        member.updated_at = this.clock();
+        this.onFamilyMembershipChange({ family_id: textId(familyId), memberships: [clone(member)] });
+        return { left: true, family_id: textId(familyId) };
+    }
+
+    transferFamilyOwnership(userId, familyId, targetMemberId, input = {}) {
+        if (String(input.confirmation || "") !== "TRANSFER_OWNERSHIP") throw repositoryError("ownership transfer confirmation required", 400);
+        const current = this.assertFamilyManager(userId, familyId);
+        const target = this.db.family_members.find((item) => textId(item.id) === textId(targetMemberId) && textId(item.family_id) === textId(familyId) && String(item.status || "active") === "active");
+        if (!target) throw repositoryError("family member not found", 404);
+        if (textId(target.user_id) === textId(userId)) throw repositoryError("select another family member", 400);
+        const changedMemberships = [];
+        for (const member of this.db.family_members) {
+            if (textId(member.family_id) !== textId(familyId) || String(member.status || "active") !== "active") continue;
+            if (textId(member.id) === textId(target.id)) continue;
+            if (!["owner", "creator"].includes(String(member.role || "").toLowerCase())) continue;
+            member.role = "member";
+            member.updated_at = this.clock();
+            changedMemberships.push(clone(member));
+        }
+        target.role = "owner";
+        target.updated_at = this.clock();
+        changedMemberships.push(clone(target));
+        const family = (this.db.families || []).find((item) => textId(item.id) === textId(familyId));
+        if (family) {
+            family.created_by_user_id = target.user_id;
+            family.metadata = { ...(family.metadata || {}), created_by_user_id: target.user_id };
+            family.updated_at = this.clock();
+        }
+        this.onFamilyMembershipChange({ family_id: textId(familyId), created_by_user_id: textId(target.user_id), memberships: changedMemberships });
+        return { transferred: true, family_id: textId(familyId), new_owner_member_id: textId(target.id), new_owner_user_id: textId(target.user_id) };
     }
 
     accountExport(userId) {
@@ -1130,5 +1251,7 @@ module.exports = {
     activityIntervalInput,
     activityTrackingEnabled,
     articlesFromCareCards,
+    familyMemberView,
+    familyJoinCodeForFamily,
     repositoryError,
 };

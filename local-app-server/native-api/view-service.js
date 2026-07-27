@@ -163,6 +163,25 @@ class NativeViewService {
         return await this.repository.accountExport(userId);
     }
 
+    async familyMembers(userId, familyId) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const members = await this.repository.familyMembers(userId, familyId);
+        const payload = { family_id: String(familyId), members };
+        return { ...payload, revision: revisionFor(payload) };
+    }
+
+    async removeFamilyMember(userId, familyId, memberId) {
+        return await this.repository.removeFamilyMember(userId, familyId, memberId);
+    }
+
+    async leaveFamily(userId, familyId) {
+        return await this.repository.leaveFamily(userId, familyId);
+    }
+
+    async transferFamilyOwnership(userId, familyId, memberId, input) {
+        return await this.repository.transferFamilyOwnership(userId, familyId, memberId, input);
+    }
+
     async accountDeletionPlan(userId) {
         const source = await this.repository.accountDeletionPlan(userId);
         return {

@@ -37,6 +37,7 @@
 		66DBFC376E46F1B98BEAC2FB /* CareMessageCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBBA32F7917F6F0495B49EF /* CareMessageCard.swift */; };
 		67041597E06E2008623365F9 /* CameraStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748FA19F9C6A88D3512B1119 /* CameraStreamClient.swift */; };
 		6707311DE7DC983040D8636B /* MemoryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5B93473F4F02FF55CBFF3B8 /* MemoryViewModel.swift */; };
+		6BA81F9D0EDE533558CF1439 /* FamilyManagementModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 160F544A8975E9BC0651F75F /* FamilyManagementModels.swift */; };
 		6BDCF5B3E6DCBF102FD6E291 /* EventsViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2849E8DC39050E6E6187E138 /* EventsViewModelTests.swift */; };
 		6CE974EA45EB32AC617AF37B /* EventPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2730983A40D8FA9915BB8BE /* EventPresentationTests.swift */; };
 		7039CE97B39FA39BAA82814B /* EditorialFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07F18362615012A08B508843 /* EditorialFeed.swift */; };
@@ -128,6 +129,7 @@
 		133FEB218A86BD650E7A4F08 /* KeychainAuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainAuthStore.swift; sourceTree = "<group>"; };
 		153AA19D1DAA360F7C305E40 /* SessionContextStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionContextStoreTests.swift; sourceTree = "<group>"; };
 		15569BD4FFB560A9B817E516 /* GuardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuardView.swift; sourceTree = "<group>"; };
+		160F544A8975E9BC0651F75F /* FamilyManagementModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyManagementModels.swift; sourceTree = "<group>"; };
 		178685C6494C490560EA8C1F /* GoHomeTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoHomeTheme.swift; sourceTree = "<group>"; };
 		1B58D029742116912B1429B4 /* MemoryViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryViewModelTests.swift; sourceTree = "<group>"; };
 		1C0080D68E7DC12E971318B6 /* EvidenceTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvidenceTimelineView.swift; sourceTree = "<group>"; };
@@ -251,6 +253,7 @@
 				EFD074E340C4AFECF2D73FFC /* CameraManagementView.swift */,
 				57F10EB712D69E2E714CCE59 /* ContentPreferencesView.swift */,
 				70A83566580A0F78EDC30D76 /* DeviceSettingsView.swift */,
+				160F544A8975E9BC0651F75F /* FamilyManagementModels.swift */,
 				BFD2CF59E07AE70E40FC1C00 /* FamilyMembersView.swift */,
 				E0FD43806D9F2114438EA8D5 /* PrivacyDataViewModel.swift */,
 				5B9993B818E230FA09B15F87 /* ProfileModels.swift */,
@@ -699,6 +702,7 @@
 				26E2B8C9D448F521842AC539 /* EventsView.swift in Sources */,
 				F136420C8F6E18EB3C5F06D5 /* EventsViewModel.swift in Sources */,
 				96044D1AAC28F1A8ED6CCF75 /* EvidenceTimelineView.swift in Sources */,
+				6BA81F9D0EDE533558CF1439 /* FamilyManagementModels.swift in Sources */,
 				F2A69B21017E1E8A574BFD1A /* FamilyMembersView.swift in Sources */,
 				F0966C683EBD522BAA2A0BE5 /* FamilySetupView.swift in Sources */,
 				FDFA83FBC4444312C36942AE /* GoHomeAppDelegate.swift in Sources */,

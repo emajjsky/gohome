@@ -65,6 +65,81 @@ test('JSON repository isolates every native read and write by family membership'
   assert.equal(repo.homeForFamily('user-a', 'family-a').articles[0].title, '社区公园本周开放夜游');
 });
 
+test('JSON family membership enforces creator boundaries and supports transfer then leave', () => {
+  const data = fixture();
+  data.family_members.push({
+    id: 'member-a-2', family_id: 'family-a', user_id: 'user-b', role: 'member', status: 'active', joined_at: '2026-07-22T08:00:00.000Z',
+  });
+  data.families[0].created_by_user_id = 'user-a';
+  const repo = new JsonNativeRepository(data, { clock: () => '2026-07-27T09:00:00.000Z' });
+
+  const members = repo.familyMembers('user-a', 'family-a');
+  assert.deepEqual(members.map((member) => [member.id, member.role, member.is_current_user]), [
+    ['member-a', 'creator', true],
+    ['member-a-2', 'member', false],
+  ]);
+  assert.throws(() => repo.removeFamilyMember('user-b', 'family-a', 'member-a'), /management permission/);
+  assert.throws(() => repo.removeFamilyMember('user-a', 'family-a', 'member-a'), /cannot remove self/);
+  assert.throws(() => repo.leaveFamily('user-a', 'family-a'), /transfer family ownership/);
+
+  data.family_members.push({
+    id: 'member-a-legacy-owner', family_id: 'family-a', user_id: 'user-c', role: 'owner', status: 'active',
+  });
+  const transfer = repo.transferFamilyOwnership('user-a', 'family-a', 'member-a-2', { confirmation: 'TRANSFER_OWNERSHIP' });
+  assert.equal(transfer.new_owner_user_id, 'user-b');
+  assert.equal(data.family_members.find((member) => member.id === 'member-a').role, 'member');
+  assert.equal(data.family_members.find((member) => member.id === 'member-a-2').role, 'owner');
+  assert.equal(data.family_members.filter((member) => member.family_id === 'family-a' && ['owner', 'creator'].includes(member.role)).length, 1);
+  assert.equal(data.families[0].created_by_user_id, 'user-b');
+
+  assert.deepEqual(repo.leaveFamily('user-a', 'family-a'), { left: true, family_id: 'family-a' });
+  assert.equal(data.family_members.find((member) => member.id === 'member-a').status, 'left');
+});
+
+test('JSON creator can remove an ordinary member without deleting the account', () => {
+  const data = fixture();
+  data.family_members.push({ id: 'member-a-2', family_id: 'family-a', user_id: 'user-b', role: 'member', status: 'active' });
+  const repo = new JsonNativeRepository(data);
+  assert.equal(repo.removeFamilyMember('user-a', 'family-a', 'member-a-2').removed, true);
+  assert.equal(data.family_members.find((member) => member.id === 'member-a-2').status, 'removed');
+  assert.equal(data.users.some((user) => user.id === 'user-b'), true);
+});
+
+test('PostgreSQL ownership transfer locks the family and active memberships in one transaction', async () => {
+  const calls = [];
+  const client = {
+    async query(text, values = []) {
+      calls.push({ text, values });
+      if (/select id from families/i.test(text)) return { rowCount: 1, rows: [{ id: 'family-a' }] };
+      if (/select \* from family_members/i.test(text)) return { rowCount: 3, rows: [
+        { id: 'member-a', family_id: 'family-a', user_id: 'user-a', role: 'owner', status: 'active' },
+        { id: 'member-a-2', family_id: 'family-a', user_id: 'user-b', role: 'member', status: 'active' },
+        { id: 'member-a-legacy-owner', family_id: 'family-a', user_id: 'user-c', role: 'creator', status: 'active' },
+      ] };
+      if (/update family_members set role = 'member'/i.test(text)) return { rowCount: 2, rows: [
+        { id: 'member-a', family_id: 'family-a', user_id: 'user-a', role: 'member', status: 'active' },
+        { id: 'member-a-legacy-owner', family_id: 'family-a', user_id: 'user-c', role: 'member', status: 'active' },
+      ] };
+      if (/update family_members set role = 'owner'/i.test(text)) return { rowCount: 1, rows: [{ id: 'member-a-2', family_id: 'family-a', user_id: 'user-b', role: 'owner', status: 'active' }] };
+      return { rowCount: 1, rows: [] };
+    },
+    release() {},
+  };
+  const changes = [];
+  const repo = new PostgresNativeRepository({ connect: async () => client, query: (...args) => client.query(...args) }, {
+    onFamilyMembershipChange: (change) => changes.push(change),
+  });
+  const result = await repo.transferFamilyOwnership('user-a', 'family-a', 'member-a-2', { confirmation: 'TRANSFER_OWNERSHIP' });
+
+  assert.equal(result.new_owner_user_id, 'user-b');
+  assert.equal(calls.some((call) => /families.*for update/i.test(call.text)), true);
+  assert.equal(calls.some((call) => /family_members.*order by id for update/i.test(call.text)), true);
+  assert.equal(calls.some((call) => /id <> \$2.*role in \('owner', 'creator'\)/is.test(call.text)), true);
+  assert.equal(calls.some((call) => /^commit$/i.test(call.text)), true);
+  assert.equal(changes[0].created_by_user_id, 'user-b');
+  assert.deepEqual(changes[0].memberships.map((member) => member.role), ['member', 'member', 'owner']);
+});
+
 test('JSON onboarding remains complete after the last camera is deleted', () => {
   const data = fixture();
   data.elder_profiles['profile-a'] = { id: 'profile-a', family_id: 'family-a' };

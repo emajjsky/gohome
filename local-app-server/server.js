@@ -621,13 +621,14 @@ function createLocalAppServer(options = {}) {
     const mediaUploadSecret = String(options.mediaUploadSecret || process.env.GOHOME_MEDIA_UPLOAD_SECRET || "").trim()
         || crypto.randomBytes(32).toString("hex");
     const { AuthService } = require("./native-api/auth-service");
+    const { encodePassword, verifyLegacyPassword, verifyPassword } = require("./native-api/password-credentials");
     const authService = options.authService || new AuthService({
         mode: options.authMode || process.env.GOHOME_AUTH_MODE || "production",
         demoOtp: options.demoOtp || process.env.GOHOME_DEMO_OTP || "",
         secret: options.authSecret || process.env.GOHOME_AUTH_SECRET || "",
         smsProvider: options.smsProvider || null,
     });
-    const { JsonNativeRepository, applyAccountDeletionToDb } = require("./native-api/repository");
+    const { JsonNativeRepository, applyAccountDeletionToDb, familyJoinCodeForFamily } = require("./native-api/repository");
     const { PostgresNativeRepository } = require("./native-api/postgres-repository");
     const { NativeViewService } = require("./native-api/view-service");
     const { NativeApiRouter } = require("./native-api/router");
@@ -637,9 +638,26 @@ function createLocalAppServer(options = {}) {
         family.metadata = { ...objectValue(family.metadata), ...objectValue(patch) };
         if (store.kind === "json") store.save();
     };
+    const onFamilyMembershipChange = ({ family_id: familyId, created_by_user_id: creatorId, memberships = [] }) => {
+        for (const updated of memberships) {
+            const member = store.db.family_members.find((item) => String(item.id) === String(updated?.id));
+            if (member) Object.assign(member, updated);
+        }
+        const family = store.db.families.find((item) => String(item.id) === String(familyId));
+        if (family && creatorId) {
+            family.created_by_user_id = creatorId;
+            family.metadata = { ...objectValue(family.metadata), created_by_user_id: creatorId };
+        }
+        if (family) {
+            family.member_count = store.db.family_members.filter((member) => (
+                String(member.family_id) === String(familyId) && String(member.status || "active") === "active"
+            )).length;
+            family.updated_at = nowIso();
+        }
+    };
     const nativeRepository = options.nativeRepository || (store.kind === "postgres"
-        ? new PostgresNativeRepository(store.pool, { onFamilyMetadataChange })
-        : new JsonNativeRepository(store.db, { onFamilyMetadataChange }));
+        ? new PostgresNativeRepository(store.pool, { onFamilyMetadataChange, onFamilyMembershipChange })
+        : new JsonNativeRepository(store.db, { onFamilyMetadataChange, onFamilyMembershipChange }));
     const nativeRouter = options.nativeRouter || new NativeApiRouter(new NativeViewService(nativeRepository, {
         homeEnricher: async ({ familyId, source }) => {
             if (source.weather) return source;
@@ -1297,9 +1315,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function familyJoinCode(family) {
-        if (!family) return "";
-        const hash = sha256(`${family.id}:${family.created_at || ""}:${family.name || ""}`).slice(0, 6).toUpperCase();
-        return `GH-${family.id}-${hash}`;
+        return familyJoinCodeForFamily(family);
     }
 
     function familyForJoinCode(code) {
@@ -8022,10 +8038,16 @@ function createLocalAppServer(options = {}) {
                 const isPhoneAccount = identity.isPhone || /@phone\.gohome\.local$/i.test(email);
                 if (isPhoneAccount) authService.verifyCode(identity.phone, password, payload.challenge_id || payload.challengeId);
                 const phoneOtpLogin = isPhoneAccount;
-                const passwordMatches = user.password ? String(user.password) === password : Boolean(password);
+                const passwordMatches = await verifyPassword(password, user.password_hash)
+                    || verifyLegacyPassword(password, user.password);
                 if (!phoneOtpLogin && !passwordMatches) {
                     writeError(res, 401, isPhoneAccount ? "验证码不正确" : "密码不正确");
                     return;
+                }
+                if (!phoneOtpLogin && !user.password_hash) {
+                    user.password_hash = await encodePassword(password);
+                    user.password = "";
+                    user.updated_at = nowIso();
                 }
                 store.db.active_user_id = user.id;
                 const session = issueAppSession(user);
@@ -8051,7 +8073,8 @@ function createLocalAppServer(options = {}) {
                     email,
                     phone: identity.phone || "",
                     display_name: String(payload.display_name || payload.name || "回家用户"),
-                    password: identity.isPhone ? "" : String(payload.password || payload.code || ""),
+                    password: "",
+                    password_hash: identity.isPhone ? "" : await encodePassword(payload.password || payload.code),
                     created_at: nowIso(),
                     updated_at: nowIso(),
                 };

@@ -63,6 +63,12 @@ final class AppModel: ObservableObject {
         Task { [weak self] in await self?.loadAuthenticatedState() }
     }
 
+    func reloadAfterFamilyChange() {
+        route = .launching
+        bootstrapTask?.cancel()
+        Task { [weak self] in await self?.loadAuthenticatedState() }
+    }
+
     func restore(scope: CacheScope) {
         bootstrapTask?.cancel()
         bootstrapTask = Task { [repository] in
