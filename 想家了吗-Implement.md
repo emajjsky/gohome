@@ -11855,5 +11855,8 @@ P4 风险升频边界：
 
 - 新增服务端 `native-account-data.test.js`，覆盖秘密排除、创建者阻断、普通成员、独立创建者、共享媒体、PostgreSQL 事务、COS 清理调用和 token 撤销。完整 `npm run test:native-server` 为 `62` 项中 `61` 通过、`1` 项因无 PostgreSQL 集成 URL 跳过、`0` 失败；`npm test`、JavaScript 语法和 `git diff --check` 通过。
 - iOS `PrivacyDataTests` 为 `3/3` 通过；全量单元测试 `97` 项中 `96` 通过、`1` 项因模拟器无 Keychain entitlement 跳过、`0` 失败；UI 测试 `16/16` 通过；无签名 Release `iphoneos` 构建成功。
-- 本批尚未部署腾讯云，也未在真实账号执行删除。下一步只能使用一次性临时账户完成云端导出、注销和旧 token 失效验收，再覆盖安装真机版本验证分享面板与删除后返回登录。
+- 腾讯云未直接覆盖开发分支整文件，而是以 `b63c329` 为共同基线，将 `e216017` 的账号功能三方合并进现有生产定制。合并副本先通过 JavaScript 语法和 `native-account-data.test.js 8/8`，再原子替换 `server.js`、两个 repository、router 和 view-service；盒子与 iOS 文件未部署。
+- 生产 PostgreSQL 使用一次性临时创建者、成员、家庭和随机哈希会话完成 7 项验收：未认证导出 401、导出无凭证字段、多成员创建者 409 阻断、普通成员注销、唯一创建者注销、两个旧 token 401、正式事件与媒体计数不变。账号和家庭由正式注销接口删除，内部清理器复查所有测试表均为 0；真实账号未参与。
+- 部署后 `gohome-app.service=active`，公网与本机 `/health` 均为 PostgreSQL，保持 `events=256 / assets=496 / pending_media_uploads=0`，近 15 分钟无 warning。生产文件 SHA-256 为 `server 7a6961f1...c07c`、`repository dacf6b63...c38e`、`postgres-repository 19956f1b...adce`、`router f32a395a...a7d`、`view-service 79b28aea...4775`。
+- 下一步是覆盖安装真机版本，使用新建的临时账号验证系统分享面板、导出临时文件回收和注销后返回登录；不得在现有真实家庭账号上点击永久删除。
 - 多成员家庭的创建者转移 API 和原生入口尚未实现；当前产品正确阻断注销并给出原因。该依赖完成前不能宣称多人家庭注销已经完整闭环。
