@@ -53,3 +53,55 @@ struct FamilyOwnershipTransferRequest: Encodable, Equatable, Sendable {
         case targetMemberID = "target_member_id"
     }
 }
+
+struct FamilyInvitation: Codable, Equatable, Identifiable, Sendable {
+    let id: String
+    let familyID: String
+    let status: String
+    let codeHint: String
+    let code: String?
+    let expiresAt: String?
+    let createdAt: String?
+    let usedAt: String?
+    let revokedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, status, code
+        case familyID = "family_id"
+        case codeHint = "code_hint"
+        case expiresAt = "expires_at"
+        case createdAt = "created_at"
+        case usedAt = "used_at"
+        case revokedAt = "revoked_at"
+    }
+
+    var isActive: Bool { status == "active" }
+}
+
+struct FamilyInvitationsResponse: Decodable, Equatable, Sendable {
+    let familyID: String
+    let invitations: [FamilyInvitation]
+    let revision: String
+
+    enum CodingKeys: String, CodingKey {
+        case invitations, revision
+        case familyID = "family_id"
+    }
+}
+
+struct FamilyInvitationCreateRequest: Encodable, Equatable, Sendable {
+    let expiresInMinutes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case expiresInMinutes = "expires_in_minutes"
+    }
+}
+
+struct FamilyInvitationConsumeRequest: Encodable, Equatable, Sendable {
+    let code: String
+}
+
+struct FamilyInvitationConsumeResponse: Decodable, Equatable, Sendable {
+    let joined: Bool
+    let family: AppFamily
+}

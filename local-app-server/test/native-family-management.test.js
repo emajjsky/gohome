@@ -46,9 +46,14 @@ test('family management HTTP flow lists, protects, transfers, and leaves without
     });
     assert.equal(familyResult.response.status, 200, JSON.stringify(familyResult.body));
     const familyID = String(familyResult.body.id);
+    assert.equal(familyResult.body.join_code, undefined);
+    const invitation = await request(baseURL, `/api/v2/families/${familyID}/invitations`, {
+      method: 'POST', token: creator.token, body: { expires_in_minutes: 10 },
+    });
+    assert.equal(invitation.response.status, 201, JSON.stringify(invitation.body));
 
     const joined = await request(baseURL, '/api/families/join', {
-      method: 'POST', token: member.token, body: { code: familyResult.body.join_code },
+      method: 'POST', token: member.token, body: { code: invitation.body.code },
     });
     assert.equal(joined.response.status, 200, JSON.stringify(joined.body));
 

@@ -65,6 +65,33 @@ class NativeApiRouter {
             };
         }
 
+        const familyInvitationsMatch = url.pathname.match(/^\/api\/v2\/families\/([^/]+)\/invitations$/);
+        if (familyInvitationsMatch) {
+            const familyId = decodeURIComponent(familyInvitationsMatch[1]);
+            if (method === "GET") {
+                return { status: 200, body: await this.viewService.familyInvitations(userId, familyId) };
+            }
+            if (method === "POST") {
+                return { status: 201, body: await this.viewService.createFamilyInvitation(userId, familyId, body) };
+            }
+        }
+
+        const familyInvitationMatch = url.pathname.match(/^\/api\/v2\/families\/([^/]+)\/invitations\/([^/]+)$/);
+        if (method === "DELETE" && familyInvitationMatch) {
+            return {
+                status: 200,
+                body: await this.viewService.revokeFamilyInvitation(
+                    userId,
+                    decodeURIComponent(familyInvitationMatch[1]),
+                    decodeURIComponent(familyInvitationMatch[2]),
+                ),
+            };
+        }
+
+        if (method === "POST" && url.pathname === "/api/v2/family-invitations/consume") {
+            return { status: 200, body: await this.viewService.consumeFamilyInvitation(userId, body) };
+        }
+
         if (method === "GET" && url.pathname === "/api/v2/app/bootstrap") {
             const body = await this.viewService.bootstrapForUser(userId);
             const etag = etagFor(body.revision);

@@ -35,6 +35,9 @@ actor AppRepository {
     typealias FamilyMemberRemover = @Sendable (String, String) async throws -> FamilyMemberRemovalResponse
     typealias FamilyLeaver = @Sendable (String) async throws -> FamilyLeaveResponse
     typealias FamilyOwnershipTransferer = @Sendable (String, String) async throws -> FamilyOwnershipTransferResponse
+    typealias FamilyInvitationsLoader = @Sendable (String) async throws -> FamilyInvitationsResponse
+    typealias FamilyInvitationCreator = @Sendable (String) async throws -> FamilyInvitation
+    typealias FamilyInvitationRevoker = @Sendable (String, String) async throws -> FamilyInvitation
 
     private let cache: DiskCache
     private let bootstrapLoader: BootstrapLoader
@@ -69,6 +72,9 @@ actor AppRepository {
     private let familyMemberRemover: FamilyMemberRemover
     private let familyLeaver: FamilyLeaver
     private let familyOwnershipTransferer: FamilyOwnershipTransferer
+    private let familyInvitationsLoader: FamilyInvitationsLoader
+    private let familyInvitationCreator: FamilyInvitationCreator
+    private let familyInvitationRevoker: FamilyInvitationRevoker
     private var bootstrapTasks: [CacheScope: Task<BootstrapResponse, Error>] = [:]
     private var homeTasks: [CacheScope: Task<HomeResponse, Error>] = [:]
     private var eventsTasks: [CacheScope: Task<[AppEvent], Error>] = [:]
@@ -112,7 +118,10 @@ actor AppRepository {
         familyMembersLoader: @escaping FamilyMembersLoader = { _ in throw APIError.invalidResponse },
         familyMemberRemover: @escaping FamilyMemberRemover = { _, _ in throw APIError.invalidResponse },
         familyLeaver: @escaping FamilyLeaver = { _ in throw APIError.invalidResponse },
-        familyOwnershipTransferer: @escaping FamilyOwnershipTransferer = { _, _ in throw APIError.invalidResponse }
+        familyOwnershipTransferer: @escaping FamilyOwnershipTransferer = { _, _ in throw APIError.invalidResponse },
+        familyInvitationsLoader: @escaping FamilyInvitationsLoader = { _ in throw APIError.invalidResponse },
+        familyInvitationCreator: @escaping FamilyInvitationCreator = { _ in throw APIError.invalidResponse },
+        familyInvitationRevoker: @escaping FamilyInvitationRevoker = { _, _ in throw APIError.invalidResponse }
     ) {
         self.cache = cache
         self.bootstrapLoader = bootstrapLoader
@@ -153,6 +162,9 @@ actor AppRepository {
         self.familyMemberRemover = familyMemberRemover
         self.familyLeaver = familyLeaver
         self.familyOwnershipTransferer = familyOwnershipTransferer
+        self.familyInvitationsLoader = familyInvitationsLoader
+        self.familyInvitationCreator = familyInvitationCreator
+        self.familyInvitationRevoker = familyInvitationRevoker
     }
 
     func fetchBootstrap() async throws -> BootstrapResponse {
@@ -450,6 +462,18 @@ actor AppRepository {
 
     func transferFamilyOwnership(familyID: String, memberID: String) async throws {
         guard try await familyOwnershipTransferer(familyID, memberID).transferred else { throw APIError.invalidResponse }
+    }
+
+    func familyInvitations(familyID: String) async throws -> FamilyInvitationsResponse {
+        try await familyInvitationsLoader(familyID)
+    }
+
+    func createFamilyInvitation(familyID: String) async throws -> FamilyInvitation {
+        try await familyInvitationCreator(familyID)
+    }
+
+    func revokeFamilyInvitation(familyID: String, invitationID: String) async throws -> FamilyInvitation {
+        try await familyInvitationRevoker(familyID, invitationID)
     }
 
     private func refreshBootstrap(scope: CacheScope) async throws -> BootstrapResponse {

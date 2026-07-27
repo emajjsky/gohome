@@ -45,9 +45,13 @@ test('video privacy is one family state shared by app playback and the edge devi
       method: 'POST', headers: owner.headers, body: JSON.stringify({ name: '隐私同步家庭' }),
     });
     const familyID = String(familyResult.body.id);
+    const invitation = await request(baseURL, `/api/v2/families/${familyID}/invitations`, {
+      method: 'POST', headers: owner.headers, body: JSON.stringify({ expires_in_minutes: 10 }),
+    });
+    assert.equal(invitation.response.status, 201);
     const member = await register(baseURL, '13800138202', '家庭成员');
     await request(baseURL, '/api/families/join', {
-      method: 'POST', headers: member.headers, body: JSON.stringify({ code: familyResult.body.join_code }),
+      method: 'POST', headers: member.headers, body: JSON.stringify({ code: invitation.body.code }),
     });
 
     const deviceID = 'edge-video-privacy';

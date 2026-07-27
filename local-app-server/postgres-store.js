@@ -7,6 +7,7 @@ const TABLE_ORDER = [
     "app_sessions",
     "families",
     "family_members",
+    "family_invitations",
     "elder_profiles",
     "devices",
     "device_bindings",
@@ -39,6 +40,7 @@ const PRIMARY_KEYS = Object.freeze({
     app_sessions: "id",
     families: "id",
     family_members: "id",
+    family_invitations: "id",
     elder_profiles: "id",
     devices: "device_id",
     device_bindings: "id",
@@ -103,6 +105,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         users: [],
         families: [],
         family_members: [],
+        family_invitations: [],
         app_sessions: [],
         elder_profiles: {},
         device_bindings: [],
@@ -179,6 +182,23 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             joined_at: iso(member.joined_at, iso(member.created_at, db.created_at)),
             created_at: iso(member.created_at, db.created_at),
             updated_at: iso(member.updated_at, iso(member.created_at, db.created_at)),
+        });
+    }
+
+    for (const invitation of rowsByTable.family_invitations || []) {
+        db.family_invitations.push({
+            id: invitation.id,
+            family_id: invitation.family_id,
+            code_hash: invitation.code_hash,
+            code_hint: invitation.code_hint || "",
+            created_by_user_id: invitation.created_by_user_id || null,
+            status: invitation.status || "active",
+            expires_at: iso(invitation.expires_at),
+            used_by_user_id: invitation.used_by_user_id || null,
+            used_at: iso(invitation.used_at),
+            revoked_at: iso(invitation.revoked_at),
+            created_at: iso(invitation.created_at, db.created_at),
+            updated_at: iso(invitation.updated_at, iso(invitation.created_at, db.created_at)),
         });
     }
 

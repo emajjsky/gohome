@@ -11874,14 +11874,38 @@ P4 风险升频边界：
 - `NativeRepository` 新增成员读取、成员移除、成员退出和创建者转让四个明确边界；router 和 view-service 只负责 HTTP 契约，JSON/PostgreSQL 仓储负责权限和一致性，不在 SwiftUI 或 9000 行服务文件中复制角色规则。
 - PostgreSQL 转让先锁 `families`，再按固定顺序锁该家庭全部 active memberships；确认当前用户是 owner/creator、目标为另一位 active 成员后，将目标之外所有历史 owner/creator 统一降为 member、目标升为唯一 owner，并在同一事务更新 `families.metadata.created_by_user_id`。
 - 组合服务通过 `onFamilyMembershipChange` 在数据库提交后同步内存成员和家庭快照。移除、退出和转让不删除账号及共享家庭数据；普通成员越权、创建者移除自己和创建者未转让直接退出分别返回 403/409。
-- bootstrap 现在统一返回真实角色、成员数和既有兼容邀请码。原生 `FamilyMembersView` 先展示当前账号，后台加载脱敏成员；创建者菜单提供“设为创建者/移出家庭”，普通成员显示“退出这个家庭”，转让和退出成功后根 App 重载 bootstrap。
+- bootstrap 现在统一返回真实角色和成员数。原生 `FamilyMembersView` 先展示当前账号，后台加载脱敏成员；创建者菜单提供“设为创建者/移出家庭”，普通成员显示“退出这个家庭”，转让和退出成功后根 App 重载 bootstrap。永久兼容邀请码已在第 146 节移除。
 
 ### 验证结果与边界
 
 - 密码专项覆盖正确/错误密码、缺失/畸形哈希、PostgreSQL 重启水合、新注册只存哈希和手机号 OTP 原回归。家庭 HTTP 专项使用两个临时手机号完成创建、邀请码加入、成员列表、普通成员越权 403、转让唯一 owner、旧创建者退出，并确认家庭和账号仍保留。
 - 当前完整服务端结果为 `69` 项中 `68` 通过、`1` 项因本机没有 PostgreSQL 集成 URL 跳过、`0` 失败；生产组合副本认证与家庭 HTTP `10/10`、家庭仓储专项 `4/4`。iOS 全量单元测试 `98/98`、UI 测试 `16/16`、无签名 Release `iphoneos` 构建和全仓 `npm test` 均通过。
 - 本批不修改 Raspberry Pi、EACP、姿态、跌倒、火灾、多模态复核、盒子配置或现有生产家庭数据。真机当前不在身边，成员菜单和角色刷新尚未人工点击验收。
-- 现有邀请码是历史兼容机制，仍可完成测试加入，但不是最终安全邀请。后续必须改为主动生成、短时、一次性、可撤销且服务端只存哈希；本批不虚报该项完成。
+- 本节当时保留的历史邀请码后续已由第 146 节安全邀请替换；bootstrap 不再返回 `join_code`，旧确定性邀请码不再可用。
 - 腾讯云未覆盖开发分支整文件，而是以已部署的账号注销版本为共同基线，将本批差异三方合并到生产定制；组合测试发现并补齐线上旧仓储缺少的集中 `assertFamilyManager`，确保普通成员越权返回 403 而非 500。最终生产 SHA-256 为 `server 6ac2ee52...83c9`、`password-credentials 2b1bd026...e0f5`、`repository a0690be5...3e9d`、`postgres-repository e7045f91...9e26`、`router cceeb587...70e`、`view-service 732d7970...014f`、`postgres-store 3e2b7e5a...59c1`。
 - 公网使用一次性临时创建者、成员和家庭完成成员脱敏、普通成员越权 403、创建者注销阻断、转让后唯一 owner、旧创建者退出、两个账号注销和旧 token 401。另一个临时邮箱账号在 PostgreSQL 中清除密码哈希并重启服务后，任意非空密码登录返回 401，随后使用原会话走正式注销接口清理。
 - 验收结束后临时用户、家庭和成员关系均为 0；本机和公网 `/health` 均为 PostgreSQL，状态为 `events=257 / assets=501 / pending_media_uploads=0`，近 15 分钟无 error/warning。真实家庭、盒子和视觉代码未参与本批操作。
+
+## 146. 2026-07-27 安全家庭邀请闭环
+
+### 服务端与数据结构
+
+- 新增 `011_family_invitations.sql`，以唯一 `code_hash` 保存邀请码身份，并约束 `active / used / revoked / expired` 状态、有效期、创建者、使用者和状态时间。数据库、JSON 快照、导出脚本、账号注销和 QA 清理统一纳入 `family_invitations`，不形成第二套孤立存储。
+- `NativeRepository` 的 JSON 和 PostgreSQL 实现统一提供邀请列表、创建、撤销和消费。邀请码由安全随机源和去歧义字符集生成，默认 10 分钟有效；创建时撤销旧有效邀请，响应返回一次明文，持久化只保留 SHA-256 与末四位提示。
+- PostgreSQL 消费在事务中以 `FOR UPDATE` 锁定邀请，并在同一事务写入家庭成员和 `used` 状态。错误、过期、撤销、已用和旧确定性邀请码统一返回无效；已有有效成员返回 409 且不消耗邀请码。
+- 新增四个 v2 路由：创建、列表、撤销和消费。旧 `/api/families/join` 只委托安全消费，不再解析 `GH-{familyId}-{digest}`；bootstrap 和创建家庭响应不再下发永久 `join_code`。
+
+### 原生 iOS 交互
+
+- `AppFamily` 删除永久 `joinCode`；首次引导通过 `/api/v2/family-invitations/consume` 加入家庭，成功后使用服务端返回的真实家庭 ID 重建上下文。
+- “我的 -> 家庭”只对创建者展示邀请区域，提供生成、系统分享、重新生成和撤销。明文只存在于本次创建后的内存模型；页面重新读取服务器后仅显示末四位，必须重新生成才能再次分享完整邀请码。
+- 普通成员不请求邀请列表且不显示邀请入口；SwiftUI 权限测试与 UI 测试同时固定该边界，服务端仍独立执行 403 校验。
+
+### 自动验证与发布边界
+
+- 本地服务端完整回归为 `71` 项：`70` 通过、`1` 项因未配置 PostgreSQL 集成地址跳过、`0` 失败。专项覆盖哈希存储、所有失效状态、旧码拒绝、权限、已有成员、JSON 并发唯一成功、PostgreSQL 迁移约束和序列化不泄露明文。
+- iOS 完整单元测试 `100/100` 通过，另有 `1` 项 Keychain 模拟器环境跳过；UI 测试 `17/17`、无签名 Release arm64 `iphoneos` 构建和生产差异合并副本运行回归 `17/17` 均通过。
+- 腾讯云已应用并登记 `011_family_invitations.sql`，迁移校验值为 `1fcc279aa146c1716a357dd4f6103b3a2063a46f15ca838afb1159439851adfa`，`family_invitations` 表 owner 已校正为运行账号 `gohome`。服务端没有整文件覆盖生产定制，而是按共同基线三方合并到 `/opt/gohome/app`。
+- 生产差异合并副本首次启动时暴露线上旧仓储缺少 `PostgresNativeRepository.assertFamilyManager`；该权限辅助函数已从共同基线恢复并重新跑过组合回归。公网验收确认未登录 401、普通成员创建邀请 403、创建者创建 201、列表不泄露明文或哈希、已有成员 409 且不消耗、并发消费结果唯一为 `200 / 404`、撤销和旧格式均为 404，数据库仅保存哈希。
+- 公网 QA 家庭 `qa-family-invite-20260727` 和 4 个临时用户已在停服事务中删除；成员、邀请和会话均为 0。服务恢复后本机和公网 `/health` 均为 PostgreSQL，真实业务计数保持 `events=261 / assets=501 / pending_media_uploads=0`。清理前临时非数字家庭 ID 曾触发旧关怀调度器的 `family_id required for care card generation`，删除测试家庭后跨调度周期未再出现；真实家庭数据未参与清理。
+- 本机证书团队 ID 为 `CPRVX9XK47`；用户侧 Apple 开发者身份验证现已成功。2026-07-27 使用自动签名完成一次 Release Archive，但 Xcode 明确使用 `Apple Development`、单设备 `iOS Team Provisioning Profile` 和 `get-task-allow=1`。随后执行不上传的 App Store Connect 导出探测，返回 `Team Lasia Y does not have permission to create iOS App Store provisioning profiles`、`No provider associated with App Store Connect user` 和 `No profiles for com.gohome.family were found`。因此当前只能开发安装，需等付费资格激活并在 Xcode 登录对应 Apple ID、出现分发团队后，再配置 APNs 并上传 Archive；当前不能标记 TestFlight 就绪。

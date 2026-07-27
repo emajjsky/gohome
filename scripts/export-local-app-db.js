@@ -194,6 +194,23 @@ function buildCloudSeedBundle(db, options = {}) {
             }))
             : []);
 
+    const familyInvitations = toArray(db.family_invitations).map((invitation) => ({
+        id: textId(invitation.id),
+        family_id: textId(invitation.family_id),
+        code_hash: String(invitation.code_hash || ""),
+        code_hint: String(invitation.code_hint || ""),
+        created_by_user_id: nullableTextId(invitation.created_by_user_id),
+        status: String(invitation.status || "active"),
+        expires_at: iso(invitation.expires_at),
+        used_by_user_id: nullableTextId(invitation.used_by_user_id),
+        used_at: iso(invitation.used_at),
+        revoked_at: iso(invitation.revoked_at),
+        created_at: iso(invitation.created_at, exportedAt),
+        updated_at: iso(invitation.updated_at, iso(invitation.created_at, exportedAt)),
+    })).filter((invitation) => (
+        invitation.id && invitation.family_id && /^[a-f0-9]{64}$/.test(invitation.code_hash) && invitation.expires_at
+    ));
+
     const elderProfileEntries = new Map(Object.entries(db.elder_profiles || {}));
     for (const family of families) {
         const key = `${family.id}:elder_primary`;
@@ -660,6 +677,7 @@ function buildCloudSeedBundle(db, options = {}) {
         app_sessions: appSessions,
         families,
         family_members: familyMembers,
+        family_invitations: familyInvitations,
         elder_profiles: elderProfiles,
         devices,
         device_bindings: deviceBindings,
@@ -690,7 +708,7 @@ function buildCloudSeedBundle(db, options = {}) {
     const counts = Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, rows.length]));
 
     return {
-        schema_version: "010_apns_delivery",
+        schema_version: "011_family_invitations",
         exported_at: exportedAt,
         source: options.source || "local-app-server-json",
         counts,

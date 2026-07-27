@@ -30,12 +30,12 @@ function quoteIdentifier(value) {
 function copyNativeMigrations(targetDir) {
   const files = fs
     .readdirSync(migrationsDir)
-    .filter((file) => /^(001|002|003|004|005|010)_.+\.sql$/.test(file))
+    .filter((file) => /^(001|002|003|004|005|010|011)_.+\.sql$/.test(file))
     .sort();
 
   assert.deepEqual(
     files.map((file) => file.slice(0, 3)),
-    ['001', '002', '003', '004', '005', '010'],
+    ['001', '002', '003', '004', '005', '010', '011'],
   );
 
   for (const file of files) {
@@ -140,6 +140,7 @@ test(
           ['004', 'applied'],
           ['005', 'applied'],
           ['010', 'applied'],
+          ['011', 'applied'],
         ],
       );
       assert.deepEqual(
@@ -151,6 +152,7 @@ test(
           ['004', 'skipped'],
           ['005', 'skipped'],
           ['010', 'skipped'],
+          ['011', 'skipped'],
         ],
       );
 
@@ -218,6 +220,28 @@ test(
       assert.match(defaults.status, /'draft'/);
       assert.match(defaults.suitability, /'\[\]'/);
 
+      const invitationConstraints = await constraintDefinitions(
+        client,
+        schemaName,
+        'family_invitations',
+      );
+      assert.match(
+        invitationConstraints.family_invitations_status_check,
+        /status = ANY \(ARRAY\['active'.*'used'.*'revoked'.*'expired'/,
+      );
+      assert.match(
+        invitationConstraints.family_invitations_lifecycle_check,
+        /used_at IS NOT NULL/,
+      );
+      const invitationIndex = await client.query(
+        `select indexdef from pg_indexes
+         where schemaname = $1 and tablename = 'family_invitations'
+           and indexname = 'family_invitations_active_expiry_idx'`,
+        [schemaName],
+      );
+      assert.equal(invitationIndex.rowCount, 1);
+      assert.match(invitationIndex.rows[0].indexdef, /WHERE \(status = 'active'/);
+
       const families = await client.query(
         `insert into families (name) values ('Family A'), ('Family B') returning id`,
       );
@@ -230,6 +254,22 @@ test(
         `insert into family_members (family_id, user_id, role, status)
          values ($1, $2, 'creator', 'active'), ($3, $4, 'creator', 'active')`,
         [familyA, userA, familyB, userB],
+      );
+      await assertCheckViolation(
+        client.query(
+          `insert into family_invitations (family_id, code_hash, status, expires_at)
+           values ($1, $2, 'pending', now() + interval '10 minutes')`,
+          [familyA, crypto.createHash('sha256').update('invalid-status').digest('hex')],
+        ),
+        'unsupported invitation status should be rejected',
+      );
+      await assertCheckViolation(
+        client.query(
+          `insert into family_invitations (family_id, code_hash, status, expires_at)
+           values ($1, $2, 'used', now() + interval '10 minutes')`,
+          [familyA, crypto.createHash('sha256').update('invalid-lifecycle').digest('hex')],
+        ),
+        'used invitation should require consumer and timestamp',
       );
       const encryptedToken = 'v1:fixture-iv:fixture-tag:fixture-ciphertext';
       await client.query(

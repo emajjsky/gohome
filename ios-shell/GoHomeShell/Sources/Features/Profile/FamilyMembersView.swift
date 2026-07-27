@@ -8,12 +8,14 @@ struct FamilyMembersView: View {
         case transfer(FamilyMember)
         case remove(FamilyMember)
         case leave
+        case revokeInvitation(FamilyInvitation)
 
         var id: String {
             switch self {
             case let .transfer(member): "transfer-\(member.id)"
             case let .remove(member): "remove-\(member.id)"
             case .leave: "leave"
+            case let .revokeInvitation(invitation): "revoke-\(invitation.id)"
             }
         }
     }
@@ -49,26 +51,7 @@ struct FamilyMembersView: View {
                     }
                 }
 
-                if let code = model.family.joinCode, !code.isEmpty, model.canEditRules {
-                    VStack(alignment: .leading, spacing: 10) {
-                        GoHomeSectionHeader(title: "家庭邀请码", detail: "创建者可见")
-                        HStack {
-                            Text(code)
-                                .font(.system(size: 18, weight: .bold, design: .monospaced))
-                                .foregroundStyle(GoHomeTheme.ink)
-                            Spacer()
-                            ShareLink(item: "加入 \(model.family.name)：\(code)") {
-                                Image(systemName: "square.and.arrow.up")
-                                    .frame(width: 38, height: 38)
-                            }
-                            .buttonStyle(ProfileIconButtonStyle())
-                            .accessibilityLabel("分享家庭邀请码")
-                        }
-                        .padding(.vertical, 12)
-                        .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
-                        .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
-                    }
-                }
+                if model.canEditRules { invitationSection }
 
                 if model.role == .member {
                     Button(role: .destructive) { pendingAction = .leave } label: {
@@ -105,6 +88,94 @@ struct FamilyMembersView: View {
         } message: {
             Text(confirmationMessage)
         }
+    }
+
+    private var invitationSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            GoHomeSectionHeader(title: "邀请家人", detail: "一次有效")
+            if let invitation = model.activeFamilyInvitation {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let code = invitation.code, !code.isEmpty {
+                            Text(code)
+                                .font(.system(size: 17, weight: .bold, design: .monospaced))
+                                .foregroundStyle(GoHomeTheme.ink)
+                        } else {
+                            Text("邀请码尾号 \(invitation.codeHint)")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(GoHomeTheme.ink)
+                        }
+                        Text(invitationExpiryText(invitation))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(GoHomeTheme.mutedInk)
+                    }
+                    Spacer(minLength: 8)
+                    if let code = invitation.code, !code.isEmpty {
+                        ShareLink(item: invitationShareText(code)) {
+                            Image(systemName: "square.and.arrow.up")
+                                .frame(width: 38, height: 38)
+                        }
+                        .buttonStyle(ProfileIconButtonStyle())
+                        .accessibilityLabel("分享家庭邀请码")
+                    } else {
+                        Button {
+                            Task { _ = await model.createFamilyInvitation() }
+                        } label: {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .frame(width: 38, height: 38)
+                        }
+                        .buttonStyle(ProfileIconButtonStyle())
+                        .disabled(model.invitationActionID != nil)
+                        .accessibilityLabel("重新生成家庭邀请码")
+                    }
+                    Button(role: .destructive) { pendingAction = .revokeInvitation(invitation) } label: {
+                        Image(systemName: "xmark.circle")
+                            .frame(width: 38, height: 38)
+                    }
+                    .buttonStyle(ProfileIconButtonStyle())
+                    .disabled(model.invitationActionID != nil)
+                    .accessibilityLabel("撤销家庭邀请码")
+                }
+            } else {
+                Button {
+                    Task { _ = await model.createFamilyInvitation() }
+                } label: {
+                    HStack(spacing: 9) {
+                        if model.invitationActionID == "create-invitation" {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "person.badge.plus")
+                        }
+                        Text("生成邀请码")
+                            .font(.system(size: 15, weight: .semibold))
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .foregroundStyle(GoHomeTheme.ink)
+                    .frame(minHeight: 46)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.invitationActionID != nil)
+            }
+        }
+        .padding(.vertical, 12)
+        .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+    }
+
+    private func invitationShareText(_ code: String) -> String {
+        "邀请你加入“\(model.family.name)”\n邀请码：\(code)\n10 分钟内有效，仅可使用一次。"
+    }
+
+    private func invitationExpiryText(_ invitation: FamilyInvitation) -> String {
+        guard let raw = invitation.expiresAt else { return "10 分钟内有效" }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = fractional.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) else {
+            return "10 分钟内有效"
+        }
+        return "\(date.formatted(date: .omitted, time: .shortened)) 前有效"
     }
 
     private var familySummary: some View {
@@ -175,6 +246,7 @@ struct FamilyMembersView: View {
         case .transfer: return "转让创建者身份？"
         case .remove: return "移出家庭？"
         case .leave: return "退出这个家庭？"
+        case .revokeInvitation: return "撤销这个邀请码？"
         }
     }
 
@@ -184,6 +256,7 @@ struct FamilyMembersView: View {
         case let .transfer(member): return "转让后，\(member.displayName) 将管理盒子、摄像头和守护规则，你将变为普通成员。"
         case let .remove(member): return "\(member.displayName) 将无法再查看这个家庭的数据，账号本身不会被删除。"
         case .leave: return "退出后将无法再查看这个家庭的画面、事件和记忆。"
+        case .revokeInvitation: return "撤销后，这个邀请码将立即失效。"
         }
     }
 
@@ -192,6 +265,7 @@ struct FamilyMembersView: View {
         case .transfer: "确认转让"
         case .remove: "确认移出"
         case .leave: "确认退出"
+        case .revokeInvitation: "确认撤销"
         }
     }
 
@@ -200,6 +274,7 @@ struct FamilyMembersView: View {
         case let .transfer(member): _ = await model.transferOwnership(to: member)
         case let .remove(member): _ = await model.removeFamilyMember(member)
         case .leave: _ = await model.leaveFamily()
+        case let .revokeInvitation(invitation): _ = await model.revokeFamilyInvitation(invitation)
         }
     }
 }

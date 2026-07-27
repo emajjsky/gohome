@@ -69,6 +69,21 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["rtsp"].exists)
     }
 
+    func testFamilyInvitationEntryIsCreatorOnly() {
+        let creatorApp = launchProfile()
+        creatorApp.buttons["我的家庭, 家庭管理"].tap()
+        XCTAssertTrue(creatorApp.navigationBars["家庭"].waitForExistence(timeout: 3))
+        XCTAssertTrue(creatorApp.staticTexts["邀请家人"].exists)
+        XCTAssertTrue(creatorApp.buttons["生成邀请码"].exists)
+
+        creatorApp.terminate()
+        let memberApp = launchProfile(extraArguments: ["-uiTestMember"])
+        memberApp.buttons["我的家庭, 家庭管理"].tap()
+        XCTAssertTrue(memberApp.navigationBars["家庭"].waitForExistence(timeout: 3))
+        XCTAssertFalse(memberApp.staticTexts["邀请家人"].exists)
+        XCTAssertFalse(memberApp.buttons["生成邀请码"].exists)
+    }
+
     func testMemberSeesDeviceConfigurationWithoutMutationControls() {
         let app = launchProfile(extraArguments: ["-uiTestMember"])
 

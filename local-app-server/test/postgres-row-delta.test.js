@@ -175,3 +175,34 @@ test('media upload intents survive PostgreSQL serialization and hydration withou
   assert.equal(db.media_upload_intents[0].object_key, persisted.object_key);
   assert.equal(db.media_upload_intents[0].expires_at, expiresAt);
 });
+
+test('family invitations survive PostgreSQL serialization and hydration without plaintext codes', () => {
+  const timestamp = '2026-07-27T08:00:00.000Z';
+  const expiresAt = '2026-07-27T08:10:00.000Z';
+  const codeHash = 'a'.repeat(64);
+  const bundle = buildCloudSeedBundle({
+    created_at: timestamp,
+    updated_at: timestamp,
+    family_invitations: [{
+      id: 'invitation-1',
+      family_id: 'family-1',
+      code_hash: codeHash,
+      code_hint: 'WXYZ',
+      code: 'GH-THIS-MUST-NOT-PERSIST',
+      created_by_user_id: 'user-1',
+      status: 'active',
+      expires_at: expiresAt,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }],
+  }, { exportedAt: timestamp });
+
+  const persisted = bundle.tables.family_invitations[0];
+  assert.equal(persisted.code_hash, codeHash);
+  assert.equal(Object.hasOwn(persisted, 'code'), false);
+
+  const db = createDbFromCloudRows(bundle.tables, { created_at: timestamp });
+  assert.equal(db.family_invitations[0].code_hash, codeHash);
+  assert.equal(db.family_invitations[0].expires_at, expiresAt);
+  assert.equal(Object.hasOwn(db.family_invitations[0], 'code'), false);
+});

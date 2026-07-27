@@ -222,11 +222,24 @@ async function main() {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(family.name, "测试家庭");
-        assert.match(family.join_code, /^GH-\d+-[A-F0-9]{6}$/);
+        assert.equal(family.join_code, undefined);
 
-        const invalidJoin = await fetch(`${baseUrl}/api/families/join`, {
+        const invitation = await requestJson(baseUrl, `/api/v2/families/${family.id}/invitations`, {
             method: "POST",
-            body: JSON.stringify({ code: "GH-0-BAD000" }),
+            body: JSON.stringify({ expires_in_minutes: 10 }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.match(invitation.code, /^GH-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}$/);
+        const invitationList = await requestJson(baseUrl, `/api/v2/families/${family.id}/invitations`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(invitationList.invitations.length, 1);
+        assert.equal(invitationList.invitations[0].code, undefined);
+        assert.equal(invitationList.invitations[0].code_hash, undefined);
+
+        const invalidJoin = await fetch(`${baseUrl}/api/v2/family-invitations/consume`, {
+            method: "POST",
+            body: JSON.stringify({ code: "GH-2345-6789-7XYZ" }),
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${phoneRegistered.token}`,
@@ -234,11 +247,13 @@ async function main() {
         });
         assert.equal(invalidJoin.status, 404);
 
-        const joinedFamily = await requestJson(baseUrl, "/api/families/join", {
+        const joined = await requestJson(baseUrl, "/api/v2/family-invitations/consume", {
             method: "POST",
-            body: JSON.stringify({ code: family.join_code }),
+            body: JSON.stringify({ code: invitation.code }),
             headers: { Authorization: `Bearer ${phoneRegistered.token}` },
         });
+        assert.equal(joined.joined, true);
+        const joinedFamily = joined.family;
         assert.equal(String(joinedFamily.id), String(family.id));
         assert.equal(joinedFamily.member_count, 2);
 
@@ -1723,7 +1738,7 @@ async function main() {
         assert.equal(customizedRules.activity_detection_enabled, false);
 
         const seedBundle = buildCloudSeedBundle(app.store.db, { source: "verify-local-app-server" });
-        assert.equal(seedBundle.schema_version, "010_apns_delivery");
+        assert.equal(seedBundle.schema_version, "011_family_invitations");
         assert.equal(seedBundle.tables.users.length, 3);
         assert.ok(seedBundle.tables.users.some((user) => user.email === phoneAccountEmail));
         assert.ok(seedBundle.tables.app_sessions.length >= 3);
@@ -1735,6 +1750,9 @@ async function main() {
             && String(item.user_id) === String(registered.user.id)
             && item.role === "owner"
         )));
+        assert.equal(seedBundle.tables.family_invitations.length, 1);
+        assert.equal(seedBundle.tables.family_invitations[0].code_hash.length, 64);
+        assert.equal("code" in seedBundle.tables.family_invitations[0], false);
         assert.ok(seedBundle.tables.elder_profiles.some((item) => String(item.family_id) === String(transferFamily.id)));
         const seededElderProfile = seedBundle.tables.elder_profiles.find((profile) => String(profile.family_id) === String(family.id));
         assert.equal(seededElderProfile.mobile_phone, "13800138000");
@@ -1790,6 +1808,9 @@ async function main() {
         assert.ok(restoredDb.users.some((user) => user.email === phoneAccountEmail));
         assert.ok(restoredDb.app_sessions.some((session) => session.token_hash === sha256(appSessionToken)));
         assert.ok(restoredDb.families.some((item) => String(item.id) === String(transferFamily.id)));
+        assert.equal(restoredDb.family_invitations.length, 1);
+        assert.equal(restoredDb.family_invitations[0].code_hash.length, 64);
+        assert.equal("code" in restoredDb.family_invitations[0], false);
         assert.ok(restoredDb.device_bindings.some((item) => (
             String(item.family_id) === String(transferFamily.id)
             && item.device_id === "edge-transferable"

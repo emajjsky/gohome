@@ -35,20 +35,17 @@ struct AppFamily: Codable, Equatable, Sendable {
     let name: String
     let role: String?
     let memberCount: Int?
-    let joinCode: String?
 
-    init(id: String, name: String, role: String?, memberCount: Int? = nil, joinCode: String? = nil) {
+    init(id: String, name: String, role: String?, memberCount: Int? = nil) {
         self.id = id
         self.name = name
         self.role = role
         self.memberCount = memberCount
-        self.joinCode = joinCode
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, role
         case memberCount = "member_count"
-        case joinCode = "join_code"
     }
 
     init(from decoder: Decoder) throws {
@@ -57,7 +54,6 @@ struct AppFamily: Codable, Equatable, Sendable {
         name = try values.decode(String.self, forKey: .name)
         role = try values.decodeIfPresent(String.self, forKey: .role)
         memberCount = try values.decodeIfPresent(Int.self, forKey: .memberCount)
-        joinCode = try values.decodeIfPresent(String.self, forKey: .joinCode)
     }
 }
 

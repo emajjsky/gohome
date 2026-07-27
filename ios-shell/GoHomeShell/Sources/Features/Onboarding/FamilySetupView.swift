@@ -26,8 +26,9 @@ struct FamilySetupView: View {
                 if mode == .create {
                     OnboardingField(title: "家庭名称", placeholder: "例如：杭州的家", text: $familyName)
                 } else {
-                    OnboardingField(title: "家庭邀请码", placeholder: "输入 GH- 开头的邀请码", text: $joinCode)
+                    OnboardingField(title: "家庭邀请码", placeholder: "输入家庭邀请码", text: $joinCode)
                         .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
                 }
 
                 OnboardingError(message: errorMessage)

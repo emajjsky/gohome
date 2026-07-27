@@ -116,10 +116,16 @@ async function main() {
             method: "POST",
             body: JSON.stringify({ phone: memberPhone, code: "000000", display_name: "流程自检成员" }),
         });
-        await json("/api/families/join", {
+        const invitation = await json(`/api/v2/families/${family.id}/invitations`, {
+            method: "POST",
+            token: owner.token,
+            body: JSON.stringify({ expires_in_minutes: 10 }),
+        });
+        assert.ok(invitation.code);
+        await json("/api/v2/family-invitations/consume", {
             method: "POST",
             token: member.token,
-            body: JSON.stringify({ code: family.join_code }),
+            body: JSON.stringify({ code: invitation.code }),
         });
         const memberRules = await json(`/api/rules?family_id=${family.id}`, { token: member.token });
         assert.equal(memberRules.can_edit, false);

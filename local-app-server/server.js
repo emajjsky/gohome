@@ -506,6 +506,7 @@ function normalizeDb(db) {
     }
     db.families = Array.isArray(db.families) ? db.families : defaults.families;
     db.family_members = Array.isArray(db.family_members) ? db.family_members : [];
+    db.family_invitations = Array.isArray(db.family_invitations) ? db.family_invitations : [];
     if (!db.family_members.length && db.families.length && db.users.length) {
         const owner = db.users.find((item) => Number(item.id) === Number(db.active_user_id))
             || [...db.users].reverse().find((item) => item.email !== "admin@gohome.local")
@@ -628,7 +629,7 @@ function createLocalAppServer(options = {}) {
         secret: options.authSecret || process.env.GOHOME_AUTH_SECRET || "",
         smsProvider: options.smsProvider || null,
     });
-    const { JsonNativeRepository, applyAccountDeletionToDb, familyJoinCodeForFamily } = require("./native-api/repository");
+    const { JsonNativeRepository, applyAccountDeletionToDb } = require("./native-api/repository");
     const { PostgresNativeRepository } = require("./native-api/postgres-repository");
     const { NativeViewService } = require("./native-api/view-service");
     const { NativeApiRouter } = require("./native-api/router");
@@ -640,8 +641,11 @@ function createLocalAppServer(options = {}) {
     };
     const onFamilyMembershipChange = ({ family_id: familyId, created_by_user_id: creatorId, memberships = [] }) => {
         for (const updated of memberships) {
-            const member = store.db.family_members.find((item) => String(item.id) === String(updated?.id));
-            if (member) Object.assign(member, updated);
+            let member = store.db.family_members.find((item) => String(item.id) === String(updated?.id));
+            if (!member && updated?.id) {
+                member = { ...updated };
+                store.db.family_members.push(member);
+            } else if (member) Object.assign(member, updated);
         }
         const family = store.db.families.find((item) => String(item.id) === String(familyId));
         if (family && creatorId) {
@@ -655,9 +659,17 @@ function createLocalAppServer(options = {}) {
             family.updated_at = nowIso();
         }
     };
+    const onFamilyInvitationChange = ({ invitations = [] }) => {
+        for (const updated of invitations) {
+            if (!updated?.id) continue;
+            const invitation = store.db.family_invitations.find((item) => String(item.id) === String(updated.id));
+            if (invitation) Object.assign(invitation, updated);
+            else store.db.family_invitations.push({ ...updated });
+        }
+    };
     const nativeRepository = options.nativeRepository || (store.kind === "postgres"
-        ? new PostgresNativeRepository(store.pool, { onFamilyMetadataChange, onFamilyMembershipChange })
-        : new JsonNativeRepository(store.db, { onFamilyMetadataChange, onFamilyMembershipChange }));
+        ? new PostgresNativeRepository(store.pool, { onFamilyMetadataChange, onFamilyMembershipChange, onFamilyInvitationChange })
+        : new JsonNativeRepository(store.db, { onFamilyMetadataChange, onFamilyMembershipChange, onFamilyInvitationChange }));
     const nativeRouter = options.nativeRouter || new NativeApiRouter(new NativeViewService(nativeRepository, {
         homeEnricher: async ({ familyId, source }) => {
             if (source.weather) return source;
@@ -1308,24 +1320,9 @@ function createLocalAppServer(options = {}) {
             id: family.id,
             name: family.name,
             member_count: activeMembers || Number(family.member_count || 1),
-            join_code: familyJoinCode(family),
             created_at: family.created_at,
             updated_at: family.updated_at || family.created_at,
         };
-    }
-
-    function familyJoinCode(family) {
-        return familyJoinCodeForFamily(family);
-    }
-
-    function familyForJoinCode(code) {
-        const normalized = String(code || "").trim().toUpperCase().replace(/\s+/g, "");
-        if (!normalized) return null;
-        const match = normalized.match(/^GH-?(\d+)-?([A-F0-9]{6})$/i);
-        if (!match) return null;
-        const family = selectedFamily(Number(match[1]));
-        if (!family) return null;
-        return familyJoinCode(family).replace(/\s+/g, "").toUpperCase() === normalized ? family : null;
     }
 
     function selectedFamily(familyId = null) {
@@ -1727,6 +1724,11 @@ function createLocalAppServer(options = {}) {
 
         countArray("app_sessions", (session) => verifyUserIds.has(idText(session.user_id)));
         countArray("family_members", (member) => verifyUserIds.has(idText(member.user_id)) || verifyFamilyIds.has(idText(member.family_id)));
+        countArray("family_invitations", (invitation) => (
+            verifyFamilyIds.has(idText(invitation.family_id))
+            || verifyUserIds.has(idText(invitation.created_by_user_id))
+            || verifyUserIds.has(idText(invitation.used_by_user_id))
+        ));
         countArray("users", (user) => verifyUserIds.has(idText(user.id)));
         countArray("families", (family) => verifyFamilyIds.has(idText(family.id)));
         countArray("device_bindings", (binding) => (
@@ -8147,15 +8149,10 @@ function createLocalAppServer(options = {}) {
             if (req.method === "POST" && (pathname === "/api/families/join" || pathname === "/api/v1/households/join")) {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
-                const family = familyForJoinCode(payload.code || payload.join_code || payload.invite_code);
-                if (!family) {
-                    writeError(res, 404, "邀请码无效或已失效。");
-                    return;
-                }
                 const user = activeAppUser(req);
-                ensureFamilyMember(family.id, user.id, "member");
+                const result = await nativeRepository.consumeFamilyInvitation(user.id, payload.code || payload.join_code || payload.invite_code);
                 await store.save();
-                write(res, 200, publicFamily(family));
+                write(res, 200, result.family);
                 return;
             }
 

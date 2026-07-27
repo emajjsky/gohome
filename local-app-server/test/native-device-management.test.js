@@ -45,9 +45,13 @@ test('native device and camera mutations are creator-only and stay bound to one 
       method: 'POST', headers: owner.headers, body: JSON.stringify({ name: '设备权限家庭' }),
     });
     const familyID = String(familyResult.body.id);
+    const invitation = await request(baseURL, `/api/v2/families/${familyID}/invitations`, {
+      method: 'POST', headers: owner.headers, body: JSON.stringify({ expires_in_minutes: 10 }),
+    });
+    assert.equal(invitation.response.status, 201);
     const member = await register(baseURL, '13800138102', '家庭成员');
     const joined = await request(baseURL, '/api/families/join', {
-      method: 'POST', headers: member.headers, body: JSON.stringify({ code: familyResult.body.join_code }),
+      method: 'POST', headers: member.headers, body: JSON.stringify({ code: invitation.body.code }),
     });
     assert.equal(String(joined.body.id), familyID);
 

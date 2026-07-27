@@ -211,6 +211,47 @@ final class ProfilePermissionTests: XCTestCase {
         XCTAssertEqual(actionsAfterDeniedRemoval, ["transfer:member-2"])
     }
 
+    @MainActor
+    func testOnlyCreatorCanCreateAndRevokeOneTimeFamilyInvitations() async throws {
+        let recorder = FamilyMutationRecorder()
+        let active = FamilyInvitation(
+            id: "invitation-1", familyID: "family-1", status: "active", codeHint: "7XYZ",
+            code: "GH-2345-6789-7XYZ", expiresAt: "2026-07-27T10:10:00.000Z",
+            createdAt: "2026-07-27T10:00:00.000Z", usedAt: nil, revokedAt: nil
+        )
+        let revoked = FamilyInvitation(
+            id: active.id, familyID: active.familyID, status: "revoked", codeHint: active.codeHint,
+            code: nil, expiresAt: active.expiresAt, createdAt: active.createdAt,
+            usedAt: nil, revokedAt: "2026-07-27T10:01:00.000Z"
+        )
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            familyInvitationCreator: { familyID in
+                await recorder.record("invite:\(familyID)")
+                return active
+            },
+            familyInvitationRevoker: { _, invitationID in
+                await recorder.record("revoke:\(invitationID)")
+                return revoked
+            }
+        )
+        let creator = makeModel(role: "owner", repository: repository, seed: fixtureProfile(canEdit: true))
+
+        let created = await creator.createFamilyInvitation()
+        XCTAssertTrue(created)
+        XCTAssertEqual(creator.activeFamilyInvitation?.code, active.code)
+        let didRevoke = await creator.revokeFamilyInvitation(active)
+        XCTAssertTrue(didRevoke)
+        XCTAssertNil(creator.activeFamilyInvitation)
+
+        let member = makeModel(role: "member", repository: repository, seed: fixtureProfile(canEdit: false))
+        let memberCreated = await member.createFamilyInvitation()
+        let actions = await recorder.snapshot()
+        XCTAssertFalse(memberCreated)
+        XCTAssertEqual(actions, ["invite:family-1", "revoke:invitation-1"])
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("ProfilePermissionTests-\(UUID().uuidString)", isDirectory: true)

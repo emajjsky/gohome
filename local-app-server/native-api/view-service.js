@@ -182,6 +182,25 @@ class NativeViewService {
         return await this.repository.transferFamilyOwnership(userId, familyId, memberId, input);
     }
 
+    async familyInvitations(userId, familyId) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const invitations = await this.repository.familyInvitations(userId, familyId);
+        const payload = { family_id: String(familyId), invitations };
+        return { ...payload, revision: revisionFor(payload) };
+    }
+
+    async createFamilyInvitation(userId, familyId, input) {
+        return await this.repository.createFamilyInvitation(userId, familyId, input);
+    }
+
+    async revokeFamilyInvitation(userId, familyId, invitationId) {
+        return await this.repository.revokeFamilyInvitation(userId, familyId, invitationId);
+    }
+
+    async consumeFamilyInvitation(userId, input) {
+        return await this.repository.consumeFamilyInvitation(userId, input?.code || input?.invite_code || "");
+    }
+
     async accountDeletionPlan(userId) {
         const source = await this.repository.accountDeletionPlan(userId);
         return {

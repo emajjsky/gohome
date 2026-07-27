@@ -328,6 +328,23 @@ struct AppEnvironment {
                     body: FamilyOwnershipTransferRequest(targetMemberID: memberID, confirmation: "TRANSFER_OWNERSHIP")
                 )
                 return try await client.send(endpoint)
+            },
+            familyInvitationsLoader: { familyID in
+                try await client.send(Endpoint(path: "/api/v2/families/\(familyID)/invitations"))
+            },
+            familyInvitationCreator: { familyID in
+                let endpoint: Endpoint<FamilyInvitation> = try .jsonBody(
+                    method: .post,
+                    path: "/api/v2/families/\(familyID)/invitations",
+                    body: FamilyInvitationCreateRequest(expiresInMinutes: 10)
+                )
+                return try await client.send(endpoint)
+            },
+            familyInvitationRevoker: { familyID, invitationID in
+                try await client.send(Endpoint(
+                    method: .delete,
+                    path: "/api/v2/families/\(familyID)/invitations/\(invitationID)"
+                ))
             }
         )
         return AppEnvironment(

@@ -9,8 +9,14 @@ struct OnboardingService: Sendable {
     }
 
     func joinFamily(code: String) async throws -> AppFamily {
-        let body = try JSONEncoder().encode(["code": code])
-        return try await client.send(Endpoint<AppFamily>(method: .post, path: "/api/families/join", body: body))
+        let endpoint: Endpoint<FamilyInvitationConsumeResponse> = try .jsonBody(
+            method: .post,
+            path: "/api/v2/family-invitations/consume",
+            body: FamilyInvitationConsumeRequest(code: code)
+        )
+        let response = try await client.send(endpoint)
+        guard response.joined else { throw APIError.invalidResponse }
+        return response.family
     }
 
     func saveProfile(familyID: String, elderID: String = "elder_primary", profile: ProfilePayload) async throws -> ElderProfile {

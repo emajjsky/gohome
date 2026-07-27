@@ -193,15 +193,54 @@ function familyMemberView(member, user, currentUserId) {
     };
 }
 
-function familyJoinCodeForFamily(family = {}) {
-    const id = textId(family.id);
-    if (!id) return "";
-    const digest = crypto.createHash("sha256")
-        .update(`${id}:${family.created_at || ""}:${family.name || ""}`)
-        .digest("hex")
-        .slice(0, 6)
-        .toUpperCase();
-    return `GH-${id}-${digest}`;
+const FAMILY_INVITATION_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
+const FAMILY_INVITATION_TTL_MINUTES = 10;
+
+function generateFamilyInvitationCode() {
+    let value = "";
+    while (value.length < 12) {
+        const byte = crypto.randomBytes(1)[0];
+        if (byte >= 224) continue;
+        value += FAMILY_INVITATION_ALPHABET[byte % FAMILY_INVITATION_ALPHABET.length];
+    }
+    return `GH-${value.slice(0, 4)}-${value.slice(4, 8)}-${value.slice(8)}`;
+}
+
+function normalizeFamilyInvitationCode(value) {
+    const compact = String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!/^GH[23456789ABCDEFGHJKMNPQRSTVWXYZ]{12}$/.test(compact)) return "";
+    return `GH-${compact.slice(2, 6)}-${compact.slice(6, 10)}-${compact.slice(10, 14)}`;
+}
+
+function hashFamilyInvitationCode(value) {
+    const normalized = normalizeFamilyInvitationCode(value);
+    return normalized ? crypto.createHash("sha256").update(normalized).digest("hex") : "";
+}
+
+function familyInvitationDurationMinutes(value) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isInteger(parsed) ? Math.max(5, Math.min(60, parsed)) : FAMILY_INVITATION_TTL_MINUTES;
+}
+
+function familyInvitationView(invitation, now = Date.now()) {
+    const expiresAt = Date.parse(invitation.expires_at || "");
+    const status = String(invitation.status || "active") === "active" && Number.isFinite(expiresAt) && expiresAt <= now
+        ? "expired"
+        : String(invitation.status || "active");
+    return {
+        id: textId(invitation.id),
+        family_id: textId(invitation.family_id),
+        status,
+        code_hint: String(invitation.code_hint || ""),
+        expires_at: invitation.expires_at || null,
+        created_at: invitation.created_at || null,
+        used_at: invitation.used_at || null,
+        revoked_at: invitation.revoked_at || null,
+    };
+}
+
+function invalidFamilyInvitation() {
+    return repositoryError("邀请码无效或已失效。", 404);
 }
 
 function accountDeletionPlanForDb(db, userId) {
@@ -443,6 +482,11 @@ function applyAccountDeletionToDb(db, userId, plan) {
 
     arrayFilter("families", (item) => deletedFamilyIds.has(textId(item.id)));
     arrayFilter("family_members", (item) => familyMatches(item) || textId(item.user_id) === user);
+    arrayFilter("family_invitations", (item) => (
+        familyMatches(item)
+        || textId(item.created_by_user_id) === user
+        || textId(item.used_by_user_id) === user
+    ));
     arrayFilter("app_sessions", (item) => textId(item.user_id) === user);
     arrayFilter("device_bindings", familyMatches);
     arrayFilter("binding_codes", familyMatches);
@@ -516,6 +560,22 @@ class NativeRepository {
 
     transferFamilyOwnership(_userId, _familyId, _targetMemberId, _input) {
         throw new Error("NativeRepository.transferFamilyOwnership is not implemented");
+    }
+
+    familyInvitations(_userId, _familyId) {
+        throw new Error("NativeRepository.familyInvitations is not implemented");
+    }
+
+    createFamilyInvitation(_userId, _familyId, _input) {
+        throw new Error("NativeRepository.createFamilyInvitation is not implemented");
+    }
+
+    revokeFamilyInvitation(_userId, _familyId, _invitationId) {
+        throw new Error("NativeRepository.revokeFamilyInvitation is not implemented");
+    }
+
+    consumeFamilyInvitation(_userId, _code) {
+        throw new Error("NativeRepository.consumeFamilyInvitation is not implemented");
     }
 
     homeForFamily(_userId, _familyId) {
@@ -617,6 +677,8 @@ class JsonNativeRepository extends NativeRepository {
         clock = () => new Date().toISOString(),
         onFamilyMetadataChange = () => {},
         onFamilyMembershipChange = () => {},
+        onFamilyInvitationChange = () => {},
+        invitationCodeFactory = generateFamilyInvitationCode,
     } = {}) {
         super();
         this.db = db || {};
@@ -624,7 +686,10 @@ class JsonNativeRepository extends NativeRepository {
         this.clock = clock;
         this.onFamilyMetadataChange = onFamilyMetadataChange;
         this.onFamilyMembershipChange = onFamilyMembershipChange;
+        this.onFamilyInvitationChange = onFamilyInvitationChange;
+        this.invitationCodeFactory = invitationCodeFactory;
         if (!Array.isArray(this.db.family_members)) this.db.family_members = [];
+        if (!Array.isArray(this.db.family_invitations)) this.db.family_invitations = [];
         if (!Array.isArray(this.db.app_messages)) this.db.app_messages = [];
         if (!Array.isArray(this.db.app_message_actions)) this.db.app_message_actions = [];
         if (!Array.isArray(this.db.product_catalog)) this.db.product_catalog = [];
@@ -682,7 +747,6 @@ class JsonNativeRepository extends NativeRepository {
                     ...family,
                     role: String(member.role || "member"),
                     member_count: this.db.family_members.filter((item) => textId(item.family_id) === textId(member.family_id) && String(item.status || "active") === "active").length,
-                    join_code: familyJoinCodeForFamily(family),
                 };
             })
             .filter(Boolean);
@@ -763,6 +827,127 @@ class JsonNativeRepository extends NativeRepository {
         }
         this.onFamilyMembershipChange({ family_id: textId(familyId), created_by_user_id: textId(target.user_id), memberships: changedMemberships });
         return { transferred: true, family_id: textId(familyId), new_owner_member_id: textId(target.id), new_owner_user_id: textId(target.user_id) };
+    }
+
+    familyInvitations(userId, familyId) {
+        this.assertFamilyManager(userId, familyId);
+        const now = Date.parse(this.clock());
+        return clone(this.db.family_invitations
+            .filter((item) => textId(item.family_id) === textId(familyId))
+            .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")))
+            .map((item) => familyInvitationView(item, now)));
+    }
+
+    createFamilyInvitation(userId, familyId, input = {}) {
+        this.assertFamilyManager(userId, familyId);
+        const family = this.family(familyId);
+        if (!family) throw repositoryError("family not found", 404);
+        const timestamp = this.clock();
+        const now = Date.parse(timestamp);
+        for (const existing of this.db.family_invitations) {
+            if (textId(existing.family_id) !== textId(familyId) || String(existing.status || "active") !== "active") continue;
+            existing.status = Date.parse(existing.expires_at || "") <= now ? "expired" : "revoked";
+            if (existing.status === "revoked") existing.revoked_at = timestamp;
+            existing.updated_at = timestamp;
+        }
+        let code = "";
+        let codeHash = "";
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+            code = normalizeFamilyInvitationCode(this.invitationCodeFactory());
+            codeHash = hashFamilyInvitationCode(code);
+            if (codeHash && !this.db.family_invitations.some((item) => item.code_hash === codeHash)) break;
+            code = "";
+        }
+        if (!code) throw repositoryError("could not create invitation", 503);
+        const expiresAt = new Date(now + familyInvitationDurationMinutes(input.expires_in_minutes) * 60 * 1000).toISOString();
+        const invitation = {
+            id: textId(this.idFactory()).replace(/^action-/, "family-invitation-"),
+            family_id: textId(familyId),
+            code_hash: codeHash,
+            code_hint: code.slice(-4),
+            created_by_user_id: textId(userId),
+            status: "active",
+            expires_at: expiresAt,
+            used_by_user_id: null,
+            used_at: null,
+            revoked_at: null,
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+        this.db.family_invitations.push(invitation);
+        this.onFamilyInvitationChange({ invitations: this.db.family_invitations.filter((item) => textId(item.family_id) === textId(familyId)).map(clone) });
+        return { ...familyInvitationView(invitation, now), code };
+    }
+
+    revokeFamilyInvitation(userId, familyId, invitationId) {
+        this.assertFamilyManager(userId, familyId);
+        const invitation = this.db.family_invitations.find((item) => (
+            textId(item.id) === textId(invitationId) && textId(item.family_id) === textId(familyId)
+        ));
+        if (!invitation) throw repositoryError("invitation not found", 404);
+        if (String(invitation.status || "active") === "active") {
+            invitation.status = "revoked";
+            invitation.revoked_at = this.clock();
+            invitation.updated_at = invitation.revoked_at;
+            this.onFamilyInvitationChange({ invitations: [clone(invitation)] });
+        }
+        return familyInvitationView(invitation, Date.parse(this.clock()));
+    }
+
+    consumeFamilyInvitation(userId, rawCode) {
+        this.user(userId);
+        const codeHash = hashFamilyInvitationCode(rawCode);
+        if (!codeHash) throw invalidFamilyInvitation();
+        const invitation = this.db.family_invitations.find((item) => item.code_hash === codeHash);
+        const timestamp = this.clock();
+        const now = Date.parse(timestamp);
+        if (!invitation || String(invitation.status || "active") !== "active") throw invalidFamilyInvitation();
+        if (Date.parse(invitation.expires_at || "") <= now) {
+            invitation.status = "expired";
+            invitation.updated_at = timestamp;
+            this.onFamilyInvitationChange({ invitations: [clone(invitation)] });
+            throw invalidFamilyInvitation();
+        }
+        const family = this.family(invitation.family_id);
+        if (!family || String(family.status || "active") !== "active") throw invalidFamilyInvitation();
+        let membership = this.db.family_members.find((item) => (
+            textId(item.family_id) === textId(invitation.family_id) && textId(item.user_id) === textId(userId)
+        ));
+        if (membership && String(membership.status || "active") === "active") {
+            throw repositoryError("你已经加入这个家庭。", 409);
+        }
+        if (!membership) {
+            membership = {
+                id: `family-member-${crypto.randomUUID()}`,
+                family_id: textId(invitation.family_id),
+                user_id: textId(userId),
+                role: "member",
+                status: "active",
+                invited_by: invitation.created_by_user_id || null,
+                joined_at: timestamp,
+                created_at: timestamp,
+                updated_at: timestamp,
+            };
+            this.db.family_members.push(membership);
+        } else {
+            Object.assign(membership, {
+                role: "member",
+                status: "active",
+                invited_by: invitation.created_by_user_id || null,
+                joined_at: timestamp,
+                updated_at: timestamp,
+            });
+        }
+        invitation.status = "used";
+        invitation.used_by_user_id = textId(userId);
+        invitation.used_at = timestamp;
+        invitation.updated_at = timestamp;
+        this.onFamilyMembershipChange({ family_id: textId(invitation.family_id), memberships: [clone(membership)] });
+        this.onFamilyInvitationChange({ invitations: [clone(invitation)] });
+        const memberCount = this.db.family_members.filter((item) => (
+            textId(item.family_id) === textId(invitation.family_id) && String(item.status || "active") === "active"
+        )).length;
+        return { joined: true, family: { id: textId(family.id), name: String(family.name || "家庭"), member_count: memberCount } };
     }
 
     accountExport(userId) {
@@ -1252,6 +1437,11 @@ module.exports = {
     activityTrackingEnabled,
     articlesFromCareCards,
     familyMemberView,
-    familyJoinCodeForFamily,
+    familyInvitationView,
+    generateFamilyInvitationCode,
+    hashFamilyInvitationCode,
+    invalidFamilyInvitation,
+    normalizeFamilyInvitationCode,
+    familyInvitationDurationMinutes,
     repositoryError,
 };

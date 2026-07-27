@@ -10,6 +10,8 @@ final class ProfileViewModel: ObservableObject {
     @Published private(set) var inlineError: String?
     @Published private(set) var familyMembers: [FamilyMember]
     @Published private(set) var familyActionID: String?
+    @Published private(set) var familyInvitations: [FamilyInvitation] = []
+    @Published private(set) var invitationActionID: String?
 
     let user: AppUser
     let family: AppFamily
@@ -51,6 +53,9 @@ final class ProfileViewModel: ObservableObject {
 
     var canEditRules: Bool { role == .creator }
     var canManageDevices: Bool { role == .creator }
+    var activeFamilyInvitation: FamilyInvitation? {
+        familyInvitations.first(where: \.isActive)
+    }
 
     func start() {
         guard !hasStarted else { return }
@@ -121,13 +126,70 @@ final class ProfileViewModel: ObservableObject {
         guard let repository, familyActionID == nil else { return }
         familyActionID = "refresh-members"
         inlineError = nil
-        Task { [repository, familyID = family.id] in
+        let shouldLoadInvitations = canEditRules
+        Task { [repository, familyID = family.id, shouldLoadInvitations] in
             defer { familyActionID = nil }
             do {
-                familyMembers = try await repository.familyMembers(familyID: familyID).members
+                async let members = repository.familyMembers(familyID: familyID)
+                if shouldLoadInvitations {
+                    async let invitations = repository.familyInvitations(familyID: familyID)
+                    let (memberResponse, invitationResponse) = try await (members, invitations)
+                    familyMembers = memberResponse.members
+                    familyInvitations = invitationResponse.invitations
+                } else {
+                    let memberResponse = try await members
+                    familyMembers = memberResponse.members
+                    familyInvitations = []
+                }
             } catch {
                 inlineError = "家庭成员暂时无法更新"
             }
+        }
+    }
+
+    func createFamilyInvitation() async -> Bool {
+        guard canEditRules, invitationActionID == nil, let repository else { return false }
+        invitationActionID = "create-invitation"
+        inlineError = nil
+        defer { invitationActionID = nil }
+        do {
+            let invitation = try await repository.createFamilyInvitation(familyID: family.id)
+            familyInvitations = [invitation] + familyInvitations.map { existing in
+                guard existing.isActive else { return existing }
+                return FamilyInvitation(
+                    id: existing.id,
+                    familyID: existing.familyID,
+                    status: "revoked",
+                    codeHint: existing.codeHint,
+                    code: nil,
+                    expiresAt: existing.expiresAt,
+                    createdAt: existing.createdAt,
+                    usedAt: existing.usedAt,
+                    revokedAt: existing.revokedAt
+                )
+            }
+            return true
+        } catch {
+            inlineError = "邀请码暂时无法生成，请重试"
+            return false
+        }
+    }
+
+    func revokeFamilyInvitation(_ invitation: FamilyInvitation) async -> Bool {
+        guard canEditRules, invitation.isActive, invitationActionID == nil, let repository else { return false }
+        invitationActionID = invitation.id
+        inlineError = nil
+        defer { invitationActionID = nil }
+        do {
+            let revoked = try await repository.revokeFamilyInvitation(
+                familyID: family.id,
+                invitationID: invitation.id
+            )
+            familyInvitations = familyInvitations.map { $0.id == revoked.id ? revoked : $0 }
+            return true
+        } catch {
+            inlineError = "邀请码暂时无法撤销，请重试"
+            return false
         }
     }
 

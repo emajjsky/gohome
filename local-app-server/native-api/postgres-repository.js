@@ -8,7 +8,12 @@ const {
     activityIntervalInput,
     articlesFromCareCards,
     familyMemberView,
-    familyJoinCodeForFamily,
+    familyInvitationDurationMinutes,
+    familyInvitationView,
+    generateFamilyInvitationCode,
+    hashFamilyInvitationCode,
+    invalidFamilyInvitation,
+    normalizeFamilyInvitationCode,
     memoryInput,
     repositoryError,
 } = require("./repository");
@@ -61,13 +66,21 @@ function validateMemoryAssets(assets) {
 }
 
 class PostgresNativeRepository extends NativeRepository {
-    constructor(pool, { clock = () => new Date(), onFamilyMetadataChange = () => {}, onFamilyMembershipChange = () => {} } = {}) {
+    constructor(pool, {
+        clock = () => new Date(),
+        onFamilyMetadataChange = () => {},
+        onFamilyMembershipChange = () => {},
+        onFamilyInvitationChange = () => {},
+        invitationCodeFactory = generateFamilyInvitationCode,
+    } = {}) {
         super();
         if (!pool || typeof pool.query !== "function") throw new Error("postgres pool required");
         this.pool = pool;
         this.clock = clock;
         this.onFamilyMetadataChange = onFamilyMetadataChange;
         this.onFamilyMembershipChange = onFamilyMembershipChange;
+        this.onFamilyInvitationChange = onFamilyInvitationChange;
+        this.invitationCodeFactory = invitationCodeFactory;
     }
 
     async assertFamilyAccess(client, userId, familyId) {
@@ -107,10 +120,7 @@ class PostgresNativeRepository extends NativeRepository {
             [textId(userId)],
         );
         const families = rows(familiesResult);
-        for (const family of families) {
-            family.member_count = Number(family.member_count || 0);
-            family.join_code = familyJoinCodeForFamily(family);
-        }
+        for (const family of families) family.member_count = Number(family.member_count || 0);
         const activeFamilyId = families[0]?.id || null;
         let onboarding = { next_step: "family", complete: false };
         if (activeFamilyId) onboarding = await this.onboardingForFamily(userId, activeFamilyId);
@@ -230,6 +240,169 @@ class PostgresNativeRepository extends NativeRepository {
             transaction = false;
             this.onFamilyMembershipChange({ family_id: textId(familyId), created_by_user_id: textId(target.user_id), memberships: [...previous, next].filter(Boolean) });
             return { transferred: true, family_id: textId(familyId), new_owner_member_id: textId(target.id), new_owner_user_id: textId(target.user_id) };
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    async familyInvitations(userId, familyId) {
+        await this.assertFamilyManager(this.pool, userId, familyId);
+        const result = await this.pool.query(
+            `select id, family_id, code_hint, status, expires_at, used_at, revoked_at, created_at
+             from family_invitations where family_id = $1 order by created_at desc limit 20`,
+            [textId(familyId)],
+        );
+        const now = new Date(this.clock()).getTime();
+        return rows(result).map((invitation) => familyInvitationView(invitation, now));
+    }
+
+    async createFamilyInvitation(userId, familyId, input = {}) {
+        let code = "";
+        let codeHash = "";
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+            code = normalizeFamilyInvitationCode(this.invitationCodeFactory());
+            codeHash = hashFamilyInvitationCode(code);
+            if (codeHash) break;
+        }
+        if (!codeHash) throw repositoryError("could not create invitation", 503);
+        const now = new Date(this.clock());
+        const expiresAt = new Date(now.getTime() + familyInvitationDurationMinutes(input.expires_in_minutes) * 60 * 1000);
+        const client = await this.pool.connect();
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            const family = row(await client.query(`select id from families where id = $1 and status = 'active' for update`, [textId(familyId)]));
+            if (!family) throw repositoryError("family not found", 404);
+            await this.assertFamilyManager(client, userId, familyId);
+            const revoked = rows(await client.query(
+                `update family_invitations
+                 set status = 'revoked', revoked_at = $2, updated_at = $2
+                 where family_id = $1 and status = 'active'
+                 returning *`,
+                [textId(familyId), now],
+            ));
+            const invitation = row(await client.query(
+                `insert into family_invitations
+                    (family_id, code_hash, code_hint, created_by_user_id, status, expires_at, created_at, updated_at)
+                 values ($1, $2, $3, $4, 'active', $5, $6, $6)
+                 returning *`,
+                [textId(familyId), codeHash, code.slice(-4), textId(userId), expiresAt, now],
+            ));
+            await client.query("commit");
+            transaction = false;
+            this.onFamilyInvitationChange({ invitations: [...revoked, invitation] });
+            return { ...familyInvitationView(invitation, now.getTime()), code };
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            if (error?.code === "23505") throw repositoryError("could not create invitation", 503);
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    async revokeFamilyInvitation(userId, familyId, invitationId) {
+        const client = await this.pool.connect();
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            await client.query(`select id from families where id = $1 for update`, [textId(familyId)]);
+            await this.assertFamilyManager(client, userId, familyId);
+            const existing = row(await client.query(
+                `select * from family_invitations where id = $1 and family_id = $2 for update`,
+                [textId(invitationId), textId(familyId)],
+            ));
+            if (!existing) throw repositoryError("invitation not found", 404);
+            const invitation = String(existing.status || "active") === "active"
+                ? row(await client.query(
+                    `update family_invitations set status = 'revoked', revoked_at = now(), updated_at = now() where id = $1 returning *`,
+                    [textId(invitationId)],
+                ))
+                : existing;
+            await client.query("commit");
+            transaction = false;
+            this.onFamilyInvitationChange({ invitations: [invitation] });
+            return familyInvitationView(invitation, new Date(this.clock()).getTime());
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    async consumeFamilyInvitation(userId, rawCode) {
+        const codeHash = hashFamilyInvitationCode(rawCode);
+        if (!codeHash) throw invalidFamilyInvitation();
+        const client = await this.pool.connect();
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            const invitation = row(await client.query(
+                `select * from family_invitations where code_hash = $1 for update`,
+                [codeHash],
+            ));
+            if (!invitation || String(invitation.status || "active") !== "active") throw invalidFamilyInvitation();
+            const now = new Date(this.clock());
+            if (new Date(invitation.expires_at).getTime() <= now.getTime()) {
+                const expired = row(await client.query(
+                    `update family_invitations set status = 'expired', updated_at = $2 where id = $1 returning *`,
+                    [textId(invitation.id), now],
+                ));
+                await client.query("commit");
+                transaction = false;
+                this.onFamilyInvitationChange({ invitations: [expired] });
+                throw invalidFamilyInvitation();
+            }
+            const family = row(await client.query(
+                `select id, name from families where id = $1 and status = 'active' for share`,
+                [textId(invitation.family_id)],
+            ));
+            if (!family) throw invalidFamilyInvitation();
+            const existing = row(await client.query(
+                `select * from family_members where family_id = $1 and user_id = $2 for update`,
+                [textId(invitation.family_id), textId(userId)],
+            ));
+            if (existing && String(existing.status || "active") === "active") {
+                throw repositoryError("你已经加入这个家庭。", 409);
+            }
+            const membership = existing
+                ? row(await client.query(
+                    `update family_members
+                     set role = 'member', status = 'active', invited_by = $2, joined_at = $3, updated_at = $3
+                     where id = $1 returning *`,
+                    [textId(existing.id), invitation.created_by_user_id || null, now],
+                ))
+                : row(await client.query(
+                    `insert into family_members (family_id, user_id, role, status, invited_by, joined_at, created_at, updated_at)
+                     values ($1, $2, 'member', 'active', $3, $4, $4, $4) returning *`,
+                    [textId(invitation.family_id), textId(userId), invitation.created_by_user_id || null, now],
+                ));
+            const used = row(await client.query(
+                `update family_invitations
+                 set status = 'used', used_by_user_id = $2, used_at = $3, updated_at = $3
+                 where id = $1 and status = 'active' returning *`,
+                [textId(invitation.id), textId(userId), now],
+            ));
+            if (!used) throw invalidFamilyInvitation();
+            const count = row(await client.query(
+                `select count(*)::int as count from family_members where family_id = $1 and status = 'active'`,
+                [textId(invitation.family_id)],
+            ));
+            await client.query("commit");
+            transaction = false;
+            this.onFamilyMembershipChange({ family_id: textId(invitation.family_id), memberships: [membership] });
+            this.onFamilyInvitationChange({ invitations: [used] });
+            return {
+                joined: true,
+                family: { id: textId(family.id), name: String(family.name || "家庭"), member_count: Number(count?.count || 1) },
+            };
         } catch (error) {
             if (transaction) await client.query("rollback");
             throw error;

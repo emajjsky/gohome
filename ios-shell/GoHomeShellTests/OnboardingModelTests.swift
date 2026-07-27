@@ -22,6 +22,18 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(value.onboarding.nextStep, .device)
     }
 
+    func testFamilyInvitationConsumeResponseAcceptsNumericFamilyIdentifier() throws {
+        let data = Data(#"""
+        {"joined":true,"family":{"id":12,"name":"杭州的家","member_count":2}}
+        """#.utf8)
+
+        let value = try JSONDecoder().decode(FamilyInvitationConsumeResponse.self, from: data)
+
+        XCTAssertTrue(value.joined)
+        XCTAssertEqual(value.family.id, "12")
+        XCTAssertEqual(value.family.memberCount, 2)
+    }
+
     func testBindingAndCameraAcceptNumericIdentifiers() throws {
         let binding = try JSONDecoder().decode(DeviceBinding.self, from: Data(#"""
         {
