@@ -627,7 +627,7 @@ function createLocalAppServer(options = {}) {
         secret: options.authSecret || process.env.GOHOME_AUTH_SECRET || "",
         smsProvider: options.smsProvider || null,
     });
-    const { JsonNativeRepository } = require("./native-api/repository");
+    const { JsonNativeRepository, applyAccountDeletionToDb } = require("./native-api/repository");
     const { PostgresNativeRepository } = require("./native-api/postgres-repository");
     const { NativeViewService } = require("./native-api/view-service");
     const { NativeApiRouter } = require("./native-api/router");
@@ -7212,12 +7212,15 @@ function createLocalAppServer(options = {}) {
         });
     }
 
-    async function cleanupMemoryAssets(assetIds = []) {
+    async function cleanupStoredAssets(assetIds = [], { memoryOnly = true } = {}) {
         const ids = new Set(assetIds.map(String));
         if (!ids.size) return;
         const deletedIds = [];
         for (const asset of store.db.assets) {
-            if (!ids.has(String(asset.id)) || String(asset.purpose || asset.metadata?.purpose || "") !== "family_memory") {
+            if (!ids.has(String(asset.id))) {
+                continue;
+            }
+            if (memoryOnly && String(asset.purpose || asset.metadata?.purpose || "") !== "family_memory") {
                 continue;
             }
             if (String(asset.storage_provider || "local") === "cos") {
@@ -7234,6 +7237,28 @@ function createLocalAppServer(options = {}) {
             deletedIds.push(String(asset.id));
         }
         await deleteStoreRows("assets", "media_assets", deletedIds);
+    }
+
+    async function cleanupMemoryAssets(assetIds = []) {
+        return cleanupStoredAssets(assetIds, { memoryOnly: true });
+    }
+
+    async function cleanupStorageObjects(objects = []) {
+        for (const item of objects) {
+            const provider = String(item?.storage_provider || "");
+            const storageKey = String(item?.storage_key || "");
+            if (!storageKey) continue;
+            if (provider === "cos") {
+                try {
+                    await cosStorage.deleteObject({ key: storageKey });
+                } catch (error) {
+                    console.warn(`COS account cleanup failed for ${storageKey}: ${error.code || error.message}`);
+                }
+                continue;
+            }
+            const filePath = path.resolve(mediaDir, storageKey.replace(/^\/+/, ""));
+            if (filePath.startsWith(`${mediaDir}${path.sep}`) && fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+        }
     }
 
     async function handleDeviceEvent(req, res) {
@@ -7906,13 +7931,30 @@ function createLocalAppServer(options = {}) {
                     url,
                     userId: req.appUserId,
                     headers: req.headers,
-                    body: ["POST", "PUT", "PATCH"].includes(req.method) ? await parseJsonBody(req) : {},
+                    body: ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) ? await parseJsonBody(req) : {},
                 });
                 if (result) {
                     const cleanupAssetIds = result.body?.cleanup_asset_ids;
                     if (Array.isArray(cleanupAssetIds)) {
                         await cleanupMemoryAssets(cleanupAssetIds);
                         delete result.body.cleanup_asset_ids;
+                    }
+                    const cleanupAllAssetIds = result.body?.cleanup_all_asset_ids;
+                    if (Array.isArray(cleanupAllAssetIds)) {
+                        await cleanupStoredAssets(cleanupAllAssetIds, { memoryOnly: false });
+                        delete result.body.cleanup_all_asset_ids;
+                    }
+                    const cleanupObjects = result.body?.cleanup_storage_objects;
+                    if (Array.isArray(cleanupObjects)) {
+                        await cleanupStorageObjects(cleanupObjects);
+                        delete result.body.cleanup_storage_objects;
+                    }
+                    if (result.body?.deleted_user_id) {
+                        applyAccountDeletionToDb(store.db, result.body.deleted_user_id, {
+                            deletion_scope: { families_to_delete: result.body.deleted_family_ids || [] },
+                        });
+                        delete result.body.deleted_user_id;
+                        delete result.body.deleted_family_ids;
                     }
                     if (req.method !== "GET" && req.method !== "HEAD") await store.save();
                     if (result.status === 304) {

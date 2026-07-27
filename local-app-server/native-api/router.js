@@ -14,6 +14,22 @@ class NativeApiRouter {
     }
 
     async dispatch({ method, url, userId, headers = {}, body = {} }) {
+        if (method === "GET" && url.pathname === "/api/v2/account/export") {
+            return {
+                status: 200,
+                body: await this.viewService.accountExport(userId),
+                headers: { "Content-Disposition": "attachment; filename=Gohome-data-export.json" },
+            };
+        }
+
+        if (method === "GET" && url.pathname === "/api/v2/account/deletion-plan") {
+            return { status: 200, body: await this.viewService.accountDeletionPlan(userId) };
+        }
+
+        if (method === "DELETE" && url.pathname === "/api/v2/account") {
+            return { status: 200, body: await this.viewService.deleteAccount(userId, body) };
+        }
+
         if (method === "GET" && url.pathname === "/api/v2/app/bootstrap") {
             const body = await this.viewService.bootstrapForUser(userId);
             const etag = etagFor(body.revision);

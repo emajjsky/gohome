@@ -9,6 +9,7 @@ struct MainTabView: View {
     let family: AppFamily
     @ObservedObject var pushNotifications: PushNotificationCoordinator
     let onSignOut: () -> Void
+    let onAccountDeleted: () -> Void
     @StateObject private var homeModel: HomeViewModel
     @StateObject private var eventsModel: EventsViewModel
     @StateObject private var timelineModel: ActivityTimelineViewModel
@@ -39,7 +40,8 @@ struct MainTabView: View {
                 enabled: false,
                 environment: "sandbox"
             ),
-            onSignOut: {}
+            onSignOut: {},
+            onAccountDeleted: {}
         )
     }
 
@@ -51,7 +53,8 @@ struct MainTabView: View {
         user: AppUser,
         family: AppFamily,
         pushNotifications: PushNotificationCoordinator,
-        onSignOut: @escaping () -> Void
+        onSignOut: @escaping () -> Void,
+        onAccountDeleted: @escaping () -> Void
     ) {
         self.repository = repository
         self.scope = scope
@@ -61,6 +64,7 @@ struct MainTabView: View {
         self.family = family
         self.pushNotifications = pushNotifications
         self.onSignOut = onSignOut
+        self.onAccountDeleted = onAccountDeleted
         _homeModel = StateObject(wrappedValue: HomeViewModel(repository: repository, scope: scope))
         let seedEvents = ProcessInfo.processInfo.arguments.contains("-uiTestEvent") ? Self.uiTestEvents : []
         _eventsModel = StateObject(wrappedValue: EventsViewModel(repository: repository, scope: scope, seedEvents: seedEvents))
@@ -112,7 +116,9 @@ struct MainTabView: View {
                 ProfileView(
                     model: profileModel,
                     onboardingService: apiClient.map(OnboardingService.init(client:)),
-                    onSignOut: onSignOut
+                    repository: repository,
+                    onSignOut: onSignOut,
+                    onAccountDeleted: onAccountDeleted
                 )
             }
         }

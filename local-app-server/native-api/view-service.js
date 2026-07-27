@@ -159,6 +159,28 @@ class NativeViewService {
         return { ...payload, revision: revisionFor(payload) };
     }
 
+    async accountExport(userId) {
+        return await this.repository.accountExport(userId);
+    }
+
+    async accountDeletionPlan(userId) {
+        const source = await this.repository.accountDeletionPlan(userId);
+        return {
+            can_delete: Boolean(source.can_delete),
+            requires_ownership_transfer: Boolean(source.requires_ownership_transfer),
+            families: Array.isArray(source.families) ? source.families : [],
+            blockers: Array.isArray(source.blockers) ? source.blockers : [],
+            deletion_scope: source.deletion_scope || {
+                families_to_delete: [], memberships_to_leave: [], authored_memories: 0,
+            },
+            retention_note: String(source.retention_note || ""),
+        };
+    }
+
+    async deleteAccount(userId, input) {
+        return await this.repository.deleteAccount(userId, input);
+    }
+
     async homeForFamily(userId, familyId) {
         if (!familyId) {
             const error = new Error("family_id required");

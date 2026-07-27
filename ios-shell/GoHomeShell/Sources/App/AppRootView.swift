@@ -48,6 +48,13 @@ struct AppRootView: View {
                                 await environment.pushNotifications.deactivate()
                                 await environment.clearAuthenticatedSession(scope: scope)
                             }
+                        },
+                        onAccountDeleted: {
+                            model.signOut()
+                            Task {
+                                await environment.pushNotifications.deactivate()
+                                await environment.clearDeletedAccountSession()
+                            }
                         }
                     )
                 } else {

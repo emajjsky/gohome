@@ -297,6 +297,20 @@ struct AppEnvironment {
             },
             deviceUnbinder: { bindingID in
                 try await client.send(Endpoint(method: .delete, path: "/api/device-bindings/\(bindingID)"))
+            },
+            accountExporter: {
+                try await client.data(path: "/api/v2/account/export")
+            },
+            accountDeletionPlanLoader: {
+                try await client.send(Endpoint(path: "/api/v2/account/deletion-plan"))
+            },
+            accountDeleter: {
+                let endpoint: Endpoint<AccountDeleteResponse> = try .jsonBody(
+                    method: .delete,
+                    path: "/api/v2/account",
+                    body: AccountDeleteRequest(confirmation: "DELETE_ACCOUNT")
+                )
+                return try await client.send(endpoint)
             }
         )
         return AppEnvironment(
@@ -314,6 +328,12 @@ struct AppEnvironment {
         _ = try? await apiClient.send(endpoint)
         try? await authStore.clear()
         if let scope { try? await cache.clear(scope: scope) }
+        await sessionContextStore.clear()
+    }
+
+    func clearDeletedAccountSession() async {
+        try? await authStore.clear()
+        try? await cache.clearAll()
         await sessionContextStore.clear()
     }
 }

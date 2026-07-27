@@ -1,7 +1,15 @@
 "use strict";
 
 const { dayBoundsShanghai } = require("./activity-reporting");
-const { NativeRepository, actionInput, activityIntervalInput, articlesFromCareCards, memoryInput, repositoryError } = require("./repository");
+const {
+    NativeRepository,
+    accountExportForDb,
+    actionInput,
+    activityIntervalInput,
+    articlesFromCareCards,
+    memoryInput,
+    repositoryError,
+} = require("./repository");
 
 const USER_COLUMNS = "id, email, display_name, phone, status, created_at, updated_at";
 const FAMILY_COLUMNS = "f.id, f.name, f.status, f.timezone, f.metadata, f.created_at, f.updated_at, fm.role";
@@ -114,6 +122,234 @@ class PostgresNativeRepository extends NativeRepository {
             unread_count: Number(row(unread)?.count || 0),
             revision: new Date(this.clock()).toISOString(),
         };
+    }
+
+    async accountExport(userId) {
+        const client = typeof this.pool.connect === "function" ? await this.pool.connect() : this.pool;
+        let transaction = false;
+        try {
+            await client.query("begin isolation level repeatable read read only");
+            transaction = true;
+            const account = row(await client.query(`select ${USER_COLUMNS} from users where id = $1 and status = 'active'`, [textId(userId)]));
+            if (!account) throw repositoryError("user not found", 404);
+            const memberships = rows(await client.query(
+                `select fm.*, f.name, f.status as family_status, f.timezone, f.metadata as family_metadata,
+                        f.created_at as family_created_at, f.updated_at as family_updated_at
+                 from family_members fm
+                 join families f on f.id = fm.family_id
+                 where fm.user_id = $1 and fm.status = 'active' and f.status = 'active'
+                 order by f.created_at`,
+                [textId(userId)],
+            ));
+            const familyIds = memberships.map((item) => textId(item.family_id));
+            const db = {
+                users: [account], families: [], family_members: memberships,
+                elder_profiles: {}, devices: {}, device_bindings: [], cameras: {}, family_rules: {}, care_preferences: {},
+                calendar_events: [], events: [], assets: [], family_memories: [], family_memory_media: [],
+                family_memory_comments: [], family_memory_favorites: [], activity_intervals: [], care_cards: [],
+                app_messages: [], app_message_actions: [],
+            };
+            for (const membership of memberships) {
+                db.families.push({
+                    id: membership.family_id,
+                    name: membership.name,
+                    status: membership.family_status,
+                    timezone: membership.timezone,
+                    metadata: membership.family_metadata,
+                    created_at: membership.family_created_at,
+                    updated_at: membership.family_updated_at,
+                });
+            }
+            if (familyIds.length) {
+                const familyValues = [familyIds];
+                const familyMembers = rows(await client.query(
+                    `select * from family_members where family_id::text = any($1::text[]) and status = 'active'`,
+                    familyValues,
+                ));
+                db.family_members = familyMembers;
+                const memberUserIds = [...new Set(familyMembers.map((item) => textId(item.user_id)))];
+                db.users = rows(await client.query(
+                    `select ${USER_COLUMNS} from users where id::text = any($1::text[])`,
+                    [memberUserIds],
+                ));
+                const collections = await Promise.all([
+                    client.query(`select * from elder_profiles where family_id::text = any($1::text[])`, familyValues),
+                    client.query(`select device_id, family_id, name, device_type, status, app_version, model_version, last_seen_at, created_at, updated_at from devices where family_id::text = any($1::text[])`, familyValues),
+                    client.query(`select id, family_id, device_id, device_name, status, bound_at, last_seen_at, created_at from device_bindings where family_id::text = any($1::text[])`, familyValues),
+                    client.query(`select id, family_id, device_id, name, room, enabled, status, sync_status, created_at, updated_at from cameras where family_id::text = any($1::text[])`, familyValues),
+                    client.query(`select family_id, config, updated_at from care_rules where family_id::text = any($1::text[]) and camera_id is null and rule_type = 'edge_rules' and enabled = true`, familyValues),
+                    client.query(`select * from care_preferences where family_id::text = any($1::text[])`, familyValues),
+                    client.query(`select * from calendar_events where family_id::text = any($1::text[]) order by starts_at`, familyValues),
+                    client.query(`select id, family_id, camera_id, media_asset_id, event_type, level, summary, room, camera_name, acknowledged, resolution, payload, occurred_at, created_at, updated_at from events where family_id::text = any($1::text[]) order by occurred_at`, familyValues),
+                    client.query(`select id, family_id, device_id, camera_id, content_type, size_bytes, metadata, created_at from media_assets where family_id::text = any($1::text[]) order by created_at`, familyValues),
+                    client.query(`select * from family_memories where family_id::text = any($1::text[]) order by happened_at`, familyValues),
+                    client.query(`select * from family_memory_media where family_id::text = any($1::text[]) order by memory_id, sort_order`, familyValues),
+                    client.query(`select * from family_memory_comments where family_id::text = any($1::text[]) order by created_at`, familyValues),
+                    client.query(`select * from family_memory_favorites where family_id::text = any($1::text[]) order by created_at`, familyValues),
+                    client.query(`select * from activity_intervals where family_id::text = any($1::text[]) order by started_at`, familyValues),
+                    client.query(`select id, family_id, card_date, card_type, title, body, facts, status, created_at from care_cards where family_id::text = any($1::text[]) order by card_date`, familyValues),
+                    client.query(`select id, message_id, family_id, user_id, message_type, title, subtitle, body, facts, status, created_at from app_messages where family_id::text = any($1::text[]) order by created_at`, familyValues),
+                    client.query(`select id, family_id, message_id, user_id, action_type, payload, created_at from app_message_actions where family_id::text = any($1::text[]) order by created_at`, familyValues),
+                ]);
+                const [profiles, devices, bindings, cameras, rules, preferences, calendar, events, assets, memories, media, comments, favorites, activity, cards, messages, actions] = collections.map(rows);
+                db.elder_profiles = Object.fromEntries(profiles.map((item) => [textId(item.id), item]));
+                db.devices = Object.fromEntries(devices.map((item) => [textId(item.device_id), item]));
+                db.device_bindings = bindings;
+                db.cameras = Object.fromEntries(cameras.map((item) => [textId(item.id), item]));
+                db.family_rules = Object.fromEntries(rules.map((item) => [textId(item.family_id), { ...(item.config || {}), updated_at: item.updated_at }]));
+                db.care_preferences = Object.fromEntries(preferences.map((item) => [textId(item.family_id), item]));
+                db.calendar_events = calendar;
+                db.events = events;
+                db.assets = assets;
+                db.family_memories = memories;
+                db.family_memory_media = media;
+                db.family_memory_comments = comments;
+                db.family_memory_favorites = favorites;
+                db.activity_intervals = activity;
+                db.care_cards = cards;
+                db.app_messages = messages;
+                db.app_message_actions = actions;
+            }
+            await client.query("commit");
+            transaction = false;
+            return accountExportForDb(db, userId, new Date(this.clock()).toISOString());
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            if (client !== this.pool && typeof client.release === "function") client.release();
+        }
+    }
+
+    async accountDeletionPlan(userId) {
+        return this.accountDeletionPlanWithClient(this.pool, userId, false);
+    }
+
+    async accountDeletionPlanWithClient(client, userId, lock = false) {
+        const account = row(await client.query(
+            `select id from users where id = $1 and status = 'active'${lock ? " for update" : ""}`,
+            [textId(userId)],
+        ));
+        if (!account) throw repositoryError("user not found", 404);
+        if (lock) {
+            const lockedMemberships = rows(await client.query(
+                `select id, family_id from family_members where user_id = $1 and status = 'active' for update`,
+                [textId(userId)],
+            ));
+            const lockedFamilyIds = lockedMemberships.map((item) => textId(item.family_id));
+            if (lockedFamilyIds.length) {
+                await client.query(`select id from families where id::text = any($1::text[]) for update`, [lockedFamilyIds]);
+            }
+        }
+        const memberships = rows(await client.query(
+            `select fm.family_id, fm.role, f.name,
+                    (select count(*)::int from family_members members where members.family_id = fm.family_id and members.status = 'active') as active_member_count
+             from family_members fm join families f on f.id = fm.family_id
+             where fm.user_id = $1 and fm.status = 'active'
+             order by f.created_at`,
+            [textId(userId)],
+        ));
+        const families = memberships.map((item) => {
+            const ownsFamily = ["owner", "creator"].includes(textId(item.role).toLowerCase());
+            const memberCount = Number(item.active_member_count || 0);
+            return {
+                id: textId(item.family_id),
+                name: String(item.name || "家庭"),
+                role: String(item.role || "member"),
+                owns_family: ownsFamily,
+                active_member_count: memberCount,
+                action: ownsFamily ? (memberCount > 1 ? "transfer_ownership" : "delete_family") : "leave_family",
+            };
+        });
+        const blockers = families.filter((item) => item.action === "transfer_ownership").map((item) => ({
+            code: "ownership_transfer_required",
+            family_id: item.id,
+            family_name: item.name,
+            message: `请先为“${item.name}”转交家庭创建者身份`,
+        }));
+        const authored = row(await client.query(`select count(*)::int as count from family_memories where author_user_id = $1`, [textId(userId)]));
+        return {
+            can_delete: blockers.length === 0,
+            requires_ownership_transfer: blockers.length > 0,
+            families,
+            blockers,
+            deletion_scope: {
+                families_to_delete: families.filter((item) => item.action === "delete_family").map((item) => item.id),
+                memberships_to_leave: families.filter((item) => item.action === "leave_family").map((item) => item.id),
+                authored_memories: Number(authored?.count || 0),
+            },
+            retention_note: "账号、登录凭证、推送标识和可删除内容将被移除；依法必须保留的安全审计会解除账号关联后按期限留存。",
+        };
+    }
+
+    async deleteAccount(userId, input = {}) {
+        if (String(input.confirmation || "") !== "DELETE_ACCOUNT") {
+            throw repositoryError("account deletion confirmation required", 400);
+        }
+        const client = typeof this.pool.connect === "function" ? await this.pool.connect() : this.pool;
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            const plan = await this.accountDeletionPlanWithClient(client, userId, true);
+            if (!plan.can_delete) throw repositoryError("family ownership transfer required", 409);
+            const familyIds = plan.deletion_scope.families_to_delete;
+            const deviceIds = rows(await client.query(
+                `select device_id from devices where family_id::text = any($1::text[]) for update`,
+                [familyIds],
+            )).map((item) => textId(item.device_id));
+            const cleanupAssets = rows(await client.query(
+                `select distinct a.id
+                 from media_assets a
+                 left join family_memory_media mm on mm.asset_id = a.id
+                 left join family_memories m on m.id = mm.memory_id
+                 where a.family_id::text = any($1::text[])
+                    or (m.author_user_id = $2 and not exists (
+                        select 1 from family_memory_media retained_mm
+                        join family_memories retained_m on retained_m.id = retained_mm.memory_id
+                        where retained_mm.asset_id = a.id
+                          and retained_m.author_user_id <> $2
+                          and not (retained_m.family_id::text = any($1::text[]))
+                    ))`,
+                [familyIds, textId(userId)],
+            )).map((item) => textId(item.id));
+            const cleanupObjects = rows(await client.query(
+                `select distinct object_key from media_upload_intents
+                 where user_id = $1 or family_id::text = any($2::text[])`,
+                [textId(userId), familyIds],
+            )).map((item) => ({ storage_provider: "cos", storage_key: String(item.object_key || "") })).filter((item) => item.storage_key);
+
+            if (familyIds.length) {
+                await client.query(`delete from events where family_id::text = any($1::text[])`, [familyIds]);
+                await client.query(`delete from scheduler_runs where family_id::text = any($1::text[])`, [familyIds]);
+                await client.query(`delete from device_config_versions where family_id::text = any($1::text[]) or device_id::text = any($2::text[])`, [familyIds, deviceIds]);
+                await client.query(`delete from audit_logs where family_id::text = any($1::text[])`, [familyIds]);
+                if (deviceIds.length) await client.query(`delete from device_heartbeats where device_id::text = any($1::text[])`, [deviceIds]);
+                await client.query(`delete from families where id::text = any($1::text[])`, [familyIds]);
+            }
+            await client.query(`delete from family_memory_comments where author_user_id = $1`, [textId(userId)]);
+            await client.query(`delete from family_memories where author_user_id = $1`, [textId(userId)]);
+            await client.query(`delete from family_memory_favorites where user_id = $1`, [textId(userId)]);
+            await client.query(`delete from app_message_actions where user_id = $1`, [textId(userId)]);
+            await client.query(`delete from notification_deliveries where user_id = $1`, [textId(userId)]);
+            await client.query(`delete from app_messages where user_id = $1`, [textId(userId)]);
+            await client.query(`delete from app_push_tokens where user_id = $1`, [textId(userId)]);
+            await client.query(`delete from users where id = $1`, [textId(userId)]);
+            await client.query("commit");
+            transaction = false;
+            return {
+                deleted: true,
+                deleted_user_id: textId(userId),
+                deleted_family_ids: familyIds,
+                cleanup_all_asset_ids: cleanupAssets,
+                cleanup_storage_objects: cleanupObjects,
+            };
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            if (client !== this.pool && typeof client.release === "function") client.release();
+        }
     }
 
     async onboardingForFamily(userId, familyId) {

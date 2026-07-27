@@ -82,6 +82,21 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertFalse(app.navigationBars["编辑摄像头"].exists)
     }
 
+    func testPrivacyDataShowsExportAndRequiresConfirmationForDeletion() {
+        let app = launchProfile()
+
+        app.buttons["隐私与数据, 已保护"].tap()
+        XCTAssertTrue(app.navigationBars["隐私与数据"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["privacy-export-data"].exists)
+        XCTAssertTrue(app.buttons["privacy-delete-account"].exists)
+        XCTAssertFalse(app.alerts["永久删除账号？"].exists)
+
+        app.buttons["privacy-delete-account"].tap()
+        XCTAssertTrue(app.alerts["永久删除账号？"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.alerts["永久删除账号？"].buttons["永久删除"].exists)
+        app.alerts["永久删除账号？"].buttons["取消"].tap()
+    }
+
     private func launchProfile(extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTestState", "-uiTestMain", "-uiTestProfile"] + extraArguments

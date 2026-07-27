@@ -28,6 +28,9 @@ actor AppRepository {
     typealias CameraUpdater = @Sendable (String, CameraUpdateRequest) async throws -> CameraConfig
     typealias CameraDeleter = @Sendable (String) async throws -> CameraDeleteResponse
     typealias DeviceUnbinder = @Sendable (String) async throws -> DeviceUnbindResponse
+    typealias AccountExporter = @Sendable () async throws -> Data
+    typealias AccountDeletionPlanLoader = @Sendable () async throws -> AccountDeletionPlan
+    typealias AccountDeleter = @Sendable () async throws -> AccountDeleteResponse
 
     private let cache: DiskCache
     private let bootstrapLoader: BootstrapLoader
@@ -55,6 +58,9 @@ actor AppRepository {
     private let cameraUpdater: CameraUpdater
     private let cameraDeleter: CameraDeleter
     private let deviceUnbinder: DeviceUnbinder
+    private let accountExporter: AccountExporter
+    private let accountDeletionPlanLoader: AccountDeletionPlanLoader
+    private let accountDeleter: AccountDeleter
     private var bootstrapTasks: [CacheScope: Task<BootstrapResponse, Error>] = [:]
     private var homeTasks: [CacheScope: Task<HomeResponse, Error>] = [:]
     private var eventsTasks: [CacheScope: Task<[AppEvent], Error>] = [:]
@@ -91,7 +97,10 @@ actor AppRepository {
         cameraCreator: @escaping CameraCreator = { _ in throw APIError.invalidResponse },
         cameraUpdater: @escaping CameraUpdater = { _, _ in throw APIError.invalidResponse },
         cameraDeleter: @escaping CameraDeleter = { _ in throw APIError.invalidResponse },
-        deviceUnbinder: @escaping DeviceUnbinder = { _ in throw APIError.invalidResponse }
+        deviceUnbinder: @escaping DeviceUnbinder = { _ in throw APIError.invalidResponse },
+        accountExporter: @escaping AccountExporter = { throw APIError.invalidResponse },
+        accountDeletionPlanLoader: @escaping AccountDeletionPlanLoader = { throw APIError.invalidResponse },
+        accountDeleter: @escaping AccountDeleter = { throw APIError.invalidResponse }
     ) {
         self.cache = cache
         self.bootstrapLoader = bootstrapLoader
@@ -125,6 +134,9 @@ actor AppRepository {
         self.cameraUpdater = cameraUpdater
         self.cameraDeleter = cameraDeleter
         self.deviceUnbinder = deviceUnbinder
+        self.accountExporter = accountExporter
+        self.accountDeletionPlanLoader = accountDeletionPlanLoader
+        self.accountDeleter = accountDeleter
     }
 
     func fetchBootstrap() async throws -> BootstrapResponse {
@@ -393,6 +405,19 @@ actor AppRepository {
 
     func unbindDevice(bindingID: String) async throws -> DeviceUnbindResponse {
         try await deviceUnbinder(bindingID)
+    }
+
+    func exportAccountData() async throws -> Data {
+        try await accountExporter()
+    }
+
+    func accountDeletionPlan() async throws -> AccountDeletionPlan {
+        try await accountDeletionPlanLoader()
+    }
+
+    func deleteAccount() async throws {
+        let response = try await accountDeleter()
+        guard response.deleted else { throw APIError.invalidResponse }
     }
 
     private func refreshBootstrap(scope: CacheScope) async throws -> BootstrapResponse {

@@ -1,14 +1,25 @@
 import SwiftUI
+import UIKit
 
 struct ProfileView: View {
     @ObservedObject private var model: ProfileViewModel
     let onboardingService: OnboardingService?
+    let repository: AppRepository?
     let onSignOut: () -> Void
+    let onAccountDeleted: () -> Void
 
-    init(model: ProfileViewModel, onboardingService: OnboardingService?, onSignOut: @escaping () -> Void) {
+    init(
+        model: ProfileViewModel,
+        onboardingService: OnboardingService?,
+        repository: AppRepository? = nil,
+        onSignOut: @escaping () -> Void,
+        onAccountDeleted: @escaping () -> Void = {}
+    ) {
         self.model = model
         self.onboardingService = onboardingService
+        self.repository = repository
         self.onSignOut = onSignOut
+        self.onAccountDeleted = onAccountDeleted
     }
 
     var body: some View {
@@ -89,7 +100,13 @@ struct ProfileView: View {
 
                 ProfileSection(title: "账户") {
                     NavigationLink {
-                        PrivacyDataView()
+                        PrivacyDataView(
+                            model: PrivacyDataViewModel(
+                                repository: repository,
+                                seedPlan: ProcessInfo.processInfo.arguments.contains("-uiTestProfile") ? .uiTestAllowed : nil
+                            ),
+                            onAccountDeleted: onAccountDeleted
+                        )
                     } label: {
                         ProfileNavigationRow(
                             symbol: "hand.raised",
@@ -186,6 +203,16 @@ struct ProfileView: View {
 }
 
 struct PrivacyDataView: View {
+    @StateObject private var model: PrivacyDataViewModel
+    let onAccountDeleted: () -> Void
+    @State private var shareItem: ExportShareItem?
+    @State private var confirmsDeletion = false
+
+    init(model: PrivacyDataViewModel, onAccountDeleted: @escaping () -> Void) {
+        _model = StateObject(wrappedValue: model)
+        self.onAccountDeleted = onAccountDeleted
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -194,6 +221,62 @@ struct PrivacyDataView: View {
                     PrivacyStatusRow(symbol: "iphone", title: "本机缓存", value: "账户隔离")
                     PrivacyStatusRow(symbol: "house", title: "家庭数据", value: "云端同步")
                 }
+
+                ProfileSection(title: "我的数据") {
+                    Button(action: model.exportData) {
+                        PrivacyActionRow(
+                            symbol: "square.and.arrow.up",
+                            title: "导出我的数据",
+                            value: model.isExporting ? "正在生成" : "JSON 文件",
+                            showsProgress: model.isExporting
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.isExporting || model.isDeleting)
+                    .accessibilityIdentifier("privacy-export-data")
+                }
+
+                ProfileSection(title: "账号") {
+                    if model.isLoading && model.plan == nil {
+                        PrivacyActionRow(symbol: "person.crop.circle.badge.questionmark", title: "注销账号", value: "正在确认", showsProgress: true)
+                    } else if let blocker = model.plan?.blockers.first {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label("暂时无法注销", systemImage: "person.2.badge.gearshape")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(GoHomeTheme.ink)
+                            Text(blocker.message)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(GoHomeTheme.mutedInk)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
+                        .accessibilityIdentifier("privacy-delete-blocked")
+                    } else {
+                        Button(role: .destructive) { confirmsDeletion = true } label: {
+                            PrivacyActionRow(
+                                symbol: "trash",
+                                title: "永久删除账号",
+                                value: deletionSummary,
+                                showsProgress: model.isDeleting,
+                                destructive: true
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(model.plan?.canDelete != true || model.isDeleting || model.isExporting)
+                        .accessibilityIdentifier("privacy-delete-account")
+                    }
+                }
+
+                if let note = model.plan?.retentionNote, !note.isEmpty {
+                    Text(note)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                }
+
+                if let error = model.errorMessage {
+                    Label(error, systemImage: "exclamationmark.circle")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                }
             }
             .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
             .padding(.top, 18)
@@ -201,7 +284,93 @@ struct PrivacyDataView: View {
         }
         .background(GoHomeTheme.paper)
         .profileNavigationTitle("隐私与数据")
+        .task { model.start() }
+        .onChange(of: model.exportURL) { url in
+            if let url { shareItem = ExportShareItem(url: url) }
+        }
+        .sheet(item: $shareItem, onDismiss: model.clearExport) { item in
+            SystemShareSheet(items: [item.url])
+        }
+        .alert("永久删除账号？", isPresented: $confirmsDeletion) {
+            Button("取消", role: .cancel) {}
+            Button("永久删除", role: .destructive) {
+                Task {
+                    if await model.deleteAccount() { onAccountDeleted() }
+                }
+            }
+        } message: {
+            Text(deletionConfirmationMessage)
+        }
     }
+
+    private var deletionSummary: String {
+        guard let scope = model.plan?.deletionScope else { return "不可恢复" }
+        if !scope.familiesToDelete.isEmpty { return "含家庭数据" }
+        return "不可恢复"
+    }
+
+    private var deletionConfirmationMessage: String {
+        guard let scope = model.plan?.deletionScope else { return "账号与登录数据将被删除，且无法恢复。" }
+        var parts = ["账号、登录凭证和推送标识将被删除"]
+        if !scope.familiesToDelete.isEmpty { parts.append("你独自创建的家庭及其数据也会删除") }
+        if scope.authoredMemories > 0 { parts.append("你发布的 \(scope.authoredMemories) 条记忆会删除") }
+        return parts.joined(separator: "；") + "。此操作无法恢复。"
+    }
+}
+
+private struct PrivacyActionRow: View {
+    let symbol: String
+    let title: String
+    let value: String
+    let showsProgress: Bool
+    var destructive = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 24)
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+            Spacer()
+            if showsProgress {
+                ProgressView().controlSize(.small)
+            } else {
+                Text(value)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(destructive ? Color.red.opacity(0.75) : GoHomeTheme.mutedInk)
+            }
+        }
+        .foregroundStyle(destructive ? Color.red : GoHomeTheme.ink)
+        .frame(minHeight: 52)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct ExportShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct SystemShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+private extension AccountDeletionPlan {
+    static let uiTestAllowed = AccountDeletionPlan(
+        canDelete: true,
+        requiresOwnershipTransfer: false,
+        families: [],
+        blockers: [],
+        deletionScope: AccountDeletionScope(familiesToDelete: ["ui-test-family"], membershipsToLeave: [], authoredMemories: 1),
+        retentionNote: "账号与可删除内容将按规则清理。"
+    )
 }
 
 private struct ProfileNavigationTitleModifier: ViewModifier {

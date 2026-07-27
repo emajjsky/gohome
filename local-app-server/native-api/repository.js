@@ -159,6 +159,311 @@ function activityIntervalInput(input = {}, now = Date.now()) {
     };
 }
 
+function safeUserExport(user = {}) {
+    return {
+        id: textId(user.id),
+        email: String(user.email || ""),
+        phone: String(user.phone || ""),
+        display_name: String(user.display_name || ""),
+        status: String(user.status || "active"),
+        created_at: user.created_at || null,
+        updated_at: user.updated_at || null,
+    };
+}
+
+function accountDeletionPlanForDb(db, userId) {
+    const user = textId(userId);
+    const memberships = (db.family_members || []).filter((item) => (
+        textId(item.user_id) === user && String(item.status || "active") === "active"
+    ));
+    const families = memberships.map((membership) => {
+        const family = (db.families || []).find((item) => textId(item.id) === textId(membership.family_id)) || {};
+        const activeMembers = (db.family_members || []).filter((item) => (
+            textId(item.family_id) === textId(membership.family_id) && String(item.status || "active") === "active"
+        ));
+        const role = String(membership.role || "member").toLowerCase();
+        const ownsFamily = ["owner", "creator"].includes(role) || textId(family.created_by_user_id) === user;
+        return {
+            id: textId(membership.family_id),
+            name: String(family.name || "家庭"),
+            role: String(membership.role || "member"),
+            owns_family: ownsFamily,
+            active_member_count: activeMembers.length,
+            action: ownsFamily ? (activeMembers.length > 1 ? "transfer_ownership" : "delete_family") : "leave_family",
+        };
+    });
+    const blockers = families
+        .filter((family) => family.action === "transfer_ownership")
+        .map((family) => ({
+            code: "ownership_transfer_required",
+            family_id: family.id,
+            family_name: family.name,
+            message: `请先为“${family.name}”转交家庭创建者身份`,
+        }));
+    const familyIdsToDelete = families.filter((family) => family.action === "delete_family").map((family) => family.id);
+    const membershipIdsToLeave = families.filter((family) => family.action === "leave_family").map((family) => family.id);
+    const authoredMemories = (db.family_memories || []).filter((item) => textId(item.author_user_id) === user).length;
+    return {
+        can_delete: blockers.length === 0,
+        requires_ownership_transfer: blockers.length > 0,
+        families,
+        blockers,
+        deletion_scope: {
+            families_to_delete: familyIdsToDelete,
+            memberships_to_leave: membershipIdsToLeave,
+            authored_memories: authoredMemories,
+        },
+        retention_note: "账号、登录凭证、推送标识和可删除内容将被移除；依法必须保留的安全审计会解除账号关联后按期限留存。",
+    };
+}
+
+function accountExportForDb(db, userId, generatedAt = new Date().toISOString()) {
+    const user = textId(userId);
+    const account = (db.users || []).find((item) => textId(item.id) === user);
+    if (!account) throw repositoryError("user not found", 404);
+    const memberships = (db.family_members || []).filter((item) => (
+        textId(item.user_id) === user && String(item.status || "active") === "active"
+    ));
+    const usersById = new Map((db.users || []).map((item) => [textId(item.id), item]));
+    const values = (source) => Array.isArray(source) ? source : Object.values(source || {});
+    const forFamily = (source, familyId) => values(source).filter((item) => textId(item.family_id) === familyId);
+
+    const families = memberships.map((membership) => {
+        const familyId = textId(membership.family_id);
+        const family = (db.families || []).find((item) => textId(item.id) === familyId) || {};
+        const memoryRows = forFamily(db.family_memories, familyId);
+        const memoryIds = new Set(memoryRows.map((item) => textId(item.id)));
+        const memoryMedia = (db.family_memory_media || []).filter((item) => memoryIds.has(textId(item.memory_id)));
+        const memoryComments = (db.family_memory_comments || []).filter((item) => memoryIds.has(textId(item.memory_id)));
+        const memoryFavorites = (db.family_memory_favorites || []).filter((item) => memoryIds.has(textId(item.memory_id)));
+        const messageIds = new Set(forFamily(db.app_messages, familyId).map((item) => textId(item.message_id || item.id)));
+        const events = forFamily(db.events, familyId).map((item) => {
+            const evidenceIds = [item.media_asset_id, ...(Array.isArray(item.payload?.evidence_media_assets)
+                ? item.payload.evidence_media_assets.map((evidence) => evidence?.asset_id || evidence?.id)
+                : [])].map(textId).filter(Boolean);
+            return {
+                id: textId(item.id),
+                event_type: String(item.event_type || "event"),
+                level: String(item.level || "warning"),
+                summary: String(item.summary || ""),
+                room: String(item.room || ""),
+                camera_id: item.camera_id ? textId(item.camera_id) : null,
+                camera_name: String(item.camera_name || ""),
+                occurred_at: item.occurred_at || null,
+                acknowledged: Boolean(item.acknowledged),
+                resolution: String(item.resolution || ""),
+                evidence_asset_ids: [...new Set(evidenceIds)],
+                verification: item.payload?.verification ? {
+                    status: String(item.payload.verification.status || ""),
+                    reason: String(item.payload.verification.result?.reason || ""),
+                } : null,
+            };
+        });
+        return {
+            family: {
+                id: familyId,
+                name: String(family.name || "家庭"),
+                status: String(family.status || "active"),
+                timezone: String(family.timezone || "Asia/Shanghai"),
+                role: String(membership.role || "member"),
+                joined_at: membership.joined_at || membership.created_at || null,
+                created_at: family.created_at || null,
+                updated_at: family.updated_at || null,
+            },
+            members: forFamily(db.family_members, familyId)
+                .filter((item) => String(item.status || "active") === "active")
+                .map((item) => ({
+                    user_id: textId(item.user_id),
+                    display_name: String(usersById.get(textId(item.user_id))?.display_name || "家庭成员"),
+                    role: String(item.role || "member"),
+                    status: String(item.status || "active"),
+                    joined_at: item.joined_at || item.created_at || null,
+                })),
+            care_profiles: forFamily(db.elder_profiles, familyId).map((item) => ({
+                id: textId(item.id),
+                display_name: String(item.display_name || ""),
+                relationship: String(item.relationship || ""),
+                age: item.age ?? null,
+                city: String(item.city || ""),
+                phone: String(item.phone || ""),
+                mobile_phone: String(item.mobile_phone || ""),
+                home_phone: String(item.home_phone || ""),
+                health_notes: String(item.health_notes || ""),
+                care_preferences: clone(item.care_preferences || {}),
+                created_at: item.created_at || null,
+                updated_at: item.updated_at || null,
+            })),
+            devices: forFamily(db.devices, familyId).map((item) => ({
+                device_id: textId(item.device_id || item.id),
+                name: String(item.name || "回家盒子"),
+                device_type: String(item.device_type || "edge-agent"),
+                status: String(item.status || ""),
+                app_version: String(item.app_version || ""),
+                model_version: String(item.model_version || ""),
+                last_seen_at: item.last_seen_at || null,
+                created_at: item.created_at || null,
+            })),
+            device_bindings: forFamily(db.device_bindings, familyId).map((item) => ({
+                id: textId(item.id),
+                device_id: textId(item.device_id),
+                device_name: String(item.device_name || "回家盒子"),
+                status: String(item.status || ""),
+                bound_at: item.bound_at || item.created_at || null,
+                last_seen_at: item.last_seen_at || null,
+            })),
+            cameras: forFamily(db.cameras, familyId).map((item) => ({
+                id: textId(item.id),
+                device_id: item.device_id ? textId(item.device_id) : null,
+                name: String(item.name || ""),
+                room: String(item.room || ""),
+                enabled: item.enabled !== false,
+                status: String(item.status || ""),
+                sync_status: String(item.sync_status || ""),
+                created_at: item.created_at || null,
+                updated_at: item.updated_at || null,
+            })),
+            rules: clone(db.family_rules?.[familyId] || {}),
+            care_preferences: clone(db.care_preferences?.[familyId] || null),
+            calendar: forFamily(db.calendar_events, familyId).map((item) => ({
+                id: textId(item.id), title: String(item.title || ""), starts_at: item.starts_at || null,
+                note: String(item.note || ""), created_at: item.created_at || null,
+            })),
+            events,
+            media: forFamily(db.assets, familyId).map((item) => ({
+                id: textId(item.id),
+                camera_id: item.camera_id ? textId(item.camera_id) : null,
+                device_id: item.device_id ? textId(item.device_id) : null,
+                content_type: String(item.content_type || "application/octet-stream"),
+                size_bytes: Number(item.size_bytes || item.size || 0),
+                purpose: String(item.purpose || item.metadata?.purpose || "evidence"),
+                created_at: item.created_at || null,
+            })),
+            memories: memoryRows.map((item) => ({
+                id: textId(item.id),
+                author_user_id: textId(item.author_user_id),
+                body: String(item.body || ""),
+                happened_at: item.happened_at || null,
+                location_name: String(item.location_name || ""),
+                people: arrayValue(item.people),
+                media: memoryMedia.filter((media) => textId(media.memory_id) === textId(item.id)).map((media) => ({
+                    asset_id: textId(media.asset_id), sort_order: Number(media.sort_order || 0), alt_text: String(media.alt_text || ""),
+                })),
+                comments: memoryComments.filter((comment) => textId(comment.memory_id) === textId(item.id)).map((comment) => ({
+                    id: textId(comment.id), author_user_id: textId(comment.author_user_id), body: String(comment.body || ""), created_at: comment.created_at || null,
+                })),
+                favorite_user_ids: memoryFavorites.filter((favorite) => textId(favorite.memory_id) === textId(item.id)).map((favorite) => textId(favorite.user_id)),
+                created_at: item.created_at || null,
+                updated_at: item.updated_at || null,
+            })),
+            activity_intervals: forFamily(db.activity_intervals, familyId).map((item) => ({
+                id: textId(item.id), camera_id: item.camera_id ? textId(item.camera_id) : null,
+                room: String(item.room || ""), started_at: item.started_at || null, ended_at: item.ended_at || null,
+                person_count_max: Number(item.person_count_max || 0), postures: arrayValue(item.postures), confidence: item.confidence ?? null,
+            })),
+            care_cards: forFamily(db.care_cards, familyId).map((item) => ({
+                id: textId(item.id), card_date: item.card_date || null, card_type: String(item.card_type || "daily"),
+                title: String(item.title || ""), body: String(item.body || ""), facts: clone(item.facts || []), status: String(item.status || "open"),
+                created_at: item.created_at || null,
+            })),
+            messages: forFamily(db.app_messages, familyId).map((item) => ({
+                id: textId(item.message_id || item.id), message_type: String(item.message_type || "care"),
+                title: String(item.title || ""), subtitle: String(item.subtitle || ""), body: String(item.body || ""),
+                facts: clone(item.facts || []), status: String(item.status || "open"), created_at: item.created_at || null,
+            })),
+            message_actions: (db.app_message_actions || []).filter((item) => (
+                textId(item.family_id) === familyId && messageIds.has(textId(item.message_id))
+            )).map((item) => ({
+                id: textId(item.id), message_id: textId(item.message_id), user_id: item.user_id ? textId(item.user_id) : null,
+                action_type: String(item.action_type || ""), payload: clone(item.payload || {}), created_at: item.created_at || null,
+            })),
+        };
+    });
+    return {
+        schema_version: 1,
+        generated_at: generatedAt,
+        account: safeUserExport(account),
+        families,
+        export_scope: {
+            family_count: families.length,
+            includes_media_files: false,
+            includes_media_metadata: true,
+        },
+    };
+}
+
+function applyAccountDeletionToDb(db, userId, plan) {
+    const user = textId(userId);
+    const deletedFamilyIds = new Set((plan?.deletion_scope?.families_to_delete || []).map(textId));
+    const familyMatches = (item) => deletedFamilyIds.has(textId(item?.family_id));
+    const arrayFilter = (key, predicate) => {
+        if (Array.isArray(db[key])) db[key] = db[key].filter((item) => !predicate(item));
+    };
+    const deletedDeviceIds = new Set(Object.values(db.devices || {})
+        .filter(familyMatches)
+        .map((item) => textId(item.device_id || item.id)));
+    const deletedMemoryIds = new Set((db.family_memories || [])
+        .filter((item) => familyMatches(item) || textId(item.author_user_id) === user)
+        .map((item) => textId(item.id)));
+    const deletedMessageIds = new Set((db.app_messages || [])
+        .filter((item) => familyMatches(item) || textId(item.user_id) === user)
+        .map((item) => textId(item.message_id || item.id)));
+
+    arrayFilter("families", (item) => deletedFamilyIds.has(textId(item.id)));
+    arrayFilter("family_members", (item) => familyMatches(item) || textId(item.user_id) === user);
+    arrayFilter("app_sessions", (item) => textId(item.user_id) === user);
+    arrayFilter("device_bindings", familyMatches);
+    arrayFilter("binding_codes", familyMatches);
+    arrayFilter("device_tokens", familyMatches);
+    arrayFilter("media_upload_intents", (item) => familyMatches(item) || textId(item.user_id) === user);
+    arrayFilter("events", familyMatches);
+    arrayFilter("heartbeats", (item) => deletedDeviceIds.has(textId(item.device_id)));
+    arrayFilter("calendar_events", familyMatches);
+    arrayFilter("care_cards", familyMatches);
+    arrayFilter("app_messages", (item) => familyMatches(item) || textId(item.user_id) === user);
+    arrayFilter("app_message_actions", (item) => (
+        familyMatches(item) || textId(item.user_id) === user || deletedMessageIds.has(textId(item.message_id))
+    ));
+    arrayFilter("notification_deliveries", (item) => familyMatches(item) || textId(item.user_id) === user);
+    arrayFilter("app_push_tokens", (item) => familyMatches(item) || textId(item.user_id) === user);
+    arrayFilter("scheduler_runs", familyMatches);
+    arrayFilter("model_generation_jobs", familyMatches);
+    arrayFilter("content_sources", familyMatches);
+    arrayFilter("content_recommendations", familyMatches);
+    arrayFilter("activity_intervals", familyMatches);
+    arrayFilter("family_memories", (item) => deletedMemoryIds.has(textId(item.id)));
+    arrayFilter("family_memory_media", (item) => deletedMemoryIds.has(textId(item.memory_id)));
+    arrayFilter("family_memory_comments", (item) => deletedMemoryIds.has(textId(item.memory_id)) || textId(item.author_user_id) === user);
+    arrayFilter("family_memory_favorites", (item) => deletedMemoryIds.has(textId(item.memory_id)) || textId(item.user_id) === user);
+    arrayFilter("device_config_versions", familyMatches);
+    arrayFilter("audit_logs", familyMatches);
+    arrayFilter("users", (item) => textId(item.id) === user);
+
+    for (const [key, profile] of Object.entries(db.elder_profiles || {})) {
+        if (familyMatches(profile)) delete db.elder_profiles[key];
+    }
+    for (const [key, camera] of Object.entries(db.cameras || {})) {
+        if (familyMatches(camera)) delete db.cameras[key];
+    }
+    for (const device of Object.values(db.devices || {})) {
+        if (!familyMatches(device)) continue;
+        device.family_id = null;
+        device.updated_at = new Date().toISOString();
+    }
+    for (const familyId of deletedFamilyIds) {
+        if (db.family_rules) delete db.family_rules[familyId];
+        if (db.care_preferences) delete db.care_preferences[familyId];
+        if (db.product_preferences) delete db.product_preferences[familyId];
+    }
+    for (const preferences of Object.values(db.product_preferences || {})) {
+        if (textId(preferences?.updated_by) === user) preferences.updated_by = null;
+    }
+    for (const log of db.audit_logs || []) {
+        if (textId(log.actor_user_id) === user) log.actor_user_id = null;
+    }
+    if (textId(db.active_user_id) === user) db.active_user_id = db.users?.[0]?.id || null;
+    return { deleted_family_ids: [...deletedFamilyIds], deleted_memory_ids: [...deletedMemoryIds] };
+}
+
 class NativeRepository {
     bootstrapForUser(_userId) {
         throw new Error("NativeRepository.bootstrapForUser is not implemented");
@@ -243,6 +548,18 @@ class NativeRepository {
     ingestActivityIntervals(_familyId, _deviceId, _intervals) {
         throw new Error("NativeRepository.ingestActivityIntervals is not implemented");
     }
+
+    accountExport(_userId) {
+        throw new Error("NativeRepository.accountExport is not implemented");
+    }
+
+    accountDeletionPlan(_userId) {
+        throw new Error("NativeRepository.accountDeletionPlan is not implemented");
+    }
+
+    deleteAccount(_userId, _input) {
+        throw new Error("NativeRepository.deleteAccount is not implemented");
+    }
 }
 
 class JsonNativeRepository extends NativeRepository {
@@ -266,6 +583,8 @@ class JsonNativeRepository extends NativeRepository {
         if (!Array.isArray(this.db.family_memory_comments)) this.db.family_memory_comments = [];
         if (!Array.isArray(this.db.family_memory_favorites)) this.db.family_memory_favorites = [];
         if (!Array.isArray(this.db.activity_intervals)) this.db.activity_intervals = [];
+        if (!Array.isArray(this.db.app_message_actions)) this.db.app_message_actions = [];
+        if (!Array.isArray(this.db.media_upload_intents)) this.db.media_upload_intents = [];
     }
 
     user(userId) {
@@ -323,6 +642,51 @@ class JsonNativeRepository extends NativeRepository {
             )).length,
             revision: textId(this.db.updated_at || this.clock()),
         });
+    }
+
+    accountExport(userId) {
+        this.user(userId);
+        return clone(accountExportForDb(this.db, userId, this.clock()));
+    }
+
+    accountDeletionPlan(userId) {
+        this.user(userId);
+        return clone(accountDeletionPlanForDb(this.db, userId));
+    }
+
+    deleteAccount(userId, input = {}) {
+        this.user(userId);
+        if (String(input.confirmation || "") !== "DELETE_ACCOUNT") {
+            throw repositoryError("account deletion confirmation required", 400);
+        }
+        const plan = accountDeletionPlanForDb(this.db, userId);
+        if (!plan.can_delete) throw repositoryError("family ownership transfer required", 409);
+        const deletedFamilyIds = new Set(plan.deletion_scope.families_to_delete.map(textId));
+        const deletedMemoryIds = new Set((this.db.family_memories || [])
+            .filter((item) => deletedFamilyIds.has(textId(item.family_id)) || textId(item.author_user_id) === textId(userId))
+            .map((item) => textId(item.id)));
+        const cleanupAssetIds = new Set((this.db.assets || [])
+            .filter((item) => deletedFamilyIds.has(textId(item.family_id)))
+            .map((item) => textId(item.id)));
+        for (const media of this.db.family_memory_media || []) {
+            if (!deletedMemoryIds.has(textId(media.memory_id))) continue;
+            const usedByRetainedMemory = this.db.family_memory_media.some((candidate) => (
+                textId(candidate.asset_id) === textId(media.asset_id) && !deletedMemoryIds.has(textId(candidate.memory_id))
+            ));
+            if (!usedByRetainedMemory) cleanupAssetIds.add(textId(media.asset_id));
+        }
+        const cleanupObjects = (this.db.media_upload_intents || [])
+            .filter((item) => deletedFamilyIds.has(textId(item.family_id)) || textId(item.user_id) === textId(userId))
+            .map((item) => ({ storage_provider: "cos", storage_key: String(item.object_key || "") }))
+            .filter((item) => item.storage_key);
+        applyAccountDeletionToDb(this.db, userId, plan);
+        return {
+            deleted: true,
+            deleted_user_id: textId(userId),
+            deleted_family_ids: [...deletedFamilyIds],
+            cleanup_all_asset_ids: [...cleanupAssetIds].filter(Boolean),
+            cleanup_storage_objects: cleanupObjects,
+        };
     }
 
     onboardingForFamily(userId, familyId) {
@@ -758,6 +1122,9 @@ module.exports = {
     ACTION_TYPES,
     NativeRepository,
     JsonNativeRepository,
+    accountDeletionPlanForDb,
+    accountExportForDb,
+    applyAccountDeletionToDb,
     actionInput,
     memoryInput,
     activityIntervalInput,
