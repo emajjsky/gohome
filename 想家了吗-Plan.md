@@ -3367,6 +3367,17 @@ Apple 付费开发者审核、APNs capability、`.p8` 和 TestFlight 仍是独�
 4. [x] 首次家庭引导改用安全邀请消费接口；bootstrap 和家庭创建响应不再返回永久 `join_code`，旧 `/api/families/join` 仅委托新安全消费逻辑。
 5. [x] 自动化覆盖错误、过期、撤销、已用、历史格式、创建者权限、已有成员不消耗邀请码、JSON 并发消费、PostgreSQL 约束和 iOS 创建者/成员界面边界。
 6. [x] 腾讯云已执行 `011_family_invitations.sql` 并按生产共同基线三方合并部署；公网 PostgreSQL 已完成创建者权限、并发唯一消费、撤销、旧码拒绝和零残留清理，真实业务计数保持 `events=261 / assets=501 / pending_media_uploads=0`。
-7. [ ] Apple 正式团队 `yihua tan / X4M4T6Z4CJ` 已在 Xcode 生效，Release Archive 和 App Store Connect 导出均成功；生成的 Store profile 为 `get-task-allow=false`，分发 IPA 已具备。下一步在 App Store Connect 完成 provider/协议与 App 记录初始化，配置 APNs 后上传 Archive 并启用 TestFlight；实际上传成功前不标记交付完成。
+7. [x] Apple 正式团队 `yihua tan / X4M4T6Z4CJ` 已生效；App Store Connect App 记录、Push Notifications capability、Sandbox + Production APNs Auth Key、腾讯云 Provider、生产 entitlement 和签名 IPA 均已配置并校验。Archive 已上传，TestFlight 构建 `1.0.0 (1)` 为准备提交，内测组与当前测试员已启用。
 
 本批继续不修改 Raspberry Pi、EACP、姿态、跌倒、火灾、多模态复核、隐私流和盒子配置。
+
+## 15.18 APNs 与 TestFlight 交付收口（2026-07-27）
+
+1. [x] 创建 App Store Connect App「想家了吗」，固定 Bundle ID `com.gohome.family` 和 Apple App ID `6795126675`。
+2. [x] 为 App ID 启用 Push Notifications，创建支持 Sandbox 和 Production 的 APNs Auth Key；私钥不进入仓库。
+3. [x] 腾讯云安装受限私钥、随机 Token 加密密钥和 APNs 环境变量，应用迁移 `010_apns_delivery.sql`，校验 Provider 为 configured。
+4. [x] iOS 开启 `GoHomePushEnabled`，Debug 使用 sandbox token，Release/TestFlight 使用 production token；保留类型化消息/事件深链路由。
+5. [x] 通过 APNs 加密、JWT、sandbox/production、重试、失效 token、事件路由专项，iOS `100/100` 单元测试和发布元数据检查。
+6. [x] 生成 App Store IPA 并校验 `aps-environment=production / get-task-allow=false / GoHomePushEnabled=true`；上传成功，TestFlight 已显示 `1.0.0 (1)` 为准备提交，出口合规已完成。
+7. [ ] 内部组「比赛内测」已启用自动分发，当前开发者账号已加入。在目标 iPhone 从 TestFlight 安装 `1.0.0 (1)` 后，完成通知授权、production token 登记、站内消息 + 系统通知双通道、前台提示、点击事件/消息深链和退出撤销验收。
+8. [ ] 比赛交付前补齐 TestFlight 测试说明、内部测试人员与必要合规问题；App Store 审核图、描述和审核账号不与首包内测试混做。

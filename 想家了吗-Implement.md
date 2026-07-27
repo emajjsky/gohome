@@ -11909,3 +11909,21 @@ P4 风险升频边界：
 - 生产差异合并副本首次启动时暴露线上旧仓储缺少 `PostgresNativeRepository.assertFamilyManager`；该权限辅助函数已从共同基线恢复并重新跑过组合回归。公网验收确认未登录 401、普通成员创建邀请 403、创建者创建 201、列表不泄露明文或哈希、已有成员 409 且不消耗、并发消费结果唯一为 `200 / 404`、撤销和旧格式均为 404，数据库仅保存哈希。
 - 公网 QA 家庭 `qa-family-invite-20260727` 和 4 个临时用户已在停服事务中删除；成员、邀请和会话均为 0。服务恢复后本机和公网 `/health` 均为 PostgreSQL，真实业务计数保持 `events=261 / assets=501 / pending_media_uploads=0`。清理前临时非数字家庭 ID 曾触发旧关怀调度器的 `family_id required for care card generation`，删除测试家庭后跨调度周期未再出现；真实家庭数据未参与清理。
 - 正式 Apple 开发者团队已确认为 `yihua tan / X4M4T6Z4CJ`，账号 `84010505@qq.com` 在 Xcode 显示 `Developer Team / Admin`，并已启用 Certificates、Identifiers & Profiles。使用该 Team ID 自动签名后，Xcode 新建开发证书与团队 profile，Release Archive 成功；随后成功生成 `iOS Team Store Provisioning Profile: com.gohome.family`，其 `get-task-allow=false`，并导出约 2.5 MB 的 App Store IPA。导出阶段仍出现 `No provider associated with App Store Connect user` 的商店配置告警，但不再阻止分发签名和 IPA 生成；下一步需登录 App Store Connect 完成 provider/协议、创建 App 记录、配置 APNs 并实际上传 Archive，上传成功后才能标记 TestFlight 就绪。
+
+## 147. 2026-07-27 APNs 正式启用与 TestFlight 首包上传
+
+### Apple 资源与服务端
+
+- App Store Connect 已创建「想家了吗」，Apple App ID 为 `6795126675`，Bundle ID 为 `com.gohome.family`。Apple Developer 中该 App ID 已启用 Push Notifications。
+- 已创建独立 APNs Auth Key `GoHome APNs 2026`，Key ID 为 `LF3BLVX29X`，同时允许 Sandbox 和 Production。`.p8` 只保存在本机受控下载位置和腾讯云 `/etc/gohome/apns/`，未进入 Git；服务器目录权限为 `750`，私钥和环境文件为 `root:gohome 640`。
+- 腾讯云已配置 APNs Team ID、Key ID、Topic、私钥路径和随机 256-bit Token 加密密钥；密钥内容未输出到日志或文档。服务端 `createApnsProvider().configured=true`。
+- 云端已部署当前 `local-app-server`，应用 `010_apns_delivery.sql`，清理旧的 macOS `._*` 元数据残留。`apns-provider.js` 和 `server.js` SHA-256 分别为 `d292ce467ccea9051abf4b8a440baaa0662e62dfdd1ad33a2cd9438fe1a8a48a` 和 `f07ba6988b69b0a4c73ee537b25bc1c382fea7ca0dc39b901beb9edbcf16c931`。
+- 部署后 `gohome-app.service=active`，内外网 `/health` 均为 PostgreSQL，业务计数保持 `events=261 / assets=501 / pending_media_uploads=0`，未清空或修改正式家庭数据。
+
+### iOS 签名、校验与上传
+
+- `GoHomePushEnabled` 已开启，`aps-environment` 由构建配置注入：Debug 为 `development`，Release/App Store 为 `production`。App 内 token 登记仍以已登录家庭和用户授权为前提，退出时撤销安装实例。
+- APNs Provider 与投递专项 `7/7` 通过，PostgreSQL 集成项因本机未提供连接而跳过；iOS 单元测试 `100/100` 通过，iOS 发布元数据检查通过。
+- 新 Release Archive 已完成 App Store 重签名。导出 IPA 实测为 `aps-environment=production`、`get-task-allow=false`、`GoHomePushEnabled=true`，不复用先前不含推送权限的包。
+- 2026-07-27 20:16 上传成功，Xcode 返回 `Upload succeeded`。TestFlight 已显示 `1.0.0 (1)` 且状态为「准备提交 / 90 天后过期」；首次构建的出口合规已按「不包含自研或非豁免加密」如实确认，后续包通过 `ITSAppUsesNonExemptEncryption=false` 避免重复询问。仍必须在目标 iPhone 安装，验证首次通知授权、Production token 登记、系统通知到达、前台展示和冷/热启动深链路由，才能标记 APNs/TestFlight 真机闭环完成。
+- App Store Connect 已建立内部组「比赛内测」并开启自动分发；`84010505@qq.com` 已以内部测试员身份加入，组状态为 `1 个测试员 / 1 个构建版本`。后续操作从 iPhone 的 TestFlight 安装该构建开始，不再通过 Xcode 开发包代替生产推送验收。

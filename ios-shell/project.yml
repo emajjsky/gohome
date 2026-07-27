@@ -10,6 +10,11 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     DEVELOPMENT_TEAM: X4M4T6Z4CJ
     CODE_SIGN_STYLE: Automatic
+  configs:
+    Debug:
+      APS_ENVIRONMENT: development
+    Release:
+      APS_ENVIRONMENT: production
 targets:
   GoHomeShell:
     type: application

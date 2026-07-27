@@ -118,11 +118,11 @@ Test `gohome://message/:id`, `gohome://event/:id`, and APNs payload equivalents.
 
 Expected: FAIL because routing still points into WebView paths.
 
-- [ ] **Step 3: Implement native notification routing**
+- [x] **Step 3: Implement native notification routing**
 
 Convert AppDelegate callbacks into typed `AppDestination.message(id:)` or `.event(id:)` and publish them to the active tab's navigation path. Add `aps-environment` entitlement through Xcode signing and set `GoHomePushEnabled` per build configuration rather than a hardcoded production claim.
 
-- [ ] **Step 4: Run local notification and payload tests**
+- [x] **Step 4: Run local notification and payload tests**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellTests/DeepLinkCoordinatorTests`
 
@@ -267,7 +267,7 @@ Expected: all PASS.
 
 Install on the trusted iPhone, execute every checklist item, capture screenshots and timings, and record APNs as blocked rather than passed if credentials are unavailable.
 
-- [ ] **Step 4: Archive and upload**
+- [x] **Step 4: Archive and upload**
 
 Archive, validate, and upload through Xcode Organizer or `xcrun altool/notarytool` successor supported by installed Xcode. Resolve signing/privacy failures rather than bypassing validation.
 

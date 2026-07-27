@@ -31,9 +31,10 @@ function hasNonEmptyPlistString(source, key) {
 
 assert.match(info, /<key>GoHomeAPIBaseURL<\/key>\s*<string>https:\/\//, "production API must use HTTPS");
 assert.match(info, /<key>CFBundleIconName<\/key>\s*<string>AppIcon<\/string>/, "the built app must declare AppIcon");
-assert.match(info, /<key>GoHomePushEnabled<\/key>\s*<false\/>/, "push must remain disabled for the Personal Team build");
+assert.match(info, /<key>GoHomePushEnabled<\/key>\s*<true\/>/, "push must be enabled for the paid-team build");
+assert.match(info, /<key>ITSAppUsesNonExemptEncryption<\/key>\s*<false\/>/, "system-only encryption must declare export-compliance exemption");
 assert.doesNotMatch(info, /GoHomeWebAppURL/, "the removed WebView runtime must not return");
-assert.doesNotMatch(entitlements, /aps-environment/, "free-signed builds must not claim APNs entitlement");
+assert.match(entitlements, /<key>aps-environment<\/key>\s*<string>\$\(APS_ENVIRONMENT\)<\/string>/, "APNs entitlement must follow the build configuration");
 
 assert.match(privacy, /<key>NSPrivacyTracking<\/key>\s*<false\/>/);
 assert.match(privacy, /NSPrivacyAccessedAPICategoryUserDefaults/);
@@ -55,6 +56,8 @@ assert.doesNotMatch(privacy, /<key>NSPrivacyCollectedDataTypeTracking<\/key>\s*<
 assert.match(project, /PrivacyInfo\.xcprivacy in Resources/);
 assert.match(project, /Assets\.xcassets in Resources/);
 assert.match(project, /MARKETING_VERSION = 1\.0\.0;/);
+assert.match(project, /APS_ENVIRONMENT = development;/, "Debug builds must register sandbox APNs tokens");
+assert.match(project, /APS_ENVIRONMENT = production;/, "Release builds must register production APNs tokens");
 
 const icon = fs.readFileSync(iconPath);
 assert.equal(icon.toString("ascii", 1, 4), "PNG", "app icon must be a PNG");
