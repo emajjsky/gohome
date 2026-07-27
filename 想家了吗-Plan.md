@@ -3367,6 +3367,6 @@ Apple 付费开发者审核、APNs capability、`.p8` 和 TestFlight 仍是独�
 4. [x] 首次家庭引导改用安全邀请消费接口；bootstrap 和家庭创建响应不再返回永久 `join_code`，旧 `/api/families/join` 仅委托新安全消费逻辑。
 5. [x] 自动化覆盖错误、过期、撤销、已用、历史格式、创建者权限、已有成员不消耗邀请码、JSON 并发消费、PostgreSQL 约束和 iOS 创建者/成员界面边界。
 6. [x] 腾讯云已执行 `011_family_invitations.sql` 并按生产共同基线三方合并部署；公网 PostgreSQL 已完成创建者权限、并发唯一消费、撤销、旧码拒绝和零残留清理，真实业务计数保持 `events=261 / assets=501 / pending_media_uploads=0`。
-7. [ ] Apple 开发者身份验证已成功；2026-07-27 本机 Release Archive 已成功，但实际仍使用 `Apple Development`、单设备 `iOS Team Provisioning Profile` 和 `get-task-allow=true`。App Store Connect 导出明确返回当前团队无权创建 iOS App Store 描述文件且账号没有 provider。下一步确认付费资格已激活并在 Xcode 登录对应 Apple ID，出现正式分发团队后再启用 APNs、上传 Archive 和 TestFlight；上传成功前不得宣称已具备发布签名。
+7. [ ] Apple 正式团队 `yihua tan / X4M4T6Z4CJ` 已在 Xcode 生效，Release Archive 和 App Store Connect 导出均成功；生成的 Store profile 为 `get-task-allow=false`，分发 IPA 已具备。下一步在 App Store Connect 完成 provider/协议与 App 记录初始化，配置 APNs 后上传 Archive 并启用 TestFlight；实际上传成功前不标记交付完成。
 
 本批继续不修改 Raspberry Pi、EACP、姿态、跌倒、火灾、多模态复核、隐私流和盒子配置。
