@@ -8,6 +8,7 @@ from typing import Any, Dict
 from .activity import ActivityAnalyzer
 from .fall import FallAnalyzer
 from .fire import FireAnalyzer
+from .hailo_pose import HailoPoseBackend
 from .person_yolo import PersonDetector
 from .pose_rtmpose import RtmposeAnalyzer
 from .quality import QualityAnalyzer
@@ -43,6 +44,12 @@ class VisionPipeline:
         pose_cache_max_motion: float = 0.06,
         activity_window_seconds: float = 30.0,
         activity_max_samples: int = 90,
+        inference_backend: str = "auto",
+        hailo_pose_model: str = "/usr/share/hailo-models/yolov8s_pose_h8.hef",
+        hailo_pose_confidence: float = 0.25,
+        hailo_pose_nms_iou: float = 0.70,
+        hailo_retry_seconds: float = 30.0,
+        context_detection_interval_seconds: float = 3.0,
     ) -> None:
         self.default_config = {
             "black_brightness_threshold": black_brightness_threshold,
@@ -59,6 +66,8 @@ class VisionPipeline:
             "pose_cache_max_motion": pose_cache_max_motion,
             "activity_window_seconds": activity_window_seconds,
             "activity_max_samples": activity_max_samples,
+            "hailo_pose_confidence": hailo_pose_confidence,
+            "context_detection_interval_seconds": context_detection_interval_seconds,
         }
         self._pose_cache: dict[str, Dict[str, Any]] = {}
         self._activity_history: dict[str, deque[Dict[str, Any]]] = {}
@@ -87,6 +96,14 @@ class VisionPipeline:
             max_poses=pose_max_poses,
             tracking=pose_tracking,
         )
+        self.hailo_pose = HailoPoseBackend(
+            mode=inference_backend,
+            model_path=hailo_pose_model,
+            confidence=hailo_pose_confidence,
+            nms_iou=hailo_pose_nms_iou,
+            max_poses=pose_max_poses,
+            retry_seconds=hailo_retry_seconds,
+        )
 
     def analyze(
         self,
@@ -98,10 +115,53 @@ class VisionPipeline:
 
         quality = self.quality.analyze(frame, previous_frame, runtime_config)
         runtime_config["frame_motion_score"] = float(quality.get("motion_score") or 0.0)
-        person = self.person.analyze(frame, runtime_config)
+        accelerated = self.hailo_pose.analyze(frame, runtime_config)
+        context_runtime: Dict[str, Any] = {}
+        if accelerated is not None:
+            height, width = frame.shape[:2]
+            boxes = accelerated["boxes"]
+            detection_scores = accelerated["scores"]
+            accelerated_people = [
+                self.person.person_box(
+                    *[float(value) for value in boxes[index]],
+                    width,
+                    height,
+                    confidence=float(detection_scores[index]),
+                    source="hailo",
+                    label="人形命中",
+                )
+                for index in range(len(boxes))
+            ]
+            context_runtime = self.person.analyze_context(frame, runtime_config)
+            person = self.person.result_from_entities(
+                accelerated_people,
+                pets=context_runtime.get("pets") or [],
+                scene_objects=context_runtime.get("scene_objects") or [],
+                backend="hailo",
+                model_status="ready",
+                model_message=f"Hailo 姿态推理 {accelerated['latency_ms']:.1f} ms。",
+                model_name=str(accelerated.get("model_name") or "yolov8s_pose_h8.hef"),
+                detection_cached=False,
+            )
+        else:
+            person = self.person.analyze(frame, runtime_config)
         raw_people = list(person.get("people") or [])
         raw_pets = list(person.get("pets") or [])
-        raw_pose = self.pose.analyze(frame, runtime_config, people=raw_people)
+        raw_pose = (
+            self.pose.analyze_precomputed(
+                frame,
+                runtime_config,
+                keypoints=accelerated["keypoints"],
+                scores=accelerated["keypoint_scores"],
+                source_person_boxes=[list(map(float, box)) for box in accelerated["boxes"]],
+                model_name=str(accelerated.get("model_name") or "yolov8s_pose_h8.hef"),
+                model_message=f"Hailo 姿态推理 {accelerated['latency_ms']:.1f} ms。",
+                backend="hailo",
+                detection_source="hailo_unified_person_pose",
+            )
+            if accelerated is not None
+            else self.pose.analyze(frame, runtime_config, people=raw_people)
+        )
         pose = self._pose_with_short_cache(raw_pose, runtime_config, quality)
         scene_candidates = self._scene_objects_without_human_overlap(
             list(person.get("scene_objects") or []),
@@ -148,7 +208,13 @@ class VisionPipeline:
         self._update_person_result_after_pose_refine(person, people, pose.get("poses") or [])
         self._update_pet_result(person, pets)
         self._update_person_scene_context(person, scene)
-        fall = self.fall.analyze(self._people_for_fall_alerts(people, raw_people, runtime_config), runtime_config)
+        fall_people = self._people_for_fall_alerts(
+            people,
+            raw_people,
+            runtime_config,
+            box_fallback_enabled=accelerated is None,
+        )
+        fall = self.fall.analyze(fall_people, runtime_config)
         pose_fall_candidate = bool(pose.get("pose_fall_candidate"))
         if pose_fall_candidate and not fall["fall_candidate"]:
             fall = {
@@ -215,6 +281,11 @@ class VisionPipeline:
         }
 
         return {
+            "inference_backend": "hailo" if accelerated is not None else "cpu",
+            "inference_backend_status": self.hailo_pose.status(),
+            "inference_latency_ms": accelerated.get("latency_ms") if accelerated is not None else None,
+            "context_detection_cached": context_runtime.get("cached") if context_runtime else None,
+            "context_detection_age_seconds": context_runtime.get("age_seconds") if context_runtime else None,
             "detector_backend": person.get("detector_backend") or "basic",
             "model_status": person.get("model_status") or "basic",
             "model_message": person.get("model_message") or "",
@@ -275,6 +346,12 @@ class VisionPipeline:
             "algorithm_results": algorithm_results,
             "tags": tags,
         }
+
+    def runtime_status(self) -> Dict[str, Any]:
+        return {"inference_backend": self.hailo_pose.status()}
+
+    def close(self) -> None:
+        self.hailo_pose.close()
 
     def _activity_temporal_features(
         self,
@@ -606,6 +683,7 @@ class VisionPipeline:
         fall_candidate = any(
             float(item.get("fall_score") or 0.0) >= threshold
             and "fall_candidate" in (item.get("action_hints") or [])
+            and not item.get("normal_lying_zone")
             for item in poses
         )
         tags = [
@@ -819,7 +897,11 @@ class VisionPipeline:
         people: list[Dict[str, Any]],
         raw_people: list[Dict[str, Any]],
         config: Dict[str, Any],
+        *,
+        box_fallback_enabled: bool = True,
     ) -> list[Dict[str, Any]]:
+        if not box_fallback_enabled:
+            return []
         alert_people = self._fresh_people_for_alerts(people)
         min_confidence = float(config.get("fall_box_min_confidence", 0.30))
         for person in raw_people:

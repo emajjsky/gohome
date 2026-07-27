@@ -44,6 +44,7 @@ class Settings:
         self.lan_pairing_window_seconds = int(os.getenv("GOHOME_LAN_PAIRING_WINDOW_SECONDS", "900"))
         self.config_sync_enabled = os.getenv("GOHOME_CONFIG_SYNC_ENABLED", "1") == "1"
         self.config_sync_interval_seconds = float(os.getenv("GOHOME_CONFIG_SYNC_INTERVAL_SECONDS", "10"))
+        self.video_privacy_sync_interval_seconds = float(os.getenv("GOHOME_VIDEO_PRIVACY_SYNC_INTERVAL_SECONDS", "1"))
         self.config_sync_request_timeout_seconds = float(os.getenv("GOHOME_CONFIG_SYNC_REQUEST_TIMEOUT_SECONDS", os.getenv("GOHOME_UPLOAD_REQUEST_TIMEOUT_SECONDS", "12")))
         self.config_sync_test_capture_enabled = os.getenv("GOHOME_CONFIG_SYNC_TEST_CAPTURE_ENABLED", "0") == "1"
         self.upload_worker_enabled = os.getenv("GOHOME_UPLOAD_WORKER_ENABLED", "1") == "1"
@@ -78,6 +79,9 @@ class Settings:
         self.inference_active_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACTIVE_INTERVAL_SECONDS", "0.25"))
         self.inference_risk_interval_seconds = float(os.getenv("GOHOME_INFERENCE_RISK_INTERVAL_SECONDS", "0.16"))
         self.inference_max_starvation_seconds = float(os.getenv("GOHOME_INFERENCE_MAX_STARVATION_SECONDS", "3"))
+        self.inference_accelerated_idle_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACCELERATED_IDLE_INTERVAL_SECONDS", "0.5"))
+        self.inference_accelerated_active_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACCELERATED_ACTIVE_INTERVAL_SECONDS", "0.10"))
+        self.inference_accelerated_risk_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACCELERATED_RISK_INTERVAL_SECONDS", "0.067"))
 
         self.default_capture_interval_seconds = int(os.getenv("GOHOME_CAPTURE_INTERVAL_SECONDS", "5"))
         self.default_no_motion_seconds = int(os.getenv("GOHOME_NO_MOTION_SECONDS", "300"))
@@ -106,6 +110,12 @@ class Settings:
         self.pose_cache_max_motion = float(os.getenv("GOHOME_POSE_CACHE_MAX_MOTION", "0.06"))
         self.activity_window_seconds = float(os.getenv("GOHOME_ACTIVITY_WINDOW_SECONDS", "30"))
         self.activity_max_samples = int(os.getenv("GOHOME_ACTIVITY_MAX_SAMPLES", "90"))
+        self.inference_backend = os.getenv("GOHOME_INFERENCE_BACKEND", "auto").strip().lower() or "auto"
+        self.hailo_pose_model = os.getenv("GOHOME_HAILO_POSE_MODEL", "/usr/share/hailo-models/yolov8s_pose_h8.hef").strip()
+        self.hailo_pose_confidence = float(os.getenv("GOHOME_HAILO_POSE_CONFIDENCE", "0.25"))
+        self.hailo_pose_nms_iou = float(os.getenv("GOHOME_HAILO_POSE_NMS_IOU", "0.70"))
+        self.hailo_retry_seconds = float(os.getenv("GOHOME_HAILO_RETRY_SECONDS", "30"))
+        self.context_detection_interval_seconds = float(os.getenv("GOHOME_CONTEXT_DETECTION_INTERVAL_SECONDS", "3"))
         self.enable_demo_camera = os.getenv("GOHOME_ENABLE_DEMO_CAMERA", "0") == "1"
 
         self.notify_channel = os.getenv("GOHOME_NOTIFY_CHANNEL", "off").lower()

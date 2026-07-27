@@ -7,13 +7,19 @@ from .base import AlgorithmResult, clamp
 
 class FallAnalyzer:
     def analyze(self, people: list[Dict[str, Any]], config: Dict[str, Any]) -> Dict[str, Any]:
-        weak_candidates = [person for person in people if person.get("fall_candidate") and not self._is_strong_box_candidate(person, config)]
+        weak_candidates = [
+            person
+            for person in people
+            if person.get("fall_candidate")
+            and not person.get("normal_lying_zone")
+            and not self._is_strong_box_candidate(person, config)
+        ]
         candidates = [person for person in people if self._is_strong_box_candidate(person, config)]
         single_low_body = self._single_low_body_candidate(people, config)
         cluster = self._floor_cluster_candidate(people, config)
         score = 0.0
         for person in people:
-            if person in weak_candidates:
+            if person in weak_candidates or person.get("normal_lying_zone"):
                 continue
             aspect_ratio = float(person.get("aspect_ratio") or 0.0)
             center_y_ratio = float(person.get("center_y_ratio") or 0.0)
@@ -55,7 +61,11 @@ class FallAnalyzer:
         }
 
     def _is_strong_box_candidate(self, person: Dict[str, Any], config: Dict[str, Any]) -> bool:
-        if not person.get("fall_candidate") or person.get("presence_candidate"):
+        if (
+            not person.get("fall_candidate")
+            or person.get("presence_candidate")
+            or person.get("normal_lying_zone")
+        ):
             return False
         confidence = person.get("confidence")
         min_confidence = float(config.get("fall_box_min_confidence", 0.30))
@@ -69,7 +79,7 @@ class FallAnalyzer:
 
         candidates: list[Dict[str, Any]] = []
         for person in people:
-            if person.get("presence_candidate"):
+            if person.get("presence_candidate") or person.get("normal_lying_zone"):
                 continue
             bbox = person.get("bbox")
             if not bbox or len(bbox) != 4:
@@ -130,6 +140,8 @@ class FallAnalyzer:
 
         low_people = []
         for person in people:
+            if person.get("normal_lying_zone"):
+                continue
             bbox = person.get("bbox")
             if not bbox or len(bbox) != 4:
                 continue

@@ -31,12 +31,14 @@ from .camera_agent import CameraAgent, CameraError
 from .camera_config_authority import camera_config_authority
 from .config_sync_agent import ConfigSyncAgent
 from .detect_agent import DetectAgent
+from .device_binding_state import DeviceBindingState
 from .edge_bootstrap_service import EdgeBootstrapService
 from .event_agent import EventAgent
 from .live_relay_agent import LiveRelayAgent
 from .notifier import Notifier
 from .object_storage_service import ObjectStorageService, build_object_storage_router
 from .package_service import PackageService
+from .pairing_window import PairingWindow
 from .public_pilot_service import PublicPilotService
 from .resource_monitor import SystemResourceMonitor
 from .schemas import (
@@ -76,11 +78,14 @@ from .schemas import (
     V1DeviceEventIngest,
     V1DeviceSyncReport,
     V1DeviceSyncTargetUpdate,
+    VideoPrivacyUpdate,
 )
 from .settings import settings
 from .storage import Storage
 from .upload_agent import UploadAgent
 from .video_distribution_service import VideoDistributionService
+from .video_privacy import normalize_privacy_mode, stricter_privacy_mode
+from .vision.privacy_stream import PrivacyFrameRenderer, PrivacyMjpegStream
 from .video_service import (
     VideoService,
     app_snapshot_url,
@@ -97,7 +102,6 @@ bearer_scheme = HTTPBearer(auto_error=False)
 SETUP_NETWORK_PAGE = "/setup/network.html"
 SETUP_HOTSPOT_ORIGIN = "http://10.42.0.1"
 SETUP_HOTSPOT_NETWORK_PAGE = f"{SETUP_HOTSPOT_ORIGIN}{SETUP_NETWORK_PAGE}"
-EDGE_STARTED_AT = datetime.now(timezone.utc)
 
 
 def model_dump(model: Any) -> Dict[str, Any]:
@@ -412,8 +416,7 @@ def write_local_device_token(token: str) -> None:
 
 
 def pairing_window_open() -> bool:
-    elapsed = (datetime.now(timezone.utc) - EDGE_STARTED_AT).total_seconds()
-    return elapsed <= max(60, settings.lan_pairing_window_seconds)
+    return pairing_window.is_open()
 
 
 def validated_pair_return_url(raw_url: str) -> str:
@@ -464,6 +467,8 @@ def cloud_pair_device(code: str) -> Dict[str, Any]:
     if not token:
         raise HTTPException(status_code=502, detail="云端没有返回设备凭证")
     write_local_device_token(token)
+    binding_state.write(result.get("binding_summary"))
+    pairing_window.close()
     return result
 
 
@@ -1166,6 +1171,8 @@ settings.ensure_dirs()
 box_init_service = BoxInitService(settings)
 box_init_service.initialize_if_needed()
 storage = Storage(settings.db_path)
+binding_state = DeviceBindingState(settings.data_dir / "device-binding-summary.json")
+pairing_window = PairingWindow(settings.lan_pairing_window_seconds)
 camera_agent = CameraAgent(settings.snapshot_dir)
 detect_agent = DetectAgent(
     black_brightness_threshold=settings.black_brightness_threshold,
@@ -1191,6 +1198,12 @@ detect_agent = DetectAgent(
     pose_cache_max_motion=settings.pose_cache_max_motion,
     activity_window_seconds=settings.activity_window_seconds,
     activity_max_samples=settings.activity_max_samples,
+    inference_backend=settings.inference_backend,
+    hailo_pose_model=settings.hailo_pose_model,
+    hailo_pose_confidence=settings.hailo_pose_confidence,
+    hailo_pose_nms_iou=settings.hailo_pose_nms_iou,
+    hailo_retry_seconds=settings.hailo_retry_seconds,
+    context_detection_interval_seconds=settings.context_detection_interval_seconds,
 )
 notifier = Notifier(settings)
 event_agent = EventAgent(storage, notifier, settings.event_throttle_seconds)
@@ -1225,6 +1238,9 @@ worker = EdgeWorker(
         idle_interval_seconds=settings.inference_idle_interval_seconds,
         active_interval_seconds=settings.inference_active_interval_seconds,
         risk_interval_seconds=settings.inference_risk_interval_seconds,
+        accelerated_idle_interval_seconds=settings.inference_accelerated_idle_interval_seconds,
+        accelerated_active_interval_seconds=settings.inference_accelerated_active_interval_seconds,
+        accelerated_risk_interval_seconds=settings.inference_accelerated_risk_interval_seconds,
         resource_monitor=resource_monitor,
         max_starvation_seconds=settings.inference_max_starvation_seconds,
     ),
@@ -1251,20 +1267,13 @@ eacp_acceptance_service = EacpAcceptanceService(
     uploads_resolver=lambda: storage.list_upload_jobs(limit=500),
     cloud_verification_resolver=lambda: upload_agent.vision_verification_status(limit=50),
 )
-live_relay_agent = LiveRelayAgent(
-    storage=storage,
-    settings=settings,
-    camera_agent=camera_agent,
-    device_id_resolver=current_device_id,
-    token_resolver=read_local_device_token,
-    remote_camera_id_resolver=remote_camera_id_for_local_camera,
-)
 config_sync_agent = ConfigSyncAgent(
     storage=storage,
     settings=settings,
     camera_agent=camera_agent,
     device_id_resolver=current_device_id,
     token_resolver=read_local_device_token,
+    binding_summary_writer=binding_state.write,
     runtime_status_resolver=lambda: {
         "worker_running": worker.is_running,
         "lan_url": f"http://{local_ip()}:{settings.port}",
@@ -1284,6 +1293,19 @@ config_sync_agent = ConfigSyncAgent(
             "last_cleanup": worker.last_history_cleanup_result,
         },
     },
+)
+privacy_frame_renderer = PrivacyFrameRenderer(worker.continual_pose_tracker)
+privacy_mjpeg_stream = PrivacyMjpegStream(camera_agent, privacy_frame_renderer)
+live_relay_agent = LiveRelayAgent(
+    storage=storage,
+    settings=settings,
+    camera_agent=camera_agent,
+    device_id_resolver=current_device_id,
+    token_resolver=read_local_device_token,
+    remote_camera_id_resolver=remote_camera_id_for_local_camera,
+    privacy_mode_resolver=config_sync_agent.video_privacy_mode,
+    privacy_mode_observer=lambda mode: config_sync_agent.observe_video_privacy_mode(mode, wake=True),
+    privacy_renderer=privacy_frame_renderer,
 )
 package_service = PackageService(storage=storage, settings=settings, object_storage=object_storage_service)
 app_runtime_guard = AppRuntimeGuardService(
@@ -1335,6 +1357,8 @@ def admin_path_requires_auth(path: str) -> bool:
 
 def admin_api_requires_auth(path: str) -> bool:
     protected_prefixes = (
+        "/api/admin/pairing-window",
+        "/api/admin/video-privacy",
         "/api/cameras",
         "/api/events",
         "/api/event-candidates",
@@ -1348,7 +1372,23 @@ def admin_api_requires_auth(path: str) -> bool:
         "/api/eacp-acceptance",
         "/snapshots",
     )
-    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected_prefixes)
+    return path == "/api/device" or any(path == prefix or path.startswith(f"{prefix}/") for prefix in protected_prefixes)
+
+
+def request_from_private_lan(request: Request) -> bool:
+    host = request.client.host if request.client else ""
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return False
+
+
+def private_lan_camera_discovery(request: Request) -> bool:
+    return (
+        request.method == "GET"
+        and request.url.path == "/api/cameras/discover"
+        and request_from_private_lan(request)
+    )
 
 
 def admin_login_redirect(request: Request) -> RedirectResponse:
@@ -1361,7 +1401,7 @@ def admin_login_redirect(request: Request) -> RedirectResponse:
 @app.middleware("http")
 async def enforce_admin_session(request: Request, call_next: Any) -> Response:
     requires_page_auth = admin_path_requires_auth(request.url.path)
-    requires_api_auth = admin_api_requires_auth(request.url.path)
+    requires_api_auth = admin_api_requires_auth(request.url.path) and not private_lan_camera_discovery(request)
     if requires_page_auth or requires_api_auth:
         token = request.cookies.get(ADMIN_SESSION_COOKIE, "")
         session = box_init_service.session_status(token)
@@ -1536,6 +1576,8 @@ def health() -> Dict[str, Any]:
 @app.get("/api/device")
 def device() -> Dict[str, Any]:
     device_identity = local_device_identity()
+    pairing = pairing_window.status()
+    binding = binding_state.read()
     return {
         "device_id": device_identity["device_id"],
         "name": socket.gethostname(),
@@ -1564,6 +1606,8 @@ def device() -> Dict[str, Any]:
         "config_sync_agent": config_sync_agent.status(),
         "video_distribution": video_distribution_service.service_info(),
         "app_runtime": app_runtime_guard.status(),
+        "binding": binding,
+        "pairing": pairing,
     }
 
 
@@ -1598,6 +1642,38 @@ def admin_auth_logout(request: Request, response: Response) -> Dict[str, Any]:
     box_init_service.logout(request.cookies.get(ADMIN_SESSION_COOKIE, ""))
     response.delete_cookie(ADMIN_SESSION_COOKIE, path="/")
     return {"authenticated": False}
+
+
+@app.post("/api/admin/pairing-window")
+def admin_open_pairing_window() -> Dict[str, Any]:
+    if binding_state.read().get("status") == "bound":
+        raise HTTPException(status_code=409, detail="盒子已经绑定家庭，请先由家庭创建者在 App 中解除绑定。")
+    return {
+        "ok": True,
+        "pairing": pairing_window.open(600),
+    }
+
+
+@app.get("/api/admin/video-privacy")
+def admin_video_privacy() -> Dict[str, Any]:
+    relay = live_relay_agent.status()
+    return {
+        "ok": True,
+        "minimum_mode": config_sync_agent.video_privacy_mode(),
+        "camera_modes": dict(relay.get("camera_privacy_modes") or {}),
+        "synced": not bool(config_sync_agent.last_error),
+        "updated_at": config_sync_agent.last_sync_at or "",
+    }
+
+
+@app.put("/api/admin/video-privacy")
+def update_admin_video_privacy(payload: VideoPrivacyUpdate) -> Dict[str, Any]:
+    result = config_sync_agent.update_video_privacy(payload.minimum_mode)
+    live_relay_agent.wake()
+    return {
+        **result,
+        "camera_modes": dict(live_relay_agent.status().get("camera_privacy_modes") or {}),
+    }
 
 
 @app.post("/api/admin/auth/change-password")
@@ -2080,17 +2156,31 @@ def lan_discovery() -> Dict[str, Any]:
         "device_name": identity["device_name"],
         "lan_ip": identity["lan_ip"],
         "api_port": identity["api_port"],
-        "pairing_window_open": pairing_window_open(),
+        "pairing_window_open": pairing_window_open() and binding_state.read().get("status") != "bound",
     }
+
+
+@app.post("/api/lan/config-sync/wake", status_code=202)
+def wake_config_sync_from_lan(request: Request) -> Dict[str, Any]:
+    if not request_from_private_lan(request):
+        raise HTTPException(status_code=403, detail="仅允许家庭局域网唤醒配置同步。")
+    return {"ok": True, "queued": config_sync_agent.wake()}
 
 
 @app.get("/pair")
 def pair_from_lan(code: str = Query(..., min_length=4, max_length=20), return_url: str = Query(...)) -> RedirectResponse:
     target = validated_pair_return_url(return_url)
+    if binding_state.read().get("status") == "bound":
+        query = urlencode({
+            "pair_status": "error",
+            "pair_message": "盒子已经绑定家庭，请先由家庭创建者在 App 中解除绑定。",
+        })
+        separator = "&" if "?" in target else "?"
+        return RedirectResponse(f"{target}{separator}{query}", status_code=303)
     if not pairing_window_open():
         query = urlencode({
             "pair_status": "window_closed",
-            "pair_message": "盒子的安全配对时间已结束，请重启盒子后在 15 分钟内重试。",
+            "pair_message": "安全配对时间已结束，请在盒子管理端开启 10 分钟安全配对后重试。",
         })
         separator = "&" if "?" in target else "?"
         return RedirectResponse(f"{target}{separator}{query}", status_code=303)
@@ -3213,6 +3303,7 @@ def camera_mjpeg_stream(
     height: int = 720,
     quality: int = 70,
     drop: int = 1,
+    privacy_mode: str = "original",
 ) -> StreamingResponse:
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
@@ -3222,21 +3313,29 @@ def camera_mjpeg_stream(
     height = max(180, min(int(height), 1080))
     quality = max(35, min(int(quality), 95))
     drop = max(0, min(int(drop), 12))
+    resolved_privacy_mode = stricter_privacy_mode(
+        config_sync_agent.video_privacy_mode(),
+        normalize_privacy_mode(privacy_mode, config_sync_agent.video_privacy_mode()),
+    )
+    frames = privacy_mjpeg_stream.mjpeg_frames(
+        camera,
+        privacy_mode=privacy_mode,
+        privacy_mode_resolver=config_sync_agent.video_privacy_mode,
+        fps=fps,
+        jpeg_quality=quality,
+        max_width=width,
+        max_height=height,
+        drop_stale_frames=drop,
+    )
     return StreamingResponse(
-        camera_agent.mjpeg_frames(
-            camera,
-            fps=fps,
-            jpeg_quality=quality,
-            max_width=width,
-            max_height=height,
-            drop_stale_frames=drop,
-        ),
+        frames,
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
             "X-Accel-Buffering": "no",
+            "X-GoHome-Privacy-Mode": resolved_privacy_mode,
         },
     )
 
@@ -3249,6 +3348,17 @@ def synchronized_camera_pose_stream(
     height: int = 540,
     quality: int = 72,
 ) -> StreamingResponse:
+    active_privacy_mode = config_sync_agent.video_privacy_mode()
+    if active_privacy_mode != "original":
+        return camera_mjpeg_stream(
+            camera_id=camera_id,
+            fps=fps,
+            width=width,
+            height=height,
+            quality=quality,
+            drop=0,
+            privacy_mode=active_privacy_mode,
+        )
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
@@ -3256,14 +3366,20 @@ def synchronized_camera_pose_stream(
     width = max(320, min(int(width), 1280))
     height = max(180, min(int(height), 720))
     quality = max(40, min(int(quality), 90))
-    return StreamingResponse(
-        synchronized_pose_stream.mjpeg_frames(
+    def frames():
+        for chunk in synchronized_pose_stream.mjpeg_frames(
             camera,
             fps=fps,
             jpeg_quality=quality,
             max_width=width,
             max_height=height,
-        ),
+        ):
+            if config_sync_agent.video_privacy_mode() != "original":
+                return
+            yield chunk
+
+    return StreamingResponse(
+        frames(),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -3283,6 +3399,7 @@ def v1_device_camera_mjpeg_stream(
     height: int = 720,
     quality: int = 70,
     drop: int = 1,
+    privacy_mode: str = "original",
     _device_session: Dict[str, Any] = Depends(current_v1_device_stream_session),
 ) -> StreamingResponse:
     return camera_mjpeg_stream(
@@ -3292,6 +3409,7 @@ def v1_device_camera_mjpeg_stream(
         height=height,
         quality=quality,
         drop=drop,
+        privacy_mode=privacy_mode,
     )
 
 

@@ -196,14 +196,13 @@ def main() -> None:
         "black_screen": False,
         "pose_factor_graph": {},
     }
-    if worker._should_persist_analysis(24, risk_analysis, {}, rules(), now=100.2):
-        raise SystemExit("risk-frequency analysis still writes every inference frame")
+    confirmed_analysis = {**risk_analysis, "fall_candidate": True}
+    if worker._should_persist_analysis(24, confirmed_analysis, {}, rules(), now=100.2):
+        raise SystemExit("visual risk still writes faster than the four-FPS evidence budget")
+    if not worker._should_persist_analysis(24, confirmed_analysis, {}, rules(), now=100.25):
+        raise SystemExit("visual risk did not retain its four-FPS evidence sample")
     if not worker._should_persist_analysis(24, risk_analysis, {}, rules(), now=101.0):
         raise SystemExit("risk-frequency analysis did not retain its one-second evidence sample")
-
-    confirmed_analysis = {**risk_analysis, "fall_candidate": True}
-    if not worker._should_persist_analysis(24, confirmed_analysis, {}, rules(), now=100.25):
-        raise SystemExit("formal fall candidate was delayed by the persistence throttle")
 
     presence_snapshot = {
         "id": 10,
@@ -253,7 +252,7 @@ def main() -> None:
         "durable_evaluations": storage.evaluations,
         "jpeg_writes": camera_agent.saved,
         "risk_persistence_interval_seconds": 1.0,
-        "formal_candidate_immediate": True,
+        "risk_evidence_fps_limit": 4,
         "presence_quality_gate": True,
     })
 

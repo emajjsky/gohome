@@ -81,6 +81,8 @@ class EdgeWorker:
         self._last_tracked_frame_ids: Dict[int, str] = {}
         self.runtime_reconciliation: Dict[str, Any] = {}
         self._runtime_reconciled = False
+        self._runtime_config_refreshed_at = 0.0
+        self._runtime_config_refresh_seconds = 1.0
         self.last_continual_pose_error = ""
         self.continual_identity_bridge_count = 0
         self.last_continual_identity_bridge: Dict[str, Any] = {}
@@ -112,6 +114,8 @@ class EdgeWorker:
             self._tracking_thread.join(timeout=2)
         if self.camera_agent is not None and hasattr(self.camera_agent, "reconcile_managed_streams"):
             self.camera_agent.reconcile_managed_streams([])
+        if self.detect_agent is not None and hasattr(self.detect_agent, "close"):
+            self.detect_agent.close()
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -130,26 +134,11 @@ class EdgeWorker:
             self.runtime_reconciliation["completed_at"] = datetime.now(timezone.utc).isoformat()
             self._runtime_reconciled = True
 
-        rules = self.storage.get_rules()
-        self.last_rules_loaded_at = rules.get("updated_at")
-        self.last_rules_snapshot = {**rules}
-        cameras = self.storage.list_cameras(include_secret=True)
-        cameras_by_id = {int(camera["id"]): camera for camera in cameras}
-        if hasattr(self.camera_agent, "reconcile_managed_streams"):
-            self.camera_agent.reconcile_managed_streams(list(cameras_by_id.values()))
-        self._runtime_cameras = {camera_id: dict(camera) for camera_id, camera in cameras_by_id.items()}
+        self._refresh_runtime_config(now)
+        rules = dict(self.last_rules_snapshot)
+        cameras_by_id = dict(self._runtime_cameras)
         current_camera_ids = set(cameras_by_id)
-        for removed_camera_id in self._known_camera_ids - current_camera_ids:
-            self._reset_camera_runtime_memory(removed_camera_id)
-        self._known_camera_ids = current_camera_ids
-
-        disabled_camera_ids = {
-            camera_id for camera_id, camera in cameras_by_id.items() if not camera.get("enabled")
-        }
-        for camera_id in disabled_camera_ids - self._disabled_camera_ids:
-            self.storage.close_camera_runtime_state(camera_id, reason="camera_disabled")
-            self._reset_camera_runtime_memory(camera_id)
-        self._disabled_camera_ids = disabled_camera_ids
+        disabled_camera_ids = set(self._disabled_camera_ids)
 
         enabled_camera_ids = sorted(current_camera_ids - disabled_camera_ids)
         self.inference_scheduler.reconcile(enabled_camera_ids, now=now)
@@ -214,12 +203,43 @@ class EdgeWorker:
                 "last": dict(self.last_continual_identity_bridge),
             },
             "motion_gate": self.motion_gate.status() if self.motion_gate is not None else {"schema_version": "disabled"},
+            "vision_runtime": (
+                self.detect_agent.runtime_status()
+                if hasattr(self.detect_agent, "runtime_status")
+                else {}
+            ),
             "camera_streams": stream_status,
             "runtime_reconciliation": self.runtime_reconciliation,
             "last_error": self.last_error,
         }
 
+    def _refresh_runtime_config(self, now: float) -> None:
+        if self._runtime_config_refreshed_at and now - self._runtime_config_refreshed_at < self._runtime_config_refresh_seconds:
+            return
+        rules = self.storage.get_rules()
+        cameras = self.storage.list_cameras(include_secret=True)
+        cameras_by_id = {int(camera["id"]): camera for camera in cameras}
+        self.last_rules_loaded_at = rules.get("updated_at")
+        self.last_rules_snapshot = dict(rules)
+        if hasattr(self.camera_agent, "reconcile_managed_streams"):
+            self.camera_agent.reconcile_managed_streams(list(cameras_by_id.values()))
+        self._runtime_cameras = {camera_id: dict(camera) for camera_id, camera in cameras_by_id.items()}
+        current_camera_ids = set(cameras_by_id)
+        for removed_camera_id in self._known_camera_ids - current_camera_ids:
+            self._reset_camera_runtime_memory(removed_camera_id)
+        self._known_camera_ids = current_camera_ids
+
+        disabled_camera_ids = {
+            camera_id for camera_id, camera in cameras_by_id.items() if not camera.get("enabled")
+        }
+        for camera_id in disabled_camera_ids - self._disabled_camera_ids:
+            self.storage.close_camera_runtime_state(camera_id, reason="camera_disabled")
+            self._reset_camera_runtime_memory(camera_id)
+        self._disabled_camera_ids = disabled_camera_ids
+        self._runtime_config_refreshed_at = float(now)
+
     def request_rules_reload(self) -> None:
+        self._runtime_config_refreshed_at = 0.0
         self.inference_scheduler.wake_all(now=self._monotonic_clock())
         self._wake.set()
 
@@ -871,17 +891,17 @@ class EdgeWorker:
         if last_persisted_at is None:
             return True
         elapsed = max(0.0, float(now) - float(last_persisted_at))
-        if analysis.get("black_screen") or any(bool(analysis.get(key)) for key in (
+        visual_risk = bool(analysis.get("black_screen")) or any(bool(analysis.get(key)) for key in (
             "fall_candidate",
             "pose_fall_candidate",
             "fire_event_candidate",
-        )):
-            return True
+        ))
         factor_graph = analysis.get("pose_factor_graph")
-        if isinstance(factor_graph, dict) and (
+        graph_risk = isinstance(factor_graph, dict) and (
             factor_graph.get("fast_fall_candidate")
             or factor_graph.get("prolonged_floor_lying_candidate")
-        ):
+        )
+        if (visual_risk or graph_risk) and elapsed >= 0.25:
             return True
         interval = max(1.0, float(rules.get("capture_interval_seconds") or 5.0))
         if elapsed >= interval:

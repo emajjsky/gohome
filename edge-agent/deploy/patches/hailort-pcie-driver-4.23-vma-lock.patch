@@ -1,0 +1,52 @@
+--- a/linux/vdma/memory.c
++++ b/linux/vdma/memory.c
+@@ -156,5 +156,6 @@ struct hailo_vdma_buffer *hailo_vdma_buffer_map(struct device *dev,
+     struct sg_table sgt = {0};
+     struct vm_area_struct *vma = NULL;
+     bool is_mmio = false;
++    bool vma_locked = false;
+     struct hailo_dmabuf_info dmabuf_info = {0};
+     uintptr_t dmabuf_from_pointer_addr = 0;
+@@ -169,3 +170,5 @@ struct hailo_vdma_buffer *hailo_vdma_buffer_map(struct device *dev,
+     if (HAILO_DMA_DMABUF_BUFFER != buffer_type) {
++        mmap_read_lock(current->mm);
++        vma_locked = true;
+         vma = find_vma(current->mm, addr_or_fd);
+         if (IS_ENABLED(HAILO_SUPPORT_MMIO_DMA_MAPPING)) {
+@@ -187,5 +190,11 @@ struct hailo_vdma_buffer *hailo_vdma_buffer_map(struct device *dev,
+             // Save original dmabuf user address in dmabuf_from_pointer_addr and override addr_or_fd with fd
+             dmabuf_from_pointer_addr = addr_or_fd;
+             addr_or_fd = ret;
+         }
++
++        if (!IS_ENABLED(HAILO_SUPPORT_MMIO_DMA_MAPPING) ||
++            (HAILO_DMA_DMABUF_BUFFER == buffer_type)) {
++            mmap_read_unlock(current->mm);
++            vma_locked = false;
++        }
+     }
+@@ -207,6 +216,8 @@ struct hailo_vdma_buffer *hailo_vdma_buffer_map(struct device *dev,
+             goto free_buffer_struct;
+         }
+         is_mmio = true;
++        mmap_read_unlock(current->mm);
++        vma_locked = false;
+     } else if (HAILO_DMA_DMABUF_BUFFER == buffer_type) {
+         // Content user_address in case of dmabuf is fd - for now
+         ret = hailo_map_dmabuf(dev, addr_or_fd, direction, &sgt, &dmabuf_info);
+@@ -223,4 +234,7 @@ struct hailo_vdma_buffer *hailo_vdma_buffer_map(struct device *dev,
+         }
+     } else {
+         // user_address is a standard 'struct page' backed memory address
++        mmap_read_unlock(current->mm);
++        vma_locked = false;
++
+         ret = prepare_sg_table(&sgt, addr_or_fd, size, low_mem_driver_allocated_buffer);
+@@ -252,4 +266,7 @@ free_buffer_struct:
+     kfree(mapped_buffer);
+ cleanup:
++    if (vma_locked) {
++        mmap_read_unlock(current->mm);
++    }
+     return ERR_PTR(ret);
+ }

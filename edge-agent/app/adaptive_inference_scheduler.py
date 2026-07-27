@@ -14,6 +14,7 @@ class ResourceMonitor(Protocol):
 class _CameraSchedule:
     next_due_at: float
     in_flight: bool = False
+    accelerated: bool = False
     active_until: float = 0.0
     risk_until: float = 0.0
     person_until: float = 0.0
@@ -39,6 +40,9 @@ class AdaptiveInferenceScheduler:
         idle_interval_seconds: float = 1.0,
         active_interval_seconds: float = 0.5,
         risk_interval_seconds: float = 0.25,
+        accelerated_idle_interval_seconds: float = 0.5,
+        accelerated_active_interval_seconds: float = 0.10,
+        accelerated_risk_interval_seconds: float = 0.067,
         active_hold_seconds: float = 8.0,
         risk_hold_seconds: float = 5.0,
         error_interval_seconds: float = 2.0,
@@ -48,6 +52,9 @@ class AdaptiveInferenceScheduler:
         self.idle_interval_seconds = max(0.25, float(idle_interval_seconds))
         self.active_interval_seconds = max(0.15, min(self.idle_interval_seconds, float(active_interval_seconds)))
         self.risk_interval_seconds = max(0.10, min(self.active_interval_seconds, float(risk_interval_seconds)))
+        self.accelerated_idle_interval_seconds = max(0.10, float(accelerated_idle_interval_seconds))
+        self.accelerated_active_interval_seconds = max(0.05, min(self.accelerated_idle_interval_seconds, float(accelerated_active_interval_seconds)))
+        self.accelerated_risk_interval_seconds = max(0.04, min(self.accelerated_active_interval_seconds, float(accelerated_risk_interval_seconds)))
         self.active_hold_seconds = max(self.active_interval_seconds, float(active_hold_seconds))
         self.risk_hold_seconds = max(self.risk_interval_seconds, float(risk_hold_seconds))
         self.error_interval_seconds = max(0.5, float(error_interval_seconds))
@@ -92,7 +99,10 @@ class AdaptiveInferenceScheduler:
             current = float(now)
             state = self._states.setdefault(int(camera_id), _CameraSchedule(next_due_at=current))
             previous_mode = self._mode_at(state, current)
-            state.active_until = max(state.active_until, current + self.active_hold_seconds)
+            # Hailo idle probes are already cheap and frequent. Motion wakes the next
+            # probe immediately, while only a formal person result sustains active mode.
+            if not state.accelerated or risk:
+                state.active_until = max(state.active_until, current + self.active_hold_seconds)
             if risk:
                 state.risk_until = max(state.risk_until, current + self.risk_hold_seconds)
                 self._record_risk_signal(state, current, source)
@@ -139,17 +149,18 @@ class AdaptiveInferenceScheduler:
         with self._lock:
             state = self._states.setdefault(int(camera_id), _CameraSchedule(next_due_at=float(now)))
             current = float(now)
+            state.accelerated = str(analysis.get("inference_backend") or "").lower() == "hailo"
             if self._risk_signal(analysis):
                 state.risk_until = max(state.risk_until, current + self.risk_hold_seconds)
                 state.active_until = max(state.active_until, current + self.active_hold_seconds)
                 self._record_risk_signal(state, current, "observed_model_risk")
-            elif self._active_signal(analysis):
+            elif self._active_signal(analysis, accelerated=state.accelerated):
                 state.active_until = max(state.active_until, current + self.active_hold_seconds)
             if int(analysis.get("person_count") or 0) > 0:
                 state.person_until = max(state.person_until, current + self.active_hold_seconds)
 
             mode = self._mode_at(state, current)
-            interval = self._interval_for_mode(mode)
+            interval = self._interval_for_mode(mode, accelerated=state.accelerated)
             started_at = state.last_started_at if state.last_started_at is not None else current
             expected_due_at = float(started_at) + interval
             if current > expected_due_at:
@@ -172,6 +183,7 @@ class AdaptiveInferenceScheduler:
     def mark_error(self, camera_id: int, *, now: float) -> None:
         with self._lock:
             state = self._states.setdefault(int(camera_id), _CameraSchedule(next_due_at=float(now)))
+            state.accelerated = False
             state.in_flight = False
             state.last_completed_at = float(now)
             state.next_due_at = float(now) + self.error_interval_seconds
@@ -209,9 +221,10 @@ class AdaptiveInferenceScheduler:
             return {
                 "camera_id": int(camera_id),
                 "mode": mode,
+                "accelerated": state.accelerated,
                 "pose_required": float(now) < state.person_until,
                 "person_confirmed_until": round(state.person_until, 6),
-                "interval_seconds": self._interval_for_mode(mode),
+                "interval_seconds": self._interval_for_mode(mode, accelerated=state.accelerated),
                 "next_due_at": round(state.next_due_at, 6),
                 "next_due_in_seconds": round(max(0.0, state.next_due_at - float(now)), 4),
                 "in_flight": state.in_flight,
@@ -248,6 +261,11 @@ class AdaptiveInferenceScheduler:
                     "idle": self.idle_interval_seconds,
                     "active": self.active_interval_seconds,
                     "risk": self.risk_interval_seconds,
+                },
+                "accelerated_intervals": {
+                    "idle": self.accelerated_idle_interval_seconds,
+                    "active": self.accelerated_active_interval_seconds,
+                    "risk": self.accelerated_risk_interval_seconds,
                 },
                 "holds": {
                     "active": self.active_hold_seconds,
@@ -310,24 +328,31 @@ class AdaptiveInferenceScheduler:
             return 0.08 if mode == "risk" else 0.22
         return 0.18 if mode == "risk" else 0.55
 
-    def _interval_for_mode(self, mode: str) -> float:
+    def _interval_for_mode(self, mode: str, *, accelerated: bool = False) -> float:
+        if accelerated:
+            if mode == "risk":
+                return self.accelerated_risk_interval_seconds
+            if mode == "active":
+                return self.accelerated_active_interval_seconds
+            return self.accelerated_idle_interval_seconds
         if mode == "risk":
             return self.risk_interval_seconds
         if mode == "active":
             return self.active_interval_seconds
         return self.idle_interval_seconds
 
-    def _active_signal(self, analysis: Dict[str, Any]) -> bool:
-        return int(analysis.get("person_count") or 0) > 0 or bool(analysis.get("motion_detected"))
+    def _active_signal(self, analysis: Dict[str, Any], *, accelerated: bool = False) -> bool:
+        if int(analysis.get("person_count") or 0) > 0:
+            return True
+        return not accelerated and bool(analysis.get("motion_detected"))
 
     def _risk_signal(self, analysis: Dict[str, Any]) -> bool:
         if bool(analysis.get("fire_event_candidate")):
             return True
+        normal_lying_only = self._normal_lying_only(analysis)
         factor_graph = analysis.get("pose_factor_graph")
         if isinstance(factor_graph, dict):
             if factor_graph.get("fast_fall_candidate") or factor_graph.get("prolonged_floor_lying_candidate"):
-                return True
-            if float(factor_graph.get("fast_fall_score") or 0.0) >= 0.45:
                 return True
             for track in factor_graph.get("tracks") or []:
                 if not isinstance(track, dict):
@@ -335,7 +360,12 @@ class AdaptiveInferenceScheduler:
                 factors = track.get("factors") if isinstance(track.get("factors"), dict) else {}
                 if factors.get("vertical_drop") and factors.get("motion"):
                     return True
-        if self._normal_lying_only(analysis):
+            if (
+                float(factor_graph.get("fast_fall_score") or 0.0) >= 0.45
+                and not normal_lying_only
+            ):
+                return True
+        if normal_lying_only:
             return False
         if bool(analysis.get("fall_candidate")) or bool(analysis.get("pose_fall_candidate")):
             return True

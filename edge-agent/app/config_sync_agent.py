@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from typing import Any, Callable, Dict
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import json
+import time
+
+from .video_privacy import normalize_privacy_mode
 
 
 class ConfigSyncAgent:
@@ -18,6 +21,8 @@ class ConfigSyncAgent:
         device_id_resolver: Callable[[], str],
         token_resolver: Callable[[], str],
         runtime_status_resolver: Callable[[], Dict[str, Any]] | None = None,
+        binding_summary_writer: Callable[[Dict[str, Any] | None], Any] | None = None,
+        monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.storage = storage
         self.settings = settings
@@ -25,14 +30,23 @@ class ConfigSyncAgent:
         self.device_id_resolver = device_id_resolver
         self.token_resolver = token_resolver
         self.runtime_status_resolver = runtime_status_resolver or (lambda: {})
+        self.binding_summary_writer = binding_summary_writer
+        self.monotonic_clock = monotonic_clock or time.monotonic
         self._stop = Event()
         self._wake = Event()
+        self._wake_lock = Lock()
+        self._last_wake_requested_at = float("-inf")
         self._thread: Thread | None = None
         self.last_loop_started_at: str | None = None
         self.last_sync_at: str | None = None
         self.last_config_version = ""
         self.last_error = ""
         self.last_result: Dict[str, Any] = {}
+        self.last_video_privacy_sync_at: str | None = None
+        self.last_video_privacy_error = ""
+        self.current_video_privacy_mode = normalize_privacy_mode(
+            self._load_state().get("video_privacy_mode")
+        )
 
     @property
     def is_running(self) -> bool:
@@ -52,8 +66,14 @@ class ConfigSyncAgent:
         if self._thread:
             self._thread.join(timeout=5)
 
-    def wake(self) -> None:
-        self._wake.set()
+    def wake(self) -> bool:
+        now = self.monotonic_clock()
+        with self._wake_lock:
+            if now - self._last_wake_requested_at < 2.0:
+                return False
+            self._last_wake_requested_at = now
+            self._wake.set()
+            return True
 
     def status(self) -> Dict[str, Any]:
         configured, reason = self._configured()
@@ -68,6 +88,38 @@ class ConfigSyncAgent:
             "last_config_version": self.last_config_version,
             "last_error": self.last_error,
             "last_result": self.last_result,
+            "video_privacy_mode": self.video_privacy_mode(),
+            "last_video_privacy_sync_at": self.last_video_privacy_sync_at,
+            "last_video_privacy_error": self.last_video_privacy_error,
+        }
+
+    def video_privacy_mode(self) -> str:
+        return self.current_video_privacy_mode
+
+    def observe_video_privacy_mode(self, mode: str, *, wake: bool = False) -> bool:
+        observed_mode = normalize_privacy_mode(mode, self.current_video_privacy_mode)
+        if observed_mode == self.current_video_privacy_mode:
+            return False
+        self.current_video_privacy_mode = observed_mode
+        if wake:
+            self.wake()
+        return True
+
+    def update_video_privacy(self, mode: str) -> Dict[str, Any]:
+        requested_mode = normalize_privacy_mode(mode)
+        response = self._request_json(
+            "PUT",
+            "/api/v1/device/video-privacy",
+            json_body={"minimum_mode": requested_mode},
+        )
+        self.observe_video_privacy_mode(
+            normalize_privacy_mode(response.get("minimum_mode"), requested_mode),
+        )
+        self.wake()
+        return {
+            "ok": bool(response.get("ok", True)),
+            "minimum_mode": self.current_video_privacy_mode,
+            "updated_at": str(response.get("updated_at") or ""),
         }
 
     def process_once(self) -> Dict[str, Any]:
@@ -75,6 +127,8 @@ class ConfigSyncAgent:
         if not configured:
             return {"ok": False, "reason": reason, "applied": 0, "reported": 0}
         config = self._request_json("GET", "/api/v1/device/config")
+        if self.binding_summary_writer is not None and "binding_summary" in config:
+            self.binding_summary_writer(config.get("binding_summary"))
         apply_result = self._apply_config(config)
         report_payload = self._build_report(config, apply_result)
         report_response = self._request_json("POST", "/api/v1/device/sync", json_body=report_payload)
@@ -94,6 +148,24 @@ class ConfigSyncAgent:
             "report": report_response,
         }
 
+    def process_video_privacy_once(self) -> Dict[str, Any]:
+        configured, reason = self._configured()
+        if not configured:
+            return {"ok": False, "reason": reason, "changed": False}
+        response = self._request_json("GET", "/api/v1/device/video-privacy")
+        changed = self.observe_video_privacy_mode(
+            normalize_privacy_mode(response.get("minimum_mode"), self.current_video_privacy_mode)
+        )
+        if changed:
+            self._persist_video_privacy_mode()
+        self.last_video_privacy_sync_at = self._utc_iso()
+        self.last_video_privacy_error = ""
+        return {
+            "ok": True,
+            "changed": changed,
+            "minimum_mode": self.current_video_privacy_mode,
+        }
+
     def _run(self) -> None:
         while not self._stop.is_set():
             self.last_loop_started_at = self._utc_iso()
@@ -104,8 +176,22 @@ class ConfigSyncAgent:
                     self.last_error = str(exc)
                     self.last_result = {"ok": False, "error": str(exc)}
             interval = max(1.0, float(getattr(self.settings, "config_sync_interval_seconds", 10)))
-            self._wake.wait(interval)
-            self._wake.clear()
+            privacy_interval = max(
+                0.5,
+                float(getattr(self.settings, "video_privacy_sync_interval_seconds", 1)),
+            )
+            deadline = self.monotonic_clock() + interval
+            while not self._stop.is_set():
+                remaining = deadline - self.monotonic_clock()
+                if remaining <= 0:
+                    break
+                if self._wake.wait(min(privacy_interval, remaining)):
+                    self._wake.clear()
+                    break
+                try:
+                    self.process_video_privacy_once()
+                except Exception as exc:
+                    self.last_video_privacy_error = str(exc)
 
     def _apply_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         state = self._load_state()
@@ -176,6 +262,13 @@ class ConfigSyncAgent:
         state["camera_map"] = camera_map
         state["config_version"] = str(config.get("config_version") or "")
         state["last_applied_at"] = self._utc_iso()
+        self.observe_video_privacy_mode(
+            normalize_privacy_mode(
+                dict(config.get("video_privacy") or {}).get("minimum_mode"),
+                self.current_video_privacy_mode,
+            )
+        )
+        state["video_privacy_mode"] = self.current_video_privacy_mode
         rules_result = self._apply_rules(config.get("rules") or {}, str(config.get("rules_version") or ""))
         if rules_result.get("applied"):
             state["rules_version"] = rules_result.get("rules_version") or ""
@@ -190,6 +283,12 @@ class ConfigSyncAgent:
             "rules": rules_result,
             "maintenance": maintenance_result,
         }
+
+    def _persist_video_privacy_mode(self) -> None:
+        state = self._load_state()
+        state["video_privacy_mode"] = self.current_video_privacy_mode
+        state["video_privacy_updated_at"] = self._utc_iso()
+        self._save_state(state)
 
     def _apply_maintenance(self, command: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         command_id = str(command.get("command_id") or "").strip()
@@ -364,6 +463,8 @@ class ConfigSyncAgent:
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 401 and self.binding_summary_writer is not None:
+                self.binding_summary_writer(None)
             raise RuntimeError(f"{method} {url} failed: HTTP {exc.code} {detail}") from exc
         except URLError as exc:
             raise RuntimeError(f"{method} {url} failed: {exc.reason}") from exc

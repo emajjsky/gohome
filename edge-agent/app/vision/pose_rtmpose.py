@@ -154,6 +154,65 @@ class RtmposeAnalyzer:
                     external_box_count=len(external_bboxes),
                 )
 
+        return self._result_from_raw_poses(
+            raw_poses,
+            config,
+            model_name=self.model_name,
+            model_label="RTMPose",
+            model_message=self._ready_message(message, inference_retried),
+            backend="rtmpose",
+            detection_source=detection_source,
+            external_box_count=len(external_bboxes),
+            inference_retried=inference_retried,
+        )
+
+    def analyze_precomputed(
+        self,
+        frame: Any,
+        config: Dict[str, Any],
+        *,
+        keypoints: Any,
+        scores: Any,
+        source_person_boxes: list[list[float]],
+        model_name: str,
+        model_message: str,
+        backend: str,
+        detection_source: str,
+    ) -> Dict[str, Any]:
+        if not bool(config.get("pose_detection_enabled", self.enabled)):
+            return self._disabled_result("姿态检测未启用。")
+        raw_poses = self._extract_poses(
+            keypoints,
+            scores,
+            frame,
+            source_person_boxes=source_person_boxes,
+            pose_source=backend,
+        )
+        return self._result_from_raw_poses(
+            raw_poses,
+            config,
+            model_name=model_name,
+            model_label="Hailo YOLOv8 Pose" if backend == "hailo" else model_name,
+            model_message=model_message,
+            backend=backend,
+            detection_source=detection_source,
+            external_box_count=len(source_person_boxes),
+            inference_retried=False,
+        )
+
+    def _result_from_raw_poses(
+        self,
+        raw_poses: list[Dict[str, Any]],
+        config: Dict[str, Any],
+        *,
+        model_name: str,
+        model_label: str,
+        model_message: str,
+        backend: str,
+        detection_source: str,
+        external_box_count: int,
+        inference_retried: bool,
+    ) -> Dict[str, Any]:
         threshold = float(config.get("pose_fall_threshold", self.fall_threshold))
         raw_pose_fall_score = max([float(pose.get("fall_score") or 0.0) for pose in raw_poses], default=0.0)
         rejected_fall_candidates = 0
@@ -185,7 +244,7 @@ class RtmposeAnalyzer:
         action_hints = self._merge_hints([hint for pose in poses for hint in pose.get("action_hints", [])])
         if pose_count:
             tags.append("pose_detected")
-        if external_bboxes:
+        if external_box_count:
             tags.append("pose_external_person_boxes")
         if inference_retried:
             tags.append("pose_inference_retried")
@@ -208,18 +267,18 @@ class RtmposeAnalyzer:
         status = "not_visible"
         level = "info"
         score = None
-        summary = "RTMPose 已运行，当前帧未检测到可用人体骨架。"
+        summary = f"{model_label} 已运行，当前帧未检测到可用人体骨架。"
         if pose_count:
             status = "candidate" if pose_fall_candidate else "ready"
             level = "critical" if pose_fall_candidate else "info"
             score = pose_fall_score if pose_fall_candidate else poses[0].get("confidence")
             posture = poses[0].get("posture") or "unknown"
             if pose_fall_candidate:
-                summary = f"RTMPose 骨架命中疑似跌倒候选，分数 {pose_fall_score:.2f}。"
+                summary = f"{model_label} 骨架命中疑似跌倒候选，分数 {pose_fall_score:.2f}。"
             elif rejected_fall_candidates:
-                summary = "RTMPose 检测到低质量跌倒形态，证据不足，未触发告警。"
+                summary = f"{model_label} 检测到低质量跌倒形态，证据不足，未触发告警。"
             else:
-                summary = f"RTMPose 检测到 {pose_count} 组骨架，主姿态为 {posture}。"
+                summary = f"{model_label} 检测到 {pose_count} 组骨架，主姿态为 {posture}。"
 
         result = AlgorithmResult(
             algorithm_id="pose",
@@ -241,11 +300,11 @@ class RtmposeAnalyzer:
                 "pose_fall_candidate": pose_fall_candidate,
                 "pose_fall_rejected_low_quality": rejected_fall_candidates,
                 "pose_model_status": "ready",
-                "pose_model_name": self.model_name,
-                "pose_model_message": self._ready_message(message, inference_retried),
-                "pose_backend": "rtmpose",
+                "pose_model_name": model_name,
+                "pose_model_message": model_message,
+                "pose_backend": backend,
                 "pose_detection_source": detection_source,
-                "pose_external_box_count": len(external_bboxes),
+                "pose_external_box_count": external_box_count,
                 "pose_fall_threshold": threshold,
             },
         )
@@ -261,10 +320,10 @@ class RtmposeAnalyzer:
             "pose_fall_candidate": pose_fall_candidate,
             "pose_fall_rejected_low_quality": rejected_fall_candidates,
             "pose_model_status": "ready",
-            "pose_model_name": self.model_name,
-            "pose_model_message": self._ready_message(message, inference_retried),
+            "pose_model_name": model_name,
+            "pose_model_message": model_message,
             "pose_detection_source": detection_source,
-            "pose_external_box_count": len(external_bboxes),
+            "pose_external_box_count": external_box_count,
             "tags": tags,
             "result": result,
         }
@@ -395,6 +454,7 @@ class RtmposeAnalyzer:
         frame: Any,
         *,
         source_person_boxes: list[list[float]] | None = None,
+        pose_source: str = "rtmpose",
     ) -> list[Dict[str, Any]]:
         import math
         import numpy as np  # type: ignore
@@ -452,7 +512,7 @@ class RtmposeAnalyzer:
                     "fall_score": fall_score,
                     "model_status": "ready",
                     "action_hints": action_hints,
-                    "source": "rtmpose",
+                    "source": pose_source,
                 }
             if source_person_boxes and pose_index < len(source_person_boxes):
                 pose_payload["source_person_bbox"] = [

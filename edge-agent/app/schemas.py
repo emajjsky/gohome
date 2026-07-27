@@ -36,6 +36,10 @@ class AdminPasswordChange(BaseModel):
     new_password: str = Field(..., min_length=6, max_length=128)
 
 
+class VideoPrivacyUpdate(BaseModel):
+    minimum_mode: str = Field(default="original", pattern="^(original|person_blur|skeleton)$")
+
+
 class CameraOut(BaseModel):
     id: int
     name: str

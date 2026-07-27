@@ -11361,3 +11361,42 @@ P4 风险升频边界：
 - 两路摄像头 `online/synced`，云中继 `8 FPS`，盒子温度约 `67°C`，近 5 分钟无 warning/error；腾讯云 `gohome-app.service=active`，健康检查返回 PostgreSQL store，部署后无 warning/error。
 - 现场三分钟事件结论：`2098/2099` 为弯腰并被云端排除，`2100` 为下蹲并被排除，`2101` 为快速倒地并被确认；模型均为 `Qwen/Qwen3.5-27B`，置信度均为 `0.95`。
 - 提交 `cc0ec5a` 已推送远端并部署边缘端与腾讯云。历史事件保留原始记录，不回写历史判断；新事件使用新的恢复契约。
+
+## 124. 2026-07-27 Hailo-8 统一人形姿态加速
+
+文档核对：
+
+- 已逐页核对 `hailo8/` 中环境、对象检测、姿态估计、分块、实例分割和单目深度文档。正式产品采用 YOLOv8s Pose、PCIe/HailoRT 和单进程设备独占；分块、实例分割和单目深度当前不能改善家庭姿态主链的端到端准确率或延迟，因此不并入 worker。
+- 厂商示例的摄像头直连/GStreamer pipeline 只作为运行方式参考。产品继续复用现有共享 RTSP 最新帧读取、双摄调度、EACP 跟踪和事件链，避免新增第二个摄像头读取器或 Hailo 示例进程抢占 `/dev/hailo0`。
+
+实现：
+
+- 新增 `vision/hailo_pose.py`，使用持久化 Hailo VDevice、configured model、bindings 和预分配输出缓冲，完成 YOLOv8s Pose DFL 解码、NMS、letterbox 坐标恢复、人物框和 17 关键点输出。
+- `VisionPipeline` 优先使用一次 Hailo 推理产生人物与姿态；公共 `RtmposeAnalyzer` 继续负责姿态质量、姿势分类、跌倒分数和既有字段契约。Hailo 不可用时自动恢复 CPU YOLO + RTMPose，并按 30 秒冷却重试。
+- `PersonYoloAnalyzer` 在 Hailo 模式不重复执行人物检测，只按 3 秒节拍补充猫狗和家具。Hailo 模式禁用 box-only 跌倒补充路径，CPU 回退保留原兼容行为。
+- `AdaptiveInferenceScheduler` 根据实际 `inference_backend` 使用 Hailo 间隔：idle 0.5 秒、active 0.10 秒、risk 0.067 秒；CPU 间隔和热保护策略不变。Hailo 模式的廉价运动门只让下一次探测立即到期，不再续期 active；只有正式人物结果保持 active，KLT 快速下降仍保持 risk。展示仍为独立最新帧 8 FPS。
+- 正常床/沙发卧躺同时关闭 pose 和 box 跌倒候选；同一人物真实跌倒仍可通过轨迹时间变化、PoseFactorGraph 和 RuleEngine 进入事件。风险证据持久化上限为 4 FPS，避免推理升频同步放大 JPEG/SQLite 写入。
+- Hailo 系统包通过受控 `.pth` 只桥接 `hailo_platform`；项目虚拟环境继续使用自身 NumPy/OpenCV，避免系统包覆盖造成 ABI 冲突。
+
+驱动与实机：
+
+- Hailo-8 26 TOPS 被识别为 `/dev/hailo0`，固件 HailoRT 4.23，正式系统级 `gohome-edge-agent.service` 单实例持有设备。
+- HailoRT 4.23 PCIe 驱动在 `find_vma` 周围缺失 VMA 读锁，已增加覆盖 MMIO、dma-buf、普通用户缓冲、错误和成功路径的成对 `mmap_read_lock/mmap_read_unlock`；补丁保存为 `edge-agent/deploy/patches/hailort-pcie-driver-4.23-vma-lock.patch`。补全普通用户缓冲解锁后已重新构建 DKMS 模块并无重启热加载，Hailo 固件重新初始化成功。
+- 300 帧独立基准约 125.60 FPS，无 `find_vma`、DMA timeout 或 call trace。真实客厅帧检测到 3 人，置信度约 0.86/0.75/0.64；稳定延迟中位数 32.56 ms、P95 38.13 ms，生产记录通常约 28-32 ms。
+- 正式服务累计近 2000 次 Hailo 推理失败为 0。重启后 `/dev/hailo0` 仍由唯一服务进程持有，两路本地摄像头在线，最新检测记录持续为 `inference_backend=hailo`。
+- 调度修正部署后，无人双摄稳定回到约 2 FPS/路，温度约 63°C；运动仍会立即唤醒下一次 Hailo 探测，不会把无人画面持续锁定在 10 FPS active 预算。
+- 现场正常坐、站和沙发卧躺过程中，两路可分别达到约 9.4 FPS 或在同时升频时公平分配约 5.8-6.1 FPS，未创建正式事件。由此发现并修正调度判断顺序：沙发正常卧躺的静态因子图高分不再单独升到 risk；同轨迹垂直下降+运动或正式快速跌倒候选仍可进入 risk。
+- 历史沙发多人画面曾因旧 box-only floor cluster 进入 risk 并高频写盘；统一语义修复后正常沙发卧躺不再产生候选。按引用保留清理 34752 条过期快照/检测/评估后，数据库约 963 MB、快照约 840 MB，清理前后 SQLite `quick_check` 均通过。
+- 驱动补丁热加载后的生产观察累计 3679 次 Hailo 推理，失败为 0；去除启动预热后延迟中位数 28.75 ms、P95 36.98 ms、P99 37.93 ms、最大 42.03 ms。两路无人时分别稳定约 1.99-2.00 FPS，单路有人时约 9.4 FPS，两路同时有人时公平分配约 5.8-6.1 FPS。
+- 两路 MJPEG 各自连续 5 秒输出 40 帧，确认展示流为独立稳定的 8 FPS；服务稳定后进程 CPU 约 41.8%，温度约 58.4 摄氏度，两路摄像头均为 online。驱动热加载后的内核日志未出现 `find_vma`、DMA timeout、call trace、blocked task 或服务 warning，SQLite `quick_check=ok`。
+- PCIe 当前协商为 Gen2 x1。640x640 姿态输入的实际吞吐远低于该链路上限，当前推理延迟和稳定性已满足预算，因此不强制切换 Gen3，避免为无实际收益的带宽增加硬件兼容与稳定性风险。
+
+兼容与回归：
+
+- Hailo decoder、失败回退、自适应 Hailo/CPU 调度、VisionPipeline、TemporalObservation、ContinualPoseTracker、PoseFactorGraph、RuleEngine、worker、持久化、同步流、隐私渲染、配置同步、上传队列和锁重试回归通过。
+- 骨架隐私接口和连续姿态流保持 200；Hailo 改造没有改变 App、云端多图复核、事件日志、宠物、家具、火灾和多摄像头的数据契约。
+
+当前边界：
+
+- 2026-07-27 20:18 的 App 解绑测试已将云端 family 2 的设备 binding、设备令牌和两路云端摄像头配置撤销。盒子本地仍保留 camera 26/27 并正常运行 Hailo，但配置同步和公网中继因令牌被云端标记 `revoked` 返回 401。该状态不是 Hailo 故障；重新绑定前不得宣称当前 App/云端在线闭环正常，也不得直接激活令牌后让空云端配置删除盒子本地摄像头。
+- Hailo 正常场景、性能和回退代码已完成；新一轮真人低风险模拟跌倒、最多三帧上传、云端确认和 App 确认仍需在恢复正式绑定后执行。此前 2026-07-22 的 CPU/EACP 现场事件 `2101` 不能冒充本轮 Hailo 端到端验收。

@@ -38,7 +38,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Verify the Raspberry Pi vision runtime before service start.")
     parser.add_argument("--require-yolo", action="store_true")
     parser.add_argument("--require-pose", action="store_true")
+    parser.add_argument("--require-hailo", action="store_true")
     parser.add_argument("--smoke", action="store_true", help="load both models and run one synthetic frame")
+    parser.add_argument(
+        "--hailo-smoke",
+        action="store_true",
+        help="configure the Hailo pose model and run one synthetic frame",
+    )
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parent.parent
@@ -75,6 +81,20 @@ def main() -> int:
         checkpoints = sorted((Path.home() / ".cache/rtmlib/hub/checkpoints").glob("*.onnx"))
         add_check(checks, "rtmpose_checkpoints", len(checkpoints) >= 2, f"{len(checkpoints)} checkpoint(s)")
 
+    hailo_model = Path(
+        env.get("GOHOME_HAILO_POSE_MODEL")
+        or "/usr/share/hailo-models/yolov8s_pose_h8.hef"
+    )
+    if args.require_hailo or args.hailo_smoke:
+        try:
+            hailo_platform = importlib.import_module("hailo_platform")
+            add_check(checks, "hailo_platform", True, str(hailo_platform.__file__))
+        except Exception as exc:
+            add_check(checks, "hailo_platform", False, str(exc))
+        add_check(checks, "hailo_pose_model", hailo_model.is_file(), str(hailo_model))
+        device_path = Path("/dev/hailo0")
+        add_check(checks, "hailo_device", device_path.exists(), str(device_path))
+
     if args.smoke and all(item["ok"] for item in checks):
         try:
             import numpy as np
@@ -90,6 +110,35 @@ def main() -> int:
             add_check(checks, "model_smoke", pose.get("pose_model_status") == "ready", str(pose.get("pose_model_message") or ""))
         except Exception as exc:
             add_check(checks, "model_smoke", False, str(exc))
+
+    hailo_prerequisites = {
+        item["name"]: item["ok"]
+        for item in checks
+        if item["name"] in {"hailo_platform", "hailo_pose_model", "hailo_device"}
+    }
+    if args.hailo_smoke and all(hailo_prerequisites.values()):
+        backend = None
+        try:
+            import numpy as np
+            from app.vision.hailo_pose import HailoPoseBackend
+
+            backend = HailoPoseBackend(mode="hailo", model_path=str(hailo_model))
+            result = backend.analyze(
+                np.zeros((360, 640, 3), dtype=np.uint8),
+                {"pose_max_poses": 1},
+            )
+            status = backend.status()
+            add_check(
+                checks,
+                "hailo_model_smoke",
+                result is not None and status.get("status") == "ready",
+                json.dumps(status, ensure_ascii=False),
+            )
+        except Exception as exc:
+            add_check(checks, "hailo_model_smoke", False, str(exc))
+        finally:
+            if backend is not None:
+                backend.close()
 
     ok = all(item["ok"] for item in checks)
     print(json.dumps({"ok": ok, "checks": checks}, ensure_ascii=False, indent=2))

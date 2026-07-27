@@ -32,6 +32,12 @@ class DetectAgent:
         pose_cache_max_motion: float = 0.06,
         activity_window_seconds: float = 30.0,
         activity_max_samples: int = 90,
+        inference_backend: str = "auto",
+        hailo_pose_model: str = "/usr/share/hailo-models/yolov8s_pose_h8.hef",
+        hailo_pose_confidence: float = 0.25,
+        hailo_pose_nms_iou: float = 0.70,
+        hailo_retry_seconds: float = 30.0,
+        context_detection_interval_seconds: float = 3.0,
     ) -> None:
         self.pipeline = VisionPipeline(
             black_brightness_threshold=black_brightness_threshold,
@@ -57,6 +63,12 @@ class DetectAgent:
             pose_cache_max_motion=pose_cache_max_motion,
             activity_window_seconds=activity_window_seconds,
             activity_max_samples=activity_max_samples,
+            inference_backend=inference_backend,
+            hailo_pose_model=hailo_pose_model,
+            hailo_pose_confidence=hailo_pose_confidence,
+            hailo_pose_nms_iou=hailo_pose_nms_iou,
+            hailo_retry_seconds=hailo_retry_seconds,
+            context_detection_interval_seconds=context_detection_interval_seconds,
         )
         self._initialize_inference_lock()
 
@@ -74,3 +86,9 @@ class DetectAgent:
     ) -> Dict[str, Any]:
         with self._inference_lock:
             return self.pipeline.analyze(frame, previous_frame=previous_frame, config=config)
+
+    def runtime_status(self) -> Dict[str, Any]:
+        return self.pipeline.runtime_status()
+
+    def close(self) -> None:
+        self.pipeline.close()

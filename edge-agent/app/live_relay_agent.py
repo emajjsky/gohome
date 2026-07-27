@@ -8,6 +8,8 @@ from urllib.parse import urlencode, urlsplit
 import json
 import time
 
+from .video_privacy import normalize_privacy_mode
+
 
 class LiveRelayAgent:
     def __init__(
@@ -19,6 +21,9 @@ class LiveRelayAgent:
         device_id_resolver: Callable[[], str],
         token_resolver: Callable[[], str],
         remote_camera_id_resolver: Callable[[int], Any],
+        privacy_mode_resolver: Callable[[], str] | None = None,
+        privacy_mode_observer: Callable[[str], Any] | None = None,
+        privacy_renderer: Any | None = None,
     ) -> None:
         self.storage = storage
         self.settings = settings
@@ -26,12 +31,16 @@ class LiveRelayAgent:
         self.device_id_resolver = device_id_resolver
         self.token_resolver = token_resolver
         self.remote_camera_id_resolver = remote_camera_id_resolver
+        self.privacy_mode_resolver = privacy_mode_resolver or (lambda: "original")
+        self.privacy_mode_observer = privacy_mode_observer
+        self.privacy_renderer = privacy_renderer
         self._stop = Event()
         self._wake = Event()
         self._thread: Thread | None = None
         self._camera_threads: Dict[int, Thread] = {}
         self._camera_stops: Dict[int, Event] = {}
         self._http_connections: Dict[int, Any] = {}
+        self._camera_privacy_modes: Dict[int, str] = {}
         self.last_loop_started_at: str | None = None
         self.last_relay_at: str | None = None
         self.last_error = ""
@@ -77,6 +86,14 @@ class LiveRelayAgent:
             "last_relay_at": self.last_relay_at,
             "last_error": self.last_error,
             "last_result": self.last_result,
+            "privacy_mode": normalize_privacy_mode(self.privacy_mode_resolver()),
+            "camera_privacy_modes": {
+                str(camera_id): self._camera_privacy_modes.get(
+                    camera_id,
+                    normalize_privacy_mode(self.privacy_mode_resolver()),
+                )
+                for camera_id in sorted(self._camera_threads.keys())
+            },
         }
 
     def _run(self) -> None:
@@ -105,6 +122,7 @@ class LiveRelayAgent:
                 if stop_event:
                     stop_event.set()
                 self._camera_threads.pop(camera_id, None)
+                self._camera_privacy_modes.pop(camera_id, None)
 
         for camera in cameras:
             camera_id = int(camera["id"])
@@ -130,6 +148,7 @@ class LiveRelayAgent:
             thread.join(timeout=1)
         self._camera_stops.clear()
         self._camera_threads.clear()
+        self._camera_privacy_modes.clear()
 
     def _run_camera(self, camera: Dict[str, Any], stop_event: Event) -> None:
         camera_id = int(camera["id"])
@@ -153,18 +172,27 @@ class LiveRelayAgent:
                     frame = self._extract_jpeg(chunk)
                     if not frame:
                         continue
-                    self._post_frame(camera_id, frame)
+                    privacy_mode = normalize_privacy_mode(self.privacy_mode_resolver())
+                    if self.privacy_renderer is not None:
+                        frame = self.privacy_renderer.render_jpeg(
+                            camera_id,
+                            frame,
+                            privacy_mode,
+                            quality=quality,
+                        )
+                    self._post_frame(camera_id, frame, privacy_mode=privacy_mode)
             except Exception as exc:
                 self.last_error = f"camera {camera_id}: {exc}"
                 time.sleep(2.0)
 
-    def _post_frame(self, local_camera_id: int, frame: bytes) -> None:
+    def _post_frame(self, local_camera_id: int, frame: bytes, *, privacy_mode: str = "original") -> None:
         remote_camera_id = self.remote_camera_id_resolver(local_camera_id) or local_camera_id
         params = {
             "camera_id": str(remote_camera_id),
             "local_camera_id": str(local_camera_id),
             "content_type": "image/jpeg",
             "captured_at": self._utc_iso(),
+            "privacy_mode": normalize_privacy_mode(privacy_mode),
         }
         url = f"{self._base_url()}/api/v1/device/live-frames/upload?{urlencode(params)}"
         headers = {
@@ -180,10 +208,19 @@ class LiveRelayAgent:
             payload = json.loads(raw) if raw else {}
         except json.JSONDecodeError:
             payload = {}
+        requested_privacy_mode = normalize_privacy_mode(
+            payload.get("requested_privacy_mode"),
+            privacy_mode,
+        )
+        if self.privacy_mode_observer is not None:
+            self.privacy_mode_observer(requested_privacy_mode)
+        self._camera_privacy_modes[int(local_camera_id)] = normalize_privacy_mode(privacy_mode)
         self.last_result = {
             "camera_id": int(local_camera_id),
             "remote_camera_id": str(remote_camera_id),
             "size": len(frame),
+            "privacy_mode": normalize_privacy_mode(privacy_mode),
+            "requested_privacy_mode": requested_privacy_mode,
             "response": payload,
         }
         self.last_error = ""
