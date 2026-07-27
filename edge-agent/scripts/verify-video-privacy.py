@@ -33,7 +33,30 @@ class TrackerStub:
                     ],
                 }],
             },
-            "analysis_context": {},
+            "analysis_context": {
+                "people": [{"bbox": [112, 27, 208, 173], "confidence": 0.93}],
+            },
+        }
+
+
+class EmptyTrackerStub:
+    def latest_metadata(self, _camera_id: int):
+        return {
+            "image_width": 320,
+            "image_height": 180,
+            "tracking": {"state": "empty", "poses": []},
+        }
+
+
+class PersonWithoutPoseTrackerStub:
+    def latest_metadata(self, _camera_id: int):
+        return {
+            "image_width": 320,
+            "image_height": 180,
+            "tracking": {"state": "observed", "poses": []},
+            "analysis_context": {
+                "people": [{"bbox": [110, 25, 210, 175], "confidence": 0.91}],
+            },
         }
 
 
@@ -54,16 +77,37 @@ def main() -> int:
     original = encoded.tobytes()
 
     renderer = PrivacyFrameRenderer(TrackerStub())
+    assert len(renderer._privacy_boxes(TrackerStub().latest_metadata(1), 320, 180)) == 1
     assert renderer.render_jpeg(1, original, "original") == original
     blurred = decode(cv2, renderer.render_jpeg(1, original, "person_blur", quality=70))
     skeleton = decode(cv2, renderer.render_jpeg(1, original, "skeleton", quality=70))
 
-    person_region = blurred[20:178, 90:230]
-    outside_region = blurred[20:160, 5:70]
-    assert float(person_region.var()) < float(source[20:178, 90:230].var())
-    assert float(outside_region.var()) > 20.0
-    assert float(skeleton.mean()) < float(source.mean()) * 0.55
+    reference = decode(cv2, original)
+    person_slice = np.s_[20:178, 90:230]
+    outside_slice = np.s_[20:160, 5:70]
+    blurred_person_delta = float(np.abs(blurred[person_slice].astype(float) - reference[person_slice]).mean())
+    blurred_background_delta = float(np.abs(blurred[outside_slice].astype(float) - reference[outside_slice]).mean())
+    skeleton_person_delta = float(np.abs(skeleton[person_slice].astype(float) - reference[person_slice]).mean())
+    skeleton_background_delta = float(np.abs(skeleton[outside_slice].astype(float) - reference[outside_slice]).mean())
+    assert blurred_person_delta > blurred_background_delta * 2.0
+    assert skeleton_person_delta > skeleton_background_delta * 2.0
+    assert blurred_background_delta < 12.0
+    assert skeleton_background_delta < 12.0
+    assert float(skeleton.mean()) > float(reference.mean()) * 0.75
     assert int((skeleton[:, :, 2] > 180).sum()) > 10
+
+    empty_renderer = PrivacyFrameRenderer(EmptyTrackerStub())
+    empty_blur = decode(cv2, empty_renderer.render_jpeg(1, original, "person_blur", quality=70))
+    empty_skeleton = decode(cv2, empty_renderer.render_jpeg(1, original, "skeleton", quality=70))
+    assert float(np.abs(empty_blur.astype(float) - reference.astype(float)).mean()) < 12.0
+    assert float(np.abs(empty_skeleton.astype(float) - reference.astype(float)).mean()) < 12.0
+
+    person_only_renderer = PrivacyFrameRenderer(PersonWithoutPoseTrackerStub())
+    person_only_blur = decode(cv2, person_only_renderer.render_jpeg(1, original, "person_blur", quality=70))
+    person_only_skeleton = decode(cv2, person_only_renderer.render_jpeg(1, original, "skeleton", quality=70))
+    assert float(np.abs(person_only_blur[person_slice].astype(float) - reference[person_slice]).mean()) > 12.0
+    assert float(np.abs(person_only_skeleton[person_slice].astype(float) - reference[person_slice]).mean()) > 12.0
+    assert float(np.abs(person_only_skeleton[outside_slice].astype(float) - reference[outside_slice]).mean()) < 12.0
     assert normalize_privacy_mode("invalid") == "original"
 
     try:

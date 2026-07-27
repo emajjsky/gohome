@@ -53,6 +53,12 @@ body.admin-web-page .material-symbols-outlined[data-icon] { font-size: 0; }
 body.admin-web-page .material-symbols-outlined[data-icon]::before { content: attr(data-icon); font-family: Arial, sans-serif; font-size: 16px; font-weight: 700; }
 body.admin-web-page .admin-sidebar-controls { padding: 0 4px 11px; border: 0; background: transparent; }
 body.admin-web-page .admin-sidebar-controls .status-pill { width: 100%; justify-content: flex-start; }
+body.admin-web-page .admin-privacy-panel { display: grid; gap: 8px; margin: 0 4px 11px; border-top: 1px solid var(--console-line); padding-top: 12px; }
+body.admin-web-page .admin-privacy-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.admin-web-page .admin-privacy-head strong { font-size: 11px; font-weight: 720; }
+body.admin-web-page .admin-privacy-head span { color: var(--console-muted); font-size: 9px; }
+body.admin-web-page .admin-privacy-panel .segmented-control { width: 100%; min-height: 32px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+body.admin-web-page .admin-privacy-panel .segmented-control button { min-height: 32px; padding: 0 5px; font-size: 10px; }
 body.admin-web-page .admin-sidebar-note, body.admin-web-page .admin-sidebar-status { margin: 0; border: 0; border-top: 1px solid var(--console-line); border-radius: 0; padding: 12px 5px; background: transparent; box-shadow: none; }
 body.admin-web-page .admin-sidebar-note span, body.admin-web-page .admin-sidebar-note strong { display: block; }
 body.admin-web-page .admin-sidebar-note span { color: var(--console-muted); font-size: 10px; }
@@ -281,6 +287,8 @@ body.admin-web-page .camera-test-result p { margin: 3px 0 0; color: var(--consol
   body.admin-web-page .admin-brand { min-height: 40px; padding: 0; }
   body.admin-web-page .admin-nav { display: flex; flex: 1; justify-content: flex-end; margin: 0; border: 0; padding: 0; }
   body.admin-web-page .admin-sidebar-controls, body.admin-web-page .admin-sidebar-note, body.admin-web-page .admin-sidebar-status, body.admin-web-page .algorithm-switch-panel, body.admin-web-page .admin-sidebar-session { display: none; }
+  body.admin-web-page .admin-privacy-panel { width: 232px; margin: 0; border: 0; padding: 0; }
+  body.admin-web-page .admin-privacy-head { display: none; }
   body.admin-web-page .admin-web-main { padding: 16px; }
   body.admin-web-page .algorithm-theater, body.admin-web-page .admin-camera-grid { grid-template-columns: 1fr; }
   body.admin-web-page .algorithm-evidence-rail { border-left: 0; border-top: 1px solid var(--console-line); }

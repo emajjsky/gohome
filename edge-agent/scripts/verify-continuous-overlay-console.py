@@ -70,8 +70,17 @@ def main() -> None:
         page_html = (ROOT / "admin" / page).read_text(encoding="utf-8")
         if '/admin/console.css' not in page_html:
             raise SystemExit(f"{page} does not load the shared management-console stylesheet")
+        if "20260727-privacy-3" not in page_html:
+            raise SystemExit(f"{page} does not load the current privacy-control assets")
     if "gradient" in console_css:
         raise SystemExit("management-console stylesheet must not rely on decorative gradients")
+    if "function ensureVideoPrivacyControl" not in console:
+        raise SystemExit("management console has no shared privacy control")
+    if console.count('class="segmented-control privacy-mode-control"') != 1:
+        raise SystemExit("privacy controls must be generated from one shared definition")
+    privacy_poll = function_source(console, "state.privacyTimer = setInterval", "setInterval(renderPairingCountdown")
+    if "pageName" in privacy_poll or "loadVideoPrivacyMode" not in privacy_poll:
+        raise SystemExit("privacy state is not synchronized on every management page")
 
     display_poses = function_source(console, "function snapshotDisplayPoses", "function snapshotPoseEdges")
     if '"coasting"' not in display_poses:
@@ -89,6 +98,7 @@ def main() -> None:
         "bounded_coasting_visible": True,
         "deterministic_safety_priority": True,
         "shared_console_design_system": True,
+        "shared_privacy_control": True,
     })
 
 

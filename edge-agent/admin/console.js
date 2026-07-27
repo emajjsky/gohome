@@ -41,6 +41,7 @@ const state = {
   toastTimer: null,
   videoPrivacyMode: "original",
   videoPrivacyUpdatedAt: "",
+  videoPrivacyLoaded: false,
   privacyTimer: null,
 };
 
@@ -112,12 +113,35 @@ function normalizeVideoPrivacyMode(value) {
     : "original";
 }
 
+function ensureVideoPrivacyControl() {
+  if (document.querySelector(".admin-privacy-panel")) return;
+  const sidebar = document.querySelector(".admin-sidebar");
+  if (!sidebar) return;
+  const panel = document.createElement("section");
+  panel.className = "admin-privacy-panel";
+  panel.setAttribute("aria-label", "家庭画面隐私");
+  panel.innerHTML = `
+    <div class="admin-privacy-head">
+      <strong>画面隐私</strong>
+      <span id="videoPrivacySyncState">家庭同步</span>
+    </div>
+    <div class="segmented-control privacy-mode-control" aria-label="隐私画面模式">
+      <button type="button" data-privacy-mode="original">原画</button>
+      <button type="button" data-privacy-mode="person_blur">模糊</button>
+      <button type="button" data-privacy-mode="skeleton">骨架</button>
+    </div>`;
+  const controls = sidebar.querySelector(".admin-sidebar-controls");
+  controls?.insertAdjacentElement("afterend", panel);
+  if (!controls) sidebar.querySelector(".admin-nav")?.insertAdjacentElement("afterend", panel);
+}
+
 function renderVideoPrivacyMode() {
   document.querySelectorAll("[data-privacy-mode]").forEach((button) => {
     const active = button.dataset.privacyMode === state.videoPrivacyMode;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", active ? "true" : "false");
   });
+  setText("videoPrivacySyncState", state.videoPrivacyLoaded ? "已同步" : "家庭同步");
 }
 
 async function loadVideoPrivacyMode({ refreshStream = true } = {}) {
@@ -126,6 +150,7 @@ async function loadVideoPrivacyMode({ refreshStream = true } = {}) {
   const changed = nextMode !== state.videoPrivacyMode;
   state.videoPrivacyMode = nextMode;
   state.videoPrivacyUpdatedAt = String(payload?.updated_at || "");
+  state.videoPrivacyLoaded = true;
   renderVideoPrivacyMode();
   if (changed && refreshStream && state.selectedCameraId) renderStream({ retry: true });
   return payload;
@@ -142,6 +167,7 @@ async function updateVideoPrivacyMode(mode, button) {
     });
     state.videoPrivacyMode = normalizeVideoPrivacyMode(payload?.minimum_mode);
     state.videoPrivacyUpdatedAt = String(payload?.updated_at || "");
+    state.videoPrivacyLoaded = true;
     renderVideoPrivacyMode();
     renderStream({ retry: true });
   } finally {
@@ -3245,6 +3271,7 @@ function bindEvents() {
 
 document.addEventListener("DOMContentLoaded", () => {
   hydrateAdminSession();
+  ensureVideoPrivacyControl();
   bindEvents();
   if (pageName === "cameras") setCameraMode("lan");
   updatePreviewAlgorithmInfo();
@@ -3269,9 +3296,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (pageName === "events") loadEventLog().catch(() => null);
   }, 6000);
   state.privacyTimer = setInterval(() => {
-    if (pageName === "home" || pageName === "algorithms") {
-      loadVideoPrivacyMode().catch(() => null);
-    }
+    loadVideoPrivacyMode().catch(() => null);
   }, 1000);
   setInterval(renderPairingCountdown, 1000);
   document.addEventListener("visibilitychange", () => {
