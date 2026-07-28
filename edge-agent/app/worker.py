@@ -13,6 +13,7 @@ from .vision.temporal import TemporalObservationEngine
 from .vision.pose_factor_graph import PoseFactorGraphEngine
 from .vision.continual_pose_tracker import ContinualPoseTracker
 from .vision.motion_gate import MotionGate
+from .observation_coverage import ObservationCoverageTracker
 
 
 LIFE_OBSERVATION_TYPES = {"no_motion", "no_person"}
@@ -40,6 +41,7 @@ class EdgeWorker:
         inference_scheduler: AdaptiveInferenceScheduler | None = None,
         continual_pose_tracker: Any | None = None,
         motion_gate: Any | None = None,
+        observation_coverage_tracker: ObservationCoverageTracker | None = None,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.storage = storage
@@ -64,6 +66,9 @@ class EdgeWorker:
         self.continual_pose_tracker = continual_pose_tracker or ContinualPoseTracker()
         self.motion_gate = motion_gate or MotionGate()
         self._monotonic_clock = monotonic_clock or time.monotonic
+        self.observation_coverage_tracker = observation_coverage_tracker or ObservationCoverageTracker(
+            monotonic_clock=self._monotonic_clock,
+        )
         self.last_history_cleanup_at = 0.0
         self.last_history_cleanup_result: Dict[str, Any] = {}
         self.last_error = ""
@@ -76,6 +81,7 @@ class EdgeWorker:
             "risk_image_writes": 0,
             "candidate_image_writes": 0,
             "structured_activity_writes": 0,
+            "activity_intervals_enqueued": 0,
             "routine_image_writes_avoided": 0,
         }
         self.last_persistence_reason: Dict[int, str] = {}
@@ -234,6 +240,22 @@ class EdgeWorker:
             "last_error": self.last_error,
         }
 
+    def camera_presence_status(
+        self,
+        camera_id: int,
+        *,
+        expected_interval_seconds: float = 5.0,
+    ) -> Dict[str, Any]:
+        historical = self.storage.camera_presence_status(
+            int(camera_id),
+            expected_interval_seconds=max(1, int(expected_interval_seconds)),
+        )
+        return self.observation_coverage_tracker.status(
+            int(camera_id),
+            expected_interval_seconds=expected_interval_seconds,
+            historical=historical,
+        )
+
     def _refresh_runtime_config(self, now: float) -> None:
         if self._runtime_config_refreshed_at and now - self._runtime_config_refreshed_at < self._runtime_config_refresh_seconds:
             return
@@ -281,6 +303,7 @@ class EdgeWorker:
         self.last_activity_signature.pop(camera_id, None)
         self.last_persistence_reason.pop(camera_id, None)
         self._last_tracked_frame_ids.pop(camera_id, None)
+        self.observation_coverage_tracker.reset_camera(camera_id)
 
     def _run_continual_tracking(self) -> None:
         while not self._stop.is_set():
@@ -409,6 +432,13 @@ class EdgeWorker:
             analysis["inference_runtime"] = self._inference_runtime_payload(pose_runtime_config)
             self._attach_continual_identity_hints(camera_id, analysis)
             temporal = self.temporal_engine.update(camera_id, analysis)
+            self.observation_coverage_tracker.observe(
+                camera_id,
+                observed_at=str(capture.get("captured_at") or ""),
+                person_present=bool(temporal.get("credible_person_present")),
+                valid=not bool(analysis.get("black_screen")),
+                now=self._monotonic_clock(),
+            )
             self._publish_continual_pose_anchor(camera_id, frame=frame, capture=capture, analysis=analysis)
             self.pose_factor_graph_engine.update(camera_id, analysis, config=rules)
             self._attach_temporal_evidence(camera_id, analysis)
@@ -806,6 +836,20 @@ class EdgeWorker:
             or (state == "visible" and interval_due)
         )
         if not should_write:
+            if previous_signature is None and state == "absent":
+                jobs = self.storage.advance_activity_export(
+                    camera_id=camera_id,
+                    room=str(camera.get("room") or ""),
+                    observed_at=str(snapshot.get("captured_at") or snapshot.get("created_at") or ""),
+                    visible=False,
+                    person_count=0,
+                    postures=(),
+                    confidence=None,
+                    flush=True,
+                    reason="person_not_visible",
+                    max_gap_seconds=self.activity_log_interval_seconds * 2,
+                )
+                self.persistence_metrics["activity_intervals_enqueued"] += len(jobs)
             self.last_activity_signature[camera_id] = signature
             self.persistence_metrics["routine_image_writes_avoided"] += 1
             return False
@@ -814,6 +858,24 @@ class EdgeWorker:
         if state != "uncertain":
             wrote = self._update_presence_session(camera, snapshot, temporal) or wrote
         wrote = bool(self._persist_posture_episodes(camera, snapshot, temporal)) or wrote
+        export_jobs = [] if state == "uncertain" else self.storage.advance_activity_export(
+            camera_id=camera_id,
+            room=str(camera.get("room") or ""),
+            observed_at=str(snapshot.get("captured_at") or snapshot.get("created_at") or ""),
+            visible=state == "visible",
+            person_count=int(temporal.get("credible_person_count") or 0),
+            postures=signature[2],
+            confidence=self._activity_confidence(temporal),
+            flush=bool(previous_signature is not None and (interval_due or state_changed or posture_changed or closures)),
+            reason=(
+                "person_not_visible" if state == "absent"
+                else "posture_changed" if posture_changed or closures
+                else "activity_heartbeat" if interval_due
+                else "person_visible"
+            ),
+            max_gap_seconds=self.activity_log_interval_seconds * 2,
+        )
+        self.persistence_metrics["activity_intervals_enqueued"] += len(export_jobs)
         self.last_activity_signature[camera_id] = signature
         self.last_activity_persisted_at[camera_id] = float(now)
         if wrote:
@@ -835,6 +897,19 @@ class EdgeWorker:
             int(temporal.get("credible_person_count") or 0),
             tuple(postures),
         )
+
+    @staticmethod
+    def _activity_confidence(temporal: Dict[str, Any]) -> float | None:
+        credible_ids = {str(item) for item in (temporal.get("credible_track_ids") or []) if item}
+        tracks = temporal.get("active_tracks") if isinstance(temporal.get("active_tracks"), list) else []
+        values = [
+            float(track.get("posture_confidence") or track.get("confidence") or 0.0)
+            for track in tracks
+            if isinstance(track, dict)
+            and (not credible_ids or str(track.get("track_id") or "") in credible_ids)
+            and float(track.get("posture_confidence") or track.get("confidence") or 0.0) > 0.0
+        ]
+        return sum(values) / len(values) if values else None
 
     def _update_presence_session(
         self,

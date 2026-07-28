@@ -98,6 +98,7 @@ class Storage:
         self.presence_active = False
         self.posture_upserts = 0
         self.posture_closes = 0
+        self.activity_intervals = 0
 
     def create_snapshot(self, **payload: object) -> dict:
         self.snapshots += 1
@@ -142,6 +143,17 @@ class Storage:
 
     def close_observation_log(self, **payload: object) -> None:
         return None
+
+    def advance_activity_export(self, **payload: object) -> list[dict]:
+        if payload.get("visible") and payload.get("flush"):
+            self.activity_intervals += 1
+        return []
+
+    def close_camera_runtime_state(self, camera_id: int, *, reason: str) -> dict:
+        return {}
+
+    def camera_presence_status(self, camera_id: int, *, expected_interval_seconds: int = 5) -> dict:
+        return {}
 
 
 class EventAgent:

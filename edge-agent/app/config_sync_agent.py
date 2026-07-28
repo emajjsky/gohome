@@ -21,6 +21,7 @@ class ConfigSyncAgent:
         device_id_resolver: Callable[[], str],
         token_resolver: Callable[[], str],
         runtime_status_resolver: Callable[[], Dict[str, Any]] | None = None,
+        presence_status_resolver: Callable[..., Dict[str, Any]] | None = None,
         binding_summary_writer: Callable[[Dict[str, Any] | None], Any] | None = None,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
@@ -30,6 +31,7 @@ class ConfigSyncAgent:
         self.device_id_resolver = device_id_resolver
         self.token_resolver = token_resolver
         self.runtime_status_resolver = runtime_status_resolver or (lambda: {})
+        self.presence_status_resolver = presence_status_resolver or self.storage.camera_presence_status
         self.binding_summary_writer = binding_summary_writer
         self.monotonic_clock = monotonic_clock or time.monotonic
         self._stop = Event()
@@ -426,7 +428,7 @@ class ConfigSyncAgent:
             "sync_status": "synced" if not last_error else "edge_error",
             "last_error": last_error,
             "action": action,
-            "presence": self.storage.camera_presence_status(
+            "presence": self.presence_status_resolver(
                 int(local_camera["id"]),
                 expected_interval_seconds=int(self.storage.get_rules().get("capture_interval_seconds") or 5),
             ),

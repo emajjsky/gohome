@@ -11457,3 +11457,24 @@ EACP 口径：
 - 本地自适应调度、worker、连续跟踪、同步姿态流、摄像头节拍、隐私渲染、配置离线持久化、视觉管线、姿态因子图、跌倒规则、上传和 Python 编译回归通过。
 - 树莓派运行时验证通过，`gohome-edge-agent.service` 保持 active，两路本地摄像头在线，Hailo 设备由单一正式服务持有，失败计数为 0。
 - 当前云端设备令牌仍为 revoked。隐私本地切换可用，但云端配置、中继、事件上传和 App 闭环仍需通过 App 局域网重新配对恢复；在完成新一轮走动、坐、蹲、沙发卧躺、模拟跌倒、三帧上传、云端确认和 App 处置前，不宣称 Hailo 版端到端验收完成。
+
+## 127. 2026-07-28 活动区间 outbox 与观察覆盖率重构
+
+### 活动区间
+
+- SQLite 新增 `activity_export_cursors`。首次可信见人只建立游标；姿态变化、600 秒活动心跳、人物离开或摄像头生命周期结束时，将区间写入 `upload_jobs(job_type=activity_interval_upload)`。
+- 区间使用 `camera_id + started_at + ended_at` 哈希生成稳定来源 ID 和 idempotency key；最长 6 小时。观察间隙超过 1200 秒时，旧段截止到 `last_observed_at`，新观察另开区间。
+- `UploadAgent` 发送 `POST /api/v1/device/activity-intervals`，发送前解析云端 camera ID。任务不引用 snapshot，不包含媒体；401 或网络失败继续由原 outbox 状态与退避机制保留，不丢区间。
+- `close_camera_runtime_state()` 统一处理禁用、删除、离线和异常；`reconcile_camera_runtime_state(close_stale_open=true)` 在 worker 重启时收口残留游标。两者只延伸到最后可信观察，不延伸到故障处理时间。
+
+### 有效观察覆盖率
+
+- 新增 `ObservationCoverageTracker`，按实际调度间隔在近一小时内去重观察桶，线程安全地维护最后有效观察、最后见人、有效样本和人物样本；黑屏不计有效观察。
+- `ConfigSyncAgent` 新增 `presence_status_resolver`，正式运行注入 `worker.camera_presence_status`。SQLite `camera_presence_status` 只提供历史最后见人和宠物事实兜底，不再决定当前覆盖率。
+- worker 重启后的覆盖率分母从本进程首次有效观察开始，避免启动瞬间因固定一小时分母进入低覆盖；摄像头被移除或禁用时同步清理内存窗口。
+
+### 验证与限制
+
+- `verify-activity-interval-outbox.py` 覆盖姿态切段、离线间隙、人物离开、运行状态关闭、无媒体任务、云端 camera ID 映射和批量上传；模拟 HTTP 401 后任务保持 `failed`、保留原 payload 并写入 `next_attempt_at`，不会误标完成或丢失区间。
+- `verify-observation-coverage.py` 覆盖有效桶、人物样本、历史最后见人合并、黑屏降低覆盖率和摄像头 reset；原自适应持久化、worker、上传和配置同步回归通过。
+- 当前未部署盒子，未修改运行中的 Hailo/EACP/跌倒规则。设备 token 仍为 revoked，真实活动区间上传与云端报告必须等安全重新绑定后验收。

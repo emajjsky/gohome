@@ -1294,6 +1294,7 @@ config_sync_agent = ConfigSyncAgent(
             "last_cleanup": worker.last_history_cleanup_result,
         },
     },
+    presence_status_resolver=worker.camera_presence_status,
 )
 privacy_frame_renderer = PrivacyFrameRenderer(worker.continual_pose_tracker)
 privacy_mjpeg_stream = PrivacyMjpegStream(camera_agent, privacy_frame_renderer)

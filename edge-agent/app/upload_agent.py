@@ -185,6 +185,8 @@ class UploadAgent:
             return self._upload_event(job)
         if job_type == "event_state_upload":
             return self._upload_event_state(job)
+        if job_type == "activity_interval_upload":
+            return self._upload_activity_interval(job)
         raise ValueError(f"Unsupported upload job type: {job_type}")
 
     def _upload_media(self, job: Dict[str, Any]) -> Dict[str, Any]:
@@ -313,6 +315,41 @@ class UploadAgent:
             "uploaded": True,
             "target": "app_server_event_state",
             "event": response.get("event") or response,
+        }
+
+    def _upload_activity_interval(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(job.get("payload") or {})
+        local_camera_id = payload.get("local_camera_id") or job.get("camera_id")
+        remote_camera_id = self.remote_camera_id_resolver(int(local_camera_id)) if local_camera_id else None
+        interval = {
+            "source_interval_id": str(payload.get("source_interval_id") or ""),
+            "camera_id": str(remote_camera_id or local_camera_id or ""),
+            "room": str(payload.get("room") or ""),
+            "started_at": str(payload.get("started_at") or ""),
+            "ended_at": str(payload.get("ended_at") or ""),
+            "person_count_max": max(1, int(payload.get("person_count_max") or 1)),
+            "postures": payload.get("postures") if isinstance(payload.get("postures"), list) else [],
+            "confidence": payload.get("confidence"),
+            "metadata": payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+        }
+        if not interval["source_interval_id"] or not interval["started_at"] or not interval["ended_at"]:
+            raise ValueError("activity interval upload is incomplete")
+        response = self._request_json(
+            "POST",
+            "/api/v1/device/activity-intervals",
+            json_body={
+                "device_id": self.device_id_resolver(),
+                "intervals": [interval],
+            },
+        )
+        return {
+            "uploaded": True,
+            "target": "app_server_activity_intervals",
+            "source_interval_id": interval["source_interval_id"],
+            "accepted": int(response.get("accepted") or 0),
+            "inserted": int(response.get("inserted") or 0),
+            "skipped": int(response.get("skipped") or 0),
+            "reason": str(response.get("reason") or ""),
         }
 
     def _camera_ids(self, job: Dict[str, Any], payload: Dict[str, Any]) -> tuple[Any, Any]:

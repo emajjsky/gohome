@@ -424,6 +424,18 @@ class Storage:
                     FOREIGN KEY(representative_snapshot_id) REFERENCES snapshots(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS activity_export_cursors (
+                    camera_id INTEGER PRIMARY KEY,
+                    segment_started_at TEXT NOT NULL,
+                    last_observed_at TEXT NOT NULL,
+                    person_count_max INTEGER NOT NULL DEFAULT 1,
+                    postures_json TEXT NOT NULL DEFAULT '[]',
+                    confidence REAL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(camera_id) REFERENCES cameras(id)
+                );
+
                 CREATE TABLE IF NOT EXISTS device_sync_states (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     device_id TEXT NOT NULL UNIQUE,
@@ -754,6 +766,8 @@ class Storage:
                     ON posture_episodes(camera_id, status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_posture_episodes_track_status
                     ON posture_episodes(camera_id, track_id, status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_activity_export_cursors_updated_at
+                    ON activity_export_cursors(updated_at, camera_id);
                 """
             )
 
@@ -3283,6 +3297,12 @@ class Storage:
     def close_camera_runtime_state(self, camera_id: int, *, reason: str) -> Dict[str, int]:
         timestamp = now_iso()
         with self.connect() as conn:
+            activity_jobs = self._close_activity_export_cursor(
+                conn,
+                camera_id=int(camera_id),
+                reason=str(reason or "camera_stopped"),
+                timestamp=timestamp,
+            )
             observation_cursor = conn.execute(
                 """
                 UPDATE observation_logs
@@ -3317,6 +3337,7 @@ class Storage:
             "observation_logs_closed": int(observation_cursor.rowcount or 0),
             "presence_sessions_closed": int(presence_cursor.rowcount or 0),
             "posture_episodes_closed": int(posture_cursor.rowcount or 0),
+            "activity_intervals_enqueued": len(activity_jobs),
         }
 
     def reconcile_camera_runtime_state(self, *, close_stale_open: bool = False) -> Dict[str, int]:
@@ -3358,7 +3379,21 @@ class Storage:
             stale_observation_count = 0
             stale_presence_count = 0
             stale_posture_count = 0
+            stale_activity_count = 0
             if close_stale_open:
+                activity_camera_ids = [
+                    int(row["camera_id"])
+                    for row in conn.execute("SELECT camera_id FROM activity_export_cursors").fetchall()
+                ]
+                stale_activity_count = sum(
+                    len(self._close_activity_export_cursor(
+                        conn,
+                        camera_id=camera_id,
+                        reason="worker_restart",
+                        timestamp=timestamp,
+                    ))
+                    for camera_id in activity_camera_ids
+                )
                 stale_observation_cursor = conn.execute(
                     """
                     UPDATE observation_logs
@@ -3399,6 +3434,7 @@ class Storage:
             "stale_observation_logs_closed": stale_observation_count,
             "stale_presence_sessions_closed": stale_presence_count,
             "stale_posture_episodes_closed": stale_posture_count,
+            "stale_activity_intervals_enqueued": stale_activity_count,
         }
 
     def create_snapshot(
@@ -3486,6 +3522,14 @@ class Storage:
                 (int(camera_id), f"-{window_seconds} seconds"),
             ).fetchone()
             historical = conn.execute(
+                """
+                SELECT MAX(last_seen_at) AS last_person_seen_at
+                FROM presence_sessions
+                WHERE camera_id = ?
+                """,
+                (int(camera_id),),
+            ).fetchone()
+            snapshot_historical = conn.execute(
                 "SELECT MAX(captured_at) AS last_person_seen_at FROM snapshots WHERE camera_id = ? AND person_count > 0",
                 (int(camera_id),),
             ).fetchone()
@@ -3496,7 +3540,10 @@ class Storage:
         observed_samples = int(row["observed_samples"] or 0)
         return {
             "last_observed_at": row["last_observed_at"],
-            "last_person_seen_at": historical["last_person_seen_at"],
+            "last_person_seen_at": max(
+                filter(None, [historical["last_person_seen_at"], snapshot_historical["last_person_seen_at"]]),
+                default=None,
+            ),
             "observation_window_minutes": max(1, int(window_minutes)),
             "observed_samples": observed_samples,
             "person_samples": int(row["person_samples"] or 0),
@@ -3996,6 +4043,215 @@ class Storage:
                 (int(family_id), str(device_id or "").strip(), str(package_type or "").strip()),
             ).fetchone()
         return self._package_execution_to_dict(row)
+
+    def advance_activity_export(
+        self,
+        *,
+        camera_id: int,
+        room: str,
+        observed_at: str,
+        visible: bool,
+        person_count: int,
+        postures: Iterable[str],
+        confidence: Optional[float],
+        flush: bool,
+        reason: str,
+        max_gap_seconds: float,
+    ) -> list[Dict[str, Any]]:
+        observed = self._parse_iso_datetime(observed_at)
+        clean_postures = sorted({str(item or "").strip() for item in postures if str(item or "").strip()})
+        bounded_confidence = None if confidence is None else max(0.0, min(1.0, float(confidence)))
+        timestamp = now_iso()
+        jobs: list[Dict[str, Any]] = []
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM activity_export_cursors WHERE camera_id = ?",
+                (int(camera_id),),
+            ).fetchone()
+            if cursor is not None:
+                started = self._parse_iso_datetime(str(cursor["segment_started_at"]))
+                last_observed = self._parse_iso_datetime(str(cursor["last_observed_at"]))
+                stale = (observed - last_observed).total_seconds() > max(60.0, float(max_gap_seconds))
+                previous_postures = json.loads(cursor["postures_json"] or "[]")
+                signature_changed = clean_postures != sorted(str(item) for item in previous_postures)
+                if not visible or flush or stale or signature_changed:
+                    ended = last_observed if stale else observed
+                    if ended > started:
+                        jobs.extend(self._enqueue_activity_interval_chunks(
+                            conn,
+                            camera_id=int(camera_id),
+                            room=str(room or ""),
+                            started_at=started,
+                            ended_at=ended,
+                            person_count=max(int(cursor["person_count_max"] or 1), 1),
+                            postures=previous_postures,
+                            confidence=cursor["confidence"],
+                            reason="observation_gap" if stale else str(reason or "activity_update"),
+                            timestamp=timestamp,
+                        ))
+
+            if visible:
+                reset = cursor is None or bool(flush) or (
+                    cursor is not None
+                    and (
+                        (observed - self._parse_iso_datetime(str(cursor["last_observed_at"]))).total_seconds()
+                        > max(60.0, float(max_gap_seconds))
+                        or clean_postures != sorted(str(item) for item in json.loads(cursor["postures_json"] or "[]"))
+                    )
+                )
+                if reset:
+                    conn.execute(
+                        """
+                        INSERT INTO activity_export_cursors (
+                            camera_id, segment_started_at, last_observed_at, person_count_max,
+                            postures_json, confidence, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(camera_id) DO UPDATE SET
+                            segment_started_at = excluded.segment_started_at,
+                            last_observed_at = excluded.last_observed_at,
+                            person_count_max = excluded.person_count_max,
+                            postures_json = excluded.postures_json,
+                            confidence = excluded.confidence,
+                            updated_at = excluded.updated_at
+                        """,
+                        (
+                            int(camera_id), observed.isoformat(), observed.isoformat(),
+                            max(1, int(person_count)), json.dumps(clean_postures, ensure_ascii=False),
+                            bounded_confidence, timestamp, timestamp,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE activity_export_cursors
+                        SET last_observed_at = ?,
+                            person_count_max = MAX(person_count_max, ?),
+                            confidence = CASE
+                                WHEN confidence IS NULL THEN ?
+                                WHEN ? IS NULL THEN confidence
+                                ELSE (confidence + ?) / 2.0
+                            END,
+                            updated_at = ?
+                        WHERE camera_id = ?
+                        """,
+                        (
+                            observed.isoformat(), max(1, int(person_count)), bounded_confidence,
+                            bounded_confidence, bounded_confidence, timestamp, int(camera_id),
+                        ),
+                    )
+            else:
+                conn.execute("DELETE FROM activity_export_cursors WHERE camera_id = ?", (int(camera_id),))
+        return jobs
+
+    def _enqueue_activity_interval_chunks(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        camera_id: int,
+        room: str,
+        started_at: datetime,
+        ended_at: datetime,
+        person_count: int,
+        postures: Iterable[str],
+        confidence: Optional[float],
+        reason: str,
+        timestamp: str,
+    ) -> list[Dict[str, Any]]:
+        jobs: list[Dict[str, Any]] = []
+        chunk_start = started_at
+        max_chunk = timedelta(hours=6)
+        while chunk_start < ended_at:
+            chunk_end = min(ended_at, chunk_start + max_chunk)
+            source_hash = hashlib.sha256(
+                f"{camera_id}|{chunk_start.isoformat()}|{chunk_end.isoformat()}".encode("utf-8")
+            ).hexdigest()[:24]
+            source_interval_id = f"camera-{camera_id}-{source_hash}"
+            idempotency_key = f"activity-interval:{source_interval_id}"
+            payload = {
+                "schema_version": "gohome-activity-interval-v1",
+                "source_interval_id": source_interval_id,
+                "local_camera_id": int(camera_id),
+                "room": str(room or ""),
+                "started_at": chunk_start.isoformat(),
+                "ended_at": chunk_end.isoformat(),
+                "person_count_max": max(1, int(person_count)),
+                "postures": sorted({str(item or "").strip() for item in postures if str(item or "").strip()}),
+                "confidence": None if confidence is None else round(max(0.0, min(1.0, float(confidence))), 4),
+                "metadata": {
+                    "source": "edge_presence_timeline",
+                    "close_reason": str(reason or "activity_update"),
+                    "contains_media": False,
+                },
+            }
+            insert_cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO upload_jobs (
+                    job_type, object_type, status, priority, idempotency_key,
+                    family_id, device_id, event_id, snapshot_id, camera_id,
+                    payload_json, attempt_count, last_error, next_attempt_at,
+                    created_at, updated_at, completed_at
+                ) VALUES (
+                    'activity_interval_upload', 'activity_interval', 'pending', 70, ?,
+                    NULL, '', NULL, NULL, ?, ?, 0, '', NULL, ?, ?, NULL
+                )
+                """,
+                (idempotency_key, int(camera_id), json.dumps(payload, ensure_ascii=False), timestamp, timestamp),
+            )
+            if int(insert_cursor.rowcount or 0) > 0:
+                row = conn.execute(
+                    "SELECT * FROM upload_jobs WHERE idempotency_key = ? LIMIT 1",
+                    (idempotency_key,),
+                ).fetchone()
+                job = self._upload_job_to_dict(row)
+                if job is not None:
+                    jobs.append(job)
+            chunk_start = chunk_end
+        return jobs
+
+    def _close_activity_export_cursor(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        camera_id: int,
+        reason: str,
+        timestamp: str,
+    ) -> list[Dict[str, Any]]:
+        cursor = conn.execute(
+            """
+            SELECT aec.*, c.room AS camera_room
+            FROM activity_export_cursors aec
+            LEFT JOIN cameras c ON c.id = aec.camera_id
+            WHERE aec.camera_id = ?
+            """,
+            (int(camera_id),),
+        ).fetchone()
+        if cursor is None:
+            return []
+        started = self._parse_iso_datetime(str(cursor["segment_started_at"]))
+        ended = self._parse_iso_datetime(str(cursor["last_observed_at"]))
+        jobs = []
+        if ended > started:
+            jobs = self._enqueue_activity_interval_chunks(
+                conn,
+                camera_id=int(camera_id),
+                room=str(cursor["camera_room"] or ""),
+                started_at=started,
+                ended_at=ended,
+                person_count=max(1, int(cursor["person_count_max"] or 1)),
+                postures=json.loads(cursor["postures_json"] or "[]"),
+                confidence=cursor["confidence"],
+                reason=str(reason or "camera_stopped"),
+                timestamp=timestamp,
+            )
+        conn.execute("DELETE FROM activity_export_cursors WHERE camera_id = ?", (int(camera_id),))
+        return jobs
+
+    @staticmethod
+    def _parse_iso_datetime(value: str) -> datetime:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
 
     def create_event(
         self,
