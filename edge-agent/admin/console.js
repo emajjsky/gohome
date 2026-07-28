@@ -935,8 +935,8 @@ function renderStream({ retry = false } = {}) {
     setText("streamStatus", "实时视频已连接");
   };
   const streamProfile = pageName === "algorithms"
-    ? { fps: 8, width: 640, height: 360, quality: 68, drop: 0, label: "同步姿态视频" }
-    : { fps: 8, width: 1280, height: 720, quality: 64, drop: 1, label: "720p 低延迟视频" };
+    ? { fps: 12, width: 960, height: 540, quality: 70, drop: 0, label: "同步姿态视频" }
+    : { fps: 10, width: 1280, height: 720, quality: 64, drop: 1, label: "720p 低延迟视频" };
   state.serverAnnotated = pageName === "algorithms" && state.videoPrivacyMode === "original";
   const streamPath = state.serverAnnotated
     ? `/api/cameras/${camera.id}/continual-pose/stream.mjpg`
