@@ -9,12 +9,14 @@ const infoPath = path.join(root, "ios-shell/GoHomeShell/Config/Info.plist");
 const entitlementsPath = path.join(root, "ios-shell/GoHomeShell/Config/GoHomeShell.entitlements");
 const privacyPath = path.join(root, "ios-shell/GoHomeShell/Resources/PrivacyInfo.xcprivacy");
 const projectPath = path.join(root, "ios-shell/GoHomeShell.xcodeproj/project.pbxproj");
+const exportOptionsPath = path.join(root, "ios-shell/ExportOptions.plist");
 const iconPath = path.join(root, "ios-shell/GoHomeShell/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png");
 
 const info = fs.readFileSync(infoPath, "utf8");
 const entitlements = fs.readFileSync(entitlementsPath, "utf8");
 const privacy = fs.readFileSync(privacyPath, "utf8");
 const project = fs.readFileSync(projectPath, "utf8");
+const exportOptions = fs.readFileSync(exportOptionsPath, "utf8");
 
 function hasNonEmptyPlistString(source, key) {
     const pattern = new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`);
@@ -58,6 +60,13 @@ assert.match(project, /Assets\.xcassets in Resources/);
 assert.match(project, /MARKETING_VERSION = 1\.0\.0;/);
 assert.match(project, /APS_ENVIRONMENT = development;/, "Debug builds must register sandbox APNs tokens");
 assert.match(project, /APS_ENVIRONMENT = production;/, "Release builds must register production APNs tokens");
+assert.match(project, /CURRENT_PROJECT_VERSION = [1-9]\d*;/, "the build number must be a positive integer");
+
+assert.match(exportOptions, /<key>destination<\/key>\s*<string>upload<\/string>/);
+assert.match(exportOptions, /<key>method<\/key>\s*<string>app-store-connect<\/string>/);
+assert.match(exportOptions, /<key>signingStyle<\/key>\s*<string>automatic<\/string>/);
+assert.match(exportOptions, /<key>teamID<\/key>\s*<string>X4M4T6Z4CJ<\/string>/);
+assert.match(exportOptions, /<key>uploadSymbols<\/key>\s*<true\/>/);
 
 const icon = fs.readFileSync(iconPath);
 assert.equal(icon.toString("ascii", 1, 4), "PNG", "app icon must be a PNG");

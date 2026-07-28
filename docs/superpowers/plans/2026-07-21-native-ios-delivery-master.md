@@ -19,6 +19,10 @@
 
 ## Delivery Gates
 
+Current release candidate: `1.0.0 (2)`. App Store Connect accepted the package
+on 2026-07-28. Apple-side processing and the physical-device checklist remain
+pending, so Gate 4 is not complete yet.
+
 - [ ] **Gate 1: Cloud contract**
 
 Run:

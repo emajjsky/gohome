@@ -247,7 +247,7 @@ git commit -m "chore(ios): prepare privacy and release configuration"
 - Create: `docs/ios/testflight-checklist.md`
 - Modify: `想家了吗-Implement.md`
 
-- [ ] **Step 1: Create explicit acceptance checklist**
+- [x] **Step 1: Create explicit acceptance checklist**
 
 Include cold/warm launch, five-tab switching, account isolation, onboarding, one-stream Guard, event actions, notification deep links, share completion/cancellation, Discover source links, location denial, offline cache, logout, and relaunch.
 
@@ -270,6 +270,9 @@ Install on the trusted iPhone, execute every checklist item, capture screenshots
 - [x] **Step 4: Archive and upload**
 
 Archive, validate, and upload through Xcode Organizer or `xcrun altool/notarytool` successor supported by installed Xcode. Resolve signing/privacy failures rather than bypassing validation.
+
+`1.0.0 (2)` was accepted by App Store Connect on 2026-07-28. Apple-side
+processing and physical-device TestFlight acceptance remain separate pending gates.
 
 - [ ] **Step 5: Commit verified delivery evidence**
 
