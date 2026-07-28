@@ -9,6 +9,11 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const { URL } = require("url");
+const {
+    buildActivityOverview,
+    dateKeysEndingAt: activityDateKeysEndingAt,
+    groupIntervalsByDate,
+} = require("./native-api/activity-reporting");
 
 function parseEnvValue(raw) {
     let value = String(raw || "").trim();
@@ -612,6 +617,9 @@ function createLocalAppServer(options = {}) {
     const dataDir = path.resolve(options.dataDir || process.env.GOHOME_APP_SERVER_DATA_DIR || path.join(rootDir, "data", "app-server"));
     const mediaDir = path.join(dataDir, "media");
     const store = options.store || new JsonStore(path.join(dataDir, "db.json"));
+    const activityEvaluationNow = typeof options.activityEvaluationNow === "function"
+        ? options.activityEvaluationNow
+        : () => new Date();
     const deviceToken = String(options.deviceToken || DEFAULT_DEVICE_TOKEN);
     const appToken = String(options.appToken || DEFAULT_APP_TOKEN);
     const opsToken = String(options.opsToken || DEFAULT_OPS_TOKEN);
@@ -2855,6 +2863,68 @@ function createLocalAppServer(options = {}) {
         });
     }
 
+    function activityOverviewForScheduler(familyId, date, evaluationAt) {
+        const dates = activityDateKeysEndingAt(date, 7);
+        const intervals = store.db.activity_intervals.filter((item) => (
+            Number(item.family_id) === Number(familyId)
+        ));
+        return buildActivityOverview(date, groupIntervalsByDate(dates, intervals), { evaluationAt });
+    }
+
+    function createActivityInsightMessage(family, preferences) {
+        const activityHistory = preferences.metadata?.activity_history || {};
+        if (activityHistory.tracking_enabled === false || activityHistory.anomaly_reminders_enabled === false) return null;
+        const evaluationAt = activityEvaluationNow();
+        const date = dateKeyShanghai(evaluationAt);
+        const messageId = `activity-insight-${family.id}-${date}`;
+        if (store.db.app_messages.some((item) => String(item.message_id || "") === messageId)) return null;
+        const overview = activityOverviewForScheduler(family.id, date, evaluationAt);
+        const priorities = ["night_activity", "activity_reduced", "routine_shift"];
+        const insight = priorities
+            .map((type) => overview.attention_items.find((item) => item.type === type))
+            .find(Boolean);
+        if (!insight) return null;
+        const presentation = {
+            night_activity: {
+                title: "昨夜有几段活动值得问候",
+                body: "记录只说明家中出现了夜间活动，不代表健康结论。可以先自然地问问昨晚休息得怎么样。",
+            },
+            activity_reduced: {
+                title: "今天的活动比近期少一些",
+                body: "这是基于可验证活动区间的变化提示，不代表身体异常。可以先聊聊今天的安排和感受。",
+            },
+            routine_shift: {
+                title: "今天的活动时间和平时不太一样",
+                body: "记录显示首次活动时间与近期规律有差异，可以借此自然地问问今天有什么新安排。",
+            },
+        }[insight.type];
+        return upsertAppMessage({
+            message_id: messageId,
+            idempotency_key: messageId,
+            family_id: family.id,
+            message_type: "activity_insight",
+            title: presentation.title,
+            subtitle: `${family.name || "当前家庭"} · 需要留意`,
+            body: presentation.body,
+            facts: insight.facts,
+            actions: [
+                { key: "shared", label: "分享参考文案" },
+                { key: "contacted", label: "已联系" },
+                { key: "snoozed", label: "稍后提醒" },
+                { key: "dismissed", label: "忽略" },
+            ],
+            source: [{ type: "activity_overview", date, insight_type: insight.type }],
+            priority: "notice",
+            generated_by: "activity-insight-scheduler",
+            metadata: {
+                trigger_reason: insight.type,
+                topics: ["今天的安排", "昨晚休息", "最近的近况"],
+                message_variants: [insight.suggested_topic],
+                data_quality: overview.data_quality,
+            },
+        });
+    }
+
     function createEventAlertMessage(event) {
         const camera = store.db.cameras[String(event.camera_id)] || {};
         return upsertAppMessage({
@@ -3316,6 +3386,7 @@ function createLocalAppServer(options = {}) {
                 app_messages_created: 0,
                 notification_deliveries_created: 0,
                 return_home_messages_created: 0,
+                activity_insight_messages_created: 0,
                 event_alerts_created: 0,
                 incident_reminders_created: 0,
                 long_absence_events_created: 0,
@@ -3368,6 +3439,7 @@ function createLocalAppServer(options = {}) {
             app_messages_created: 0,
             notification_deliveries_created: 0,
             return_home_messages_created: 0,
+            activity_insight_messages_created: 0,
             event_alerts_created: 0,
             incident_reminders_created: 0,
             long_absence_events_created: 0,
@@ -3382,6 +3454,7 @@ function createLocalAppServer(options = {}) {
                 result.families_checked += 1;
                 const preferences = carePreferences(family.id);
                 const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
+                const rules = schedule.delivery_rules || {};
                 const presenceState = familyPresenceState(family);
                 const beforePresenceEvents = store.db.events.length;
                 const absenceEvent = reconcileLongAbsenceEvent(family, presenceState);
@@ -3402,6 +3475,14 @@ function createLocalAppServer(options = {}) {
                     const reminder = createIncidentReminderMessage(event);
                     if (reminder) queueNotificationDelivery(reminder);
                     result.incident_reminders_created += Math.max(0, store.db.app_messages.length - beforeMessages);
+                }
+                if (rules.home_status?.exception_push_enabled !== false) {
+                    const beforeInsightMessages = store.db.app_messages.length;
+                    const beforeInsightDeliveries = store.db.notification_deliveries.length;
+                    const insightMessage = createActivityInsightMessage(family, preferences);
+                    if (insightMessage) queueNotificationDelivery(insightMessage);
+                    result.activity_insight_messages_created += Math.max(0, store.db.app_messages.length - beforeInsightMessages);
+                    result.notification_deliveries_created += Math.max(0, store.db.notification_deliveries.length - beforeInsightDeliveries);
                 }
                 if (!schedule.enabled) {
                     result.skipped.push({ family_id: family.id, reason: "schedule_disabled" });
@@ -3428,7 +3509,6 @@ function createLocalAppServer(options = {}) {
                     result.skipped.push({ family_id: family.id, reason: "daily_not_due_or_already_sent" });
                 }
 
-                const rules = schedule.delivery_rules || {};
                 if (rules.home_status?.exception_push_enabled !== false) {
                     const familyIds = new Set([Number(family.id)]);
                     const openEvents = eventList(new URL("/api/app/events?acknowledged=false&limit=20", "http://local"), {

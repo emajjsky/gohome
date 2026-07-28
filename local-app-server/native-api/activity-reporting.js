@@ -68,7 +68,46 @@ function durationMinutes(ranges) {
     return Math.round(milliseconds / 60000);
 }
 
+function minuteOfShanghaiDay(value) {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Shanghai",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+    }).formatToParts(new Date(value)).reduce((result, part) => {
+        if (part.type !== "literal") result[part.type] = part.value;
+        return result;
+    }, {});
+    return Number(parts.hour || 0) * 60 + Number(parts.minute || 0);
+}
+
+function dayReachedShanghaiMinute(date, evaluationAt, minute) {
+    const evaluated = evaluationAt instanceof Date ? evaluationAt : new Date(evaluationAt);
+    if (!Number.isFinite(evaluated.getTime())) {
+        throw Object.assign(new Error("invalid activity evaluation time"), { statusCode: 400 });
+    }
+    const evaluationDate = dateKeyShanghai(evaluated);
+    if (date < evaluationDate) return true;
+    if (date > evaluationDate) return false;
+    return minuteOfShanghaiDay(evaluated) >= minute;
+}
+
+function activityDurationComparisonReady(date, evaluationAt = new Date()) {
+    return dayReachedShanghaiMinute(date, evaluationAt, 20 * 60);
+}
+
+function nightActivityComparisonReady(date, evaluationAt = new Date()) {
+    return dayReachedShanghaiMinute(date, evaluationAt, 5 * 60);
+}
+
+function overlapRanges(intervals, start, end) {
+    return intervals
+        .map((item) => [Math.max(item.started, start), Math.min(item.ended, end)])
+        .filter(([rangeStart, rangeEnd]) => rangeEnd > rangeStart);
+}
+
 function summarizeDay(date, intervals = []) {
+    const [dayStart] = dayBoundsShanghai(date);
     const valid = intervals
         .map((item) => clipIntervalToDate(item, date))
         .filter(Boolean)
@@ -97,6 +136,7 @@ function summarizeDay(date, intervals = []) {
             interval_count: roomCounts.get(room) || 0,
         }))
         .sort((a, b) => b.active_minutes - a.active_minutes || a.room.localeCompare(b.room, "zh-CN"));
+    const nightRanges = mergeRanges(overlapRanges(valid, dayStart, dayStart + 5 * 60 * 60 * 1000));
     return {
         date,
         has_data: valid.length > 0,
@@ -105,12 +145,26 @@ function summarizeDay(date, intervals = []) {
         person_count_max: personCountMax,
         first_activity_at: valid[0]?.started_at || null,
         last_activity_at: valid[valid.length - 1]?.ended_at || null,
+        first_activity_minute: valid[0] ? minuteOfShanghaiDay(valid[0].started_at) : null,
+        night_activity_minutes: durationMinutes(nightRanges),
+        night_activity_sessions: nightRanges.length,
         observed_postures: [...postures].sort(),
         rooms,
     };
 }
 
-function buildActivityOverview(date, intervalsByDate = {}) {
+function attentionItem(type, facts, suggestedTopic) {
+    return {
+        type,
+        severity: "notice",
+        label: "需要留意",
+        facts,
+        suggested_topic: suggestedTopic,
+        requires_review: false,
+    };
+}
+
+function buildActivityOverview(date, intervalsByDate = {}, options = {}) {
     const dates = dateKeysEndingAt(date, 7);
     const days = dates.map((day) => summarizeDay(day, intervalsByDate[day] || []));
     const today = days[days.length - 1];
@@ -118,16 +172,56 @@ function buildActivityOverview(date, intervalsByDate = {}) {
     const baselineMinutes = baselineDays.length
         ? Math.round(baselineDays.reduce((total, day) => total + day.active_minutes, 0) / baselineDays.length)
         : null;
+    const baselineFirstActivity = baselineDays.length
+        ? Math.round(baselineDays.reduce((total, day) => total + day.first_activity_minute, 0) / baselineDays.length)
+        : null;
+    const canCompareRoutine = today.has_data && baselineDays.length >= 3;
+    const canCompareActivityDuration = canCompareRoutine
+        && activityDurationComparisonReady(date, options.evaluationAt);
+    const canCompareNightActivity = nightActivityComparisonReady(date, options.evaluationAt);
     const facts = [];
+    const attentionItems = [];
     if (today.has_data) {
         facts.push(`今日记录 ${today.active_minutes} 分钟可验证活动`);
         if (today.rooms[0]) facts.push(`${today.rooms[0].room}活动时间最长`);
     }
-    if (baselineMinutes !== null && today.has_data) {
+    if (canCompareRoutine && baselineMinutes !== null) {
         const delta = today.active_minutes - baselineMinutes;
         const threshold = Math.max(15, Math.round(baselineMinutes * 0.3));
-        if (Math.abs(delta) >= threshold) {
+        if (delta >= threshold || (canCompareActivityDuration && delta <= -threshold)) {
             facts.push(delta > 0 ? "今日活动时长高于近期记录" : "今日活动时长低于近期记录");
+        }
+        if (canCompareActivityDuration
+            && baselineMinutes >= 30
+            && delta < 0
+            && today.active_minutes <= Math.round(baselineMinutes * 0.6)) {
+            attentionItems.push(attentionItem(
+                "activity_reduced",
+                [`今日已记录 ${today.active_minutes} 分钟活动`, `近期可比较日平均 ${baselineMinutes} 分钟`],
+                "今天过得怎么样？有没有什么想和我聊聊的？",
+            ));
+        }
+    }
+    if (canCompareNightActivity
+        && today.has_data
+        && (today.night_activity_sessions >= 2 || today.night_activity_minutes >= 20)) {
+        attentionItems.push(attentionItem(
+            "night_activity",
+            [`00:00–05:00 记录 ${today.night_activity_minutes} 分钟活动`, `共形成 ${today.night_activity_sessions} 段可验证活动`],
+            "昨晚休息得怎么样？今天要不要早点休息？",
+        ));
+    }
+    if (canCompareRoutine && baselineFirstActivity !== null && today.first_activity_minute !== null) {
+        const shift = today.first_activity_minute - baselineFirstActivity;
+        if (Math.abs(shift) >= 120) {
+            attentionItems.push(attentionItem(
+                "routine_shift",
+                [
+                    `今日首次活动 ${formatClockMinute(today.first_activity_minute)}`,
+                    `近期可比较日平均 ${formatClockMinute(baselineFirstActivity)}`,
+                ],
+                "今天的安排和平时不太一样吗？最近有什么新计划？",
+            ));
         }
     }
     return {
@@ -137,19 +231,38 @@ function buildActivityOverview(date, intervalsByDate = {}) {
         baseline: {
             comparable_days: baselineDays.length,
             average_active_minutes: baselineMinutes,
+            average_first_activity_minute: baselineFirstActivity,
+        },
+        data_quality: {
+            status: !today.has_data ? "no_today_activity" : canCompareRoutine ? "comparable" : "building_baseline",
+            has_today_activity: today.has_data,
+            comparable_days: baselineDays.length,
+            minimum_comparable_days: 3,
+            can_compare_routine: canCompareRoutine,
+            activity_duration_comparison_ready: canCompareActivityDuration,
+            night_activity_comparison_ready: canCompareNightActivity,
         },
         facts,
+        attention_items: attentionItems,
     };
 }
 
+function formatClockMinute(value) {
+    const minutes = Math.max(0, Math.min(1439, Number(value) || 0));
+    return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
 module.exports = {
+    activityDurationComparisonReady,
     buildActivityOverview,
     clipIntervalToDate,
     dateKeyShanghai,
     dateKeysEndingAt,
     dayBoundsShanghai,
     durationMinutes,
+    formatClockMinute,
     groupIntervalsByDate,
     mergeRanges,
+    nightActivityComparisonReady,
     summarizeDay,
 };

@@ -1041,7 +1041,7 @@ class JsonNativeRepository extends NativeRepository {
         const careMessage = this.db.app_messages
             .filter((message) => (
                 textId(message.family_id) === textId(familyId)
-                && ["return_home", "care_card"].includes(textId(message.message_type))
+                && ["activity_insight", "return_home", "care_card"].includes(textId(message.message_type))
                 && textId(message.status || "open") === "open"
             ))
             .filter((message) => {
@@ -1049,7 +1049,7 @@ class JsonNativeRepository extends NativeRepository {
                 return !Number.isFinite(snoozedUntil) || snoozedUntil <= now;
             })
             .sort((a, b) => {
-                const priority = (message) => textId(message.message_type) === "return_home" ? 0 : 1;
+                const priority = (message) => ({ activity_insight: 0, return_home: 1, care_card: 2 }[textId(message.message_type)] ?? 3);
                 return priority(a) - priority(b) || Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0);
             })[0] || null;
         return clone({

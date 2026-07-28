@@ -50,13 +50,94 @@ test("seven day overview only compares days with real observations", () => {
         postures: ["standing"],
     });
     const overview = buildActivityOverview("2026-07-25", {
+        "2026-07-22": [interval("2026-07-22", 60)],
         "2026-07-23": [interval("2026-07-23", 60)],
         "2026-07-24": [interval("2026-07-24", 60)],
         "2026-07-25": [interval("2026-07-25", 20)],
-    });
-    assert.equal(overview.baseline.comparable_days, 2);
+    }, { evaluationAt: "2026-07-25T20:30:00+08:00" });
+    assert.equal(overview.baseline.comparable_days, 3);
     assert.equal(overview.baseline.average_active_minutes, 60);
     assert.equal(overview.facts.includes("今日活动时长低于近期记录"), true);
+    assert.equal(overview.data_quality.can_compare_routine, true);
+    assert.equal(overview.attention_items.some((item) => item.type === "activity_reduced"), true);
+});
+
+test("partial current day never reports reduced activity before the evening comparison window", () => {
+    const interval = (date, minutes) => ({
+        room: "客厅",
+        started_at: `${date}T01:00:00.000Z`,
+        ended_at: new Date(Date.parse(`${date}T01:00:00.000Z`) + minutes * 60000).toISOString(),
+    });
+    const intervals = {
+        "2026-07-22": [interval("2026-07-22", 60)],
+        "2026-07-23": [interval("2026-07-23", 60)],
+        "2026-07-24": [interval("2026-07-24", 60)],
+        "2026-07-25": [interval("2026-07-25", 10)],
+    };
+    const morning = buildActivityOverview("2026-07-25", intervals, {
+        evaluationAt: "2026-07-25T10:00:00+08:00",
+    });
+    const evening = buildActivityOverview("2026-07-25", intervals, {
+        evaluationAt: "2026-07-25T20:00:00+08:00",
+    });
+
+    assert.equal(morning.data_quality.activity_duration_comparison_ready, false);
+    assert.equal(morning.facts.includes("今日活动时长低于近期记录"), false);
+    assert.equal(morning.attention_items.some((item) => item.type === "activity_reduced"), false);
+    assert.equal(evening.data_quality.activity_duration_comparison_ready, true);
+    assert.equal(evening.attention_items.some((item) => item.type === "activity_reduced"), true);
+});
+
+test("limited history remains factual and does not produce routine deviation", () => {
+    const interval = (date, minutes) => ({
+        room: "客厅",
+        started_at: `${date}T01:00:00.000Z`,
+        ended_at: new Date(Date.parse(`${date}T01:00:00.000Z`) + minutes * 60000).toISOString(),
+    });
+    const overview = buildActivityOverview("2026-07-25", {
+        "2026-07-24": [interval("2026-07-24", 90)],
+        "2026-07-25": [interval("2026-07-25", 10)],
+    });
+    assert.equal(overview.data_quality.status, "building_baseline");
+    assert.deepEqual(overview.attention_items, []);
+    assert.equal(overview.facts.includes("今日活动时长低于近期记录"), false);
+});
+
+test("night activity uses real interval overlap and never invents health conclusions", () => {
+    const overview = buildActivityOverview("2026-07-25", {
+        "2026-07-25": [{
+            room: "客厅",
+            started_at: "2026-07-24T17:10:00.000Z",
+            ended_at: "2026-07-24T17:35:00.000Z",
+            person_count_max: 1,
+            postures: ["standing"],
+        }],
+    });
+    const insight = overview.attention_items.find((item) => item.type === "night_activity");
+    assert.equal(overview.today.night_activity_minutes, 25);
+    assert.equal(insight?.severity, "notice");
+    assert.equal(JSON.stringify(insight).includes("诊断"), false);
+});
+
+test("night activity waits until the observation window has ended", () => {
+    const intervals = {
+        "2026-07-25": [{
+            room: "客厅",
+            started_at: "2026-07-24T17:10:00.000Z",
+            ended_at: "2026-07-24T17:35:00.000Z",
+        }],
+    };
+    const beforeWindowEnd = buildActivityOverview("2026-07-25", intervals, {
+        evaluationAt: "2026-07-25T04:59:00+08:00",
+    });
+    const afterWindowEnd = buildActivityOverview("2026-07-25", intervals, {
+        evaluationAt: "2026-07-25T05:00:00+08:00",
+    });
+
+    assert.equal(beforeWindowEnd.data_quality.night_activity_comparison_ready, false);
+    assert.equal(beforeWindowEnd.attention_items.some((item) => item.type === "night_activity"), false);
+    assert.equal(afterWindowEnd.data_quality.night_activity_comparison_ready, true);
+    assert.equal(afterWindowEnd.attention_items.some((item) => item.type === "night_activity"), true);
 });
 
 test("activity crossing Shanghai midnight is clipped into each natural day", () => {

@@ -204,12 +204,36 @@ struct ActivityOverviewResponse: Codable, Equatable, Sendable {
     let today: ActivityDaySummary
     let sevenDayTrend: [ActivityDaySummary]
     let baseline: ActivityBaseline
+    let dataQuality: ActivityDataQuality?
     let facts: [String]
+    let attentionItems: [ActivityAttentionItem]?
     let revision: String
 
     enum CodingKeys: String, CodingKey {
         case date, today, baseline, facts, revision
+        case dataQuality = "data_quality"
+        case attentionItems = "attention_items"
         case sevenDayTrend = "seven_day_trend"
+    }
+
+    init(
+        date: String,
+        today: ActivityDaySummary,
+        sevenDayTrend: [ActivityDaySummary],
+        baseline: ActivityBaseline,
+        dataQuality: ActivityDataQuality? = nil,
+        facts: [String],
+        attentionItems: [ActivityAttentionItem]? = nil,
+        revision: String
+    ) {
+        self.date = date
+        self.today = today
+        self.sevenDayTrend = sevenDayTrend
+        self.baseline = baseline
+        self.dataQuality = dataQuality
+        self.facts = facts
+        self.attentionItems = attentionItems
+        self.revision = revision
     }
 }
 
@@ -222,6 +246,9 @@ struct ActivityDaySummary: Codable, Equatable, Sendable, Identifiable {
     let personCountMax: Int
     let firstActivityAt: String?
     let lastActivityAt: String?
+    let firstActivityMinute: Int?
+    let nightActivityMinutes: Int?
+    let nightActivitySessions: Int?
     let observedPostures: [String]
     let rooms: [ActivityRoomSummary]
 
@@ -233,7 +260,38 @@ struct ActivityDaySummary: Codable, Equatable, Sendable, Identifiable {
         case personCountMax = "person_count_max"
         case firstActivityAt = "first_activity_at"
         case lastActivityAt = "last_activity_at"
+        case firstActivityMinute = "first_activity_minute"
+        case nightActivityMinutes = "night_activity_minutes"
+        case nightActivitySessions = "night_activity_sessions"
         case observedPostures = "observed_postures"
+    }
+
+    init(
+        date: String,
+        hasData: Bool,
+        activeMinutes: Int,
+        intervalCount: Int,
+        personCountMax: Int,
+        firstActivityAt: String?,
+        lastActivityAt: String?,
+        firstActivityMinute: Int? = nil,
+        nightActivityMinutes: Int? = nil,
+        nightActivitySessions: Int? = nil,
+        observedPostures: [String],
+        rooms: [ActivityRoomSummary]
+    ) {
+        self.date = date
+        self.hasData = hasData
+        self.activeMinutes = activeMinutes
+        self.intervalCount = intervalCount
+        self.personCountMax = personCountMax
+        self.firstActivityAt = firstActivityAt
+        self.lastActivityAt = lastActivityAt
+        self.firstActivityMinute = firstActivityMinute
+        self.nightActivityMinutes = nightActivityMinutes
+        self.nightActivitySessions = nightActivitySessions
+        self.observedPostures = observedPostures
+        self.rooms = rooms
     }
 }
 
@@ -253,10 +311,52 @@ struct ActivityRoomSummary: Codable, Equatable, Sendable, Identifiable {
 struct ActivityBaseline: Codable, Equatable, Sendable {
     let comparableDays: Int
     let averageActiveMinutes: Int?
+    let averageFirstActivityMinute: Int?
 
     enum CodingKeys: String, CodingKey {
         case comparableDays = "comparable_days"
         case averageActiveMinutes = "average_active_minutes"
+        case averageFirstActivityMinute = "average_first_activity_minute"
+    }
+
+    init(comparableDays: Int, averageActiveMinutes: Int?, averageFirstActivityMinute: Int? = nil) {
+        self.comparableDays = comparableDays
+        self.averageActiveMinutes = averageActiveMinutes
+        self.averageFirstActivityMinute = averageFirstActivityMinute
+    }
+}
+
+struct ActivityDataQuality: Codable, Equatable, Sendable {
+    let status: String
+    let hasTodayActivity: Bool
+    let comparableDays: Int
+    let minimumComparableDays: Int
+    let canCompareRoutine: Bool
+    let activityDurationComparisonReady: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case hasTodayActivity = "has_today_activity"
+        case comparableDays = "comparable_days"
+        case minimumComparableDays = "minimum_comparable_days"
+        case canCompareRoutine = "can_compare_routine"
+        case activityDurationComparisonReady = "activity_duration_comparison_ready"
+    }
+}
+
+struct ActivityAttentionItem: Codable, Equatable, Sendable, Identifiable {
+    var id: String { type }
+    let type: String
+    let severity: String
+    let label: String
+    let facts: [String]
+    let suggestedTopic: String
+    let requiresReview: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case type, severity, label, facts
+        case suggestedTopic = "suggested_topic"
+        case requiresReview = "requires_review"
     }
 }
 

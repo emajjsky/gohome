@@ -11927,3 +11927,26 @@ P4 风险升频边界：
 - 新 Release Archive 已完成 App Store 重签名。导出 IPA 实测为 `aps-environment=production`、`get-task-allow=false`、`GoHomePushEnabled=true`，不复用先前不含推送权限的包。
 - 2026-07-27 20:16 上传成功，Xcode 返回 `Upload succeeded`。TestFlight 已显示 `1.0.0 (1)` 且状态为「准备提交 / 90 天后过期」；首次构建的出口合规已按「不包含自研或非豁免加密」如实确认，后续包通过 `ITSAppUsesNonExemptEncryption=false` 避免重复询问。仍必须在目标 iPhone 安装，验证首次通知授权、Production token 登记、系统通知到达、前台展示和冷/热启动深链路由，才能标记 APNs/TestFlight 真机闭环完成。
 - App Store Connect 已建立内部组「比赛内测」并开启自动分发；`84010505@qq.com` 已以内部测试员身份加入，组状态为 `1 个测试员 / 1 个构建版本`。后续操作从 iPhone 的 TestFlight 安装该构建开始，不再通过 Xcode 开发包代替生产推送验收。
+
+## 148. 2026-07-28 活动区间生产、规律候选与原生关怀闭环
+
+### 盒子与传输契约
+
+- `activity_export_cursors` 持久化每路正在进行的活动段，`activity_interval_upload` 复用现有 `upload_jobs` 退避和重试机制；上传目标为 `POST /api/v1/device/activity-intervals`，本地 camera ID 在发送前映射为云端 camera ID。
+- 首次见人只建立游标；姿态变化、10 分钟心跳、人物离开、摄像头禁用/删除/离线和 worker 重启负责收口。观察中断超过允许间隙时以 `last_observed_at` 截止，不把停机时间伪造成持续活动；单段最长 6 小时并按来源哈希幂等。
+- 区间 payload 只有房间、时间、人数上限、姿态、置信度和关闭原因，`contains_media=false`，不创建 snapshot/media job，不进入 COS。
+- 新增内存 `ObservationCoverageTracker`，按实际分析机会统计近一小时有效观察，黑屏不计有效样本；配置同步通过 worker resolver 读取，结构化 presence session 只补充重启前最后见人时间，不为覆盖率恢复高频磁盘写入。
+
+### 云端与原生 App
+
+- `buildActivityOverview()` 继续合并多摄像头重叠区间，并新增数据质量、夜间活动分钟/段数、平均首次活动时间和 `attention_items`。
+- `activity_reduced` 与 `routine_shift` 要求至少 3 个历史活动日且今日存在真实活动；当天总活动量减少只在上海时间 20:00 后判断，历史日期按完整日判断，避免上午用部分日对比历史全天。`night_activity` 只读取 00:00–05:00 的真实区间，并在 05:00 窗口结束后才评估。候选统一为 `notice / 需要留意`，不生成安全事件，不输出医疗诊断。
+- scheduler 按 `activity_history.tracking_enabled`、`anomaly_reminders_enabled` 和家庭异常推送规则生成 `activity_insight`。消息 ID 为家庭+日期，单日幂等；进入现有 notification delivery / APNs，并复用关怀卡的可编辑文案、系统分享、已联系、稍后和忽略动作。
+- 原生模型兼容旧响应；活动页展示基线建立状态、事实和联系话题。“活动变化提醒”成为唯一新增可见开关；每日定时摘要、正式周报和多模态活动复核继续隐藏。
+
+### 验证与剩余边界
+
+- 盒子定向验证通过：活动区间、离线间隙、运行状态收口、无媒体 outbox、远端 camera ID 映射、观察覆盖率、事件驱动持久化、配置同步；模拟 HTTP 401 后区间任务保持可重试且 payload 不丢失。
+- App Server 原生测试 `75 passed / 1 PostgreSQL environment skip`；夜间窗口结束、早间不触发和 20:00 后可触发的确定时钟测试通过；iOS `100/100` 单元测试和 `17/17` UI 自动化通过；iOS 发布元数据检查通过。
+- 本批未修改 EACP 阈值、跌倒/火灾规则或 Hailo 模型。时序风险模型尚未训练，不能将规则图包装成已训练模型；公开数据集只作为按需备选。
+- 尚未部署腾讯云，也未完成盒子真实上传和 TestFlight 新构建验收。当前设备 token 已撤销，需恢复安全绑定后再做实机端到端验收。

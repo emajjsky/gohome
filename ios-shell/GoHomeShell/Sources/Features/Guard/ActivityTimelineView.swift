@@ -9,6 +9,9 @@ struct ActivityTimelineView: View {
             if let overview = model.overviewState.value,
                overview.today.hasData || overview.sevenDayTrend.contains(where: { $0.hasData }) {
                 ActivityOverviewHeader(overview: overview)
+                if let attentionItems = overview.attentionItems, !attentionItems.isEmpty {
+                    ActivityAttentionSection(items: attentionItems)
+                }
             }
             if model.state.value == nil {
                 Color.clear
@@ -107,6 +110,19 @@ private struct ActivityOverviewHeader: View {
                 }
             }
             ActivityWeekTrend(days: overview.sevenDayTrend)
+            if let quality = overview.dataQuality,
+               quality.hasTodayActivity,
+               !quality.canCompareRoutine {
+                Text("规律建立中 · 已有 \(quality.comparableDays) 个可比较日")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            } else if let quality = overview.dataQuality,
+                      quality.canCompareRoutine,
+                      quality.activityDurationComparisonReady == false {
+                Text("今日持续记录中 · 晚间再比较活动时长")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            }
             ForEach(overview.facts.prefix(2), id: \.self) { fact in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Circle().fill(GoHomeTheme.ginger).frame(width: 5, height: 5)
@@ -120,6 +136,58 @@ private struct ActivityOverviewHeader: View {
         .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
         .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
         .accessibilityIdentifier("activity-overview")
+    }
+}
+
+private struct ActivityAttentionSection: View {
+    let items: [ActivityAttentionItem]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.ginger)
+                Text("需要留意")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(GoHomeTheme.ink)
+            }
+            ForEach(items) { item in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title(item.type))
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(GoHomeTheme.ink)
+                    ForEach(item.facts.prefix(2), id: \.self) { fact in
+                        Text(fact)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(GoHomeTheme.mutedInk)
+                    }
+                    if !item.suggestedTopic.isEmpty {
+                        Text(item.suggestedTopic)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(GoHomeTheme.ink)
+                            .padding(.top, 2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 13)
+                .overlay(alignment: .leading) {
+                    Rectangle().fill(GoHomeTheme.ginger).frame(width: 2)
+                }
+            }
+        }
+        .padding(.vertical, 18)
+        .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+        .accessibilityIdentifier("activity-attention-items")
+    }
+
+    private func title(_ type: String) -> String {
+        switch type {
+        case "night_activity": return "夜间活动"
+        case "activity_reduced": return "活动比近期少"
+        case "routine_shift": return "活动时间变化"
+        default: return "活动变化"
+        }
     }
 }
 

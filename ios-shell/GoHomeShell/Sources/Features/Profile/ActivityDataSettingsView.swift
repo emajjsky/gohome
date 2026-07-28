@@ -36,6 +36,11 @@ struct ActivityDataSettingsView: View {
                         }
                         .frame(minHeight: 50)
                     }
+                    ProfileSection(title: "关怀提醒") {
+                        settingToggle("活动变化提醒", symbol: "waveform.path.ecg", value: settings.anomalyRemindersEnabled) { enabled in
+                            update(preferences, value: enabled) { $0.anomalyRemindersEnabled = $1 }
+                        }
+                    }
                 } else {
                     ProfileEmptyRow(symbol: "chart.xyaxis.line", title: "活动数据设置暂不可用")
                 }
