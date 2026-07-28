@@ -17,6 +17,9 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(app.switches["人物出现"].exists)
         XCTAssertTrue(app.switches["姿态与跌倒"].exists)
         XCTAssertTrue(app.switches["烟火风险"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["rule-number-静止提醒"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["rule-number-无人提醒"].exists)
+        XCTAssertFalse(app.staticTexts["抽帧间隔"].exists)
         XCTAssertFalse(app.staticTexts["fall_score_threshold"].exists)
         XCTAssertFalse(app.staticTexts["yolo_confidence"].exists)
 
@@ -110,6 +113,40 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(app.alerts["永久删除账号？"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.alerts["永久删除账号？"].buttons["永久删除"].exists)
         app.alerts["永久删除账号？"].buttons["取消"].tap()
+    }
+
+    func testContentPreferencesOfferRealQuietHoursAndRecommendationEditors() {
+        let app = launchProfile()
+
+        app.buttons["提醒与内容偏好, 已开启"].tap()
+        XCTAssertTrue(app.navigationBars["提醒与内容"].waitForExistence(timeout: 3))
+
+        app.staticTexts["免打扰"].tap()
+        XCTAssertTrue(app.navigationBars["免打扰"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)["quiet-hours-start"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["quiet-hours-end"].exists)
+        app.buttons["取消"].tap()
+
+        app.staticTexts["推荐方向"].tap()
+        XCTAssertTrue(app.navigationBars["推荐方向"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["照明与视野"].exists)
+        XCTAssertTrue(app.staticTexts["夜间照明"].exists)
+        app.buttons["取消"].tap()
+    }
+
+    func testCreatorCanAddMissingCaredForProfileWhileMemberCannot() {
+        let creatorApp = launchProfile()
+        creatorApp.buttons["照护资料, 未填写"].tap()
+        XCTAssertTrue(creatorApp.buttons["添加资料"].waitForExistence(timeout: 2))
+        creatorApp.buttons["添加资料"].tap()
+        XCTAssertTrue(creatorApp.navigationBars["编辑照护资料"].waitForExistence(timeout: 2))
+        creatorApp.buttons["取消"].tap()
+
+        creatorApp.terminate()
+        let memberApp = launchProfile(extraArguments: ["-uiTestMember"])
+        memberApp.buttons["照护资料, 未填写"].tap()
+        XCTAssertTrue(memberApp.staticTexts["尚未填写照护资料"].waitForExistence(timeout: 2))
+        XCTAssertFalse(memberApp.buttons["添加资料"].exists)
     }
 
     private func launchProfile(extraArguments: [String] = []) -> XCUIApplication {

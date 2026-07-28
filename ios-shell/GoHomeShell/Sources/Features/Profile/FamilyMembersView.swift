@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct FamilyMembersView: View {
     @ObservedObject var model: ProfileViewModel
@@ -280,34 +281,55 @@ struct FamilyMembersView: View {
 }
 
 struct CaredForProfileView: View {
-    let profile: ElderProfile
+    @ObservedObject var model: ProfileViewModel
+    @State private var isEditing = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                HStack(spacing: 14) {
-                    Image(systemName: "person.crop.square")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(GoHomeTheme.ink)
-                        .frame(width: 50, height: 50)
-                        .background(GoHomeTheme.paleGinger, in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(profile.displayName)
-                            .font(.system(size: 22, weight: .bold, design: .rounded))
-                        Text([profile.relationship, ageText].filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(GoHomeTheme.mutedInk)
+                if let profile = model.state.value?.elder {
+                    HStack(spacing: 14) {
+                        Image(systemName: "person.crop.square")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(GoHomeTheme.ink)
+                            .frame(width: 50, height: 50)
+                            .background(GoHomeTheme.paleGinger, in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(profile.displayName)
+                                .font(.system(size: 22, weight: .bold, design: .rounded))
+                            Text([profile.relationship, ageText(profile)].filter { !$0.isEmpty }.joined(separator: " · "))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(GoHomeTheme.mutedInk)
+                        }
                     }
-                }
 
-                ProfileSection(title: "联系方式") {
-                    ProfileValueRow(title: "手机", value: profile.mobilePhone.isEmpty ? profile.phone : profile.mobilePhone)
-                    ProfileValueRow(title: "家庭电话", value: profile.homePhone)
-                }
+                    ProfileSection(title: "联系方式") {
+                        ProfileValueRow(title: "手机", value: profile.mobilePhone.isEmpty ? profile.phone : profile.mobilePhone)
+                        ProfileValueRow(title: "家庭电话", value: profile.homePhone)
+                    }
 
-                ProfileSection(title: "所在地区") {
-                    ProfileValueRow(title: "城市", value: profile.city)
-                    ProfileValueRow(title: "区域", value: profile.district)
+                    ProfileSection(title: "所在地区") {
+                        ProfileValueRow(title: "城市", value: profile.city)
+                        ProfileValueRow(title: "区域", value: profile.district)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                            .font(.system(size: 28, weight: .medium))
+                            .foregroundStyle(GoHomeTheme.ginger)
+                        Text("尚未填写照护资料")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(GoHomeTheme.ink)
+                        if model.canEditRules {
+                            Button("添加资料") { isEditing = true }
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(GoHomeTheme.ink)
+                                .padding(.horizontal, 15)
+                                .frame(height: 40)
+                                .background(GoHomeTheme.ginger, in: RoundedRectangle(cornerRadius: GoHomeTheme.controlRadius, style: .continuous))
+                        }
+                    }
+                    .padding(.vertical, 28)
                 }
             }
             .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
@@ -316,9 +338,150 @@ struct CaredForProfileView: View {
         }
         .background(GoHomeTheme.paper)
         .profileNavigationTitle("照护资料")
+        .toolbar {
+            if model.canEditRules, model.state.value?.elder != nil {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("编辑") { isEditing = true }
+                        .fontWeight(.semibold)
+                        .foregroundStyle(GoHomeTheme.ink)
+                }
+            }
+        }
+        .sheet(isPresented: $isEditing) {
+            CaredForProfileEditor(model: model, profile: model.state.value?.elder)
+        }
     }
 
-    private var ageText: String { profile.age.map { "\($0) 岁" } ?? "" }
+    private func ageText(_ profile: ElderProfile) -> String { profile.age.map { "\($0) 岁" } ?? "" }
+}
+
+private struct CaredForProfileEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var model: ProfileViewModel
+    @State private var displayName: String
+    @State private var relationship: String
+    @State private var city: String
+    @State private var district: String
+    @State private var mobilePhone: String
+    @State private var homePhone: String
+
+    private let relationships = ["母亲", "父亲", "祖父", "祖母", "亲属", "其他"]
+
+    init(model: ProfileViewModel, profile: ElderProfile?) {
+        let mobilePhone = profile?.mobilePhone.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.model = model
+        _displayName = State(initialValue: profile?.displayName ?? "")
+        _relationship = State(initialValue: profile?.relationship ?? "亲属")
+        _city = State(initialValue: profile?.city ?? "")
+        _district = State(initialValue: profile?.district ?? "")
+        _mobilePhone = State(initialValue: mobilePhone.isEmpty ? profile?.phone ?? "" : mobilePhone)
+        _homePhone = State(initialValue: profile?.homePhone ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    ProfileSection(title: "基本资料") {
+                        editField("称呼", text: $displayName, contentType: .name)
+                        HStack(spacing: 16) {
+                            Text("关系")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(GoHomeTheme.mutedInk)
+                                .frame(width: 72, alignment: .leading)
+                            Menu {
+                                ForEach(relationships, id: \.self) { value in
+                                    Button(value) { relationship = value }
+                                }
+                            } label: {
+                                HStack {
+                                    Text(relationship)
+                                    Spacer()
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.caption.weight(.bold))
+                                }
+                                .foregroundStyle(GoHomeTheme.ink)
+                            }
+                        }
+                        .frame(minHeight: 50)
+                    }
+
+                    ProfileSection(title: "联系方式") {
+                        editField("手机", text: $mobilePhone, contentType: .telephoneNumber, keyboard: .phonePad)
+                        editField("家庭电话", text: $homePhone, contentType: .telephoneNumber, keyboard: .phonePad)
+                    }
+
+                    ProfileSection(title: "所在地区") {
+                        editField("城市", text: $city, contentType: .addressCity)
+                        editField("区域", text: $district, contentType: .sublocality)
+                    }
+
+                    if let error = model.inlineError {
+                        Label(error, systemImage: "exclamationmark.circle")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(GoHomeTheme.mutedInk)
+                    }
+                }
+                .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
+                .padding(.top, 18)
+                .padding(.bottom, 28)
+            }
+            .background(GoHomeTheme.paper)
+            .navigationTitle("编辑照护资料")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(model.savingElderProfile ? "保存中" : "保存") { save() }
+                        .fontWeight(.semibold)
+                        .disabled(!canSave || model.savingElderProfile)
+                }
+            }
+        }
+    }
+
+    private var normalizedMobilePhone: String { mobilePhone.filter(\.isNumber) }
+    private var normalizedHomePhone: String { homePhone.filter { $0.isNumber || $0 == "-" } }
+    private var canSave: Bool {
+        !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && normalizedMobilePhone.count >= 7
+    }
+
+    private func editField(
+        _ title: String,
+        text: Binding<String>,
+        contentType: UITextContentType?,
+        keyboard: UIKeyboardType = .default
+    ) -> some View {
+        HStack(spacing: 16) {
+            Text(title)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(GoHomeTheme.mutedInk)
+                .frame(width: 72, alignment: .leading)
+            TextField("未填写", text: text)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(GoHomeTheme.ink)
+                .textContentType(contentType)
+                .keyboardType(keyboard)
+        }
+        .frame(minHeight: 50)
+    }
+
+    private func save() {
+        let payload = ProfilePayload(
+            displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
+            relationship: relationship,
+            city: city.trimmingCharacters(in: .whitespacesAndNewlines),
+            district: district.trimmingCharacters(in: .whitespacesAndNewlines),
+            phone: normalizedMobilePhone,
+            mobilePhone: normalizedMobilePhone,
+            homePhone: normalizedHomePhone
+        )
+        Task {
+            if await model.saveElderProfile(payload) { dismiss() }
+        }
+    }
 }
 
 struct ProfileValueRow: View {

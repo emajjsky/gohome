@@ -2,13 +2,17 @@ import SwiftUI
 
 struct HomeView: View {
     @ObservedObject var model: HomeViewModel
-    let unreadCount: Int
+    let onOpenAlert: (String) -> Void
     private let referenceDate: Date
 
-    init(model: HomeViewModel, unreadCount: Int, referenceDate: Date = Date()) {
+    init(
+        model: HomeViewModel,
+        referenceDate: Date = Date(),
+        onOpenAlert: @escaping (String) -> Void = { _ in }
+    ) {
         self.model = model
-        self.unreadCount = unreadCount
         self.referenceDate = referenceDate
+        self.onOpenAlert = onOpenAlert
     }
 
     var body: some View {
@@ -16,7 +20,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 28) {
                 header
                 if let alert = HomePresentation.activeAlert(model.state.value?.criticalAlert) {
-                    CriticalAlertStrip(alert: alert)
+                    CriticalAlertStrip(alert: alert) { onOpenAlert(alert.id) }
                 }
                 if let message = model.careMessage {
                     CareMessageCard(message: message, model: model)
@@ -57,14 +61,6 @@ struct HomeView: View {
                 }
             }
             Spacer()
-            if unreadCount > 0 {
-                Text("\(min(unreadCount, 99))")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(GoHomeTheme.ink)
-                    .frame(minWidth: 30, minHeight: 30)
-                    .background(GoHomeTheme.ginger, in: Circle())
-                    .accessibilityLabel("\(unreadCount) 条未读消息")
-            }
         }
     }
 
@@ -79,22 +75,30 @@ struct HomeView: View {
 
 private struct CriticalAlertStrip: View {
     let alert: HomeCriticalAlert
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 11) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(GoHomeTheme.ginger)
-            Text(alert.title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(GoHomeTheme.ink)
-                .lineLimit(2)
-            Spacer()
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(GoHomeTheme.mutedInk)
+        Button(action: action) {
+            HStack(spacing: 11) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(GoHomeTheme.ginger)
+                Text(alert.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.ink)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .padding(.vertical, 12)
         .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+        .accessibilityLabel(alert.title)
+        .accessibilityHint("查看事件证据")
         .accessibilityIdentifier("home-critical-alert")
     }
 }

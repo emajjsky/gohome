@@ -27,6 +27,20 @@ final class TabStateTests: XCTestCase {
         XCTAssertTrue(home.waitForExistence(timeout: 2))
     }
 
+    func testHomeCriticalAlertOpensExistingEventDetail() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTestState", "-uiTestMain", "-uiTestHome"]
+        app.launch()
+
+        let alert = app.buttons["home-critical-alert"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.tap()
+
+        XCTAssertTrue(app.tabBars.buttons["守护"].isSelected)
+        XCTAssertTrue(app.buttons["event-confirm-safe"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "未读消息")).firstMatch.exists)
+    }
+
     func testCommunityTabOpensNativeProductRecommendations() {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTestState", "-uiTestMain"]

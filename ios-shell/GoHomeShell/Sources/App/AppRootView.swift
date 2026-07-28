@@ -36,7 +36,6 @@ struct AppRootView: View {
                     MainTabView(
                         repository: environment.repository,
                         scope: scope,
-                        unreadCount: bootstrap.unreadCount,
                         apiClient: environment.apiClient,
                         user: bootstrap.user,
                         family: bootstrap.families.first(where: { $0.id == familyID })

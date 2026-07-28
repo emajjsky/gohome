@@ -1,8 +1,9 @@
 # GoHome Native iOS App Redesign
 
-Status: approved design baseline  
-Date: 2026-07-21  
-Target: TestFlight-installable iOS application  
+Status: approved design baseline, updated after native surface audit
+Date: 2026-07-21
+Last verified: 2026-07-28
+Target: TestFlight-installable iOS application
 Minimum OS: iOS 16
 
 ## 1. Decision
@@ -72,8 +73,9 @@ The native target uses SwiftUI and Swift 5.10 with these boundaries:
 - `AuthStore`: stores the session token in Keychain and exposes no token to views.
 - `AppRepository` actor: account-scoped server data and synchronization policy.
 - `AppModel` on the main actor: publishes view-ready state to SwiftUI.
-- Feature modules: `Auth`, `Onboarding`, `Home`, `Guard`, `Events`, `Discover`, and
-  `Profile`.
+- Feature modules: `Auth`, `Onboarding`, `Home`, `Guard`, `Events`, `Memory`,
+  `Discover`, and `Profile`. `Events` is presented inside Guard; `Discover` powers
+  the user-facing Community tab.
 - Shared components: image loading, empty/error states, share sheet, phone action,
   map, badges, and bottom navigation.
 
@@ -129,9 +131,9 @@ event data.
 The five native tabs are:
 
 1. Home
-2. Guard
-3. Events
-4. Discover
+2. Guard, containing Live, Activity, and Events
+3. Memory
+4. Community, powered by curated recommendations
 5. Profile
 
 Each tab owns an independent `NavigationStack` so returning to a tab preserves its
@@ -146,8 +148,10 @@ Home is an editorial and planning surface, not a device-status dashboard.
 
 - current date;
 - real weather for the configured family location;
-- notification button with unread count;
 - a compact critical-event strip only when a real event needs attention.
+
+The critical-event strip opens the existing Guard event detail. Home does not show
+a fabricated unread badge when no native inbox owns that count.
 
 ### 8.2 Calendar module
 
@@ -182,6 +186,7 @@ incident.
 
 Guard prioritizes one stable, selected live stream.
 
+- a persistent segmented control switches between Live, Activity, and Events;
 - selected camera stream fills the primary 16:9 stage;
 - camera selector changes the selected stream without rebuilding the screen;
 - non-selected cameras show recent thumbnails and do not play simultaneous streams;
@@ -194,9 +199,10 @@ The initial release consumes the current cloud stream API. The native stream lay
 isolates MJPEG parsing and lifecycle management so a later HLS or WebRTC transport
 can replace it without changing Guard views.
 
-## 10. Events
+## 10. Events Inside Guard
 
-Events contains only real safety events that may require family action.
+Events is a Guard section, not a separate bottom tab. It contains only real safety
+events that may require family action.
 
 - segmented states: pending, handled, and false positive;
 - chronological evidence list with screenshot, room, time, event type, cloud review,
@@ -208,12 +214,25 @@ Events contains only real safety events that may require family action.
 - optimistic action state is reconciled with the server and can recover after a
   failed request.
 
-## 11. Discover
+## 11. Memory
 
-Discover replaces the overlapping Companion tab. It is a curated recommendation
+Memory is a family-only native publishing surface.
+
+- text, location, up to nine photos, or one video;
+- media is compressed before upload and persisted through the cloud media contract;
+- posts retain author, publication time, comments, and favorites;
+- create, edit, delete, comment, favorite, media preview, and video playback are
+  real actions with server persistence;
+- media selection follows native Photos behavior and never displays a successful
+  post before the server accepts it.
+
+## 12. Community Recommendations
+
+Community replaces the overlapping Companion tab. The implementation module is
+named `Discover`, but the product label is Community. It is a curated recommendation
 surface, not a store.
 
-### 11.1 Scope
+### 12.1 Scope
 
 Allowed first-release categories include:
 
@@ -226,7 +245,7 @@ Allowed first-release categories include:
 Medicines, supplements, medical devices, diagnostic products, and products making
 medical claims are excluded.
 
-### 11.2 Product contract
+### 12.2 Product contract
 
 Every recommendation must contain:
 
@@ -246,7 +265,7 @@ The detail screen explains suitability and limitations, then opens the external
 merchant or brand page. There is no cart, checkout, payment, order history, or fake
 purchase success state.
 
-## 12. Profile
+## 13. Profile
 
 Profile contains:
 
@@ -254,19 +273,21 @@ Profile contains:
 - family members and roles;
 - cared-for family member profile and phone numbers;
 - household box and cameras;
-- notification permissions and quiet hours;
-- return-home and content preferences;
+- guard rules using user-facing durations rather than edge sampling controls;
+- activity-history retention and reporting preferences;
+- safety-event push permission, iOS notification status, and quiet hours;
+- editorial content and recommendation preferences;
 - product recommendation interests;
 - privacy, data export, and deletion.
 
 The word "administrator" is not used as a personal identity label. Roles appear
 only inside family-member management as creator or member.
 
-## 13. Return-Home Message Workflow
+## 14. Return-Home Message Workflow
 
 Return-home is a message and notification workflow, not a decorative home card.
 
-### 13.1 Triggers
+### 14.1 Triggers
 
 Supported triggers are:
 
@@ -277,7 +298,7 @@ Supported triggers are:
 Triggers respect quiet hours, reminder frequency, idempotency, and user settings.
 Normal safety events do not generate a commercial or casual return-home message.
 
-### 13.2 Generated content
+### 14.2 Generated content
 
 The persisted message includes:
 
@@ -292,7 +313,7 @@ The persisted message includes:
 Generated text must not claim that the user is physically present. It must not tell
 the user to hand over tea, water, medicine, or another physical object while away.
 
-### 13.3 User flow
+### 14.3 User flow
 
 1. Scheduler creates an idempotent `return_home` app message.
 2. The server records an in-app delivery and queues APNs when configured.
@@ -305,9 +326,9 @@ the user to hand over tea, water, medicine, or another physical object while awa
 iOS cannot guarantee that a private WeChat message was sent or select a recipient.
 The product records the user's explicit follow-up action, not a fabricated send receipt.
 
-## 14. Cloud API And Persistence
+## 15. Cloud API And Persistence
 
-### 14.1 API aggregation
+### 15.1 API aggregation
 
 Add a versioned native bootstrap endpoint that returns the signed-in user, primary
 family, onboarding state, permissions, unread count, and stable revision identifiers.
@@ -330,7 +351,7 @@ may be adapted behind typed native repositories. Compatibility must be preserved
 the edge agent, operational consoles, and migration-time browser verification until
 native parity is accepted.
 
-### 14.2 Database behavior
+### 15.2 Database behavior
 
 Replace full-table delete-and-reinsert persistence with entity-level SQL repositories
 and transactions. Mutations use server-side authorization, database constraints,
@@ -343,7 +364,7 @@ releasing a new App binary.
 Passwords or SMS codes are never stored in plaintext. Session tokens are stored only
 as hashes on the server and expire or revoke independently.
 
-## 15. Push And Native Integrations
+## 16. Push And Native Integrations
 
 - APNs registration is native and associated with user, family, installation, and
   environment.
@@ -357,7 +378,7 @@ APNs delivery requires the Apple Developer team, App Store Connect application,
 Bundle ID, push entitlement, and APNs Auth Key. The application must still provide
 complete in-app messages when APNs is not configured.
 
-## 16. Visual System
+## 17. Visual System
 
 Design read: a native family-care utility for younger family members, combining a
 clean editorial feed with quiet operational surfaces.
@@ -381,7 +402,7 @@ Rules:
 - skeletons match module geometry and are used only when no cached state exists;
 - empty states contain one relevant action and no feature-description copy.
 
-## 17. Failure And Offline States
+## 18. Failure And Offline States
 
 - Invalid session: clear Keychain credentials and return to native login.
 - Network timeout: keep cached data and mark the affected module stale.
@@ -394,9 +415,9 @@ Rules:
 - Product link expired: hide the action, record the catalog item for re-verification,
   and never route to an unrelated page.
 
-## 18. Acceptance Criteria
+## 19. Acceptance Criteria
 
-### 18.1 Experience
+### 19.1 Experience
 
 - Warm launch renders the cached primary screen without a network loading page.
 - Tab selection changes visible content in under 100ms on the target device.
@@ -404,40 +425,53 @@ Rules:
 - Background refresh never clears already visible content.
 - No primary action is a `#` link, placeholder toast, or unrelated page jump.
 
-### 18.2 Data
+### 19.2 Data
 
 - Two registered phone accounts cannot read each other's family data.
 - A new account starts with no family, device, camera, event, or message ownership.
 - Server restart preserves sessions and data without full-table replacement.
 - Logout and account switching do not display the previous account's cached content.
 
-### 18.3 Workflows
+### 19.3 Workflows
 
 - New-user onboarding can reach a bound device and configured camera without browser pages.
 - A return-home trigger creates one persisted message and one idempotent delivery per target.
 - Notification deep-link opens the correct native detail.
 - A reference message can be edited, shared, and marked with a persisted outcome.
 - Every visible editorial and product card has a real source and a functioning action.
-- Guard shows one selected live stream and can switch cameras without recreating the tab.
+- Guard shows one selected live stream, can switch cameras without recreating the
+  tab, and owns Activity and Events without mounting duplicate streams.
+- Memory create, edit, delete, comment, favorite, image preview, and single-video
+  playback persist and survive relaunch.
 - Event actions update the server and survive relaunch.
 
-### 18.4 Distribution
+### 19.4 Distribution
 
 - Debug and Release builds compile without the remote web UI as a runtime dependency.
 - Release has no fixed verification code or development credentials.
 - Archive passes signing, entitlement, privacy-manifest, and TestFlight upload checks.
 
-## 19. Delivery Sequence
+## 20. Delivery Sequence
 
 1. Stabilize cloud identity and entity-level PostgreSQL persistence.
 2. Create native app foundation, authentication, cache, and onboarding.
 3. Build native tab shell and Home.
 4. Build Guard stream lifecycle and camera switching.
-5. Build Events and event actions.
-6. Build return-home messages, native sharing, and notification deep links.
-7. Build Discover with curated real-product catalog.
-8. Build Profile and permission/settings flows.
-9. Complete APNs configuration, device QA, accessibility checks, and TestFlight archive.
+5. Integrate Activity and Events inside Guard.
+6. Build Memory publishing and media lifecycle.
+7. Build return-home messages, native sharing, and notification deep links.
+8. Build Community with a curated real-product catalog and native recommendation detail.
+9. Build Profile, permissions, editable cared-for profile, and settings flows.
+10. Complete APNs configuration, device QA, accessibility checks, and TestFlight archive.
+
+## 21. Native Surface Audit Record
+
+The 2026-07-28 simulator audit verifies Home, Guard Live, Guard Activity, Guard
+Events, Memory, Community, recommendation detail, Profile, Devices, Guard Rules,
+Activity Settings, Content Settings, and Privacy. The audit also verifies that a
+Home critical event opens the existing event detail, editable settings use persisted
+repository mutations, recommendation cards open native provenance detail before an
+official HTTPS source, and no primary tab depends on a full-page loading transition.
 
 Each phase must preserve edge-agent and operational-console API compatibility. The
 household-user web screens remain available only during migration and are removed

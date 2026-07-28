@@ -25,7 +25,7 @@ struct ArticleCard: View {
                             .multilineTextAlignment(.leading)
                             .lineLimit(3)
                     }
-                    Text(article.sourceName)
+                    Text(metadataText)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(GoHomeTheme.mutedInk)
                         .lineLimit(1)
@@ -44,6 +44,13 @@ struct ArticleCard: View {
         .accessibilityLabel("\(article.category)，\(article.title)，来源 \(article.sourceName)")
         .accessibilityHint("打开原文")
         .accessibilityIdentifier("home-article-\(article.id)")
+    }
+
+    private var metadataText: String {
+        guard let publishedAt = article.publishedAt else { return article.sourceName }
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: publishedAt) else { return article.sourceName }
+        return "\(article.sourceName) · \(date.formatted(.dateTime.month().day()))"
     }
 }
 

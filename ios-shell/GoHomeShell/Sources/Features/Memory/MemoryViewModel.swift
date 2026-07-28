@@ -40,9 +40,10 @@ final class MemoryViewModel: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var hasStarted = false
 
-    init(repository: AppRepository?, scope: CacheScope?) {
+    init(repository: AppRepository?, scope: CacheScope?, seed: FamilyMemoriesResponse? = nil) {
         self.repository = repository
         self.scope = scope
+        state = Loadable(value: seed, isRefreshing: false, staleReason: nil)
     }
 
     var memories: [FamilyMemory] { state.value?.memories ?? [] }

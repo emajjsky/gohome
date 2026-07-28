@@ -54,7 +54,9 @@ ios-shell/scripts/test.sh
 
 Then install the Debug build on the connected iPhone.
 
-Expected: all five tabs are native, tab switches preserve state, Guard owns at most one active live stream, and event actions persist through relaunch.
+Expected: the native tabs are Home, Guard, Memory, Community, and Profile; tab
+switches preserve state; Guard owns at most one active live stream and contains
+Activity and Events; Memory and event actions persist through relaunch.
 
 - [ ] **Gate 4: Messaging and distribution**
 

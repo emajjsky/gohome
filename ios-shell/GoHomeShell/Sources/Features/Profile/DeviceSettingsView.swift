@@ -261,18 +261,9 @@ struct RuleSettingsView: View {
                 }
 
                 if let rules = model.state.value?.rules {
-                    ProfileSection(title: "检测频率") {
+                    ProfileSection(title: "异常时长") {
                         ruleNumber(
-                            "抽帧间隔",
-                            value: rules.captureIntervalSeconds,
-                            range: 1...60,
-                            step: 1,
-                            formatted: "\(rules.captureIntervalSeconds) 秒"
-                        ) {
-                            var next = rules; next.captureIntervalSeconds = $0; model.saveRules(next)
-                        }
-                        ruleNumber(
-                            "静止阈值",
+                            "静止提醒",
                             value: rules.noMotionSeconds,
                             range: 10...86_400,
                             step: 30,
@@ -281,7 +272,7 @@ struct RuleSettingsView: View {
                             var next = rules; next.noMotionSeconds = $0; model.saveRules(next)
                         }
                         ruleNumber(
-                            "无人阈值",
+                            "无人提醒",
                             value: rules.noPersonSeconds,
                             range: 10...86_400,
                             step: 30,
@@ -318,11 +309,6 @@ struct RuleSettingsView: View {
                         }
                     }
 
-                    ProfileSection(title: "提醒") {
-                        ruleToggle("安全事件提醒", symbol: "bell.fill", value: rules.notificationEnabled) {
-                            var next = rules; next.notificationEnabled = $0; model.saveRules(next)
-                        }
-                    }
                 } else {
                     ProfileEmptyRow(symbol: "viewfinder", title: "守护规则暂不可用")
                 }
@@ -378,6 +364,7 @@ struct RuleSettingsView: View {
         }
         .frame(minHeight: 50)
         .disabled(!model.canEditRules || model.savingRules)
+        .accessibilityIdentifier("rule-number-\(title)")
     }
 
     private func durationText(_ seconds: Int) -> String {

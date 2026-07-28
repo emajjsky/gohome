@@ -82,9 +82,11 @@ final class HomeViewModel: ObservableObject {
     private var reconciliationTask: Task<Void, Never>?
     private var hasStarted = false
 
-    init(repository: AppRepository?, scope: CacheScope?) {
+    init(repository: AppRepository?, scope: CacheScope?, seed: HomeResponse? = nil) {
         self.repository = repository
         self.scope = scope
+        state = Loadable(value: seed, isRefreshing: false, staleReason: nil)
+        careMessage = seed?.careMessage
     }
 
     func start() {

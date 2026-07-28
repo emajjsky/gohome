@@ -40,11 +40,7 @@ struct ProfileView: View {
                     }
 
                     NavigationLink {
-                        if let elder = model.state.value?.elder {
-                            CaredForProfileView(profile: elder)
-                        } else {
-                            ProfileUnavailableView(title: "尚未配置照护资料")
-                        }
+                        CaredForProfileView(model: model)
                     } label: {
                         ProfileNavigationRow(
                             symbol: "person.text.rectangle",

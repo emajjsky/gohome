@@ -123,6 +123,23 @@ struct AppEnvironment {
                 )
                 return try await client.send(endpoint)
             },
+            productPreferencesUpdater: { familyID, preferences in
+                let endpoint: Endpoint<ProductPreferencesEnvelope> = try .jsonBody(
+                    method: .put,
+                    path: "/api/v2/product-preferences",
+                    body: preferences,
+                    queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                )
+                return try await client.send(endpoint)
+            },
+            elderProfileUpdater: { familyID, elderID, payload in
+                let endpoint: Endpoint<ElderProfile> = try .jsonBody(
+                    method: .put,
+                    path: "/api/v1/families/\(familyID)/elders/\(elderID)/profile",
+                    body: payload
+                )
+                return try await client.send(endpoint)
+            },
             messageActionLoader: { familyID, messageID, request in
                 let endpoint: Endpoint<CareMessageActionResponse> = try .jsonBody(
                     method: .post,

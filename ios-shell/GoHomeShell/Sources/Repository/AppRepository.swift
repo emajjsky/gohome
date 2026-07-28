@@ -12,6 +12,8 @@ actor AppRepository {
     typealias ProfileLoader = @Sendable (String) async throws -> ProfileData
     typealias RulesUpdater = @Sendable (String, RulePatch) async throws -> FamilyRules
     typealias CarePreferencesUpdater = @Sendable (String, CarePreferencesPatch) async throws -> CarePreferences
+    typealias ProductPreferencesUpdater = @Sendable (String, ProductPreferences) async throws -> ProductPreferencesEnvelope
+    typealias ElderProfileUpdater = @Sendable (String, String, ProfilePayload) async throws -> ElderProfile
     typealias MessageActionLoader = @Sendable (String, String, CareMessageActionRequest) async throws -> CareMessageActionResponse
     typealias MemoriesLoader = @Sendable (String) async throws -> FamilyMemoriesResponse
     typealias MemoryCreator = @Sendable (String, MemoryDraftRequest) async throws -> FamilyMemoryEnvelope
@@ -49,6 +51,8 @@ actor AppRepository {
     private let profileLoader: ProfileLoader
     private let rulesUpdater: RulesUpdater
     private let carePreferencesUpdater: CarePreferencesUpdater
+    private let productPreferencesUpdater: ProductPreferencesUpdater
+    private let elderProfileUpdater: ElderProfileUpdater
     private let messageActionLoader: MessageActionLoader
     private let memoriesLoader: MemoriesLoader
     private let memoryCreator: MemoryCreator
@@ -96,6 +100,8 @@ actor AppRepository {
         profileLoader: @escaping ProfileLoader = { _ in throw APIError.invalidResponse },
         rulesUpdater: @escaping RulesUpdater = { _, _ in throw APIError.invalidResponse },
         carePreferencesUpdater: @escaping CarePreferencesUpdater = { _, _ in throw APIError.invalidResponse },
+        productPreferencesUpdater: @escaping ProductPreferencesUpdater = { _, _ in throw APIError.invalidResponse },
+        elderProfileUpdater: @escaping ElderProfileUpdater = { _, _, _ in throw APIError.invalidResponse },
         messageActionLoader: @escaping MessageActionLoader = { _, _, _ in throw APIError.invalidResponse },
         memoriesLoader: @escaping MemoriesLoader = { _ in throw APIError.invalidResponse },
         memoryCreator: @escaping MemoryCreator = { _, _ in throw APIError.invalidResponse },
@@ -133,6 +139,8 @@ actor AppRepository {
         self.profileLoader = profileLoader
         self.rulesUpdater = rulesUpdater
         self.carePreferencesUpdater = carePreferencesUpdater
+        self.productPreferencesUpdater = productPreferencesUpdater
+        self.elderProfileUpdater = elderProfileUpdater
         self.messageActionLoader = messageActionLoader
         self.memoriesLoader = memoriesLoader
         self.memoryCreator = memoryCreator
@@ -296,6 +304,14 @@ actor AppRepository {
 
     func updateCarePreferences(familyID: String, patch: CarePreferencesPatch) async throws -> CarePreferences {
         try await carePreferencesUpdater(familyID, patch)
+    }
+
+    func updateProductPreferences(familyID: String, preferences: ProductPreferences) async throws -> ProductPreferences {
+        try await productPreferencesUpdater(familyID, preferences).preferences
+    }
+
+    func updateElderProfile(familyID: String, elderID: String, payload: ProfilePayload) async throws -> ElderProfile {
+        try await elderProfileUpdater(familyID, elderID, payload)
     }
 
     func recordMessageAction(

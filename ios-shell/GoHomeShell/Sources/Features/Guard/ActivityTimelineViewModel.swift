@@ -14,10 +14,18 @@ final class ActivityTimelineViewModel: ObservableObject {
     private var overviewTask: Task<Void, Never>?
     private var hasStarted = false
 
-    init(repository: AppRepository?, scope: CacheScope?, canManageHistory: Bool = false) {
+    init(
+        repository: AppRepository?,
+        scope: CacheScope?,
+        canManageHistory: Bool = false,
+        seed: ActivityTimelineResponse? = nil,
+        overviewSeed: ActivityOverviewResponse? = nil
+    ) {
         self.repository = repository
         self.scope = scope
         self.canManageHistory = canManageHistory
+        state = Loadable(value: seed, isRefreshing: false, staleReason: nil)
+        overviewState = Loadable(value: overviewSeed, isRefreshing: false, staleReason: nil)
     }
 
     func start() {

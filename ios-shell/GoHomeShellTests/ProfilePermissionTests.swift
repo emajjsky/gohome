@@ -252,6 +252,64 @@ final class ProfilePermissionTests: XCTestCase {
         XCTAssertEqual(actions, ["invite:family-1", "revoke:invitation-1"])
     }
 
+    @MainActor
+    func testProductPreferencesPersistThroughRepositoryAndCache() async throws {
+        let cache = try DiskCache(rootURL: temporaryDirectory())
+        let scope = CacheScope(userID: "user-1", familyID: "family-1")
+        let expected = ProductPreferences(categories: ["照明与视野"], needs: ["夜间照明"])
+        let repository = AppRepository(
+            cache: cache,
+            bootstrapLoader: { throw APIError.invalidResponse },
+            productPreferencesUpdater: { familyID, preferences in
+                XCTAssertEqual(familyID, scope.familyID)
+                return ProductPreferencesEnvelope(preferences: preferences)
+            }
+        )
+        let model = makeModel(role: "owner", repository: repository, seed: fixtureProfile(canEdit: true))
+
+        model.saveProductPreferences(expected)
+        for _ in 0..<20 where model.savingProductPreferences {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(model.state.value?.productPreferences, expected)
+        let cached = try await cache.read(ProfileData.self, key: "profile", scope: scope)
+        XCTAssertEqual(cached?.productPreferences, expected)
+    }
+
+    @MainActor
+    func testOnlyCreatorCanSaveCaredForProfile() async throws {
+        let updated = try elderProfileFixture()
+        let recorder = FamilyMutationRecorder()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            elderProfileUpdater: { familyID, elderID, payload in
+                await recorder.record("elder:\(familyID):\(elderID):\(payload.displayName)")
+                return updated
+            }
+        )
+        let payload = ProfilePayload(
+            displayName: "林姨",
+            relationship: "母亲",
+            city: "杭州",
+            district: "西湖区",
+            phone: "13800138000",
+            mobilePhone: "13800138000",
+            homePhone: ""
+        )
+        let creator = makeModel(role: "owner", repository: repository, seed: fixtureProfile(canEdit: true))
+        let member = makeModel(role: "member", repository: repository, seed: fixtureProfile(canEdit: false))
+
+        let creatorSaved = await creator.saveElderProfile(payload)
+        XCTAssertEqual(creator.state.value?.elder, updated)
+        let memberSaved = await member.saveElderProfile(payload)
+        let actions = await recorder.snapshot()
+        XCTAssertTrue(creatorSaved)
+        XCTAssertFalse(memberSaved)
+        XCTAssertEqual(actions, ["elder:family-1:elder_primary:林姨"])
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("ProfilePermissionTests-\(UUID().uuidString)", isDirectory: true)
@@ -348,6 +406,13 @@ private func cameraDeleteResponse(id: String) throws -> CameraDeleteResponse {
     try JSONDecoder().decode(
         CameraDeleteResponse.self,
         from: Data(#"{"ok":true,"deleted":"\#(id)"}"#.utf8)
+    )
+}
+
+private func elderProfileFixture() throws -> ElderProfile {
+    try JSONDecoder().decode(
+        ElderProfile.self,
+        from: Data(#"{"id":"elder-1","elder_id":"elder_primary","display_name":"林姨","relationship":"母亲","city":"杭州","district":"西湖区","phone":"13800138000","mobile_phone":"13800138000","home_phone":""}"#.utf8)
     )
 }
 

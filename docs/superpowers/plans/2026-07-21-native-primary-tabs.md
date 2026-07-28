@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement native Home, Guard, Events, and Profile surfaces with immediate tab switching, real data, one selected video stream, and preserved navigation state.
+**Goal:** Implement native Home, Guard, Memory, Community, and Profile surfaces
+with immediate tab switching, real data, one selected video stream, and preserved
+navigation state. Activity and Events live inside Guard.
 
 **Architecture:** Each tab owns a `NavigationStack` and feature model while sharing one repository. Views consume cached view-state structs and never issue network calls. Guard isolates stream transport behind a protocol so current MJPEG can later be replaced without changing product views.
 
@@ -38,7 +40,10 @@ Expected: FAIL because `MainTabView` does not exist.
 
 - [ ] **Step 3: Implement five native tab roots**
 
-Use `TabView(selection:)` with Home, Guard, Events, Discover, and Profile. Give each tab its own `NavigationPath` stored in a tab state object. Define white, near-black, and ginger-yellow tokens; card radius is 8, button radius is 8, icon buttons may be circular.
+Use `TabView(selection:)` with Home, Guard, Memory, Community, and Profile. Give
+each tab its own `NavigationPath` stored in a tab state object. Guard owns Live,
+Activity, and Events sections. Define white, near-black, and ginger-yellow tokens;
+card radius is 8, button radius is 8, icon buttons may be circular.
 
 - [ ] **Step 4: Run tab tests**
 

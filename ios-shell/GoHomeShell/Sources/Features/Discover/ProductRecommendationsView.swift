@@ -38,9 +38,10 @@ final class ProductRecommendationsViewModel: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var hasStarted = false
 
-    init(repository: AppRepository?, scope: CacheScope?) {
+    init(repository: AppRepository?, scope: CacheScope?, seed: ProductRecommendationsResponse? = nil) {
         self.repository = repository
         self.scope = scope
+        state = Loadable(value: seed, isRefreshing: false, staleReason: nil)
     }
 
     func start() {
@@ -59,6 +60,7 @@ final class ProductRecommendationsViewModel: ObservableObject {
 struct ProductRecommendationsView: View {
     @ObservedObject var model: ProductRecommendationsViewModel
     @State private var selectedCategory = "全部"
+    @State private var selectedProduct: ProductRecommendation?
 
     private let columns = [
         GridItem(.flexible(), spacing: 12, alignment: .top),
@@ -79,7 +81,9 @@ struct ProductRecommendationsView: View {
                 } else {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
                         ForEach(filteredProducts) { product in
-                            ProductRecommendationCard(product: product)
+                            ProductRecommendationCard(product: product) {
+                                selectedProduct = product
+                            }
                         }
                     }
                 }
@@ -96,6 +100,9 @@ struct ProductRecommendationsView: View {
         }
         .background(GoHomeTheme.paper)
         .accessibilityIdentifier("product-recommendations-content")
+        .sheet(item: $selectedProduct) { product in
+            ProductRecommendationDetail(product: product)
+        }
     }
 
     private var products: [ProductRecommendation] {
@@ -148,16 +155,13 @@ struct ProductRecommendationsView: View {
 
 private struct ProductRecommendationCard: View {
     let product: ProductRecommendation
+    let action: () -> Void
 
     var body: some View {
-        Group {
-            if let url = URL(string: product.sourceURL) {
-                Link(destination: url) { content }
-            } else {
-                content
-            }
-        }
+        Button(action: action) { content }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(product.name)，\(product.category)")
+        .accessibilityHint("查看推荐详情")
         .accessibilityIdentifier("product-card-\(product.id)")
     }
 
@@ -205,5 +209,117 @@ private struct ProductRecommendationCard: View {
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(GoHomeTheme.mutedInk)
         }
+    }
+}
+
+private struct ProductRecommendationDetail: View {
+    @Environment(\.dismiss) private var dismiss
+    let product: ProductRecommendation
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    AsyncImage(url: URL(string: product.imageURL)) { phase in
+                        if case let .success(image) = phase {
+                            image.resizable().scaledToFill()
+                        } else {
+                            Rectangle()
+                                .fill(GoHomeTheme.paleGinger)
+                                .overlay {
+                                    Image(systemName: "shippingbox")
+                                        .font(.system(size: 34, weight: .light))
+                                        .foregroundStyle(GoHomeTheme.ink.opacity(0.72))
+                                }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(4 / 3, contentMode: .fit)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(product.category)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(GoHomeTheme.ginger)
+                        Text(product.name)
+                            .font(.system(size: 26, weight: .bold, design: .rounded))
+                            .foregroundStyle(GoHomeTheme.ink)
+                        Text(product.brand)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(GoHomeTheme.mutedInk)
+                    }
+
+                    Text(product.summary)
+                        .font(.system(size: 15))
+                        .foregroundStyle(GoHomeTheme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    detailSection(title: "推荐依据") {
+                        Text(product.recommendationReason)
+                    }
+
+                    detailSection(title: "适用方向") {
+                        Text(product.suitability.joined(separator: " · "))
+                    }
+
+                    detailSection(title: "来源与说明") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(product.sourceName)
+                            Text(product.disclosure)
+                            Text("核验于 \(verifiedDateText)")
+                        }
+                    }
+
+                    if let url = URL(string: product.sourceURL), url.scheme?.lowercased() == "https" {
+                        Link(destination: url) {
+                            Label("查看官方页面", systemImage: "arrow.up.right")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Color.white)
+                                .frame(maxWidth: .infinity, minHeight: 48)
+                                .background(GoHomeTheme.ink, in: RoundedRectangle(cornerRadius: GoHomeTheme.controlRadius, style: .continuous))
+                        }
+                        .accessibilityIdentifier("product-official-link")
+                    }
+                }
+                .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
+            }
+            .background(GoHomeTheme.paper)
+            .navigationTitle("推荐详情")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .accessibilityLabel("关闭")
+                }
+            }
+        }
+    }
+
+    private func detailSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            GoHomeSectionHeader(title: title)
+            content()
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(GoHomeTheme.mutedInk)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 12)
+        .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
+    }
+
+    private var verifiedDateText: String {
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: product.verifiedAt) else { return product.verifiedAt }
+        let displayFormatter = DateFormatter()
+        displayFormatter.locale = Locale(identifier: "zh_CN")
+        displayFormatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        displayFormatter.dateFormat = "yyyy年M月d日"
+        return displayFormatter.string(from: date)
     }
 }

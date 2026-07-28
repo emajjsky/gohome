@@ -122,9 +122,13 @@ struct AuthView: View {
                 .opacity(viewModel.canSubmit ? 1 : 0.55)
                 .accessibilityIdentifier("auth-submit-button")
 
-                Text("登录即表示你同意隐私政策与服务条款")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.black.opacity(0.38))
+                HStack(spacing: 2) {
+                    Text("登录即表示你同意")
+                    Link("《隐私政策》", destination: URL(string: "https://gohome.ai2shx.club/privacy.html")!)
+                        .foregroundStyle(Color.black.opacity(0.7))
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(Color.black.opacity(0.38))
             }
             .padding(.horizontal, 24)
             .padding(.top, 10)

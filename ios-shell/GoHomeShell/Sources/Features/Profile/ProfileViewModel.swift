@@ -5,6 +5,8 @@ final class ProfileViewModel: ObservableObject {
     @Published private(set) var state: Loadable<ProfileData>
     @Published private(set) var savingRules = false
     @Published private(set) var savingPreferences = false
+    @Published private(set) var savingProductPreferences = false
+    @Published private(set) var savingElderProfile = false
     @Published private(set) var deviceActionID: String?
     @Published private(set) var deviceConfigurationRevision = 0
     @Published private(set) var inlineError: String?
@@ -115,6 +117,52 @@ final class ProfileViewModel: ObservableObject {
                 inlineError = "内容偏好未能保存，请重试"
             }
             savingPreferences = false
+        }
+    }
+
+    func saveProductPreferences(_ preferences: ProductPreferences) {
+        guard !savingProductPreferences, let repository, let scope else { return }
+        let original = state.value
+        savingProductPreferences = true
+        inlineError = nil
+        replaceProductPreferences(preferences)
+
+        Task { [repository, scope] in
+            do {
+                let updated = try await repository.updateProductPreferences(
+                    familyID: scope.familyID,
+                    preferences: preferences
+                )
+                replaceProductPreferences(updated)
+                await persist()
+            } catch {
+                if let original { state.value = original }
+                inlineError = "推荐偏好未能保存，请重试"
+            }
+            savingProductPreferences = false
+        }
+    }
+
+    func saveElderProfile(_ payload: ProfilePayload) async -> Bool {
+        guard canEditRules, !savingElderProfile, let repository, let scope else { return false }
+        savingElderProfile = true
+        inlineError = nil
+        defer { savingElderProfile = false }
+        do {
+            let elderID = state.value?.elder?.elderID ?? "elder_primary"
+            let updated = try await repository.updateElderProfile(
+                familyID: scope.familyID,
+                elderID: elderID,
+                payload: payload
+            )
+            guard var value = state.value else { return true }
+            value.elder = updated
+            state.value = value
+            await persist()
+            return true
+        } catch {
+            inlineError = "照护资料未能保存，请重试"
+            return false
         }
     }
 
@@ -339,6 +387,12 @@ final class ProfileViewModel: ObservableObject {
     private func replacePreferences(_ preferences: CarePreferences) {
         guard var value = state.value else { return }
         value.carePreferences = preferences
+        state.value = value
+    }
+
+    private func replaceProductPreferences(_ preferences: ProductPreferences) {
+        guard var value = state.value else { return }
+        value.productPreferences = preferences
         state.value = value
     }
 
