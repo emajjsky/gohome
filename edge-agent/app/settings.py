@@ -51,8 +51,6 @@ class Settings:
         self.upload_worker_interval_seconds = float(os.getenv("GOHOME_UPLOAD_WORKER_INTERVAL_SECONDS", "5"))
         self.upload_worker_batch_size = int(os.getenv("GOHOME_UPLOAD_WORKER_BATCH_SIZE", "4"))
         self.upload_request_timeout_seconds = float(os.getenv("GOHOME_UPLOAD_REQUEST_TIMEOUT_SECONDS", "12"))
-        self.live_frame_upload_enabled = os.getenv("GOHOME_LIVE_FRAME_UPLOAD_ENABLED", "1") == "1"
-        self.live_frame_upload_interval_seconds = float(os.getenv("GOHOME_LIVE_FRAME_UPLOAD_INTERVAL_SECONDS", "12"))
         self.live_relay_enabled = os.getenv("GOHOME_LIVE_RELAY_ENABLED", "1") == "1"
         self.live_relay_fps = int(os.getenv("GOHOME_LIVE_RELAY_FPS", "8"))
         self.live_relay_width = int(os.getenv("GOHOME_LIVE_RELAY_WIDTH", "640"))
@@ -60,10 +58,14 @@ class Settings:
         self.live_relay_quality = int(os.getenv("GOHOME_LIVE_RELAY_QUALITY", "55"))
         self.live_relay_drop_stale_frames = int(os.getenv("GOHOME_LIVE_RELAY_DROP_STALE_FRAMES", "1"))
         self.live_relay_request_timeout_seconds = float(os.getenv("GOHOME_LIVE_RELAY_REQUEST_TIMEOUT_SECONDS", "2"))
-        self.history_retention_hours = int(os.getenv("GOHOME_HISTORY_RETENTION_HOURS", "24"))
+        self.history_retention_hours = int(os.getenv("GOHOME_HISTORY_RETENTION_HOURS", "6"))
         self.history_cleanup_interval_seconds = float(os.getenv("GOHOME_HISTORY_CLEANUP_INTERVAL_SECONDS", "3600"))
         self.history_cleanup_batch_size = int(os.getenv("GOHOME_HISTORY_CLEANUP_BATCH_SIZE", "5000"))
         self.completed_upload_retention_days = int(os.getenv("GOHOME_COMPLETED_UPLOAD_RETENTION_DAYS", "7"))
+        self.activity_log_interval_seconds = float(os.getenv("GOHOME_ACTIVITY_LOG_INTERVAL_SECONDS", "600"))
+        self.risk_evidence_interval_seconds = float(os.getenv("GOHOME_RISK_EVIDENCE_INTERVAL_SECONDS", "0.5"))
+        self.local_storage_high_watermark_percent = float(os.getenv("GOHOME_LOCAL_STORAGE_HIGH_WATERMARK_PERCENT", "70"))
+        self.local_storage_critical_percent = float(os.getenv("GOHOME_LOCAL_STORAGE_CRITICAL_PERCENT", "85"))
 
         self.host = os.getenv("GOHOME_AGENT_HOST", "0.0.0.0")
         self.port = int(os.getenv("GOHOME_AGENT_PORT", "8711"))
@@ -83,7 +85,7 @@ class Settings:
         self.inference_accelerated_active_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACCELERATED_ACTIVE_INTERVAL_SECONDS", "0.067"))
         self.inference_accelerated_risk_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACCELERATED_RISK_INTERVAL_SECONDS", "0.05"))
 
-        self.default_capture_interval_seconds = int(os.getenv("GOHOME_CAPTURE_INTERVAL_SECONDS", "5"))
+        self.default_capture_interval_seconds = int(os.getenv("GOHOME_CAPTURE_INTERVAL_SECONDS", "600"))
         self.default_no_motion_seconds = int(os.getenv("GOHOME_NO_MOTION_SECONDS", "300"))
         self.motion_threshold = float(os.getenv("GOHOME_MOTION_THRESHOLD", "0.015"))
         self.black_brightness_threshold = float(os.getenv("GOHOME_BLACK_BRIGHTNESS_THRESHOLD", "18"))
@@ -114,6 +116,10 @@ class Settings:
         self.hailo_pose_model = os.getenv("GOHOME_HAILO_POSE_MODEL", "/usr/share/hailo-models/yolov8s_pose_h8.hef").strip()
         self.hailo_pose_confidence = float(os.getenv("GOHOME_HAILO_POSE_CONFIDENCE", "0.25"))
         self.hailo_pose_nms_iou = float(os.getenv("GOHOME_HAILO_POSE_NMS_IOU", "0.70"))
+        self.hailo_object_mode = os.getenv("GOHOME_HAILO_OBJECT_MODE", "auto").strip().lower() or "auto"
+        self.hailo_object_model = os.getenv("GOHOME_HAILO_OBJECT_MODEL", "/usr/share/hailo-models/yolov8s_h8.hef").strip()
+        self.hailo_object_confidence = float(os.getenv("GOHOME_HAILO_OBJECT_CONFIDENCE", "0.30"))
+        self.hailo_object_interval_seconds = float(os.getenv("GOHOME_HAILO_OBJECT_INTERVAL_SECONDS", "1.0"))
         self.hailo_retry_seconds = float(os.getenv("GOHOME_HAILO_RETRY_SECONDS", "30"))
         self.context_detection_interval_seconds = float(os.getenv("GOHOME_CONTEXT_DETECTION_INTERVAL_SECONDS", "3"))
         self.enable_demo_camera = os.getenv("GOHOME_ENABLE_DEMO_CAMERA", "0") == "1"

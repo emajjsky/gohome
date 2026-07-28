@@ -764,6 +764,7 @@ class Storage:
         retention_hours: int = 24,
         completed_upload_retention_days: int = 7,
         batch_size: int = 5000,
+        discard_live_preview_uploads: bool = True,
     ) -> Dict[str, Any]:
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, int(retention_hours)))).isoformat()
         upload_cutoff = (
@@ -775,6 +776,35 @@ class Storage:
 
         with self.connect() as conn:
             conn.execute("PRAGMA foreign_keys = OFF")
+
+            deleted["live_preview_upload_jobs"] = 0
+            if discard_live_preview_uploads:
+                deleted["live_preview_upload_jobs"] = conn.execute(
+                    """
+                    DELETE FROM upload_jobs
+                    WHERE id IN (
+                        SELECT id FROM upload_jobs
+                        WHERE object_type = 'live_frame'
+                          AND status != 'uploading'
+                        ORDER BY id
+                        LIMIT ?
+                    )
+                    """,
+                    (limit,),
+                ).rowcount
+
+            deleted["observation_logs"] = conn.execute(
+                """
+                DELETE FROM observation_logs
+                WHERE id IN (
+                    SELECT id FROM observation_logs
+                    WHERE status = 'closed' AND updated_at < ?
+                    ORDER BY id
+                    LIMIT ?
+                )
+                """,
+                (cutoff, limit),
+            ).rowcount
 
             deleted["presence_sessions"] = conn.execute(
                 """
@@ -938,6 +968,35 @@ class Storage:
             removed_paths = [str(row["image_path"] or "") for row in snapshot_rows]
             if snapshot_ids:
                 placeholders = ",".join("?" for _ in snapshot_ids)
+                # Closed runtime summaries and completed jobs remain useful
+                # after their short-lived local preview image expires.
+                conn.execute(
+                    f"""
+                    UPDATE presence_sessions
+                    SET representative_snapshot_id = NULL
+                    WHERE status != 'open'
+                      AND representative_snapshot_id IN ({placeholders})
+                    """,
+                    snapshot_ids,
+                )
+                conn.execute(
+                    f"""
+                    UPDATE posture_episodes
+                    SET representative_snapshot_id = NULL
+                    WHERE status != 'open'
+                      AND representative_snapshot_id IN ({placeholders})
+                    """,
+                    snapshot_ids,
+                )
+                conn.execute(
+                    f"""
+                    UPDATE upload_jobs
+                    SET snapshot_id = NULL
+                    WHERE status = 'completed'
+                      AND snapshot_id IN ({placeholders})
+                    """,
+                    snapshot_ids,
+                )
                 deleted["snapshots"] = conn.execute(
                     f"DELETE FROM snapshots WHERE id IN ({placeholders})",
                     snapshot_ids,
@@ -971,11 +1030,13 @@ class Storage:
 
     def runtime_storage_status(self, snapshot_dir: Path, *, retention_hours: int = 24) -> Dict[str, Any]:
         disk = shutil.disk_usage(self.db_path.parent)
+        used_percent = (float(disk.used) / float(disk.total) * 100.0) if disk.total else 0.0
         return {
             "database_bytes": self.db_path.stat().st_size if self.db_path.exists() else 0,
             "disk_total_bytes": disk.total,
             "disk_used_bytes": disk.used,
             "disk_free_bytes": disk.free,
+            "disk_used_percent": round(used_percent, 2),
             "retention_hours": max(1, int(retention_hours)),
             "snapshot_dir": str(snapshot_dir),
         }

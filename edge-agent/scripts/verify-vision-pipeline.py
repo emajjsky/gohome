@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 from app.detect_agent import DetectAgent
 from app.rule_engine import build_event_evidence
 from app.vision.fall import FallAnalyzer
+from app.vision.hailo_object import HailoObjectBackend, HailoObjectNmsDecoder
 from app.vision.hailo_pose import HailoPoseBackend, HailoPoseDecoder
 from app.vision.person_yolo import PersonDetector
 from app.vision.pipeline import VisionPipeline
@@ -93,6 +94,7 @@ def main() -> None:
     detector_cache = verify_person_detector_cache_is_motion_aware()
     pose_requires_person_box = verify_pose_requires_person_box()
     hailo_decoder = verify_hailo_pose_decoder()
+    hailo_object = verify_hailo_object_decoder_and_cache()
     hailo_fallback = verify_hailo_failure_falls_back()
 
     checks = {
@@ -174,6 +176,9 @@ def main() -> None:
         "pose_requires_person_box": pose_requires_person_box["fallback_calls"],
         "hailo_decoder_count": hailo_decoder["count"],
         "hailo_decoder_score": hailo_decoder["score"],
+        "hailo_object_classes": hailo_object["classes"],
+        "hailo_object_inference_calls": hailo_object["inference_calls"],
+        "hailo_object_cache_hit": hailo_object["cache_hit"],
         "hailo_fallback_status": hailo_fallback,
         "pose_result_status": fire_result.get("algorithm_results", {}).get("pose", {}).get("status"),
         "pipeline_version": fire_result.get("pipeline_version"),
@@ -250,6 +255,10 @@ def main() -> None:
         raise SystemExit("worker pose mode must not run a whole-frame fallback without a person box")
     if checks["hailo_decoder_count"] != 1 or checks["hailo_decoder_score"] < 0.89:
         raise SystemExit("Hailo YOLOv8 Pose decoder contract failed")
+    if checks["hailo_object_classes"] != [15, 57]:
+        raise SystemExit("Hailo YOLOv8 object NMS decoder contract failed")
+    if checks["hailo_object_inference_calls"] != 1 or not checks["hailo_object_cache_hit"]:
+        raise SystemExit("Hailo object cadence cache did not suppress duplicate inference")
     if checks["hailo_fallback_status"] != "degraded":
         raise SystemExit("Hailo runtime failure must degrade to the CPU path")
     if checks["pet_fall_candidate"]:
@@ -1228,6 +1237,57 @@ def verify_hailo_pose_decoder() -> dict:
         max_poses=3,
     )
     return {"count": len(result["boxes"]), "score": float(result["scores"][0])}
+
+
+def verify_hailo_object_decoder_and_cache() -> dict:
+    output = np.zeros((1, 80, 5, 100), dtype=np.float32)
+    output[0, 15, :, 0] = [0.30, 0.20, 0.70, 0.45, 0.88]
+    output[0, 57, :, 0] = [0.45, 0.48, 0.82, 0.92, 0.77]
+    decoded = HailoObjectNmsDecoder().decode(
+        {"nms": output},
+        original_width=640,
+        original_height=360,
+        class_thresholds={15: 0.40, 57: 0.30},
+    )
+
+    class Runtime:
+        input_shape = (640, 640, 3)
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def infer(self, image: np.ndarray) -> dict:
+            self.calls += 1
+            return {"nms": output}
+
+        def close(self) -> None:
+            return None
+
+    runtime = Runtime()
+    variable_output = [np.empty((0, 5), dtype=np.float32) for _ in range(80)]
+    variable_output[15] = np.array([[0.30, 0.20, 0.70, 0.45, 0.88]], dtype=np.float32)
+    variable_output[57] = np.array([[0.45, 0.48, 0.82, 0.92, 0.77]], dtype=np.float32)
+    runtime_output = variable_output
+
+    def infer_variable(image: np.ndarray) -> dict:
+        runtime.calls += 1
+        return {"nms": runtime_output}
+
+    runtime.infer = infer_variable  # type: ignore[method-assign]
+    with tempfile.NamedTemporaryFile(suffix=".hef") as model:
+        backend = HailoObjectBackend(
+            model_path=model.name,
+            runtime_factory=lambda _path: runtime,
+        )
+        frame = np.zeros((360, 640, 3), dtype=np.uint8)
+        first = backend.analyze(frame, {"camera_id": 1, "hailo_object_interval_seconds": 1.0})
+        second = backend.analyze(frame, {"camera_id": 1, "hailo_object_interval_seconds": 1.0})
+        backend.close()
+    return {
+        "classes": sorted(int(item["class_id"]) for item in decoded),
+        "inference_calls": runtime.calls,
+        "cache_hit": bool(first and second and not first.get("cached") and second.get("cached")),
+    }
 
 
 def verify_hailo_failure_falls_back() -> str:

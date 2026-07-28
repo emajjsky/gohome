@@ -1202,6 +1202,10 @@ detect_agent = DetectAgent(
     hailo_pose_model=settings.hailo_pose_model,
     hailo_pose_confidence=settings.hailo_pose_confidence,
     hailo_pose_nms_iou=settings.hailo_pose_nms_iou,
+    hailo_object_mode=settings.hailo_object_mode,
+    hailo_object_model=settings.hailo_object_model,
+    hailo_object_confidence=settings.hailo_object_confidence,
+    hailo_object_interval_seconds=settings.hailo_object_interval_seconds,
     hailo_retry_seconds=settings.hailo_retry_seconds,
     context_detection_interval_seconds=settings.context_detection_interval_seconds,
 )
@@ -1222,18 +1226,15 @@ worker = EdgeWorker(
     camera_agent,
     detect_agent,
     event_agent,
-    live_frame_upload_enabled=(
-        settings.live_frame_upload_enabled
-        and settings.upload_worker_enabled
-        and bool(settings.app_server_base_url)
-    ),
-    live_frame_upload_interval_seconds=settings.live_frame_upload_interval_seconds,
-    remote_camera_id_resolver=remote_camera_id_for_local_camera,
     snapshot_dir=settings.snapshot_dir,
     history_retention_hours=settings.history_retention_hours,
     history_cleanup_interval_seconds=settings.history_cleanup_interval_seconds,
     history_cleanup_batch_size=settings.history_cleanup_batch_size,
     completed_upload_retention_days=settings.completed_upload_retention_days,
+    activity_log_interval_seconds=settings.activity_log_interval_seconds,
+    risk_evidence_interval_seconds=settings.risk_evidence_interval_seconds,
+    local_storage_high_watermark_percent=settings.local_storage_high_watermark_percent,
+    local_storage_critical_percent=settings.local_storage_critical_percent,
     inference_scheduler=AdaptiveInferenceScheduler(
         idle_interval_seconds=settings.inference_idle_interval_seconds,
         active_interval_seconds=settings.inference_active_interval_seconds,
@@ -1561,10 +1562,32 @@ def on_shutdown() -> None:
 
 @app.get("/health")
 def health() -> Dict[str, Any]:
+    worker_status = worker.runtime_status()
+    vision_status = worker_status.get("vision_runtime") or {}
+    pose_status = vision_status.get("inference_backend") or {}
+    context_status = vision_status.get("context_inference_backend") or {}
     return {
         "status": "ok",
         "service": "gohome-edge-agent",
         "worker_running": worker.is_running,
+        "vision_runtime": {
+            "pose": {
+                key: pose_status.get(key)
+                for key in (
+                    "schema_version", "mode", "status", "last_latency_ms",
+                    "latency_summary_ms", "successful_inferences", "failed_inferences",
+                )
+            },
+            "context": {
+                key: context_status.get(key)
+                for key in (
+                    "schema_version", "mode", "status", "last_latency_ms",
+                    "latency_summary_ms", "successful_inferences", "failed_inferences", "cache_count",
+                )
+            },
+            "pipeline_latency_ms": vision_status.get("pipeline_latency_ms") or {},
+        },
+        "persistence": worker_status.get("persistence") or {},
         "config_sync_agent": config_sync_agent.status(),
         "live_relay_agent": live_relay_agent.status(),
         "lan_url": f"http://{local_ip()}:{settings.port}",

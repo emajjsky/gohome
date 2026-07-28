@@ -11,6 +11,49 @@ from typing import Any, Callable, Dict
 logger = logging.getLogger(__name__)
 
 
+class HailoVDevicePool:
+    """Own one scheduled VDevice so multiple HEFs cannot compete for /dev/hailo0."""
+
+    _lock = RLock()
+    _device: Any | None = None
+    _lease_count = 0
+
+    @classmethod
+    def acquire(cls) -> Any:
+        from hailo_platform import HailoSchedulingAlgorithm, VDevice
+
+        with cls._lock:
+            if cls._device is None:
+                params = VDevice.create_params()
+                params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
+                params.group_id = "GOHOME_SHARED"
+                cls._device = VDevice(params)
+            cls._lease_count += 1
+            return cls._device
+
+    @classmethod
+    def release(cls, device: Any) -> None:
+        with cls._lock:
+            if device is not cls._device:
+                return
+            cls._lease_count = max(0, cls._lease_count - 1)
+            if cls._lease_count:
+                return
+            try:
+                cls._device.release()
+            finally:
+                cls._device = None
+
+    @classmethod
+    def status(cls) -> Dict[str, Any]:
+        with cls._lock:
+            return {
+                "group_id": "GOHOME_SHARED",
+                "active": cls._device is not None,
+                "lease_count": cls._lease_count,
+            }
+
+
 class HailoPoseDecoder:
     def __init__(self, *, input_size: int = 640, nms_iou: float = 0.70) -> None:
         self.input_size = int(input_size)
@@ -171,32 +214,35 @@ class HailoPoseDecoder:
 class HailoInferRuntime:
     def __init__(self, model_path: Path) -> None:
         import numpy as np
-        from hailo_platform import FormatType, HailoSchedulingAlgorithm, HEF, VDevice
+        from hailo_platform import FormatType, HEF
 
-        params = VDevice.create_params()
-        params.scheduling_algorithm = HailoSchedulingAlgorithm.ROUND_ROBIN
-        params.group_id = "GOHOME_SHARED"
-        self._device = VDevice(params)
-        self._hef = HEF(str(model_path))
-        input_info = self._hef.get_input_vstream_infos()[0]
-        self.input_name = input_info.name
-        self.input_shape = tuple(int(item) for item in input_info.shape)
-        self._infer_model = self._device.create_infer_model(str(model_path))
-        self._infer_model.set_batch_size(1)
-        self._infer_model.input().set_format_type(FormatType.UINT8)
-        self._output_dtypes: Dict[str, Any] = {}
-        for output_info in self._hef.get_output_vstream_infos():
-            self._infer_model.output(output_info.name).set_format_type(FormatType.FLOAT32)
-            self._output_dtypes[output_info.name] = np.float32
-        self._config_context = self._infer_model.configure()
-        self._configured_model = self._config_context.__enter__()
-        self._output_buffers = {
-            name: np.empty(self._infer_model.output(name).shape, dtype=dtype)
-            for name, dtype in self._output_dtypes.items()
-        }
-        self._bindings = self._configured_model.create_bindings(
-            output_buffers=self._output_buffers,
-        )
+        self._device = HailoVDevicePool.acquire()
+        self._config_context: Any | None = None
+        try:
+            self._hef = HEF(str(model_path))
+            input_info = self._hef.get_input_vstream_infos()[0]
+            self.input_name = input_info.name
+            self.input_shape = tuple(int(item) for item in input_info.shape)
+            self._infer_model = self._device.create_infer_model(str(model_path))
+            self._infer_model.set_batch_size(1)
+            self._infer_model.input().set_format_type(FormatType.UINT8)
+            self._output_dtypes: Dict[str, Any] = {}
+            for output_info in self._hef.get_output_vstream_infos():
+                self._infer_model.output(output_info.name).set_format_type(FormatType.FLOAT32)
+                self._output_dtypes[output_info.name] = np.float32
+            self._config_context = self._infer_model.configure()
+            self._configured_model = self._config_context.__enter__()
+            self._output_buffers = {
+                name: np.empty(self._infer_model.output(name).shape, dtype=dtype)
+                for name, dtype in self._output_dtypes.items()
+            }
+            self._bindings = self._configured_model.create_bindings(
+                output_buffers=self._output_buffers,
+            )
+        except Exception:
+            HailoVDevicePool.release(self._device)
+            self._device = None
+            raise
 
     def infer(self, image: Any) -> Dict[str, Any]:
         import numpy as np
@@ -209,10 +255,11 @@ class HailoInferRuntime:
         self._configured_model.wait_for_async_ready(timeout_ms=3000)
         job = self._configured_model.run_async([self._bindings])
         job.wait(3000)
-        return {
-            name: np.expand_dims(self._bindings.output(name).get_buffer(), axis=0)
-            for name in self._output_buffers
-        }
+        outputs: Dict[str, Any] = {}
+        for name in self._output_buffers:
+            buffer = self._bindings.output(name).get_buffer()
+            outputs[name] = np.expand_dims(buffer, axis=0) if isinstance(buffer, np.ndarray) else buffer
+        return outputs
 
     def close(self) -> None:
         context = getattr(self, "_config_context", None)
@@ -221,7 +268,7 @@ class HailoInferRuntime:
             self._config_context = None
         device = getattr(self, "_device", None)
         if device is not None:
-            device.release()
+            HailoVDevicePool.release(device)
             self._device = None
 
 
@@ -341,6 +388,7 @@ class HailoPoseBackend:
                 "successful_inferences": self._successful_inferences,
                 "failed_inferences": self._failed_inferences,
                 "retry_in_seconds": round(max(0.0, self._retry_at - time.monotonic()), 2),
+                "shared_vdevice": HailoVDevicePool.status(),
             }
 
     def _latency_summary(self) -> Dict[str, float | int | None]:
@@ -388,20 +436,24 @@ class HailoPoseBackend:
 
     @staticmethod
     def _preprocess(frame: Any, input_shape: tuple[int, ...]) -> Any:
-        import cv2
-        import numpy as np
+        return preprocess_hailo_letterbox(frame, input_shape)
 
-        model_height, model_width, channels = input_shape
-        if channels != 3:
-            raise ValueError(f"Unsupported Hailo pose input shape: {input_shape}")
-        height, width = frame.shape[:2]
-        scale = min(model_width / width, model_height / height)
-        resized_width = max(1, int(width * scale))
-        resized_height = max(1, int(height * scale))
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        resized = cv2.resize(rgb, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
-        output = np.full((model_height, model_width, 3), 114, dtype=np.uint8)
-        offset_x = (model_width - resized_width) // 2
-        offset_y = (model_height - resized_height) // 2
-        output[offset_y:offset_y + resized_height, offset_x:offset_x + resized_width] = resized
-        return output
+
+def preprocess_hailo_letterbox(frame: Any, input_shape: tuple[int, ...]) -> Any:
+    import cv2
+    import numpy as np
+
+    model_height, model_width, channels = input_shape
+    if channels != 3:
+        raise ValueError(f"Unsupported Hailo input shape: {input_shape}")
+    height, width = frame.shape[:2]
+    scale = min(model_width / width, model_height / height)
+    resized_width = max(1, int(width * scale))
+    resized_height = max(1, int(height * scale))
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    resized = cv2.resize(rgb, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
+    output = np.full((model_height, model_width, 3), 114, dtype=np.uint8)
+    offset_x = (model_width - resized_width) // 2
+    offset_y = (model_height - resized_height) // 2
+    output[offset_y:offset_y + resized_height, offset_x:offset_x + resized_width] = resized
+    return output

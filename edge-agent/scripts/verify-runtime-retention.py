@@ -125,9 +125,48 @@ def main() -> None:
             track_id="expired-track",
             ended_at=old,
         )
+        storage.upsert_observation_log(
+            camera_id=int(camera["id"]),
+            observation_type="no_motion",
+            summary="expired observation",
+            evaluated_at=old,
+            snapshot_id=int(routine[0]["id"]),
+            detection_result_id=int(routine[1]["id"]),
+            rule_evaluation_id=int(routine[2]["id"]),
+            event_candidate_id=None,
+        )
+        storage.close_observation_log(
+            camera_id=int(camera["id"]),
+            observation_type="no_motion",
+            ended_at=old,
+        )
+        legacy_preview_job = storage.enqueue_upload_job(
+            job_type="media_upload",
+            object_type="live_frame",
+            idempotency_key="legacy-live-preview",
+            snapshot_id=int(routine[0]["id"]),
+            camera_id=int(camera["id"]),
+        )
+        formal_event_job = storage.enqueue_upload_job(
+            job_type="event_upload",
+            object_type="event",
+            idempotency_key="formal-event-upload",
+            event_id=int(event["id"]),
+            snapshot_id=int(protected[0]["id"]),
+            camera_id=int(camera["id"]),
+        )
+        completed_preview_job = storage.enqueue_upload_job(
+            job_type="media_upload",
+            object_type="snapshot",
+            idempotency_key="completed-routine-preview",
+            snapshot_id=int(routine[0]["id"]),
+            camera_id=int(camera["id"]),
+        )
+        storage.complete_upload_job(int(completed_preview_job["id"]), {"ok": True})
         with storage.connect() as conn:
             conn.execute("UPDATE presence_sessions SET created_at = ?, updated_at = ?", (old, old))
             conn.execute("UPDATE posture_episodes SET created_at = ?, updated_at = ?", (old, old))
+            conn.execute("UPDATE observation_logs SET created_at = ?, updated_at = ?", (old, old))
 
         result = storage.prune_runtime_history(
             snapshot_dir=snapshot_dir,
@@ -135,17 +174,29 @@ def main() -> None:
             batch_size=100,
         )
         assert result["deleted"]["snapshots"] == 1, result
+        assert result["deleted"]["observation_logs"] == 1, result
         assert result["deleted"]["presence_sessions"] == 1, result
         assert result["deleted"]["posture_episodes"] == 1, result
+        assert result["deleted"]["live_preview_upload_jobs"] == 1, result
         assert not (snapshot_dir / "camera_1/routine.jpg").exists()
         assert (snapshot_dir / "camera_1/event.jpg").exists()
         assert (snapshot_dir / "camera_1/recent.jpg").exists()
         assert storage.get_event(int(event["id"])) is not None
         assert storage.latest_snapshot(int(camera["id"]))["id"] == recent[0]["id"]
+        remaining_job_ids = {int(job["id"]) for job in storage.list_upload_jobs(limit=20)}
+        assert int(legacy_preview_job["id"]) not in remaining_job_ids
+        assert int(formal_event_job["id"]) in remaining_job_ids
 
         with storage.connect() as conn:
             journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            completed_snapshot_id = conn.execute(
+                "SELECT snapshot_id FROM upload_jobs WHERE id = ?",
+                (completed_preview_job["id"],),
+            ).fetchone()[0]
+            dangling_references = conn.execute("PRAGMA foreign_key_check").fetchall()
         assert journal_mode == "wal"
+        assert completed_snapshot_id is None
+        assert not dangling_references, dangling_references
         try:
             conn.execute("SELECT 1")
             raise AssertionError("connection remained open after context exit")

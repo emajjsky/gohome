@@ -173,15 +173,14 @@ def main() -> None:
     if analysis_runtime.get("mode") != "active" or not analysis_runtime.get("pose_requested"):
         raise SystemExit(f"persisted analysis mode does not match scheduler state: {analysis_runtime}")
 
-    persistence_rules = {"capture_interval_seconds": 5}
-    if not worker._should_persist_analysis(24, {}, {}, persistence_rules, now=200.0):
-        raise SystemExit("first analysis frame must establish a durable baseline")
+    persistence_rules = {"capture_interval_seconds": 600}
+    if worker._should_persist_analysis(24, {}, {}, persistence_rules, now=200.0):
+        raise SystemExit("ordinary analysis must remain memory-only")
     worker.last_persisted_analysis_at[24] = 200.0
-    worker.last_persisted_person_state[24] = False
     if worker._should_persist_analysis(24, {}, {}, persistence_rules, now=201.0):
         raise SystemExit("ordinary high-frequency anchors must not all be written to disk")
-    if not worker._should_persist_analysis(24, {"person_count": 1}, {}, persistence_rules, now=201.05):
-        raise SystemExit("no-person to person transition must be persisted immediately")
+    if worker._should_persist_analysis(24, {"person_count": 1}, {}, persistence_rules, now=201.05):
+        raise SystemExit("person activity must use structured persistence instead of JPEG baselines")
     if not worker._should_persist_analysis(
         24,
         {"pose_factor_graph": {"fast_fall_candidate": True}},
@@ -190,8 +189,8 @@ def main() -> None:
         now=201.1,
     ):
         raise SystemExit("fall-risk anchor must be persisted immediately")
-    if not worker._should_persist_analysis(24, {}, {}, persistence_rules, now=205.0):
-        raise SystemExit("durable baseline was not refreshed at the persistence interval")
+    if worker._should_persist_analysis(24, {}, {}, persistence_rules, now=800.0):
+        raise SystemExit("routine analysis interval must not restore periodic JPEG persistence")
 
     runtime = worker.runtime_status()
     if runtime.get("inference_scheduler", {}).get("schema_version") != "eacp-scheduler-v1":
@@ -200,6 +199,9 @@ def main() -> None:
         raise SystemExit(f"worker runtime omitted continual pose tracker: {runtime}")
     if runtime.get("continual_pose", {}).get("schema_version") != continual_tracker.version:
         raise SystemExit(f"worker runtime omitted continual pose metrics: {runtime}")
+    persistence = runtime.get("persistence", {})
+    if persistence.get("schema_version") != "event-driven-persistence-v1":
+        raise SystemExit(f"worker runtime omitted persistence contract: {runtime}")
 
     observed_analysis = {
         "pose_model_status": "ready",

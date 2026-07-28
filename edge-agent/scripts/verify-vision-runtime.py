@@ -85,6 +85,10 @@ def main() -> int:
         env.get("GOHOME_HAILO_POSE_MODEL")
         or "/usr/share/hailo-models/yolov8s_pose_h8.hef"
     )
+    hailo_object_model = Path(
+        env.get("GOHOME_HAILO_OBJECT_MODEL")
+        or "/usr/share/hailo-models/yolov8s_h8.hef"
+    )
     if args.require_hailo or args.hailo_smoke:
         try:
             hailo_platform = importlib.import_module("hailo_platform")
@@ -92,6 +96,7 @@ def main() -> int:
         except Exception as exc:
             add_check(checks, "hailo_platform", False, str(exc))
         add_check(checks, "hailo_pose_model", hailo_model.is_file(), str(hailo_model))
+        add_check(checks, "hailo_object_model", hailo_object_model.is_file(), str(hailo_object_model))
         device_path = Path("/dev/hailo0")
         add_check(checks, "hailo_device", device_path.exists(), str(device_path))
 
@@ -114,31 +119,43 @@ def main() -> int:
     hailo_prerequisites = {
         item["name"]: item["ok"]
         for item in checks
-        if item["name"] in {"hailo_platform", "hailo_pose_model", "hailo_device"}
+        if item["name"] in {"hailo_platform", "hailo_pose_model", "hailo_object_model", "hailo_device"}
     }
     if args.hailo_smoke and all(hailo_prerequisites.values()):
         backend = None
+        object_backend = None
         try:
             import numpy as np
+            from app.vision.hailo_object import HailoObjectBackend
             from app.vision.hailo_pose import HailoPoseBackend
 
             backend = HailoPoseBackend(mode="hailo", model_path=str(hailo_model))
+            object_backend = HailoObjectBackend(mode="hailo", model_path=str(hailo_object_model))
+            frame = np.zeros((360, 640, 3), dtype=np.uint8)
             result = backend.analyze(
-                np.zeros((360, 640, 3), dtype=np.uint8),
+                frame,
                 {"pose_max_poses": 1},
             )
+            object_result = object_backend.analyze(frame, {"camera_id": "smoke"})
             status = backend.status()
+            object_status = object_backend.status()
             add_check(
                 checks,
                 "hailo_model_smoke",
-                result is not None and status.get("status") == "ready",
-                json.dumps(status, ensure_ascii=False),
+                result is not None
+                and object_result is not None
+                and status.get("status") == "ready"
+                and object_status.get("status") == "ready"
+                and status.get("shared_vdevice", {}).get("lease_count") == 2,
+                json.dumps({"pose": status, "object": object_status}, ensure_ascii=False),
             )
         except Exception as exc:
             add_check(checks, "hailo_model_smoke", False, str(exc))
         finally:
             if backend is not None:
                 backend.close()
+            if object_backend is not None:
+                object_backend.close()
 
     ok = all(item["ok"] for item in checks)
     print(json.dumps({"ok": ok, "checks": checks}, ensure_ascii=False, indent=2))

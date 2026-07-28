@@ -8,8 +8,9 @@ from typing import Any, Dict
 from .activity import ActivityAnalyzer
 from .fall import FallAnalyzer
 from .fire import FireAnalyzer
+from .hailo_object import HailoObjectBackend
 from .hailo_pose import HailoPoseBackend
-from .person_yolo import PersonDetector
+from .person_yolo import PET_CLASS_LABELS, SCENE_CLASS_LABELS, PersonDetector
 from .pose_rtmpose import RtmposeAnalyzer
 from .quality import QualityAnalyzer
 from .scene_context import SceneContextTracker
@@ -48,6 +49,10 @@ class VisionPipeline:
         hailo_pose_model: str = "/usr/share/hailo-models/yolov8s_pose_h8.hef",
         hailo_pose_confidence: float = 0.25,
         hailo_pose_nms_iou: float = 0.70,
+        hailo_object_mode: str = "auto",
+        hailo_object_model: str = "/usr/share/hailo-models/yolov8s_h8.hef",
+        hailo_object_confidence: float = 0.30,
+        hailo_object_interval_seconds: float = 1.0,
         hailo_retry_seconds: float = 30.0,
         context_detection_interval_seconds: float = 3.0,
     ) -> None:
@@ -67,6 +72,7 @@ class VisionPipeline:
             "activity_window_seconds": activity_window_seconds,
             "activity_max_samples": activity_max_samples,
             "hailo_pose_confidence": hailo_pose_confidence,
+            "hailo_object_interval_seconds": hailo_object_interval_seconds,
             "context_detection_interval_seconds": context_detection_interval_seconds,
         }
         self._pose_cache: dict[str, Dict[str, Any]] = {}
@@ -106,6 +112,12 @@ class VisionPipeline:
             max_poses=pose_max_poses,
             retry_seconds=hailo_retry_seconds,
         )
+        self.hailo_object = HailoObjectBackend(
+            mode=hailo_object_mode,
+            model_path=hailo_object_model,
+            confidence=hailo_object_confidence,
+            retry_seconds=hailo_retry_seconds,
+        )
 
     def analyze(
         self,
@@ -119,7 +131,8 @@ class VisionPipeline:
         quality = self.quality.analyze(frame, previous_frame, runtime_config)
         runtime_config["frame_motion_score"] = float(quality.get("motion_score") or 0.0)
         accelerated = self.hailo_pose.analyze(frame, runtime_config)
-        context_runtime: Dict[str, Any] = {}
+        accelerated_context = self.hailo_object.analyze(frame, runtime_config)
+        context_runtime = self._hailo_context_entities(accelerated_context, frame)
         if accelerated is not None:
             height, width = frame.shape[:2]
             boxes = accelerated["boxes"]
@@ -135,7 +148,8 @@ class VisionPipeline:
                 )
                 for index in range(len(boxes))
             ]
-            context_runtime = self.person.analyze_context(frame, runtime_config)
+            if not context_runtime:
+                context_runtime = self.person.analyze_context(frame, runtime_config)
             person = self.person.result_from_entities(
                 accelerated_people,
                 pets=context_runtime.get("pets") or [],
@@ -147,7 +161,21 @@ class VisionPipeline:
                 detection_cached=False,
             )
         else:
-            person = self.person.analyze(frame, runtime_config)
+            person = (
+                self.person.result_from_entities(
+                    context_runtime.get("people") or [],
+                    pets=context_runtime.get("pets") or [],
+                    scene_objects=context_runtime.get("scene_objects") or [],
+                    backend="hailo",
+                    model_status="ready_cached" if context_runtime.get("cached") else "ready",
+                    model_message=f"Hailo 目标推理 {float(context_runtime.get('latency_ms') or 0.0):.1f} ms。",
+                    model_name=str(context_runtime.get("model_name") or "yolov8s_h8.hef"),
+                    detection_cached=bool(context_runtime.get("cached")),
+                    detection_cache_age_seconds=context_runtime.get("age_seconds"),
+                )
+                if context_runtime
+                else self.person.analyze(frame, runtime_config)
+            )
         raw_people = list(person.get("people") or [])
         raw_pets = list(person.get("pets") or [])
         raw_pose = (
@@ -290,6 +318,8 @@ class VisionPipeline:
             "inference_stage_latency_ms": accelerated.get("stage_latency_ms") if accelerated is not None else {},
             "context_detection_cached": context_runtime.get("cached") if context_runtime else None,
             "context_detection_age_seconds": context_runtime.get("age_seconds") if context_runtime else None,
+            "context_inference_backend": context_runtime.get("backend") if context_runtime else "cpu",
+            "context_inference_latency_ms": context_runtime.get("latency_ms") if context_runtime else None,
             "detector_backend": person.get("detector_backend") or "basic",
             "model_status": person.get("model_status") or "basic",
             "model_message": person.get("model_message") or "",
@@ -364,6 +394,7 @@ class VisionPipeline:
     def runtime_status(self) -> Dict[str, Any]:
         return {
             "inference_backend": self.hailo_pose.status(),
+            "context_inference_backend": self.hailo_object.status(),
             "pipeline_latency_ms": {
                 "last": self._last_pipeline_latency_ms,
                 **self._latency_summary(self._pipeline_latency_history),
@@ -372,6 +403,59 @@ class VisionPipeline:
 
     def close(self) -> None:
         self.hailo_pose.close()
+        self.hailo_object.close()
+
+    def _hailo_context_entities(
+        self,
+        result: Dict[str, Any] | None,
+        frame: Any,
+    ) -> Dict[str, Any]:
+        if not result:
+            return {}
+        height, width = frame.shape[:2]
+        people: list[Dict[str, Any]] = []
+        pets: list[Dict[str, Any]] = []
+        scene_objects: list[Dict[str, Any]] = []
+        for detection in result.get("detections") or []:
+            class_id = int(detection.get("class_id") or 0)
+            bbox = detection.get("bbox") or []
+            if len(bbox) != 4:
+                continue
+            x1, y1, x2, y2 = [float(value) for value in bbox]
+            confidence = float(detection.get("confidence") or 0.0)
+            if class_id == 0:
+                people.append(self.person.person_box(
+                    x1, y1, x2, y2, width, height,
+                    confidence=confidence,
+                    source="hailo_object",
+                    label="人形命中",
+                ))
+            elif class_id in PET_CLASS_LABELS:
+                pet_type, label_zh = PET_CLASS_LABELS[class_id]
+                pet = self.person.pet_box(
+                    x1, y1, x2, y2, width, height,
+                    confidence=confidence,
+                    class_id=class_id,
+                    pet_type=pet_type,
+                    label_zh=label_zh,
+                )
+                pet["source"] = "hailo_pet"
+                pets.append(pet)
+            elif class_id in SCENE_CLASS_LABELS:
+                scene_object = self.person.object_box(
+                    x1, y1, x2, y2, width, height,
+                    confidence=confidence,
+                    class_id=class_id,
+                    label=SCENE_CLASS_LABELS[class_id],
+                )
+                scene_object["source"] = "hailo_scene"
+                scene_objects.append(scene_object)
+        return {
+            **result,
+            "people": people[:3],
+            "pets": pets[:6],
+            "scene_objects": scene_objects[:8],
+        }
 
     @staticmethod
     def _latency_summary(values: deque[float]) -> Dict[str, float | int | None]:

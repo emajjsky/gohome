@@ -11375,7 +11375,7 @@ P4 风险升频边界：
 - `VisionPipeline` 优先使用一次 Hailo 推理产生人物与姿态；公共 `RtmposeAnalyzer` 继续负责姿态质量、姿势分类、跌倒分数和既有字段契约。Hailo 不可用时自动恢复 CPU YOLO + RTMPose，并按 30 秒冷却重试。
 - `PersonYoloAnalyzer` 在 Hailo 模式不重复执行人物检测，只按 3 秒节拍补充猫狗和家具。Hailo 模式禁用 box-only 跌倒补充路径，CPU 回退保留原兼容行为。
 - `AdaptiveInferenceScheduler` 根据实际 `inference_backend` 使用 Hailo 间隔：idle 0.5 秒、active 0.067 秒、risk 0.05 秒；CPU 间隔和热保护策略不变。Hailo 模式的廉价运动门只让下一次探测立即到期，不再续期 active；只有正式人物结果保持 active，KLT 快速下降仍保持 risk。盒子算法管理页同步姿态流目标为 12 FPS、上限 15 FPS，公网云中继仍为独立 8 FPS。
-- 正常床/沙发卧躺同时关闭 pose 和 box 跌倒候选；同一人物真实跌倒仍可通过轨迹时间变化、PoseFactorGraph 和 RuleEngine 进入事件。风险证据持久化上限为 4 FPS，避免推理升频同步放大 JPEG/SQLite 写入。
+- 正常床/沙发卧躺同时关闭 pose 和 box 跌倒候选；同一人物真实跌倒仍可通过轨迹时间变化、PoseFactorGraph 和 RuleEngine 进入事件。风险证据当前持久化上限为每 0.5 秒一帧，避免推理升频同步放大 JPEG/SQLite 写入。
 - Hailo 系统包通过受控 `.pth` 只桥接 `hailo_platform`；项目虚拟环境继续使用自身 NumPy/OpenCV，避免系统包覆盖造成 ABI 冲突。
 
 驱动与实机：
@@ -11401,6 +11401,35 @@ P4 风险升频边界：
 - 2026-07-27 20:18 的 App 解绑测试已将云端 family 2 的设备 binding、设备令牌和两路云端摄像头配置撤销。盒子本地仍保留 camera 26/27 并正常运行 Hailo，但配置同步和公网中继因令牌被云端标记 `revoked` 返回 401。该状态不是 Hailo 故障；重新绑定前不得宣称当前 App/云端在线闭环正常，也不得直接激活令牌后让空云端配置删除盒子本地摄像头。
 - Hailo 正常场景、性能和回退代码已完成；新一轮真人低风险模拟跌倒、最多三帧上传、云端确认和 App 确认仍需在恢复正式绑定后执行。此前 2026-07-22 的 CPU/EACP 现场事件 `2101` 不能冒充本轮 Hailo 端到端验收。
 
+## 126. 2026-07-28 Hailo 双模型、事件驱动留存与数据库收口
+
+Hailo 统一运行：
+
+- 新增 `vision/hailo_object.py`，运行 `yolov8s_h8.hef` 并解析 HailoRT 实际返回的 80 类变长 NMS 数组；同时兼容固定测试张量。输出只保留 person、cat、dog、couch、bed、chair、dining table 和 tv 所需类别。
+- `HailoPoseAnalyzer` 与 `HailoObjectAnalyzer` 使用同一 `GOHOME_SHARED` VDevice 和 ROUND_ROBIN 调度，避免两个运行时争抢 `/dev/hailo0`。Object 约每秒刷新并缓存，其余姿态帧复用缓存。
+- `VisionPipeline` 仍是唯一分析入口。Hailo Pose 提供人物和关键点，Hailo Object 提供宠物与家具；Hailo 不可用时回退现有 CPU YOLO。Temporal、PoseFactorGraph、RuleEngine、EventAgent 和云端复核均未复制。
+- `/health` 增加脱敏的 Pose/Object 状态、成功失败计数、延迟分位、缓存数量、Pipeline 延迟和持久化计数，管理与运维不再依赖日志猜测运行状态。
+
+事件驱动留存：
+
+- `EdgeWorker` 将分析频率与持久化彻底解耦。普通帧使用内存临时 snapshot；只有正式候选、风险取证或活动状态变化才建立数据库快照和 DetectionResult。
+- 首次可信人物出现、可信姿态变化和人物离开更新 PresenceSession/PostureEpisode；持续有人每 600 秒写一次轻量心跳，持续无人不写。风险证据最短间隔 0.5 秒，正式候选立即写完整证据。
+- 删除周期 `live_frame` 上传配置和 worker 入队逻辑；实时预览继续使用 LiveRelay 内存帧，不产生 COS 媒体。普通本地记录默认保留 6 小时，70%/85% 磁盘水位触发收紧策略。
+- `prune_runtime_history()` 删除普通快照前，会先把已关闭 PresenceSession/PostureEpisode 和已完成 UploadJob 的短期图片引用置空；正式事件、开放状态、候选证据、媒体资产和未完成上传仍受保护。
+
+实机与存储验证：
+
+- 双路 camera 26/27 同时在线。Hailo Pose 累计样本中位约 13.28 ms、P95 约 32.06 ms；Hailo Object 中位约 34.42 ms、P95 约 35.73 ms；Pipeline 中位约 16.36 ms、P95 约 51.95 ms，推理失败为 0。
+- 事件驱动样本 203 次分析、普通图片写入 0、规避冗余落盘 199 次、结构化活动写入 3 次、`live_frame` 上传任务 0。稳定期进程 CPU 约 40%、温度约 56°C。
+- 清理后快照从约 26611 个降至 10325 个、目录从约 1.7GB 降到约 667MB。停服务备份后执行 `wal_checkpoint(TRUNCATE)` 和 `VACUUM`，主数据库从 1689804800 字节降到 444022784 字节，`integrity_check=ok`、freelist=0；服务恢复后 CPU 约 33%、温度 52.4°C，两路摄像头和两个 Hailo 后端均恢复 ready。
+- 历史 camera 1-25 被硬删除后，部分旧事件仍保留原 camera_id，导致既有外键检查项；这是旧摄像头生命周期模型问题，不属于本轮新写入损坏。正式迁移应改为摄像头软删除或归档身份，保留历史事件可读性，不能直接删除旧事件。
+
+验证边界：
+
+- 本地 Hailo、双摄、回退、事件驱动存储与清理回归已通过。云端设备令牌仍被撤销，配置同步和 LiveRelay 返回 401，所以当前不能完成新事件的 COS、多模态和 App 处置复验。
+- 恢复绑定后按固定顺序执行 30-60 分钟稳定性观察、四类正常动作负例和一次低风险模拟跌倒正例；只有三帧上传、云端确认和 App 处置均完成，才把 Hailo 版端到端状态改为通过。
+- 当前历史图片只能作为标注候选。启动轻量 TCN/Continual ST-GCN 前必须先定义同轨迹序列、动作起止、跌倒/日常困难负例、训练验证隔离和隐私保留规则；未满足条件前不训练、不宣称论文模型结果。
+
 ## 125. 2026-07-28 Hailo 姿态解码、EACP 节拍与隐私模式修正
 
 性能根因与修正：
@@ -11410,7 +11439,7 @@ P4 风险升频边界：
 - 实机优化后，解码/NMS 从约 16-18 ms 降至无人约 0.23-0.38 ms、有人约 0.67-0.70 ms；Hailo 姿态全流程约 12.6-14.1 ms，滚动中位约 13.2 ms、P95 约 14.5 ms、P99 约 15.1 ms；常规完整产品分析约 14-17 ms，正式 Hailo 失败为 0。
 - Hailo 调度改为 idle/active/risk `0.5 / 0.067 / 0.05` 秒，即约 `2 / 15 / 20 FPS` 的单路预算；KLT 连续跟踪目标约 15 FPS。双摄继续共享一个串行 Hailo 队列并按最新帧、公平性和风险优先调度，不补跑历史帧。
 - 盒子算法管理页使用 12 FPS、960x540 的同步姿态流，其他管理页使用 10 FPS、720p；公网云中继仍保持 8 FPS，不能把本地展示节拍未经带宽和长期稳定性验收直接套到公网。
-- 提高节拍后实机进程 CPU 约 57%、温度约 60.6 摄氏度、无 Hailo 失败、服务和内核无新 warning。每 3 秒一次的 CPU 宠物/家具补充推理仍会形成约 120-137 ms 尖峰；该链用于维持宠物和场景语义，独立最新帧视频与 KLT 覆盖层负责跨越短时锚点停顿，不能把辅助 YOLO 复制到每个姿态锚点。
+- 提高节拍后的初始实机进程 CPU 约 57%、温度约 60.6 摄氏度、无 Hailo 失败、服务和内核无新 warning。该阶段每 3 秒一次的 CPU 宠物/家具补充推理会形成约 120-137 ms 尖峰；此路径已在第 126 节由共享 Hailo Object 替换，不再作为当前生产结构。
 
 隐私语义修正：
 

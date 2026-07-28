@@ -36,6 +36,10 @@ class DetectAgent:
         hailo_pose_model: str = "/usr/share/hailo-models/yolov8s_pose_h8.hef",
         hailo_pose_confidence: float = 0.25,
         hailo_pose_nms_iou: float = 0.70,
+        hailo_object_mode: str = "auto",
+        hailo_object_model: str = "/usr/share/hailo-models/yolov8s_h8.hef",
+        hailo_object_confidence: float = 0.30,
+        hailo_object_interval_seconds: float = 1.0,
         hailo_retry_seconds: float = 30.0,
         context_detection_interval_seconds: float = 3.0,
     ) -> None:
@@ -67,6 +71,10 @@ class DetectAgent:
             hailo_pose_model=hailo_pose_model,
             hailo_pose_confidence=hailo_pose_confidence,
             hailo_pose_nms_iou=hailo_pose_nms_iou,
+            hailo_object_mode=hailo_object_mode,
+            hailo_object_model=hailo_object_model,
+            hailo_object_confidence=hailo_object_confidence,
+            hailo_object_interval_seconds=hailo_object_interval_seconds,
             hailo_retry_seconds=hailo_retry_seconds,
             context_detection_interval_seconds=context_detection_interval_seconds,
         )
