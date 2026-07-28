@@ -112,7 +112,7 @@ def main() -> None:
     accelerated_active = scheduler.camera_state(24, now=101.55)
     if (
         not accelerated_active["accelerated"]
-        or abs(float(accelerated_active["interval_seconds"]) - 0.10) > 0.0001
+        or abs(float(accelerated_active["interval_seconds"]) - 0.067) > 0.0001
     ):
         raise SystemExit(f"Hailo active cadence was not enabled: {accelerated_active}")
 
@@ -169,7 +169,7 @@ def main() -> None:
     if (
         accelerated_risk["mode"] != "risk"
         or not accelerated_risk["accelerated"]
-        or abs(float(accelerated_risk["interval_seconds"]) - 0.067) > 0.0001
+        or abs(float(accelerated_risk["interval_seconds"]) - 0.05) > 0.0001
     ):
         raise SystemExit(f"Hailo risk cadence was not enabled: {accelerated_risk}")
 

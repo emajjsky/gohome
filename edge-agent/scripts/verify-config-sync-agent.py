@@ -147,6 +147,23 @@ def main() -> None:
         if deleted["applied"] != 0 or deleted["reported"] != 1 or cameras:
             raise SystemExit(f"camera was not deleted after remote removal: result={deleted} cameras={cameras}")
 
+        offline_privacy = agent.update_video_privacy("person_blur")
+        persisted_state = json.loads((root / "runtime" / "config-sync-state.json").read_text(encoding="utf-8"))
+        if offline_privacy.get("synced") is not False or agent.video_privacy_mode() != "person_blur":
+            raise SystemExit(f"offline privacy update did not apply locally: {offline_privacy}")
+        if persisted_state.get("video_privacy_mode") != "person_blur":
+            raise SystemExit(f"offline privacy update was not persisted: {persisted_state}")
+
+        def privacy_request(method: str, path: str, **kwargs: object) -> dict:
+            if method == "PUT" and path == "/api/v1/device/video-privacy":
+                return {"ok": True, "minimum_mode": "skeleton", "updated_at": "cloud-now"}
+            return fake_request(method, path, **kwargs)
+
+        agent._request_json = privacy_request  # type: ignore[method-assign]
+        synced_privacy = agent.update_video_privacy("skeleton")
+        if synced_privacy.get("synced") is not True or agent.video_privacy_mode() != "skeleton":
+            raise SystemExit(f"cloud privacy update did not converge: {synced_privacy}")
+
         print(
             json.dumps(
                 {

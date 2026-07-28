@@ -71,6 +71,8 @@ class VisionPipeline:
         }
         self._pose_cache: dict[str, Dict[str, Any]] = {}
         self._activity_history: dict[str, deque[Dict[str, Any]]] = {}
+        self._pipeline_latency_history: deque[float] = deque(maxlen=240)
+        self._last_pipeline_latency_ms: float | None = None
         self.scene = SceneContextTracker()
         self.quality = QualityAnalyzer()
         self.person = PersonDetector(
@@ -111,6 +113,7 @@ class VisionPipeline:
         previous_frame: Any | None = None,
         config: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
+        pipeline_started_at = time.perf_counter()
         runtime_config = {**self.default_config, **(config or {})}
 
         quality = self.quality.analyze(frame, previous_frame, runtime_config)
@@ -280,10 +283,11 @@ class VisionPipeline:
             "fire_confirm_frames": int(runtime_config.get("fire_confirm_frames", 5)),
         }
 
-        return {
+        result = {
             "inference_backend": "hailo" if accelerated is not None else "cpu",
             "inference_backend_status": self.hailo_pose.status(),
             "inference_latency_ms": accelerated.get("latency_ms") if accelerated is not None else None,
+            "inference_stage_latency_ms": accelerated.get("stage_latency_ms") if accelerated is not None else {},
             "context_detection_cached": context_runtime.get("cached") if context_runtime else None,
             "context_detection_age_seconds": context_runtime.get("age_seconds") if context_runtime else None,
             "detector_backend": person.get("detector_backend") or "basic",
@@ -346,12 +350,51 @@ class VisionPipeline:
             "algorithm_results": algorithm_results,
             "tags": tags,
         }
+        pipeline_latency_ms = (time.perf_counter() - pipeline_started_at) * 1000.0
+        self._last_pipeline_latency_ms = round(pipeline_latency_ms, 2)
+        self._pipeline_latency_history.append(pipeline_latency_ms)
+        result["pipeline_latency_ms"] = self._last_pipeline_latency_ms
+        inference_latency_ms = result.get("inference_latency_ms")
+        result["pipeline_overhead_ms"] = round(
+            max(0.0, pipeline_latency_ms - float(inference_latency_ms or 0.0)),
+            2,
+        )
+        return result
 
     def runtime_status(self) -> Dict[str, Any]:
-        return {"inference_backend": self.hailo_pose.status()}
+        return {
+            "inference_backend": self.hailo_pose.status(),
+            "pipeline_latency_ms": {
+                "last": self._last_pipeline_latency_ms,
+                **self._latency_summary(self._pipeline_latency_history),
+            },
+        }
 
     def close(self) -> None:
         self.hailo_pose.close()
+
+    @staticmethod
+    def _latency_summary(values: deque[float]) -> Dict[str, float | int | None]:
+        ordered = sorted(float(value) for value in values)
+        if not ordered:
+            return {"samples": 0, "median": None, "p95": None, "p99": None, "max": None}
+
+        def percentile(fraction: float) -> float:
+            if len(ordered) == 1:
+                return ordered[0]
+            position = fraction * (len(ordered) - 1)
+            lower = int(position)
+            upper = min(len(ordered) - 1, lower + 1)
+            weight = position - lower
+            return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+        return {
+            "samples": len(ordered),
+            "median": round(percentile(0.50), 2),
+            "p95": round(percentile(0.95), 2),
+            "p99": round(percentile(0.99), 2),
+            "max": round(ordered[-1], 2),
+        }
 
     def _activity_temporal_features(
         self,

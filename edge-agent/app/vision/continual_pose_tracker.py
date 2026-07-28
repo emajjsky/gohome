@@ -63,7 +63,7 @@ class ContinualPoseTracker:
         *,
         max_age_seconds: float = 0.6,
         max_display_age_seconds: float = 1.2,
-        minimum_interval_seconds: float = 0.1,
+        minimum_interval_seconds: float = 0.067,
         tracking_scale: float = 0.5,
         min_tracked_points: int = 6,
         min_tracked_ratio: float = 0.55,

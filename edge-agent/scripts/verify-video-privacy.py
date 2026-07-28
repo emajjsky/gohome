@@ -72,6 +72,8 @@ def main() -> int:
     for x in range(320):
         source[:, x] = (x % 255, (x * 3) % 255, (x * 7) % 255)
     cv2.rectangle(source, (110, 25), (210, 175), (245, 245, 245), -1)
+    for y in range(30, 175, 12):
+        cv2.line(source, (112, y), (208, y), (30, 70 + (y % 120), 210), 5)
     ok, encoded = cv2.imencode(".jpg", source, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
     assert ok
     original = encoded.tobytes()
@@ -89,11 +91,12 @@ def main() -> int:
     blurred_background_delta = float(np.abs(blurred[outside_slice].astype(float) - reference[outside_slice]).mean())
     skeleton_person_delta = float(np.abs(skeleton[person_slice].astype(float) - reference[person_slice]).mean())
     skeleton_background_delta = float(np.abs(skeleton[outside_slice].astype(float) - reference[outside_slice]).mean())
+    blur_skeleton_delta = float(np.abs(blurred[person_slice].astype(float) - skeleton[person_slice].astype(float)).mean())
     assert blurred_person_delta > blurred_background_delta * 2.0
     assert skeleton_person_delta > skeleton_background_delta * 2.0
+    assert blur_skeleton_delta > 20.0
     assert blurred_background_delta < 12.0
     assert skeleton_background_delta < 12.0
-    assert float(skeleton.mean()) > float(reference.mean()) * 0.75
     assert int((skeleton[:, :, 2] > 180).sum()) > 10
 
     empty_renderer = PrivacyFrameRenderer(EmptyTrackerStub())
@@ -107,6 +110,7 @@ def main() -> int:
     person_only_skeleton = decode(cv2, person_only_renderer.render_jpeg(1, original, "skeleton", quality=70))
     assert float(np.abs(person_only_blur[person_slice].astype(float) - reference[person_slice]).mean()) > 12.0
     assert float(np.abs(person_only_skeleton[person_slice].astype(float) - reference[person_slice]).mean()) > 12.0
+    assert float(np.abs(person_only_blur[person_slice].astype(float) - person_only_skeleton[person_slice].astype(float)).mean()) > 20.0
     assert float(np.abs(person_only_skeleton[outside_slice].astype(float) - reference[outside_slice]).mean()) < 12.0
     assert normalize_privacy_mode("invalid") == "original"
 

@@ -80,8 +80,8 @@ class Settings:
         self.inference_risk_interval_seconds = float(os.getenv("GOHOME_INFERENCE_RISK_INTERVAL_SECONDS", "0.16"))
         self.inference_max_starvation_seconds = float(os.getenv("GOHOME_INFERENCE_MAX_STARVATION_SECONDS", "3"))
         self.inference_accelerated_idle_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACCELERATED_IDLE_INTERVAL_SECONDS", "0.5"))
-        self.inference_accelerated_active_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACCELERATED_ACTIVE_INTERVAL_SECONDS", "0.10"))
-        self.inference_accelerated_risk_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACCELERATED_RISK_INTERVAL_SECONDS", "0.067"))
+        self.inference_accelerated_active_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACCELERATED_ACTIVE_INTERVAL_SECONDS", "0.067"))
+        self.inference_accelerated_risk_interval_seconds = float(os.getenv("GOHOME_INFERENCE_ACCELERATED_RISK_INTERVAL_SECONDS", "0.05"))
 
         self.default_capture_interval_seconds = int(os.getenv("GOHOME_CAPTURE_INTERVAL_SECONDS", "5"))
         self.default_no_motion_seconds = int(os.getenv("GOHOME_NO_MOTION_SECONDS", "300"))

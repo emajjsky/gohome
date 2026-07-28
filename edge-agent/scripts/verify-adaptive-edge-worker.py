@@ -242,8 +242,8 @@ def main() -> None:
     worker._run_continual_tracking_iteration()
     if continual_tracker.frames[-1]["frame_id"] != "24-latest":
         raise SystemExit("independent continual tracking loop did not consume the latest cached frame")
-    if abs(worker._continual_tracking_interval_seconds() - 0.1) > 0.001:
-        raise SystemExit("continual tracking loop is running faster than its effective tracker interval")
+    if abs(worker._continual_tracking_interval_seconds() - 0.067) > 0.001:
+        raise SystemExit("continual tracking loop did not use the accelerated tracker interval")
 
     worker._reset_camera_runtime_memory(24)
     if continual_tracker.reset != [24]:

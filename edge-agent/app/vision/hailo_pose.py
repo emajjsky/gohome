@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 from threading import RLock
 import logging
@@ -34,19 +35,30 @@ class HailoPoseDecoder:
             box_tensor = self._required(tensors, (1, grid_size, grid_size, 64))
             score_tensor = self._required(tensors, (1, grid_size, grid_size, 1))
             keypoint_tensor = self._required(tensors, (1, grid_size, grid_size, 51))
-            boxes, keypoints = self._decode_scale(box_tensor, keypoint_tensor, stride)
+            scale_scores = score_tensor.reshape(-1)
+            scale_indices = np.flatnonzero(scale_scores >= float(confidence))
+            if scale_indices.size == 0:
+                continue
+            if scale_indices.size > 1000:
+                ranked = np.argsort(scale_scores[scale_indices])[::-1][:1000]
+                scale_indices = scale_indices[ranked]
+            boxes, keypoints = self._decode_scale(
+                box_tensor,
+                keypoint_tensor,
+                stride,
+                scale_indices,
+            )
             decoded_boxes.append(boxes)
             decoded_keypoints.append(keypoints)
-            decoded_scores.append(score_tensor.reshape(-1))
+            decoded_scores.append(scale_scores[scale_indices])
+
+        if not decoded_scores:
+            return self._empty(np)
 
         boxes = np.concatenate(decoded_boxes, axis=0)
         keypoints = np.concatenate(decoded_keypoints, axis=0)
         scores = np.concatenate(decoded_scores, axis=0)
-        candidate_indices = np.flatnonzero(scores >= float(confidence))
-        if candidate_indices.size == 0:
-            return self._empty(np)
-
-        candidate_indices = candidate_indices[np.argsort(scores[candidate_indices])[::-1][:1000]]
+        candidate_indices = np.argsort(scores)[::-1][:1000]
         boxes = boxes[candidate_indices]
         keypoints = keypoints[candidate_indices]
         scores = scores[candidate_indices]
@@ -88,21 +100,29 @@ class HailoPoseDecoder:
             raise ValueError(f"Hailo pose output is missing tensor {shape}")
         return tensor.reshape(shape)
 
-    def _decode_scale(self, boxes: Any, keypoints: Any, stride: int) -> tuple[Any, Any]:
+    def _decode_scale(
+        self,
+        boxes: Any,
+        keypoints: Any,
+        stride: int,
+        indices: Any,
+    ) -> tuple[Any, Any]:
         import numpy as np
 
         grid_size = int(boxes.shape[1])
-        grid_x, grid_y = np.meshgrid(np.arange(grid_size) + 0.5, np.arange(grid_size) + 0.5)
-        centers = np.stack((grid_x, grid_y), axis=-1).reshape(-1, 2).astype(np.float32) * stride
+        selected_indices = np.asarray(indices, dtype=np.int64).reshape(-1)
+        grid_y = selected_indices // grid_size
+        grid_x = selected_indices % grid_size
+        centers = np.stack((grid_x + 0.5, grid_y + 0.5), axis=-1).astype(np.float32) * stride
 
-        distribution = boxes.reshape(-1, 4, 16)
+        distribution = boxes.reshape(-1, 4, 16)[selected_indices].copy()
         distribution -= distribution.max(axis=-1, keepdims=True)
         distribution = np.exp(distribution)
         distribution /= distribution.sum(axis=-1, keepdims=True)
         distances = (distribution * np.arange(16, dtype=np.float32)).sum(axis=-1) * stride
         decoded_boxes = np.concatenate((centers - distances[:, :2], centers + distances[:, 2:]), axis=1)
 
-        decoded_keypoints = keypoints.reshape(-1, 17, 3).copy()
+        decoded_keypoints = keypoints.reshape(-1, 17, 3)[selected_indices].copy()
         decoded_keypoints[..., :2] = (
             stride * (decoded_keypoints[..., :2] * 2.0 - 0.5)
             + centers[:, None, :]
@@ -232,6 +252,8 @@ class HailoPoseBackend:
         self._status = "disabled" if self.mode in {"off", "cpu", "disabled"} else "idle"
         self._last_error = ""
         self._last_latency_ms: float | None = None
+        self._last_stage_latency_ms: Dict[str, float] = {}
+        self._latency_history: deque[float] = deque(maxlen=240)
         self._successful_inferences = 0
         self._failed_inferences = 0
 
@@ -249,9 +271,14 @@ class HailoPoseBackend:
             started_at = time.perf_counter()
             try:
                 runtime = self._ensure_runtime()
+                preprocess_started_at = time.perf_counter()
                 model_input = self._preprocess(frame, runtime.input_shape)
+                preprocess_ms = (time.perf_counter() - preprocess_started_at) * 1000.0
+                inference_started_at = time.perf_counter()
                 outputs = runtime.infer(model_input)
+                inference_ms = (time.perf_counter() - inference_started_at) * 1000.0
                 height, width = frame.shape[:2]
+                decode_started_at = time.perf_counter()
                 result = self.decoder.decode(
                     outputs,
                     original_width=width,
@@ -259,7 +286,16 @@ class HailoPoseBackend:
                     confidence=float(config.get("hailo_pose_confidence", self.confidence)),
                     max_poses=int(config.get("pose_max_poses", self.max_poses)),
                 )
-                self._last_latency_ms = round((time.perf_counter() - started_at) * 1000.0, 2)
+                decode_ms = (time.perf_counter() - decode_started_at) * 1000.0
+                total_ms = (time.perf_counter() - started_at) * 1000.0
+                self._last_latency_ms = round(total_ms, 2)
+                self._last_stage_latency_ms = {
+                    "preprocess": round(preprocess_ms, 2),
+                    "device_inference": round(inference_ms, 2),
+                    "decode_nms": round(decode_ms, 2),
+                    "total": self._last_latency_ms,
+                }
+                self._latency_history.append(total_ms)
                 self._successful_inferences += 1
                 if self._status != "ready":
                     logger.info(
@@ -275,6 +311,7 @@ class HailoPoseBackend:
                     "model_name": self.model_path.name,
                     "model_path": str(self.model_path),
                     "latency_ms": self._last_latency_ms,
+                    "stage_latency_ms": dict(self._last_stage_latency_ms),
                 }
             except Exception as exc:
                 self._failed_inferences += 1
@@ -299,10 +336,34 @@ class HailoPoseBackend:
                 "model_present": self.model_path.is_file(),
                 "last_error": self._last_error,
                 "last_latency_ms": self._last_latency_ms,
+                "last_stage_latency_ms": dict(self._last_stage_latency_ms),
+                "latency_summary_ms": self._latency_summary(),
                 "successful_inferences": self._successful_inferences,
                 "failed_inferences": self._failed_inferences,
                 "retry_in_seconds": round(max(0.0, self._retry_at - time.monotonic()), 2),
             }
+
+    def _latency_summary(self) -> Dict[str, float | int | None]:
+        values = sorted(float(value) for value in self._latency_history)
+        if not values:
+            return {"samples": 0, "median": None, "p95": None, "p99": None, "max": None}
+        return {
+            "samples": len(values),
+            "median": round(self._percentile(values, 0.50), 2),
+            "p95": round(self._percentile(values, 0.95), 2),
+            "p99": round(self._percentile(values, 0.99), 2),
+            "max": round(values[-1], 2),
+        }
+
+    @staticmethod
+    def _percentile(values: list[float], percentile: float) -> float:
+        if len(values) == 1:
+            return values[0]
+        position = max(0.0, min(1.0, percentile)) * (len(values) - 1)
+        lower = int(position)
+        upper = min(len(values) - 1, lower + 1)
+        fraction = position - lower
+        return values[lower] * (1.0 - fraction) + values[upper] * fraction
 
     def close(self) -> None:
         with self._lock:

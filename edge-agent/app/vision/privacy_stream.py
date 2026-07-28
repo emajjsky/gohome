@@ -12,7 +12,7 @@ from .synchronized_pose_stream import DEFAULT_SKELETON_EDGES
 class PrivacyFrameRenderer:
     """Render privacy-safe relay frames without changing safety inference inputs."""
 
-    version = "privacy-frame-renderer-v2"
+    version = "privacy-frame-renderer-v3"
 
     def __init__(self, tracker: Any) -> None:
         self.tracker = tracker
@@ -78,7 +78,7 @@ class PrivacyFrameRenderer:
         joint_color = (242, 242, 238)
 
         for box in self._privacy_boxes(metadata, width, height):
-            self._obscure_region(cv2, canvas, *box)
+            self._shield_region(cv2, canvas, *box)
 
         for pose in tracking.get("poses") or []:
             if not isinstance(pose, dict):
@@ -191,11 +191,26 @@ class PrivacyFrameRenderer:
 
     def _strong_blur(self, cv2: Any, frame: Any) -> Any:
         height, width = frame.shape[:2]
-        small_width = max(12, width // 20)
-        small_height = max(8, height // 20)
-        reduced = cv2.resize(frame, (small_width, small_height), interpolation=cv2.INTER_AREA)
-        pixelated = cv2.resize(reduced, (width, height), interpolation=cv2.INTER_NEAREST)
-        return cv2.GaussianBlur(pixelated, (21, 21), 0)
+        kernel = max(21, min(81, ((min(width, height) // 5) | 1)))
+        return cv2.GaussianBlur(frame, (kernel, kernel), 0)
+
+    def _shield_region(
+        self,
+        cv2: Any,
+        frame: Any,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+    ) -> None:
+        region = frame[y1:y2, x1:x2]
+        if not region.size:
+            return
+        luminance = float(np.median(cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)))
+        tone = int(max(28, min(76, luminance * 0.28 + 24)))
+        shield = np.full_like(region, (tone, tone, tone))
+        frame[y1:y2, x1:x2] = shield
+        cv2.rectangle(frame, (x1, y1), (max(x1, x2 - 1), max(y1, y2 - 1)), (104, 104, 100), 1)
 
     def _point(
         self,

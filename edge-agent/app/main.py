@@ -1661,8 +1661,9 @@ def admin_video_privacy() -> Dict[str, Any]:
         "ok": True,
         "minimum_mode": config_sync_agent.video_privacy_mode(),
         "camera_modes": dict(relay.get("camera_privacy_modes") or {}),
-        "synced": not bool(config_sync_agent.last_error),
-        "updated_at": config_sync_agent.last_sync_at or "",
+        "synced": not bool(config_sync_agent.last_video_privacy_error),
+        "updated_at": config_sync_agent.last_video_privacy_sync_at or "",
+        "sync_error": config_sync_agent.last_video_privacy_error,
     }
 
 
@@ -3343,7 +3344,7 @@ def camera_mjpeg_stream(
 @app.get("/api/cameras/{camera_id}/continual-pose/stream.mjpg")
 def synchronized_camera_pose_stream(
     camera_id: int,
-    fps: int = 8,
+    fps: int = 12,
     width: int = 960,
     height: int = 540,
     quality: int = 72,
@@ -3362,7 +3363,7 @@ def synchronized_camera_pose_stream(
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
-    fps = max(1, min(int(fps), 10))
+    fps = max(1, min(int(fps), 15))
     width = max(320, min(int(width), 1280))
     height = max(180, min(int(height), 720))
     quality = max(40, min(int(quality), 90))

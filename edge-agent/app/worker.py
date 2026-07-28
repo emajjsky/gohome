@@ -266,11 +266,11 @@ class EdgeWorker:
             self._stop.wait(self._continual_tracking_interval_seconds())
 
     def _continual_tracking_interval_seconds(self) -> float:
-        interval = getattr(self.continual_pose_tracker, "minimum_interval_seconds", 0.1)
+        interval = getattr(self.continual_pose_tracker, "minimum_interval_seconds", 0.067)
         try:
-            return max(0.08, min(0.25, float(interval)))
+            return max(0.05, min(0.25, float(interval)))
         except (TypeError, ValueError):
-            return 0.1
+            return 0.067
 
     def _run_continual_tracking_iteration(self) -> None:
         if self.camera_agent is None or self.continual_pose_tracker is None:

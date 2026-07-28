@@ -107,17 +107,34 @@ class ConfigSyncAgent:
 
     def update_video_privacy(self, mode: str) -> Dict[str, Any]:
         requested_mode = normalize_privacy_mode(mode)
-        response = self._request_json(
-            "PUT",
-            "/api/v1/device/video-privacy",
-            json_body={"minimum_mode": requested_mode},
-        )
-        self.observe_video_privacy_mode(
-            normalize_privacy_mode(response.get("minimum_mode"), requested_mode),
-        )
+        changed = self.observe_video_privacy_mode(requested_mode)
+        if changed:
+            self._persist_video_privacy_mode()
         self.wake()
+        try:
+            response = self._request_json(
+                "PUT",
+                "/api/v1/device/video-privacy",
+                json_body={"minimum_mode": requested_mode},
+            )
+        except Exception as exc:
+            self.last_video_privacy_error = str(exc)
+            return {
+                "ok": True,
+                "synced": False,
+                "minimum_mode": self.current_video_privacy_mode,
+                "updated_at": self._utc_iso(),
+                "sync_error": self.last_video_privacy_error,
+            }
+
+        cloud_mode = normalize_privacy_mode(response.get("minimum_mode"), requested_mode)
+        if self.observe_video_privacy_mode(cloud_mode):
+            self._persist_video_privacy_mode()
+        self.last_video_privacy_sync_at = self._utc_iso()
+        self.last_video_privacy_error = ""
         return {
             "ok": bool(response.get("ok", True)),
+            "synced": True,
             "minimum_mode": self.current_video_privacy_mode,
             "updated_at": str(response.get("updated_at") or ""),
         }
