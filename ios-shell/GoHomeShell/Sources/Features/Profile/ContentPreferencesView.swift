@@ -1,12 +1,11 @@
 import SwiftUI
 import UIKit
-import UserNotifications
 
 struct ContentPreferencesView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var model: ProfileViewModel
+    @ObservedObject var pushNotifications: PushNotificationCoordinator
     @State private var editor: PreferencesEditor?
-    @State private var notificationPermissionText = "检查中"
     private let availableInterests = ["天气", "本地资讯", "健康生活", "防诈骗", "戏曲", "家常", "节日"]
 
     private enum PreferencesEditor: String, Identifiable {
@@ -30,10 +29,52 @@ struct ContentPreferencesView: View {
                             ProfileNavigationRow(
                                 symbol: "gearshape",
                                 title: "系统通知权限",
-                                value: notificationPermissionText
+                                value: pushNotifications.status.permissionSummary
                             )
                         }
                         .buttonStyle(.plain)
+                        HStack(spacing: 12) {
+                            Image(systemName: "bell.badge")
+                                .font(.system(size: 15, weight: .semibold))
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("推送通道")
+                                    .font(.system(size: 15, weight: .semibold))
+                                Text(pushNotifications.status.channelSummary)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(GoHomeTheme.mutedInk)
+                            }
+                            Spacer()
+                            Text(pushNotifications.registrationActive ? "已连接" : "待连接")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(GoHomeTheme.mutedInk)
+                        }
+                        .foregroundStyle(GoHomeTheme.ink)
+                        .frame(minHeight: 52)
+                        Button {
+                            Task { await pushNotifications.sendTest(familyID: model.family.id) }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "paperplane")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .frame(width: 24)
+                                Text("发送测试通知")
+                                    .font(.system(size: 15, weight: .semibold))
+                                Spacer()
+                                if pushNotifications.testState.isSending {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(GoHomeTheme.mutedInk)
+                                }
+                            }
+                            .foregroundStyle(GoHomeTheme.ink)
+                            .frame(minHeight: 52)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(pushNotifications.testState.isSending || pushNotifications.status.authorization != .allowed)
                         Button { editor = .quietHours } label: {
                             ProfileNavigationRow(
                                 symbol: "moon",
@@ -108,6 +149,11 @@ struct ContentPreferencesView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(GoHomeTheme.mutedInk)
                 }
+                if let message = pushNotifications.testState.message {
+                    Label(message, systemImage: pushNotifications.testState == .queued ? "checkmark.circle" : "bell")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                }
             }
             .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
             .padding(.top, 18)
@@ -115,10 +161,10 @@ struct ContentPreferencesView: View {
         }
         .background(GoHomeTheme.paper)
         .profileNavigationTitle("提醒与内容")
-        .task { await refreshNotificationPermission() }
+        .task { await pushNotifications.refreshStatus() }
         .onChange(of: scenePhase) { phase in
             if phase == .active {
-                Task { await refreshNotificationPermission() }
+                Task { await pushNotifications.refreshStatus() }
             }
         }
         .sheet(item: $editor) { destination in
@@ -159,16 +205,6 @@ struct ContentPreferencesView: View {
         guard let preferences = model.state.value?.productPreferences else { return "尚未选择推荐方向" }
         let values = preferences.categories + preferences.needs
         return values.isEmpty ? "尚未选择推荐方向" : values.joined(separator: " · ")
-    }
-
-    private func refreshNotificationPermission() async {
-        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
-        notificationPermissionText = switch status {
-        case .authorized, .provisional, .ephemeral: "已允许"
-        case .denied: "已关闭"
-        case .notDetermined: "未设置"
-        @unknown default: "未知"
-        }
     }
 
     private func openSystemNotificationSettings() {

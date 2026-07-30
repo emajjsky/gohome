@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 enum GuardStreamState: Equatable {
     case idle
@@ -7,15 +8,42 @@ enum GuardStreamState: Equatable {
     case failed(String)
 }
 
+struct FrameRateMeter: Sendable {
+    private let windowSeconds: TimeInterval
+    private var samples: [TimeInterval] = []
+
+    init(windowSeconds: TimeInterval = 2) {
+        self.windowSeconds = max(0.5, windowSeconds)
+    }
+
+    mutating func record(at timestamp: TimeInterval) -> Double {
+        samples.append(timestamp)
+        let cutoff = timestamp - windowSeconds
+        samples.removeAll { $0 < cutoff }
+        guard let first = samples.first, let last = samples.last, samples.count > 1, last > first else {
+            return 0
+        }
+        return Double(samples.count - 1) / (last - first)
+    }
+
+    mutating func reset() {
+        samples.removeAll(keepingCapacity: true)
+    }
+}
+
 @MainActor
 final class GuardViewModel: ObservableObject {
     @Published private(set) var selectedCameraID: String?
     @Published private(set) var latestFrame: Data?
+    @Published private(set) var latestImage: UIImage?
+    @Published private(set) var displayFPS: Double = 0
+    @Published private(set) var poseUpdatesPerSecond: Double = 0
     @Published private(set) var streamState: GuardStreamState = .idle
     @Published private(set) var selectedPrivacyMode: VideoPrivacyMode
     @Published private(set) var privacyPolicy: VideoPrivacyPolicy?
     @Published private(set) var privacyUpdateInFlight = false
     @Published private(set) var privacyError: String?
+    @Published private(set) var poseTimeline: PoseTimeline = .empty
 
     private let streamClient: CameraStreamClient
     private let privacyService: (any VideoPrivacyServicing)?
@@ -28,6 +56,8 @@ final class GuardViewModel: ObservableObject {
     private var selectionGeneration = 0
     private var lastFrameAt = Date.distantPast
     private var currentSessionReceivedFrame = false
+    private var frameRateMeter = FrameRateMeter()
+    private var poseRateMeter = FrameRateMeter()
 
     init(
         streamClient: CameraStreamClient,
@@ -64,7 +94,15 @@ final class GuardViewModel: ObservableObject {
         let generation = selectionGeneration
         frameTask?.cancel()
         selectedCameraID = cameraID
-        if !preserveFrame { latestFrame = nil }
+        if !preserveFrame {
+            latestFrame = nil
+            latestImage = nil
+        }
+        frameRateMeter.reset()
+        poseRateMeter.reset()
+        displayFPS = 0
+        poseUpdatesPerSecond = 0
+        poseTimeline = .empty
         if latestFrame == nil { streamState = .connecting }
         let privacyMode = selectedPrivacyMode
         frameTask = Task { [weak self, streamClient] in
@@ -115,11 +153,26 @@ final class GuardViewModel: ObservableObject {
         generation: Int
     ) async throws {
         currentSessionReceivedFrame = false
-        let frames = try await streamClient.frames(
+        let streams = try await streamClient.streams(
             cameraID: cameraID,
             profile: profile,
             privacyMode: privacyMode
         )
+        let poseTask = Task { [weak self] in
+            guard let poses = streams.poses else { return }
+            do {
+                for try await packet in poses {
+                    guard
+                        let self,
+                        !Task.isCancelled,
+                        generation == self.selectionGeneration
+                    else { return }
+                    self.receivePose(packet)
+                }
+            } catch {
+                // Pose is a display-only enhancement and must not interrupt video playback.
+            }
+        }
         lastFrameAt = Date()
         let watchdog = Task { [weak self, streamClient] in
             guard let self else { return }
@@ -137,16 +190,45 @@ final class GuardViewModel: ObservableObject {
                 }
             }
         }
-        defer { watchdog.cancel() }
+        defer {
+            watchdog.cancel()
+            poseTask.cancel()
+        }
 
-        for try await frame in frames {
+        for try await frame in streams.frames {
+            guard !Task.isCancelled, generation == selectionGeneration else {
+                throw CancellationError()
+            }
+            let decoded = await Task.detached(priority: .userInitiated) {
+                autoreleasepool {
+                    guard let image = UIImage(data: frame) else { return nil as DecodedCameraFrame? }
+                    return DecodedCameraFrame(image: image.preparingForDisplay() ?? image)
+                }
+            }.value
             guard !Task.isCancelled, generation == selectionGeneration else {
                 throw CancellationError()
             }
             lastFrameAt = Date()
             currentSessionReceivedFrame = true
             latestFrame = frame
+            if let decoded {
+                latestImage = decoded.image
+                displayFPS = frameRateMeter.record(at: ProcessInfo.processInfo.systemUptime)
+            }
             streamState = .playing
+        }
+    }
+
+    private func receivePose(_ packet: PosePacket) {
+        guard packet.displayOnly, !packet.formalEvidenceEligible else { return }
+        let next = TimedPosePacket(packet: packet, receivedAt: Date())
+        if packet.isDisplaySafe {
+            poseTimeline = PoseTimeline(previous: poseTimeline.current, current: next)
+            poseUpdatesPerSecond = poseRateMeter.record(at: ProcessInfo.processInfo.systemUptime)
+        } else {
+            poseTimeline = PoseTimeline(previous: nil, current: next)
+            poseRateMeter.reset()
+            poseUpdatesPerSecond = 0
         }
     }
 
@@ -159,12 +241,21 @@ final class GuardViewModel: ObservableObject {
             await streamClient.stop()
         }
         streamState = .idle
+        frameRateMeter.reset()
+        poseRateMeter.reset()
+        displayFPS = 0
+        poseUpdatesPerSecond = 0
+        poseTimeline = .empty
     }
 
     func clearSelection() {
         stop()
         selectedCameraID = nil
         latestFrame = nil
+        latestImage = nil
+        displayFPS = 0
+        poseUpdatesPerSecond = 0
+        poseTimeline = .empty
     }
 
     func retry() {
@@ -230,4 +321,8 @@ final class GuardViewModel: ObservableObject {
         let streamClient = streamClient
         Task { await streamClient.stop() }
     }
+}
+
+private struct DecodedCameraFrame: @unchecked Sendable {
+    let image: UIImage
 }

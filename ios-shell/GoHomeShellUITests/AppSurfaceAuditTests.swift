@@ -49,6 +49,28 @@ final class AppSurfaceAuditTests: XCTestCase {
         open(app, button: "隐私与数据, 已保护", navigationTitle: "隐私与数据", screenshot: "12 Privacy")
     }
 
+    func testAccountEditorAndCitySelectorRemainUsable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTestState", "-uiTestMain", "-uiTestProfile"]
+        app.launch()
+
+        XCTAssertTrue(app.tabBars.buttons["我的"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["我的"].tap()
+        let accountEntry = app.buttons["profile-account-entry"]
+        XCTAssertTrue(accountEntry.waitForExistence(timeout: 2))
+        accountEntry.tap()
+
+        XCTAssertTrue(app.navigationBars["个人资料"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["profile-avatar-picker"].exists)
+        XCTAssertTrue(app.buttons["profile-location-action"].exists)
+        capture(app, name: "13 Account editor")
+
+        app.buttons["profile-city-selector"].tap()
+        XCTAssertTrue(app.navigationBars["选择城市"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)["city-selection-list"].exists)
+        capture(app, name: "14 City selector")
+    }
+
     private func open(_ app: XCUIApplication, button: String, navigationTitle: String, screenshot: String) {
         let entry = app.buttons[button]
         XCTAssertTrue(entry.waitForExistence(timeout: 2), "Missing settings entry: \(button)")

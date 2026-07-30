@@ -33,6 +33,8 @@ actor AppRepository {
     typealias AccountExporter = @Sendable () async throws -> Data
     typealias AccountDeletionPlanLoader = @Sendable () async throws -> AccountDeletionPlan
     typealias AccountDeleter = @Sendable () async throws -> AccountDeleteResponse
+    typealias AccountProfileLoader = @Sendable () async throws -> AccountProfileEnvelope
+    typealias AccountProfileUpdater = @Sendable (AccountProfilePatch) async throws -> AccountProfileEnvelope
     typealias FamilyMembersLoader = @Sendable (String) async throws -> FamilyMembersResponse
     typealias FamilyMemberRemover = @Sendable (String, String) async throws -> FamilyMemberRemovalResponse
     typealias FamilyLeaver = @Sendable (String) async throws -> FamilyLeaveResponse
@@ -72,6 +74,8 @@ actor AppRepository {
     private let accountExporter: AccountExporter
     private let accountDeletionPlanLoader: AccountDeletionPlanLoader
     private let accountDeleter: AccountDeleter
+    private let accountProfileLoader: AccountProfileLoader
+    private let accountProfileUpdater: AccountProfileUpdater
     private let familyMembersLoader: FamilyMembersLoader
     private let familyMemberRemover: FamilyMemberRemover
     private let familyLeaver: FamilyLeaver
@@ -121,6 +125,8 @@ actor AppRepository {
         accountExporter: @escaping AccountExporter = { throw APIError.invalidResponse },
         accountDeletionPlanLoader: @escaping AccountDeletionPlanLoader = { throw APIError.invalidResponse },
         accountDeleter: @escaping AccountDeleter = { throw APIError.invalidResponse },
+        accountProfileLoader: @escaping AccountProfileLoader = { throw APIError.invalidResponse },
+        accountProfileUpdater: @escaping AccountProfileUpdater = { _ in throw APIError.invalidResponse },
         familyMembersLoader: @escaping FamilyMembersLoader = { _ in throw APIError.invalidResponse },
         familyMemberRemover: @escaping FamilyMemberRemover = { _, _ in throw APIError.invalidResponse },
         familyLeaver: @escaping FamilyLeaver = { _ in throw APIError.invalidResponse },
@@ -166,6 +172,8 @@ actor AppRepository {
         self.accountExporter = accountExporter
         self.accountDeletionPlanLoader = accountDeletionPlanLoader
         self.accountDeleter = accountDeleter
+        self.accountProfileLoader = accountProfileLoader
+        self.accountProfileUpdater = accountProfileUpdater
         self.familyMembersLoader = familyMembersLoader
         self.familyMemberRemover = familyMemberRemover
         self.familyLeaver = familyLeaver
@@ -177,6 +185,14 @@ actor AppRepository {
 
     func fetchBootstrap() async throws -> BootstrapResponse {
         try await bootstrapLoader()
+    }
+
+    func accountProfile() async throws -> AccountProfile {
+        try await accountProfileLoader().profile
+    }
+
+    func updateAccountProfile(_ patch: AccountProfilePatch) async throws -> AccountProfile {
+        try await accountProfileUpdater(patch).profile
     }
 
     func cacheBootstrap(_ value: BootstrapResponse, scope: CacheScope) async {
@@ -296,6 +312,12 @@ actor AppRepository {
                 staleReason: cached == nil ? "配置暂时无法更新" : "当前显示上次保存的配置"
             ))
         }
+    }
+
+    func freshProfile(scope: CacheScope) async throws -> ProfileData {
+        let refreshed = try await refreshProfile(scope: scope)
+        try await cache.write(refreshed, key: "profile", scope: scope, ttl: 24 * 60 * 60)
+        return refreshed
     }
 
     func updateRules(familyID: String, patch: RulePatch) async throws -> FamilyRules {

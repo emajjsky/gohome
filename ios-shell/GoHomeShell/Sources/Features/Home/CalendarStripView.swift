@@ -35,7 +35,7 @@ struct CalendarStripView: View {
                     }
                     .foregroundStyle(item.isToday ? Color.white : GoHomeTheme.ink)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 58)
+                    .frame(height: 52)
                     .background(
                         item.isToday ? GoHomeTheme.ink : GoHomeTheme.softLine,
                         in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous)

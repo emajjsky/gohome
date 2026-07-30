@@ -35,6 +35,25 @@ final class ProductRecommendationsTests: XCTestCase {
         XCTAssertEqual(states[1], Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
     }
 
+    func testCommunityServicesResolveToRealSystemActions() throws {
+        let home = HomeLocation(
+            latitude: 30.2741,
+            longitude: 120.1551,
+            label: "拱墅区 · 杭州市",
+            city: "杭州市",
+            district: "拱墅区",
+            source: "family_setup_phone",
+            updatedAt: nil
+        )
+        let mealURL = try XCTUnwrap(CommunityService.meals.destinationURL(homeLocation: home))
+        let mealComponents = try XCTUnwrap(URLComponents(url: mealURL, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(mealComponents.host, "maps.apple.com")
+        XCTAssertEqual(mealComponents.queryItems?.first(where: { $0.name == "q" })?.value, "社区助餐")
+        XCTAssertEqual(mealComponents.queryItems?.first(where: { $0.name == "ll" })?.value, "30.2741,120.1551")
+        XCTAssertEqual(CommunityService.emergency.destinationURL(homeLocation: home)?.absoluteString, "tel://120")
+        XCTAssertNil(CommunityService.meals.destinationURL(homeLocation: nil))
+    }
+
     private func response(id: String) -> ProductRecommendationsResponse {
         ProductRecommendationsResponse(
             products: [ProductRecommendation(

@@ -329,6 +329,17 @@ struct AppEnvironment {
                 )
                 return try await client.send(endpoint)
             },
+            accountProfileLoader: {
+                try await client.send(Endpoint(path: "/api/v2/account/profile"))
+            },
+            accountProfileUpdater: { patch in
+                let endpoint: Endpoint<AccountProfileEnvelope> = try .jsonBody(
+                    method: .patch,
+                    path: "/api/v2/account/profile",
+                    body: patch
+                )
+                return try await client.send(endpoint)
+            },
             familyMembersLoader: { familyID in
                 try await client.send(Endpoint(path: "/api/v2/families/\(familyID)/members"))
             },

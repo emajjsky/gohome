@@ -24,6 +24,12 @@ struct OnboardingService: Sendable {
         return try await client.send(Endpoint<ElderProfile>(method: .put, path: "/api/v1/families/\(familyID)/elders/\(elderID)/profile", body: body))
     }
 
+    func profile(familyID: String, elderID: String = "elder_primary") async throws -> ElderProfile {
+        try await client.send(Endpoint(
+            path: "/api/v1/families/\(familyID)/elders/\(elderID)/profile"
+        ))
+    }
+
     func availableDevices(familyID: String) async throws -> [ClaimableDevice] {
         try await client.send(Endpoint<[ClaimableDevice]>(
             path: "/api/device-claims/available",
@@ -88,12 +94,42 @@ struct ProfilePayload: Encodable, Sendable {
     let phone: String
     let mobilePhone: String
     let homePhone: String
+    let homeLatitude: Double?
+    let homeLongitude: Double?
+    let homeLocationLabel: String?
+
+    init(
+        displayName: String,
+        relationship: String,
+        city: String,
+        district: String,
+        phone: String,
+        mobilePhone: String,
+        homePhone: String,
+        homeLatitude: Double? = nil,
+        homeLongitude: Double? = nil,
+        homeLocationLabel: String? = nil
+    ) {
+        self.displayName = displayName
+        self.relationship = relationship
+        self.city = city
+        self.district = district
+        self.phone = phone
+        self.mobilePhone = mobilePhone
+        self.homePhone = homePhone
+        self.homeLatitude = homeLatitude
+        self.homeLongitude = homeLongitude
+        self.homeLocationLabel = homeLocationLabel
+    }
 
     enum CodingKeys: String, CodingKey {
         case displayName = "display_name"
         case relationship, city, district, phone
         case mobilePhone = "mobile_phone"
         case homePhone = "home_phone"
+        case homeLatitude = "home_latitude"
+        case homeLongitude = "home_longitude"
+        case homeLocationLabel = "home_location_label"
     }
 }
 

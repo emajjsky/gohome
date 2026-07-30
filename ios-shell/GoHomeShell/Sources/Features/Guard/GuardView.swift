@@ -1,5 +1,16 @@
 import SwiftUI
 
+enum GuardCameraCatalog {
+    static func resolve(profile: ProfileData?, fallback: [HomeCamera]) -> [HomeCamera] {
+        guard let profile else { return fallback }
+        return profile.cameras
+            .filter(\.enabled)
+            .map { camera in
+                HomeCamera(id: camera.id, name: camera.name, status: camera.status)
+            }
+    }
+}
+
 struct GuardView: View {
     @Environment(\.scenePhase) private var scenePhase
     let cameras: [HomeCamera]
@@ -108,9 +119,12 @@ struct GuardView: View {
         VStack(alignment: .leading, spacing: 20) {
             privacyModeControl
             CameraStageView(
-                frameData: model.latestFrame,
+                image: model.latestImage,
                 state: model.streamState,
-                privacyMode: model.selectedPrivacyMode
+                displayFPS: model.displayFPS,
+                poseUpdatesPerSecond: model.poseUpdatesPerSecond,
+                privacyMode: model.selectedPrivacyMode,
+                poseTimeline: model.poseTimeline
             )
             CameraThumbnailStrip(cameras: cameras, selectedID: model.selectedCameraID) { cameraID in
                 model.select(cameraID: cameraID)
@@ -239,11 +253,11 @@ enum GuardSection: String, CaseIterable, Identifiable {
 }
 
 private actor UnavailableStreamClient: CameraStreamClient {
-    func frames(
+    func streams(
         cameraID: String,
         profile: String,
         privacyMode: VideoPrivacyMode
-    ) async throws -> AsyncThrowingStream<Data, Error> {
+    ) async throws -> CameraDisplayStreams {
         throw APIError.invalidResponse
     }
 

@@ -2,6 +2,72 @@ import XCTest
 @testable import GoHomeShell
 
 final class GuardViewModelTests: XCTestCase {
+    func testFrameRateMeterReportsRollingPresentedFrames() {
+        var meter = FrameRateMeter(windowSeconds: 2)
+
+        XCTAssertEqual(meter.record(at: 10), 0)
+        XCTAssertEqual(meter.record(at: 10.1), 10, accuracy: 0.001)
+        XCTAssertEqual(meter.record(at: 10.2), 10, accuracy: 0.001)
+        XCTAssertEqual(meter.record(at: 12.3), 0)
+        XCTAssertEqual(meter.record(at: 12.4), 10, accuracy: 0.001)
+
+        meter.reset()
+        XCTAssertEqual(meter.record(at: 20), 0)
+    }
+
+    func testGuardCameraCatalogUsesCanonicalProfileCameras() {
+        let profile = ProfileData(
+            elder: nil,
+            bindings: [],
+            cameras: [
+                CameraConfig(
+                    id: "3",
+                    familyID: "family-1",
+                    deviceID: "box-1",
+                    name: "冰箱上面",
+                    room: "厨房",
+                    status: "online",
+                    syncStatus: "synced",
+                    enabled: true
+                ),
+                CameraConfig(
+                    id: "4",
+                    familyID: "family-1",
+                    deviceID: "box-1",
+                    name: "电视柜",
+                    room: "客厅",
+                    status: "online",
+                    syncStatus: "synced",
+                    enabled: false
+                ),
+            ],
+            rules: FamilyRules(
+                canEdit: true,
+                offlineEnabled: true,
+                blackScreenEnabled: true,
+                noMotionEnabled: true,
+                personDetectionEnabled: true,
+                fallDetectionEnabled: true,
+                activityDetectionEnabled: true,
+                fireDetectionEnabled: true,
+                notificationEnabled: true
+            ),
+            carePreferences: CarePreferences(familyID: "family-1"),
+            productPreferences: ProductPreferences(categories: [], needs: [])
+        )
+        let stale = [HomeCamera(id: "2", name: "旧摄像头", status: "offline")]
+
+        XCTAssertEqual(
+            GuardCameraCatalog.resolve(profile: profile, fallback: stale),
+            [HomeCamera(id: "3", name: "冰箱上面", status: "online")]
+        )
+    }
+
+    func testGuardCameraCatalogUsesHomeCacheUntilProfileLoads() {
+        let cached = [HomeCamera(id: "3", name: "冰箱上面", status: "online")]
+        XCTAssertEqual(GuardCameraCatalog.resolve(profile: nil, fallback: cached), cached)
+    }
+
     @MainActor
     func testSelectingAnotherCameraStopsCurrentStreamBeforeStartingNext() async throws {
         let client = RecordingStreamClient()
@@ -159,16 +225,57 @@ final class GuardViewModelTests: XCTestCase {
         XCTAssertEqual(currentPolicy.minimumMode, .personBlur)
         model.stop()
     }
+
+    @MainActor
+    func testSkeletonPosePacketsUpdateDisplayTimelineWithoutReplacingVideoFrames() async throws {
+        let client = RecordingStreamClient()
+        let model = GuardViewModel(streamClient: client, initialPrivacyMode: .skeleton)
+
+        model.select(cameraID: "camera-a")
+        try await waitUntil { await client.hasStarted(cameraID: "camera-a") }
+        await client.yield(Data([0x42]), cameraID: "camera-a")
+        let packet = guardPosePacket(frameID: "pose-1", x: 120)
+        await client.yieldPose(packet, cameraID: "camera-a")
+        await client.yieldPose(guardPosePacket(frameID: "pose-2", x: 128), cameraID: "camera-a")
+        try await waitUntil {
+            await MainActor.run { model.poseTimeline.current?.packet.frameID == "pose-2" }
+        }
+
+        XCTAssertEqual(model.latestFrame, Data([0x42]))
+        XCTAssertEqual(model.poseTimeline.current?.packet.frameID, "pose-2")
+        XCTAssertGreaterThan(model.poseUpdatesPerSecond, 0)
+        model.stop()
+    }
+}
+
+private func guardPosePacket(frameID: String, x: Double) -> PosePacket {
+    PosePacket(
+        schemaVersion: "eacp-pose-relay-v1",
+        cameraID: 2,
+        frameID: frameID,
+        capturedAt: "2026-07-28T08:00:00Z",
+        state: "observed",
+        imageWidth: 640,
+        imageHeight: 360,
+        poses: [PoseTrack(
+            trackID: "person-1",
+            confidence: 0.9,
+            bbox: [90, 20, 220, 350],
+            keypoints: [PoseKeypoint(name: "nose", x: x, y: 60, confidence: 0.9, visible: true)]
+        )],
+        displayOnly: true,
+        formalEvidenceEligible: false
+    )
 }
 
 private actor FailingStreamClient: CameraStreamClient {
     private(set) var startCount = 0
 
-    func frames(
+    func streams(
         cameraID: String,
         profile: String,
         privacyMode: VideoPrivacyMode
-    ) async throws -> AsyncThrowingStream<Data, Error> {
+    ) async throws -> CameraDisplayStreams {
         startCount += 1
         throw URLError(.cannotConnectToHost)
     }
@@ -179,26 +286,35 @@ private actor FailingStreamClient: CameraStreamClient {
 private actor RecordingStreamClient: CameraStreamClient {
     private(set) var events: [String] = []
     private var continuations: [String: AsyncThrowingStream<Data, Error>.Continuation] = [:]
+    private var poseContinuations: [String: AsyncThrowingStream<PosePacket, Error>.Continuation] = [:]
     private var privacyModes: [String: VideoPrivacyMode] = [:]
 
     var stopCount: Int { events.filter { $0 == "stop" }.count }
 
-    func frames(
+    func streams(
         cameraID: String,
         profile: String,
         privacyMode: VideoPrivacyMode
-    ) async throws -> AsyncThrowingStream<Data, Error> {
+    ) async throws -> CameraDisplayStreams {
         events.append("start:\(cameraID)")
         privacyModes[cameraID] = privacyMode
-        return AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+        let frames = AsyncThrowingStream<Data, Error>(bufferingPolicy: .bufferingNewest(1)) { continuation in
             continuations[cameraID] = continuation
         }
+        let poses = privacyMode == .skeleton
+            ? AsyncThrowingStream<PosePacket, Error>(bufferingPolicy: .bufferingNewest(2)) { continuation in
+                poseContinuations[cameraID] = continuation
+            }
+            : nil
+        return CameraDisplayStreams(frames: frames, poses: poses)
     }
 
     func stop() async {
         events.append("stop")
         continuations.values.forEach { $0.finish() }
         continuations.removeAll()
+        poseContinuations.values.forEach { $0.finish() }
+        poseContinuations.removeAll()
     }
 
     func hasStarted(cameraID: String) -> Bool {
@@ -215,6 +331,10 @@ private actor RecordingStreamClient: CameraStreamClient {
 
     func yield(_ data: Data, cameraID: String) {
         continuations[cameraID]?.yield(data)
+    }
+
+    func yieldPose(_ packet: PosePacket, cameraID: String) {
+        poseContinuations[cameraID]?.yield(packet)
     }
 
     func fail(cameraID: String) {

@@ -11,6 +11,7 @@ struct ProfileSetupView: View {
     @State private var phone = ""
     @State private var isSubmitting = false
     @State private var errorMessage: String?
+    @State private var showsCityPicker = false
 
     private let relationships = ["母亲", "父亲", "祖父", "祖母", "亲属", "其他"]
 
@@ -40,7 +41,26 @@ struct ProfileSetupView: View {
                     }
                 }
                 HStack(spacing: 12) {
-                    OnboardingField(title: "城市", placeholder: "杭州", text: $city)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("城市")
+                            .font(.system(size: 13, weight: .semibold))
+                        Button { showsCityPicker = true } label: {
+                            HStack {
+                                Text(city.isEmpty ? "选择城市" : city)
+                                    .foregroundStyle(city.isEmpty ? Color.secondary : Color.black)
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 15)
+                            .frame(height: 52)
+                            .background(Color.black.opacity(0.045), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .frame(maxWidth: .infinity)
                     OnboardingField(title: "区域", placeholder: "可选", text: $district)
                 }
                 OnboardingField(title: "联系号码", placeholder: "用于重要提醒", text: $phone, keyboard: .phonePad)
@@ -54,6 +74,9 @@ struct ProfileSetupView: View {
             }
         }
         .accessibilityIdentifier("onboarding-profile")
+        .sheet(isPresented: $showsCityPicker) {
+            CitySelectionView(selection: $city)
+        }
     }
 
     private var normalizedPhone: String { phone.filter(\.isNumber) }

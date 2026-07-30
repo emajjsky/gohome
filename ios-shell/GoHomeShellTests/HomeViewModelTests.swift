@@ -106,6 +106,35 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertNotNil(HomePresentation.activeAlert(HomeCriticalAlert(id: "2", title: "待处理", level: "critical", acknowledged: false)))
     }
 
+    func testContextualTopicUsesCalendarThenWeatherAndAlwaysHasAShareableFallback() {
+        let calendarHome = HomeResponse(
+            family: nil,
+            weather: HomeWeather(city: "上海", temperature: 28, condition: "晴"),
+            calendar: [HomeCalendarEvent(id: "1", title: "周末回家", startsAt: "2026-08-01T10:00:00+08:00")],
+            distance: nil,
+            criticalAlert: nil,
+            careMessage: nil,
+            articles: [],
+            cameras: [],
+            revision: "1"
+        )
+        XCTAssertTrue(HomePresentation.contextualTopic(calendarHome).message.contains("周末回家"))
+
+        let weatherOnly = HomeResponse(
+            family: nil,
+            weather: HomeWeather(city: "杭州", temperature: 31, condition: "多云"),
+            calendar: [],
+            distance: nil,
+            criticalAlert: nil,
+            careMessage: nil,
+            articles: [],
+            cameras: [],
+            revision: "2"
+        )
+        XCTAssertTrue(HomePresentation.contextualTopic(weatherOnly).message.contains("杭州"))
+        XCTAssertFalse(HomePresentation.contextualTopic(nil).message.isEmpty)
+    }
+
     private func decodeHome(careFragment: String = "") throws -> HomeResponse {
         let data = Data("""
         {"family":null,"weather":null,"calendar":[],"distance":null,"critical_alert":null,

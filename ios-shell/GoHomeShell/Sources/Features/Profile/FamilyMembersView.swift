@@ -358,12 +358,17 @@ struct CaredForProfileView: View {
 private struct CaredForProfileEditor: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var model: ProfileViewModel
+    @StateObject private var locationProvider = MemoryLocationProvider()
     @State private var displayName: String
     @State private var relationship: String
     @State private var city: String
     @State private var district: String
     @State private var mobilePhone: String
     @State private var homePhone: String
+    @State private var homeLatitude: Double?
+    @State private var homeLongitude: Double?
+    @State private var homeLocationLabel: String
+    @State private var showsCityPicker = false
 
     private let relationships = ["母亲", "父亲", "祖父", "祖母", "亲属", "其他"]
 
@@ -376,6 +381,9 @@ private struct CaredForProfileEditor: View {
         _district = State(initialValue: profile?.district ?? "")
         _mobilePhone = State(initialValue: mobilePhone.isEmpty ? profile?.phone ?? "" : mobilePhone)
         _homePhone = State(initialValue: profile?.homePhone ?? "")
+        _homeLatitude = State(initialValue: profile?.homeLatitude)
+        _homeLongitude = State(initialValue: profile?.homeLongitude)
+        _homeLocationLabel = State(initialValue: profile?.homeLocationLabel ?? "")
     }
 
     var body: some View {
@@ -412,8 +420,46 @@ private struct CaredForProfileEditor: View {
                     }
 
                     ProfileSection(title: "所在地区") {
-                        editField("城市", text: $city, contentType: .addressCity)
+                        Button { showsCityPicker = true } label: {
+                            HStack(spacing: 16) {
+                                Text("城市")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(GoHomeTheme.mutedInk)
+                                    .frame(width: 72, alignment: .leading)
+                                Text(city.isEmpty ? "选择城市" : city)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(city.isEmpty ? GoHomeTheme.mutedInk : GoHomeTheme.ink)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(GoHomeTheme.mutedInk)
+                            }
+                            .frame(minHeight: 50)
+                        }
+                        .buttonStyle(.plain)
                         editField("区域", text: $district, contentType: .sublocality)
+                        Button { locationProvider.requestLocation() } label: {
+                            HStack(spacing: 16) {
+                                Text("家庭位置")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(GoHomeTheme.mutedInk)
+                                    .frame(width: 72, alignment: .leading)
+                                Text(homeLocationLabel.isEmpty ? "设为当前位置" : homeLocationLabel)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(homeLocationLabel.isEmpty ? GoHomeTheme.mutedInk : GoHomeTheme.ink)
+                                    .lineLimit(1)
+                                Spacer()
+                                if locationProvider.isLocating {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "location.fill")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(GoHomeTheme.ginger)
+                                }
+                            }
+                            .frame(minHeight: 50)
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     if let error = model.inlineError {
@@ -439,6 +485,18 @@ private struct CaredForProfileEditor: View {
                         .disabled(!canSave || model.savingElderProfile)
                 }
             }
+        }
+        .sheet(isPresented: $showsCityPicker) {
+            CitySelectionView(selection: $city)
+        }
+        .onReceive(locationProvider.$coordinate.compactMap { $0 }) { coordinate in
+            homeLatitude = coordinate.latitude
+            homeLongitude = coordinate.longitude
+        }
+        .onReceive(locationProvider.$resolvedLocation.compactMap { $0 }) { location in
+            city = location.city
+            district = location.district
+            homeLocationLabel = location.displayName
         }
     }
 
@@ -476,7 +534,10 @@ private struct CaredForProfileEditor: View {
             district: district.trimmingCharacters(in: .whitespacesAndNewlines),
             phone: normalizedMobilePhone,
             mobilePhone: normalizedMobilePhone,
-            homePhone: normalizedHomePhone
+            homePhone: normalizedHomePhone,
+            homeLatitude: homeLatitude,
+            homeLongitude: homeLongitude,
+            homeLocationLabel: homeLocationLabel.isEmpty ? nil : homeLocationLabel
         )
         Task {
             if await model.saveElderProfile(payload) { dismiss() }

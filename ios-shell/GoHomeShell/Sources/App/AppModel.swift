@@ -69,6 +69,20 @@ final class AppModel: ObservableObject {
         Task { [weak self] in await self?.loadAuthenticatedState() }
     }
 
+    func accountProfileChanged(_ profile: AccountProfile) {
+        guard let value = bootstrap.value else { return }
+        let updated = BootstrapResponse(
+            user: AppUser(id: profile.id, phone: profile.phone, displayName: profile.displayName),
+            families: value.families,
+            activeFamilyID: value.activeFamilyID,
+            onboarding: value.onboarding,
+            unreadCount: value.unreadCount,
+            revision: value.revision
+        )
+        bootstrap.value = updated
+        persistContext(for: updated)
+    }
+
     func restore(scope: CacheScope) {
         bootstrapTask?.cancel()
         bootstrapTask = Task { [repository] in

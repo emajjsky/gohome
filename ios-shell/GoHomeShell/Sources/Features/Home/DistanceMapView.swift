@@ -11,7 +11,7 @@ struct DistanceMapView: View {
             case let .value(kilometers, travelMinutes, user, home):
                 if let user, let home {
                     HomeRouteMap(user: user, home: home)
-                        .frame(height: 148)
+                        .frame(height: 112)
                         .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
                         .allowsHitTesting(false)
                 } else {
@@ -19,7 +19,7 @@ struct DistanceMapView: View {
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(kilometers.formatted(.number.precision(.fractionLength(kilometers < 10 ? 1 : 0))))
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
                     Text("公里")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(GoHomeTheme.mutedInk)
@@ -33,6 +33,11 @@ struct DistanceMapView: View {
             case .permissionRequired:
                 RouteBand()
                 Label("开启位置后查看回家距离", systemImage: "location")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            case .homeRequired:
+                RouteBand()
+                Label("在照护资料中设定家庭位置", systemImage: "house")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(GoHomeTheme.mutedInk)
             }
@@ -60,7 +65,7 @@ private struct RouteBand: View {
                 .foregroundStyle(GoHomeTheme.ink)
         }
         .padding(.horizontal, 18)
-        .frame(height: 72)
+        .frame(height: 58)
         .background(GoHomeTheme.paleGinger.opacity(0.55), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
     }
 }

@@ -51,14 +51,23 @@ enum HomeArticlePolicy {
     }
 }
 
+enum HomeArticleComposition {
+    static func featured(_ articles: [HomeArticle]) -> HomeArticle? { articles.first }
+    static func remaining(_ articles: [HomeArticle]) -> [HomeArticle] { Array(articles.dropFirst()) }
+}
+
 struct EditorialFeed: View {
     let articles: [HomeArticle]
+    let apiBaseURL: URL?
     @State private var category: ArticleCategory = .all
     @State private var selectedArticle: HomeArticle?
 
     private var visibleArticles: [HomeArticle] {
         HomeArticlePolicy.visibleArticles(articles).filter(category.matches)
     }
+
+    private var featuredArticle: HomeArticle? { HomeArticleComposition.featured(visibleArticles) }
+    private var remainingArticles: [HomeArticle] { HomeArticleComposition.remaining(visibleArticles) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -88,9 +97,14 @@ struct EditorialFeed: View {
                     .foregroundStyle(GoHomeTheme.mutedInk)
                     .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
             } else {
+                if let featuredArticle {
+                    FeaturedArticleCard(article: featuredArticle, apiBaseURL: apiBaseURL) {
+                        selectedArticle = featuredArticle
+                    }
+                }
                 MasonryLayout(spacing: 12) {
-                    ForEach(visibleArticles) { article in
-                        ArticleCard(article: article) { selectedArticle = article }
+                    ForEach(remainingArticles) { article in
+                        ArticleCard(article: article, apiBaseURL: apiBaseURL) { selectedArticle = article }
                     }
                 }
             }

@@ -59,6 +59,7 @@ final class ProductRecommendationsViewModel: ObservableObject {
 
 struct ProductRecommendationsView: View {
     @ObservedObject var model: ProductRecommendationsViewModel
+    let apiBaseURL: URL?
     @State private var selectedCategory = "全部"
     @State private var selectedProduct: ProductRecommendation?
 
@@ -68,40 +69,33 @@ struct ProductRecommendationsView: View {
     ]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                GoHomePageHeader(eyebrow: "精选", title: "生活好物")
+        VStack(alignment: .leading, spacing: 18) {
+            GoHomeSectionHeader(title: "适老好物", detail: filteredProducts.isEmpty ? nil : "\(filteredProducts.count) 项")
 
-                if !categories.isEmpty {
-                    categoryBar
-                }
+            if !categories.isEmpty {
+                categoryBar
+            }
 
-                if filteredProducts.isEmpty {
-                    emptyState
-                } else {
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
-                        ForEach(filteredProducts) { product in
-                            ProductRecommendationCard(product: product) {
-                                selectedProduct = product
-                            }
+            if filteredProducts.isEmpty {
+                emptyState
+            } else {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
+                    ForEach(filteredProducts) { product in
+                        ProductRecommendationCard(product: product, apiBaseURL: apiBaseURL) {
+                            selectedProduct = product
                         }
                     }
                 }
-
-                if let staleReason = model.state.staleReason, model.state.value != nil {
-                    Text(staleReason)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(GoHomeTheme.mutedInk)
-                }
             }
-            .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
-            .padding(.top, 18)
-            .padding(.bottom, 30)
+
+            if let staleReason = model.state.staleReason, model.state.value != nil {
+                Text(staleReason)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            }
         }
-        .background(GoHomeTheme.paper)
-        .accessibilityIdentifier("product-recommendations-content")
         .sheet(item: $selectedProduct) { product in
-            ProductRecommendationDetail(product: product)
+            ProductRecommendationDetail(product: product, apiBaseURL: apiBaseURL)
         }
     }
 
@@ -155,6 +149,7 @@ struct ProductRecommendationsView: View {
 
 private struct ProductRecommendationCard: View {
     let product: ProductRecommendation
+    let apiBaseURL: URL?
     let action: () -> Void
 
     var body: some View {
@@ -167,7 +162,7 @@ private struct ProductRecommendationCard: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
-            AsyncImage(url: URL(string: product.imageURL)) { phase in
+            AsyncImage(url: proxiedContentImageURL(product.imageURL, baseURL: apiBaseURL)) { phase in
                 switch phase {
                 case .success(let image):
                     image.resizable().scaledToFill()
@@ -215,12 +210,13 @@ private struct ProductRecommendationCard: View {
 private struct ProductRecommendationDetail: View {
     @Environment(\.dismiss) private var dismiss
     let product: ProductRecommendation
+    let apiBaseURL: URL?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    AsyncImage(url: URL(string: product.imageURL)) { phase in
+                    AsyncImage(url: proxiedContentImageURL(product.imageURL, baseURL: apiBaseURL)) { phase in
                         if case let .success(image) = phase {
                             image.resizable().scaledToFill()
                         } else {

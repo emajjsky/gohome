@@ -2,6 +2,15 @@ import XCTest
 @testable import GoHomeShell
 
 final class EditorialFeedTests: XCTestCase {
+    func testRemoteImagesUseTheApprovedServerProxy() throws {
+        let baseURL = try XCTUnwrap(URL(string: "https://gohome.example.com"))
+        let url = try XCTUnwrap(proxiedContentImageURL("https://images.example.com/photo.jpg", baseURL: baseURL))
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.path, "/api/v1/content/image")
+        XCTAssertEqual(components.queryItems?.first?.value, "https://images.example.com/photo.jpg")
+        XCTAssertNil(proxiedContentImageURL("http://unsafe.example.com/photo.jpg", baseURL: baseURL))
+    }
+
     func testPolicyRequiresHTTPSSourceTitleCategoryAndPublisher() {
         let valid = article(id: "1")
         let invalidURL = article(id: "2", sourceURL: "http://example.com/a")
@@ -19,6 +28,14 @@ final class EditorialFeedTests: XCTestCase {
     func testOfficialAntiFraudEducationCanRemainEditorial() {
         let education = article(id: "1", category: "防诈骗", sourceName: "公安部刑侦局")
         XCTAssertEqual(HomeArticlePolicy.visibleArticles([education]).map(\.id), ["1"])
+    }
+
+    func testEditorialCompositionPromotesOneArticleWithoutDuplicatingIt() {
+        let articles = [article(id: "lead"), article(id: "second"), article(id: "third")]
+
+        XCTAssertEqual(HomeArticleComposition.featured(articles)?.id, "lead")
+        XCTAssertEqual(HomeArticleComposition.remaining(articles).map(\.id), ["second", "third"])
+        XCTAssertNil(HomeArticleComposition.featured([]))
     }
 
     private func article(

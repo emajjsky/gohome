@@ -2,6 +2,13 @@ import UIKit
 import UserNotifications
 
 final class GoHomeAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    static let foregroundPresentationOptions: UNNotificationPresentationOptions = [
+        .banner,
+        .list,
+        .badge,
+        .sound,
+    ]
+
     weak var notificationCoordinator: PushNotificationCoordinator? {
         didSet {
             if let token = pendingDeviceToken {
@@ -49,7 +56,12 @@ final class GoHomeAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificati
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .badge, .sound])
+        Task { @MainActor in
+            let payload = notification.request.content.userInfo
+            let shouldPresent = notificationCoordinator?.shouldPresentNotification(userInfo: payload) ?? true
+            notificationCoordinator?.recordForegroundReceipt(userInfo: payload)
+            completionHandler(shouldPresent ? Self.foregroundPresentationOptions : [])
+        }
     }
 
     func userNotificationCenter(

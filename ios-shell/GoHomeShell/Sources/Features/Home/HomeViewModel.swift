@@ -17,9 +17,35 @@ struct HomeMapPoint: Equatable {
 enum HomeDistanceState: Equatable {
     case value(kilometers: Double, travelMinutes: Int?, user: HomeMapPoint?, home: HomeMapPoint?)
     case permissionRequired
+    case homeRequired
 }
 
 enum HomePresentation {
+    static func contextualTopic(_ home: HomeResponse?) -> HomeTopicSuggestion {
+        if let event = home?.calendar.first {
+            return HomeTopicSuggestion(
+                title: "聊聊接下来的安排",
+                body: event.title,
+                topics: ["时间安排", "一起吃饭", "最近想做的事"],
+                message: "看到接下来有“\(event.title)”，你们那天怎么安排？我也想听听。"
+            )
+        }
+        if let weather = home?.weather, let text = weatherText(weather) {
+            return HomeTopicSuggestion(
+                title: "从今天的天气聊起",
+                body: text,
+                topics: ["出门走走", "今天吃什么", "最近睡得好吗"],
+                message: "今天\(weather.city)是\(weather.condition)，你们那边体感怎么样？"
+            )
+        }
+        return HomeTopicSuggestion(
+            title: "今天想聊点什么",
+            body: "一句自然的问候就够了",
+            topics: ["今天吃什么", "最近在看什么", "周末安排"],
+            message: "今天过得怎么样？最近有没有什么新鲜事想和我说说？"
+        )
+    }
+
     static func calendarDays(reference: Date, calendar: Calendar = .current) -> [HomeCalendarDay] {
         let start = calendar.startOfDay(for: reference)
         let formatter = DateFormatter()
@@ -69,6 +95,13 @@ enum HomePresentation {
     }
 }
 
+struct HomeTopicSuggestion: Equatable {
+    let title: String
+    let body: String
+    let topics: [String]
+    let message: String
+}
+
 @MainActor
 final class HomeViewModel: ObservableObject {
     @Published private(set) var state = Loadable<HomeResponse>()
@@ -104,7 +137,7 @@ final class HomeViewModel: ObservableObject {
         refresh()
         reconciliationTask?.cancel()
         reconciliationTask = Task { [weak self] in
-            for delay in [2, 5] {
+            for delay in [1, 2, 3, 5, 8] {
                 do {
                     try await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
                 } catch {

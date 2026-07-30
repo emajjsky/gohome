@@ -1,5 +1,22 @@
 import Foundation
 
+enum DeviceOperationProgress: Equatable {
+    case saving(String)
+    case syncing(cameraID: String?, message: String)
+    case ready(String)
+
+    var message: String {
+        switch self {
+        case let .saving(message), let .syncing(_, message), let .ready(message): return message
+        }
+    }
+
+    var showsActivity: Bool {
+        if case .ready = self { return false }
+        return true
+    }
+}
+
 @MainActor
 final class ProfileViewModel: ObservableObject {
     @Published private(set) var state: Loadable<ProfileData>
@@ -8,12 +25,15 @@ final class ProfileViewModel: ObservableObject {
     @Published private(set) var savingProductPreferences = false
     @Published private(set) var savingElderProfile = false
     @Published private(set) var deviceActionID: String?
+    @Published private(set) var deviceProgress: DeviceOperationProgress?
     @Published private(set) var deviceConfigurationRevision = 0
     @Published private(set) var inlineError: String?
     @Published private(set) var familyMembers: [FamilyMember]
     @Published private(set) var familyActionID: String?
     @Published private(set) var familyInvitations: [FamilyInvitation] = []
     @Published private(set) var invitationActionID: String?
+    @Published private(set) var accountProfile: AccountProfile
+    @Published private(set) var savingAccountProfile = false
 
     let user: AppUser
     let family: AppFamily
@@ -21,8 +41,10 @@ final class ProfileViewModel: ObservableObject {
     private let repository: AppRepository?
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
+    private var deviceReconciliationTask: Task<Void, Never>?
     private var hasStarted = false
     private let onFamilyChanged: () -> Void
+    private let onAccountProfileChanged: (AccountProfile) -> Void
 
     init(
         user: AppUser,
@@ -30,13 +52,16 @@ final class ProfileViewModel: ObservableObject {
         repository: AppRepository?,
         scope: CacheScope?,
         seed: ProfileData? = nil,
-        onFamilyChanged: @escaping () -> Void = {}
+        onFamilyChanged: @escaping () -> Void = {},
+        onAccountProfileChanged: @escaping (AccountProfile) -> Void = { _ in }
     ) {
         self.user = user
         self.family = family
         self.repository = repository
         self.scope = scope
         self.onFamilyChanged = onFamilyChanged
+        self.onAccountProfileChanged = onAccountProfileChanged
+        accountProfile = AccountProfile(user: user)
         state = Loadable(value: seed, isRefreshing: false, staleReason: nil)
         familyMembers = [FamilyMember(
             id: "current-\(user.id)",
@@ -63,6 +88,66 @@ final class ProfileViewModel: ObservableObject {
         guard !hasStarted else { return }
         hasStarted = true
         refresh()
+        refreshAccountProfile()
+    }
+
+    func refreshAccountProfile() {
+        guard let repository else { return }
+        Task { [repository] in
+            do {
+                let profile = try await repository.accountProfile()
+                accountProfile = profile
+                onAccountProfileChanged(profile)
+            } catch {
+                if accountProfile.displayName.isEmpty { inlineError = "账户资料暂时无法更新" }
+            }
+        }
+    }
+
+    func saveAccountProfile(
+        displayName: String,
+        city: String,
+        district: String,
+        avatarJPEG: Data?
+    ) async -> Bool {
+        guard !savingAccountProfile, let repository, let scope else { return false }
+        let original = accountProfile
+        let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, trimmedName.count <= 40 else {
+            inlineError = "昵称请填写 1 到 40 个字符"
+            return false
+        }
+        savingAccountProfile = true
+        inlineError = nil
+        defer { savingAccountProfile = false }
+        do {
+            var avatarAssetID = original.avatarAssetID
+            if let avatarJPEG {
+                avatarAssetID = try await repository.uploadMemoryMediaBatch(
+                    familyID: scope.familyID,
+                    media: [MemoryUploadAsset(
+                        data: avatarJPEG,
+                        contentType: "image/jpeg",
+                        pixelWidth: 768,
+                        pixelHeight: 768,
+                        durationSeconds: nil
+                    )]
+                ).first?.id ?? original.avatarAssetID
+            }
+            let updated = try await repository.updateAccountProfile(AccountProfilePatch(
+                displayName: trimmedName,
+                city: city.trimmingCharacters(in: .whitespacesAndNewlines),
+                district: district.trimmingCharacters(in: .whitespacesAndNewlines),
+                avatarAssetID: avatarAssetID
+            ))
+            accountProfile = updated
+            onAccountProfileChanged(updated)
+            return true
+        } catch {
+            accountProfile = original
+            inlineError = "账户资料未能保存，请重试"
+            return false
+        }
     }
 
     func refresh() {
@@ -296,6 +381,7 @@ final class ProfileViewModel: ObservableObject {
     ) async -> Bool {
         guard canManageDevices, deviceActionID == nil, let repository, let scope else { return false }
         deviceActionID = "camera-new"
+        deviceProgress = .saving("正在保存摄像头")
         inlineError = nil
         defer { deviceActionID = nil }
         do {
@@ -312,8 +398,10 @@ final class ProfileViewModel: ObservableObject {
             replaceCamera(camera)
             await persist()
             deviceConfigurationRevision += 1
+            reconcileDeviceConfiguration(cameraID: camera.id, expectedToExist: true)
             return true
         } catch {
+            deviceProgress = nil
             inlineError = error.localizedDescription
             return false
         }
@@ -322,6 +410,7 @@ final class ProfileViewModel: ObservableObject {
     func updateCamera(_ camera: CameraConfig, name: String, room: String, enabled: Bool) async -> Bool {
         guard canManageDevices, deviceActionID == nil, let repository else { return false }
         deviceActionID = "camera-\(camera.id)"
+        deviceProgress = .saving("正在保存摄像头设置")
         inlineError = nil
         defer { deviceActionID = nil }
         do {
@@ -332,8 +421,10 @@ final class ProfileViewModel: ObservableObject {
             replaceCamera(updated)
             await persist()
             deviceConfigurationRevision += 1
+            reconcileDeviceConfiguration(cameraID: camera.id, expectedToExist: true)
             return true
         } catch {
+            deviceProgress = nil
             inlineError = error.localizedDescription
             return false
         }
@@ -342,6 +433,7 @@ final class ProfileViewModel: ObservableObject {
     func deleteCamera(_ camera: CameraConfig) async -> Bool {
         guard canManageDevices, deviceActionID == nil, let repository else { return false }
         deviceActionID = "camera-\(camera.id)"
+        deviceProgress = .saving("正在删除摄像头")
         inlineError = nil
         defer { deviceActionID = nil }
         do {
@@ -351,8 +443,10 @@ final class ProfileViewModel: ObservableObject {
             state.value = value
             await persist()
             deviceConfigurationRevision += 1
+            reconcileDeviceConfiguration(cameraID: camera.id, expectedToExist: false)
             return true
         } catch {
+            deviceProgress = nil
             inlineError = error.localizedDescription
             return false
         }
@@ -361,6 +455,7 @@ final class ProfileViewModel: ObservableObject {
     func unbindDevice(_ binding: DeviceBinding) async -> Bool {
         guard canManageDevices, deviceActionID == nil, let repository else { return false }
         deviceActionID = "binding-\(binding.id)"
+        deviceProgress = .saving("正在解除盒子绑定")
         inlineError = nil
         defer { deviceActionID = nil }
         do {
@@ -371,8 +466,10 @@ final class ProfileViewModel: ObservableObject {
             state.value = value
             await persist()
             deviceConfigurationRevision += 1
+            reconcileDeviceConfiguration(cameraID: nil, expectedToExist: false)
             return true
         } catch {
+            deviceProgress = nil
             inlineError = error.localizedDescription
             return false
         }
@@ -406,6 +503,58 @@ final class ProfileViewModel: ObservableObject {
         state.value = value
     }
 
+    private func reconcileDeviceConfiguration(cameraID: String?, expectedToExist: Bool) {
+        guard let repository, let scope else {
+            deviceProgress = nil
+            return
+        }
+        deviceReconciliationTask?.cancel()
+        deviceProgress = .syncing(cameraID: cameraID, message: expectedToExist ? "已保存，正在同步到盒子" : "云端已更新，正在确认盒子状态")
+        deviceReconciliationTask = Task { [weak self, repository, scope] in
+            let delays: [UInt64] = [0, 1, 2, 3, 5, 8]
+            for delay in delays {
+                if delay > 0 {
+                    do {
+                        try await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                    } catch {
+                        return
+                    }
+                }
+                guard !Task.isCancelled else { return }
+                do {
+                    let profile = try await repository.freshProfile(scope: scope)
+                    guard let self, !Task.isCancelled else { return }
+                    self.state = Loadable(value: profile, isRefreshing: false, staleReason: nil)
+                    self.deviceConfigurationRevision += 1
+                    let camera = cameraID.flatMap { id in profile.cameras.first(where: { $0.id == id }) }
+                    if expectedToExist, let camera, camera.isReadyForLiveView {
+                        self.finishDeviceReconciliation("摄像头已在线")
+                        return
+                    }
+                    if !expectedToExist, cameraID == nil || camera == nil {
+                        self.finishDeviceReconciliation("设备配置已更新")
+                        return
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    continue
+                }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.deviceProgress = .syncing(cameraID: cameraID, message: "配置已保存，盒子仍在后台同步")
+        }
+    }
+
+    private func finishDeviceReconciliation(_ message: String) {
+        deviceProgress = .ready(message)
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+            self?.deviceProgress = nil
+        }
+    }
+
     private func persist() async {
         guard let repository, let scope, let value = state.value else { return }
         await repository.cacheProfile(value, scope: scope)
@@ -413,5 +562,6 @@ final class ProfileViewModel: ObservableObject {
 
     deinit {
         loadTask?.cancel()
+        deviceReconciliationTask?.cancel()
     }
 }

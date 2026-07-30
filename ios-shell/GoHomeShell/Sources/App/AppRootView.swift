@@ -57,6 +57,9 @@ struct AppRootView: View {
                         },
                         onFamilyChanged: {
                             model.reloadAfterFamilyChange()
+                        },
+                        onAccountProfileChanged: { profile in
+                            model.accountProfileChanged(profile)
                         }
                     )
                 } else {

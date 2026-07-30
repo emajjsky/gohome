@@ -10,6 +10,7 @@ struct MainTabView: View {
     let onSignOut: () -> Void
     let onAccountDeleted: () -> Void
     let onFamilyChanged: () -> Void
+    let onAccountProfileChanged: (AccountProfile) -> Void
     @StateObject private var homeModel: HomeViewModel
     @StateObject private var eventsModel: EventsViewModel
     @StateObject private var timelineModel: ActivityTimelineViewModel
@@ -41,7 +42,8 @@ struct MainTabView: View {
             ),
             onSignOut: {},
             onAccountDeleted: {},
-            onFamilyChanged: {}
+            onFamilyChanged: {},
+            onAccountProfileChanged: { _ in }
         )
     }
 
@@ -54,7 +56,8 @@ struct MainTabView: View {
         pushNotifications: PushNotificationCoordinator,
         onSignOut: @escaping () -> Void,
         onAccountDeleted: @escaping () -> Void,
-        onFamilyChanged: @escaping () -> Void
+        onFamilyChanged: @escaping () -> Void,
+        onAccountProfileChanged: @escaping (AccountProfile) -> Void
     ) {
         self.repository = repository
         self.scope = scope
@@ -65,6 +68,7 @@ struct MainTabView: View {
         self.onSignOut = onSignOut
         self.onAccountDeleted = onAccountDeleted
         self.onFamilyChanged = onFamilyChanged
+        self.onAccountProfileChanged = onAccountProfileChanged
         let hasHomeFixture = ProcessInfo.processInfo.arguments.contains("-uiTestHome")
         let hasSurfaceFixture = ProcessInfo.processInfo.arguments.contains("-uiTestSurface")
         _homeModel = StateObject(wrappedValue: HomeViewModel(
@@ -102,14 +106,15 @@ struct MainTabView: View {
             repository: repository,
             scope: scope,
             seed: seedProfile,
-            onFamilyChanged: onFamilyChanged
+            onFamilyChanged: onFamilyChanged,
+            onAccountProfileChanged: onAccountProfileChanged
         ))
     }
 
     var body: some View {
         TabView(selection: $selection) {
             GoHomeTabRoot(tab: .home, path: $homePath) {
-                HomeView(model: homeModel) { eventID in
+                HomeView(model: homeModel, apiClient: apiClient) { eventID in
                     openEvent(eventID)
                 }
             }
@@ -118,7 +123,7 @@ struct MainTabView: View {
                     EventsView(model: eventsModel, apiClient: apiClient)
                 } else {
                     GuardView(
-                        cameras: homeModel.state.value?.cameras ?? [],
+                        cameras: guardCameras,
                         apiClient: apiClient,
                         familyID: family.id,
                         eventsModel: eventsModel,
@@ -131,13 +136,19 @@ struct MainTabView: View {
                 MemoryView(model: memoryModel, apiClient: apiClient, user: user, family: family)
             }
             GoHomeTabRoot(tab: .community, path: $communityPath) {
-                ProductRecommendationsView(model: recommendationsModel)
+                CommunityView(
+                    model: recommendationsModel,
+                    apiBaseURL: apiClient?.baseURL,
+                    homeLocation: homeModel.state.value?.homeLocation
+                )
             }
             GoHomeTabRoot(tab: .profile, path: $profilePath) {
                 ProfileView(
                     model: profileModel,
                     onboardingService: apiClient.map(OnboardingService.init(client:)),
                     repository: repository,
+                    apiClient: apiClient,
+                    pushNotifications: pushNotifications,
                     onSignOut: onSignOut,
                     onAccountDeleted: onAccountDeleted
                 )
@@ -148,6 +159,7 @@ struct MainTabView: View {
         .accessibilityIdentifier("main-tab-shell")
         .task {
             homeModel.start()
+            profileModel.start()
             memoryModel.start()
             recommendationsModel.start()
         }
@@ -157,6 +169,13 @@ struct MainTabView: View {
         .onReceive(pushNotifications.$pendingRoute.compactMap { $0 }) { route in
             open(route)
         }
+    }
+
+    private var guardCameras: [HomeCamera] {
+        GuardCameraCatalog.resolve(
+            profile: profileModel.state.value,
+            fallback: homeModel.state.value?.cameras ?? []
+        )
     }
 
     private func open(_ route: PushNotificationRoute) {

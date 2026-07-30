@@ -5,6 +5,8 @@ struct ProfileView: View {
     @ObservedObject private var model: ProfileViewModel
     let onboardingService: OnboardingService?
     let repository: AppRepository?
+    let apiClient: APIClient?
+    @ObservedObject var pushNotifications: PushNotificationCoordinator
     let onSignOut: () -> Void
     let onAccountDeleted: () -> Void
 
@@ -12,12 +14,16 @@ struct ProfileView: View {
         model: ProfileViewModel,
         onboardingService: OnboardingService?,
         repository: AppRepository? = nil,
+        apiClient: APIClient? = nil,
+        pushNotifications: PushNotificationCoordinator,
         onSignOut: @escaping () -> Void,
         onAccountDeleted: @escaping () -> Void = {}
     ) {
         self.model = model
         self.onboardingService = onboardingService
         self.repository = repository
+        self.apiClient = apiClient
+        self.pushNotifications = pushNotifications
         self.onSignOut = onSignOut
         self.onAccountDeleted = onAccountDeleted
     }
@@ -26,7 +32,13 @@ struct ProfileView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 GoHomePageHeader(eyebrow: "我的", title: "账户与家庭")
-                identity
+                NavigationLink {
+                    AccountProfileEditor(model: model, apiClient: apiClient)
+                } label: {
+                    identity
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("profile-account-entry")
 
                 ProfileSection(title: "家庭") {
                     NavigationLink {
@@ -84,7 +96,7 @@ struct ProfileView: View {
 
                 ProfileSection(title: "消息与内容") {
                     NavigationLink {
-                        ContentPreferencesView(model: model)
+                        ContentPreferencesView(model: model, pushNotifications: pushNotifications)
                     } label: {
                         ProfileNavigationRow(
                             symbol: "slider.horizontal.3",
@@ -143,53 +155,60 @@ struct ProfileView: View {
 
     private var identity: some View {
         HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous)
-                    .fill(GoHomeTheme.ink)
-                    .frame(width: 52, height: 52)
-                Text(identityInitial)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(GoHomeTheme.ginger)
-            }
+            AccountAvatar(
+                profile: model.accountProfile,
+                apiClient: apiClient,
+                size: 54,
+                fallback: identityInitial
+            )
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(model.user.displayName?.nonEmpty ?? "回家用户")
+                Text(model.accountProfile.displayName.nonEmpty ?? "回家用户")
                     .font(.system(size: 18, weight: .bold, design: .rounded))
                     .foregroundStyle(GoHomeTheme.ink)
-                Text(maskedPhone)
+                Text(accountSubtitle)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(GoHomeTheme.mutedInk)
             }
             Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(GoHomeTheme.mutedInk)
         }
         .padding(.vertical, 5)
+        .contentShape(Rectangle())
     }
 
     private var identityInitial: String {
-        String((model.user.displayName?.nonEmpty ?? model.user.phone?.nonEmpty ?? "回").prefix(1))
+        String((model.accountProfile.displayName.nonEmpty ?? model.accountProfile.phone.nonEmpty ?? "回").prefix(1))
     }
 
     private var maskedPhone: String {
-        guard let phone = model.user.phone?.nonEmpty else { return "手机号未设置" }
+        guard let phone = model.accountProfile.phone.nonEmpty else { return "手机号未设置" }
         guard phone.count >= 7 else { return phone }
         let start = phone.prefix(3)
         let end = phone.suffix(4)
         return "\(start) **** \(end)"
     }
 
+    private var accountSubtitle: String {
+        let place = [model.accountProfile.city, model.accountProfile.district].filter { !$0.isEmpty }.joined(separator: " · ")
+        return place.isEmpty ? maskedPhone : place
+    }
+
     private var deviceSummary: String {
-        guard let value = model.state.value else { return "待同步" }
+        guard let value = model.state.value else { return "—" }
         if value.bindings.isEmpty { return "未绑定" }
         return "\(value.cameras.count) 路画面"
     }
 
     private var preferenceSummary: String {
-        guard let value = model.state.value else { return "待同步" }
+        guard let value = model.state.value else { return "—" }
         return value.carePreferences.contentRecommendationsEnabled ? "已开启" : "已关闭"
     }
 
     private var activityDataSummary: String {
-        guard let settings = model.state.value?.carePreferences.metadata.activityHistory else { return "待同步" }
+        guard let settings = model.state.value?.carePreferences.metadata.activityHistory else { return "—" }
         return settings.trackingEnabled ? "已开启" : "已关闭"
     }
 

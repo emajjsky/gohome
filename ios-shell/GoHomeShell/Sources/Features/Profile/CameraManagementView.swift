@@ -14,7 +14,13 @@ struct CameraManagementView: View {
                 CameraConfigurationForm(binding: binding, existing: camera, onSave: save)
                 if camera != nil {
                     Button(role: .destructive) { confirmingDelete = true } label: {
-                        Label("删除摄像头", systemImage: "trash")
+                        HStack(spacing: 8) {
+                            if let camera, model.deviceActionID == "camera-\(camera.id)" { ProgressView().controlSize(.small) }
+                            Label(
+                                camera.map { model.deviceActionID == "camera-\($0.id)" } == true ? "正在删除" : "删除摄像头",
+                                systemImage: "trash"
+                            )
+                        }
                             .font(.system(size: 14, weight: .semibold))
                             .frame(maxWidth: .infinity, minHeight: 48)
                     }

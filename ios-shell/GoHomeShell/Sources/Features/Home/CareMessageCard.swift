@@ -56,6 +56,57 @@ struct CareMessageCard: View {
     }
 }
 
+struct ContextTopicCard: View {
+    let suggestion: HomeTopicSuggestion
+    @State private var isSharePresented = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.ink)
+                    .frame(width: 34, height: 34)
+                    .background(GoHomeTheme.ginger, in: Circle())
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(suggestion.title)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(GoHomeTheme.ink)
+                    Text(suggestion.body)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                        .lineLimit(2)
+                }
+                Spacer()
+            }
+            HStack(spacing: 7) {
+                ForEach(suggestion.topics.prefix(3), id: \.self) { topic in
+                    Text(topic)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(GoHomeTheme.ink)
+                        .lineLimit(1)
+                        .padding(.horizontal, 8)
+                        .frame(height: 26)
+                        .background(Color.white.opacity(0.72), in: Capsule())
+                }
+            }
+            Button { isSharePresented = true } label: {
+                Label("生成问候", systemImage: "arrow.up.message.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(GoHomeTheme.ink)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .background(GoHomeTheme.paleGinger.opacity(0.72), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+        .sheet(isPresented: $isSharePresented) {
+            ActivityView(activityItems: [suggestion.message]) { _ in }
+                .presentationDetents([.medium, .large])
+        }
+        .accessibilityIdentifier("home-context-topic")
+    }
+}
+
 private struct CareMessageEditor: View {
     let message: CareMessage
     @ObservedObject var model: HomeViewModel
@@ -215,7 +266,7 @@ private struct CareMessageEditor: View {
     }
 }
 
-private struct ActivityView: UIViewControllerRepresentable {
+struct ActivityView: UIViewControllerRepresentable {
     let activityItems: [Any]
     let completion: (Bool) -> Void
 

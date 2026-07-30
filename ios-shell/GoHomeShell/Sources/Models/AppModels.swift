@@ -30,6 +30,53 @@ struct AppUser: Codable, Equatable, Sendable {
     }
 }
 
+struct AccountProfileEnvelope: Codable, Equatable, Sendable {
+    let profile: AccountProfile
+}
+
+struct AccountProfile: Codable, Equatable, Sendable {
+    let id: String
+    let phone: String
+    let displayName: String
+    let city: String
+    let district: String
+    let avatarAssetID: String
+    let avatarURL: String
+    let updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, phone, city, district
+        case displayName = "display_name"
+        case avatarAssetID = "avatar_asset_id"
+        case avatarURL = "avatar_url"
+        case updatedAt = "updated_at"
+    }
+
+    init(user: AppUser) {
+        id = user.id
+        phone = user.phone ?? ""
+        displayName = user.displayName ?? "回家用户"
+        city = ""
+        district = ""
+        avatarAssetID = ""
+        avatarURL = ""
+        updatedAt = nil
+    }
+}
+
+struct AccountProfilePatch: Encodable, Equatable, Sendable {
+    let displayName: String
+    let city: String
+    let district: String
+    let avatarAssetID: String
+
+    enum CodingKeys: String, CodingKey {
+        case city, district
+        case displayName = "display_name"
+        case avatarAssetID = "avatar_asset_id"
+    }
+}
+
 struct AppFamily: Codable, Equatable, Sendable {
     let id: String
     let name: String
@@ -106,16 +153,57 @@ struct HomeResponse: Codable, Equatable, Sendable {
     let weather: HomeWeather?
     let calendar: [HomeCalendarEvent]
     let distance: HomeDistance?
+    let homeLocation: HomeLocation?
     let criticalAlert: HomeCriticalAlert?
     let careMessage: CareMessage?
     let articles: [HomeArticle]
     let cameras: [HomeCamera]
     let revision: String
 
+    init(
+        family: AppFamily?,
+        weather: HomeWeather?,
+        calendar: [HomeCalendarEvent],
+        distance: HomeDistance?,
+        homeLocation: HomeLocation? = nil,
+        criticalAlert: HomeCriticalAlert?,
+        careMessage: CareMessage?,
+        articles: [HomeArticle],
+        cameras: [HomeCamera],
+        revision: String
+    ) {
+        self.family = family
+        self.weather = weather
+        self.calendar = calendar
+        self.distance = distance
+        self.homeLocation = homeLocation
+        self.criticalAlert = criticalAlert
+        self.careMessage = careMessage
+        self.articles = articles
+        self.cameras = cameras
+        self.revision = revision
+    }
+
     enum CodingKeys: String, CodingKey {
         case family, weather, calendar, distance, articles, cameras, revision
+        case homeLocation = "home_location"
         case criticalAlert = "critical_alert"
         case careMessage = "care_message"
+    }
+}
+
+struct HomeLocation: Codable, Equatable, Sendable {
+    let latitude: Double
+    let longitude: Double
+    let label: String
+    let city: String
+    let district: String
+    let source: String
+    let updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case latitude, longitude, label, city, district, source
+        case updatedAt = "updated_at"
     }
 }
 
@@ -756,6 +844,12 @@ struct HomeCamera: Codable, Equatable, Sendable, Identifiable {
     let name: String
     let status: String?
 
+    init(id: String, name: String, status: String?) {
+        self.id = id
+        self.name = name
+        self.status = status
+    }
+
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeFlexibleID(forKey: .id)
@@ -1163,6 +1257,9 @@ struct ElderProfile: Codable, Equatable, Sendable {
     var phone: String
     var mobilePhone: String
     var homePhone: String
+    var homeLatitude: Double?
+    var homeLongitude: Double?
+    var homeLocationLabel: String
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1171,6 +1268,9 @@ struct ElderProfile: Codable, Equatable, Sendable {
         case relationship, age, city, district, phone
         case mobilePhone = "mobile_phone"
         case homePhone = "home_phone"
+        case homeLatitude = "home_latitude"
+        case homeLongitude = "home_longitude"
+        case homeLocationLabel = "home_location_label"
     }
 
     init(from decoder: Decoder) throws {
@@ -1185,6 +1285,9 @@ struct ElderProfile: Codable, Equatable, Sendable {
         phone = try values.decodeIfPresent(String.self, forKey: .phone) ?? ""
         mobilePhone = try values.decodeIfPresent(String.self, forKey: .mobilePhone) ?? ""
         homePhone = try values.decodeIfPresent(String.self, forKey: .homePhone) ?? ""
+        homeLatitude = try values.decodeIfPresent(Double.self, forKey: .homeLatitude)
+        homeLongitude = try values.decodeIfPresent(Double.self, forKey: .homeLongitude)
+        homeLocationLabel = try values.decodeIfPresent(String.self, forKey: .homeLocationLabel) ?? ""
     }
 }
 
@@ -1348,6 +1451,16 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
         hasStreamConfig = try values.decodeIfPresent(Bool.self, forKey: .hasStreamConfig)
         passwordSet = try values.decodeIfPresent(Bool.self, forKey: .passwordSet) ?? false
         enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+    }
+}
+
+extension CameraConfig {
+    var isReadyForLiveView: Bool {
+        let readyStatuses = Set(["online", "active", "connected"])
+        let readySyncStatuses = Set(["synced", "online", "active", "connected", ""])
+        return enabled
+            && readyStatuses.contains(status.lowercased())
+            && readySyncStatuses.contains((syncStatus ?? "").lowercased())
     }
 }
 

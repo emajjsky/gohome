@@ -310,6 +310,105 @@ final class ProfilePermissionTests: XCTestCase {
         XCTAssertEqual(actions, ["elder:family-1:elder_primary:林姨"])
     }
 
+    @MainActor
+    func testAccountProfileUploadsAvatarAndPublishesSavedServerState() async throws {
+        let scope = CacheScope(userID: "user-1", familyID: "family-1")
+        let updated = try accountProfileFixture(
+            displayName: "林舟",
+            city: "上海市",
+            district: "徐汇区",
+            avatarAssetID: "asset-avatar"
+        )
+        let recorder = AccountProfileMutationRecorder()
+        var publishedProfiles: [AccountProfile] = []
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoryMediaBatchUploader: { familyID, media in
+                await recorder.recordUpload(familyID: familyID, media: media)
+                return MemoryMediaBatchUploadResponse(assets: [
+                    MemoryUploadedAsset(
+                        id: "asset-avatar",
+                        contentType: "image/jpeg",
+                        imageURL: "/api/v1/video/assets/asset-avatar",
+                        mediaURL: nil,
+                        mediaType: "image",
+                        sizeBytes: media[0].data.count
+                    )
+                ])
+            },
+            accountProfileUpdater: { patch in
+                await recorder.recordPatch(patch)
+                return AccountProfileEnvelope(profile: updated)
+            }
+        )
+        let model = ProfileViewModel(
+            user: AppUser(id: scope.userID, phone: "13800138000", displayName: "测试用户"),
+            family: AppFamily(id: scope.familyID, name: "测试家庭", role: "owner"),
+            repository: repository,
+            scope: scope,
+            seed: fixtureProfile(canEdit: true),
+            onAccountProfileChanged: { publishedProfiles.append($0) }
+        )
+
+        let saved = await model.saveAccountProfile(
+            displayName: "  林舟  ",
+            city: "上海市",
+            district: "徐汇区",
+            avatarJPEG: Data([1, 2, 3])
+        )
+        let snapshot = await recorder.snapshot()
+
+        XCTAssertTrue(saved)
+        XCTAssertEqual(model.accountProfile, updated)
+        XCTAssertEqual(publishedProfiles, [updated])
+        XCTAssertEqual(snapshot.uploadFamilyID, scope.familyID)
+        XCTAssertEqual(snapshot.uploadCount, 1)
+        XCTAssertEqual(snapshot.patch?.displayName, "林舟")
+        XCTAssertEqual(snapshot.patch?.avatarAssetID, "asset-avatar")
+        XCTAssertNil(model.inlineError)
+    }
+
+    @MainActor
+    func testAccountProfileSaveFailureRestoresCurrentProfile() async throws {
+        let scope = CacheScope(userID: "user-1", familyID: "family-1")
+        let current = try accountProfileFixture(
+            displayName: "当前昵称",
+            city: "杭州市",
+            district: "西湖区",
+            avatarAssetID: "asset-current"
+        )
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            accountProfileLoader: { AccountProfileEnvelope(profile: current) },
+            accountProfileUpdater: { _ in throw APIError.invalidResponse }
+        )
+        let model = ProfileViewModel(
+            user: AppUser(id: scope.userID, phone: "13800138000", displayName: "测试用户"),
+            family: AppFamily(id: scope.familyID, name: "测试家庭", role: "owner"),
+            repository: repository,
+            scope: scope,
+            seed: fixtureProfile(canEdit: true)
+        )
+        model.refreshAccountProfile()
+        for _ in 0..<20 where model.accountProfile != current {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        let saved = await model.saveAccountProfile(
+            displayName: "失败的新昵称",
+            city: "上海市",
+            district: "徐汇区",
+            avatarJPEG: nil
+        )
+
+        XCTAssertFalse(saved)
+        XCTAssertEqual(model.accountProfile, current)
+        XCTAssertEqual(model.inlineError, "账户资料未能保存，请重试")
+        XCTAssertFalse(model.savingAccountProfile)
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("ProfilePermissionTests-\(UUID().uuidString)", isDirectory: true)
@@ -344,6 +443,25 @@ private actor FamilyMutationRecorder {
     private(set) var actions: [String] = []
     func record(_ action: String) { actions.append(action) }
     func snapshot() -> [String] { actions }
+}
+
+private actor AccountProfileMutationRecorder {
+    private var uploadFamilyID: String?
+    private var uploadCount = 0
+    private var patch: AccountProfilePatch?
+
+    func recordUpload(familyID: String, media: [MemoryUploadAsset]) {
+        uploadFamilyID = familyID
+        uploadCount = media.count
+    }
+
+    func recordPatch(_ patch: AccountProfilePatch) {
+        self.patch = patch
+    }
+
+    func snapshot() -> (uploadFamilyID: String?, uploadCount: Int, patch: AccountProfilePatch?) {
+        (uploadFamilyID, uploadCount, patch)
+    }
 }
 
 private func fixtureProfile(
@@ -414,6 +532,25 @@ private func elderProfileFixture() throws -> ElderProfile {
         ElderProfile.self,
         from: Data(#"{"id":"elder-1","elder_id":"elder_primary","display_name":"林姨","relationship":"母亲","city":"杭州","district":"西湖区","phone":"13800138000","mobile_phone":"13800138000","home_phone":""}"#.utf8)
     )
+}
+
+private func accountProfileFixture(
+    displayName: String,
+    city: String,
+    district: String,
+    avatarAssetID: String
+) throws -> AccountProfile {
+    let object: [String: Any] = [
+        "id": "user-1",
+        "phone": "13800138000",
+        "display_name": displayName,
+        "city": city,
+        "district": district,
+        "avatar_asset_id": avatarAssetID,
+        "avatar_url": "/api/v1/video/assets/\(avatarAssetID)",
+        "updated_at": "2026-07-28T08:00:00.000Z",
+    ]
+    return try JSONDecoder().decode(AccountProfile.self, from: JSONSerialization.data(withJSONObject: object))
 }
 
 private extension FamilyRole {

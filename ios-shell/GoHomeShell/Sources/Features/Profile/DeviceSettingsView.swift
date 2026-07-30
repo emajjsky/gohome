@@ -12,6 +12,18 @@ struct DeviceSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                if let progress = model.deviceProgress {
+                    HStack(spacing: 10) {
+                        if progress.showsActivity { ProgressView().tint(GoHomeTheme.ink) }
+                        Image(systemName: progress.showsActivity ? "arrow.triangle.2.circlepath" : "checkmark.circle.fill")
+                            .foregroundStyle(progress.showsActivity ? GoHomeTheme.mutedInk : Color.green)
+                        Text(progress.message)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(GoHomeTheme.ink)
+                        Spacer()
+                    }
+                    .frame(minHeight: 44)
+                }
                 boxSection
                 cameraSection
                 NavigationLink {
@@ -114,9 +126,15 @@ struct DeviceSettingsView: View {
                             Spacer()
                             if model.canManageDevices {
                                 Button(role: .destructive) { bindingToRemove = binding } label: {
-                                    Label("解除绑定", systemImage: "shippingbox.and.arrow.backward")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .padding(.vertical, 10)
+                                    HStack(spacing: 6) {
+                                        if model.deviceActionID == "binding-\(binding.id)" { ProgressView().controlSize(.small) }
+                                        Label(
+                                            model.deviceActionID == "binding-\(binding.id)" ? "正在解除" : "解除绑定",
+                                            systemImage: "shippingbox.and.arrow.backward"
+                                        )
+                                    }
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .padding(.vertical, 10)
                                 }
                                 .buttonStyle(.plain)
                                 .foregroundStyle(.red)
@@ -197,9 +215,14 @@ struct DeviceSettingsView: View {
                     .foregroundStyle(GoHomeTheme.mutedInk)
             }
             Spacer()
-            Text(cameraStatus(camera))
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(camera.status.lowercased() == "online" ? Color.green : GoHomeTheme.mutedInk)
+            HStack(spacing: 6) {
+                if case let .syncing(cameraID, _) = model.deviceProgress, cameraID == camera.id {
+                    ProgressView().controlSize(.small)
+                }
+                Text(cameraStatus(camera))
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(camera.isReadyForLiveView ? Color.green : GoHomeTheme.mutedInk)
+            }
             if showsDisclosure {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .bold))
