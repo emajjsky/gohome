@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("crypto");
 const { buildCloudSeedBundle } = require("../scripts/export-local-app-db");
 
 const TABLE_ORDER = [
@@ -34,6 +35,75 @@ const TABLE_ORDER = [
 ];
 
 const DELETE_ORDER = [...TABLE_ORDER].reverse();
+
+const PRIMARY_KEYS = Object.freeze({
+    users: "id",
+    app_sessions: "id",
+    families: "id",
+    family_members: "id",
+    elder_profiles: "id",
+    devices: "device_id",
+    device_bindings: "id",
+    binding_codes: "id",
+    device_tokens: "id",
+    cameras: "id",
+    camera_secrets: "camera_id",
+    care_rules: "id",
+    care_preferences: "family_id",
+    model_providers: "provider_id",
+    content_sources: "id",
+    media_assets: "id",
+    events: "id",
+    device_heartbeats: "id",
+    calendar_events: "id",
+    care_cards: "id",
+    app_messages: "id",
+    app_push_tokens: "id",
+    notification_deliveries: "id",
+    scheduler_runs: "id",
+    model_generation_jobs: "id",
+    content_recommendations: "id",
+    device_config_versions: "id",
+    audit_logs: "id",
+});
+
+// Care cards have a mutable daily business key in addition to their primary key.
+// Rebuilding this unreferenced table avoids transient unique-key collisions when
+// a normalization pass changes which historical row owns a daily key.
+const REBUILD_TABLES = new Set(["care_cards"]);
+const REVISION_SIGNATURE_TABLES = new Set([
+    "media_assets",
+    "events",
+    "app_messages",
+    "notification_deliveries",
+    "scheduler_runs",
+    "model_generation_jobs",
+]);
+
+function tableSignature(table, rows) {
+    const primaryKey = PRIMARY_KEYS[table];
+    const hash = crypto.createHash("sha256");
+    const ordered = [...rows].sort((left, right) => String(left[primaryKey] || "").localeCompare(String(right[primaryKey] || "")));
+    hash.update(`${table}:${ordered.length}\n`);
+    for (const row of ordered) {
+        if (REVISION_SIGNATURE_TABLES.has(table)) {
+            hash.update(JSON.stringify([
+                row[primaryKey],
+                row.updated_at || "",
+                row.created_at || "",
+                row.status || "",
+            ]));
+        } else {
+            hash.update(JSON.stringify(row));
+        }
+        hash.update("\n");
+    }
+    return hash.digest("hex");
+}
+
+function bundleSignatures(bundle) {
+    return new Map(TABLE_ORDER.map((table) => [table, tableSignature(table, bundle.tables[table] || [])]));
+}
 
 function textId(value, fallback = "") {
     if (value === null || value === undefined || value === "") return String(fallback || "");
@@ -573,31 +643,74 @@ async function readRowsByTable(pool) {
     return rowsByTable;
 }
 
-async function insertRows(client, table, rows) {
+function postgresValue(value) {
+    if (value && typeof value === "object" && !Buffer.isBuffer(value) && !(value instanceof Date)) {
+        return JSON.stringify(value);
+    }
+    return value;
+}
+
+async function upsertRows(client, table, rows) {
+    const groups = new Map();
     for (const row of rows) {
         const columns = Object.keys(row);
         if (!columns.length) continue;
-        const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ");
-        const values = columns.map((column) => {
-            const value = row[column];
-            if (value && typeof value === "object" && !Buffer.isBuffer(value) && !(value instanceof Date)) {
-                return JSON.stringify(value);
-            }
-            return value;
-        });
-        await client.query(`insert into ${table} (${columns.join(", ")}) values (${placeholders})`, values);
+        const signature = columns.join("\u0000");
+        if (!groups.has(signature)) groups.set(signature, { columns, rows: [] });
+        groups.get(signature).rows.push(row);
+    }
+
+    for (const group of groups.values()) {
+        const columns = group.columns;
+        const primaryKey = PRIMARY_KEYS[table];
+        const updateColumns = columns.filter((column) => column !== primaryKey);
+        const conflictClause = updateColumns.length
+            ? `on conflict (${primaryKey}) do update set ${updateColumns.map((column) => `${column} = excluded.${column}`).join(", ")}`
+            : `on conflict (${primaryKey}) do nothing`;
+        const maxRowsPerInsert = Math.max(1, Math.min(250, Math.floor(60000 / columns.length)));
+        for (let offset = 0; offset < group.rows.length; offset += maxRowsPerInsert) {
+            const batch = group.rows.slice(offset, offset + maxRowsPerInsert);
+            const values = [];
+            const tuples = batch.map((row) => {
+                const placeholders = columns.map((column) => {
+                    values.push(postgresValue(row[column]));
+                    return `$${values.length}`;
+                });
+                return `(${placeholders.join(", ")})`;
+            });
+            await client.query(
+                `insert into ${table} (${columns.join(", ")}) values ${tuples.join(", ")} ${conflictClause}`,
+                values,
+            );
+        }
     }
 }
 
-async function replaceAllRows(pool, bundle) {
+async function deleteRowsMissingFromBundle(client, table, rows) {
+    if (REBUILD_TABLES.has(table)) {
+        await client.query(`delete from ${table}`);
+        return;
+    }
+    const primaryKey = PRIMARY_KEYS[table];
+    const ids = rows.map((row) => row[primaryKey]).filter((value) => value !== null && value !== undefined && value !== "");
+    if (!ids.length) {
+        await client.query(`delete from ${table}`);
+        return;
+    }
+    const placeholders = ids.map((_, index) => `$${index + 1}`).join(", ");
+    await client.query(`delete from ${table} where ${primaryKey} not in (${placeholders})`, ids);
+}
+
+async function synchronizeAllRows(pool, bundle, changedTables = TABLE_ORDER) {
     const client = await pool.connect();
+    const changed = new Set(changedTables);
     try {
         await client.query("begin");
-        for (const table of DELETE_ORDER) {
-            await client.query(`delete from ${table}`);
+        for (const table of DELETE_ORDER.filter((table) => changed.has(table))) {
+            await deleteRowsMissingFromBundle(client, table, bundle.tables[table] || []);
         }
-        for (const table of TABLE_ORDER) {
-            await insertRows(client, table, bundle.tables[table] || []);
+        for (const table of TABLE_ORDER.filter((table) => changed.has(table))) {
+            await upsertRows(client, table, bundle.tables[table] || []);
         }
         await client.query("commit");
     } catch (error) {
@@ -613,7 +726,11 @@ class PostgresStore {
         this.kind = "postgres";
         this.pool = options.pool;
         this.db = options.db;
-        this.pendingSave = Promise.resolve();
+        this.persistBundle = options.persistBundle || ((bundle, changedTables) => synchronizeAllRows(this.pool, bundle, changedTables));
+        this.persistedTableSignatures = options.persistedTableSignatures || new Map();
+        this.requestedSaveGeneration = 0;
+        this.persistedSaveGeneration = 0;
+        this.pendingSave = null;
         this.last_save_error = "";
     }
 
@@ -625,21 +742,43 @@ class PostgresStore {
 
     save() {
         this.db.updated_at = new Date().toISOString();
-        const bundle = buildCloudSeedBundle(this.db, { source: "postgres-store" });
-        this.pendingSave = this.pendingSave
-            .then(() => replaceAllRows(this.pool, bundle))
-            .then(() => {
-                this.last_save_error = "";
-            })
-            .catch((error) => {
-                this.last_save_error = error.message || String(error);
-                throw error;
+        this.requestedSaveGeneration += 1;
+        if (!this.pendingSave) {
+            this.pendingSave = this.drainSaves().finally(() => {
+                this.pendingSave = null;
             });
+        }
         return this.pendingSave;
     }
 
+    async drainSaves() {
+        try {
+            while (this.persistedSaveGeneration < this.requestedSaveGeneration) {
+                const generation = this.requestedSaveGeneration;
+                const bundle = buildCloudSeedBundle(this.db, { source: "postgres-store" });
+                const nextSignatures = bundleSignatures(bundle);
+                const changedTables = TABLE_ORDER.filter((table) => (
+                    this.persistedTableSignatures.get(table) !== nextSignatures.get(table)
+                ));
+                if (changedTables.length) {
+                    const startedAt = Date.now();
+                    await this.persistBundle(bundle, changedTables);
+                    console.info(`[postgres-store] persisted tables=${changedTables.join(",")} duration_ms=${Date.now() - startedAt}`);
+                }
+                for (const table of changedTables) {
+                    this.persistedTableSignatures.set(table, nextSignatures.get(table));
+                }
+                this.persistedSaveGeneration = generation;
+            }
+            this.last_save_error = "";
+        } catch (error) {
+            this.last_save_error = error.message || String(error);
+            throw error;
+        }
+    }
+
     async close() {
-        await this.pendingSave;
+        if (this.pendingSave) await this.pendingSave;
         await this.pool.end();
     }
 }
@@ -655,7 +794,12 @@ async function createPostgresStore(options) {
     const hasSeedRows = TABLE_ORDER.some((table) => (rowsByTable[table] || []).length > 0);
     const rawDb = hasSeedRows ? createDbFromCloudRows(rowsByTable, options.initialDb) : options.initialDb;
     const db = options.normalizeDb(rawDb);
-    const store = new PostgresStore({ pool, db });
+    const initialBundle = hasSeedRows ? buildCloudSeedBundle(db, { source: "postgres-store-initial" }) : null;
+    const store = new PostgresStore({
+        pool,
+        db,
+        persistedTableSignatures: initialBundle ? bundleSignatures(initialBundle) : new Map(),
+    });
     if (!hasSeedRows && options.seedWhenEmpty !== false) {
         await store.save();
     }
@@ -665,5 +809,6 @@ async function createPostgresStore(options) {
 module.exports = {
     createPostgresStore,
     createDbFromCloudRows,
+    PostgresStore,
     TABLE_ORDER,
 };

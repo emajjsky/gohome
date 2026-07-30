@@ -61,6 +61,17 @@ const DEFAULT_OPS_TOKEN = process.env.GOHOME_OPS_TOKEN || "";
 const DEFAULT_BOX_ADMIN_USERNAME = process.env.GOHOME_BOX_ADMIN_USERNAME || "admin";
 const DEFAULT_BOX_ADMIN_PASSWORD = process.env.GOHOME_BOX_ADMIN_PASSWORD || "123456";
 const DEFAULT_STORE_KIND = process.env.GOHOME_APP_STORE || (process.env.GOHOME_DATABASE_URL || process.env.DATABASE_URL ? "postgres" : "json");
+const VIDEO_PRIVACY_MODES = ["original", "person_blur", "skeleton"];
+const VIDEO_PRIVACY_RANK = new Map(VIDEO_PRIVACY_MODES.map((mode, index) => [mode, index]));
+
+function normalizeVideoPrivacyMode(value, fallback = "original") {
+    const mode = String(value || "").trim().toLowerCase();
+    return VIDEO_PRIVACY_RANK.has(mode) ? mode : fallback;
+}
+
+function isVideoPrivacyMode(value) {
+    return VIDEO_PRIVACY_RANK.has(String(value || "").trim().toLowerCase());
+}
 
 function nowIso() {
     return new Date().toISOString();
@@ -424,6 +435,20 @@ class JsonStore {
     }
 }
 
+const MAX_SCHEDULER_RUNS = 500;
+
+function compactSchedulerRuns(runs, limit = MAX_SCHEDULER_RUNS) {
+    if (!Array.isArray(runs) || runs.length <= limit) return Array.isArray(runs) ? runs : [];
+    return [...runs]
+        .sort((left, right) => {
+            const leftTime = Date.parse(left.updated_at || left.finished_at || left.started_at || left.created_at || "") || 0;
+            const rightTime = Date.parse(right.updated_at || right.finished_at || right.started_at || right.created_at || "") || 0;
+            if (leftTime !== rightTime) return leftTime - rightTime;
+            return Number(left.id || 0) - Number(right.id || 0);
+        })
+        .slice(-limit);
+}
+
 function normalizeDb(db) {
     const defaults = createDefaultDb();
     const hadActiveUserId = db.active_user_id !== undefined && db.active_user_id !== null;
@@ -501,9 +526,22 @@ function normalizeDb(db) {
     db.care_preferences = db.care_preferences && typeof db.care_preferences === "object" ? db.care_preferences : {};
     db.care_cards = compactCareCards(Array.isArray(db.care_cards) ? db.care_cards : []);
     db.app_messages = Array.isArray(db.app_messages) ? db.app_messages : [];
+    for (const message of db.app_messages) {
+        const verificationStatus = String(message?.metadata?.verification_status || "");
+        const obsoleteIncidentReminder = message?.generated_by === "incident-reminder";
+        const nonAlertVerificationOutcome = (
+            message?.generated_by === "vision-verification-orchestrator"
+            && verificationStatus
+            && verificationStatus !== "confirmed"
+        );
+        if (obsoleteIncidentReminder || nonAlertVerificationOutcome) {
+            message.status = "archived";
+            message.updated_at = message.updated_at || nowIso();
+        }
+    }
     db.notification_deliveries = Array.isArray(db.notification_deliveries) ? db.notification_deliveries : [];
     db.app_push_tokens = Array.isArray(db.app_push_tokens) ? db.app_push_tokens : [];
-    db.scheduler_runs = Array.isArray(db.scheduler_runs) ? db.scheduler_runs : [];
+    db.scheduler_runs = compactSchedulerRuns(db.scheduler_runs);
     db.model_providers = Array.isArray(db.model_providers) ? db.model_providers : [];
     db.model_generation_jobs = Array.isArray(db.model_generation_jobs) ? db.model_generation_jobs : [];
     db.content_sources = Array.isArray(db.content_sources) ? db.content_sources : [];
@@ -549,9 +587,14 @@ function createLocalAppServer(options = {}) {
     const careCardGenerationJobs = new Map();
     const liveFrameCache = new Map();
     const liveFrameSequence = new Map();
+    const livePoseCache = new Map();
+    const liveSceneCache = new Map();
+    const liveSceneSequence = new Map();
     let schedulerRunning = false;
     let visionVerificationRunning = false;
     const LIVE_FRAME_TTL_MS = 10000;
+    const LIVE_POSE_TTL_MS = 1500;
+    const LIVE_SCENE_TTL_MS = 30000;
 
     ensureDir(mediaDir);
 
@@ -986,12 +1029,23 @@ function createLocalAppServer(options = {}) {
         return true;
     }
 
+    function playbackTicketFromRequest(req) {
+        const url = new URL(req.url, "http://local");
+        const ticketId = url.searchParams.get("playback_ticket") || "";
+        if (!ticketId) return null;
+        const ticket = playbackTickets.get(ticketId) || null;
+        if (!ticket || Number(ticket.expires_at || 0) <= Date.now()) {
+            playbackTickets.delete(ticketId);
+            return null;
+        }
+        return { id: ticketId, ...ticket };
+    }
+
     function requireApp(req, res) {
         const url = new URL(req.url, "http://local");
         const token = tokenFrom(req) || url.searchParams.get("access_token") || "";
-        const playbackTicket = url.searchParams.get("playback_ticket") || "";
-        const ticket = playbackTicket ? playbackTickets.get(playbackTicket) : null;
-        if (ticket && Number(ticket.expires_at || 0) > Date.now()) {
+        const ticket = playbackTicketFromRequest(req);
+        if (ticket) {
             if (ticket.user_id) req.appUserId = ticket.user_id;
             return true;
         }
@@ -1225,6 +1279,34 @@ function createLocalAppServer(options = {}) {
             status: binding.status || "active",
             bound_at: binding.bound_at,
             last_seen_at: device.last_seen_at || binding.last_seen_at || null,
+        };
+    }
+
+    function maskBindingAccount(user = {}) {
+        const phone = String(user.phone || phoneFromAccountEmail(user.email) || "").trim();
+        if (phone.length >= 7) return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
+        const email = String(user.email || "").trim();
+        const at = email.indexOf("@");
+        if (at <= 0) return "";
+        const local = email.slice(0, at);
+        return `${local.slice(0, 1)}***${email.slice(at)}`;
+    }
+
+    function deviceBindingSummary(familyId, deviceId) {
+        const binding = store.db.device_bindings.find((item) => (
+            Number(item.family_id) === Number(familyId)
+            && String(item.device_id || "") === String(deviceId || "")
+            && String(item.status || "active") !== "revoked"
+        ));
+        const family = selectedFamily(familyId);
+        if (!binding || !family) return { status: "unbound" };
+        const owner = store.db.users.find((item) => Number(item.id) === Number(family.created_by_user_id)) || {};
+        return {
+            status: "bound",
+            family_name: String(family.name || ""),
+            owner_account: maskBindingAccount(owner),
+            owner_display_name: String(owner.display_name || ""),
+            bound_at: String(binding.bound_at || binding.created_at || ""),
         };
     }
 
@@ -1577,6 +1659,46 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function importPairingBootstrapCameras({ familyId, deviceId, cameras }) {
+        const existing = appConfigCameras(new Set([Number(familyId)]))
+            .filter((camera) => String(camera.device_id || "") === String(deviceId || ""));
+        if (existing.length) {
+            return { imported: 0, skipped: existing.length, reason: "cloud_config_exists" };
+        }
+
+        const candidates = Array.isArray(cameras) ? cameras.slice(0, 8) : [];
+        let imported = 0;
+        let skipped = 0;
+        for (const candidate of candidates) {
+            const streamUrl = String(candidate?.stream_url || "").trim();
+            if (!streamUrl || !/^rtsps?:\/\//i.test(streamUrl)) {
+                skipped += 1;
+                continue;
+            }
+            const camera = normalizeCameraPayload({
+                family_id: Number(familyId),
+                device_id: String(deviceId || ""),
+                local_camera_id: normalizeNumber(candidate.local_camera_id ?? candidate.id, null),
+                name: String(candidate.name || "摄像头").trim().slice(0, 80) || "摄像头",
+                room: String(candidate.room || "").trim().slice(0, 80),
+                stream_url: streamUrl.slice(0, 1000),
+                username: candidate.username == null ? null : String(candidate.username).slice(0, 160),
+                password: candidate.password == null ? null : String(candidate.password).slice(0, 300),
+                enabled: candidate.enabled !== false,
+                status: "pending_edge_sync",
+                sync_status: "pending_edge_sync",
+                source: "edge_pairing_import",
+            });
+            store.db.cameras[String(camera.id)] = camera;
+            imported += 1;
+        }
+        return {
+            imported,
+            skipped,
+            reason: imported ? "imported_from_edge" : "no_valid_edge_cameras",
+        };
+    }
+
     function publicCamera(camera) {
         const { stream_url: _streamUrl, username: _username, password: _password, ...safeCamera } = camera;
         return {
@@ -1650,9 +1772,9 @@ function createLocalAppServer(options = {}) {
 
     function streamProfileConfig(profile) {
         const normalized = String(profile || "mobile").trim().toLowerCase();
-        if (normalized === "detail") return { fps: 8, width: 1280, height: 720, quality: 78, drop: 1 };
-        if (normalized === "monitor") return { fps: 8, width: 960, height: 540, quality: 70, drop: 1 };
-        return { fps: 8, width: 720, height: 405, quality: 64, drop: 1 };
+        if (normalized === "detail") return { fps: 12, width: 1280, height: 720, quality: 78, drop: 1 };
+        if (normalized === "monitor") return { fps: 15, width: 960, height: 540, quality: 70, drop: 1 };
+        return { fps: 15, width: 720, height: 405, quality: 64, drop: 1 };
     }
 
     function cameraStreamProxyTarget(req, cameraId) {
@@ -1776,8 +1898,87 @@ function createLocalAppServer(options = {}) {
         return `rules-${crypto.createHash("sha1").update(JSON.stringify(currentRules(familyId))).digest("hex").slice(0, 12)}`;
     }
 
-    function deviceConfigVersion(familyId = null) {
-        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion(familyId)}|${rulesVersion(familyId)}`).digest("hex").slice(0, 12)}`;
+    function deviceConfigVersion(familyId = null, deviceId = currentEdgeDeviceId()) {
+        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion(familyId)}|${rulesVersion(familyId)}|${JSON.stringify(videoPrivacyForFamily(familyId))}|${JSON.stringify(eventStateCommandsForDevice(deviceId, familyId))}`).digest("hex").slice(0, 12)}`;
+    }
+
+    function eventStateCommandReceipts(deviceId) {
+        const device = store.db.devices[String(deviceId || "")] || {};
+        const receipts = objectValue(device.metadata).event_state_command_receipts;
+        return Array.isArray(receipts) ? receipts.filter((item) => item && typeof item === "object") : [];
+    }
+
+    function eventStateCommandsForDevice(deviceId, familyId = null) {
+        const cleanDeviceId = String(deviceId || "").trim();
+        const cleanFamilyId = familyId === null || familyId === undefined ? "" : String(familyId);
+        const completed = new Set(
+            eventStateCommandReceipts(cleanDeviceId)
+                .filter((item) => ["applied", "already_applied"].includes(String(item.status || "")))
+                .map((item) => String(item.command_id || ""))
+                .filter(Boolean),
+        );
+        return store.db.events
+            .filter((event) => {
+                if (!event?.edge_event_id) return false;
+                const camera = store.db.cameras[String(event.camera_id || "")] || {};
+                const eventDeviceId = String(
+                    event.device_id
+                    || event.payload?.edge_device_id
+                    || event.payload?.edge_upload?.edge_device_id
+                    || camera.device_id
+                    || "",
+                );
+                if (cleanDeviceId && eventDeviceId !== cleanDeviceId) return false;
+                if (cleanFamilyId && String(event.family_id || "") !== cleanFamilyId) return false;
+                const incidentStatus = String(event.payload?.incident?.status || "").toLowerCase();
+                return Boolean(event.acknowledged || event.resolution || incidentStatus === "rejected");
+            })
+            .map((event) => {
+                const resolution = String(event.resolution || "").trim();
+                const incidentStatus = String(event.payload?.incident?.status || "").toLowerCase();
+                const state = resolution === "false_positive" || incidentStatus === "rejected"
+                    ? "rejected"
+                    : resolution
+                    ? "resolved"
+                    : "acknowledged";
+                const updatedAt = String(event.updated_at || event.created_at || event.occurred_at || "");
+                const identity = [event.id, event.edge_event_id, state, resolution, updatedAt].join(":");
+                return {
+                    command_id: `event-state-${crypto.createHash("sha1").update(identity).digest("hex").slice(0, 20)}`,
+                    edge_event_id: String(event.edge_event_id),
+                    cloud_event_id: String(event.id),
+                    state,
+                    resolution,
+                    updated_at: updatedAt,
+                };
+            })
+            .sort((left, right) => String(left.updated_at).localeCompare(String(right.updated_at)))
+            .slice(-24)
+            .filter((command) => !completed.has(command.command_id));
+    }
+
+    function mergeEventStateCommandReceipts(deviceId, reports, receivedAt) {
+        const byId = new Map(
+            eventStateCommandReceipts(deviceId)
+                .filter((item) => item.command_id)
+                .map((item) => [String(item.command_id), item]),
+        );
+        for (const rawReport of Array.isArray(reports) ? reports : []) {
+            if (!rawReport || typeof rawReport !== "object") continue;
+            const commandId = String(rawReport.command_id || "").trim();
+            const status = String(rawReport.status || "").trim();
+            if (!commandId || !["applied", "already_applied", "failed"].includes(status)) continue;
+            byId.set(commandId, {
+                command_id: commandId,
+                edge_event_id: String(rawReport.edge_event_id || ""),
+                state: String(rawReport.state || ""),
+                resolution: String(rawReport.resolution || ""),
+                status,
+                error: String(rawReport.error || ""),
+                reported_at: receivedAt,
+            });
+        }
+        return [...byId.values()].slice(-128);
     }
 
     function deviceCameraConfig(camera) {
@@ -1792,6 +1993,7 @@ function createLocalAppServer(options = {}) {
             status: camera.status || "pending_edge_setup",
             sync_status: camera.sync_status || "pending_edge_sync",
             source: camera.source || "app_server_config",
+            local_camera_id: camera.local_camera_id ?? null,
             stream_url: camera.stream_url || "",
             username: camera.username || "",
             password: camera.password || "",
@@ -1803,16 +2005,20 @@ function createLocalAppServer(options = {}) {
     function deviceConfigPayload(options = {}) {
         const familyId = normalizeNumber(options.family_id ?? options.familyId, null);
         const familyIds = familyId ? new Set([familyId]) : new Set();
-        const device = store.db.devices[String(options.device_id || currentEdgeDeviceId())] || {};
+        const deviceId = String(options.device_id || currentEdgeDeviceId());
+        const device = store.db.devices[deviceId] || {};
         return {
             ok: true,
-            device_id: options.device_id || currentEdgeDeviceId(),
+            device_id: deviceId,
             generated_at: nowIso(),
-            config_version: deviceConfigVersion(familyId),
+            config_version: deviceConfigVersion(familyId, deviceId),
             cameras: appConfigCameras(familyIds).map(deviceCameraConfig),
             rules: currentRules(familyId),
             rules_version: rulesVersion(familyId),
+            video_privacy: videoPrivacyForFamily(familyId),
             maintenance: objectValue(objectValue(device.metadata).maintenance_command),
+            binding_summary: deviceBindingSummary(familyId, options.device_id || currentEdgeDeviceId()),
+            event_state_commands: eventStateCommandsForDevice(deviceId, familyId),
         };
     }
 
@@ -2076,6 +2282,15 @@ function createLocalAppServer(options = {}) {
         return {
             ...source,
             care_card_schedule: normalizeCareSchedule(source.care_card_schedule),
+            video_privacy: normalizeVideoPrivacy(source.video_privacy),
+        };
+    }
+
+    function normalizeVideoPrivacy(value = {}) {
+        const source = value && typeof value === "object" ? value : {};
+        return {
+            minimum_mode: normalizeVideoPrivacyMode(source.minimum_mode),
+            updated_at: String(source.updated_at || ""),
         };
     }
 
@@ -2116,6 +2331,27 @@ function createLocalAppServer(options = {}) {
         const preferences = store.db.care_preferences[key] || defaultCarePreferences(key);
         preferences.metadata = normalizeCareMetadata(preferences.metadata || {});
         return preferences;
+    }
+
+    function videoPrivacyForFamily(familyId) {
+        return normalizeVideoPrivacy(carePreferences(familyId).metadata?.video_privacy || {});
+    }
+
+    function updateVideoPrivacyForFamily(familyId, mode) {
+        const existing = carePreferences(familyId);
+        const videoPrivacy = normalizeVideoPrivacy({
+            minimum_mode: mode,
+            updated_at: nowIso(),
+        });
+        store.db.care_preferences[String(familyId)] = publicCarePreferences({
+            ...existing,
+            metadata: normalizeCareMetadata({
+                ...(existing.metadata || {}),
+                video_privacy: videoPrivacy,
+            }),
+            updated_at: nowIso(),
+        });
+        return videoPrivacy;
     }
 
     function publicCarePreferences(preferences) {
@@ -2455,7 +2691,7 @@ function createLocalAppServer(options = {}) {
         "long_absence",
     ]);
 
-    const INCIDENT_REMINDER_STATUSES = new Set(["active", "verifying", "confirmed", "uncertain"]);
+    const INCIDENT_NOTIFICATION_POLICY = "confirmed-once-v1";
 
     function incidentCorrelationWindowMs() {
         return Math.max(5000, normalizeNumber(process.env.GOHOME_INCIDENT_CORRELATION_WINDOW_SECONDS, 45) * 1000);
@@ -2540,6 +2776,16 @@ function createLocalAppServer(options = {}) {
             recovered_at: existing.recovered_at || "",
             last_reminder_bucket: existing.last_reminder_bucket || "",
             reminder_count: Number(existing.reminder_count || 0),
+            notification: existing.notification && typeof existing.notification === "object"
+                ? existing.notification
+                : {
+                    policy: INCIDENT_NOTIFICATION_POLICY,
+                    decision: "record_only",
+                    reason: "awaiting_verification",
+                    message_id: "",
+                    notified_at: "",
+                    delivery_count: 0,
+                },
             source_event_ids: [...new Set([...(existing.source_event_ids || []), event.id])],
             source_camera_ids: [...new Set([...(existing.source_camera_ids || []), event.camera_id].filter(Boolean))],
             transitions: Array.isArray(existing.transitions) ? existing.transitions.slice(-24) : [],
@@ -2561,37 +2807,56 @@ function createLocalAppServer(options = {}) {
         }
     }
 
+    function setIncidentNotificationState(event, patch = {}) {
+        const primary = incidentPrimaryEvent(event);
+        const incident = ensureSafetyIncident(primary);
+        if (!incident) return null;
+        const notification = {
+            policy: INCIDENT_NOTIFICATION_POLICY,
+            decision: "record_only",
+            reason: "awaiting_verification",
+            message_id: "",
+            notified_at: "",
+            delivery_count: 0,
+            ...(incident.notification || {}),
+            ...patch,
+            updated_at: nowIso(),
+        };
+        for (const linked of incidentEvents(incident.incident_id)) {
+            ensureSafetyIncident(linked).notification = { ...notification };
+        }
+        return notification;
+    }
+
+    function queueSafetyIncidentNotification(event, message, reason) {
+        if (!message) return [];
+        const incident = ensureSafetyIncident(incidentPrimaryEvent(event));
+        if (!incident || incident.notification?.notified_at) return [];
+        const deliveries = queueNotificationDelivery(message);
+        setIncidentNotificationState(event, {
+            decision: "notify_once",
+            reason,
+            message_id: message.message_id,
+            notified_at: nowIso(),
+            delivery_count: deliveries.length,
+        });
+        return deliveries;
+    }
+
     function createVerificationOutcomeMessage(event, status, verification = {}) {
+        if (status !== "confirmed") return null;
         const primary = incidentPrimaryEvent(event);
         if (isValidationEvent(primary)) return null;
         const incident = ensureSafetyIncident(primary);
         if (!incident || !primary.family_id) return null;
         const result = verification.result || {};
-        const copies = {
-            confirmed: {
-                title: primary.summary || "家中异常已经确认",
-                subtitle: `${primary.room || primary.camera_name || "家里"} · 云端复核确认`,
-                body: result.reason || "云端视觉模型支持边缘端异常判断，请尽快查看并联系老人。",
-                priority: "high",
-                message_type: "alert",
-            },
-            rejected: {
-                title: "刚才的异常已经排除",
-                subtitle: `${primary.room || primary.camera_name || "家里"} · 云端复核完成`,
-                body: result.reason || "云端复核未发现需要告警的异常，原始记录仍会保留用于追溯。",
-                priority: "normal",
-                message_type: "explain",
-            },
-            uncertain: {
-                title: "这条异常需要你确认",
-                subtitle: `${primary.room || primary.camera_name || "家里"} · 云端无法明确判断`,
-                body: result.reason || verification.error || "云端复核证据不足，请查看事件截图并联系老人确认。",
-                priority: "high",
-                message_type: "alert",
-            },
+        const copy = {
+            title: primary.summary || "家中异常已经确认",
+            subtitle: `${primary.room || primary.camera_name || "家里"} · 云端复核确认`,
+            body: result.reason || "云端视觉模型支持边缘端异常判断，请尽快查看并联系老人。",
+            priority: "high",
+            message_type: "alert",
         };
-        const copy = copies[status];
-        if (!copy) return null;
         const messageId = `incident-verification-${incident.incident_id}-${status}`;
         return upsertAppMessage({
             message_id: messageId,
@@ -2603,7 +2868,7 @@ function createLocalAppServer(options = {}) {
             subtitle: copy.subtitle,
             body: copy.body,
             facts: [primary.event_type, status, result.confidence !== undefined ? `置信度 ${Math.round(Number(result.confidence) * 100)}%` : ""].filter(Boolean),
-            actions: [{ key: "open_event", label: status === "rejected" ? "查看记录" : "查看事件", event_id: primary.id }],
+            actions: [{ key: "open_event", label: "查看事件", event_id: primary.id }],
             source_event_ids: incident.source_event_ids || [primary.id],
             source: [{ type: "safety_incident", id: incident.incident_id }],
             priority: copy.priority,
@@ -2650,11 +2915,19 @@ function createLocalAppServer(options = {}) {
             primary.resolution = "vision_rejected";
             archiveIncidentMessages(primaryIncident.incident_id);
         }
-        if (nextStatus === previousStatus || nextStatus === "verifying") {
+        const shouldNotify = nextStatus === "confirmed";
+        const notificationDecision = setIncidentNotificationState(primary, {
+            decision: shouldNotify ? "notify_once" : "record_only",
+            reason: shouldNotify ? "multimodal_risk_confirmed" : `multimodal_${nextStatus}`,
+            message_id: String(primaryIncident.notification?.message_id || ""),
+            notified_at: String(primaryIncident.notification?.notified_at || ""),
+            delivery_count: Number(primaryIncident.notification?.delivery_count || 0),
+        });
+        if (!shouldNotify || nextStatus === previousStatus || notificationDecision.notified_at) {
             return { status: nextStatus, message: null, deliveries: [] };
         }
         const message = createVerificationOutcomeMessage(primary, nextStatus, event.payload?.verification || {});
-        const deliveries = message ? queueNotificationDelivery(message) : [];
+        const deliveries = queueSafetyIncidentNotification(primary, message, "multimodal_risk_confirmed");
         return { status: nextStatus, message, deliveries };
     }
 
@@ -2700,40 +2973,6 @@ function createLocalAppServer(options = {}) {
             archiveIncidentMessages(incident.incident_id);
         }
         return linkedEvents;
-    }
-
-    function incidentMinuteBucket(date = new Date()) {
-        return date.toISOString().slice(0, 16);
-    }
-
-    function createIncidentReminderMessage(event, bucket = incidentMinuteBucket()) {
-        if (isValidationEvent(event)) return null;
-        const incident = ensureSafetyIncident(event);
-        if (!incident || event.acknowledged || !INCIDENT_REMINDER_STATUSES.has(incident.status)) return null;
-        if (incident.last_reminder_bucket === bucket) return null;
-        const incidentAgeMs = Date.now() - Date.parse(incident.started_at || event.occurred_at || "");
-        if (!Number.isFinite(incidentAgeMs) || incidentAgeMs < 60000) return null;
-        const message = upsertAppMessage({
-            message_id: `incident-reminder-${event.id}-${bucket}`,
-            idempotency_key: `incident-reminder:${event.id}:${bucket}`,
-            family_id: event.family_id,
-            event_id: event.id,
-            message_type: "alert",
-            title: event.summary || "家里有紧急提醒待确认",
-            subtitle: `${event.room || event.camera_name || "家里"} · 尚未确认收到`,
-            body: event.event_type === "long_absence"
-                ? "所有守护摄像头持续未检测到老人，请尽快联系家里确认情况。"
-                : "这条安全提醒尚未确认收到，请尽快查看事件并联系老人。",
-            facts: [event.event_type, `提醒 ${incident.reminder_count + 1} 次`],
-            actions: [{ key: "open_event", label: "立即确认", event_id: event.id }],
-            source_event_ids: [event.id],
-            source: [{ type: "safety_incident", id: incident.incident_id }],
-            priority: "high",
-            generated_by: "incident-reminder",
-        });
-        incident.last_reminder_bucket = bucket;
-        incident.reminder_count += 1;
-        return message;
     }
 
     function familyPresenceThresholdSeconds() {
@@ -2955,20 +3194,11 @@ function createLocalAppServer(options = {}) {
                 const createdAbsence = Math.max(0, store.db.events.length - beforePresenceEvents);
                 result.long_absence_events_created += createdAbsence;
                 if (absenceEvent && createdAbsence) {
-                    queueNotificationDelivery(createEventAlertMessage(absenceEvent));
-                }
-                const safetyEvents = store.db.events.filter((event) => (
-                    Number(event.family_id) === Number(family.id)
-                    && SAFETY_INCIDENT_TYPES.has(event.event_type)
-                    && !event.acknowledged
-                    && INCIDENT_REMINDER_STATUSES.has(event.payload?.incident?.status)
-                    && String(event.payload?.incident?.primary_event_id || event.id) === String(event.id)
-                ));
-                for (const event of safetyEvents) {
-                    const beforeMessages = store.db.app_messages.length;
-                    const reminder = createIncidentReminderMessage(event);
-                    if (reminder) queueNotificationDelivery(reminder);
-                    result.incident_reminders_created += Math.max(0, store.db.app_messages.length - beforeMessages);
+                    queueSafetyIncidentNotification(
+                        absenceEvent,
+                        createEventAlertMessage(absenceEvent),
+                        "long_absence_confirmed",
+                    );
                 }
                 if (!schedule.enabled) {
                     result.skipped.push({ family_id: family.id, reason: "schedule_disabled" });
@@ -2989,22 +3219,8 @@ function createLocalAppServer(options = {}) {
                     result.skipped.push({ family_id: family.id, reason: "daily_not_due_or_already_sent" });
                 }
 
-                const rules = schedule.delivery_rules || {};
-                if (rules.home_status?.exception_push_enabled !== false) {
-                    const familyIds = new Set([Number(family.id)]);
-                    const openEvents = eventList(new URL("/api/app/events?acknowledged=false&limit=20", "http://local"), {
-                        userVisible: true,
-                        familyIds,
-                    }).filter((event) => !event.acknowledged);
-                    for (const event of openEvents) {
-                        const beforeMessages = store.db.app_messages.length;
-                        const beforeDeliveries = store.db.notification_deliveries.length;
-                        const message = createEventAlertMessage(event);
-                        queueNotificationDelivery(message);
-                        result.event_alerts_created += Math.max(0, store.db.app_messages.length - beforeMessages);
-                        result.notification_deliveries_created += Math.max(0, store.db.notification_deliveries.length - beforeDeliveries);
-                    }
-                }
+                // Event notifications are emitted only at event creation or first
+                // confirmed transition. The care scheduler must never backfill history.
             }
             run.status = "succeeded";
             run.result = result;
@@ -3019,6 +3235,7 @@ function createLocalAppServer(options = {}) {
             run.updated_at = run.finished_at;
             throw error;
         } finally {
+            store.db.scheduler_runs = compactSchedulerRuns(store.db.scheduler_runs);
             schedulerRunning = false;
         }
     }
@@ -5655,6 +5872,16 @@ function createLocalAppServer(options = {}) {
         return null;
     }
 
+    function activeVideoPrivacyMode(cameraId) {
+        return videoPrivacyForFamily(familyIdForCamera(cameraId)).minimum_mode;
+    }
+
+    function streamPrivacyMode(req, cameraId) {
+        const ticket = playbackTicketFromRequest(req);
+        if (ticket && String(ticket.payload?.camera_id || "") !== String(cameraId)) return null;
+        return activeVideoPrivacyMode(cameraId);
+    }
+
     function requireCameraAccess(req, res, cameraId) {
         const familyId = familyIdForCamera(cameraId);
         if (!familyId) {
@@ -5934,7 +6161,7 @@ function createLocalAppServer(options = {}) {
         }
 
         writeNextFrame({ force: true });
-        const timer = setInterval(writeNextFrame, 120);
+        const timer = setInterval(writeNextFrame, Math.ceil(1000 / streamProfileConfig("mobile").fps));
         req.on("close", () => {
             closed = true;
             clearInterval(timer);
@@ -5965,6 +6192,7 @@ function createLocalAppServer(options = {}) {
             writeError(res, 400, "camera_id is required");
             return;
         }
+        const privacyMode = normalizeVideoPrivacyMode(url.searchParams.get("privacy_mode"));
         const sequence = Number(liveFrameSequence.get(String(cameraId)) || 0) + 1;
         liveFrameSequence.set(String(cameraId), sequence);
         const receivedAt = nowIso();
@@ -5979,13 +6207,268 @@ function createLocalAppServer(options = {}) {
             received_at: receivedAt,
             received_at_ms: Date.now(),
             size: content.length,
+            privacy_mode: privacyMode,
         });
         write(res, 200, {
             ok: true,
             camera_id: cameraId,
             live_frame_id: liveFrameCache.get(String(cameraId)).frame_id,
             received_at: receivedAt,
+            received_privacy_mode: privacyMode,
+            requested_privacy_mode: activeVideoPrivacyMode(cameraId),
         });
+    }
+
+    function relayCameraId(req, url) {
+        const issuedToken = issuedDeviceTokenFromRequest(req);
+        const rawCameraId = url.searchParams.get("camera_id");
+        const localCameraId = url.searchParams.get("local_camera_id") || rawCameraId;
+        const mappedCamera = resolveAppCameraForDeviceCameraId(rawCameraId, {
+            local_camera_id: localCameraId,
+            edge_camera_id: localCameraId,
+        }, issuedToken?.device_id || "");
+        const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
+        if (!cameraId) return null;
+        if (issuedToken?.device_id && mappedCamera?.device_id
+            && String(mappedCamera.device_id) !== String(issuedToken.device_id)) return null;
+        return {
+            cameraId,
+            localCameraId: normalizeNumber(localCameraId, null),
+            deviceId: issuedToken?.device_id || mappedCamera?.device_id || "",
+        };
+    }
+
+    function finitePoseNumber(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function validatePosePacket(payload, cameraId) {
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+        const states = new Set(["observed", "tracked", "coasting", "empty", "expired"]);
+        const state = String(payload.state || payload.source || "empty");
+        if (!states.has(state)) return null;
+        if (payload.display_only !== true || payload.formal_evidence_eligible !== false) return null;
+        const imageWidth = Math.max(0, Math.min(8192, Math.trunc(finitePoseNumber(payload.image_width) || 0)));
+        const imageHeight = Math.max(0, Math.min(8192, Math.trunc(finitePoseNumber(payload.image_height) || 0)));
+        const poses = [];
+        for (const sourcePose of (Array.isArray(payload.poses) ? payload.poses.slice(0, 4) : [])) {
+            if (!sourcePose || typeof sourcePose !== "object") return null;
+            const keypoints = [];
+            for (const sourcePoint of (Array.isArray(sourcePose.keypoints) ? sourcePose.keypoints.slice(0, 24) : [])) {
+                const x = finitePoseNumber(sourcePoint?.x);
+                const y = finitePoseNumber(sourcePoint?.y);
+                const confidence = finitePoseNumber(sourcePoint?.confidence);
+                const name = String(sourcePoint?.name || "").slice(0, 40);
+                if (!name || x === null || y === null || confidence === null) return null;
+                keypoints.push({
+                    name,
+                    x: Math.max(-256, Math.min((imageWidth || 8192) + 256, x)),
+                    y: Math.max(-256, Math.min((imageHeight || 8192) + 256, y)),
+                    confidence: Math.max(0, Math.min(1, confidence)),
+                    visible: sourcePoint.visible === true,
+                });
+            }
+            if (!keypoints.length) return null;
+            const bbox = Array.isArray(sourcePose.bbox) && sourcePose.bbox.length === 4
+                ? sourcePose.bbox.map(finitePoseNumber)
+                : [];
+            if (bbox.some((value) => value === null)) return null;
+            poses.push({
+                track_id: String(sourcePose.track_id || "").slice(0, 96),
+                confidence: Math.max(0, Math.min(1, finitePoseNumber(sourcePose.confidence) || 0)),
+                bbox,
+                keypoints,
+            });
+        }
+        return {
+            schema_version: "eacp-pose-relay-v1",
+            camera_id: Number(cameraId),
+            frame_id: String(payload.frame_id || "").slice(0, 160),
+            captured_at: String(payload.captured_at || "").slice(0, 64),
+            state,
+            source: state,
+            image_width: imageWidth,
+            image_height: imageHeight,
+            poses: ["observed", "tracked", "coasting"].includes(state) ? poses : [],
+            display_only: true,
+            formal_evidence_eligible: false,
+        };
+    }
+
+    async function handleDeviceLivePoseUpload(req, res, url) {
+        if (!requireDevice(req, res)) return;
+        const relayCamera = relayCameraId(req, url);
+        if (!relayCamera) {
+            writeError(res, 400, "camera_id is invalid for this device");
+            return;
+        }
+        const content = await readBody(req, 96 * 1024);
+        let payload;
+        try {
+            payload = JSON.parse(content.toString("utf8"));
+        } catch (_error) {
+            writeError(res, 400, "pose payload must be valid JSON");
+            return;
+        }
+        const packet = validatePosePacket(payload, relayCamera.cameraId);
+        if (!packet) {
+            writeError(res, 400, "pose payload is invalid");
+            return;
+        }
+        const receivedAt = nowIso();
+        livePoseCache.set(String(relayCamera.cameraId), {
+            ...packet,
+            local_camera_id: relayCamera.localCameraId,
+            device_id: relayCamera.deviceId,
+            received_at: receivedAt,
+            received_at_ms: Date.now(),
+        });
+        write(res, 200, {
+            ok: true,
+            camera_id: relayCamera.cameraId,
+            frame_id: packet.frame_id,
+            received_at: receivedAt,
+        });
+    }
+
+    async function handleDeviceLiveSceneUpload(req, res, url) {
+        if (!requireDevice(req, res)) return;
+        const relayCamera = relayCameraId(req, url);
+        if (!relayCamera) {
+            writeError(res, 400, "camera_id is invalid for this device");
+            return;
+        }
+        const contentType = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+        if (contentType !== "image/jpeg") {
+            writeError(res, 415, "safe scene must be image/jpeg");
+            return;
+        }
+        const content = await readBody(req, 2 * 1024 * 1024);
+        if (content.length < 4 || content[0] !== 0xff || content[1] !== 0xd8
+            || content[content.length - 2] !== 0xff || content[content.length - 1] !== 0xd9) {
+            writeError(res, 400, "safe scene must be a complete JPEG");
+            return;
+        }
+        const cameraKey = String(relayCamera.cameraId);
+        const sequence = Number(liveSceneSequence.get(cameraKey) || 0) + 1;
+        liveSceneSequence.set(cameraKey, sequence);
+        const receivedAt = nowIso();
+        const frameId = `${relayCamera.cameraId}-${Date.now()}-${sequence}`;
+        liveSceneCache.set(cameraKey, {
+            frame_id: frameId,
+            frame: content,
+            camera_id: relayCamera.cameraId,
+            local_camera_id: relayCamera.localCameraId,
+            device_id: relayCamera.deviceId,
+            captured_at: url.searchParams.get("captured_at") || receivedAt,
+            received_at: receivedAt,
+            received_at_ms: Date.now(),
+        });
+        write(res, 200, { ok: true, camera_id: relayCamera.cameraId, scene_frame_id: frameId, received_at: receivedAt });
+    }
+
+    function latestLiveScene(cameraId) {
+        const scene = liveSceneCache.get(String(cameraId));
+        if (!scene?.frame || Date.now() - Number(scene.received_at_ms || 0) > LIVE_SCENE_TTL_MS) return null;
+        return scene;
+    }
+
+    function writeSafeSceneMjpegStream(req, res, cameraId) {
+        const boundary = `gohome-scene-${crypto.randomBytes(4).toString("hex")}`;
+        let lastFrameId = "";
+        let closed = false;
+        if (typeof req.setTimeout === "function") req.setTimeout(0);
+        if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
+        res.writeHead(200, {
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store, no-transform",
+            "Connection": "keep-alive",
+            "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
+            "X-Accel-Buffering": "no",
+            "X-GoHome-Stream-State": "safe_scene_relay",
+            "X-GoHome-Privacy-Mode": "skeleton",
+        });
+        if (typeof res.flushHeaders === "function") res.flushHeaders();
+        const writeLatest = () => {
+            if (closed || res.destroyed || res.writableEnded) return;
+            const scene = latestLiveScene(cameraId);
+            if (!scene || scene.frame_id === lastFrameId) return;
+            lastFrameId = scene.frame_id;
+            res.write(`--${boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: ${scene.frame.length}\r\n`);
+            res.write(`X-GoHome-Frame-Source: safe_scene\r\nX-GoHome-Privacy-Mode: skeleton\r\n\r\n`);
+            res.write(scene.frame);
+            res.write("\r\n");
+        };
+        writeLatest();
+        const timer = setInterval(writeLatest, 250);
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            clearInterval(timer);
+        };
+        req.on("close", close);
+        res.on("close", close);
+    }
+
+    function writePoseSseStream(req, res, cameraId) {
+        let closed = false;
+        let lastPacketKey = "";
+        let staleEmitted = false;
+        if (typeof req.setTimeout === "function") req.setTimeout(0);
+        if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
+        res.writeHead(200, {
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store, no-transform",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "X-Accel-Buffering": "no",
+        });
+        if (typeof res.flushHeaders === "function") res.flushHeaders();
+        const emit = (packet) => res.write(`event: pose\ndata: ${JSON.stringify(packet)}\n\n`);
+        const tick = () => {
+            if (closed || res.destroyed || res.writableEnded) return;
+            const cached = livePoseCache.get(String(cameraId));
+            const fresh = cached && Date.now() - Number(cached.received_at_ms || 0) <= LIVE_POSE_TTL_MS;
+            if (fresh) {
+                const packetKey = `${cached.state}:${cached.frame_id}:${cached.received_at_ms}`;
+                if (packetKey !== lastPacketKey) {
+                    lastPacketKey = packetKey;
+                    staleEmitted = false;
+                    const { received_at_ms: _receivedAtMs, ...packet } = cached;
+                    emit(packet);
+                }
+            } else if (!staleEmitted) {
+                staleEmitted = true;
+                lastPacketKey = "";
+                emit({
+                    schema_version: "eacp-pose-relay-v1",
+                    camera_id: Number(cameraId),
+                    frame_id: "",
+                    captured_at: nowIso(),
+                    state: "expired",
+                    source: "expired",
+                    image_width: cached?.image_width || 0,
+                    image_height: cached?.image_height || 0,
+                    poses: [],
+                    display_only: true,
+                    formal_evidence_eligible: false,
+                });
+            }
+        };
+        tick();
+        const packetTimer = setInterval(tick, 50);
+        const heartbeatTimer = setInterval(() => {
+            if (!closed && !res.destroyed && !res.writableEnded) res.write(": keepalive\n\n");
+        }, 15000);
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            clearInterval(packetTimer);
+            clearInterval(heartbeatTimer);
+        };
+        req.on("close", close);
+        res.on("close", close);
     }
 
     function applyStreamParams(sourceUrl, req) {
@@ -6218,6 +6701,7 @@ function createLocalAppServer(options = {}) {
         const event = {
             id: store.nextId("event"),
             family_id: camera?.family_id || store.db.devices[String(camera?.device_id || "")]?.family_id || null,
+            device_id: issuedToken?.device_id || camera?.device_id || null,
             idempotency_key: String(payload.idempotency_key || stableId("event-")),
             edge_event_id: edgeEventId || null,
             event_type: String(payload.event_type || "event"),
@@ -6272,7 +6756,9 @@ function createLocalAppServer(options = {}) {
                 created_at: event.occurred_at,
             });
             if (currentRules(event.family_id).notification_enabled) {
-                deliveries = queueNotificationDelivery(message);
+                deliveries = SAFETY_INCIDENT_TYPES.has(event.event_type)
+                    ? queueSafetyIncidentNotification(event, message, "edge_safety_fallback")
+                    : queueNotificationDelivery(message);
             }
         }
         if (!verificationJob && event.payload?.verification) {
@@ -6428,8 +6914,69 @@ function createLocalAppServer(options = {}) {
         const state = String(payload.state || "");
         const resolution = String(payload.resolution || "");
         const evidence = payload.evidence && typeof payload.evidence === "object" ? payload.evidence : {};
-        if (state !== "resolved" || resolution !== "person_upright_again") {
+        if (state !== "resolved" || !["person_upright_again", "camera_reconnected"].includes(resolution)) {
             writeError(res, 400, "unsupported event state transition");
+            return;
+        }
+        const event = store.db.events.find((item) => {
+            if (String(item.edge_event_id || item.payload?.edge_upload?.edge_event_id || "") !== String(edgeEventId || "")) return false;
+            const camera = store.db.cameras[String(item.camera_id || "")] || {};
+            const edgeDeviceId = String(item.payload?.edge_upload?.edge_device_id || camera.device_id || "");
+            if (deviceId && edgeDeviceId) return edgeDeviceId === deviceId;
+            if (familyId) return Number(item.family_id || camera.family_id) === Number(familyId);
+            return false;
+        });
+        if (!event) {
+            writeError(res, 404, "event not found");
+            return;
+        }
+        if (resolution === "camera_reconnected") {
+            if (event.event_type !== "camera_offline") {
+                writeError(res, 400, "event type does not support camera recovery");
+                return;
+            }
+            if (evidence.confirmed !== true) {
+                writeError(res, 400, "confirmed camera recovery evidence is required");
+                return;
+            }
+            if (event.resolution === "camera_reconnected") {
+                write(res, 200, { ok: true, event: publicEvent(event), duplicate: true });
+                return;
+            }
+            const resolvedAt = String(payload.observed_at || evidence.recovered_at || nowIso());
+            event.payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+            event.payload.edge_recovery = {
+                observed_at: resolvedAt,
+                evidence: {
+                    schema_version: String(evidence.schema_version || "gohome-camera-recovery-v1"),
+                    confirmed: true,
+                    failure_count: Math.max(0, normalizeNumber(evidence.failure_count, 0)),
+                    duration_seconds: Math.max(0, normalizeNumber(evidence.duration_seconds, 0)),
+                    last_error: String(evidence.last_error || ""),
+                    recovered_at: String(evidence.recovered_at || resolvedAt),
+                    reason: String(evidence.reason || "camera_stream_recovered"),
+                },
+            };
+            event.acknowledged = true;
+            event.resolution = resolution;
+            event.resolved_at = resolvedAt;
+            event.updated_at = nowIso();
+            for (const message of store.db.app_messages) {
+                const sourceEventIds = Array.isArray(message.source_event_ids)
+                    ? message.source_event_ids.map(String)
+                    : [];
+                if (String(message.event_id || "") !== String(event.id) && !sourceEventIds.includes(String(event.id))) continue;
+                if (message.status === "archived") continue;
+                message.status = "archived";
+                message.updated_at = event.updated_at;
+                message.metadata = {
+                    ...(message.metadata && typeof message.metadata === "object" ? message.metadata : {}),
+                    resolution,
+                    resolved_at: resolvedAt,
+                };
+            }
+            await store.save();
+            write(res, 200, { ok: true, event: publicEvent(event) });
             return;
         }
         const posture = String(evidence.posture || "");
@@ -6450,18 +6997,6 @@ function createLocalAppServer(options = {}) {
             || recoverySamples < requiredSamples
         ) {
             writeError(res, 400, "same-track stable recovery evidence is required");
-            return;
-        }
-        const event = store.db.events.find((item) => {
-            if (String(item.edge_event_id || item.payload?.edge_upload?.edge_event_id || "") !== String(edgeEventId || "")) return false;
-            const camera = store.db.cameras[String(item.camera_id || "")] || {};
-            const edgeDeviceId = String(item.payload?.edge_upload?.edge_device_id || camera.device_id || "");
-            if (deviceId && edgeDeviceId) return edgeDeviceId === deviceId;
-            if (familyId) return Number(item.family_id || camera.family_id) === Number(familyId);
-            return false;
-        });
-        if (!event) {
-            writeError(res, 404, "event not found");
             return;
         }
         if (!["fall_candidate", "prolonged_floor_lying"].includes(event.event_type)) {
@@ -6555,6 +7090,11 @@ function createLocalAppServer(options = {}) {
         const detectorBackend = String(payload.detector_backend || runtime.detector_backend || existingDevice.detector_backend || "").trim();
         const yoloModel = String(payload.yolo_model || runtime.yolo_model || existingDevice.yolo_model || "").trim();
         const yoloImgsz = normalizeNumber(payload.yolo_imgsz ?? runtime.yolo_imgsz ?? existingDevice.yolo_imgsz, null);
+        const eventStateCommandReceipts = mergeEventStateCommandReceipts(
+            deviceId,
+            payload.event_state_commands,
+            receivedAt,
+        );
 
         if (issuedToken) {
             issuedToken.device_id = deviceId;
@@ -6585,6 +7125,7 @@ function createLocalAppServer(options = {}) {
             metadata: {
                 ...objectValue(existingDevice.metadata),
                 serial_number: objectValue(existingDevice.metadata).serial_number || deviceSerial({ ...existingDevice, device_id: deviceId }),
+                event_state_command_receipts: eventStateCommandReceipts,
             },
             sync_status: String(reportedStatus.sync_status || payload.sync_status || "reported"),
             last_error: String(reportedStatus.last_error || payload.last_error || ""),
@@ -6657,7 +7198,7 @@ function createLocalAppServer(options = {}) {
             device_id: deviceId,
             received_at: receivedAt,
             reported_config_version: store.db.devices[deviceId].reported_config_version,
-            current_config_version: deviceConfigVersion(deviceFamilyId),
+            current_config_version: deviceConfigVersion(deviceFamilyId, deviceId),
             rules_version: rulesVersion(deviceFamilyId),
             updated_cameras: updatedCameras,
             config: deviceConfigPayload({
@@ -7359,6 +7900,11 @@ function createLocalAppServer(options = {}) {
                     deviceName: payload.device_name || "回家盒子",
                     note: payload.note || "",
                 });
+                const bootstrapImport = importPairingBootstrapCameras({
+                    familyId: code.family_id,
+                    deviceId,
+                    cameras: payload.bootstrap_cameras,
+                });
                 await store.save();
                 write(res, 200, {
                     ok: true,
@@ -7367,6 +7913,8 @@ function createLocalAppServer(options = {}) {
                     device_id: deviceId,
                     family_id: code.family_id,
                     binding: publicBinding(binding),
+                    binding_summary: deviceBindingSummary(code.family_id, deviceId),
+                    bootstrap_import: bootstrapImport,
                     config: { upload_enabled: true },
                 });
                 return;
@@ -7570,9 +8118,66 @@ function createLocalAppServer(options = {}) {
             if (req.method === "POST" && (pathname === "/api/v1/video/sessions" || pathname === "/api/app/playback-sessions")) {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
+                const resourceType = String(payload.resource_type || "").trim();
+                const ticketPayload = { ...payload, resource_type: resourceType };
+                let privacyMode = null;
+                if (resourceType === "stream") {
+                    const cameraId = String(payload.camera_id || "").trim();
+                    if (!cameraId) {
+                        writeError(res, 400, "camera_id is required");
+                        return;
+                    }
+                    if (!requireCameraAccess(req, res, cameraId)) return;
+                    privacyMode = activeVideoPrivacyMode(cameraId);
+                    Object.assign(ticketPayload, {
+                        camera_id: cameraId,
+                        profile: String(payload.profile || "mobile"),
+                        privacy_mode: privacyMode,
+                    });
+                }
                 const ticket = stableId("play-");
-                playbackTickets.set(ticket, { payload, user_id: activeAppUser(req).id, expires_at: Date.now() + 120000 });
-                write(res, 200, { ticket, expires_at: new Date(Date.now() + 120000).toISOString() });
+                const expiresAt = Date.now() + 120000;
+                playbackTickets.set(ticket, { payload: ticketPayload, user_id: activeAppUser(req).id, expires_at: expiresAt });
+                const response = { ticket, expires_at: new Date(expiresAt).toISOString() };
+                if (privacyMode) {
+                    response.privacy_mode = privacyMode;
+                    response.minimum_privacy_mode = privacyMode;
+                    if (privacyMode === "skeleton") {
+                        const cameraId = encodeURIComponent(String(ticketPayload.camera_id));
+                        response.pose_stream_path = `/api/v1/video/cameras/${cameraId}/pose-stream`;
+                        response.scene_stream_path = `/api/v1/video/cameras/${cameraId}/scene.mjpg`;
+                        response.display_transport = "safe-scene-pose-v1";
+                    } else {
+                        response.display_transport = "mjpeg-v1";
+                    }
+                }
+                write(res, 200, response);
+                return;
+            }
+
+            const poseStreamMatch = pathname.match(/^\/api\/v1\/video\/cameras\/([^/]+)\/pose-stream$/);
+            if (req.method === "GET" && poseStreamMatch) {
+                const cameraId = decodeURIComponent(poseStreamMatch[1]);
+                if (!requireApp(req, res)) return;
+                if (!requireCameraAccess(req, res, cameraId)) return;
+                if (streamPrivacyMode(req, cameraId) !== "skeleton") {
+                    writeError(res, 403, "pose stream requires skeleton privacy mode");
+                    return;
+                }
+                writePoseSseStream(req, res, cameraId);
+                return;
+            }
+
+            const sceneStreamMatch = pathname.match(/^\/api\/v1\/video\/cameras\/([^/]+)\/scene\.mjpg$/);
+            if (req.method === "GET" && sceneStreamMatch) {
+                const cameraId = decodeURIComponent(sceneStreamMatch[1]);
+                if (!requireApp(req, res)) return;
+                if (!requireCameraAccess(req, res, cameraId)) return;
+                if (streamPrivacyMode(req, cameraId) !== "skeleton") {
+                    writeError(res, 403, "safe scene stream requires skeleton privacy mode");
+                    return;
+                }
+                writeSafeSceneMjpegStream(req, res, cameraId);
                 return;
             }
 
@@ -7613,6 +8218,33 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
+            if ((req.method === "GET" || req.method === "PUT") && pathname === "/api/v1/device/video-privacy") {
+                if (!requireDevice(req, res)) return;
+                const issuedToken = issuedDeviceTokenFromRequest(req);
+                const deviceId = String(issuedToken?.device_id || currentEdgeDeviceId());
+                const familyId = normalizeNumber(
+                    issuedToken?.family_id || store.db.devices[deviceId]?.family_id,
+                    null
+                );
+                if (!familyId) {
+                    writeError(res, 409, "device is not bound to a family");
+                    return;
+                }
+                if (req.method === "GET") {
+                    write(res, 200, { family_id: familyId, ...videoPrivacyForFamily(familyId) });
+                    return;
+                }
+                const payload = await parseJsonBody(req);
+                if (!isVideoPrivacyMode(payload.minimum_mode)) {
+                    writeError(res, 400, "minimum_mode is invalid");
+                    return;
+                }
+                const videoPrivacy = updateVideoPrivacyForFamily(familyId, payload.minimum_mode);
+                await store.save();
+                write(res, 200, { ok: true, family_id: familyId, ...videoPrivacy });
+                return;
+            }
+
             if (req.method === "POST" && pathname === "/api/v1/device/sync") {
                 await handleDeviceSync(req, res);
                 return;
@@ -7620,6 +8252,16 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "POST" && pathname === "/api/v1/device/live-frames/upload") {
                 await handleDeviceLiveFrameUpload(req, res, url);
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/device/live-poses/upload") {
+                await handleDeviceLivePoseUpload(req, res, url);
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/device/live-scenes/upload") {
+                await handleDeviceLiveSceneUpload(req, res, url);
                 return;
             }
 
@@ -7721,6 +8363,34 @@ function createLocalAppServer(options = {}) {
             }
 
             const carePreferenceMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/care-preferences$/);
+            const videoPrivacyMatch = pathname.match(/^\/api\/v1\/families\/([^/]+)\/video-privacy$/);
+            if (videoPrivacyMatch && req.method === "GET") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(videoPrivacyMatch[1]);
+                if (!requireFamilyAccess(req, res, familyId)) return;
+                write(res, 200, {
+                    family_id: familyId,
+                    ...videoPrivacyForFamily(familyId),
+                    can_manage: userCanManageFamily(activeAppUser(req).id, familyId),
+                });
+                return;
+            }
+
+            if (videoPrivacyMatch && req.method === "PUT") {
+                if (!requireApp(req, res)) return;
+                const familyId = Number(videoPrivacyMatch[1]);
+                if (!requireFamilyOwner(req, res, familyId)) return;
+                const payload = await parseJsonBody(req);
+                if (!isVideoPrivacyMode(payload.minimum_mode)) {
+                    writeError(res, 400, "minimum_mode is invalid");
+                    return;
+                }
+                const videoPrivacy = updateVideoPrivacyForFamily(familyId, payload.minimum_mode);
+                await store.save();
+                write(res, 200, { family_id: familyId, ...videoPrivacy, can_manage: true });
+                return;
+            }
+
             if (carePreferenceMatch && req.method === "GET") {
                 if (!requireApp(req, res)) return;
                 if (!requireFamilyAccess(req, res, Number(carePreferenceMatch[1]))) return;
@@ -7734,8 +8404,9 @@ function createLocalAppServer(options = {}) {
                 if (!requireFamilyAccess(req, res, familyId)) return;
                 const payload = await parseJsonBody(req);
                 const existing = carePreferences(familyId);
-                if (payload.metadata?.presence_monitoring && !userCanManageFamily(activeAppUser(req).id, familyId)) {
-                    writeError(res, 403, "只有家庭创建者可以修改外出与暂停守护设置。");
+                if ((payload.metadata?.presence_monitoring || payload.metadata?.video_privacy)
+                    && !userCanManageFamily(activeAppUser(req).id, familyId)) {
+                    writeError(res, 403, "只有家庭创建者可以修改守护设置。");
                     return;
                 }
                 const nextMetadata = payload.metadata && typeof payload.metadata === "object"
@@ -8085,35 +8756,7 @@ function createLocalAppServer(options = {}) {
                     .filter((message) => messageFamilyIds.has(Number(message.family_id)))
                     .filter((message) => !statusFilter || statusFilter === "all" || String(message.status || "open") === statusFilter)
                     .map(publicAppMessage);
-                const persistedEventIds = new Set(persisted.flatMap((message) => (
-                    Array.isArray(message.source_event_ids) ? message.source_event_ids.map(String) : []
-                )));
-                const events = eventList(url, { userVisible: true, familyIds: messageFamilyIds })
-                    .filter((event) => !event.acknowledged)
-                    .filter((event) => !persistedEventIds.has(String(event.id)))
-                    .slice(0, 5);
-                const eventMessages = events.map((event) => ({
-                    id: `event-${event.id}`,
-                    message_id: `event-${event.id}`,
-                    family_id: event.family_id || store.db.cameras[String(event.camera_id)]?.family_id || null,
-                    message_type: event.level === "critical" ? "alert" : "explain",
-                    title: event.type === "camera_offline"
-                        ? `${event.camera_name || event.room || "摄像头"} 暂时没有返回画面`
-                        : event.summary,
-                    subtitle: `${event.room || event.camera_name || "摄像头"} · ${event.event_type}`,
-                    body: event.type === "camera_offline"
-                        ? "家庭盒子暂时没有拿到这路画面，会继续重试。"
-                        : (event.payload?.rule?.reason || event.summary),
-                    facts: [event.event_type, event.level],
-                    actions: [{ key: "open_event", label: "查看事件" }],
-                    source_event_ids: [event.id],
-                    generated_by: "local-app-server",
-                    status: "open",
-                    priority: event.level === "critical" ? "high" : "normal",
-                    created_at: event.created_at,
-                    updated_at: event.updated_at || event.created_at,
-                }));
-                const messages = [...persisted, ...eventMessages]
+                const messages = persisted
                     .sort((a, b) => {
                         const priorityScore = (item) => item.priority === "high" ? 1 : 0;
                         const priorityDelta = priorityScore(b) - priorityScore(a);
@@ -8377,4 +9020,11 @@ if (require.main === module) {
         });
 }
 
-module.exports = { createLocalAppServer, createLocalAppServerAsync, createDefaultDb, normalizeDb };
+module.exports = {
+    createLocalAppServer,
+    createLocalAppServerAsync,
+    createDefaultDb,
+    normalizeDb,
+    compactSchedulerRuns,
+    MAX_SCHEDULER_RUNS,
+};

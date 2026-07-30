@@ -13,8 +13,14 @@ process.env.GOHOME_WEATHER_PROVIDER = "none";
 process.env.GOHOME_SEARCH_PROVIDER = "none";
 process.env.GOHOME_VISION_VERIFICATION_ENABLED = "0";
 
-const { createDefaultDb, createLocalAppServer, normalizeDb } = require("../local-app-server/server");
-const { createDbFromCloudRows, TABLE_ORDER } = require("../local-app-server/postgres-store");
+const {
+    createDefaultDb,
+    createLocalAppServer,
+    normalizeDb,
+    compactSchedulerRuns,
+    MAX_SCHEDULER_RUNS,
+} = require("../local-app-server/server");
+const { createDbFromCloudRows, PostgresStore, TABLE_ORDER } = require("../local-app-server/postgres-store");
 const { buildCloudSeedBundle, sha256 } = require("./export-local-app-db");
 
 const DEVICE_TOKEN = "verify-device-token";
@@ -89,7 +95,47 @@ function assertHtmlUsesLocalTailwind() {
     }
 }
 
+async function assertPostgresSaveCoalescing() {
+    const db = createDefaultDb();
+    let releaseFirstSave;
+    const firstSaveBlocked = new Promise((resolve) => {
+        releaseFirstSave = resolve;
+    });
+    const persistedBundles = [];
+    const persistedTableSets = [];
+    const store = new PostgresStore({
+        db,
+        pool: { end: async () => {} },
+        persistBundle: async (bundle, changedTables) => {
+            persistedBundles.push(bundle);
+            persistedTableSets.push(changedTables);
+            if (persistedBundles.length === 1) await firstSaveBlocked;
+        },
+    });
+
+    const first = store.save();
+    db.families[0].name = "并发期间更新";
+    const second = store.save();
+    releaseFirstSave();
+    await Promise.all([first, second]);
+
+    assert.equal(persistedBundles.length, 2);
+    assert.equal(persistedBundles[1].tables.families[0].name, "并发期间更新");
+    assert.deepEqual(persistedTableSets[1], ["families"]);
+    assert.equal(store.last_save_error, "");
+}
+
 async function main() {
+    await assertPostgresSaveCoalescing();
+    const oversizedSchedulerHistory = Array.from({ length: MAX_SCHEDULER_RUNS + 25 }, (_, index) => ({
+        id: index + 1,
+        updated_at: new Date(1_700_000_000_000 + index * 1000).toISOString(),
+    }));
+    const compactedSchedulerHistory = compactSchedulerRuns(oversizedSchedulerHistory);
+    assert.equal(compactedSchedulerHistory.length, MAX_SCHEDULER_RUNS);
+    assert.equal(compactedSchedulerHistory[0].id, 26);
+    assert.equal(compactedSchedulerHistory.at(-1).id, MAX_SCHEDULER_RUNS + 25);
+
     const defaultDb = createDefaultDb();
     for (const key of [
         "offline_enabled",
@@ -466,11 +512,40 @@ async function main() {
 
         const exchanged = await requestJson(baseUrl, "/api/device/token/exchange", {
             method: "POST",
-            body: JSON.stringify({ code: bindingCode.code, device_id: "edge-test", device_name: "测试盒子" }),
+            body: JSON.stringify({
+                code: bindingCode.code,
+                device_id: "edge-test",
+                device_name: "测试盒子",
+                bootstrap_cameras: [
+                    {
+                        local_camera_id: 26,
+                        name: "客厅恢复相机",
+                        room: "客厅",
+                        stream_url: "rtsp://192.168.1.20:554/stream1",
+                        username: "camera-user",
+                        password: "camera-password",
+                        enabled: true,
+                    },
+                ],
+            }),
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(exchanged.ok, true);
         assert.ok(exchanged.device_token);
+        assert.equal(exchanged.binding_summary.status, "bound");
+        assert.equal(exchanged.bootstrap_import.imported, 1);
+
+        const recoveredConfig = await requestJson(baseUrl, "/api/v1/device/config", {
+            headers: { Authorization: `Bearer ${exchanged.device_token}` },
+        });
+        assert.equal(recoveredConfig.binding_summary.status, "bound");
+        assert.equal(recoveredConfig.cameras.length, 1);
+        assert.equal(recoveredConfig.cameras[0].local_camera_id, 26);
+        assert.equal(recoveredConfig.cameras[0].stream_url, "rtsp://192.168.1.20:554/stream1");
+        await requestJson(baseUrl, `/api/cameras/${recoveredConfig.cameras[0].id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
 
         const reusedBindingCode = await fetch(`${baseUrl}/api/device/token/exchange`, {
             method: "POST",
@@ -820,10 +895,32 @@ async function main() {
             assert.match(userContent[0].text, /pose_factor_graph/);
             assert.match(userContent[0].text, /evidence_frames/);
             const imageContent = userContent.filter((item) => item.type === "image_url");
-            assert.equal(imageContent.length, 3);
+            assert.ok(imageContent.length >= 1 && imageContent.length <= 3);
             assert.ok(imageContent.every((item) => /^data:image\/jpeg;base64,/.test(item.image_url.url)));
-            const parsed = verificationRequestCount === 1
-                ? {
+            const promptText = userContent[0].text;
+            let parsed;
+            if (promptText.includes("视觉排除测试事件")) {
+                parsed = {
+                    person_count: 1,
+                    posture: "sitting",
+                    surface: "sofa",
+                    emergency: false,
+                    confidence: 0.94,
+                    reason: "人物稳定坐在沙发上，未看到跌倒或地面倒卧证据。",
+                    suggested_event_type: "none",
+                };
+            } else if (promptText.includes("视觉不确定测试事件")) {
+                parsed = {
+                    person_count: 1,
+                    posture: "unknown",
+                    surface: "unknown",
+                    emergency: false,
+                    confidence: 0.42,
+                    reason: "人物被遮挡，现有画面不足以判断是否存在危险姿态。",
+                    suggested_event_type: "uncertain",
+                };
+            } else if (verificationRequestCount === 1) {
+                parsed = {
                     person_count: 1,
                     posture: "fallen",
                     surface: "floor",
@@ -832,8 +929,9 @@ async function main() {
                     reason: "画面中一人位于地面低位。",
                     suggested_event_type: "fall_candidate",
                     unexpected: "strict contract must reject this field",
-                }
-                : {
+                };
+            } else {
+                parsed = {
                     person_count: 1,
                     posture: "fallen",
                     surface: "floor",
@@ -842,6 +940,7 @@ async function main() {
                     reason: "画面中一人横卧在地面区域，支持边缘端跌倒候选。",
                     suggested_event_type: "fall_candidate",
                 };
+            }
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({
                 id: `mock-vision-${verificationRequestCount}`,
@@ -973,6 +1072,89 @@ async function main() {
             assert.ok(app.store.db.notification_deliveries.some((delivery) => (
                 String(delivery.message_id) === String(verificationOutcomeMessage.message_id)
             )));
+            assert.equal(verifiedEvent.payload.incident.notification.policy, "confirmed-once-v1");
+            assert.equal(verifiedEvent.payload.incident.notification.decision, "notify_once");
+            assert.equal(verifiedEvent.payload.incident.notification.message_id, verificationOutcomeMessage.message_id);
+            assert.ok(verifiedEvent.payload.incident.notification.notified_at);
+
+            const createVerificationPolicyProbe = async ({ edgeEventId, summary, occurredAt }) => {
+                const media = await requestJson(
+                    baseUrl,
+                    `/api/v1/device/media-assets/upload?file_name=${edgeEventId}.jpg&snapshot_path=events/${edgeEventId}.jpg&content_type=image/jpeg&edge_event_id=${edgeEventId}&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence&evidence_frame_role=current&captured_at=${encodeURIComponent(occurredAt)}`,
+                    {
+                        method: "POST",
+                        body: Buffer.from(`mock-${edgeEventId}-jpeg`),
+                        headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
+                    },
+                );
+                return requestJson(baseUrl, "/api/v1/device/events", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        idempotency_key: `event:${edgeEventId}`,
+                        edge_event_id: edgeEventId,
+                        event_type: "fall_candidate",
+                        summary,
+                        level: "critical",
+                        room: "客厅",
+                        camera_id: 11,
+                        snapshot_path: `events/${edgeEventId}.jpg`,
+                        occurred_at: occurredAt,
+                        payload: {
+                            rule: { reason: "边缘端提交候选，等待云端复核。" },
+                            evidence_media_assets: [
+                                { asset: media.asset, role: "current", captured_at: occurredAt, postures: ["unknown"] },
+                            ],
+                            media_upload_result: { asset: media.asset },
+                            edge_upload: { edge_event_id: edgeEventId, edge_device_id: "edge-test" },
+                        },
+                    }),
+                    headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+                });
+            };
+
+            const policyMessageCount = app.store.db.app_messages.length;
+            const policyDeliveryCount = app.store.db.notification_deliveries.length;
+            const rejectedProbe = await createVerificationPolicyProbe({
+                edgeEventId: "verification-rejected",
+                summary: "视觉排除测试事件",
+                occurredAt: "2026-07-05T11:00:00.000Z",
+            });
+            assert.equal(rejectedProbe.message, null);
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            await requestJson(baseUrl, "/api/v1/internal/vision-verifications/run", {
+                method: "POST",
+                body: JSON.stringify({ force: true, limit: 1 }),
+            });
+            const rejectedEvent = await requestJson(baseUrl, `/api/v1/events/${rejectedProbe.event.id}`, {
+                headers: { Authorization: `Bearer ${appSessionToken}` },
+            });
+            assert.equal(rejectedEvent.payload.verification.status, "rejected");
+            assert.equal(rejectedEvent.payload.incident.status, "rejected");
+            assert.equal(rejectedEvent.payload.incident.notification.decision, "record_only");
+            assert.equal(rejectedEvent.payload.incident.notification.message_id, "");
+            assert.equal(app.store.db.app_messages.length, policyMessageCount);
+            assert.equal(app.store.db.notification_deliveries.length, policyDeliveryCount);
+
+            const uncertainProbe = await createVerificationPolicyProbe({
+                edgeEventId: "verification-uncertain",
+                summary: "视觉不确定测试事件",
+                occurredAt: "2026-07-05T12:00:00.000Z",
+            });
+            assert.equal(uncertainProbe.message, null);
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            await requestJson(baseUrl, "/api/v1/internal/vision-verifications/run", {
+                method: "POST",
+                body: JSON.stringify({ force: true, limit: 1 }),
+            });
+            const uncertainEvent = await requestJson(baseUrl, `/api/v1/events/${uncertainProbe.event.id}`, {
+                headers: { Authorization: `Bearer ${appSessionToken}` },
+            });
+            assert.equal(uncertainEvent.payload.verification.status, "uncertain");
+            assert.equal(uncertainEvent.payload.incident.status, "uncertain");
+            assert.equal(uncertainEvent.payload.incident.notification.decision, "record_only");
+            assert.equal(uncertainEvent.payload.incident.notification.message_id, "");
+            assert.equal(app.store.db.app_messages.length, policyMessageCount);
+            assert.equal(app.store.db.notification_deliveries.length, policyDeliveryCount);
             const verificationJob = app.store.db.model_generation_jobs.find((job) => (
                 job.purpose === "vision_event_verification"
                 && String(job.metadata?.event_id) === String(verificationEvent.event.id)
@@ -1144,6 +1326,56 @@ async function main() {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
 
+        const removedCameraEvent = {
+            id: app.store.nextId("event"),
+            family_id: transferFamily.id,
+            idempotency_key: "event:removed-camera-offline",
+            edge_event_id: "removed-camera-offline",
+            event_type: "camera_offline",
+            summary: "已移除摄像头的历史离线记录",
+            level: "warning",
+            room: "旧房间",
+            camera_id: "removed-camera",
+            camera_name: "已移除摄像头",
+            snapshot_path: "",
+            media_asset_id: null,
+            occurred_at: new Date().toISOString(),
+            acknowledged: false,
+            resolution: "",
+            payload: { rule: { reason: "保留历史事件时摄像头配置已经删除。" } },
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        };
+        app.store.db.events.push(removedCameraEvent);
+        const schedulerDateKey = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Asia/Shanghai",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).format(new Date());
+        const schedulerGuardMessage = {
+            id: "removed-camera-scheduler-guard",
+            message_id: `care-daily-${transferFamily.id}-${schedulerDateKey}`,
+            idempotency_key: `daily-care:${transferFamily.id}:${schedulerDateKey}`,
+            family_id: transferFamily.id,
+            message_type: "care_card",
+            title: "调度回归占位",
+            status: "archived",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        };
+        app.store.db.app_messages.push(schedulerGuardMessage);
+        const removedCameraRun = await requestJson(baseUrl, "/api/v1/internal/scheduler/run", {
+            method: "POST",
+            body: JSON.stringify({ family_id: transferFamily.id }),
+        });
+        assert.equal(removedCameraRun.run.status, "succeeded");
+        assert.equal(removedCameraRun.result.event_alerts_created, 0);
+        assert.equal(app.store.db.app_messages.some((message) => (
+            message.message_id === `event-alert-${removedCameraEvent.id}`
+        )), false);
+        app.store.db.app_messages = app.store.db.app_messages.filter((message) => message !== schedulerGuardMessage);
+
         const originalAbsenceThreshold = process.env.GOHOME_LONG_ABSENCE_SECONDS;
         try {
             process.env.GOHOME_LONG_ABSENCE_SECONDS = "60";
@@ -1167,15 +1399,8 @@ async function main() {
                 body: JSON.stringify({ family_id: family.id, force: true }),
             });
             assert.equal(absenceRun.result.long_absence_events_created, 1);
-            assert.ok(
-                absenceRun.result.incident_reminders_created >= 2,
-                JSON.stringify(app.store.db.events.map((event) => ({
-                    summary: event.summary,
-                    status: event.payload?.incident?.status,
-                    primary_event_id: event.payload?.incident?.primary_event_id,
-                    acknowledged: event.acknowledged,
-                }))),
-            );
+            assert.equal(absenceRun.result.incident_reminders_created, 0);
+            assert.equal(app.store.db.app_messages.some((message) => message.generated_by === "incident-reminder"), false);
             const validationEventIds = new Set(app.store.db.events.filter((event) => event.payload?.validation?.test_event).map((event) => String(event.id)));
             assert.ok(validationEventIds.size > 0);
             assert.equal(
@@ -1233,8 +1458,10 @@ async function main() {
         const events = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false", {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        assert.equal(events.length, 2);
+        assert.equal(events.length, 4);
         assert.ok(events.every((event) => event.type === "fall_candidate"));
+        assert.ok(events.some((event) => event.payload?.incident?.status === "rejected"));
+        assert.ok(events.some((event) => event.payload?.incident?.status === "uncertain"));
         const eventSummaries = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false&view=summary", {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
@@ -1741,13 +1968,13 @@ async function main() {
         assert.ok(seededFamilyRules);
         assert.equal(seededFamilyRules.rule_type, "edge_rules");
         assert.equal(seededFamilyRules.config.activity_detection_enabled, false);
-        assert.equal(seedBundle.tables.events.length, 5);
+        assert.equal(seedBundle.tables.events.length, 8);
         const seededFallEvent = seedBundle.tables.events.find((event) => event.event_type === "fall_candidate");
         const seededStaleOfflineEvent = seedBundle.tables.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(seededFallEvent);
         assert.ok(seededStaleOfflineEvent);
         assert.equal(seededFallEvent.camera_id, String(camera.id));
-        assert.equal(seedBundle.tables.media_assets.length, 5);
+        assert.equal(seedBundle.tables.media_assets.length, 7);
         const seededEventAsset = seedBundle.tables.media_assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(seededEventAsset.metadata.purpose, "event_evidence");
         assert.equal(seedBundle.tables.care_preferences.length, 1);
@@ -1785,14 +2012,14 @@ async function main() {
         assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].home_phone, "057100000000");
         assert.equal(Object.values(restoredDb.cameras).length, 2);
         assert.equal(String(restoredDb.cameras[String(claimFamilyCamera.id)].family_id), String(claimFamily.id));
-        assert.equal(restoredDb.events.length, 5);
+        assert.equal(restoredDb.events.length, 8);
         const restoredFallEvent = restoredDb.events.find((event) => event.event_type === "fall_candidate");
         const restoredStaleOfflineEvent = restoredDb.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(restoredFallEvent);
         assert.ok(restoredStaleOfflineEvent);
         assert.equal(restoredFallEvent.summary, "疑似跌倒");
         assert.equal(String(restoredFallEvent.camera_id), String(camera.id));
-        assert.equal(restoredDb.assets.length, 5);
+        assert.equal(restoredDb.assets.length, 7);
         const restoredEventAsset = restoredDb.assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(restoredEventAsset.purpose, "event_evidence");
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);
