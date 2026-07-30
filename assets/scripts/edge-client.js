@@ -1161,7 +1161,10 @@
         unbindDevice: (bindingId) => request(`/api/device-bindings/${encodeURIComponent(bindingId)}`, {
             method: "DELETE",
         }),
-        claimableDevices: () => request("/api/device-claims/available"),
+        claimableDevices: (familyId) => {
+            const query = familyId ? `?family_id=${encodeURIComponent(familyId)}` : "";
+            return request(`/api/device-claims/available${query}`);
+        },
         claimDevice: (payload) => request("/api/device-claims/claim", {
             method: "POST",
             body: JSON.stringify(payload),

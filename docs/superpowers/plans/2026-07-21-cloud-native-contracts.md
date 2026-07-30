@@ -31,7 +31,7 @@
 - Create: `local-app-server/test/native-schema.test.js`
 - Modify: `package.json`
 
-- [ ] **Step 1: Write the failing schema test**
+- [x] **Step 1: Write the failing schema test**
 
 ```js
 const test = require("node:test");
@@ -47,12 +47,12 @@ test("native migration defines action and curated catalog ownership", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test and verify failure**
+- [x] **Step 2: Run the test and verify failure**
 
 Run: `node --test local-app-server/test/native-schema.test.js`  
 Expected: FAIL because `005_native_app.sql` does not exist.
 
-- [ ] **Step 3: Add the migration**
+- [x] **Step 3: Add the migration**
 
 Define:
 
@@ -96,7 +96,7 @@ create table if not exists product_preferences (
 
 Add indexes for `(family_id, created_at desc)`, `(status, category)`, and message action lookup.
 
-- [ ] **Step 4: Add and run the test command**
+- [x] **Step 4: Add and run the test command**
 
 Add to `package.json`:
 
@@ -107,7 +107,7 @@ Add to `package.json`:
 Run: `npm run test:native-server`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add local-app-server/migrations/005_native_app.sql local-app-server/test/native-schema.test.js package.json
@@ -121,7 +121,7 @@ git commit -m "feat(server): add native app schema"
 - Create: `local-app-server/native-api/postgres-repository.js`
 - Test: `local-app-server/test/native-repository.test.js`
 
-- [ ] **Step 1: Write repository isolation tests**
+- [x] **Step 1: Write repository isolation tests**
 
 Test two users in different families and assert that `bootstrapForUser`, `messagesForFamily`, and `productsForFamily` never return rows from the other family. Also assert `recordMessageAction` returns the same row for the same idempotency key.
 
@@ -131,12 +131,12 @@ await assert.rejects(() => repo.messagesForFamily("family-b", "user-a"), /family
 assert.equal(first.id, duplicate.id);
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `node --test local-app-server/test/native-repository.test.js`  
 Expected: FAIL because the repository modules do not exist.
 
-- [ ] **Step 3: Implement the repository interface**
+- [x] **Step 3: Implement the repository interface**
 
 Expose exactly these methods:
 
@@ -156,12 +156,12 @@ class NativeRepository {
 
 The PostgreSQL implementation must use parameterized statements and an access guard based on `family_members`. It must not read a global active user.
 
-- [ ] **Step 4: Run repository tests**
+- [x] **Step 4: Run repository tests**
 
 Run: `npm run test:native-server`  
 Expected: PASS for JSON contract tests; PostgreSQL integration tests skip only when `GOHOME_DATABASE_URL` is absent.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add local-app-server/native-api/repository.js local-app-server/native-api/postgres-repository.js local-app-server/test/native-repository.test.js
@@ -175,7 +175,7 @@ git commit -m "feat(server): add account-scoped native repository"
 - Modify: `local-app-server/server.js`
 - Test: `local-app-server/test/postgres-row-delta.test.js`
 
-- [ ] **Step 1: Add a failing SQL-spy test**
+- [x] **Step 1: Add a failing SQL-spy test**
 
 Use a fake pool/client, call `store.save()` after changing one camera, and assert no query matches `delete from users`, `delete from families`, or another unmodified table. Then call `store.deleteRow("cameras", cameraID)` and assert exactly one parameterized camera delete occurs.
 
@@ -185,12 +185,12 @@ assert.equal(queries.some(q => /^delete from families/i.test(q.text)), false);
 assert.equal(queries.some(q => /insert into cameras/i.test(q.text)), true);
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `node --test local-app-server/test/postgres-row-delta.test.js`  
 Expected: FAIL because `replaceAllRows` deletes every table.
 
-- [ ] **Step 3: Implement snapshot-based row deltas**
+- [x] **Step 3: Implement snapshot-based row deltas**
 
 Maintain the last persisted bundle by table and primary key. Define a primary-key map (`users.id`, `families.id`, `devices.device_id`, and the corresponding declared key for every remaining table). In one transaction, upsert only changed rows with the mapped key, for example `on conflict (id) do update`, and acquire `pg_advisory_xact_lock(hashtext('gohome-app-store'))`. Never infer deletion from a row being absent in the in-memory snapshot, because native repository writes may have occurred in PostgreSQL. Add an explicit parameterized `deleteRow(table, id)` method and migrate existing camera, binding, session, and cleanup deletion routes to call it. Update the in-memory persisted snapshot only after commit.
 
@@ -220,16 +220,16 @@ git commit -m "fix(server): persist postgres changes by row"
 - Modify: `local-app-server/server.js`
 - Test: `local-app-server/test/native-auth.test.js`
 
-- [ ] **Step 1: Write tests for demo and production modes**
+- [x] **Step 1: Write tests for demo and production modes**
 
 Assert production rejects `000000`, challenge requests are rate-limited, challenge hashes expire, and debug mode accepts the configured `GOHOME_DEMO_OTP` only when `GOHOME_AUTH_MODE=demo`.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `node --test local-app-server/test/native-auth.test.js`  
 Expected: FAIL because the legacy route accepts `000000` unconditionally.
 
-- [ ] **Step 3: Implement provider abstraction**
+- [x] **Step 3: Implement provider abstraction**
 
 Define `requestCode(phone)` and `verifyCode(phone, code)` around a `SmsProvider`. Store only `sha256(challengeId + code + serverSecret)`, expiry, attempt count, and consumed timestamp. Return `503 sms provider not configured` in production when no provider exists; never silently fall back to demo OTP.
 
@@ -259,20 +259,20 @@ git commit -m "feat(auth): enforce environment-scoped phone verification"
 - Modify: `local-app-server/server.js`
 - Test: `local-app-server/test/native-api.test.js`
 
-- [ ] **Step 1: Write failing HTTP contract tests**
+- [x] **Step 1: Write failing HTTP contract tests**
 
 Assert `/api/v2/app/bootstrap` returns `user`, `families`, `active_family_id`, `onboarding.next_step`, `unread_count`, and `revision`; `/api/v2/home` returns separate `weather`, `calendar`, `distance`, `critical_alert`, and `articles` fields. Assert articles without HTTPS source URLs are omitted.
 
-- [ ] **Step 2: Run and verify 404**
+- [x] **Step 2: Run and verify 404**
 
 Run: `node --test local-app-server/test/native-api.test.js`  
 Expected: FAIL with HTTP 404.
 
-- [ ] **Step 3: Implement router delegation and views**
+- [x] **Step 3: Implement router delegation and views**
 
 Delegate `/api/v2/*` before legacy route matching. Return ETags/revisions and support `If-None-Match`. Bootstrap computes exactly one onboarding next step: `family`, `profile`, `device`, `camera`, or `complete`.
 
-- [ ] **Step 4: Run contract tests**
+- [x] **Step 4: Run contract tests**
 
 Run: `npm run test:native-server`  
 Expected: PASS with two-account isolation fixtures.
@@ -292,16 +292,16 @@ git commit -m "feat(server): expose native bootstrap and home contracts"
 - Modify: `local-app-server/server.js`
 - Test: `local-app-server/test/native-messages.test.js`
 
-- [ ] **Step 1: Write workflow tests**
+- [x] **Step 1: Write workflow tests**
 
 Create one threshold trigger and assert one idempotent `return_home` message contains `trigger_reason`, 2-3 `topics`, two `message_variants`, and allowed actions. Record `shared`, `snoozed`, and `returned_home`; assert each updates state without claiming WeChat delivery.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `node --test local-app-server/test/native-messages.test.js`  
 Expected: FAIL because v2 message actions are absent.
 
-- [ ] **Step 3: Implement endpoints**
+- [x] **Step 3: Implement endpoints**
 
 Implement:
 
@@ -313,7 +313,7 @@ POST /api/v2/messages/:id/actions
 
 Allow only `opened`, `shared`, `contacted`, `snoozed`, `dismissed`, and `returned_home`. Require an idempotency key. `snoozed` requires a future timestamp; `returned_home` closes the reminder and updates the visit record.
 
-- [ ] **Step 4: Run scheduler and message tests**
+- [x] **Step 4: Run scheduler and message tests**
 
 Run: `npm run test:native-server && npm run verify:app-server`  
 Expected: PASS; legacy safety reminders remain unchanged.
@@ -332,16 +332,16 @@ git commit -m "feat(messages): close return-home action workflow"
 - Modify: `local-app-server/native-api/router.js`
 - Test: `local-app-server/test/native-products.test.js`
 
-- [ ] **Step 1: Write product policy tests**
+- [x] **Step 1: Write product policy tests**
 
 Reject non-HTTPS links, stale verification timestamps, missing source/brand/image, and categories matching medicine, supplement, medical device, or diagnosis. Verify a household safety light with a real source passes.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `node --test local-app-server/test/native-products.test.js`  
 Expected: FAIL because policy and endpoints are absent.
 
-- [ ] **Step 3: Implement product policy and endpoints**
+- [x] **Step 3: Implement product policy and endpoints**
 
 Add `GET /api/v2/products`, `GET /api/v2/products/:id`, and preference GET/PUT. Responses expose no cart, checkout, order, payment, or inventory fields. Recommendation reasons use only explicitly selected preference categories/needs.
 
@@ -358,7 +358,7 @@ npm run verify:cloud-onboarding
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add local-app-server/native-api/product-policy.js local-app-server/native-api/router.js local-app-server/test/native-products.test.js

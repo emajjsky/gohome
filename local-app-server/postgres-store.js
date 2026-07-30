@@ -1,13 +1,13 @@
 "use strict";
 
-const crypto = require("crypto");
-const { buildCloudSeedBundle } = require("../scripts/export-local-app-db");
+const { buildCloudSeedBundle, schedulerRunRow } = require("../scripts/export-local-app-db");
 
 const TABLE_ORDER = [
     "users",
     "app_sessions",
     "families",
     "family_members",
+    "family_invitations",
     "elder_profiles",
     "devices",
     "device_bindings",
@@ -20,6 +20,7 @@ const TABLE_ORDER = [
     "model_providers",
     "content_sources",
     "media_assets",
+    "media_upload_intents",
     "events",
     "device_heartbeats",
     "calendar_events",
@@ -34,13 +35,12 @@ const TABLE_ORDER = [
     "audit_logs",
 ];
 
-const DELETE_ORDER = [...TABLE_ORDER].reverse();
-
 const PRIMARY_KEYS = Object.freeze({
     users: "id",
     app_sessions: "id",
     families: "id",
     family_members: "id",
+    family_invitations: "id",
     elder_profiles: "id",
     devices: "device_id",
     device_bindings: "id",
@@ -53,6 +53,7 @@ const PRIMARY_KEYS = Object.freeze({
     model_providers: "provider_id",
     content_sources: "id",
     media_assets: "id",
+    media_upload_intents: "asset_id",
     events: "id",
     device_heartbeats: "id",
     calendar_events: "id",
@@ -66,44 +67,6 @@ const PRIMARY_KEYS = Object.freeze({
     device_config_versions: "id",
     audit_logs: "id",
 });
-
-// Care cards have a mutable daily business key in addition to their primary key.
-// Rebuilding this unreferenced table avoids transient unique-key collisions when
-// a normalization pass changes which historical row owns a daily key.
-const REBUILD_TABLES = new Set(["care_cards"]);
-const REVISION_SIGNATURE_TABLES = new Set([
-    "media_assets",
-    "events",
-    "app_messages",
-    "notification_deliveries",
-    "scheduler_runs",
-    "model_generation_jobs",
-]);
-
-function tableSignature(table, rows) {
-    const primaryKey = PRIMARY_KEYS[table];
-    const hash = crypto.createHash("sha256");
-    const ordered = [...rows].sort((left, right) => String(left[primaryKey] || "").localeCompare(String(right[primaryKey] || "")));
-    hash.update(`${table}:${ordered.length}\n`);
-    for (const row of ordered) {
-        if (REVISION_SIGNATURE_TABLES.has(table)) {
-            hash.update(JSON.stringify([
-                row[primaryKey],
-                row.updated_at || "",
-                row.created_at || "",
-                row.status || "",
-            ]));
-        } else {
-            hash.update(JSON.stringify(row));
-        }
-        hash.update("\n");
-    }
-    return hash.digest("hex");
-}
-
-function bundleSignatures(bundle) {
-    return new Map(TABLE_ORDER.map((table) => [table, tableSignature(table, bundle.tables[table] || [])]));
-}
 
 function textId(value, fallback = "") {
     if (value === null || value === undefined || value === "") return String(fallback || "");
@@ -119,8 +82,16 @@ function iso(value, fallback = null) {
 function dateText(value, fallback = "") {
     if (!value) return fallback;
     if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-    const parsed = iso(value);
-    return parsed ? parsed.slice(0, 10) : fallback;
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return fallback;
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
 }
 
 function metadataValue(row, key, fallback = null) {
@@ -134,6 +105,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         users: [],
         families: [],
         family_members: [],
+        family_invitations: [],
         app_sessions: [],
         elder_profiles: {},
         device_bindings: [],
@@ -142,6 +114,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         devices: {},
         cameras: {},
         assets: [],
+        media_upload_intents: [],
         events: [],
         heartbeats: [],
         calendar_events: [],
@@ -164,6 +137,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             display_name: user.display_name || "",
             phone: user.phone || "",
             password: "",
+            password_hash: user.password_hash || "",
             created_at: iso(user.created_at, db.created_at),
             updated_at: iso(user.updated_at, iso(user.created_at, db.created_at)),
         });
@@ -188,6 +162,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         db.families.push({
             id: family.id,
             name: family.name || "默认家庭",
+            metadata: family.metadata && typeof family.metadata === "object" ? family.metadata : {},
             member_count: Number(metadataValue(family, "member_count", 1)) || 1,
             created_by_user_id: metadataValue(family, "created_by_user_id", null),
             presence_state: metadataValue(family, "presence_state", {}),
@@ -207,6 +182,23 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             joined_at: iso(member.joined_at, iso(member.created_at, db.created_at)),
             created_at: iso(member.created_at, db.created_at),
             updated_at: iso(member.updated_at, iso(member.created_at, db.created_at)),
+        });
+    }
+
+    for (const invitation of rowsByTable.family_invitations || []) {
+        db.family_invitations.push({
+            id: invitation.id,
+            family_id: invitation.family_id,
+            code_hash: invitation.code_hash,
+            code_hint: invitation.code_hint || "",
+            created_by_user_id: invitation.created_by_user_id || null,
+            status: invitation.status || "active",
+            expires_at: iso(invitation.expires_at),
+            used_by_user_id: invitation.used_by_user_id || null,
+            used_at: iso(invitation.used_at),
+            revoked_at: iso(invitation.revoked_at),
+            created_at: iso(invitation.created_at, db.created_at),
+            updated_at: iso(invitation.updated_at, iso(invitation.created_at, db.created_at)),
         });
     }
 
@@ -386,12 +378,31 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             storage_key: asset.storage_key || "",
             edge_event_id: asset.edge_event_id || "",
             purpose: metadataValue(asset, "purpose", ""),
+            evidence_frame_role: metadataValue(asset, "evidence_frame_role", ""),
             local_camera_id: metadataValue(asset, "local_camera_id", null),
             captured_at: iso(metadataValue(asset, "captured_at", null)),
             size: Number(asset.size_bytes || 0),
             url: metadataValue(asset, "url", ""),
+            metadata: asset.metadata && typeof asset.metadata === "object" ? asset.metadata : {},
             created_at: iso(asset.created_at, db.created_at),
             updated_at: iso(asset.updated_at, iso(asset.created_at, db.created_at)),
+        });
+    }
+
+    for (const intent of rowsByTable.media_upload_intents || []) {
+        db.media_upload_intents.push({
+            asset_id: intent.asset_id,
+            family_id: intent.family_id,
+            user_id: intent.user_id,
+            object_key: intent.object_key || "",
+            content_type: intent.content_type || "image/jpeg",
+            size_bytes: Number(intent.size_bytes || 0),
+            pixel_width: Number(intent.pixel_width || 0),
+            pixel_height: Number(intent.pixel_height || 0),
+            duration_seconds: Number(intent.duration_seconds || 0),
+            expires_at: iso(intent.expires_at),
+            created_at: iso(intent.created_at, db.created_at),
+            updated_at: iso(intent.updated_at, iso(intent.created_at, db.created_at)),
         });
     }
 
@@ -518,7 +529,10 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             user_id: token.user_id || "",
             app_install_id: token.app_install_id || "",
             platform: token.platform || "ios",
+            provider: token.provider || "apns",
+            environment: token.environment || "production",
             push_token_hash: token.push_token_hash || "",
+            token_ciphertext: token.token_ciphertext || "",
             token_preview: token.token_preview || "",
             status: token.status || "active",
             device_name: token.device_name || "",
@@ -643,76 +657,93 @@ async function readRowsByTable(pool) {
     return rowsByTable;
 }
 
-function postgresValue(value) {
+function sqlValue(value) {
     if (value && typeof value === "object" && !Buffer.isBuffer(value) && !(value instanceof Date)) {
         return JSON.stringify(value);
     }
     return value;
 }
 
+function comparable(value) {
+    if (value instanceof Date) return value.toISOString();
+    if (Buffer.isBuffer(value)) return value.toString("base64");
+    if (Array.isArray(value)) return value.map(comparable);
+    if (value && typeof value === "object") {
+        return Object.fromEntries(Object.keys(value).sort().map((key) => [key, comparable(value[key])]));
+    }
+    return value;
+}
+
+function rowFingerprint(row) {
+    return JSON.stringify(comparable(row));
+}
+
+function rowsByPrimaryKey(table, rows) {
+    const primaryKey = PRIMARY_KEYS[table];
+    if (!primaryKey) throw new Error(`unsupported postgres table: ${table}`);
+    const mapped = new Map();
+    for (const row of rows || []) {
+        const key = textId(row?.[primaryKey]);
+        if (!key) throw new Error(`missing ${table}.${primaryKey}`);
+        mapped.set(key, row);
+    }
+    return mapped;
+}
+
+function changedRows(table, currentRows, persistedRows) {
+    const persisted = rowsByPrimaryKey(table, persistedRows);
+    return (currentRows || []).filter((current) => {
+        const key = textId(current?.[PRIMARY_KEYS[table]]);
+        const previous = persisted.get(key);
+        return !previous || rowFingerprint(previous) !== rowFingerprint(current);
+    });
+}
+
 async function upsertRows(client, table, rows) {
-    const groups = new Map();
+    const primaryKey = PRIMARY_KEYS[table];
     for (const row of rows) {
         const columns = Object.keys(row);
         if (!columns.length) continue;
-        const signature = columns.join("\u0000");
-        if (!groups.has(signature)) groups.set(signature, { columns, rows: [] });
-        groups.get(signature).rows.push(row);
+        const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ");
+        const values = columns.map((column) => sqlValue(row[column]));
+        const updatedColumns = columns.filter((column) => column !== primaryKey);
+        const conflictAction = updatedColumns.length
+            ? `do update set ${updatedColumns.map((column) => `${column} = excluded.${column}`).join(", ")}`
+            : "do nothing";
+        await client.query(
+            `insert into ${table} (${columns.join(", ")}) values (${placeholders}) on conflict (${primaryKey}) ${conflictAction}`,
+            values,
+        );
     }
+}
 
-    for (const group of groups.values()) {
-        const columns = group.columns;
+function mergePersistedTables(persistedTables, currentTables) {
+    const merged = {};
+    for (const table of TABLE_ORDER) {
         const primaryKey = PRIMARY_KEYS[table];
-        const updateColumns = columns.filter((column) => column !== primaryKey);
-        const conflictClause = updateColumns.length
-            ? `on conflict (${primaryKey}) do update set ${updateColumns.map((column) => `${column} = excluded.${column}`).join(", ")}`
-            : `on conflict (${primaryKey}) do nothing`;
-        const maxRowsPerInsert = Math.max(1, Math.min(250, Math.floor(60000 / columns.length)));
-        for (let offset = 0; offset < group.rows.length; offset += maxRowsPerInsert) {
-            const batch = group.rows.slice(offset, offset + maxRowsPerInsert);
-            const values = [];
-            const tuples = batch.map((row) => {
-                const placeholders = columns.map((column) => {
-                    values.push(postgresValue(row[column]));
-                    return `$${values.length}`;
-                });
-                return `(${placeholders.join(", ")})`;
-            });
-            await client.query(
-                `insert into ${table} (${columns.join(", ")}) values ${tuples.join(", ")} ${conflictClause}`,
-                values,
-            );
+        const rows = rowsByPrimaryKey(table, persistedTables?.[table] || []);
+        for (const row of currentTables?.[table] || []) {
+            rows.set(textId(row[primaryKey]), comparable(row));
         }
+        merged[table] = [...rows.values()];
     }
+    return merged;
 }
 
-async function deleteRowsMissingFromBundle(client, table, rows) {
-    if (REBUILD_TABLES.has(table)) {
-        await client.query(`delete from ${table}`);
-        return;
-    }
-    const primaryKey = PRIMARY_KEYS[table];
-    const ids = rows.map((row) => row[primaryKey]).filter((value) => value !== null && value !== undefined && value !== "");
-    if (!ids.length) {
-        await client.query(`delete from ${table}`);
-        return;
-    }
-    const placeholders = ids.map((_, index) => `$${index + 1}`).join(", ");
-    await client.query(`delete from ${table} where ${primaryKey} not in (${placeholders})`, ids);
-}
-
-async function synchronizeAllRows(pool, bundle, changedTables = TABLE_ORDER) {
+async function persistRowDeltas(pool, bundle, persistedTables = {}) {
     const client = await pool.connect();
-    const changed = new Set(changedTables);
     try {
         await client.query("begin");
-        for (const table of DELETE_ORDER.filter((table) => changed.has(table))) {
-            await deleteRowsMissingFromBundle(client, table, bundle.tables[table] || []);
-        }
-        for (const table of TABLE_ORDER.filter((table) => changed.has(table))) {
-            await upsertRows(client, table, bundle.tables[table] || []);
+        await client.query("select pg_advisory_xact_lock(hashtext('gohome-app-store'))");
+        for (const table of TABLE_ORDER) {
+            await upsertRows(
+                client,
+                table,
+                changedRows(table, bundle.tables[table] || [], persistedTables[table] || []),
+            );
         }
         await client.query("commit");
+        return mergePersistedTables(persistedTables, bundle.tables);
     } catch (error) {
         await client.query("rollback");
         throw error;
@@ -726,11 +757,11 @@ class PostgresStore {
         this.kind = "postgres";
         this.pool = options.pool;
         this.db = options.db;
-        this.persistBundle = options.persistBundle || ((bundle, changedTables) => synchronizeAllRows(this.pool, bundle, changedTables));
-        this.persistedTableSignatures = options.persistedTableSignatures || new Map();
-        this.requestedSaveGeneration = 0;
-        this.persistedSaveGeneration = 0;
-        this.pendingSave = null;
+        this.persistedTables = mergePersistedTables({}, options.persistedTables || {});
+        this.persistBundle = options.persistBundle || ((bundle) => (
+            persistRowDeltas(this.pool, bundle, this.persistedTables)
+        ));
+        this.pendingSave = Promise.resolve();
         this.last_save_error = "";
     }
 
@@ -742,43 +773,96 @@ class PostgresStore {
 
     save() {
         this.db.updated_at = new Date().toISOString();
-        this.requestedSaveGeneration += 1;
-        if (!this.pendingSave) {
-            this.pendingSave = this.drainSaves().finally(() => {
-                this.pendingSave = null;
+        const bundle = buildCloudSeedBundle(this.db, { source: "postgres-store" });
+        this.pendingSave = this.pendingSave
+            .catch(() => undefined)
+            .then(async () => {
+                const changedTables = TABLE_ORDER.filter((table) => (
+                    changedRows(table, bundle.tables[table] || [], this.persistedTables[table] || []).length > 0
+                ));
+                const persisted = await this.persistBundle(bundle, changedTables);
+                this.persistedTables = persisted || mergePersistedTables({}, bundle.tables);
+            })
+            .then(() => {
+                this.last_save_error = "";
+            })
+            .catch((error) => {
+                this.last_save_error = error.message || String(error);
+                throw error;
             });
-        }
         return this.pendingSave;
     }
 
-    async drainSaves() {
-        try {
-            while (this.persistedSaveGeneration < this.requestedSaveGeneration) {
-                const generation = this.requestedSaveGeneration;
-                const bundle = buildCloudSeedBundle(this.db, { source: "postgres-store" });
-                const nextSignatures = bundleSignatures(bundle);
-                const changedTables = TABLE_ORDER.filter((table) => (
-                    this.persistedTableSignatures.get(table) !== nextSignatures.get(table)
-                ));
-                if (changedTables.length) {
-                    const startedAt = Date.now();
-                    await this.persistBundle(bundle, changedTables);
-                    console.info(`[postgres-store] persisted tables=${changedTables.join(",")} duration_ms=${Date.now() - startedAt}`);
+    saveSchedulerRun(run, { retention = 500 } = {}) {
+        const row = schedulerRunRow(run);
+        if (!textId(row.id)) return this.pendingSave;
+        const retained = Math.max(100, Math.trunc(Number(retention) || 500));
+        this.pendingSave = this.pendingSave
+            .catch(() => undefined)
+            .then(async () => {
+                const client = await this.pool.connect();
+                try {
+                    await client.query("begin");
+                    await client.query("select pg_advisory_xact_lock(hashtext('gohome-app-store'))");
+                    await upsertRows(client, "scheduler_runs", [row]);
+                    await client.query(
+                        "delete from scheduler_runs where id in (select id from scheduler_runs order by created_at desc offset $1)",
+                        [retained],
+                    );
+                    await client.query("commit");
+                    const rows = rowsByPrimaryKey("scheduler_runs", this.persistedTables.scheduler_runs || []);
+                    rows.set(textId(row.id), comparable(row));
+                    this.persistedTables.scheduler_runs = [...rows.values()]
+                        .sort((first, second) => Date.parse(second.created_at || 0) - Date.parse(first.created_at || 0))
+                        .slice(0, retained);
+                    this.last_save_error = "";
+                } catch (error) {
+                    await client.query("rollback");
+                    this.last_save_error = error.message || String(error);
+                    throw error;
+                } finally {
+                    client.release();
                 }
-                for (const table of changedTables) {
-                    this.persistedTableSignatures.set(table, nextSignatures.get(table));
+            });
+        return this.pendingSave;
+    }
+
+    deleteRow(table, id) {
+        const primaryKey = PRIMARY_KEYS[table];
+        const rowId = textId(id);
+        if (!primaryKey) return Promise.reject(new Error(`unsupported postgres table: ${table}`));
+        if (!rowId) return Promise.reject(new Error(`missing ${table}.${primaryKey}`));
+        this.pendingSave = this.pendingSave
+            .catch(() => undefined)
+            .then(async () => {
+                const client = await this.pool.connect();
+                try {
+                    await client.query("begin");
+                    await client.query("select pg_advisory_xact_lock(hashtext('gohome-app-store'))");
+                    await client.query(`delete from ${table} where ${primaryKey} = $1`, [rowId]);
+                    await client.query("commit");
+                    this.persistedTables[table] = (this.persistedTables[table] || [])
+                        .filter((row) => textId(row[primaryKey]) !== rowId);
+                    if (table === "cameras") {
+                        this.persistedTables.camera_secrets = (this.persistedTables.camera_secrets || [])
+                            .filter((row) => textId(row.camera_id) !== rowId);
+                        this.persistedTables.care_rules = (this.persistedTables.care_rules || [])
+                            .filter((row) => textId(row.camera_id) !== rowId);
+                    }
+                    this.last_save_error = "";
+                } catch (error) {
+                    await client.query("rollback");
+                    this.last_save_error = error.message || String(error);
+                    throw error;
+                } finally {
+                    client.release();
                 }
-                this.persistedSaveGeneration = generation;
-            }
-            this.last_save_error = "";
-        } catch (error) {
-            this.last_save_error = error.message || String(error);
-            throw error;
-        }
+            });
+        return this.pendingSave;
     }
 
     async close() {
-        if (this.pendingSave) await this.pendingSave;
+        await this.pendingSave;
         await this.pool.end();
     }
 }
@@ -794,12 +878,7 @@ async function createPostgresStore(options) {
     const hasSeedRows = TABLE_ORDER.some((table) => (rowsByTable[table] || []).length > 0);
     const rawDb = hasSeedRows ? createDbFromCloudRows(rowsByTable, options.initialDb) : options.initialDb;
     const db = options.normalizeDb(rawDb);
-    const initialBundle = hasSeedRows ? buildCloudSeedBundle(db, { source: "postgres-store-initial" }) : null;
-    const store = new PostgresStore({
-        pool,
-        db,
-        persistedTableSignatures: initialBundle ? bundleSignatures(initialBundle) : new Map(),
-    });
+    const store = new PostgresStore({ pool, db, persistedTables: rowsByTable });
     if (!hasSeedRows && options.seedWhenEmpty !== false) {
         await store.save();
     }
@@ -809,6 +888,8 @@ async function createPostgresStore(options) {
 module.exports = {
     createPostgresStore,
     createDbFromCloudRows,
+    persistRowDeltas,
     PostgresStore,
+    PRIMARY_KEYS,
     TABLE_ORDER,
 };

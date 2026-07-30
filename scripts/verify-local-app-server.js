@@ -21,7 +21,7 @@ const {
     MAX_SCHEDULER_RUNS,
 } = require("../local-app-server/server");
 const { createDbFromCloudRows, PostgresStore, TABLE_ORDER } = require("../local-app-server/postgres-store");
-const { buildCloudSeedBundle, sha256 } = require("./export-local-app-db");
+const { buildCloudSeedBundle, CLOUD_SEED_SCHEMA_VERSION, sha256 } = require("./export-local-app-db");
 
 const DEVICE_TOKEN = "verify-device-token";
 const APP_TOKEN = "verify-app-token";
@@ -62,6 +62,15 @@ function schemaColumns(sql, tableName) {
         const line = rawLine.trim().replace(/,$/, "");
         if (!line || /^(primary|unique|foreign|constraint|check)\b/i.test(line)) continue;
         columns.add(line.split(/\s+/)[0].replace(/"/g, ""));
+    }
+    const alterations = new RegExp(
+        `alter table ${escapedTable}\\s+([\\s\\S]*?);`,
+        "gi",
+    );
+    for (const alteration of sql.matchAll(alterations)) {
+        for (const addition of alteration[1].matchAll(/add column(?: if not exists)?\s+"?([a-z0-9_]+)"?/gi)) {
+            columns.add(addition[1]);
+        }
     }
     return columns;
 }
@@ -166,6 +175,8 @@ async function main() {
         dataDir: tempDir,
         deviceToken: DEVICE_TOKEN,
         appToken: APP_TOKEN,
+        authMode: "demo",
+        demoOtp: "000000",
     });
     const baseUrl = await listen(app.server);
 
@@ -257,7 +268,14 @@ async function main() {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(family.name, "测试家庭");
-        assert.match(family.join_code, /^GH-\d+-[A-F0-9]{6}$/);
+        assert.equal(family.join_code, undefined);
+
+        const invitation = await requestJson(baseUrl, `/api/v2/families/${family.id}/invitations`, {
+            method: "POST",
+            body: JSON.stringify({ expires_in_minutes: 10 }),
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.match(invitation.code, /^GH-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}(?:-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}){2}$/);
 
         const invalidJoin = await fetch(`${baseUrl}/api/families/join`, {
             method: "POST",
@@ -271,7 +289,7 @@ async function main() {
 
         const joinedFamily = await requestJson(baseUrl, "/api/families/join", {
             method: "POST",
-            body: JSON.stringify({ code: family.join_code }),
+            body: JSON.stringify({ code: invitation.code }),
             headers: { Authorization: `Bearer ${phoneRegistered.token}` },
         });
         assert.equal(String(joinedFamily.id), String(family.id));
@@ -1939,7 +1957,7 @@ async function main() {
         assert.equal(customizedRules.activity_detection_enabled, false);
 
         const seedBundle = buildCloudSeedBundle(app.store.db, { source: "verify-local-app-server" });
-        assert.equal(seedBundle.schema_version, "004_app_sessions");
+        assert.equal(seedBundle.schema_version, CLOUD_SEED_SCHEMA_VERSION);
         assert.equal(seedBundle.tables.users.length, 3);
         assert.ok(seedBundle.tables.users.some((user) => user.email === phoneAccountEmail));
         assert.ok(seedBundle.tables.app_sessions.length >= 3);

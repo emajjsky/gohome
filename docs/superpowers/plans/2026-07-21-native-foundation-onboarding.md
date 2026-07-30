@@ -31,7 +31,7 @@
 - Create: `ios-shell/GoHomeShellTests/AppSmokeTests.swift`
 - Create: `ios-shell/GoHomeShellUITests/LaunchTests.swift`
 
-- [ ] **Step 1: Add test targets and failing smoke tests**
+- [x] **Step 1: Add test targets and failing smoke tests**
 
 ```swift
 import XCTest
@@ -57,7 +57,7 @@ xcodebuild test -project GoHomeShell.xcodeproj -scheme GoHomeShell \
   -destination 'platform=iOS Simulator,name=iPhone 16 Pro' "${args[@]}"
 ```
 
-- [ ] **Step 2: Generate and verify failure**
+- [x] **Step 2: Generate and verify failure**
 
 Run:
 
@@ -70,7 +70,7 @@ xcodebuild test -project GoHomeShell.xcodeproj -scheme GoHomeShell \
 
 Expected: FAIL because `AppRoute` is undefined.
 
-- [ ] **Step 3: Add the minimal route type**
+- [x] **Step 3: Add the minimal route type**
 
 Create `Sources/App/AppRoute.swift`:
 
@@ -87,12 +87,12 @@ enum OnboardingStep: String, Codable, Equatable {
 }
 ```
 
-- [ ] **Step 4: Regenerate and pass smoke test**
+- [x] **Step 4: Regenerate and pass smoke test**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellTests/AppSmokeTests`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/project.yml ios-shell/scripts/test.sh ios-shell/GoHomeShellTests ios-shell/GoHomeShellUITests ios-shell/GoHomeShell/Sources/App/AppRoute.swift ios-shell/GoHomeShell.xcodeproj
@@ -107,7 +107,7 @@ git commit -m "test(ios): add native unit and UI targets"
 - Create: `ios-shell/GoHomeShell/Sources/Networking/Endpoint.swift`
 - Test: `ios-shell/GoHomeShellTests/APIClientTests.swift`
 
-- [ ] **Step 1: Write transport tests with URLProtocol**
+- [x] **Step 1: Write transport tests with URLProtocol**
 
 Test authorization, JSON decode, 401 mapping, server detail mapping, cancellation, and ETag 304 handling.
 
@@ -117,7 +117,7 @@ XCTAssertEqual(response.user.phone, "13800000000")
 XCTAssertEqual(URLProtocolStub.lastRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer token")
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run:
 
@@ -130,7 +130,7 @@ xcodebuild test -project GoHomeShell.xcodeproj -scheme GoHomeShell \
 
 Expected: FAIL because `APIClient` is undefined.
 
-- [ ] **Step 3: Implement actor client**
+- [x] **Step 3: Implement actor client**
 
 ```swift
 actor APIClient {
@@ -149,13 +149,13 @@ actor APIClient {
 
 Use `GoHomeAPIBaseURL` from `Info.plist`; do not reuse `GoHomeWebAppURL`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellTests/APIClientTests`
 
 Expected: all API client tests PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Networking ios-shell/GoHomeShellTests/APIClientTests.swift ios-shell/GoHomeShell/Config/Info.plist
@@ -169,16 +169,16 @@ git commit -m "feat(ios): add typed cloud API client"
 - Create: `Sources/Storage/DiskCache.swift`
 - Test: `GoHomeShellTests/AuthAndCacheTests.swift`
 
-- [ ] **Step 1: Write failing isolation tests**
+- [x] **Step 1: Write failing isolation tests**
 
 Assert token round-trip, logout deletion, user/family cache key separation, expired-entry rejection, and prior-account data not returned after switching scope.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellTests/AuthAndCacheTests`  
 Expected: FAIL because stores do not exist.
 
-- [ ] **Step 3: Implement stores**
+- [x] **Step 3: Implement stores**
 
 ```swift
 struct CacheScope: Hashable, Codable {
@@ -195,13 +195,13 @@ actor DiskCache {
 
 Store Keychain items under service `com.gohome.family.auth`; use `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
 
-- [ ] **Step 4: Run tests and inspect filesystem protection**
+- [x] **Step 4: Run tests and inspect filesystem protection**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellTests/AuthAndCacheTests`
 
 Expected: PASS; cache files use complete-unless-open data protection and contain no token.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Storage ios-shell/GoHomeShellTests/AuthAndCacheTests.swift
@@ -217,15 +217,15 @@ git commit -m "feat(ios): add secure auth and scoped cache"
 - Create: `Sources/App/AppEnvironment.swift`
 - Test: `GoHomeShellTests/AppRepositoryTests.swift`
 
-- [ ] **Step 1: Write stale-while-revalidate tests**
+- [x] **Step 1: Write stale-while-revalidate tests**
 
 Seed cached bootstrap/home data, delay the network response, and assert the first emitted state is cached while the second is refreshed. Assert a refresh error preserves content and sets only `staleReason`.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Expected: FAIL because repository types are undefined.
 
-- [ ] **Step 3: Implement state contract**
+- [x] **Step 3: Implement state contract**
 
 ```swift
 struct Loadable<Value: Equatable>: Equatable {
@@ -242,13 +242,13 @@ struct Loadable<Value: Equatable>: Equatable {
 
 `AppRepository.bootstrap()` reads cache first and revalidates once. Concurrent views share the same in-flight task.
 
-- [ ] **Step 4: Run repository tests**
+- [x] **Step 4: Run repository tests**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellTests/AppRepositoryTests`
 
 Expected: PASS; no state transition clears a non-nil value during refresh.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Models ios-shell/GoHomeShell/Sources/Repository ios-shell/GoHomeShell/Sources/App ios-shell/GoHomeShellTests/AppRepositoryTests.swift
@@ -265,15 +265,15 @@ git commit -m "feat(ios): add cached app repository and session state"
 - Create: `Sources/Features/Auth/AuthViewModel.swift`
 - Test: `GoHomeShellUITests/AuthFlowTests.swift`
 
-- [ ] **Step 1: Write UI tests**
+- [x] **Step 1: Write UI tests**
 
 Launch with `-uiTestState signedOut`; assert phone input, request-code button, code input, and login/create segmented mode. Assert the view hierarchy contains no `WKWebView` accessibility element.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Expected: FAIL because WebView launch UI is still the root.
 
-- [ ] **Step 3: Replace root with native routing**
+- [x] **Step 3: Replace root with native routing**
 
 ```swift
 struct AppRootView: View {
@@ -291,13 +291,13 @@ struct AppRootView: View {
 
 Move `GoHomeAppDelegate` out of `GoHomeShellRuntime.swift` into its own file so push callbacks can be connected to the native coordinator later. Use labeled native text fields and inline validation. Do not show a full-screen spinner after cached bootstrap exists.
 
-- [ ] **Step 4: Run unit and UI tests**
+- [x] **Step 4: Run unit and UI tests**
 
 Run: `ios-shell/scripts/test.sh GoHomeShellUITests/AuthFlowTests`
 
 Expected: PASS for signed-out launch and authentication routing.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/GoHomeShellApp.swift ios-shell/GoHomeShell/Sources/App ios-shell/GoHomeShell/Sources/Features/Auth ios-shell/GoHomeShellUITests/AuthFlowTests.swift
@@ -315,19 +315,19 @@ git commit -m "feat(ios): replace web root with native authentication"
 - Create: `Sources/Services/BoxDiscoveryService.swift`
 - Test: `GoHomeShellUITests/OnboardingFlowTests.swift`
 
-- [ ] **Step 1: Write one UI test per server next step**
+- [x] **Step 1: Write one UI test per server next step**
 
 Stub bootstrap responses for `family`, `profile`, `device`, `camera`, and `complete`; assert each opens exactly its matching native screen and incomplete users cannot access tabs.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Expected: FAIL because onboarding views do not exist.
 
-- [ ] **Step 3: Implement native steps**
+- [x] **Step 3: Implement native steps**
 
 Family supports create/join. Profile requires display name and at least one validated contact number. Device binding uses `NWBrowser` for `_gohome._tcp` and exchanges the cloud one-time credential. Camera setup writes cloud configuration and waits for versioned edge sync without blocking navigation.
 
-- [ ] **Step 4: Run onboarding and legacy cloud verification**
+- [x] **Step 4: Run onboarding and legacy cloud verification**
 
 Run:
 
@@ -338,7 +338,7 @@ cd .. && npm run verify:cloud-onboarding
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Features/Onboarding ios-shell/GoHomeShell/Sources/Services/BoxDiscoveryService.swift ios-shell/GoHomeShellUITests/OnboardingFlowTests.swift

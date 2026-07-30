@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,12 +67,28 @@ def main() -> None:
     if safety_state.index("analysis.fire_candidate") < safety_state.index("if (personCount > 0 || poses.length > 0)"):
         raise SystemExit("weak fire evidence still outranks normal person activity")
 
+    expected_css_asset = re.search(r'/admin/console\.css\?v=([^"\']+)', (ROOT / "admin" / "index.html").read_text(encoding="utf-8"))
+    expected_js_asset = re.search(r'/admin/console\.js\?v=([^"\']+)', (ROOT / "admin" / "index.html").read_text(encoding="utf-8"))
+    if not expected_css_asset or not expected_js_asset or expected_css_asset.group(1) != expected_js_asset.group(1):
+        raise SystemExit("index.html must load one matching console asset version")
+    expected_asset_version = expected_css_asset.group(1)
     for page in ("index.html", "algorithms.html", "events.html", "cameras.html"):
         page_html = (ROOT / "admin" / page).read_text(encoding="utf-8")
         if '/admin/console.css' not in page_html:
             raise SystemExit(f"{page} does not load the shared management-console stylesheet")
+        if f'/admin/console.css?v={expected_asset_version}' not in page_html:
+            raise SystemExit(f"{page} does not load the current management-console stylesheet")
+        if f'/admin/console.js?v={expected_asset_version}' not in page_html:
+            raise SystemExit(f"{page} does not load the current management-console script")
     if "gradient" in console_css:
         raise SystemExit("management-console stylesheet must not rely on decorative gradients")
+    if "function ensureVideoPrivacyControl" not in console:
+        raise SystemExit("management console has no shared privacy control")
+    if console.count('class="segmented-control privacy-mode-control"') != 1:
+        raise SystemExit("privacy controls must be generated from one shared definition")
+    privacy_poll = function_source(console, "state.privacyTimer = setInterval", "setInterval(renderPairingCountdown")
+    if "pageName" in privacy_poll or "loadVideoPrivacyMode" not in privacy_poll:
+        raise SystemExit("privacy state is not synchronized on every management page")
 
     display_poses = function_source(console, "function snapshotDisplayPoses", "function snapshotPoseEdges")
     if '"coasting"' not in display_poses:
@@ -89,6 +106,7 @@ def main() -> None:
         "bounded_coasting_visible": True,
         "deterministic_safety_priority": True,
         "shared_console_design_system": True,
+        "shared_privacy_control": True,
     })
 
 

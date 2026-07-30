@@ -1,0 +1,134 @@
+import Foundation
+
+@MainActor
+final class AppModel: ObservableObject {
+    @Published private(set) var route: AppRoute = .launching
+    @Published private(set) var bootstrap = Loadable<BootstrapResponse>()
+
+    private let repository: AppRepository
+    private let sessionContextStore: SessionContextStore
+    private var bootstrapTask: Task<Void, Never>?
+    private var hasStarted = false
+
+    var pushFamilyID: String? {
+        guard route == .main else { return nil }
+        return bootstrap.value?.activeFamilyID
+    }
+
+    init(repository: AppRepository, sessionContextStore: SessionContextStore) {
+        self.repository = repository
+        self.sessionContextStore = sessionContextStore
+    }
+
+    func start(authStore: KeychainAuthStore) {
+        guard !hasStarted else { return }
+        hasStarted = true
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-uiTestState") {
+            if let rawStep = arguments.first(where: { $0.hasPrefix("-uiTestOnboardingStep=") })?
+                .split(separator: "=", maxSplits: 1).last,
+               let step = OnboardingStep(rawValue: String(rawStep)) {
+                route = .onboarding(step)
+            } else if arguments.contains("-uiTestMain") {
+                route = .main
+            } else {
+                route = .signedOut
+            }
+            return
+        }
+        Task { [weak self] in
+            do {
+                guard let token = try await authStore.token(), !token.isEmpty else {
+                    self?.route = .signedOut
+                    return
+                }
+                if let scope = await self?.sessionContextStore.scope() {
+                    self?.restore(scope: scope)
+                } else {
+                    await self?.loadAuthenticatedState()
+                }
+            } catch {
+                self?.route = .signedOut
+            }
+        }
+    }
+
+    func authenticated() {
+        route = .launching
+        bootstrapTask?.cancel()
+        Task { [weak self] in await self?.loadAuthenticatedState() }
+    }
+
+    func reloadAfterOnboardingStep() {
+        Task { [weak self] in await self?.loadAuthenticatedState() }
+    }
+
+    func reloadAfterFamilyChange() {
+        route = .launching
+        bootstrapTask?.cancel()
+        Task { [weak self] in await self?.loadAuthenticatedState() }
+    }
+
+    func accountProfileChanged(_ profile: AccountProfile) {
+        guard let value = bootstrap.value else { return }
+        let updated = BootstrapResponse(
+            user: AppUser(id: profile.id, phone: profile.phone, displayName: profile.displayName),
+            families: value.families,
+            activeFamilyID: value.activeFamilyID,
+            onboarding: value.onboarding,
+            unreadCount: value.unreadCount,
+            revision: value.revision
+        )
+        bootstrap.value = updated
+        persistContext(for: updated)
+    }
+
+    func restore(scope: CacheScope) {
+        bootstrapTask?.cancel()
+        bootstrapTask = Task { [repository] in
+            await repository.bootstrap(scope: scope) { state in
+                await self.applyBootstrap(state)
+            }
+        }
+    }
+
+    func signOut() {
+        bootstrapTask?.cancel()
+        bootstrap = Loadable()
+        route = .signedOut
+        Task { await sessionContextStore.clear() }
+    }
+
+    private func applyBootstrap(_ state: Loadable<BootstrapResponse>) {
+        bootstrap = state
+        guard let value = state.value else {
+            if !state.isRefreshing { route = .signedOut }
+            return
+        }
+        persistContext(for: value)
+        route = value.onboarding.complete ? .main : .onboarding(value.onboarding.nextStep)
+    }
+
+    private func loadAuthenticatedState() async {
+        do {
+            let value = try await repository.fetchBootstrap()
+            bootstrap = Loadable(value: value, isRefreshing: false, staleReason: nil)
+            persistContext(for: value)
+            if value.onboarding.complete {
+                route = .main
+            } else {
+                route = .onboarding(value.onboarding.nextStep)
+            }
+        } catch {
+            route = .signedOut
+        }
+    }
+
+    private func persistContext(for value: BootstrapResponse) {
+        let scope = CacheScope(userID: value.user.id, familyID: value.activeFamilyID ?? "onboarding")
+        Task { [repository, sessionContextStore] in
+            await sessionContextStore.save(scope: scope)
+            await repository.cacheBootstrap(value, scope: scope)
+        }
+    }
+}

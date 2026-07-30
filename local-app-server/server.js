@@ -9,6 +9,11 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const { URL } = require("url");
+const {
+    buildActivityOverview,
+    dateKeysEndingAt: activityDateKeysEndingAt,
+    groupIntervalsByDate,
+} = require("./native-api/activity-reporting");
 
 function parseEnvValue(raw) {
     let value = String(raw || "").trim();
@@ -73,6 +78,14 @@ function isVideoPrivacyMode(value) {
     return VIDEO_PRIVACY_RANK.has(String(value || "").trim().toLowerCase());
 }
 
+function stricterVideoPrivacyMode(first, second) {
+    const resolvedFirst = normalizeVideoPrivacyMode(first);
+    const resolvedSecond = normalizeVideoPrivacyMode(second);
+    return VIDEO_PRIVACY_RANK.get(resolvedFirst) >= VIDEO_PRIVACY_RANK.get(resolvedSecond)
+        ? resolvedFirst
+        : resolvedSecond;
+}
+
 function nowIso() {
     return new Date().toISOString();
 }
@@ -105,6 +118,56 @@ function readBody(req, limitBytes = 25 * 1024 * 1024) {
         req.on("end", () => resolve(Buffer.concat(chunks)));
         req.on("error", reject);
     });
+}
+
+function mjpegHeaderValue(value) {
+    return String(value || "").replace(/[\r\n]+/g, " ").trim();
+}
+
+function encodeMjpegFrame(boundary, relayFrame) {
+    const headers = [
+        `--${boundary}`,
+        `Content-Type: ${mjpegHeaderValue(relayFrame.contentType) || "image/jpeg"}`,
+        `Content-Length: ${relayFrame.frame.length}`,
+        `X-GoHome-Frame-Source: ${mjpegHeaderValue(relayFrame.source) || "live"}`,
+        `X-GoHome-Privacy-Mode: ${mjpegHeaderValue(relayFrame.privacyMode) || "original"}`,
+    ];
+    if (relayFrame.assetId) headers.push(`X-GoHome-Asset-Id: ${mjpegHeaderValue(relayFrame.assetId)}`);
+    if (relayFrame.capturedAt) headers.push(`X-GoHome-Captured-At: ${mjpegHeaderValue(relayFrame.capturedAt)}`);
+    return Buffer.concat([
+        Buffer.from(`${headers.join("\r\n")}\r\n\r\n`),
+        relayFrame.frame,
+        Buffer.from("\r\n"),
+    ]);
+}
+
+function createLatestFrameMjpegWriter(response, { boundary, getLatestFrame }) {
+    let lastFrameKey = "";
+    let waitingForDrain = false;
+    let closed = false;
+
+    function writeLatest({ force = false } = {}) {
+        if (closed || waitingForDrain || response.destroyed || response.writableEnded) return false;
+        const relayFrame = getLatestFrame();
+        if (!relayFrame || (!force && relayFrame.key === lastFrameKey)) return false;
+        lastFrameKey = relayFrame.key;
+        waitingForDrain = !response.write(encodeMjpegFrame(boundary, relayFrame));
+        return true;
+    }
+
+    function handleDrain() {
+        waitingForDrain = false;
+        writeLatest();
+    }
+
+    response.on("drain", handleDrain);
+    return {
+        writeLatest,
+        close() {
+            closed = true;
+            response.removeListener("drain", handleDrain);
+        },
+    };
 }
 
 function parseJsonBody(req) {
@@ -382,6 +445,7 @@ function createDefaultDb() {
         devices: {},
         cameras: {},
         assets: [],
+        media_upload_intents: [],
         events: [],
         heartbeats: [],
         rules: defaultRules(timestamp),
@@ -461,6 +525,7 @@ function normalizeDb(db) {
     }
     db.families = Array.isArray(db.families) ? db.families : defaults.families;
     db.family_members = Array.isArray(db.family_members) ? db.family_members : [];
+    db.family_invitations = Array.isArray(db.family_invitations) ? db.family_invitations : [];
     if (!db.family_members.length && db.families.length && db.users.length) {
         const owner = db.users.find((item) => Number(item.id) === Number(db.active_user_id))
             || [...db.users].reverse().find((item) => item.email !== "admin@gohome.local")
@@ -512,6 +577,7 @@ function normalizeDb(db) {
     });
     db.cameras = db.cameras && typeof db.cameras === "object" ? db.cameras : {};
     db.assets = Array.isArray(db.assets) ? db.assets : [];
+    db.media_upload_intents = Array.isArray(db.media_upload_intents) ? db.media_upload_intents : [];
     db.events = Array.isArray(db.events) ? db.events : [];
     db.heartbeats = Array.isArray(db.heartbeats) ? db.heartbeats : [];
     db.rules = normalizeRules(db.rules || defaults.rules, defaults.rules);
@@ -526,19 +592,6 @@ function normalizeDb(db) {
     db.care_preferences = db.care_preferences && typeof db.care_preferences === "object" ? db.care_preferences : {};
     db.care_cards = compactCareCards(Array.isArray(db.care_cards) ? db.care_cards : []);
     db.app_messages = Array.isArray(db.app_messages) ? db.app_messages : [];
-    for (const message of db.app_messages) {
-        const verificationStatus = String(message?.metadata?.verification_status || "");
-        const obsoleteIncidentReminder = message?.generated_by === "incident-reminder";
-        const nonAlertVerificationOutcome = (
-            message?.generated_by === "vision-verification-orchestrator"
-            && verificationStatus
-            && verificationStatus !== "confirmed"
-        );
-        if (obsoleteIncidentReminder || nonAlertVerificationOutcome) {
-            message.status = "archived";
-            message.updated_at = message.updated_at || nowIso();
-        }
-    }
     db.notification_deliveries = Array.isArray(db.notification_deliveries) ? db.notification_deliveries : [];
     db.app_push_tokens = Array.isArray(db.app_push_tokens) ? db.app_push_tokens : [];
     db.scheduler_runs = compactSchedulerRuns(db.scheduler_runs);
@@ -578,9 +631,87 @@ function createLocalAppServer(options = {}) {
     const dataDir = path.resolve(options.dataDir || process.env.GOHOME_APP_SERVER_DATA_DIR || path.join(rootDir, "data", "app-server"));
     const mediaDir = path.join(dataDir, "media");
     const store = options.store || new JsonStore(path.join(dataDir, "db.json"));
+    const activityEvaluationNow = typeof options.activityEvaluationNow === "function"
+        ? options.activityEvaluationNow
+        : () => new Date();
     const deviceToken = String(options.deviceToken || DEFAULT_DEVICE_TOKEN);
     const appToken = String(options.appToken || DEFAULT_APP_TOKEN);
     const opsToken = String(options.opsToken || DEFAULT_OPS_TOKEN);
+    const { createCosStorage } = require("./cos-storage");
+    const cosStorage = options.cosStorage || createCosStorage();
+    const { createApnsProvider } = require("./apns-provider");
+    const apnsProvider = options.apnsProvider || createApnsProvider();
+    const mediaUploadSecret = String(options.mediaUploadSecret || process.env.GOHOME_MEDIA_UPLOAD_SECRET || "").trim()
+        || crypto.randomBytes(32).toString("hex");
+    const { AuthService } = require("./native-api/auth-service");
+    const { encodePassword, verifyLegacyPassword, verifyPassword } = require("./native-api/password-credentials");
+    const authService = options.authService || new AuthService({
+        mode: options.authMode || process.env.GOHOME_AUTH_MODE || "production",
+        demoOtp: options.demoOtp || process.env.GOHOME_DEMO_OTP || "",
+        secret: options.authSecret || process.env.GOHOME_AUTH_SECRET || "",
+        smsProvider: options.smsProvider || null,
+    });
+    const { JsonNativeRepository, applyAccountDeletionToDb } = require("./native-api/repository");
+    const { PostgresNativeRepository } = require("./native-api/postgres-repository");
+    const { NativeViewService } = require("./native-api/view-service");
+    const { NativeApiRouter } = require("./native-api/router");
+    const onFamilyMetadataChange = (familyId, patch) => {
+        const family = store.db.families.find((item) => String(item.id) === String(familyId));
+        if (!family) return;
+        family.metadata = { ...objectValue(family.metadata), ...objectValue(patch) };
+        if (store.kind === "json") store.save();
+    };
+    const onFamilyMembershipChange = ({ family_id: familyId, created_by_user_id: creatorId, memberships = [] }) => {
+        for (const updated of memberships) {
+            let member = store.db.family_members.find((item) => String(item.id) === String(updated?.id));
+            if (!member && updated?.id) {
+                member = { ...updated };
+                store.db.family_members.push(member);
+            } else if (member) Object.assign(member, updated);
+        }
+        const family = store.db.families.find((item) => String(item.id) === String(familyId));
+        if (family && creatorId) {
+            family.created_by_user_id = creatorId;
+            family.metadata = { ...objectValue(family.metadata), created_by_user_id: creatorId };
+        }
+        if (family) {
+            family.member_count = store.db.family_members.filter((member) => (
+                String(member.family_id) === String(familyId) && String(member.status || "active") === "active"
+            )).length;
+            family.updated_at = nowIso();
+        }
+    };
+    const onFamilyInvitationChange = ({ invitations = [] }) => {
+        for (const updated of invitations) {
+            if (!updated?.id) continue;
+            const invitation = store.db.family_invitations.find((item) => String(item.id) === String(updated.id));
+            if (invitation) Object.assign(invitation, updated);
+            else store.db.family_invitations.push({ ...updated });
+        }
+    };
+    const nativeRepository = options.nativeRepository || (store.kind === "postgres"
+        ? new PostgresNativeRepository(store.pool, { onFamilyMetadataChange, onFamilyMembershipChange, onFamilyInvitationChange })
+        : new JsonNativeRepository(store.db, { onFamilyMetadataChange, onFamilyMembershipChange, onFamilyInvitationChange }));
+    const nativeRouter = options.nativeRouter || new NativeApiRouter(new NativeViewService(nativeRepository, {
+        homeEnricher: async ({ familyId, source }) => {
+            if (source.weather) return source;
+            const profile = source.elder || existingElderProfile(familyId, "elder_primary") || {};
+            const weather = await fetchWeatherSignal({
+                familyId,
+                city: profile.city || "",
+            });
+            return {
+                ...source,
+                weather: weather.available
+                    ? {
+                        city: weather.city || profile.city || "",
+                        temperature: weather.temperature_c,
+                        condition: weather.condition || "",
+                    }
+                    : null,
+            };
+        },
+    }));
     const playbackTickets = new Map();
     const boxAdminSessions = new Map();
     const providerCache = new Map();
@@ -590,11 +721,98 @@ function createLocalAppServer(options = {}) {
     const livePoseCache = new Map();
     const liveSceneCache = new Map();
     const liveSceneSequence = new Map();
+    const activityInsightNextEvaluationAt = new Map();
+    const liveStreamMetrics = new Map();
+    const activeStreamClients = { video: 0, pose: 0, scene: 0 };
+    const eventLoopDelaySamples = [];
+    let expectedEventLoopTick = Date.now() + 100;
+    const eventLoopDelayTimer = setInterval(() => {
+        const now = Date.now();
+        eventLoopDelaySamples.push({ at: now, delay_ms: Math.max(0, now - expectedEventLoopTick) });
+        expectedEventLoopTick = now + 100;
+        const cutoff = now - 60000;
+        while (eventLoopDelaySamples.length && eventLoopDelaySamples[0].at < cutoff) {
+            eventLoopDelaySamples.shift();
+        }
+    }, 100);
+    eventLoopDelayTimer.unref?.();
     let schedulerRunning = false;
     let visionVerificationRunning = false;
+    let memoryUploadCleanupRunning = false;
+    let apnsDispatchRunning = false;
     const LIVE_FRAME_TTL_MS = 10000;
     const LIVE_POSE_TTL_MS = 1500;
     const LIVE_SCENE_TTL_MS = 30000;
+
+    function percentile(values, ratio) {
+        if (!values.length) return 0;
+        const sorted = [...values].sort((first, second) => first - second);
+        const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * ratio)));
+        return sorted[index];
+    }
+
+    function pruneStreamMetric(metric, now = Date.now()) {
+        const cutoff = now - 60000;
+        while (metric.accepted_at_ms.length && metric.accepted_at_ms[0] < cutoff) metric.accepted_at_ms.shift();
+        while (metric.transport_latency.length && metric.transport_latency[0].at < cutoff) metric.transport_latency.shift();
+    }
+
+    function cameraStreamMetric(cameraId) {
+        const key = String(cameraId);
+        if (!liveStreamMetrics.has(key)) {
+            liveStreamMetrics.set(key, {
+                accepted_at_ms: [],
+                transport_latency: [],
+                stale_rejections: 0,
+                last_received_at: "",
+            });
+        }
+        return liveStreamMetrics.get(key);
+    }
+
+    function recordLiveFrameMetric(cameraId, { accepted, capturedAt, receivedAtMs }) {
+        const metric = cameraStreamMetric(cameraId);
+        pruneStreamMetric(metric, receivedAtMs);
+        if (!accepted) {
+            metric.stale_rejections += 1;
+            return;
+        }
+        metric.accepted_at_ms.push(receivedAtMs);
+        metric.last_received_at = new Date(receivedAtMs).toISOString();
+        const capturedAtMs = Date.parse(capturedAt || "");
+        if (Number.isFinite(capturedAtMs)) {
+            metric.transport_latency.push({ at: receivedAtMs, value: Math.max(0, receivedAtMs - capturedAtMs) });
+        }
+    }
+
+    function streamMetricsSnapshot() {
+        const now = Date.now();
+        const cameras = {};
+        for (const [cameraId, metric] of liveStreamMetrics.entries()) {
+            pruneStreamMetric(metric, now);
+            const recent = metric.accepted_at_ms.filter((timestamp) => timestamp >= now - 10000);
+            const gaps = recent.slice(1).map((timestamp, index) => timestamp - recent[index]);
+            const latencies = metric.transport_latency
+                .filter((sample) => sample.at >= now - 10000)
+                .map((sample) => sample.value);
+            cameras[cameraId] = {
+                accepted_fps_10s: Number((recent.length / 10).toFixed(2)),
+                frame_gap_ms_p95: Number(percentile(gaps, 0.95).toFixed(2)),
+                frame_gap_ms_max: Number((gaps.length ? Math.max(...gaps) : 0).toFixed(2)),
+                transport_latency_ms_p95: Number(percentile(latencies, 0.95).toFixed(2)),
+                transport_latency_ms_max: Number((latencies.length ? Math.max(...latencies) : 0).toFixed(2)),
+                stale_rejections: metric.stale_rejections,
+                last_received_at: metric.last_received_at,
+            };
+        }
+        const loopDelays = eventLoopDelaySamples.map((sample) => sample.delay_ms);
+        return {
+            cameras,
+            active_clients: { ...activeStreamClients },
+            event_loop_delay_ms_p95: Number(percentile(loopDelays, 0.95).toFixed(2)),
+            event_loop_delay_ms_max: Number((loopDelays.length ? Math.max(...loopDelays) : 0).toFixed(2)),
+        };
+    }
 
     ensureDir(mediaDir);
 
@@ -1067,6 +1285,17 @@ function createLocalAppServer(options = {}) {
         return true;
     }
 
+    function requireNativeApp(req, res) {
+        const session = sessionForToken(tokenFrom(req));
+        if (!session) {
+            writeError(res, 401, "请先登录回家 App。");
+            return false;
+        }
+        session.last_seen_at = nowIso();
+        req.appUserId = session.user_id;
+        return true;
+    }
+
     function requireOps(req, res) {
         const url = new URL(req.url, "http://local");
         const token = tokenFrom(req) || url.searchParams.get("ops_token") || "";
@@ -1085,6 +1314,16 @@ function createLocalAppServer(options = {}) {
             display_name: user.display_name,
             created_at: user.created_at,
         };
+    }
+
+    function maskedAccount(user) {
+        const phone = String(user?.phone || phoneFromAccountEmail(user?.email) || "").trim();
+        if (/^\d{11}$/.test(phone)) return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
+        const email = String(user?.email || "").trim();
+        if (!email.includes("@")) return "";
+        const [local, domain] = email.split("@");
+        const visible = local.slice(0, Math.min(2, local.length));
+        return `${visible}${"*".repeat(Math.max(2, Math.min(6, local.length - visible.length)))}@${domain}`;
     }
 
     function activeAppUser(req = null) {
@@ -1193,26 +1432,9 @@ function createLocalAppServer(options = {}) {
             id: family.id,
             name: family.name,
             member_count: activeMembers || Number(family.member_count || 1),
-            join_code: familyJoinCode(family),
             created_at: family.created_at,
             updated_at: family.updated_at || family.created_at,
         };
-    }
-
-    function familyJoinCode(family) {
-        if (!family) return "";
-        const hash = sha256(`${family.id}:${family.created_at || ""}:${family.name || ""}`).slice(0, 6).toUpperCase();
-        return `GH-${family.id}-${hash}`;
-    }
-
-    function familyForJoinCode(code) {
-        const normalized = String(code || "").trim().toUpperCase().replace(/\s+/g, "");
-        if (!normalized) return null;
-        const match = normalized.match(/^GH-?(\d+)-?([A-F0-9]{6})$/i);
-        if (!match) return null;
-        const family = selectedFamily(Number(match[1]));
-        if (!family) return null;
-        return familyJoinCode(family).replace(/\s+/g, "").toUpperCase() === normalized ? family : null;
     }
 
     function selectedFamily(familyId = null) {
@@ -1231,10 +1453,10 @@ function createLocalAppServer(options = {}) {
             id: elderId,
             elder_id: elderId,
             family_id: Number(familyId),
-            display_name: "张阿姨",
+            display_name: "家中长辈",
             relationship: "母亲",
             age: null,
-            city: "杭州",
+            city: "",
             district: "",
             phone: "",
             mobile_phone: "",
@@ -1268,6 +1490,20 @@ function createLocalAppServer(options = {}) {
         return store.db.elder_profiles[elderProfileKey(family.id, elderId)] || null;
     }
 
+    function publicElderProfile(profile) {
+        if (!profile) return null;
+        const metadata = profile.metadata && typeof profile.metadata === "object" ? profile.metadata : {};
+        const home = metadata.home_location && typeof metadata.home_location === "object"
+            ? metadata.home_location
+            : {};
+        return {
+            ...profile,
+            home_latitude: profile.home_latitude ?? home.latitude ?? null,
+            home_longitude: profile.home_longitude ?? home.longitude ?? null,
+            home_location_label: String(profile.home_location_label || home.label || ""),
+        };
+    }
+
     function publicBinding(binding) {
         const device = store.db.devices[String(binding.device_id)] || {};
         return {
@@ -1277,36 +1513,29 @@ function createLocalAppServer(options = {}) {
             device_name: binding.device_name || device.name || "回家盒子",
             device_type: binding.device_type || "edge-agent",
             status: binding.status || "active",
-            bound_at: binding.bound_at,
+            bound_at: binding.bound_at || binding.updated_at,
             last_seen_at: device.last_seen_at || binding.last_seen_at || null,
         };
     }
 
-    function maskBindingAccount(user = {}) {
-        const phone = String(user.phone || phoneFromAccountEmail(user.email) || "").trim();
-        if (phone.length >= 7) return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
-        const email = String(user.email || "").trim();
-        const at = email.indexOf("@");
-        if (at <= 0) return "";
-        const local = email.slice(0, at);
-        return `${local.slice(0, 1)}***${email.slice(at)}`;
-    }
-
-    function deviceBindingSummary(familyId, deviceId) {
+    function bindingSummaryForDevice(deviceId, familyId = null) {
+        const normalizedDeviceId = String(deviceId || "").trim();
         const binding = store.db.device_bindings.find((item) => (
-            Number(item.family_id) === Number(familyId)
-            && String(item.device_id || "") === String(deviceId || "")
+            String(item.device_id || "") === normalizedDeviceId
             && String(item.status || "active") !== "revoked"
+            && (!familyId || Number(item.family_id) === Number(familyId))
         ));
-        const family = selectedFamily(familyId);
-        if (!binding || !family) return { status: "unbound" };
-        const owner = store.db.users.find((item) => Number(item.id) === Number(family.created_by_user_id)) || {};
+        if (!binding) {
+            return { status: "unbound", family_name: "", owner_account: "", owner_display_name: "", bound_at: "" };
+        }
+        const family = selectedFamily(binding.family_id);
+        const owner = store.db.users.find((item) => Number(item.id) === Number(family?.created_by_user_id)) || null;
         return {
             status: "bound",
-            family_name: String(family.name || ""),
-            owner_account: maskBindingAccount(owner),
-            owner_display_name: String(owner.display_name || ""),
-            bound_at: String(binding.bound_at || binding.created_at || ""),
+            family_name: String(family?.name || "已绑定家庭"),
+            owner_account: maskedAccount(owner),
+            owner_display_name: String(owner?.display_name || "家庭创建者"),
+            bound_at: String(binding.bound_at || binding.created_at || binding.updated_at || ""),
         };
     }
 
@@ -1387,6 +1616,15 @@ function createLocalAppServer(options = {}) {
         ));
     }
 
+    function activeDeviceBindingForFamily(familyId, deviceId = "") {
+        const requestedDeviceId = String(deviceId || "").trim();
+        return store.db.device_bindings.find((item) => (
+            Number(item.family_id) === Number(familyId)
+            && String(item.status || "active") !== "revoked"
+            && (!requestedDeviceId || String(item.device_id || "") === requestedDeviceId)
+        )) || null;
+    }
+
     function deviceBoundToOtherFamily(deviceId, familyId) {
         return store.db.device_bindings.some((item) => (
             String(item.device_id || "") === String(deviceId || "")
@@ -1445,11 +1683,16 @@ function createLocalAppServer(options = {}) {
                 updated_at: nowIso(),
             };
             store.db.device_bindings.push(binding);
-        } else {
+        } else if (String(binding.status || "active") === "revoked") {
+            const reboundAt = nowIso();
             binding.status = "active";
             binding.device_name = String(deviceName || binding.device_name || "回家盒子");
             binding.note = String(note || binding.note || "");
-            binding.updated_at = nowIso();
+            binding.bound_at = reboundAt;
+            binding.updated_at = reboundAt;
+            delete binding.unbound_at;
+        } else {
+            binding.status = "active";
         }
 
         const existingDevice = store.db.devices[normalizedDeviceId] || {};
@@ -1513,6 +1756,7 @@ function createLocalAppServer(options = {}) {
                 && String(camera.device_id || "") === normalizedDeviceId
             ))
             .map((camera) => String(camera.id));
+        detachCameraReferences(removedCameraIds, timestamp);
         removedCameraIds.forEach((cameraId) => {
             delete store.db.cameras[cameraId];
         });
@@ -1536,7 +1780,30 @@ function createLocalAppServer(options = {}) {
             binding,
             device: store.db.devices[normalizedDeviceId],
             removed_camera_count: removedCameraIds.length,
+            removed_camera_ids: removedCameraIds,
         };
+    }
+
+    function detachCameraReferences(cameraIds, timestamp = nowIso()) {
+        const ids = new Set((cameraIds || []).map(String));
+        if (!ids.size) return;
+        for (const asset of store.db.assets) {
+            if (!ids.has(String(asset.camera_id || ""))) continue;
+            asset.camera_id = null;
+            asset.updated_at = timestamp;
+        }
+        for (const event of store.db.events) {
+            if (!ids.has(String(event.camera_id || ""))) continue;
+            event.camera_id = null;
+            event.updated_at = timestamp;
+        }
+    }
+
+    async function deletePersistedRows(rows) {
+        if (typeof store.deleteRow !== "function") return;
+        for (const item of rows || []) {
+            await store.deleteRow(item.table, item.id);
+        }
     }
 
     function cleanupVerifyData(options = {}) {
@@ -1556,28 +1823,38 @@ function createLocalAppServer(options = {}) {
             .filter((camera) => verifyFamilyIds.has(idText(camera.family_id)))
             .map((camera) => idText(camera.id)));
         const deleted = {};
+        const persistenceDeletes = [];
 
-        function countArray(key, predicate) {
+        function countArray(key, predicate, table = key, primaryKey = (item) => item.id) {
             const items = Array.isArray(store.db[key]) ? store.db[key] : [];
-            const removeCount = items.filter(predicate).length;
+            const removed = items.filter(predicate);
+            const removeCount = removed.length;
             deleted[key] = removeCount;
             if (!dryRun && removeCount) {
+                removed.forEach((item) => persistenceDeletes.push({ table, id: idText(primaryKey(item)) }));
                 store.db[key] = items.filter((item) => !predicate(item));
             }
         }
 
-        function countObject(key, predicate) {
+        function countObject(key, predicate, table = key, primaryKey = (value, entryKey) => value.id || entryKey) {
             const object = store.db[key] && typeof store.db[key] === "object" ? store.db[key] : {};
             const entries = Object.entries(object);
-            const removeCount = entries.filter(([entryKey, value]) => predicate(value, entryKey)).length;
+            const removed = entries.filter(([entryKey, value]) => predicate(value, entryKey));
+            const removeCount = removed.length;
             deleted[key] = removeCount;
             if (!dryRun && removeCount) {
+                removed.forEach(([entryKey, value]) => persistenceDeletes.push({ table, id: idText(primaryKey(value, entryKey)) }));
                 store.db[key] = Object.fromEntries(entries.filter(([entryKey, value]) => !predicate(value, entryKey)));
             }
         }
 
         countArray("app_sessions", (session) => verifyUserIds.has(idText(session.user_id)));
         countArray("family_members", (member) => verifyUserIds.has(idText(member.user_id)) || verifyFamilyIds.has(idText(member.family_id)));
+        countArray("family_invitations", (invitation) => (
+            verifyFamilyIds.has(idText(invitation.family_id))
+            || verifyUserIds.has(idText(invitation.created_by_user_id))
+            || verifyUserIds.has(idText(invitation.used_by_user_id))
+        ));
         countArray("users", (user) => verifyUserIds.has(idText(user.id)));
         countArray("families", (family) => verifyFamilyIds.has(idText(family.id)));
         countArray("device_bindings", (binding) => (
@@ -1586,15 +1863,15 @@ function createLocalAppServer(options = {}) {
         ));
         countArray("binding_codes", (code) => verifyFamilyIds.has(idText(code.family_id)));
         countArray("device_tokens", (token) => verifyFamilyIds.has(idText(token.family_id)) || verifyDeviceIds.has(idText(token.device_id)));
-        countArray("heartbeats", (heartbeat) => verifyDeviceIds.has(idText(heartbeat.device_id)));
-        countObject("devices", (device, key) => verifyDeviceIds.has(idText(device.device_id || device.id || key)));
+        countArray("heartbeats", (heartbeat) => verifyDeviceIds.has(idText(heartbeat.device_id)), "device_heartbeats");
+        countObject("devices", (device, key) => verifyDeviceIds.has(idText(device.device_id || device.id || key)), "devices", (device, key) => device.device_id || device.id || key);
         countObject("cameras", (camera) => verifyFamilyIds.has(idText(camera.family_id)));
-        countArray("assets", (asset) => verifyFamilyIds.has(idText(asset.family_id)) || verifyCameraIds.has(idText(asset.camera_id)));
+        countArray("assets", (asset) => verifyFamilyIds.has(idText(asset.family_id)) || verifyCameraIds.has(idText(asset.camera_id)), "media_assets");
         countArray("events", (event) => verifyFamilyIds.has(idText(event.family_id)) || verifyCameraIds.has(idText(event.camera_id)));
         countArray("calendar_events", (event) => verifyFamilyIds.has(idText(event.family_id)));
-        countObject("elder_profiles", (profile, key) => verifyFamilyIds.has(idText(profile.family_id)) || [...verifyFamilyIds].some((familyId) => String(key).startsWith(`${familyId}:`)));
-        countObject("care_preferences", (preferences, key) => verifyFamilyIds.has(idText(preferences.family_id)) || verifyFamilyIds.has(idText(key)));
-        countObject("family_rules", (_rules, key) => verifyFamilyIds.has(idText(key)));
+        countObject("elder_profiles", (profile, key) => verifyFamilyIds.has(idText(profile.family_id)) || [...verifyFamilyIds].some((familyId) => String(key).startsWith(`${familyId}:`)), "elder_profiles", (profile, key) => `${profile.family_id || String(key).split(":")[0]}:${profile.elder_id || String(key).split(":")[1] || "elder_primary"}`);
+        countObject("care_preferences", (preferences, key) => verifyFamilyIds.has(idText(preferences.family_id)) || verifyFamilyIds.has(idText(key)), "care_preferences", (preferences, key) => preferences.family_id || key);
+        countObject("family_rules", (_rules, key) => verifyFamilyIds.has(idText(key)), "care_rules", (_rules, key) => `${key}:edge_rules`);
         countArray("care_cards", (card) => verifyFamilyIds.has(idText(card.family_id)));
         countArray("app_messages", (message) => verifyFamilyIds.has(idText(message.family_id)) || verifyUserIds.has(idText(message.user_id)));
         countArray("notification_deliveries", (delivery) => verifyFamilyIds.has(idText(delivery.family_id)) || verifyUserIds.has(idText(delivery.user_id)));
@@ -1628,6 +1905,7 @@ function createLocalAppServer(options = {}) {
                 families: verifyFamilies.map((family) => ({ id: family.id, name: family.name })),
             },
             deleted,
+            persistence_deletes: persistenceDeletes,
         };
     }
 
@@ -1772,9 +2050,9 @@ function createLocalAppServer(options = {}) {
 
     function streamProfileConfig(profile) {
         const normalized = String(profile || "mobile").trim().toLowerCase();
-        if (normalized === "detail") return { fps: 12, width: 1280, height: 720, quality: 78, drop: 1 };
-        if (normalized === "monitor") return { fps: 15, width: 960, height: 540, quality: 70, drop: 1 };
-        return { fps: 15, width: 720, height: 405, quality: 64, drop: 1 };
+        if (normalized === "detail") return { fps: 24, width: 1280, height: 720, quality: 78, drop: 1 };
+        if (normalized === "monitor") return { fps: 30, width: 960, height: 540, quality: 70, drop: 1 };
+        return { fps: 24, width: 720, height: 405, quality: 64, drop: 1 };
     }
 
     function cameraStreamProxyTarget(req, cameraId) {
@@ -1899,7 +2177,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function deviceConfigVersion(familyId = null, deviceId = currentEdgeDeviceId()) {
-        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion(familyId)}|${rulesVersion(familyId)}|${JSON.stringify(videoPrivacyForFamily(familyId))}|${JSON.stringify(eventStateCommandsForDevice(deviceId, familyId))}`).digest("hex").slice(0, 12)}`;
+        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion(familyId)}|${rulesVersion(familyId)}|${JSON.stringify(videoPrivacyForFamily(familyId))}|${JSON.stringify(bindingSummaryForDevice(deviceId, familyId))}|${JSON.stringify(eventStateCommandsForDevice(deviceId, familyId))}`).digest("hex").slice(0, 12)}`;
     }
 
     function eventStateCommandReceipts(deviceId) {
@@ -2017,7 +2295,7 @@ function createLocalAppServer(options = {}) {
             rules_version: rulesVersion(familyId),
             video_privacy: videoPrivacyForFamily(familyId),
             maintenance: objectValue(objectValue(device.metadata).maintenance_command),
-            binding_summary: deviceBindingSummary(familyId, options.device_id || currentEdgeDeviceId()),
+            binding_summary: bindingSummaryForDevice(deviceId, familyId),
             event_state_commands: eventStateCommandsForDevice(deviceId, familyId),
         };
     }
@@ -2033,6 +2311,7 @@ function createLocalAppServer(options = {}) {
                 if (!evidenceAsset) return null;
                 return {
                     asset_id: evidenceAsset.id,
+                    url: `/api/v1/video/assets/${encodeURIComponent(evidenceAsset.id)}`,
                     role: entry.role || evidenceAsset.evidence_frame_role || "evidence",
                     captured_at: entry.captured_at || evidenceAsset.captured_at || evidenceAsset.created_at || "",
                     postures: Array.isArray(entry.postures) ? entry.postures : [],
@@ -2055,7 +2334,9 @@ function createLocalAppServer(options = {}) {
             acknowledged: Boolean(event.acknowledged),
             resolution: event.resolution || "",
             snapshot_path: event.snapshot_path || asset?.snapshot_path || "",
-            snapshot_url: event.snapshot_path || asset?.snapshot_path || "",
+            snapshot_url: asset
+                ? `/api/v1/video/assets/${encodeURIComponent(asset.id)}`
+                : (event.snapshot_path || ""),
             media_asset_id: asset?.id || null,
             evidence_media: evidenceMedia,
             payload: event.payload || {},
@@ -2282,6 +2563,7 @@ function createLocalAppServer(options = {}) {
         return {
             ...source,
             care_card_schedule: normalizeCareSchedule(source.care_card_schedule),
+            activity_history: normalizeActivityHistory(source.activity_history),
             video_privacy: normalizeVideoPrivacy(source.video_privacy),
         };
     }
@@ -2291,6 +2573,19 @@ function createLocalAppServer(options = {}) {
         return {
             minimum_mode: normalizeVideoPrivacyMode(source.minimum_mode),
             updated_at: String(source.updated_at || ""),
+        };
+    }
+
+    function normalizeActivityHistory(value = {}) {
+        const source = value && typeof value === "object" ? value : {};
+        const retentionDays = normalizeNumber(source.retention_days, 30);
+        return {
+            tracking_enabled: "tracking_enabled" in source ? normalizeBool(source.tracking_enabled) : true,
+            daily_summary_enabled: "daily_summary_enabled" in source ? normalizeBool(source.daily_summary_enabled) : true,
+            weekly_report_enabled: "weekly_report_enabled" in source ? normalizeBool(source.weekly_report_enabled) : true,
+            anomaly_reminders_enabled: "anomaly_reminders_enabled" in source ? normalizeBool(source.anomaly_reminders_enabled) : true,
+            multimodal_review_enabled: "multimodal_review_enabled" in source ? normalizeBool(source.multimodal_review_enabled) : true,
+            retention_days: Math.max(7, Math.min(365, retentionDays)),
         };
     }
 
@@ -2390,6 +2685,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function publicAppMessage(message) {
+        const delivery = notificationMessageDeliverySummary(message);
         return {
             id: message.message_id || message.id,
             message_id: message.message_id || message.id,
@@ -2409,7 +2705,9 @@ function createLocalAppServer(options = {}) {
             status: message.status || "open",
             generated_by: message.generated_by || "notification-service",
             scheduled_for: message.scheduled_for || "",
-            delivered_at: message.delivered_at || "",
+            delivery_status: delivery.status,
+            delivery_summary: delivery.counts,
+            delivered_at: message.delivered_at || delivery.delivered_at,
             read_at: message.read_at || "",
             created_at: message.created_at,
             updated_at: message.updated_at,
@@ -2446,6 +2744,7 @@ function createLocalAppServer(options = {}) {
             user_id: token.user_id || "",
             app_install_id: token.app_install_id || "",
             platform: token.platform || "",
+            environment: token.environment || "production",
             token_preview: token.token_preview || "",
             status: token.status || "active",
             device_name: token.device_name || "",
@@ -2457,7 +2756,88 @@ function createLocalAppServer(options = {}) {
     }
 
     function appPushProviderConfigured() {
-        return Boolean(envFirst(["GOHOME_APNS_KEY_ID", "GOHOME_APNS_AUTH_KEY", "GOHOME_PUSH_PROVIDER"]));
+        return apnsProvider.configured === true;
+    }
+
+    function deliveriesForMessage(message) {
+        const messageId = String(message?.message_id || message?.id || message || "");
+        if (!messageId) return [];
+        return store.db.notification_deliveries.filter((delivery) => String(delivery.message_id || "") === messageId);
+    }
+
+    function notificationMessageDeliverySummary(message) {
+        const deliveries = deliveriesForMessage(message);
+        const counts = {
+            total: deliveries.length,
+            queued: 0,
+            sent: 0,
+            delivered: 0,
+            opened: 0,
+            failed: 0,
+            in_app_only: 0,
+        };
+        let deliveredAt = "";
+        for (const delivery of deliveries) {
+            const status = String(delivery.status || "queued");
+            if (status === "queued") counts.queued += 1;
+            if (status === "failed") counts.failed += 1;
+            if (["app_message_only", "simulated"].includes(status)) counts.in_app_only += 1;
+            if (delivery.sent_at || ["sent", "delivered"].includes(status)) counts.sent += 1;
+            if (delivery.delivered_at || status === "delivered") {
+                counts.delivered += 1;
+                const value = String(delivery.delivered_at || "");
+                if (value && (!deliveredAt || value < deliveredAt)) deliveredAt = value;
+            }
+            if (delivery.clicked_at) counts.opened += 1;
+        }
+        let status = "none";
+        if (counts.in_app_only) status = "in_app_only";
+        if (counts.failed) status = "failed";
+        if (counts.queued) status = "queued";
+        if (counts.sent) status = "sent";
+        if (counts.delivered) status = "delivered";
+        if (counts.opened) status = "opened";
+        return { status, counts, delivered_at: deliveredAt };
+    }
+
+    function syncMessageDeliveryState(messageId, timestamp = nowIso()) {
+        const message = store.db.app_messages.find((item) => String(item.message_id || item.id) === String(messageId || ""));
+        if (!message) return null;
+        const summary = notificationMessageDeliverySummary(message);
+        if (summary.delivered_at && !message.delivered_at) {
+            message.delivered_at = summary.delivered_at;
+            message.updated_at = timestamp;
+        }
+        return message;
+    }
+
+    function pushDeliveryMetrics() {
+        const now = Date.now();
+        const deliveries = store.db.notification_deliveries.filter((delivery) => (
+            delivery.provider === "apns" && delivery.target_type === "push_token"
+        ));
+        const queued = deliveries.filter((delivery) => delivery.status === "queued");
+        const queuedTimes = queued.map((delivery) => Date.parse(delivery.created_at || "")).filter(Number.isFinite);
+        const attempted = deliveries.filter((delivery) => Number(delivery.response_payload?.attempt_count || 0) > 0);
+        const attempts = attempted.reduce((total, delivery) => total + Number(delivery.response_payload?.attempt_count || 0), 0);
+        return {
+            provider_configured: appPushProviderConfigured(),
+            dispatch_running: apnsDispatchRunning,
+            active_tokens: store.db.app_push_tokens.filter((token) => String(token.status || "active") === "active").length,
+            total: deliveries.length,
+            queued: queued.length,
+            ready: queued.filter((delivery) => (
+                (!delivery.scheduled_for || Date.parse(delivery.scheduled_for) <= now)
+                && (!delivery.response_payload?.next_attempt_at || Date.parse(delivery.response_payload.next_attempt_at) <= now)
+            )).length,
+            oldest_queued_age_seconds: queuedTimes.length ? Math.max(0, Math.floor((now - Math.min(...queuedTimes)) / 1000)) : 0,
+            retry_attempts: Math.max(0, attempts - attempted.length),
+            retries_scheduled: queued.filter((delivery) => Boolean(delivery.response_payload?.next_attempt_at)).length,
+            sent: deliveries.filter((delivery) => Boolean(delivery.sent_at)).length,
+            delivered: deliveries.filter((delivery) => Boolean(delivery.delivered_at)).length,
+            opened: deliveries.filter((delivery) => Boolean(delivery.clicked_at)).length,
+            failed: deliveries.filter((delivery) => delivery.status === "failed").length,
+        };
     }
 
     function tokenPreview(value) {
@@ -2497,7 +2877,7 @@ function createLocalAppServer(options = {}) {
             idempotency_key: idempotencyKey,
             metadata: payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {},
             scheduled_for: payload.scheduled_for || "",
-            delivered_at: payload.delivered_at || "",
+            delivered_at: payload.delivered_at || message?.delivered_at || "",
             updated_at: timestamp,
         };
         if (!message) {
@@ -2523,13 +2903,21 @@ function createLocalAppServer(options = {}) {
         const familyId = normalizeNumber(message.family_id, null);
         if (!familyId) return [];
         const channel = String(options.channel || "app_push");
-        const activeTokens = store.db.app_push_tokens.filter((token) => (
-            Number(token.family_id) === Number(familyId)
-            && String(token.status || "active") === "active"
-        ));
+        const requestedTokenIds = Array.isArray(options.target_token_ids)
+            ? new Set(options.target_token_ids.map((value) => String(value || "")).filter(Boolean))
+            : null;
+        const activeTokenHashes = new Set();
+        const activeTokens = store.db.app_push_tokens.filter((token) => {
+            if (Number(token.family_id) !== Number(familyId) || String(token.status || "active") !== "active") return false;
+            if (requestedTokenIds && !requestedTokenIds.has(String(token.id || ""))) return false;
+            const key = String(token.push_token_hash || token.id || "");
+            if (activeTokenHashes.has(key)) return false;
+            activeTokenHashes.add(key);
+            return true;
+        });
         const targets = activeTokens.length
             ? activeTokens.map((token) => ({ type: "push_token", id: token.id, user_id: token.user_id || "" }))
-            : [{ type: "family", id: String(familyId), user_id: "" }];
+            : (requestedTokenIds ? [] : [{ type: "family", id: String(familyId), user_id: "" }]);
         const deliveries = [];
         for (const target of targets) {
             const idempotencyKey = [
@@ -2540,6 +2928,12 @@ function createLocalAppServer(options = {}) {
                 target.id,
             ].join(":");
             let delivery = store.db.notification_deliveries.find((item) => String(item.idempotency_key || "") === idempotencyKey);
+            // The dispatcher owns retry state. Scheduler reruns must not reset
+            // attempts, retry deadlines, or terminal outcomes for this key.
+            if (delivery) {
+                deliveries.push(delivery);
+                continue;
+            }
             const hasPushProvider = appPushProviderConfigured();
             const status = target.type === "push_token"
                 ? (hasPushProvider ? "queued" : "simulated")
@@ -2570,8 +2964,8 @@ function createLocalAppServer(options = {}) {
                 delivery = {
                     id: store.nextId("notification_delivery"),
                     ...patch,
-                    sent_at: status === "simulated" || status === "app_message_only" ? timestamp : "",
-                    delivered_at: status === "simulated" || status === "app_message_only" ? timestamp : "",
+                    sent_at: "",
+                    delivered_at: "",
                     clicked_at: "",
                     created_at: timestamp,
                 };
@@ -2581,9 +2975,137 @@ function createLocalAppServer(options = {}) {
             }
             deliveries.push(delivery);
         }
-        if (!message.delivered_at) message.delivered_at = timestamp;
-        message.updated_at = timestamp;
         return deliveries;
+    }
+
+    function notificationPayload(delivery, message) {
+        const event = message?.event_id
+            ? store.db.events.find((item) => String(item.id) === String(message.event_id))
+            : null;
+        const gohome = {
+            route: message?.event_id ? "event" : "home",
+            delivery_id: String(delivery.id || ""),
+            message_id: String(message?.message_id || delivery.message_id || ""),
+            event_id: String(message?.event_id || ""),
+            camera_id: String(event?.camera_id || ""),
+            open_deep_link: message?.event_id
+                ? `gohome://open?next=${encodeURIComponent(`event_detail.html?eventId=${message.event_id}`)}`
+                : "gohome://open?next=index.html",
+        };
+        return {
+            aps: {
+                alert: { title: delivery.title || "回家", body: delivery.body || "有一条新的家庭消息" },
+                sound: "default",
+                "thread-id": `family-${delivery.family_id}`,
+            },
+            gohome,
+        };
+    }
+
+    function apnsRetryDelayMs(attemptCount) {
+        const delays = [1000, 2000, 5000, 10000, 20000, 30000, 60000, 120000];
+        return delays[Math.min(Math.max(0, Number(attemptCount || 1) - 1), delays.length - 1)];
+    }
+
+    async function dispatchQueuedPushDeliveries({ limit = 20, target_delivery_ids = null } = {}) {
+        if (!appPushProviderConfigured() || apnsDispatchRunning) return { attempted: 0, sent: 0, failed: 0 };
+        apnsDispatchRunning = true;
+        const result = { attempted: 0, sent: 0, failed: 0 };
+        try {
+            const now = Date.now();
+            const requestedDeliveryIds = Array.isArray(target_delivery_ids)
+                ? new Set(target_delivery_ids.map((value) => String(value || "")).filter(Boolean))
+                : null;
+            const deliveries = store.db.notification_deliveries
+                .filter((item) => item.provider === "apns" && item.target_type === "push_token" && item.status === "queued")
+                .filter((item) => !requestedDeliveryIds || requestedDeliveryIds.has(String(item.id || "")))
+                .filter((item) => !item.scheduled_for || Date.parse(item.scheduled_for) <= now)
+                .filter((item) => !item.response_payload?.next_attempt_at || Date.parse(item.response_payload.next_attempt_at) <= now)
+                .slice(0, Math.max(1, Math.min(100, Number(limit) || 20)));
+            for (const delivery of deliveries) {
+                result.attempted += 1;
+                const token = store.db.app_push_tokens.find((item) => (
+                    String(item.id) === String(delivery.target_id) && String(item.status || "active") === "active"
+                ));
+                const attemptCount = Number(delivery.response_payload?.attempt_count || 0) + 1;
+                const attemptStartedAt = nowIso();
+                const attemptStartedMs = Date.now();
+                const previousFailures = Array.isArray(delivery.response_payload?.failure_history)
+                    ? delivery.response_payload.failure_history
+                    : [];
+                if (!token?.token_ciphertext) {
+                    delivery.status = "failed";
+                    delivery.error_message = "Encrypted APNs token is unavailable; device must register again.";
+                    delivery.response_payload = {
+                        attempt_count: attemptCount,
+                        attempt_started_at: attemptStartedAt,
+                        attempt_finished_at: nowIso(),
+                    };
+                    delivery.updated_at = nowIso();
+                    result.failed += 1;
+                    continue;
+                }
+                try {
+                    const message = store.db.app_messages.find((item) => String(item.message_id || item.id) === String(delivery.message_id));
+                    const response = await apnsProvider.send({
+                        tokenCiphertext: token.token_ciphertext,
+                        environment: token.environment || "production",
+                        payload: notificationPayload(delivery, message),
+                        priority: delivery.scheduled_for ? 5 : 10,
+                    });
+                    const finishedAt = nowIso();
+                    delivery.status = "sent";
+                    delivery.error_message = "";
+                    delivery.sent_at = finishedAt;
+                    delivery.response_payload = {
+                        attempt_count: attemptCount,
+                        apns_id: response.apnsId || "",
+                        status_code: response.statusCode || 200,
+                        attempt_started_at: attemptStartedAt,
+                        attempt_finished_at: finishedAt,
+                        provider_latency_ms: Date.now() - attemptStartedMs,
+                        queued_to_sent_ms: Math.max(0, Date.now() - Date.parse(delivery.created_at || finishedAt)),
+                        ...(previousFailures.length ? { failure_history: previousFailures.slice(-8) } : {}),
+                    };
+                    delivery.updated_at = finishedAt;
+                    result.sent += 1;
+                } catch (error) {
+                    const finishedAt = nowIso();
+                    const providerLatencyMs = Date.now() - attemptStartedMs;
+                    const invalidToken = ["BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered"].includes(String(error.reason || ""));
+                    if (invalidToken) {
+                        token.status = "revoked";
+                        token.updated_at = finishedAt;
+                    }
+                    const retry = error.retryable === true && attemptCount < 8;
+                    delivery.status = retry ? "queued" : "failed";
+                    delivery.error_message = String(error.reason || error.message || "APNs delivery failed").slice(0, 240);
+                    delivery.response_payload = {
+                        attempt_count: attemptCount,
+                        apns_id: String(error.apnsId || ""),
+                        status_code: Number(error.statusCode || 0),
+                        reason: String(error.reason || ""),
+                        attempt_started_at: attemptStartedAt,
+                        attempt_finished_at: finishedAt,
+                        provider_latency_ms: providerLatencyMs,
+                        failure_history: [...previousFailures, {
+                            attempt: attemptCount,
+                            occurred_at: finishedAt,
+                            status_code: Number(error.statusCode || 0),
+                            reason: String(error.reason || error.message || "APNs delivery failed").slice(0, 160),
+                            provider_latency_ms: providerLatencyMs,
+                        }].slice(-8),
+                        ...(retry ? { next_attempt_at: new Date(Date.now() + apnsRetryDelayMs(attemptCount)).toISOString() } : {}),
+                    };
+                    if (!retry) result.failed += 1;
+                    delivery.updated_at = finishedAt;
+                }
+            }
+            if (result.attempted > 0) await store.save();
+            return result;
+        } finally {
+            apnsDispatchRunning = false;
+        }
     }
 
     function shanghaiTimeParts(date = new Date()) {
@@ -2660,7 +3182,141 @@ function createLocalAppServer(options = {}) {
         return message;
     }
 
+    function createReturnHomeMessage(family, preferences) {
+        const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
+        const reminder = schedule.visit_reminder || {};
+        const thresholdDays = Math.max(1, normalizeNumber(
+            schedule.delivery_rules?.visit_reminder?.threshold_days,
+            reminder.threshold_days || 14,
+        ));
+        const daysSinceVisit = daysSinceDateString(reminder.last_visit_at);
+        if (schedule.content_types?.visit_reminder === false || reminder.enabled === false) return null;
+        if (daysSinceVisit === null || daysSinceVisit < thresholdDays) return null;
+        const messageId = `return-home-${family.id}-${reminder.last_visit_at}-${thresholdDays}`;
+        const existing = store.db.app_messages.find((message) => String(message.message_id || "") === messageId);
+        if (existing) return null;
+        const region = [schedule.content_region?.city, schedule.content_region?.district].filter(Boolean).join("");
+        const interests = normalizeStringList(schedule.interest_topics, [], 2);
+        const topics = [
+            "这周末的时间安排",
+            region ? `${region}最近的天气和出行` : "最近的天气和出行",
+            interests[0] ? `最近有没有在关注${interests[0]}` : "最近想做的一件小事",
+        ].slice(0, 3);
+        const messageVariants = [
+            "这周末我在看看时间安排，你们有什么计划？",
+            interests[0]
+                ? `最近看到一些${interests[0]}相关的内容，想听听你们怎么看。`
+                : "最近有什么新鲜事？晚上有空的话想听你们聊聊。",
+        ];
+        return upsertAppMessage({
+            message_id: messageId,
+            idempotency_key: messageId,
+            family_id: family.id,
+            message_type: "return_home",
+            title: "周末安排可以提前定了",
+            subtitle: `距离上次回家 ${daysSinceVisit} 天`,
+            body: "看看这周末是否适合回家；暂时定不下来，也可以先选一个话题联系家里。",
+            facts: [`上次回家：${reminder.last_visit_at}`, `提醒阈值：${thresholdDays} 天`],
+            actions: [
+                { key: "shared", label: "分享参考文案" },
+                { key: "contacted", label: "已联系" },
+                { key: "snoozed", label: "稍后提醒" },
+                { key: "returned_home", label: "已回家" },
+            ],
+            source: [{ type: "visit_schedule", last_visit_at: reminder.last_visit_at, threshold_days: thresholdDays }],
+            priority: "normal",
+            generated_by: "return-home-scheduler",
+            metadata: {
+                trigger_reason: "days_since_last_visit",
+                trigger_context: { last_visit_at: reminder.last_visit_at, days_since_visit: daysSinceVisit, threshold_days: thresholdDays },
+                topics,
+                message_variants: messageVariants,
+            },
+        });
+    }
+
+    async function activityOverviewForScheduler(familyId, date, evaluationAt) {
+        const dates = activityDateKeysEndingAt(date, 7);
+        const intervals = await nativeRepository.activityIntervalsForScheduler(familyId, {
+            start_date: dates[0],
+            end_date: dates[dates.length - 1],
+        });
+        return buildActivityOverview(date, groupIntervalsByDate(dates, intervals), { evaluationAt });
+    }
+
+    async function createActivityInsightMessage(family, preferences) {
+        const activityHistory = preferences.metadata?.activity_history || {};
+        if (activityHistory.tracking_enabled === false || activityHistory.anomaly_reminders_enabled === false) return null;
+        const evaluationAt = activityEvaluationNow();
+        const date = dateKeyShanghai(evaluationAt);
+        const messageId = `activity-insight-${family.id}-${date}`;
+        if (store.db.app_messages.some((item) => String(item.message_id || "") === messageId)) return null;
+        const overview = await activityOverviewForScheduler(family.id, date, evaluationAt);
+        const priorities = ["night_activity", "activity_reduced", "routine_shift"];
+        const insight = priorities
+            .map((type) => overview.attention_items.find((item) => item.type === type))
+            .find(Boolean);
+        if (!insight) return null;
+        const presentation = {
+            night_activity: {
+                title: "昨夜有几段活动值得问候",
+                body: "记录只说明家中出现了夜间活动，不代表健康结论。可以先自然地问问昨晚休息得怎么样。",
+            },
+            activity_reduced: {
+                title: "今天的活动比近期少一些",
+                body: "这是基于可验证活动区间的变化提示，不代表身体异常。可以先聊聊今天的安排和感受。",
+            },
+            routine_shift: {
+                title: "今天的活动时间和平时不太一样",
+                body: "记录显示首次活动时间与近期规律有差异，可以借此自然地问问今天有什么新安排。",
+            },
+        }[insight.type];
+        return upsertAppMessage({
+            message_id: messageId,
+            idempotency_key: messageId,
+            family_id: family.id,
+            message_type: "activity_insight",
+            title: presentation.title,
+            subtitle: `${family.name || "当前家庭"} · 需要留意`,
+            body: presentation.body,
+            facts: insight.facts,
+            actions: [
+                { key: "shared", label: "分享参考文案" },
+                { key: "contacted", label: "已联系" },
+                { key: "snoozed", label: "稍后提醒" },
+                { key: "dismissed", label: "忽略" },
+            ],
+            source: [{ type: "activity_overview", date, insight_type: insight.type }],
+            priority: "notice",
+            generated_by: "activity-insight-scheduler",
+            metadata: {
+                trigger_reason: insight.type,
+                topics: ["今天的安排", "昨晚休息", "最近的近况"],
+                message_variants: [insight.suggested_topic],
+                data_quality: overview.data_quality,
+            },
+        });
+    }
+
+    function activityInsightEvaluationDue(familyId, preferences, evaluationAt = Date.now()) {
+        const activityHistory = preferences?.metadata?.activity_history || {};
+        if (activityHistory.tracking_enabled === false || activityHistory.anomaly_reminders_enabled === false) return false;
+        const date = dateKeyShanghai(new Date(evaluationAt));
+        const messageId = `activity-insight-${familyId}-${date}`;
+        if (store.db.app_messages.some((item) => String(item.message_id || "") === messageId)) return false;
+        return evaluationAt >= Number(activityInsightNextEvaluationAt.get(String(familyId)) || 0);
+    }
+
+    function deferActivityInsightEvaluation(familyId, evaluationAt = Date.now()) {
+        const intervalSeconds = Math.max(
+            60,
+            normalizeNumber(process.env.GOHOME_ACTIVITY_INSIGHT_INTERVAL_SECONDS, 600),
+        );
+        activityInsightNextEvaluationAt.set(String(familyId), evaluationAt + intervalSeconds * 1000);
+    }
+
     function createEventAlertMessage(event) {
+        if (!directEventAlertEligible(event)) return null;
         const camera = store.db.cameras[String(event.camera_id)] || {};
         return upsertAppMessage({
             message_id: `event-alert-${event.id}`,
@@ -2682,6 +3338,14 @@ function createLocalAppServer(options = {}) {
             priority: event.level === "critical" ? "high" : "normal",
             generated_by: "event-notification-service",
         });
+    }
+
+    function directEventAlertEligible(event) {
+        if (!event || event.acknowledged) return false;
+        if (VISION_VERIFICATION_EVENT_TYPES.has(String(event.event_type || ""))) return false;
+        const incidentStatus = String(event.payload?.incident?.status || "");
+        if (["rejected", "resolved"].includes(incidentStatus)) return false;
+        return !String(event.resolution || "").trim();
     }
 
     const SAFETY_INCIDENT_TYPES = new Set([
@@ -2850,28 +3514,21 @@ function createLocalAppServer(options = {}) {
         const incident = ensureSafetyIncident(primary);
         if (!incident || !primary.family_id) return null;
         const result = verification.result || {};
-        const copy = {
-            title: primary.summary || "家中异常已经确认",
-            subtitle: `${primary.room || primary.camera_name || "家里"} · 云端复核确认`,
-            body: result.reason || "云端视觉模型支持边缘端异常判断，请尽快查看并联系老人。",
-            priority: "high",
-            message_type: "alert",
-        };
         const messageId = `incident-verification-${incident.incident_id}-${status}`;
         return upsertAppMessage({
             message_id: messageId,
             idempotency_key: messageId,
             family_id: primary.family_id,
             event_id: primary.id,
-            message_type: copy.message_type,
-            title: copy.title,
-            subtitle: copy.subtitle,
-            body: copy.body,
+            message_type: "alert",
+            title: primary.summary || "家中异常已经确认",
+            subtitle: `${primary.room || primary.camera_name || "家里"} · 云端复核确认`,
+            body: result.reason || "云端视觉模型支持边缘端异常判断，请尽快查看并联系老人。",
             facts: [primary.event_type, status, result.confidence !== undefined ? `置信度 ${Math.round(Number(result.confidence) * 100)}%` : ""].filter(Boolean),
             actions: [{ key: "open_event", label: "查看事件", event_id: primary.id }],
             source_event_ids: incident.source_event_ids || [primary.id],
             source: [{ type: "safety_incident", id: incident.incident_id }],
-            priority: copy.priority,
+            priority: "high",
             generated_by: "vision-verification-orchestrator",
             metadata: { verification_status: status, model: verification.model || "" },
         });
@@ -2915,7 +3572,7 @@ function createLocalAppServer(options = {}) {
             primary.resolution = "vision_rejected";
             archiveIncidentMessages(primaryIncident.incident_id);
         }
-        const shouldNotify = nextStatus === "confirmed";
+        const shouldNotify = nextStatus === "confirmed" && !primary.acknowledged;
         const notificationDecision = setIncidentNotificationState(primary, {
             decision: shouldNotify ? "notify_once" : "record_only",
             reason: shouldNotify ? "multimodal_risk_confirmed" : `multimodal_${nextStatus}`,
@@ -3123,6 +3780,8 @@ function createLocalAppServer(options = {}) {
                 care_cards_generated: 0,
                 app_messages_created: 0,
                 notification_deliveries_created: 0,
+                return_home_messages_created: 0,
+                activity_insight_messages_created: 0,
                 event_alerts_created: 0,
                 incident_reminders_created: 0,
                 long_absence_events_created: 0,
@@ -3174,6 +3833,8 @@ function createLocalAppServer(options = {}) {
             care_cards_generated: 0,
             app_messages_created: 0,
             notification_deliveries_created: 0,
+            return_home_messages_created: 0,
+            activity_insight_messages_created: 0,
             event_alerts_created: 0,
             incident_reminders_created: 0,
             long_absence_events_created: 0,
@@ -3184,26 +3845,43 @@ function createLocalAppServer(options = {}) {
                 (!scopeFamilyId || Number(family.id) === Number(scopeFamilyId))
                 && String(family.status || "active") !== "disabled"
             ));
+            let activityInsightEvaluationBudget = String(options.job_type || "") === "background_scheduler" ? 1 : Infinity;
             for (const family of families) {
                 result.families_checked += 1;
                 const preferences = carePreferences(family.id);
                 const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
+                const rules = schedule.delivery_rules || {};
                 const presenceState = familyPresenceState(family);
                 const beforePresenceEvents = store.db.events.length;
                 const absenceEvent = reconcileLongAbsenceEvent(family, presenceState);
                 const createdAbsence = Math.max(0, store.db.events.length - beforePresenceEvents);
                 result.long_absence_events_created += createdAbsence;
                 if (absenceEvent && createdAbsence) {
-                    queueSafetyIncidentNotification(
-                        absenceEvent,
-                        createEventAlertMessage(absenceEvent),
-                        "long_absence_confirmed",
-                    );
+                    const absenceMessage = createEventAlertMessage(absenceEvent);
+                    if (absenceMessage) queueNotificationDelivery(absenceMessage);
+                }
+                if (rules.home_status?.exception_push_enabled !== false) {
+                    const beforeInsightMessages = store.db.app_messages.length;
+                    const beforeInsightDeliveries = store.db.notification_deliveries.length;
+                    if (activityInsightEvaluationBudget > 0 && activityInsightEvaluationDue(family.id, preferences)) {
+                        activityInsightEvaluationBudget -= 1;
+                        deferActivityInsightEvaluation(family.id);
+                        const insightMessage = await createActivityInsightMessage(family, preferences);
+                        if (insightMessage) queueNotificationDelivery(insightMessage);
+                    }
+                    result.activity_insight_messages_created += Math.max(0, store.db.app_messages.length - beforeInsightMessages);
+                    result.notification_deliveries_created += Math.max(0, store.db.notification_deliveries.length - beforeInsightDeliveries);
                 }
                 if (!schedule.enabled) {
                     result.skipped.push({ family_id: family.id, reason: "schedule_disabled" });
                     continue;
                 }
+                const beforeReturnHomeMessages = store.db.app_messages.length;
+                const beforeReturnHomeDeliveries = store.db.notification_deliveries.length;
+                const returnHomeMessage = createReturnHomeMessage(family, preferences);
+                if (returnHomeMessage) queueNotificationDelivery(returnHomeMessage);
+                result.return_home_messages_created += Math.max(0, store.db.app_messages.length - beforeReturnHomeMessages);
+                result.notification_deliveries_created += Math.max(0, store.db.notification_deliveries.length - beforeReturnHomeDeliveries);
                 if (dailyCareDue(family.id, schedule, options)) {
                     const beforeMessages = store.db.app_messages.length;
                     const beforeDeliveries = store.db.notification_deliveries.length;
@@ -3219,8 +3897,8 @@ function createLocalAppServer(options = {}) {
                     result.skipped.push({ family_id: family.id, reason: "daily_not_due_or_already_sent" });
                 }
 
-                // Event notifications are emitted only at event creation or first
-                // confirmed transition. The care scheduler must never backfill history.
+                // Safety alerts are emitted only at event creation or the first
+                // confirmed verification transition. Never backfill history here.
             }
             run.status = "succeeded";
             run.result = result;
@@ -3238,6 +3916,28 @@ function createLocalAppServer(options = {}) {
             store.db.scheduler_runs = compactSchedulerRuns(store.db.scheduler_runs);
             schedulerRunning = false;
         }
+    }
+
+    function persistSchedulerOutcome(outcome) {
+        if (!outcome?.run?.id) return Promise.resolve();
+        const result = outcome?.result || {};
+        const mutationKeys = [
+            "care_cards_generated",
+            "app_messages_created",
+            "notification_deliveries_created",
+            "return_home_messages_created",
+            "activity_insight_messages_created",
+            "event_alerts_created",
+            "incident_reminders_created",
+            "long_absence_events_created",
+        ];
+        const changedBusinessState = mutationKeys.some((key) => Number(result[key] || 0) > 0);
+        if (store.kind === "postgres" && !changedBusinessState && typeof store.saveSchedulerRun === "function") {
+            return store.saveSchedulerRun(outcome.run, {
+                retention: normalizeNumber(process.env.GOHOME_SCHEDULER_RUN_RETENTION, 500),
+            });
+        }
+        return store.save();
     }
 
     function modelJob(payload) {
@@ -3717,6 +4417,82 @@ function createLocalAppServer(options = {}) {
         return target.startsWith(root) ? target : "";
     }
 
+    function eventTemporalEvidenceSnapshots(event) {
+        const evidence = event.payload?.evidence || {};
+        const bundle = evidence.temporal_evidence_bundle || event.payload?.temporal_evidence_bundle || {};
+        return Array.isArray(bundle.snapshots) ? bundle.snapshots.slice(0, 3) : [];
+    }
+
+    function eventEvidenceAssetRole(event, asset, orderedIndex, orderedCount) {
+        const explicit = String(asset?.evidence_frame_role || asset?.metadata?.evidence_frame_role || "").trim();
+        if (["before", "transition", "current"].includes(explicit)) return explicit;
+        const snapshot = eventTemporalEvidenceSnapshots(event).find((item) => (
+            String(item?.snapshot_path || "") === String(asset?.snapshot_path || "")
+        ));
+        const bundleRole = String(snapshot?.role || "").trim();
+        if (["before", "transition", "current"].includes(bundleRole)) return bundleRole;
+        if (String(asset?.purpose || asset?.metadata?.purpose || "") === "event_evidence") return "current";
+        if (orderedIndex === 0) return "before";
+        if (orderedIndex === orderedCount - 1) return "current";
+        return "transition";
+    }
+
+    function synchronizeEventEvidence(event, preferredAsset = null) {
+        if (!event || !event.payload) return { assets: [], expected_count: 1, ready: false };
+        const edgeEventId = String(event.edge_event_id || event.payload?.edge_upload?.edge_event_id || "");
+        const edgeDeviceId = String(event.device_id || event.payload?.edge_upload?.edge_device_id || "");
+        let assets = store.db.assets.filter((asset) => (
+            edgeEventId
+            && String(asset.edge_event_id || "") === edgeEventId
+            && (!edgeDeviceId || String(asset.device_id || "") === edgeDeviceId)
+            && (!event.family_id || String(asset.family_id || "") === String(event.family_id))
+            && String(asset.purpose || asset.metadata?.purpose || "").startsWith("event_evidence")
+        ));
+        if (preferredAsset?.id && !assets.some((asset) => String(asset.id) === String(preferredAsset.id))) {
+            assets.push(preferredAsset);
+        }
+        assets = assets
+            .filter((asset, index, items) => items.findIndex((item) => String(item.id) === String(asset.id)) === index)
+            .sort((a, b) => String(a.captured_at || a.created_at || "").localeCompare(String(b.captured_at || b.created_at || "")))
+            .slice(-3);
+        assets.forEach((asset, index) => {
+            asset.evidence_frame_role = eventEvidenceAssetRole(event, asset, index, assets.length);
+            asset.metadata = {
+                ...(asset.metadata || {}),
+                evidence_frame_role: asset.evidence_frame_role,
+            };
+        });
+        const roleOrder = { before: 0, transition: 1, current: 2 };
+        assets.sort((a, b) => (
+            (roleOrder[a.evidence_frame_role] ?? 3) - (roleOrder[b.evidence_frame_role] ?? 3)
+            || String(a.captured_at || a.created_at || "").localeCompare(String(b.captured_at || b.created_at || ""))
+        ));
+        const entries = assets.map((asset) => {
+            const source = eventTemporalEvidenceSnapshots(event).find((item) => (
+                String(item?.snapshot_path || "") === String(asset.snapshot_path || "")
+            ));
+            return {
+                asset_id: asset.id,
+                role: asset.evidence_frame_role || "evidence",
+                captured_at: String(source?.observed_at || asset.captured_at || asset.created_at || ""),
+                snapshot_id: normalizeNumber(source?.snapshot_id, null),
+                postures: Array.isArray(source?.postures) ? source.postures.map(String).slice(0, 8) : [],
+            };
+        });
+        event.payload.evidence_media_assets = entries;
+        const current = assets.find((asset) => asset.evidence_frame_role === "current") || assets[assets.length - 1] || null;
+        if (current) {
+            event.media_asset_id = current.id;
+            event.snapshot_path = current.snapshot_path || event.snapshot_path || "";
+        }
+        const expectedCount = Math.max(1, Math.min(3, eventTemporalEvidenceSnapshots(event).length || 1));
+        return {
+            assets,
+            expected_count: expectedCount,
+            ready: assets.length >= expectedCount && Boolean(current),
+        };
+    }
+
     function visionEvidenceAssets(event, primaryAsset = null) {
         const roleOrder = { before: 0, transition: 1, current: 2, evidence: 3 };
         const ids = [];
@@ -3851,11 +4627,14 @@ function createLocalAppServer(options = {}) {
         const validationProbe = Boolean(event.payload?.validation?.vision_verification_probe);
         if (!VISION_VERIFICATION_EVENT_TYPES.has(event.event_type) || (isValidationEvent(event) && !validationProbe)) return null;
         event.payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+        const synchronized = synchronizeEventEvidence(event, asset);
         const assets = visionEvidenceAssets(event, asset);
-        if (!assets.length) {
+        if (!synchronized.ready || assets.length < synchronized.expected_count) {
             event.payload.verification = {
-                status: "unavailable",
-                reason: "missing_event_evidence",
+                status: "waiting_evidence",
+                reason: "awaiting_event_evidence",
+                received_count: assets.length,
+                expected_count: synchronized.expected_count,
                 updated_at: nowIso(),
             };
             return null;
@@ -3915,6 +4694,20 @@ function createLocalAppServer(options = {}) {
         const force = normalizeBool(options.force);
         const result = { ok: true, processed: 0, succeeded: 0, retrying: 0, failed: 0, skipped: 0 };
         try {
+            for (const event of store.db.events) {
+                const verification = event.payload?.verification || {};
+                if (
+                    VISION_VERIFICATION_EVENT_TYPES.has(event.event_type)
+                    && !verificationJobForEvent(event.id)
+                    && (
+                        verification.status === "waiting_evidence"
+                        || verification.reason === "missing_event_evidence"
+                        || verification.reason === "awaiting_event_evidence"
+                    )
+                ) {
+                    queueVisionVerification(event, null);
+                }
+            }
             const now = Date.now();
             const jobs = store.db.model_generation_jobs
                 .filter((job) => job.purpose === "vision_event_verification")
@@ -4153,10 +4946,14 @@ function createLocalAppServer(options = {}) {
             && entry.value.recommendations.some((item) => String(item?.image_url || "").trim() === target)
         ));
         if (cached) return true;
-        return store.db.care_cards.some((card) => (
+        if (store.db.care_cards.some((card) => (
             Array.isArray(card?.content_recommendations)
             && card.content_recommendations.some((item) => String(item?.image_url || "").trim() === target)
-        ));
+        ))) return true;
+        if (store.db.content_recommendations.some((item) => (
+            String(item?.image_url || item?.metadata?.image_url || "").trim() === target
+        ))) return true;
+        return store.db.product_catalog.some((item) => String(item?.image_url || "").trim() === target);
     }
 
     async function proxyContentImage(targetUrl) {
@@ -4230,7 +5027,7 @@ function createLocalAppServer(options = {}) {
     function unavailableWeatherSignal({ familyId, city, provider, reason, detail = "" }) {
         return {
             family_id: Number(familyId || 0),
-            city: city || "杭州",
+            city: city || "",
             available: false,
             provider,
             reason,
@@ -4283,10 +5080,13 @@ function createLocalAppServer(options = {}) {
 
     async function fetchQWeatherSignal({ familyId, city }) {
         const runtime = weatherRuntimeConfig();
-        if (!runtime.api_key) {
-            return unavailableWeatherSignal({ familyId, city, provider: "qweather", reason: "not_configured" });
+        const targetCity = String(city || "").trim();
+        if (!targetCity) {
+            return unavailableWeatherSignal({ familyId, city: "", provider: "qweather", reason: "home_location_missing" });
         }
-        const targetCity = String(city || "杭州").trim() || "杭州";
+        if (!runtime.api_key) {
+            return unavailableWeatherSignal({ familyId, city: targetCity, provider: "qweather", reason: "not_configured" });
+        }
         const cacheKey = `weather:qweather:${targetCity}`;
         const cached = cachedProviderValue(cacheKey, 20 * 60 * 1000);
         if (cached) return { ...cached, family_id: Number(familyId || cached.family_id || 0) };
@@ -4360,7 +5160,10 @@ function createLocalAppServer(options = {}) {
     }
 
     async function fetchOpenMeteoSignal({ familyId, city }) {
-        const targetCity = String(city || "杭州").trim() || "杭州";
+        const targetCity = String(city || "").trim();
+        if (!targetCity) {
+            return unavailableWeatherSignal({ familyId, city: "", provider: "open-meteo", reason: "home_location_missing" });
+        }
         const cacheKey = `weather:open-meteo:${targetCity}`;
         const cached = cachedProviderValue(cacheKey, 20 * 60 * 1000);
         if (cached) return { ...cached, family_id: Number(familyId || cached.family_id || 0) };
@@ -5013,6 +5816,38 @@ function createLocalAppServer(options = {}) {
                     "-vf", "scale=1024:1024:force_original_aspect_ratio=decrease",
                     "-c:v", "libwebp",
                     "-quality", "82",
+                    "-compression_level", "4",
+                    outputPath,
+                ], { timeout: 20_000, maxBuffer: 1024 * 1024 });
+                if (result.status !== 0) return null;
+            }
+            const optimizedStat = fs.statSync(outputPath);
+            return optimizedStat.size > 0 && optimizedStat.size < stat.size ? outputPath : null;
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    function optimizedMemoryImageFile(asset, filePath, variant) {
+        const purpose = String(asset?.purpose || asset?.metadata?.purpose || "");
+        if (purpose !== "family_memory" || variant !== "grid") return null;
+        const width = Number(asset?.metadata?.pixel_width || 0);
+        const height = Number(asset?.metadata?.pixel_height || 0);
+        const contentType = String(asset?.content_type || "").toLowerCase();
+        if (Math.max(width, height) <= 1280 && Math.max(width, height) > 0
+            && ["image/jpeg", "image/webp"].includes(contentType)) return null;
+        const stat = fs.statSync(filePath);
+        const outputPath = `${filePath}.grid.webp`;
+        try {
+            const outputStat = fs.existsSync(outputPath) ? fs.statSync(outputPath) : null;
+            if (!outputStat || outputStat.mtimeMs < stat.mtimeMs) {
+                const result = spawnSync("ffmpeg", [
+                    "-y",
+                    "-loglevel", "error",
+                    "-i", filePath,
+                    "-vf", "scale=1280:1280:force_original_aspect_ratio=decrease",
+                    "-c:v", "libwebp",
+                    "-quality", "74",
                     "-compression_level", "4",
                     outputPath,
                 ], { timeout: 20_000, maxBuffer: 1024 * 1024 });
@@ -5832,6 +6667,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function assetAbsolutePath(asset) {
+        if (String(asset?.storage_provider || "local") !== "local") return "";
         if (!asset?.relative_path) return "";
         const filePath = path.resolve(mediaDir, asset.relative_path);
         if (!filePath.startsWith(mediaDir)) return "";
@@ -5872,14 +6708,24 @@ function createLocalAppServer(options = {}) {
         return null;
     }
 
+    function effectiveVideoPrivacyMode(cameraId, requestedMode = "original") {
+        const familyId = familyIdForCamera(cameraId);
+        const minimumMode = videoPrivacyForFamily(familyId).minimum_mode;
+        return stricterVideoPrivacyMode(minimumMode, requestedMode);
+    }
+
     function activeVideoPrivacyMode(cameraId) {
         return videoPrivacyForFamily(familyIdForCamera(cameraId)).minimum_mode;
     }
 
     function streamPrivacyMode(req, cameraId) {
         const ticket = playbackTicketFromRequest(req);
-        if (ticket && String(ticket.payload?.camera_id || "") !== String(cameraId)) return null;
-        return activeVideoPrivacyMode(cameraId);
+        if (ticket) {
+            if (String(ticket.payload?.camera_id || "") !== String(cameraId)) return null;
+            return effectiveVideoPrivacyMode(cameraId, ticket.payload?.privacy_mode);
+        }
+        const requested = new URL(req.url, "http://local").searchParams.get("privacy_mode") || "original";
+        return effectiveVideoPrivacyMode(cameraId, requested);
     }
 
     function requireCameraAccess(req, res, cameraId) {
@@ -6077,146 +6923,14 @@ function createLocalAppServer(options = {}) {
         return true;
     }
 
-    function latestLiveFrame(cameraId) {
-        const item = liveFrameCache.get(String(cameraId));
+    function liveFrameCacheKey(cameraId, privacyMode = "original") {
+        return `${cameraId}:${normalizeVideoPrivacyMode(privacyMode)}`;
+    }
+
+    function latestLiveFrame(cameraId, privacyMode = "original") {
+        const item = liveFrameCache.get(liveFrameCacheKey(cameraId, privacyMode));
         if (!item?.frame || Date.now() - Number(item.received_at_ms || 0) > LIVE_FRAME_TTL_MS) return null;
         return item;
-    }
-
-    function latestRelayFrame(cameraId) {
-        const live = latestLiveFrame(cameraId);
-        if (live) {
-            return {
-                key: `live:${live.frame_id}`,
-                frame: live.frame,
-                contentType: live.content_type || "image/jpeg",
-                capturedAt: live.captured_at || live.received_at,
-                source: "live",
-                assetId: "",
-            };
-        }
-
-        const asset = latestCameraAsset(cameraId, { purposes: ["live_preview"] });
-        const filePath = assetAbsolutePath(asset);
-        if (!asset || !filePath || !fs.existsSync(filePath)) return null;
-        let stat;
-        try {
-            stat = fs.statSync(filePath);
-        } catch (_error) {
-            return null;
-        }
-        if (!stat.isFile() || stat.size <= 0) return null;
-        let frame;
-        try {
-            frame = fs.readFileSync(filePath);
-        } catch (_error) {
-            return null;
-        }
-        if (!frame.length) return null;
-        return {
-            key: `asset:${asset.id || ""}:${asset.relative_path || ""}:${stat.mtimeMs}:${stat.size}`,
-            frame,
-            contentType: asset.content_type || "image/jpeg",
-            capturedAt: asset.captured_at || asset.created_at,
-            source: "asset",
-            assetId: asset.id ? String(asset.id) : "",
-        };
-    }
-
-    function writeLatestFrameMjpegStream(req, res, cameraId) {
-        const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
-        let lastAssetKey = "";
-        let closed = false;
-
-        if (typeof req.setTimeout === "function") req.setTimeout(0);
-        if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
-
-        res.writeHead(200, {
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-store, no-transform",
-            "Connection": "keep-alive",
-            "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
-            "X-Accel-Buffering": "no",
-            "X-GoHome-Stream-State": "cloud_relay",
-        });
-        if (typeof res.flushHeaders === "function") res.flushHeaders();
-
-        function writeNextFrame({ force = false } = {}) {
-            if (closed || res.destroyed || res.writableEnded) return;
-            const relayFrame = latestRelayFrame(cameraId);
-            if (!relayFrame) return;
-            if (!force && relayFrame.key === lastAssetKey) return;
-            lastAssetKey = relayFrame.key;
-            res.write(`--${boundary}\r\n`);
-            res.write(`Content-Type: ${relayFrame.contentType}\r\n`);
-            res.write(`Content-Length: ${relayFrame.frame.length}\r\n`);
-            res.write(`X-GoHome-Frame-Source: ${relayFrame.source}\r\n`);
-            if (relayFrame.assetId) res.write(`X-GoHome-Asset-Id: ${relayFrame.assetId}\r\n`);
-            if (relayFrame.capturedAt) {
-                res.write(`X-GoHome-Captured-At: ${relayFrame.capturedAt}\r\n`);
-            }
-            res.write("\r\n");
-            res.write(relayFrame.frame);
-            res.write("\r\n");
-        }
-
-        writeNextFrame({ force: true });
-        const timer = setInterval(writeNextFrame, Math.ceil(1000 / streamProfileConfig("mobile").fps));
-        req.on("close", () => {
-            closed = true;
-            clearInterval(timer);
-        });
-        res.on("close", () => {
-            closed = true;
-            clearInterval(timer);
-        });
-        return true;
-    }
-
-    async function handleDeviceLiveFrameUpload(req, res, url) {
-        if (!requireDevice(req, res)) return;
-        const issuedToken = issuedDeviceTokenFromRequest(req);
-        const content = await readBody(req, 4 * 1024 * 1024);
-        if (!content.length) {
-            writeError(res, 400, "live frame body is empty");
-            return;
-        }
-        const rawCameraId = url.searchParams.get("camera_id");
-        const localCameraId = url.searchParams.get("local_camera_id") || rawCameraId;
-        const mappedCamera = resolveAppCameraForDeviceCameraId(rawCameraId, {
-            local_camera_id: localCameraId,
-            edge_camera_id: localCameraId,
-        }, issuedToken?.device_id || "");
-        const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
-        if (!cameraId) {
-            writeError(res, 400, "camera_id is required");
-            return;
-        }
-        const privacyMode = normalizeVideoPrivacyMode(url.searchParams.get("privacy_mode"));
-        const sequence = Number(liveFrameSequence.get(String(cameraId)) || 0) + 1;
-        liveFrameSequence.set(String(cameraId), sequence);
-        const receivedAt = nowIso();
-        liveFrameCache.set(String(cameraId), {
-            frame_id: `${cameraId}-${Date.now()}-${sequence}`,
-            frame: content,
-            camera_id: cameraId,
-            local_camera_id: normalizeNumber(localCameraId, null),
-            device_id: issuedToken?.device_id || "",
-            content_type: url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg",
-            captured_at: url.searchParams.get("captured_at") || receivedAt,
-            received_at: receivedAt,
-            received_at_ms: Date.now(),
-            size: content.length,
-            privacy_mode: privacyMode,
-        });
-        write(res, 200, {
-            ok: true,
-            camera_id: cameraId,
-            live_frame_id: liveFrameCache.get(String(cameraId)).frame_id,
-            received_at: receivedAt,
-            received_privacy_mode: privacyMode,
-            requested_privacy_mode: activeVideoPrivacyMode(cameraId),
-        });
     }
 
     function relayCameraId(req, url) {
@@ -6361,9 +7075,11 @@ function createLocalAppServer(options = {}) {
             camera_id: relayCamera.cameraId,
             local_camera_id: relayCamera.localCameraId,
             device_id: relayCamera.deviceId,
+            content_type: "image/jpeg",
             captured_at: url.searchParams.get("captured_at") || receivedAt,
             received_at: receivedAt,
             received_at_ms: Date.now(),
+            privacy_mode: "skeleton",
         });
         write(res, 200, { ok: true, camera_id: relayCamera.cameraId, scene_frame_id: frameId, received_at: receivedAt });
     }
@@ -6376,8 +7092,8 @@ function createLocalAppServer(options = {}) {
 
     function writeSafeSceneMjpegStream(req, res, cameraId) {
         const boundary = `gohome-scene-${crypto.randomBytes(4).toString("hex")}`;
-        let lastFrameId = "";
         let closed = false;
+        activeStreamClients.scene += 1;
         if (typeof req.setTimeout === "function") req.setTimeout(0);
         if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
         res.writeHead(200, {
@@ -6390,31 +7106,40 @@ function createLocalAppServer(options = {}) {
             "X-GoHome-Privacy-Mode": "skeleton",
         });
         if (typeof res.flushHeaders === "function") res.flushHeaders();
-        const writeLatest = () => {
-            if (closed || res.destroyed || res.writableEnded) return;
-            const scene = latestLiveScene(cameraId);
-            if (!scene || scene.frame_id === lastFrameId) return;
-            lastFrameId = scene.frame_id;
-            res.write(`--${boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: ${scene.frame.length}\r\n`);
-            res.write(`X-GoHome-Frame-Source: safe_scene\r\nX-GoHome-Privacy-Mode: skeleton\r\n\r\n`);
-            res.write(scene.frame);
-            res.write("\r\n");
-        };
-        writeLatest();
-        const timer = setInterval(writeLatest, 250);
-        const close = () => {
+        const writer = createLatestFrameMjpegWriter(res, {
+            boundary,
+            getLatestFrame: () => {
+                const scene = latestLiveScene(cameraId);
+                if (!scene) return null;
+                return {
+                    key: `scene:${scene.frame_id}`,
+                    frame: scene.frame,
+                    contentType: "image/jpeg",
+                    capturedAt: scene.captured_at || scene.received_at,
+                    source: "safe_scene",
+                    assetId: "",
+                    privacyMode: "skeleton",
+                };
+            },
+        });
+        writer.writeLatest({ force: true });
+        const timer = setInterval(writer.writeLatest, 250);
+        function closeStream() {
             if (closed) return;
             closed = true;
+            activeStreamClients.scene = Math.max(0, activeStreamClients.scene - 1);
             clearInterval(timer);
-        };
-        req.on("close", close);
-        res.on("close", close);
+            writer.close();
+        }
+        req.on("close", closeStream);
+        res.on("close", closeStream);
     }
 
     function writePoseSseStream(req, res, cameraId) {
         let closed = false;
         let lastPacketKey = "";
         let staleEmitted = false;
+        activeStreamClients.pose += 1;
         if (typeof req.setTimeout === "function") req.setTimeout(0);
         if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
         res.writeHead(200, {
@@ -6461,21 +7186,195 @@ function createLocalAppServer(options = {}) {
         const heartbeatTimer = setInterval(() => {
             if (!closed && !res.destroyed && !res.writableEnded) res.write(": keepalive\n\n");
         }, 15000);
-        const close = () => {
+        function closeStream() {
             if (closed) return;
             closed = true;
+            activeStreamClients.pose = Math.max(0, activeStreamClients.pose - 1);
             clearInterval(packetTimer);
             clearInterval(heartbeatTimer);
-        };
-        req.on("close", close);
-        res.on("close", close);
+        }
+        req.on("close", closeStream);
+        res.on("close", closeStream);
     }
 
-    function applyStreamParams(sourceUrl, req) {
+    function latestRelayFrame(cameraId, privacyMode = "original") {
+        const resolvedPrivacyMode = normalizeVideoPrivacyMode(privacyMode);
+        const live = latestLiveFrame(cameraId, resolvedPrivacyMode);
+        if (live) {
+            return {
+                key: `live:${live.frame_id}`,
+                frame: live.frame,
+                contentType: live.content_type || "image/jpeg",
+                capturedAt: live.captured_at || live.received_at,
+                source: "live",
+                assetId: "",
+                privacyMode: resolvedPrivacyMode,
+            };
+        }
+
+        if (resolvedPrivacyMode !== "original") return null;
+
+        const asset = latestCameraAsset(cameraId, { purposes: ["live_preview"] });
+        const filePath = assetAbsolutePath(asset);
+        if (!asset || !filePath || !fs.existsSync(filePath)) return null;
+        let stat;
+        try {
+            stat = fs.statSync(filePath);
+        } catch (_error) {
+            return null;
+        }
+        if (!stat.isFile() || stat.size <= 0) return null;
+        let frame;
+        try {
+            frame = fs.readFileSync(filePath);
+        } catch (_error) {
+            return null;
+        }
+        if (!frame.length) return null;
+        return {
+            key: `asset:${asset.id || ""}:${asset.relative_path || ""}:${stat.mtimeMs}:${stat.size}`,
+            frame,
+            contentType: asset.content_type || "image/jpeg",
+            capturedAt: asset.captured_at || asset.created_at,
+            source: "asset",
+            assetId: asset.id ? String(asset.id) : "",
+            privacyMode: "original",
+        };
+    }
+
+    function writeLatestFrameMjpegStream(req, res, cameraId, privacyMode = "original") {
+        const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
+        const profile = new URL(req.url, "http://local").searchParams.get("profile") || "mobile";
+        const resolvedPrivacyMode = normalizeVideoPrivacyMode(privacyMode);
+        const relayFps = streamProfileConfig(profile).fps;
+        const relayIntervalMs = Math.ceil(1000 / Math.max(1, relayFps));
+        let closed = false;
+        activeStreamClients.video += 1;
+
+        if (typeof req.setTimeout === "function") req.setTimeout(0);
+        if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
+
+        res.writeHead(200, {
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store, no-transform",
+            "Connection": "keep-alive",
+            "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
+            "X-Accel-Buffering": "no",
+            "X-GoHome-Stream-State": "cloud_relay",
+            "X-GoHome-Privacy-Mode": resolvedPrivacyMode,
+        });
+        if (typeof res.flushHeaders === "function") res.flushHeaders();
+
+        const writer = createLatestFrameMjpegWriter(res, {
+            boundary,
+            getLatestFrame: () => latestRelayFrame(cameraId, resolvedPrivacyMode),
+        });
+        writer.writeLatest({ force: true });
+        const timer = setInterval(writer.writeLatest, relayIntervalMs);
+        function closeStream() {
+            if (closed) return;
+            closed = true;
+            activeStreamClients.video = Math.max(0, activeStreamClients.video - 1);
+            clearInterval(timer);
+            writer.close();
+        }
+        req.on("close", closeStream);
+        res.on("close", closeStream);
+        return true;
+    }
+
+    async function handleDeviceLiveFrameUpload(req, res, url) {
+        if (!requireDevice(req, res)) return;
+        const issuedToken = issuedDeviceTokenFromRequest(req);
+        const content = await readBody(req, 4 * 1024 * 1024);
+        if (!content.length) {
+            writeError(res, 400, "live frame body is empty");
+            return;
+        }
+        const rawCameraId = url.searchParams.get("camera_id");
+        const localCameraId = url.searchParams.get("local_camera_id") || rawCameraId;
+        const mappedCamera = resolveAppCameraForDeviceCameraId(rawCameraId, {
+            local_camera_id: localCameraId,
+            edge_camera_id: localCameraId,
+        }, issuedToken?.device_id || "");
+        const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
+        if (!cameraId) {
+            writeError(res, 400, "camera_id is required");
+            return;
+        }
+        const receivedAt = nowIso();
+        const privacyMode = normalizeVideoPrivacyMode(url.searchParams.get("privacy_mode"));
+        const cacheKey = liveFrameCacheKey(cameraId, privacyMode);
+        const streamEpochMs = Math.max(0, Math.trunc(normalizeNumber(url.searchParams.get("stream_epoch_ms"), 0)));
+        const sourceSequence = Math.max(0, Math.trunc(normalizeNumber(url.searchParams.get("sequence"), 0)));
+        const current = liveFrameCache.get(cacheKey);
+        const orderedUpload = streamEpochMs > 0 && sourceSequence > 0;
+        const staleUpload = orderedUpload && current?.stream_epoch_ms > 0 && (
+            streamEpochMs < current.stream_epoch_ms
+            || (streamEpochMs === current.stream_epoch_ms && sourceSequence <= current.source_sequence)
+        );
+        if (staleUpload) {
+            recordLiveFrameMetric(cameraId, {
+                accepted: false,
+                capturedAt: url.searchParams.get("captured_at"),
+                receivedAtMs: Date.now(),
+            });
+            write(res, 200, {
+                ok: true,
+                accepted: false,
+                stale_ignored: true,
+                camera_id: cameraId,
+                live_frame_id: current.frame_id,
+                received_at: receivedAt,
+                received_privacy_mode: privacyMode,
+                requested_privacy_mode: activeVideoPrivacyMode(cameraId),
+                stream_epoch_ms: current.stream_epoch_ms,
+                source_sequence: current.source_sequence,
+            });
+            return;
+        }
+        const sequence = Number(liveFrameSequence.get(String(cameraId)) || 0) + 1;
+        liveFrameSequence.set(String(cameraId), sequence);
+        liveFrameCache.set(cacheKey, {
+            frame_id: `${cameraId}-${Date.now()}-${sequence}`,
+            frame: content,
+            camera_id: cameraId,
+            local_camera_id: normalizeNumber(localCameraId, null),
+            device_id: issuedToken?.device_id || "",
+            content_type: url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg",
+            captured_at: url.searchParams.get("captured_at") || receivedAt,
+            received_at: receivedAt,
+            received_at_ms: Date.now(),
+            size: content.length,
+            privacy_mode: privacyMode,
+            stream_epoch_ms: streamEpochMs,
+            source_sequence: sourceSequence,
+        });
+        recordLiveFrameMetric(cameraId, {
+            accepted: true,
+            capturedAt: url.searchParams.get("captured_at") || receivedAt,
+            receivedAtMs: Date.now(),
+        });
+        write(res, 200, {
+            ok: true,
+            accepted: true,
+            stale_ignored: false,
+            camera_id: cameraId,
+            live_frame_id: liveFrameCache.get(cacheKey).frame_id,
+            received_at: receivedAt,
+            received_privacy_mode: privacyMode,
+            requested_privacy_mode: activeVideoPrivacyMode(cameraId),
+            stream_epoch_ms: streamEpochMs,
+            source_sequence: sourceSequence,
+        });
+    }
+
+    function applyStreamParams(sourceUrl, req, privacyMode = "original") {
         const requestedUrl = new URL(req.url, "http://local");
         const profile = requestedUrl.searchParams.get("profile") || "mobile";
         const defaults = streamProfileConfig(profile);
         sourceUrl.searchParams.set("profile", profile);
+        sourceUrl.searchParams.set("privacy_mode", normalizeVideoPrivacyMode(privacyMode));
         for (const [key, value] of Object.entries(defaults)) {
             sourceUrl.searchParams.set(key, String(requestedUrl.searchParams.get(key) || value));
         }
@@ -6578,12 +7477,12 @@ function createLocalAppServer(options = {}) {
         });
     }
 
-    async function proxyCameraMjpeg(req, res, cameraId) {
+    async function proxyCameraMjpeg(req, res, cameraId, privacyMode = "original") {
         const target = cameraStreamProxyTarget(req, cameraId);
         if (!target) return false;
 
         for (const localCameraId of target.localCameraIds) {
-            const deviceUrl = applyStreamParams(new URL(`/api/v1/device/cameras/${localCameraId}/stream.mjpg`, target.base), req);
+            const deviceUrl = applyStreamParams(new URL(`/api/v1/device/cameras/${localCameraId}/stream.mjpg`, target.base), req, privacyMode);
             const deviceProxied = await proxyMjpegRequest(req, res, deviceUrl, {
                 Authorization: `Bearer ${target.token}`,
                 "X-GoHome-Device-Token": target.token,
@@ -6598,7 +7497,7 @@ function createLocalAppServer(options = {}) {
         const adminCookie = await requestBoxAdminCookie(target.base);
         if (!adminCookie) return false;
         for (const localCameraId of target.localCameraIds) {
-            const adminUrl = applyStreamParams(new URL(`/api/cameras/${localCameraId}/stream.mjpg`, target.base), req);
+            const adminUrl = applyStreamParams(new URL(`/api/cameras/${localCameraId}/stream.mjpg`, target.base), req, privacyMode);
             const adminProxied = await proxyMjpegRequest(req, res, adminUrl, { Cookie: adminCookie }, {
                 "X-GoHome-Device-Base": target.base,
                 "X-GoHome-Local-Camera-Id": String(localCameraId),
@@ -6612,9 +7511,18 @@ function createLocalAppServer(options = {}) {
     async function serveCameraMjpeg(req, res, cameraId) {
         if (!requireApp(req, res)) return;
         if (!requireCameraAccess(req, res, cameraId)) return;
-        if (isLocalBrowserRequest(req) && await proxyCameraMjpeg(req, res, cameraId)) return;
-        if (writeLatestFrameMjpegStream(req, res, cameraId)) return;
-        if (await proxyCameraMjpeg(req, res, cameraId)) return;
+        const privacyMode = streamPrivacyMode(req, cameraId);
+        if (!privacyMode) {
+            writeError(res, 403, "playback ticket does not match camera");
+            return;
+        }
+        if (isLocalBrowserRequest(req) && await proxyCameraMjpeg(req, res, cameraId, privacyMode)) return;
+        if (writeLatestFrameMjpegStream(req, res, cameraId, privacyMode)) return;
+        if (await proxyCameraMjpeg(req, res, cameraId, privacyMode)) return;
+        if (privacyMode !== "original") {
+            writeEmptyMjpeg(res);
+            return;
+        }
         if (writeLatestFrameImage(res, cameraId)) return;
         writeEmptyMjpeg(res);
     }
@@ -6626,10 +7534,7 @@ function createLocalAppServer(options = {}) {
         const assetId = store.nextId("asset");
         const fileName = path.basename(url.searchParams.get("file_name") || `asset-${assetId}.jpg`).replace(/[^\w.\-]+/g, "_");
         const dateDir = new Date().toISOString().slice(0, 10);
-        const relativePath = path.join(dateDir, `${assetId}-${fileName}`);
-        const target = path.join(mediaDir, relativePath);
-        ensureDir(path.dirname(target));
-        fs.writeFileSync(target, content);
+        const relativePath = `${dateDir}/${assetId}-${fileName}`;
         const snapshotPath = String(url.searchParams.get("snapshot_path") || relativePath).replace(/^\/+/, "");
         const rawCameraId = url.searchParams.get("camera_id");
         const localCameraId = url.searchParams.get("local_camera_id") || rawCameraId;
@@ -6638,15 +7543,28 @@ function createLocalAppServer(options = {}) {
             edge_camera_id: localCameraId,
         }, issuedToken?.device_id || "");
         const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
+        const familyId = issuedToken?.family_id || mappedCamera?.family_id || null;
+        const contentType = url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg";
+        const storageKey = `edge-evidence/${familyId || "unbound"}/${relativePath}`;
+        const useCos = Boolean(cosStorage.enabled);
+        if (useCos) {
+            await cosStorage.putObject({ key: storageKey, body: content, contentType });
+        } else {
+            const target = path.join(mediaDir, relativePath);
+            ensureDir(path.dirname(target));
+            await fs.promises.writeFile(target, content);
+        }
         const asset = {
             id: assetId,
-            family_id: issuedToken?.family_id || mappedCamera?.family_id || null,
+            family_id: familyId,
             device_id: issuedToken?.device_id || mappedCamera?.device_id || "",
             camera_id: cameraId,
             file_name: fileName,
-            content_type: url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg",
+            content_type: contentType,
             snapshot_path: snapshotPath,
-            relative_path: relativePath,
+            relative_path: useCos ? "" : relativePath,
+            storage_provider: useCos ? "cos" : "local",
+            storage_key: useCos ? storageKey : relativePath,
             edge_event_id: url.searchParams.get("edge_event_id") || "",
             purpose: url.searchParams.get("purpose") || "",
             evidence_frame_role: url.searchParams.get("evidence_frame_role") || "",
@@ -6655,11 +7573,623 @@ function createLocalAppServer(options = {}) {
             size: content.length,
             created_at: nowIso(),
             updated_at: nowIso(),
-            url: `/api/v1/video/media/snapshots/${encodeURIComponent(snapshotPath)}`,
+            url: `/api/v1/video/assets/${encodeURIComponent(assetId)}`,
+        };
+        store.db.assets.push(asset);
+        let queuedVerification = false;
+        for (const event of store.db.events) {
+            const eventEdgeId = String(event.edge_event_id || event.payload?.edge_upload?.edge_event_id || "");
+            const eventDeviceId = String(event.device_id || event.payload?.edge_upload?.edge_device_id || "");
+            if (
+                eventEdgeId === String(asset.edge_event_id || "")
+                && (!eventDeviceId || eventDeviceId === String(asset.device_id || ""))
+            ) {
+                queuedVerification = Boolean(queueVisionVerification(event, asset)) || queuedVerification;
+            }
+        }
+        await store.save();
+        if (queuedVerification) {
+            setImmediate(() => {
+                processVisionVerificationJobs({ limit: 1 })
+                    .catch((error) => console.error(`vision verification failed: ${error.message || error}`));
+            });
+        }
+        write(res, 200, { ok: true, asset });
+    }
+
+    async function handleMemoryMediaUpload(req, res, url) {
+        if (!requireNativeApp(req, res)) return;
+        const familyId = String(url.searchParams.get("family_id") || "");
+        if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+        const contentType = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+        const extensions = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "image/heic": ".heic",
+            "image/heif": ".heif",
+        };
+        const extension = extensions[contentType];
+        if (!extension) {
+            writeError(res, 415, "unsupported memory image type");
+            return;
+        }
+        const content = await readBody(req, 10 * 1024 * 1024);
+        if (!content.length) {
+            writeError(res, 400, "memory image required");
+            return;
+        }
+        const assetId = stableId("memory-asset-");
+        const dateDir = path.join("memories", new Date().toISOString().slice(0, 10));
+        const fileName = `${assetId}${extension}`;
+        const relativePath = path.join(dateDir, fileName);
+        const target = path.join(mediaDir, relativePath);
+        ensureDir(path.dirname(target));
+        fs.writeFileSync(target, content, { mode: 0o600 });
+        const timestamp = nowIso();
+        const asset = {
+            id: assetId,
+            family_id: familyId,
+            device_id: "",
+            camera_id: null,
+            file_name: fileName,
+            content_type: contentType,
+            snapshot_path: relativePath,
+            relative_path: relativePath,
+            storage_provider: "local",
+            storage_key: relativePath,
+            edge_event_id: "",
+            purpose: "family_memory",
+            size: content.length,
+            metadata: { purpose: "family_memory", uploaded_by: String(req.appUserId || "") },
+            created_at: timestamp,
+            updated_at: timestamp,
+            url: `/api/v1/video/assets/${encodeURIComponent(assetId)}`,
         };
         store.db.assets.push(asset);
         await store.save();
-        write(res, 200, { ok: true, asset });
+        write(res, 201, {
+            asset: {
+                id: asset.id,
+                content_type: asset.content_type,
+                image_url: asset.url,
+                size_bytes: asset.size,
+            },
+        });
+    }
+
+    async function handleMemoryMediaBatchUpload(req, res, url) {
+        if (!requireNativeApp(req, res)) return;
+        const familyId = String(url.searchParams.get("family_id") || "");
+        if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+        const payload = await parseJsonBody(req);
+        const images = Array.isArray(payload.images) ? payload.images : [];
+        if (!images.length || images.length > 9) {
+            writeError(res, 400, "memory images must contain 1 to 9 items");
+            return;
+        }
+        const extensions = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        };
+        const decoded = [];
+        let totalBytes = 0;
+        for (const [index, image] of images.entries()) {
+            const contentType = String(image?.content_type || "").split(";")[0].trim().toLowerCase();
+            const extension = extensions[contentType];
+            const encoded = String(image?.data || "").trim();
+            if (!extension || !encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+                writeError(res, 415, `unsupported memory image at index ${index}`);
+                return;
+            }
+            const content = Buffer.from(encoded, "base64");
+            const canonical = content.toString("base64").replace(/=+$/, "");
+            if (!content.length || canonical !== encoded.replace(/=+$/, "") || content.length > 4 * 1024 * 1024) {
+                writeError(res, 400, `invalid memory image at index ${index}`);
+                return;
+            }
+            totalBytes += content.length;
+            // Base64 adds roughly one third; keep the JSON request below the
+            // production reverse proxy's 20 MB body limit.
+            if (totalBytes > 12 * 1024 * 1024) {
+                writeError(res, 413, "memory image batch too large");
+                return;
+            }
+            const pixelWidth = Math.max(0, Math.min(12_000, Number(image?.pixel_width) || 0));
+            const pixelHeight = Math.max(0, Math.min(12_000, Number(image?.pixel_height) || 0));
+            decoded.push({ content, contentType, extension, pixelWidth, pixelHeight });
+        }
+
+        const dateDir = path.join("memories", new Date().toISOString().slice(0, 10));
+        const timestamp = nowIso();
+        const createdAssets = [];
+        try {
+            for (const image of decoded) {
+                const assetId = stableId("memory-asset-");
+                const fileName = `${assetId}${image.extension}`;
+                const relativePath = path.join(dateDir, fileName);
+                const target = path.join(mediaDir, relativePath);
+                ensureDir(path.dirname(target));
+                fs.writeFileSync(target, image.content, { mode: 0o600 });
+                const asset = {
+                    id: assetId,
+                    family_id: familyId,
+                    device_id: "",
+                    camera_id: null,
+                    file_name: fileName,
+                    content_type: image.contentType,
+                    snapshot_path: relativePath,
+                    relative_path: relativePath,
+                    storage_provider: "local",
+                    storage_key: relativePath,
+                    edge_event_id: "",
+                    purpose: "family_memory",
+                    size: image.content.length,
+                    metadata: {
+                        purpose: "family_memory",
+                        uploaded_by: String(req.appUserId || ""),
+                        pixel_width: image.pixelWidth,
+                        pixel_height: image.pixelHeight,
+                    },
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                    url: `/api/v1/video/assets/${encodeURIComponent(assetId)}`,
+                };
+                createdAssets.push(asset);
+                store.db.assets.push(asset);
+            }
+            await store.save();
+        } catch (error) {
+            const createdIds = new Set(createdAssets.map((asset) => String(asset.id)));
+            store.db.assets = store.db.assets.filter((asset) => !createdIds.has(String(asset.id)));
+            for (const asset of createdAssets) {
+                const filePath = assetAbsolutePath(asset);
+                if (filePath && fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+            }
+            throw error;
+        }
+        write(res, 201, {
+            assets: createdAssets.map((asset) => ({
+                id: asset.id,
+                content_type: asset.content_type,
+                image_url: asset.url,
+                size_bytes: asset.size,
+            })),
+        });
+    }
+
+    function memoryUploadToken(payload) {
+        const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+        const signature = crypto.createHmac("sha256", mediaUploadSecret).update(encoded).digest("base64url");
+        return `${encoded}.${signature}`;
+    }
+
+    function verifyMemoryUploadToken(token) {
+        const [encoded, signature, extra] = String(token || "").split(".");
+        if (!encoded || !signature || extra) return null;
+        const expected = crypto.createHmac("sha256", mediaUploadSecret).update(encoded).digest();
+        let actual;
+        try {
+            actual = Buffer.from(signature, "base64url");
+        } catch (_error) {
+            return null;
+        }
+        if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
+        const payload = safeJsonParse(Buffer.from(encoded, "base64url").toString("utf8"), null);
+        if (!payload || Number(payload.expires_at || 0) <= Date.now()) return null;
+        return payload;
+    }
+
+    function memoryUploadDescriptor(raw, index) {
+        const contentType = String(raw?.content_type || "").split(";")[0].trim().toLowerCase();
+        const extensions = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "video/mp4": ".mp4",
+        };
+        const extension = extensions[contentType];
+        const sizeBytes = Math.max(0, Number(raw?.size_bytes) || 0);
+        const mediaType = contentType === "video/mp4" ? "video" : "image";
+        const sizeLimit = mediaType === "video" ? 24 * 1024 * 1024 : 4 * 1024 * 1024;
+        const durationSeconds = Math.max(0, Number(raw?.duration_seconds) || 0);
+        if (!extension || !sizeBytes || sizeBytes > sizeLimit) {
+            throw new Error(`invalid memory image at index ${index}`);
+        }
+        if (mediaType === "video" && (!durationSeconds || durationSeconds > 60.5)) {
+            throw new Error(`invalid memory video duration at index ${index}`);
+        }
+        return {
+            contentType,
+            extension,
+            mediaType,
+            sizeBytes,
+            pixelWidth: Math.max(0, Math.min(12_000, Number(raw?.pixel_width) || 0)),
+            pixelHeight: Math.max(0, Math.min(12_000, Number(raw?.pixel_height) || 0)),
+            durationSeconds: mediaType === "video" ? durationSeconds : 0,
+        };
+    }
+
+    function validateMemoryUploadBatch(descriptors) {
+        const videoCount = descriptors.filter((item) => item.mediaType === "video").length;
+        if (videoCount > 1 || (videoCount === 1 && descriptors.length !== 1)) {
+            throw new Error("memory media must contain either one video or up to nine images");
+        }
+    }
+
+    function memoryUploadIntentMatches(intent, tokenPayload) {
+        return Boolean(
+            intent
+            && String(intent.asset_id) === String(tokenPayload.asset_id)
+            && String(intent.family_id) === String(tokenPayload.family_id)
+            && String(intent.user_id) === String(tokenPayload.user_id)
+            && String(intent.object_key) === String(tokenPayload.object_key)
+            && String(intent.content_type) === String(tokenPayload.content_type)
+            && Number(intent.size_bytes) === Number(tokenPayload.size_bytes)
+            && Number(intent.pixel_width) === Number(tokenPayload.pixel_width)
+            && Number(intent.pixel_height) === Number(tokenPayload.pixel_height)
+            && Number(intent.duration_seconds) === Number(tokenPayload.duration_seconds)
+            && Date.parse(intent.expires_at || "") === Number(tokenPayload.expires_at)
+        );
+    }
+
+    async function deleteStoreRows(dbKey, table, ids = []) {
+        const pending = new Set(ids.map(String).filter(Boolean));
+        if (!pending.size) return 0;
+        let deleted = 0;
+        if (store.kind === "postgres" && typeof store.deleteRow === "function") {
+            for (const id of pending) {
+                await store.deleteRow(table, id);
+                store.db[dbKey] = store.db[dbKey].filter((item) => String(item.id ?? item.asset_id) !== id);
+                deleted += 1;
+            }
+            return deleted;
+        }
+        const before = store.db[dbKey].length;
+        store.db[dbKey] = store.db[dbKey].filter((item) => !pending.has(String(item.id ?? item.asset_id)));
+        deleted = before - store.db[dbKey].length;
+        if (deleted) await store.save();
+        return deleted;
+    }
+
+    async function cleanupExpiredMemoryUploads(options = {}) {
+        if (!cosStorage.enabled || memoryUploadCleanupRunning) {
+            return { scanned: 0, deleted: 0, released: 0, failed: 0, running: memoryUploadCleanupRunning };
+        }
+        memoryUploadCleanupRunning = true;
+        try {
+            const nowMs = Number(options.nowMs ?? Date.now());
+            const expired = store.db.media_upload_intents.filter((intent) => {
+                const expiresAt = Date.parse(intent.expires_at || "");
+                return Number.isFinite(expiresAt) && expiresAt <= nowMs;
+            });
+            const releasedIds = [];
+            let deleted = 0;
+            let failed = 0;
+            for (const intent of expired) {
+                const completed = store.db.assets.some((asset) => String(asset.id) === String(intent.asset_id));
+                if (completed) {
+                    releasedIds.push(String(intent.asset_id));
+                    continue;
+                }
+                try {
+                    await cosStorage.deleteObject({ key: intent.object_key });
+                    deleted += 1;
+                    releasedIds.push(String(intent.asset_id));
+                } catch (error) {
+                    failed += 1;
+                    console.warn(`COS expired upload cleanup failed for ${intent.asset_id}: ${error.code || error.message}`);
+                }
+            }
+            const released = await deleteStoreRows(
+                "media_upload_intents",
+                "media_upload_intents",
+                releasedIds,
+            );
+            return { scanned: expired.length, deleted, released, failed, running: false };
+        } finally {
+            memoryUploadCleanupRunning = false;
+        }
+    }
+
+    async function handleMemoryMediaUploadIntents(req, res, url) {
+        if (!requireNativeApp(req, res)) return;
+        if (!cosStorage.enabled) {
+            writeError(res, 503, "COS media storage is not configured");
+            return;
+        }
+        const familyId = String(url.searchParams.get("family_id") || "");
+        if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+        const payload = await parseJsonBody(req);
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        if (!items.length || items.length > 9) {
+            writeError(res, 400, "memory images must contain 1 to 9 items");
+            return;
+        }
+        let descriptors;
+        try {
+            descriptors = items.map(memoryUploadDescriptor);
+            validateMemoryUploadBatch(descriptors);
+        } catch (error) {
+            writeError(res, 400, error.message || "invalid memory image");
+            return;
+        }
+        const expiresAt = Date.now() + 10 * 60 * 1000;
+        const datePath = new Date().toISOString().slice(0, 10).replace(/-/g, "/");
+        const safeFamilyId = familyId.replace(/[^A-Za-z0-9_-]+/g, "_");
+        const timestamp = nowIso();
+        const prepared = descriptors.map((item) => {
+            const assetId = stableId("memory-asset-");
+            const objectKey = `memory-media/${safeFamilyId}/${datePath}/${assetId}${item.extension}`;
+            const tokenPayload = {
+                version: 1,
+                asset_id: assetId,
+                family_id: familyId,
+                user_id: String(req.appUserId || ""),
+                object_key: objectKey,
+                content_type: item.contentType,
+                size_bytes: item.sizeBytes,
+                pixel_width: item.pixelWidth,
+                pixel_height: item.pixelHeight,
+                duration_seconds: item.durationSeconds,
+                expires_at: expiresAt,
+            };
+            const expiresAtIso = new Date(expiresAt).toISOString();
+            return {
+                upload: {
+                    asset_id: assetId,
+                    upload_url: cosStorage.signedPutUrl({ key: objectKey, contentType: item.contentType }),
+                    upload_token: memoryUploadToken(tokenPayload),
+                    content_type: item.contentType,
+                    expires_at: expiresAtIso,
+                },
+                intent: {
+                    asset_id: assetId,
+                    family_id: familyId,
+                    user_id: String(req.appUserId || ""),
+                    object_key: objectKey,
+                    content_type: item.contentType,
+                    size_bytes: item.sizeBytes,
+                    pixel_width: item.pixelWidth,
+                    pixel_height: item.pixelHeight,
+                    duration_seconds: item.durationSeconds,
+                    expires_at: expiresAtIso,
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                },
+            };
+        });
+        store.db.media_upload_intents.push(...prepared.map((item) => item.intent));
+        await store.save();
+        write(res, 201, { uploads: prepared.map((item) => item.upload) });
+    }
+
+    async function handleMemoryMediaUploadAbort(req, res, url) {
+        if (!requireNativeApp(req, res)) return;
+        if (!cosStorage.enabled) {
+            writeError(res, 503, "COS media storage is not configured");
+            return;
+        }
+        const familyId = String(url.searchParams.get("family_id") || "");
+        if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+        const payload = await parseJsonBody(req);
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        if (!items.length || items.length > 9) {
+            writeError(res, 400, "memory uploads must contain 1 to 9 items");
+            return;
+        }
+        let deleted = 0;
+        const releasedIntentIds = [];
+        for (const item of items) {
+            const tokenPayload = verifyMemoryUploadToken(item?.upload_token);
+            if (
+                !tokenPayload
+                || String(tokenPayload.asset_id) !== String(item?.asset_id || "")
+                || String(tokenPayload.family_id) !== familyId
+                || String(tokenPayload.user_id) !== String(req.appUserId || "")
+            ) {
+                writeError(res, 400, "invalid memory upload token");
+                return;
+            }
+            const completed = store.db.assets.some((asset) => String(asset.id) === String(tokenPayload.asset_id));
+            const intent = store.db.media_upload_intents.find((candidate) => (
+                String(candidate.asset_id) === String(tokenPayload.asset_id)
+            ));
+            if (completed) {
+                if (intent) releasedIntentIds.push(String(tokenPayload.asset_id));
+                continue;
+            }
+            if (!intent) continue;
+            if (!memoryUploadIntentMatches(intent, tokenPayload)) {
+                writeError(res, 400, "invalid memory upload intent");
+                return;
+            }
+            try {
+                await cosStorage.deleteObject({ key: tokenPayload.object_key });
+                deleted += 1;
+                releasedIntentIds.push(String(tokenPayload.asset_id));
+            } catch (error) {
+                console.warn(`COS upload abort failed for ${tokenPayload.asset_id}: ${error.code || error.message}`);
+            }
+        }
+        const released = await deleteStoreRows(
+            "media_upload_intents",
+            "media_upload_intents",
+            releasedIntentIds,
+        );
+        write(res, 200, { deleted, released });
+    }
+
+    function handleMemoryMediaPlayback(req, res, assetId) {
+        if (!requireNativeApp(req, res)) return;
+        const asset = store.db.assets.find((item) => String(item.id) === String(assetId));
+        if (!asset) {
+            writeError(res, 404, "media asset not found");
+            return;
+        }
+        if (!requireAssetAccess(req, res, asset)) return;
+        if (String(asset.storage_provider || "local") !== "cos" || !cosStorage.enabled || !asset.storage_key) {
+            writeError(res, 409, "direct media playback is unavailable");
+            return;
+        }
+        const expiresSeconds = 5 * 60;
+        write(res, 200, {
+            url: cosStorage.signedGetUrl({ key: asset.storage_key, expiresSeconds }),
+            expires_at: new Date(Date.now() + expiresSeconds * 1000).toISOString(),
+        });
+    }
+
+    async function handleMemoryMediaUploadComplete(req, res, url) {
+        if (!requireNativeApp(req, res)) return;
+        if (!cosStorage.enabled) {
+            writeError(res, 503, "COS media storage is not configured");
+            return;
+        }
+        const familyId = String(url.searchParams.get("family_id") || "");
+        if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+        const payload = await parseJsonBody(req);
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        if (!items.length || items.length > 9) {
+            writeError(res, 400, "memory uploads must contain 1 to 9 items");
+            return;
+        }
+        const verified = [];
+        for (const [index, item] of items.entries()) {
+            const tokenPayload = verifyMemoryUploadToken(item?.upload_token);
+            if (
+                !tokenPayload
+                || String(tokenPayload.asset_id) !== String(item?.asset_id || "")
+                || String(tokenPayload.family_id) !== familyId
+                || String(tokenPayload.user_id) !== String(req.appUserId || "")
+                || !String(tokenPayload.object_key || "").startsWith(`memory-media/${familyId.replace(/[^A-Za-z0-9_-]+/g, "_")}/`)
+            ) {
+                writeError(res, 400, `invalid memory upload token at index ${index}`);
+                return;
+            }
+            const existing = store.db.assets.find((asset) => String(asset.id) === String(tokenPayload.asset_id));
+            if (existing) {
+                verified.push({ existing });
+                continue;
+            }
+            const intent = store.db.media_upload_intents.find((candidate) => (
+                String(candidate.asset_id) === String(tokenPayload.asset_id)
+            ));
+            if (!memoryUploadIntentMatches(intent, tokenPayload)) {
+                writeError(res, 409, `memory upload intent is unavailable at index ${index}`);
+                return;
+            }
+            let head;
+            try {
+                head = await cosStorage.headObject({ key: tokenPayload.object_key });
+            } catch (_error) {
+                writeError(res, 409, `memory upload is incomplete at index ${index}`);
+                return;
+            }
+            const contentLength = Number(head?.headers?.["content-length"] || head?.headers?.["Content-Length"] || 0);
+            const contentType = String(head?.headers?.["content-type"] || head?.headers?.["Content-Type"] || "").split(";")[0].toLowerCase();
+            if (contentLength !== Number(tokenPayload.size_bytes) || (contentType && contentType !== tokenPayload.content_type)) {
+                writeError(res, 409, `memory upload metadata mismatch at index ${index}`);
+                return;
+            }
+            verified.push({ tokenPayload, contentLength });
+        }
+
+        const timestamp = nowIso();
+        const createdAssets = verified.map(({ existing, tokenPayload, contentLength }) => existing || {
+            id: tokenPayload.asset_id,
+            family_id: familyId,
+            device_id: "",
+            camera_id: null,
+            file_name: path.posix.basename(tokenPayload.object_key),
+            content_type: tokenPayload.content_type,
+            snapshot_path: tokenPayload.object_key,
+            relative_path: "",
+            storage_provider: "cos",
+            storage_key: tokenPayload.object_key,
+            edge_event_id: "",
+            purpose: "family_memory",
+            size: contentLength,
+            metadata: {
+                purpose: "family_memory",
+                uploaded_by: String(req.appUserId || ""),
+                pixel_width: tokenPayload.pixel_width,
+                pixel_height: tokenPayload.pixel_height,
+                duration_seconds: tokenPayload.duration_seconds || 0,
+            },
+            created_at: timestamp,
+            updated_at: timestamp,
+            url: `/api/v1/video/assets/${encodeURIComponent(tokenPayload.asset_id)}`,
+        });
+        const existingIds = new Set(store.db.assets.map((asset) => String(asset.id)));
+        for (const asset of createdAssets) {
+            if (!existingIds.has(String(asset.id))) store.db.assets.push(asset);
+        }
+        await store.save();
+        await deleteStoreRows(
+            "media_upload_intents",
+            "media_upload_intents",
+            createdAssets.map((asset) => asset.id),
+        );
+        write(res, 201, {
+            assets: createdAssets.map((asset) => ({
+                id: asset.id,
+                content_type: asset.content_type,
+                image_url: asset.url,
+                media_url: asset.url,
+                media_type: String(asset.content_type || "").startsWith("video/") ? "video" : "image",
+                size_bytes: asset.size,
+            })),
+        });
+    }
+
+    async function cleanupStoredAssets(assetIds = [], { memoryOnly = true } = {}) {
+        const ids = new Set(assetIds.map(String));
+        if (!ids.size) return;
+        const deletedIds = [];
+        for (const asset of store.db.assets) {
+            if (!ids.has(String(asset.id))) {
+                continue;
+            }
+            if (memoryOnly && String(asset.purpose || asset.metadata?.purpose || "") !== "family_memory") {
+                continue;
+            }
+            if (String(asset.storage_provider || "local") === "cos") {
+                try {
+                    await cosStorage.deleteObject({ key: asset.storage_key });
+                } catch (error) {
+                    console.warn(`COS cleanup failed for ${asset.id}: ${error.code || error.message}`);
+                    continue;
+                }
+            } else {
+                const filePath = assetAbsolutePath(asset);
+                if (filePath && fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+            }
+            deletedIds.push(String(asset.id));
+        }
+        await deleteStoreRows("assets", "media_assets", deletedIds);
+    }
+
+    async function cleanupMemoryAssets(assetIds = []) {
+        return cleanupStoredAssets(assetIds, { memoryOnly: true });
+    }
+
+    async function cleanupStorageObjects(objects = []) {
+        for (const item of objects) {
+            const provider = String(item?.storage_provider || "");
+            const storageKey = String(item?.storage_key || "");
+            if (!storageKey) continue;
+            if (provider === "cos") {
+                try {
+                    await cosStorage.deleteObject({ key: storageKey });
+                } catch (error) {
+                    console.warn(`COS account cleanup failed for ${storageKey}: ${error.code || error.message}`);
+                }
+                continue;
+            }
+            const filePath = path.resolve(mediaDir, storageKey.replace(/^\/+/, ""));
+            if (filePath.startsWith(`${mediaDir}${path.sep}`) && fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+        }
     }
 
     async function handleDeviceEvent(req, res) {
@@ -6735,7 +8265,12 @@ function createLocalAppServer(options = {}) {
         const verificationJob = queueVisionVerification(event, asset);
         let message = null;
         let deliveries = [];
-        if (event.family_id && !isValidationEvent(event) && !correlatedPrimary && !verificationJob) {
+        if (
+            event.family_id
+            && !isValidationEvent(event)
+            && !correlatedPrimary
+            && !verificationJob
+        ) {
             message = upsertAppMessage({
                 message_id: `edge-event-${event.idempotency_key}`,
                 family_id: event.family_id,
@@ -7208,6 +8743,27 @@ function createLocalAppServer(options = {}) {
         });
     }
 
+    async function handleDeviceActivityIntervals(req, res) {
+        if (!requireDevice(req, res)) return;
+        const payload = await parseJsonBody(req);
+        const intervals = Array.isArray(payload.intervals) ? payload.intervals : [];
+        if (!intervals.length || intervals.length > 100) {
+            writeError(res, 400, "activity intervals must contain 1 to 100 items");
+            return;
+        }
+        const issuedToken = issuedDeviceTokenFromRequest(req);
+        const deviceId = String(payload.device_id || issuedToken?.device_id || currentEdgeDeviceId() || "");
+        const device = store.db.devices[deviceId] || {};
+        const familyId = String(issuedToken?.family_id || device.family_id || "");
+        if (!deviceId || !familyId) {
+            writeError(res, 403, "bound device family required");
+            return;
+        }
+        const result = await nativeRepository.ingestActivityIntervals(familyId, deviceId, intervals);
+        await store.save();
+        write(res, 200, { ok: true, ...result });
+    }
+
     function serveMedia(req, res, snapshotPath) {
         if (!requireApp(req, res)) return;
         const asset = latestAssetForSnapshot(decodeURIComponent(snapshotPath || ""));
@@ -7224,19 +8780,52 @@ function createLocalAppServer(options = {}) {
         });
     }
 
-    function serveAsset(req, res, assetId) {
+    function serveAsset(req, res, assetId, url) {
         if (!requireApp(req, res)) return;
-        const asset = store.db.assets.find((item) => Number(item.id) === Number(assetId));
-        const filePath = assetAbsolutePath(asset);
-        if (!asset || !filePath || !fs.existsSync(filePath)) {
+        const asset = store.db.assets.find((item) => String(item.id) === String(assetId));
+        if (!asset) {
             writeError(res, 404, "media asset not found");
             return;
         }
         if (!requireAssetAccess(req, res, asset)) return;
-        const optimizedPath = optimizedCareCardFile(asset, filePath);
-        write(res, 200, fs.readFileSync(optimizedPath || filePath), {
+        if (String(asset.storage_provider || "local") === "cos") {
+            if (!cosStorage.enabled || !asset.storage_key) {
+                writeError(res, 503, "media storage unavailable");
+                return;
+            }
+            res.writeHead(302, {
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "private, no-store",
+                Location: cosStorage.signedGetUrl({ key: asset.storage_key }),
+            });
+            res.end();
+            return;
+        }
+        const filePath = assetAbsolutePath(asset);
+        if (!filePath || !fs.existsSync(filePath)) {
+            writeError(res, 404, "media asset not found");
+            return;
+        }
+        const variant = String(url?.searchParams?.get("variant") || "");
+        const optimizedPath = optimizedMemoryImageFile(asset, filePath, variant) || optimizedCareCardFile(asset, filePath);
+        const servedPath = optimizedPath || filePath;
+        const stat = fs.statSync(servedPath);
+        const etag = `W/\"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}\"`;
+        const headers = {
             "Content-Type": optimizedPath ? "image/webp" : (asset.content_type || "image/jpeg"),
-            "Cache-Control": "private, max-age=300",
+            "Cache-Control": "private, max-age=604800, immutable",
+            "ETag": etag,
+        };
+        if (String(req.headers["if-none-match"] || "") === etag) {
+            res.writeHead(304, {
+                "Access-Control-Allow-Origin": "*",
+                ...headers,
+            });
+            res.end();
+            return;
+        }
+        write(res, 200, fs.readFileSync(servedPath), {
+            ...headers,
         });
     }
 
@@ -7305,6 +8894,77 @@ function createLocalAppServer(options = {}) {
         }
 
         try {
+            if (req.method === "POST" && pathname === "/api/v2/memory-media-upload-intents") {
+                await handleMemoryMediaUploadIntents(req, res, url);
+                return;
+            }
+            if (req.method === "POST" && pathname === "/api/v2/memory-media-upload-complete") {
+                await handleMemoryMediaUploadComplete(req, res, url);
+                return;
+            }
+            if (req.method === "POST" && pathname === "/api/v2/memory-media-upload-abort") {
+                await handleMemoryMediaUploadAbort(req, res, url);
+                return;
+            }
+            if (req.method === "GET" && pathname.startsWith("/api/v2/memory-media-playback/")) {
+                handleMemoryMediaPlayback(req, res, decodeURIComponent(pathname.slice("/api/v2/memory-media-playback/".length)));
+                return;
+            }
+            if (req.method === "POST" && pathname === "/api/v2/memory-media-batch") {
+                await handleMemoryMediaBatchUpload(req, res, url);
+                return;
+            }
+            if (req.method === "POST" && pathname === "/api/v2/memory-media") {
+                await handleMemoryMediaUpload(req, res, url);
+                return;
+            }
+            if (pathname.startsWith("/api/v2/")) {
+                if (!requireNativeApp(req, res)) return;
+                const result = await nativeRouter.dispatch({
+                    method: req.method,
+                    url,
+                    userId: req.appUserId,
+                    headers: req.headers,
+                    body: ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) ? await parseJsonBody(req) : {},
+                });
+                if (result) {
+                    const cleanupAssetIds = result.body?.cleanup_asset_ids;
+                    if (Array.isArray(cleanupAssetIds)) {
+                        await cleanupMemoryAssets(cleanupAssetIds);
+                        delete result.body.cleanup_asset_ids;
+                    }
+                    const cleanupAllAssetIds = result.body?.cleanup_all_asset_ids;
+                    if (Array.isArray(cleanupAllAssetIds)) {
+                        await cleanupStoredAssets(cleanupAllAssetIds, { memoryOnly: false });
+                        delete result.body.cleanup_all_asset_ids;
+                    }
+                    const cleanupObjects = result.body?.cleanup_storage_objects;
+                    if (Array.isArray(cleanupObjects)) {
+                        await cleanupStorageObjects(cleanupObjects);
+                        delete result.body.cleanup_storage_objects;
+                    }
+                    if (result.body?.deleted_user_id) {
+                        applyAccountDeletionToDb(store.db, result.body.deleted_user_id, {
+                            deletion_scope: { families_to_delete: result.body.deleted_family_ids || [] },
+                        });
+                        delete result.body.deleted_user_id;
+                        delete result.body.deleted_family_ids;
+                    }
+                    if (req.method !== "GET" && req.method !== "HEAD") await store.save();
+                    if (result.status === 304) {
+                        res.writeHead(304, {
+                            "Access-Control-Allow-Origin": "*",
+                            "Cache-Control": "private, no-cache",
+                            ...(result.headers || {}),
+                        });
+                        res.end();
+                    } else {
+                        write(res, result.status, result.body, result.headers);
+                    }
+                    return;
+                }
+            }
+
             if (req.method === "GET" && pathname === "/health") {
                 const payload = {
                     ok: true,
@@ -7313,12 +8973,22 @@ function createLocalAppServer(options = {}) {
                     app_server_base_url: process.env.GOHOME_APP_SERVER_BASE_URL || `http://localhost:${DEFAULT_PORT}`,
                     events: store.db.events.length,
                     assets: store.db.assets.length,
+                    pending_media_uploads: store.db.media_upload_intents.length,
+                    stream_metrics: streamMetricsSnapshot(),
+                    push_metrics: pushDeliveryMetrics(),
                     updated_at: store.db.updated_at,
                 };
                 if (isLocalRequest(req) && process.env.NODE_ENV !== "production") {
                     payload.local_app_demo_token = appToken;
                 }
                 write(res, 200, payload);
+                return;
+            }
+
+            if (req.method === "POST" && (pathname === "/api/auth/request-code" || pathname === "/api/v1/identity/request-code")) {
+                const payload = await parseJsonBody(req);
+                const result = await authService.requestCode(payload.phone || payload.mobile || payload.mobile_phone);
+                write(res, 200, result);
                 return;
             }
 
@@ -7346,11 +9016,18 @@ function createLocalAppServer(options = {}) {
                     return;
                 }
                 const isPhoneAccount = identity.isPhone || /@phone\.gohome\.local$/i.test(email);
-                const phoneOtpLogin = isPhoneAccount && (password === "000000" || (user.password && String(user.password) === password));
-                const passwordMatches = user.password ? String(user.password) === password : Boolean(password);
+                if (isPhoneAccount) authService.verifyCode(identity.phone, password, payload.challenge_id || payload.challengeId);
+                const phoneOtpLogin = isPhoneAccount;
+                const passwordMatches = await verifyPassword(password, user.password_hash)
+                    || verifyLegacyPassword(password, user.password);
                 if (!phoneOtpLogin && !passwordMatches) {
                     writeError(res, 401, isPhoneAccount ? "验证码不正确" : "密码不正确");
                     return;
+                }
+                if (!phoneOtpLogin && !user.password_hash) {
+                    user.password_hash = await encodePassword(password);
+                    user.password = "";
+                    user.updated_at = nowIso();
                 }
                 store.db.active_user_id = user.id;
                 const session = issueAppSession(user);
@@ -7365,6 +9042,7 @@ function createLocalAppServer(options = {}) {
                 const payload = await parseJsonBody(req);
                 const identity = authIdentityFromPayload(payload, `user-${Date.now()}@gohome.local`);
                 const email = identity.email;
+                if (identity.isPhone) authService.verifyCode(identity.phone, payload.code || payload.password, payload.challenge_id || payload.challengeId);
                 let user = store.db.users.find((item) => item.email === email);
                 if (user) {
                     writeError(res, 409, identity.isPhone ? "手机号已注册，请直接登录。" : "账号已存在，请直接登录。");
@@ -7375,7 +9053,8 @@ function createLocalAppServer(options = {}) {
                     email,
                     phone: identity.phone || "",
                     display_name: String(payload.display_name || payload.name || "回家用户"),
-                    password: String(payload.password || payload.code || ""),
+                    password: "",
+                    password_hash: identity.isPhone ? "" : await encodePassword(payload.password || payload.code),
                     created_at: nowIso(),
                     updated_at: nowIso(),
                 };
@@ -7448,15 +9127,11 @@ function createLocalAppServer(options = {}) {
             if (req.method === "POST" && (pathname === "/api/families/join" || pathname === "/api/v1/households/join")) {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
-                const family = familyForJoinCode(payload.code || payload.join_code || payload.invite_code);
-                if (!family) {
-                    writeError(res, 404, "邀请码无效或已失效。");
-                    return;
-                }
                 const user = activeAppUser(req);
-                ensureFamilyMember(family.id, user.id, "member");
+                const invitationCode = payload.code || payload.join_code || payload.invite_code;
+                const result = await nativeRepository.consumeFamilyInvitation(user.id, invitationCode);
                 await store.save();
-                write(res, 200, publicFamily(family));
+                write(res, 200, result.family);
                 return;
             }
 
@@ -7470,7 +9145,10 @@ function createLocalAppServer(options = {}) {
                     return;
                 }
                 if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
-                const bindings = store.db.device_bindings.filter((item) => Number(item.family_id) === Number(familyId));
+                const bindings = store.db.device_bindings.filter((item) => (
+                    Number(item.family_id) === Number(familyId)
+                    && String(item.status || "active") !== "revoked"
+                ));
                 write(res, 200, bindings.map(publicBinding));
                 return;
             }
@@ -7496,6 +9174,7 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "盒子绑定已经解除。");
                     return;
                 }
+                await deletePersistedRows(result.removed_camera_ids.map((id) => ({ table: "cameras", id })));
                 await store.save();
                 write(res, 200, {
                     ok: true,
@@ -7536,7 +9215,7 @@ function createLocalAppServer(options = {}) {
                 const user = activeAppUser(req);
                 const userFamilies = familiesForUser(user.id);
                 const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
-                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                if (!familyId || !requireFamilyOwner(req, res, familyId)) return;
                 const claimCode = payload.claim_code || payload.code || payload.serial_number || payload.serial || "";
                 const requestedSerial = normalizeClaimCode(payload.serial_number || payload.serial || "");
                 const requestedDeviceId = normalizeClaimCode(payload.device_id || "");
@@ -7590,7 +9269,7 @@ function createLocalAppServer(options = {}) {
                     const user = activeAppUser(req);
                     const userFamilies = familiesForUser(user.id);
                     const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
-                    if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
+                    if (!familyId || !requireFamilyOwner(req, res, familyId)) return;
                     const claimCode = payload.claim_code || payload.code || payload.serial_number || payload.serial || "";
                     const device = Object.values(store.db.devices).find((item) => claimCodeMatchesDevice(item, claimCode));
                     if (!device) {
@@ -7627,7 +9306,7 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "老人资料尚未填写。");
                     return;
                 }
-                write(res, 200, profile);
+                write(res, 200, publicElderProfile(profile));
                 return;
             }
 
@@ -7639,16 +9318,41 @@ function createLocalAppServer(options = {}) {
                 const payload = await parseJsonBody(req);
                 const key = elderProfileKey(familyId, elderId);
                 const existing = store.db.elder_profiles[key] || defaultElderProfile(familyId, elderId);
+                const latitude = Number(payload.home_latitude);
+                const longitude = Number(payload.home_longitude);
+                const hasHomeCoordinate = Number.isFinite(latitude) && Number.isFinite(longitude)
+                    && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
+                const metadata = {
+                    ...(existing.metadata && typeof existing.metadata === "object" ? existing.metadata : {}),
+                    ...(payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {}),
+                };
+                if (hasHomeCoordinate) {
+                    metadata.home_location = {
+                        latitude,
+                        longitude,
+                        label: String(payload.home_location_label || "").trim().slice(0, 120),
+                        city: String(payload.city || existing.city || "").trim().slice(0, 40),
+                        district: String(payload.district || existing.district || "").trim().slice(0, 40),
+                        source: "family_setup_phone",
+                        updated_at: nowIso(),
+                    };
+                }
                 store.db.elder_profiles[key] = {
                     ...existing,
                     ...payload,
+                    metadata,
+                    home_latitude: hasHomeCoordinate ? latitude : existing.home_latitude,
+                    home_longitude: hasHomeCoordinate ? longitude : existing.home_longitude,
+                    home_location_label: hasHomeCoordinate
+                        ? metadata.home_location.label
+                        : existing.home_location_label,
                     id: elderId,
                     elder_id: elderId,
                     family_id: familyId,
                     updated_at: nowIso(),
                 };
                 await store.save();
-                write(res, 200, store.db.elder_profiles[key]);
+                write(res, 200, publicElderProfile(store.db.elder_profiles[key]));
                 return;
             }
 
@@ -7692,7 +9396,7 @@ function createLocalAppServer(options = {}) {
                 if (!requireFamilyAccess(req, res, familyId)) return;
                 const elderId = url.searchParams.get("elder_id") || "elder_primary";
                 const profile = existingElderProfile(familyId, elderId) || {};
-                const city = url.searchParams.get("city") || profile.city || "杭州";
+                const city = url.searchParams.get("city") || profile.city || "";
                 write(res, 200, await fetchWeatherSignal({ familyId, city }));
                 return;
             }
@@ -7913,7 +9617,7 @@ function createLocalAppServer(options = {}) {
                     device_id: deviceId,
                     family_id: code.family_id,
                     binding: publicBinding(binding),
-                    binding_summary: deviceBindingSummary(code.family_id, deviceId),
+                    binding_summary: bindingSummaryForDevice(deviceId, code.family_id),
                     bootstrap_import: bootstrapImport,
                     config: { upload_enabled: true },
                 });
@@ -8012,8 +9716,20 @@ function createLocalAppServer(options = {}) {
                 const payload = await parseJsonBody(req);
                 const userFamilies = familiesForUser(activeAppUser(req).id);
                 const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
-                if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
-                const camera = normalizeCameraPayload({ ...payload, family_id: familyId });
+                if (!familyId || !requireFamilyOwner(req, res, familyId)) return;
+                const requestedDeviceId = String(payload.device_id || "").trim();
+                const binding = activeDeviceBindingForFamily(familyId, requestedDeviceId);
+                if (!binding) {
+                    writeError(res, 409, requestedDeviceId
+                        ? "所选盒子没有绑定到当前家庭，请重新搜索并绑定。"
+                        : "请先绑定家庭盒子，再添加摄像头。");
+                    return;
+                }
+                const camera = normalizeCameraPayload({
+                    ...payload,
+                    family_id: familyId,
+                    device_id: String(binding.device_id || ""),
+                });
                 store.db.cameras[String(camera.id)] = camera;
                 await store.save();
                 write(res, 200, publicCamera(camera));
@@ -8023,6 +9739,13 @@ function createLocalAppServer(options = {}) {
             if (req.method === "POST" && pathname === "/api/cameras/test-connection") {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
+                const userFamilies = familiesForUser(activeAppUser(req).id);
+                const familyId = normalizeNumber(payload.family_id, userFamilies[0]?.id || null);
+                if (!familyId || !requireFamilyOwner(req, res, familyId)) return;
+                if (!activeDeviceBindingForFamily(familyId, payload.device_id)) {
+                    writeError(res, 409, "请先绑定家庭盒子，再配置摄像头。");
+                    return;
+                }
                 const streamUrl = String(payload.stream_url || "").trim();
                 write(res, 200, {
                     ok: true,
@@ -8046,9 +9769,19 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "camera not found");
                     return;
                 }
-                if (!existing.family_id || !requireFamilyAccess(req, res, existing.family_id)) return;
+                if (!existing.family_id || !requireFamilyOwner(req, res, existing.family_id)) return;
                 const patch = await parseJsonBody(req);
-                const camera = normalizeCameraPayload({ ...existing, ...patch, id: existing.id }, existing);
+                if ("family_id" in patch || "device_id" in patch) {
+                    writeError(res, 400, "摄像头不能通过编辑迁移家庭或盒子，请删除后重新添加。");
+                    return;
+                }
+                const camera = normalizeCameraPayload({
+                    ...existing,
+                    ...patch,
+                    id: existing.id,
+                    family_id: existing.family_id,
+                    device_id: existing.device_id,
+                }, existing);
                 store.db.cameras[cameraId] = camera;
                 await store.save();
                 write(res, 200, publicCamera(camera));
@@ -8062,8 +9795,10 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "camera not found");
                     return;
                 }
-                if (!store.db.cameras[cameraId].family_id || !requireFamilyAccess(req, res, store.db.cameras[cameraId].family_id)) return;
+                if (!store.db.cameras[cameraId].family_id || !requireFamilyOwner(req, res, store.db.cameras[cameraId].family_id)) return;
+                detachCameraReferences([cameraId]);
                 delete store.db.cameras[cameraId];
+                await deletePersistedRows([{ table: "cameras", id: cameraId }]);
                 await store.save();
                 write(res, 200, { ok: true, deleted: Number(cameraId) || cameraId });
                 return;
@@ -8077,7 +9812,7 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "camera not found");
                     return;
                 }
-                if (!camera.family_id || !requireFamilyAccess(req, res, camera.family_id)) return;
+                if (!camera.family_id || !requireFamilyOwner(req, res, camera.family_id)) return;
                 camera.status = camera.stream_url ? "pending_edge_verify" : "pending_edge_setup";
                 camera.sync_status = "pending_edge_sync";
                 camera.last_error = "";
@@ -8128,7 +9863,7 @@ function createLocalAppServer(options = {}) {
                         return;
                     }
                     if (!requireCameraAccess(req, res, cameraId)) return;
-                    privacyMode = activeVideoPrivacyMode(cameraId);
+                    privacyMode = videoPrivacyForFamily(familyIdForCamera(cameraId)).minimum_mode;
                     Object.assign(ticketPayload, {
                         camera_id: cameraId,
                         profile: String(payload.profile || "mobile"),
@@ -8137,8 +9872,15 @@ function createLocalAppServer(options = {}) {
                 }
                 const ticket = stableId("play-");
                 const expiresAt = Date.now() + 120000;
-                playbackTickets.set(ticket, { payload: ticketPayload, user_id: activeAppUser(req).id, expires_at: expiresAt });
-                const response = { ticket, expires_at: new Date(expiresAt).toISOString() };
+                playbackTickets.set(ticket, {
+                    payload: ticketPayload,
+                    user_id: activeAppUser(req).id,
+                    expires_at: expiresAt,
+                });
+                const response = {
+                    ticket,
+                    expires_at: new Date(expiresAt).toISOString(),
+                };
                 if (privacyMode) {
                     response.privacy_mode = privacyMode;
                     response.minimum_privacy_mode = privacyMode;
@@ -8197,7 +9939,7 @@ function createLocalAppServer(options = {}) {
             }
 
             if (req.method === "GET" && pathname.startsWith("/api/v1/video/assets/")) {
-                serveAsset(req, res, pathname.slice("/api/v1/video/assets/".length));
+                serveAsset(req, res, pathname.slice("/api/v1/video/assets/".length), url);
                 return;
             }
 
@@ -8231,7 +9973,10 @@ function createLocalAppServer(options = {}) {
                     return;
                 }
                 if (req.method === "GET") {
-                    write(res, 200, { family_id: familyId, ...videoPrivacyForFamily(familyId) });
+                    write(res, 200, {
+                        family_id: familyId,
+                        ...videoPrivacyForFamily(familyId),
+                    });
                     return;
                 }
                 const payload = await parseJsonBody(req);
@@ -8241,12 +9986,21 @@ function createLocalAppServer(options = {}) {
                 }
                 const videoPrivacy = updateVideoPrivacyForFamily(familyId, payload.minimum_mode);
                 await store.save();
-                write(res, 200, { ok: true, family_id: familyId, ...videoPrivacy });
+                write(res, 200, {
+                    ok: true,
+                    family_id: familyId,
+                    ...videoPrivacy,
+                });
                 return;
             }
 
             if (req.method === "POST" && pathname === "/api/v1/device/sync") {
                 await handleDeviceSync(req, res);
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/device/activity-intervals") {
+                await handleDeviceActivityIntervals(req, res);
                 return;
             }
 
@@ -8387,7 +10141,11 @@ function createLocalAppServer(options = {}) {
                 }
                 const videoPrivacy = updateVideoPrivacyForFamily(familyId, payload.minimum_mode);
                 await store.save();
-                write(res, 200, { family_id: familyId, ...videoPrivacy, can_manage: true });
+                write(res, 200, {
+                    family_id: familyId,
+                    ...videoPrivacy,
+                    can_manage: true,
+                });
                 return;
             }
 
@@ -8404,9 +10162,9 @@ function createLocalAppServer(options = {}) {
                 if (!requireFamilyAccess(req, res, familyId)) return;
                 const payload = await parseJsonBody(req);
                 const existing = carePreferences(familyId);
-                if ((payload.metadata?.presence_monitoring || payload.metadata?.video_privacy)
+                if ((payload.metadata?.presence_monitoring || payload.metadata?.activity_history || payload.metadata?.video_privacy)
                     && !userCanManageFamily(activeAppUser(req).id, familyId)) {
-                    writeError(res, 403, "只有家庭创建者可以修改守护设置。");
+                    writeError(res, 403, "只有家庭创建者可以修改守护与活动数据设置。");
                     return;
                 }
                 const nextMetadata = payload.metadata && typeof payload.metadata === "object"
@@ -8599,7 +10357,12 @@ function createLocalAppServer(options = {}) {
                     ? normalizeBool(payload.dry_run)
                     : normalizeBool(url.searchParams.get("dry_run"));
                 const result = cleanupVerifyData({ dry_run: dryRun });
-                if (!dryRun) await store.save();
+                const persistenceDeletes = result.persistence_deletes || [];
+                delete result.persistence_deletes;
+                if (!dryRun) {
+                    await deletePersistedRows(persistenceDeletes);
+                    await store.save();
+                }
                 write(res, 200, result);
                 return;
             }
@@ -8635,6 +10398,90 @@ function createLocalAppServer(options = {}) {
                     ok: true,
                     run: result.run,
                     result: result.result,
+                });
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/internal/notifications/test") {
+                if (!requireOps(req, res)) return;
+                if (!appPushProviderConfigured()) {
+                    writeError(res, 503, "APNs provider is not configured.");
+                    return;
+                }
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const familyId = normalizeNumber(payload.family_id, null);
+                if (!familyId) {
+                    writeError(res, 400, "family_id required");
+                    return;
+                }
+                if (!selectedFamily(familyId)) {
+                    writeError(res, 404, "family not found");
+                    return;
+                }
+                const environment = ["sandbox", "production"].includes(String(payload.environment || "").toLowerCase())
+                    ? String(payload.environment).toLowerCase()
+                    : "production";
+                const requestedUserId = normalizeNumber(payload.user_id, null);
+                const requestedInstallId = String(payload.app_install_id || "").trim();
+                const targetToken = store.db.app_push_tokens
+                    .filter((token) => Number(token.family_id) === Number(familyId))
+                    .filter((token) => String(token.status || "active") === "active")
+                    .filter((token) => String(token.provider || "apns") === "apns")
+                    .filter((token) => String(token.environment || "production") === environment)
+                    .filter((token) => Boolean(token.token_ciphertext))
+                    .filter((token) => !requestedUserId || Number(token.user_id) === Number(requestedUserId))
+                    .filter((token) => !requestedInstallId || String(token.app_install_id || "") === requestedInstallId)
+                    .filter((token) => Boolean(familyMemberForUser(token.user_id, familyId)))
+                    .sort((first, second) => {
+                        const secondTime = Date.parse(second.last_seen_at || second.updated_at || second.created_at || "") || 0;
+                        const firstTime = Date.parse(first.last_seen_at || first.updated_at || first.created_at || "") || 0;
+                        return secondTime - firstTime;
+                    })[0] || null;
+                if (!targetToken) {
+                    writeError(res, 409, `No active ${environment} APNs installation found for this family.`);
+                    return;
+                }
+                const requestId = crypto.randomUUID();
+                const message = upsertAppMessage({
+                    message_id: `ops-notification-test-${familyId}-${requestId}`,
+                    family_id: familyId,
+                    user_id: targetToken.user_id || "",
+                    message_type: "test",
+                    title: String(payload.title || "服务器主动推送验收").trim().slice(0, 80),
+                    subtitle: String(payload.subtitle || "这条通知由回家云端主动发送。").trim().slice(0, 160),
+                    body: String(payload.body || "用于验证 TestFlight、APNs 与通知中心的真实闭环。").trim().slice(0, 300),
+                    facts: ["服务器主动触发", "单安装单次投递"],
+                    actions: [{ key: "open_home", label: "打开回家" }],
+                    priority: "normal",
+                    generated_by: "ops-notification-test",
+                    idempotency_key: `ops-notification-test:${requestId}`,
+                    metadata: {
+                        ops_test_id: requestId,
+                        target_install_id: targetToken.app_install_id || "",
+                        target_environment: environment,
+                        requested_at: nowIso(),
+                    },
+                });
+                const deliveries = queueNotificationDelivery(message, {
+                    target_token_ids: [targetToken.id],
+                });
+                if (deliveries.length !== 1) {
+                    writeError(res, 409, "Unable to create a single targeted APNs delivery.");
+                    return;
+                }
+                await store.save();
+                const dispatch = await dispatchQueuedPushDeliveries({
+                    limit: 1,
+                    target_delivery_ids: deliveries.map((delivery) => delivery.id),
+                });
+                await store.save();
+                write(res, 200, {
+                    ok: true,
+                    request_id: requestId,
+                    target: publicAppPushToken(targetToken),
+                    message: publicAppMessage(message),
+                    deliveries: deliveries.map(publicNotificationDelivery),
+                    dispatch,
                 });
                 return;
             }
@@ -8756,7 +10603,35 @@ function createLocalAppServer(options = {}) {
                     .filter((message) => messageFamilyIds.has(Number(message.family_id)))
                     .filter((message) => !statusFilter || statusFilter === "all" || String(message.status || "open") === statusFilter)
                     .map(publicAppMessage);
-                const messages = persisted
+                const persistedEventIds = new Set(persisted.flatMap((message) => (
+                    Array.isArray(message.source_event_ids) ? message.source_event_ids.map(String) : []
+                )));
+                const events = eventList(url, { userVisible: true, familyIds: messageFamilyIds })
+                    .filter((event) => !event.acknowledged)
+                    .filter((event) => !persistedEventIds.has(String(event.id)))
+                    .slice(0, 5);
+                const eventMessages = events.map((event) => ({
+                    id: `event-${event.id}`,
+                    message_id: `event-${event.id}`,
+                    family_id: event.family_id || store.db.cameras[String(event.camera_id)]?.family_id || null,
+                    message_type: event.level === "critical" ? "alert" : "explain",
+                    title: event.type === "camera_offline"
+                        ? `${event.camera_name || event.room || "摄像头"} 暂时没有返回画面`
+                        : event.summary,
+                    subtitle: `${event.room || event.camera_name || "摄像头"} · ${event.event_type}`,
+                    body: event.type === "camera_offline"
+                        ? "家庭盒子暂时没有拿到这路画面，会继续重试。"
+                        : (event.payload?.rule?.reason || event.summary),
+                    facts: [event.event_type, event.level],
+                    actions: [{ key: "open_event", label: "查看事件" }],
+                    source_event_ids: [event.id],
+                    generated_by: "local-app-server",
+                    status: "open",
+                    priority: event.level === "critical" ? "high" : "normal",
+                    created_at: event.created_at,
+                    updated_at: event.updated_at || event.created_at,
+                }));
+                const messages = [...persisted, ...eventMessages]
                     .sort((a, b) => {
                         const priorityScore = (item) => item.priority === "high" ? 1 : 0;
                         const priorityDelta = priorityScore(b) - priorityScore(a);
@@ -8780,6 +10655,59 @@ function createLocalAppServer(options = {}) {
                     .slice(0, limit)
                     .map(publicNotificationDelivery);
                 write(res, 200, deliveries);
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/notifications/receipts") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const deliveryId = String(payload.delivery_id || "").trim();
+                const receiptState = String(payload.state || "").trim().toLowerCase();
+                if (!deliveryId || !["received_foreground", "opened"].includes(receiptState)) {
+                    writeError(res, 400, "delivery_id and a valid receipt state are required");
+                    return;
+                }
+                const delivery = store.db.notification_deliveries.find((item) => String(item.id) === deliveryId);
+                if (!delivery) {
+                    writeError(res, 404, "notification delivery not found");
+                    return;
+                }
+                if (!requireFamilyAccess(req, res, delivery.family_id)) return;
+                const timestamp = nowIso();
+                const appInstallId = String(payload.app_install_id || "").trim();
+                const user = activeAppUser(req);
+                const targetToken = store.db.app_push_tokens.find((item) => (
+                    String(item.id) === String(delivery.target_id || "")
+                    && String(item.app_install_id || "") === appInstallId
+                    && Number(item.user_id) === Number(user.id)
+                    && String(item.status || "active") === "active"
+                ));
+                if (delivery.target_type !== "push_token" || !appInstallId || !targetToken) {
+                    writeError(res, 403, "notification receipt target does not match this app installation");
+                    return;
+                }
+                const receiptKey = `${receiptState}:${appInstallId || "unknown"}`;
+                const responsePayload = delivery.response_payload && typeof delivery.response_payload === "object"
+                    ? delivery.response_payload
+                    : {};
+                const receipts = Array.isArray(responsePayload.receipts) ? [...responsePayload.receipts] : [];
+                if (!receipts.some((item) => String(item.key || "") === receiptKey)) {
+                    receipts.push({
+                        key: receiptKey,
+                        state: receiptState,
+                        app_install_id: appInstallId,
+                        app_version: String(payload.app_version || "").slice(0, 40),
+                        occurred_at: timestamp,
+                    });
+                }
+                delivery.response_payload = { ...responsePayload, receipts: receipts.slice(-12) };
+                delivery.status = "delivered";
+                delivery.delivered_at = delivery.delivered_at || timestamp;
+                if (receiptState === "opened") delivery.clicked_at = delivery.clicked_at || timestamp;
+                delivery.updated_at = timestamp;
+                syncMessageDeliveryState(delivery.message_id, timestamp);
+                await store.save();
+                write(res, 200, { ok: true, delivery: publicNotificationDelivery(delivery) });
                 return;
             }
 
@@ -8838,6 +10766,9 @@ function createLocalAppServer(options = {}) {
                     return;
                 }
                 const tokenHash = sha256(pushToken);
+                const environment = ["sandbox", "production"].includes(String(payload.environment || "").toLowerCase())
+                    ? String(payload.environment).toLowerCase()
+                    : "production";
                 let token = store.db.app_push_tokens.find((item) => (
                     String(item.app_install_id || "") === appInstallId
                     && Number(item.user_id) === Number(user.id)
@@ -8848,7 +10779,12 @@ function createLocalAppServer(options = {}) {
                     user_id: user.id,
                     app_install_id: appInstallId,
                     platform: String(payload.platform || "ios").toLowerCase(),
+                    provider: "apns",
+                    environment,
                     push_token_hash: tokenHash,
+                    token_ciphertext: appPushProviderConfigured()
+                        ? apnsProvider.encryptToken(pushToken)
+                        : String(token?.token_ciphertext || ""),
                     token_preview: tokenPreview(pushToken),
                     status: "active",
                     device_name: String(payload.device_name || payload.deviceName || "").slice(0, 80),
@@ -8866,6 +10802,13 @@ function createLocalAppServer(options = {}) {
                     store.db.app_push_tokens.push(token);
                 } else {
                     Object.assign(token, patch);
+                }
+                for (const duplicate of store.db.app_push_tokens) {
+                    if (String(duplicate.id) === String(token.id)) continue;
+                    if (String(duplicate.push_token_hash || "") !== tokenHash) continue;
+                    if (String(duplicate.status || "active") !== "active") continue;
+                    duplicate.status = "revoked";
+                    duplicate.updated_at = timestamp;
                 }
                 await store.save();
                 write(res, 200, publicAppPushToken(token));
@@ -8918,18 +10861,81 @@ function createLocalAppServer(options = {}) {
 
             serveStatic(req, res, url);
         } catch (error) {
-            writeError(res, 500, error.message || "server error");
+            writeError(res, Number(error?.statusCode) || 500, error.message || "server error");
         }
     }
 
     const server = http.createServer(route);
     let schedulerTimer = null;
     let visionVerificationTimer = null;
+    let mediaUploadCleanupTimer = null;
+    let initialMediaUploadCleanupTimer = null;
+    let apnsDispatchTimer = null;
+    let initialApnsDispatchTimer = null;
+    let activityCleanupTimer = null;
+    let initialActivityCleanupTimer = null;
+    const mediaUploadCleanupEnabled = options.mediaUploadCleanupEnabled ?? !["0", "false", "no"].includes(
+        String(process.env.GOHOME_MEDIA_UPLOAD_CLEANUP_ENABLED || "1").trim().toLowerCase(),
+    );
+    if (cosStorage.enabled && mediaUploadCleanupEnabled) {
+        const intervalMs = Math.max(
+            60000,
+            normalizeNumber(process.env.GOHOME_MEDIA_UPLOAD_CLEANUP_INTERVAL_MS, 5 * 60 * 1000),
+        );
+        const runCleanup = () => {
+            cleanupExpiredMemoryUploads()
+                .catch((error) => console.error(`media upload cleanup failed: ${error.message || error}`));
+        };
+        mediaUploadCleanupTimer = setInterval(runCleanup, intervalMs);
+        mediaUploadCleanupTimer.unref?.();
+        initialMediaUploadCleanupTimer = setTimeout(runCleanup, 1000);
+        initialMediaUploadCleanupTimer.unref?.();
+        server.on("close", () => {
+            clearInterval(mediaUploadCleanupTimer);
+            clearTimeout(initialMediaUploadCleanupTimer);
+        });
+    }
+    if (appPushProviderConfigured()) {
+        const intervalMs = Math.max(1000, normalizeNumber(process.env.GOHOME_APNS_DISPATCH_INTERVAL_MS, 1000));
+        const dispatch = () => {
+            dispatchQueuedPushDeliveries()
+                .catch((error) => console.error(`APNs dispatch failed: ${error.message || error}`));
+        };
+        apnsDispatchTimer = setInterval(dispatch, intervalMs);
+        apnsDispatchTimer.unref?.();
+        initialApnsDispatchTimer = setTimeout(dispatch, 1000);
+        initialApnsDispatchTimer.unref?.();
+        server.on("close", () => {
+            clearInterval(apnsDispatchTimer);
+            clearTimeout(initialApnsDispatchTimer);
+            apnsProvider.close?.();
+        });
+    }
+    const activityCleanupEnabled = options.activityCleanupEnabled ?? !["0", "false", "no"].includes(
+        String(process.env.GOHOME_ACTIVITY_CLEANUP_ENABLED || "1").trim().toLowerCase(),
+    );
+    if (activityCleanupEnabled && typeof nativeRepository.cleanupExpiredActivityIntervals === "function") {
+        const intervalMs = Math.max(
+            60 * 60 * 1000,
+            normalizeNumber(process.env.GOHOME_ACTIVITY_CLEANUP_INTERVAL_MS, 6 * 60 * 60 * 1000),
+        );
+        const cleanup = () => Promise.resolve(nativeRepository.cleanupExpiredActivityIntervals())
+            .then(() => (store.kind === "postgres" ? undefined : store.save()))
+            .catch((error) => console.error(`activity history cleanup failed: ${error.message || error}`));
+        activityCleanupTimer = setInterval(cleanup, intervalMs);
+        activityCleanupTimer.unref?.();
+        initialActivityCleanupTimer = setTimeout(cleanup, 1000);
+        initialActivityCleanupTimer.unref?.();
+        server.on("close", () => {
+            clearInterval(activityCleanupTimer);
+            clearTimeout(initialActivityCleanupTimer);
+        });
+    }
     if (normalizeBool(process.env.GOHOME_SCHEDULER_ENABLED)) {
         const intervalMs = Math.max(60000, normalizeNumber(process.env.GOHOME_SCHEDULER_INTERVAL_MS, 60000));
         schedulerTimer = setInterval(() => {
             runNotificationScheduler({ job_type: "background_scheduler" })
-                .then(() => store.save())
+                .then(persistSchedulerOutcome)
                 .catch((error) => {
                     console.error(`scheduler failed: ${error.message || error}`);
                 });
@@ -8954,7 +10960,20 @@ function createLocalAppServer(options = {}) {
             clearTimeout(initialTimer);
         });
     }
-    return { server, store, dataDir, appToken, deviceToken };
+    server.on("close", () => clearInterval(eventLoopDelayTimer));
+    return {
+        server,
+        store,
+        dataDir,
+        appToken,
+        deviceToken,
+        nativeRepository,
+        cleanupExpiredMemoryUploads,
+        cleanupExpiredActivityIntervals: () => nativeRepository.cleanupExpiredActivityIntervals(),
+        dispatchQueuedPushDeliveries,
+        queueNotificationDelivery,
+        upsertAppMessage,
+    };
 }
 
 function appServerStoreKind(options = {}) {
@@ -9021,9 +11040,10 @@ if (require.main === module) {
 }
 
 module.exports = {
+    createDefaultDb,
+    createLatestFrameMjpegWriter,
     createLocalAppServer,
     createLocalAppServerAsync,
-    createDefaultDb,
     normalizeDb,
     compactSchedulerRuns,
     MAX_SCHEDULER_RUNS,

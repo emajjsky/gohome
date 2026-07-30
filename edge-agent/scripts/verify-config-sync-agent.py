@@ -26,10 +26,12 @@ def main() -> None:
             runtime_dir=root / "runtime",
             config_sync_enabled=True,
             config_sync_interval_seconds=10,
+            video_privacy_sync_interval_seconds=1,
             config_sync_request_timeout_seconds=2,
             config_sync_test_capture_enabled=False,
         )
         camera_agent = SimpleNamespace(capture_frame=lambda *_args, **_kwargs: {"width": 640, "height": 360})
+        monotonic_now = [100.0]
         agent = ConfigSyncAgent(
             storage=storage,
             settings=settings,
@@ -37,7 +39,39 @@ def main() -> None:
             device_id_resolver=lambda: "edge-test",
             token_resolver=lambda: "",
             runtime_status_resolver=lambda: {"worker_running": True},
+            monotonic_clock=lambda: monotonic_now[0],
         )
+
+        if not agent.wake() or agent.wake():
+            raise SystemExit("config sync wake requests must be coalesced for two seconds")
+        monotonic_now[0] += 2.0
+        if not agent.wake():
+            raise SystemExit("config sync wake must become available after the debounce window")
+        agent._wake.clear()
+
+        if not agent.observe_video_privacy_mode("person_blur"):
+            raise SystemExit("privacy observations must update the shared runtime mode")
+        if agent.video_privacy_mode() != "person_blur":
+            raise SystemExit("privacy observations must be visible to the management API")
+        if agent.observe_video_privacy_mode("invalid"):
+            raise SystemExit("invalid privacy observations must preserve the current mode")
+        monotonic_now[0] += 2.0
+        if not agent.observe_video_privacy_mode("skeleton", wake=True) or not agent._wake.is_set():
+            raise SystemExit("changed relay observations must wake durable config sync")
+        agent._wake.clear()
+
+        privacy_requests: list[str] = []
+
+        def fake_privacy_request(method: str, path: str, **_kwargs: object) -> dict:
+            privacy_requests.append(f"{method} {path}")
+            return {"ok": True, "minimum_mode": "person_blur"}
+
+        agent._request_json = fake_privacy_request  # type: ignore[method-assign]
+        privacy_result = agent.process_video_privacy_once()
+        if not privacy_result["changed"] or agent.video_privacy_mode() != "person_blur":
+            raise SystemExit("lightweight privacy sync must update the shared runtime mode")
+        if privacy_requests != ["GET /api/v1/device/video-privacy"]:
+            raise SystemExit(f"privacy sync used the wrong endpoint: {privacy_requests}")
 
         config_holder = {
             "payload": {

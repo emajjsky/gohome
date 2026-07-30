@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import platform
 import sys
 from pathlib import Path
@@ -62,7 +63,8 @@ def main() -> int:
 
     cfg_path = Path(sys.prefix) / "pyvenv.cfg"
     cfg_text = cfg_path.read_text(encoding="utf-8", errors="replace") if cfg_path.exists() else ""
-    expected_prefix = (root / ".venv").resolve()
+    configured_venv = os.environ.get("GOHOME_PI_VENV_DIR") or env.get("GOHOME_PI_VENV_DIR") or str(root / ".venv")
+    expected_prefix = Path(configured_venv).expanduser().resolve()
     active_prefix = Path(sys.prefix).resolve()
     runtime_paths = configured_runtime_paths(cfg_text)
     missing_runtime_paths = [str(path) for path in runtime_paths if not path.exists()]

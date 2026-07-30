@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement native Home, Guard, Events, and Profile surfaces with immediate tab switching, real data, one selected video stream, and preserved navigation state.
+**Goal:** Implement native Home, Guard, Memory, Community, and Profile surfaces
+with immediate tab switching, real data, one selected video stream, and preserved
+navigation state. Activity and Events live inside Guard.
 
 **Architecture:** Each tab owns a `NavigationStack` and feature model while sharing one repository. Views consume cached view-state structs and never issue network calls. Guard isolates stream transport behind a protocol so current MJPEG can later be replaced without changing product views.
 
@@ -38,7 +40,10 @@ Expected: FAIL because `MainTabView` does not exist.
 
 - [ ] **Step 3: Implement five native tab roots**
 
-Use `TabView(selection:)` with Home, Guard, Events, Discover, and Profile. Give each tab its own `NavigationPath` stored in a tab state object. Define white, near-black, and ginger-yellow tokens; card radius is 8, button radius is 8, icon buttons may be circular.
+Use `TabView(selection:)` with Home, Guard, Memory, Community, and Profile. Give
+each tab its own `NavigationPath` stored in a tab state object. Guard owns Live,
+Activity, and Events sections. Define white, near-black, and ginger-yellow tokens;
+card radius is 8, button radius is 8, icon buttons may be circular.
 
 - [ ] **Step 4: Run tab tests**
 
@@ -214,25 +219,25 @@ git commit -m "feat(ios): build native guard experience"
 - Test: `GoHomeShellTests/EventPresentationTests.swift`
 - Test: `GoHomeShellUITests/EventActionTests.swift`
 
-- [ ] **Step 1: Write event presentation tests**
+- [x] **Step 1: Write event presentation tests**
 
 Map pending/handled/false-positive states, hide raw metric keys, group one SafetyIncident across multiple cameras, and produce human-readable cloud verification states.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Expected: FAIL because native event presentation is absent.
 
-- [ ] **Step 3: Implement list, detail, and optimistic actions**
+- [x] **Step 3: Implement list, detail, and optimistic actions**
 
 Use segmented filtering and evidence cards. `confirmSafe` and `markFalsePositive` update local state optimistically, disable duplicate submission by idempotency key, and roll back with an inline error if the server rejects the action.
 
-- [ ] **Step 4: Run tests and relaunch persistence test**
+- [x] **Step 4: Run targeted and full native tests**
 
-Run: `ios-shell/scripts/test.sh GoHomeShellUITests/EventActionTests`
+Run: `ios-shell/scripts/test.sh GoHomeShellUITests/EventActionTests` and the full `xcodebuild test` suite.
 
-Expected: PASS; handled state remains after terminating and relaunching the test app.
+Expected: PASS; event detail actions update the visible state, hide raw model output, and the full native suite remains green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Features/Events ios-shell/GoHomeShellTests/EventPresentationTests.swift ios-shell/GoHomeShellUITests/EventActionTests.swift
@@ -248,25 +253,25 @@ git commit -m "feat(ios): add native incident evidence and actions"
 - Create: `Sources/Features/Profile/ContentPreferencesView.swift`
 - Test: `GoHomeShellTests/ProfilePermissionTests.swift`
 
-- [ ] **Step 1: Write creator/member permission tests**
+- [x] **Step 1: Write creator/member permission tests**
 
 Assert only creator sees enabled algorithm/rule mutation controls; members receive read-only values. Assert “管理员” is absent from personal identity copy and role labels are “创建者/成员” only inside family management.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Expected: FAIL because Profile views are absent.
 
-- [ ] **Step 3: Implement grouped native settings**
+- [x] **Step 3: Implement grouped native settings**
 
 Sections: account, family, cared-for profile/contact, box/cameras, notifications, return-home/content preferences, Discover preferences, privacy/data, logout. Keep rule details in a pushed screen and enforce server permissions as well as UI state.
 
-- [ ] **Step 4: Run full primary-tab gate**
+- [x] **Step 4: Run full primary-tab gate**
 
 Run: `ios-shell/scripts/test.sh`  
 Then install the Debug build on the connected iPhone and execute Home scroll retention, camera A/B switching, event confirmation, Profile permissions, and logout once.  
-Expected: PASS; all four implemented tabs and Profile remain responsive during stream playback.
+Expected: PASS; native unit/UI suites pass and all implemented tabs plus Profile remain responsive in the simulator. Physical-device install and logout still require the local signing/device pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ios-shell/GoHomeShell/Sources/Features/Profile ios-shell/GoHomeShellTests/ProfilePermissionTests.swift

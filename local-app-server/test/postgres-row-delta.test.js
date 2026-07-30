@@ -1,0 +1,255 @@
+const assert = require('node:assert/strict');
+const test = require('node:test');
+const {
+  createDbFromCloudRows,
+  persistRowDeltas,
+  PostgresStore,
+  TABLE_ORDER,
+} = require('../postgres-store');
+const { buildCloudSeedBundle } = require('../../scripts/export-local-app-db');
+
+function emptyTables() {
+  return Object.fromEntries(TABLE_ORDER.map((table) => [table, []]));
+}
+
+function recordingPool() {
+  const queries = [];
+  const client = {
+    async query(text, values = []) {
+      queries.push({ text: String(text), values });
+      return { rowCount: 1, rows: [] };
+    },
+    release() {},
+  };
+  return {
+    queries,
+    async connect() { return client; },
+    async end() {},
+  };
+}
+
+test('row-delta persistence upserts only a changed camera and never wipes tables', async () => {
+  const pool = recordingPool();
+  const persisted = emptyTables();
+  persisted.users = [{ id: 'user-1', email: 'person@example.com' }];
+  persisted.families = [{ id: 'family-1', name: 'Home' }];
+  persisted.cameras = [
+    { id: 'camera-1', family_id: 'family-1', name: 'Old name' },
+    { id: 'external-camera', family_id: 'family-1', name: 'Created outside the legacy snapshot' },
+  ];
+  const current = structuredClone(persisted);
+  current.cameras[0].name = 'Living room';
+  current.cameras = current.cameras.filter((camera) => camera.id !== 'external-camera');
+
+  const nextSnapshot = await persistRowDeltas(pool, { tables: current }, persisted);
+
+  const sql = pool.queries.map((query) => query.text.trim());
+  assert.equal(sql.some((text) => /^delete from/i.test(text)), false);
+  assert.equal(sql.some((text) => /^insert into users/i.test(text)), false);
+  assert.equal(sql.some((text) => /^insert into families/i.test(text)), false);
+  assert.equal(sql.filter((text) => /^insert into cameras/i.test(text)).length, 1);
+  assert.equal(sql.some((text) => /pg_advisory_xact_lock/i.test(text)), true);
+  assert.equal(nextSnapshot.cameras.some((camera) => camera.id === 'external-camera'), true);
+});
+
+test('explicit row deletion is parameterized and updates the persisted snapshot', async () => {
+  const pool = recordingPool();
+  const persisted = emptyTables();
+  persisted.cameras = [{ id: 'camera-1', family_id: 'family-1', name: 'Living room' }];
+  const store = new PostgresStore({ pool, db: {}, persistedTables: persisted });
+
+  await store.deleteRow('cameras', 'camera-1');
+
+  const deletion = pool.queries.find((query) => /^delete from cameras/i.test(query.text.trim()));
+  assert.ok(deletion);
+  assert.match(deletion.text, /where id = \$1/i);
+  assert.deepEqual(deletion.values, ['camera-1']);
+  assert.deepEqual(store.persistedTables.cameras, []);
+  await assert.rejects(store.deleteRow('cameras; drop table users', 'camera-1'), /unsupported postgres table/);
+});
+
+test('scheduler run persistence updates one row and prunes retained history without a full save', async () => {
+  const pool = recordingPool();
+  const persisted = emptyTables();
+  persisted.scheduler_runs = [{ id: 'run-old', created_at: '2026-07-01T00:00:00.000Z' }];
+  const store = new PostgresStore({ pool, db: {}, persistedTables: persisted });
+  const run = {
+    id: 'run-new',
+    job_type: 'background_scheduler',
+    status: 'succeeded',
+    result: { families_checked: 4 },
+    started_at: '2026-07-30T00:00:00.000Z',
+    finished_at: '2026-07-30T00:00:00.100Z',
+    created_at: '2026-07-30T00:00:00.000Z',
+    updated_at: '2026-07-30T00:00:00.100Z',
+  };
+
+  await store.saveSchedulerRun(run, { retention: 100 });
+
+  const sql = pool.queries.map((query) => query.text.trim());
+  assert.equal(sql.filter((text) => /^insert into scheduler_runs/i.test(text)).length, 1);
+  assert.equal(sql.some((text) => /^insert into (?!scheduler_runs)/i.test(text)), false);
+  const retentionDelete = pool.queries.find((query) => /^delete from scheduler_runs/i.test(query.text.trim()));
+  assert.ok(retentionDelete);
+  assert.deepEqual(retentionDelete.values, [100]);
+  assert.equal(store.persistedTables.scheduler_runs.some((item) => item.id === 'run-new'), true);
+});
+
+test('scheduler run persistence ignores overlap placeholders without an id', async () => {
+  const pool = recordingPool();
+  const persisted = emptyTables();
+  persisted.scheduler_runs = [{ id: 'run-existing', created_at: '2026-07-30T00:00:00.000Z' }];
+  const store = new PostgresStore({ pool, db: {}, persistedTables: persisted });
+
+  await store.saveSchedulerRun({
+    id: null,
+    job_type: 'background_scheduler',
+    status: 'skipped',
+    result: { skipped: [{ reason: 'scheduler_already_running' }] },
+  });
+
+  assert.equal(pool.queries.length, 0);
+  assert.deepEqual(store.persistedTables.scheduler_runs, persisted.scheduler_runs);
+});
+
+test('postgres date values retain their Shanghai calendar day after hydration', () => {
+  const rows = emptyTables();
+  rows.care_cards = [{
+    id: '36',
+    card_id: 'care-5-2026-07-22',
+    family_id: '5',
+    elder_id: 'elder_primary',
+    card_date: new Date('2026-07-21T16:00:00.000Z'),
+    card_type: 'daily',
+    created_at: new Date('2026-07-22T00:00:00.000Z'),
+    updated_at: new Date('2026-07-22T00:00:00.000Z'),
+  }];
+
+  const db = createDbFromCloudRows(rows, { created_at: '2026-07-22T00:00:00.000Z' });
+
+  assert.equal(db.care_cards[0].card_date, '2026-07-22');
+});
+
+test('family metadata survives PostgreSQL hydration and serialization', () => {
+  const rows = emptyTables();
+  rows.families = [{
+    id: 'family-1',
+    name: 'Home',
+    metadata: {
+      member_count: 1,
+      created_by_user_id: 'user-1',
+      onboarding_completed_at: '2026-07-25T09:00:00.000Z',
+      custom_setting: { enabled: true },
+    },
+  }];
+
+  const db = createDbFromCloudRows(rows, { created_at: '2026-07-25T09:00:00.000Z' });
+  assert.equal(db.families[0].metadata.onboarding_completed_at, '2026-07-25T09:00:00.000Z');
+  assert.deepEqual(db.families[0].metadata.custom_setting, { enabled: true });
+
+  const persisted = buildCloudSeedBundle(db, { exportedAt: '2026-07-25T09:00:00.000Z' }).tables.families[0];
+  assert.equal(persisted.metadata.onboarding_completed_at, '2026-07-25T09:00:00.000Z');
+  assert.deepEqual(persisted.metadata.custom_setting, { enabled: true });
+});
+
+test('media asset metadata survives PostgreSQL serialization and hydration', () => {
+  const timestamp = '2026-07-24T02:00:00.000Z';
+  const bundle = buildCloudSeedBundle({
+    created_at: timestamp,
+    updated_at: timestamp,
+    assets: [{
+      id: 'memory-video-1',
+      family_id: null,
+      content_type: 'video/mp4',
+      storage_provider: 'cos',
+      storage_key: 'memory-media/family-1/video.mp4',
+      purpose: 'family_memory',
+      size: 2_000_000,
+      metadata: {
+        duration_seconds: 42.5,
+        pixel_width: 1280,
+        pixel_height: 720,
+        uploaded_by: 'user-1',
+      },
+      evidence_frame_role: 'current',
+      created_at: timestamp,
+      updated_at: timestamp,
+    }],
+  }, { exportedAt: timestamp });
+
+  const persisted = bundle.tables.media_assets[0];
+  assert.equal(persisted.metadata.duration_seconds, 42.5);
+  assert.equal(persisted.metadata.pixel_width, 1280);
+  assert.equal(persisted.metadata.uploaded_by, 'user-1');
+  assert.equal(persisted.metadata.evidence_frame_role, 'current');
+
+  const db = createDbFromCloudRows(bundle.tables, { created_at: timestamp });
+  assert.equal(db.assets[0].metadata.duration_seconds, 42.5);
+  assert.equal(db.assets[0].metadata.pixel_height, 720);
+  assert.equal(db.assets[0].purpose, 'family_memory');
+  assert.equal(db.assets[0].evidence_frame_role, 'current');
+});
+
+test('media upload intents survive PostgreSQL serialization and hydration without credentials', () => {
+  const timestamp = '2026-07-24T02:00:00.000Z';
+  const expiresAt = '2026-07-24T02:10:00.000Z';
+  const bundle = buildCloudSeedBundle({
+    created_at: timestamp,
+    updated_at: timestamp,
+    media_upload_intents: [{
+      asset_id: 'memory-asset-pending',
+      family_id: 'family-1',
+      user_id: 'user-1',
+      object_key: 'memory-media/family-1/2026/07/24/memory-asset-pending.mp4',
+      content_type: 'video/mp4',
+      size_bytes: 2_000_000,
+      pixel_width: 1280,
+      pixel_height: 720,
+      duration_seconds: 42.5,
+      expires_at: expiresAt,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }],
+  }, { exportedAt: timestamp });
+
+  const persisted = bundle.tables.media_upload_intents[0];
+  assert.equal(persisted.asset_id, 'memory-asset-pending');
+  assert.equal(persisted.duration_seconds, 42.5);
+  assert.equal(Object.hasOwn(persisted, 'upload_url'), false);
+  assert.equal(Object.hasOwn(persisted, 'upload_token'), false);
+
+  const db = createDbFromCloudRows(bundle.tables, { created_at: timestamp });
+  assert.equal(db.media_upload_intents[0].object_key, persisted.object_key);
+  assert.equal(db.media_upload_intents[0].expires_at, expiresAt);
+});
+
+test('family invitations survive PostgreSQL serialization and hydration without plaintext codes', () => {
+  const timestamp = '2026-07-27T08:00:00.000Z';
+  const expiresAt = '2026-07-27T08:10:00.000Z';
+  const codeHash = 'a'.repeat(64);
+  const bundle = buildCloudSeedBundle({
+    created_at: timestamp,
+    updated_at: timestamp,
+    family_invitations: [{
+      id: 'invitation-1',
+      family_id: 'family-1',
+      code_hash: codeHash,
+      code_hint: 'WXYZ',
+      code: 'GH-THIS-MUST-NOT-PERSIST',
+      created_by_user_id: 'user-1',
+      status: 'active',
+      expires_at: expiresAt,
+      created_at: timestamp,
+      updated_at: timestamp,
+    }],
+  }, { exportedAt: timestamp });
+
+  const persisted = bundle.tables.family_invitations[0];
+  assert.equal(persisted.code_hash, codeHash);
+  assert.equal(Object.hasOwn(persisted, 'code'), false);
+
+  const db = createDbFromCloudRows(bundle.tables, { created_at: timestamp });
+  assert.equal(db.family_invitations[0].code_hash, codeHash);
+  assert.equal(db.family_invitations[0].expires_at, expiresAt);
+  assert.equal(Object.hasOwn(db.family_invitations[0], 'code'), false);
+});

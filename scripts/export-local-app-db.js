@@ -5,6 +5,8 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
+const CLOUD_SEED_SCHEMA_VERSION = "011_family_invitations";
+
 function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
@@ -120,6 +122,22 @@ function cameraDeviceId(db, camera) {
     return nullableTextId(camera.device_id || defaultDeviceId(db));
 }
 
+function schedulerRunRow(run, exportedAt = new Date().toISOString()) {
+    return {
+        id: textId(run.id),
+        family_id: nullableTextId(run.family_id),
+        job_type: String(run.job_type || "care_notification"),
+        status: String(run.status || "running"),
+        scope: run.scope && typeof run.scope === "object" ? run.scope : {},
+        result: run.result && typeof run.result === "object" ? run.result : {},
+        error_message: String(run.error_message || ""),
+        started_at: iso(run.started_at, exportedAt),
+        finished_at: iso(run.finished_at),
+        created_at: iso(run.created_at, exportedAt),
+        updated_at: iso(run.updated_at, iso(run.created_at, exportedAt)),
+    };
+}
+
 function buildCloudSeedBundle(db, options = {}) {
     const exportedAt = options.exportedAt || new Date().toISOString();
     const fallbackFamilyId = defaultFamilyId(db);
@@ -157,6 +175,7 @@ function buildCloudSeedBundle(db, options = {}) {
         status: String(family.status || "active"),
         timezone: String(family.timezone || "Asia/Shanghai"),
         metadata: {
+            ...((family.metadata && typeof family.metadata === "object" && !Array.isArray(family.metadata)) ? family.metadata : {}),
             member_count: numberOrNull(family.member_count),
             created_by_user_id: nullableTextId(family.created_by_user_id),
             presence_state: family.presence_state && typeof family.presence_state === "object" ? family.presence_state : {},
@@ -192,6 +211,23 @@ function buildCloudSeedBundle(db, options = {}) {
                 updated_at: family.updated_at,
             }))
             : []);
+
+    const familyInvitations = toArray(db.family_invitations).map((invitation) => ({
+        id: textId(invitation.id),
+        family_id: textId(invitation.family_id),
+        code_hash: String(invitation.code_hash || ""),
+        code_hint: String(invitation.code_hint || ""),
+        created_by_user_id: nullableTextId(invitation.created_by_user_id),
+        status: String(invitation.status || "active"),
+        expires_at: iso(invitation.expires_at),
+        used_by_user_id: nullableTextId(invitation.used_by_user_id),
+        used_at: iso(invitation.used_at),
+        revoked_at: iso(invitation.revoked_at),
+        created_at: iso(invitation.created_at, exportedAt),
+        updated_at: iso(invitation.updated_at, iso(invitation.created_at, exportedAt)),
+    })).filter((invitation) => (
+        invitation.id && invitation.family_id && /^[a-f0-9]{64}$/.test(invitation.code_hash) && invitation.expires_at
+    ));
 
     const elderProfileEntries = new Map(Object.entries(db.elder_profiles || {}));
     for (const family of families) {
@@ -408,14 +444,40 @@ function buildCloudSeedBundle(db, options = {}) {
         edge_event_id: String(asset.edge_event_id || ""),
         size_bytes: numberOrNull(asset.size || asset.size_bytes) || 0,
         metadata: {
-            url: asset.url || "",
-            purpose: String(asset.purpose || ""),
-            local_camera_id: nullableTextId(asset.local_camera_id),
-            captured_at: iso(asset.captured_at),
+            ...(asset.metadata && typeof asset.metadata === "object" && !Array.isArray(asset.metadata)
+                ? asset.metadata
+                : {}),
+            url: asset.url || asset.metadata?.url || "",
+            purpose: String(asset.purpose || asset.metadata?.purpose || ""),
+            local_camera_id: nullableTextId(asset.local_camera_id || asset.metadata?.local_camera_id),
+            captured_at: iso(asset.captured_at || asset.metadata?.captured_at),
+            evidence_frame_role: String(asset.evidence_frame_role || asset.metadata?.evidence_frame_role || ""),
         },
         created_at: iso(asset.created_at, exportedAt),
         updated_at: iso(asset.updated_at, iso(asset.created_at, exportedAt)),
     }));
+
+    const mediaUploadIntents = toArray(db.media_upload_intents).map((intent) => ({
+        asset_id: textId(intent.asset_id),
+        family_id: textId(intent.family_id, fallbackFamilyId),
+        user_id: textId(intent.user_id),
+        object_key: String(intent.object_key || ""),
+        content_type: String(intent.content_type || "image/jpeg"),
+        size_bytes: numberOrNull(intent.size_bytes) || 0,
+        pixel_width: numberOrNull(intent.pixel_width) || 0,
+        pixel_height: numberOrNull(intent.pixel_height) || 0,
+        duration_seconds: numberOrNull(intent.duration_seconds) || 0,
+        expires_at: iso(intent.expires_at),
+        created_at: iso(intent.created_at, exportedAt),
+        updated_at: iso(intent.updated_at, iso(intent.created_at, exportedAt)),
+    })).filter((intent) => (
+        intent.asset_id
+        && intent.family_id
+        && intent.user_id
+        && intent.object_key.startsWith("memory-media/")
+        && intent.size_bytes > 0
+        && intent.expires_at
+    ));
 
     const events = sourceEvents.filter((event) => !validationEventIds.has(textId(event.id))).map((event) => ({
         id: textId(event.id),
@@ -522,7 +584,10 @@ function buildCloudSeedBundle(db, options = {}) {
         user_id: nullableTextId(token.user_id),
         app_install_id: String(token.app_install_id || ""),
         platform: String(token.platform || "ios"),
+        provider: String(token.provider || "apns"),
+        environment: String(token.environment || "production"),
         push_token_hash: String(token.push_token_hash || ""),
+        token_ciphertext: String(token.token_ciphertext || ""),
         token_preview: String(token.token_preview || ""),
         status: String(token.status || "active"),
         device_name: String(token.device_name || ""),
@@ -559,19 +624,9 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(delivery.updated_at, iso(delivery.created_at, exportedAt)),
     })).filter((delivery) => delivery.family_id && delivery.idempotency_key);
 
-    const schedulerRuns = toArray(db.scheduler_runs).map((run) => ({
-        id: textId(run.id),
-        family_id: nullableTextId(run.family_id),
-        job_type: String(run.job_type || "care_notification"),
-        status: String(run.status || "running"),
-        scope: run.scope && typeof run.scope === "object" ? run.scope : {},
-        result: run.result && typeof run.result === "object" ? run.result : {},
-        error_message: String(run.error_message || ""),
-        started_at: iso(run.started_at, exportedAt),
-        finished_at: iso(run.finished_at),
-        created_at: iso(run.created_at, exportedAt),
-        updated_at: iso(run.updated_at, iso(run.created_at, exportedAt)),
-    })).filter((run) => run.id);
+    const schedulerRuns = toArray(db.scheduler_runs)
+        .map((run) => schedulerRunRow(run, exportedAt))
+        .filter((run) => run.id);
 
     const modelGenerationJobs = toArray(db.model_generation_jobs)
         .filter((job) => !validationEventIds.has(textId(job.metadata?.event_id)))
@@ -631,6 +686,7 @@ function buildCloudSeedBundle(db, options = {}) {
         app_sessions: appSessions,
         families,
         family_members: familyMembers,
+        family_invitations: familyInvitations,
         elder_profiles: elderProfiles,
         devices,
         device_bindings: deviceBindings,
@@ -643,6 +699,7 @@ function buildCloudSeedBundle(db, options = {}) {
         model_providers: modelProviders,
         content_sources: contentSources,
         media_assets: mediaAssets,
+        media_upload_intents: mediaUploadIntents,
         events,
         device_heartbeats: deviceHeartbeats,
         calendar_events: calendarEvents,
@@ -660,7 +717,7 @@ function buildCloudSeedBundle(db, options = {}) {
     const counts = Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, rows.length]));
 
     return {
-        schema_version: "004_app_sessions",
+        schema_version: CLOUD_SEED_SCHEMA_VERSION,
         exported_at: exportedAt,
         source: options.source || "local-app-server-json",
         counts,
@@ -732,5 +789,7 @@ if (require.main === module) {
 
 module.exports = {
     buildCloudSeedBundle,
+    CLOUD_SEED_SCHEMA_VERSION,
+    schedulerRunRow,
     sha256,
 };

@@ -29,5 +29,5 @@ PIP_CONFIG_FILE=/dev/null "$VENV_DIR/bin/python" -m pip install \
   --retries 5 \
   -r requirements-pose.txt
 
-"$VENV_DIR/bin/python" scripts/verify-vision-runtime.py --require-yolo --require-pose --smoke
+GOHOME_PI_VENV_DIR="$VENV_DIR" "$VENV_DIR/bin/python" scripts/verify-vision-runtime.py --require-yolo --require-pose --smoke
 echo "Pi vision runtime is ready: $VENV_DIR"

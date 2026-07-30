@@ -14,13 +14,16 @@
     "verify:postgres-loop": "node scripts/verify-postgres-loop.js",
     "verify:app-server": "node scripts/verify-local-app-server.js",
     "verify:frontend-cache": "node scripts/verify-frontend-state-cache.js",
-    "test": "npm run verify:frontend-cache && npm run verify:app-server"
+    "verify:ios-release": "node scripts/verify-ios-release.js",
+    "test:native-server": "node --test local-app-server/test/*.test.js",
+    "test": "npm run verify:frontend-cache && npm run verify:app-server && npm run verify:ios-release"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "cos-nodejs-sdk-v5": "^3.0.0",
     "pg": "^8.22.0",
     "tailwindcss": "^3.4.17"
   }
