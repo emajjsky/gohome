@@ -170,7 +170,8 @@ a fabricated unread badge when no native inbox owns that count.
 
 ### 8.4 Editorial feed
 
-- two-column masonry layout implemented as an iOS 16 custom `Layout`;
+- one full-width featured story followed by a two-column masonry layout implemented
+  as an iOS 16 custom `Layout`;
 - real image, category, title, concise summary, source, and publication date;
 - filter chips for all, local, health lifestyle, culture, and selected interests;
 - tap opens the original HTTPS source in an in-app Safari view;
@@ -232,6 +233,11 @@ Community replaces the overlapping Companion tab. The implementation module is
 named `Discover`, but the product label is Community. It is a curated recommendation
 surface, not a store.
 
+The first section provides real nearby-service actions through Apple Maps for
+community meals, daily delivery, convenience services, and community healthcare.
+Emergency calling uses the system telephone confirmation for `120`. Product
+recommendations remain a visually secondary section below these services.
+
 ### 12.1 Scope
 
 Allowed first-release categories include:
@@ -269,7 +275,7 @@ purchase success state.
 
 Profile contains:
 
-- account and logout;
+- editable account avatar, nickname, city, district, system location, and logout;
 - family members and roles;
 - cared-for family member profile and phone numbers;
 - household box and cameras;
@@ -369,6 +375,11 @@ as hashes on the server and expire or revoke independently.
 - APNs registration is native and associated with user, family, installation, and
   environment.
 - Push payloads contain typed deep-link data, not arbitrary external URLs.
+- Stable `message_id` and `event_id` values are deduplicated for foreground
+  presentation and native routing for 24 hours per installation. Payloads without
+  a stable identifier are never collapsed as though they were the same message.
+- Re-registering an APNs token revokes stale installations that own the same token,
+  and delivery targets are deduplicated by token hash.
 - Notification permissions are requested in context after onboarding.
 - Native share sheet handles reference-message sharing.
 - `tel:` handling validates the configured number and displays a confirmation.
@@ -467,11 +478,15 @@ Rules:
 ## 21. Native Surface Audit Record
 
 The 2026-07-28 simulator audit verifies Home, Guard Live, Guard Activity, Guard
-Events, Memory, Community, recommendation detail, Profile, Devices, Guard Rules,
-Activity Settings, Content Settings, and Privacy. The audit also verifies that a
-Home critical event opens the existing event detail, editable settings use persisted
-repository mutations, recommendation cards open native provenance detail before an
-official HTTPS source, and no primary tab depends on a full-page loading transition.
+Events, Memory, Community, recommendation detail, Profile, account editing, city
+selection, Devices, Guard Rules, Activity Settings, Content Settings, and Privacy
+on iPhone 16 Pro and iPhone SE (3rd generation). It verifies small-screen text and
+safe-area layout, full-row account and city hit targets, the featured editorial
+headline in the first viewport, and Community service hierarchy. The audit also
+verifies that a Home critical event opens the existing event detail, editable
+settings use persisted repository mutations, recommendation cards open native
+provenance detail before an official HTTPS source, and no primary tab depends on a
+full-page loading transition.
 
 Each phase must preserve edge-agent and operational-console API compatibility. The
 household-user web screens remain available only during migration and are removed
