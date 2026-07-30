@@ -133,6 +133,17 @@ def main() -> None:
         aggregation = (aggregated_event.get("payload") or {}).get("candidate_aggregation") or {}
         if aggregation.get("repeat_count") != 1 or aggregation.get("total_candidate_count") != 2:
             raise SystemExit(f"event aggregation audit data is incomplete: {aggregation}")
+        finalizer = next(
+            (
+                job for job in storage.list_upload_jobs(limit=20, job_type="event_evidence_finalize")
+                if int(job.get("event_id") or 0) == int(first_fall["id"])
+            ),
+            None,
+        )
+        if finalizer is None:
+            raise SystemExit("fall incident did not defer cloud publication until evidence finalization")
+        finalized_event = storage.finalize_event_evidence(int(first_fall["id"]))
+        storage.enqueue_event_upload_jobs(finalized_event)
         event_upload = next(
             (
                 job for job in storage.list_upload_jobs(limit=20, job_type="event_upload")
@@ -142,7 +153,7 @@ def main() -> None:
         )
         uploaded_aggregation = ((event_upload or {}).get("payload") or {}).get("payload", {}).get("candidate_aggregation") or {}
         if uploaded_aggregation.get("repeat_count") != 1:
-            raise SystemExit(f"pending cloud event did not receive aggregate evidence: {event_upload}")
+            raise SystemExit(f"finalized cloud event did not receive aggregate evidence: {event_upload}")
 
         expired_at = (datetime.now(timezone.utc) - timedelta(seconds=9)).isoformat()
         with storage.connect() as conn:

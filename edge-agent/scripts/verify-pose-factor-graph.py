@@ -174,6 +174,62 @@ def main() -> None:
     if different_track["fast_fall_candidate"]:
         raise SystemExit("a distant replacement track must not inherit another person's upright history")
 
+    # Production miss from camera 32 on 2026-07-30: a brief occlusion changed
+    # the track id immediately before a clear upright-to-floor transition.
+    reacquired_engine = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    reacquired_engine.update(
+        32,
+        frame(
+            "standing",
+            [255.5, 56.3, 314.1, 256.4],
+            track_id="c32-p6",
+            confidence=0.915,
+        ),
+        monotonic_at=0.0,
+    )
+    reacquired = reacquired_engine.update(
+        32,
+        frame(
+            "lying",
+            [352.7, 238.4, 542.7, 348.8],
+            track_id="c32-p7",
+            confidence=0.8559,
+            motion=0.0,
+        ),
+        monotonic_at=8.7,
+    )
+    reacquired_track = reacquired["fast_fall_track"] or {}
+    if not reacquired_track.get("review_ready"):
+        raise SystemExit(f"single-person track reacquisition must preserve rapid-fall review evidence: {reacquired}")
+    if reacquired_track.get("identity_match") != "single_person_spatial_reacquisition":
+        raise SystemExit(f"track reacquisition provenance is not auditable: {reacquired_track}")
+
+    multi_reacquisition_engine = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    multi_reacquisition_engine.update(
+        32,
+        {
+            **frame("standing", [255.5, 56.3, 314.1, 256.4], track_id="person-a"),
+            "poses": [
+                frame("standing", [255.5, 56.3, 314.1, 256.4], track_id="person-a")["poses"][0],
+                frame("standing", [420.0, 40.0, 500.0, 310.0], track_id="person-b")["poses"][0],
+            ],
+        },
+        monotonic_at=0.0,
+    )
+    multi_reacquisition = multi_reacquisition_engine.update(
+        32,
+        {
+            **frame("lying", [352.7, 238.4, 542.7, 348.8], track_id="replacement"),
+            "poses": [
+                frame("lying", [352.7, 238.4, 542.7, 348.8], track_id="replacement")["poses"][0],
+                frame("standing", [40.0, 30.0, 120.0, 320.0], track_id="bystander")["poses"][0],
+            ],
+        },
+        monotonic_at=2.0,
+    )
+    if multi_reacquisition["fast_fall_candidate"]:
+        raise SystemExit("multi-person replacement tracks must not inherit another person's upright baseline")
+
     # Production miss from camera 24 on 2026-07-22: geometry and track continuity
     # were strong, but the 0.6552 posture confidence previously capped the score.
     real_sequence = PoseFactorGraphEngine(prolonged_lying_seconds=180)
@@ -368,7 +424,7 @@ def main() -> None:
         raise SystemExit("a standing bystander must not clear another track's floor episode")
 
     engine.update(1, frame("standing", [250, 20, 340, 320], motion=0.02), monotonic_at=186.0)
-    recovered = engine.update(1, frame("standing", [252, 20, 342, 320], motion=0.01), monotonic_at=187.0)
+    recovered = engine.update(1, frame("standing", [252, 20, 342, 320], motion=0.01), monotonic_at=187.6)
     if recovered["prolonged_floor_lying_candidate"]:
         raise SystemExit("two upright recovery samples must close prolonged lying state")
     recovery = recovered["physical_recoveries"][0] if recovered["physical_recoveries"] else {}
@@ -378,9 +434,20 @@ def main() -> None:
     seated_recovery_engine = PoseFactorGraphEngine(prolonged_lying_seconds=180)
     seated_recovery_engine.update(1, frame("lying", [220, 220, 540, 350]), monotonic_at=0.0)
     seated_recovery_engine.update(1, frame("sitting", [250, 120, 360, 340]), monotonic_at=181.0)
-    seated_recovered = seated_recovery_engine.update(1, frame("sitting", [252, 120, 362, 340]), monotonic_at=182.0)
+    seated_recovered = seated_recovery_engine.update(1, frame("sitting", [252, 120, 362, 340]), monotonic_at=182.6)
     if not seated_recovered["physical_recoveries"]:
         raise SystemExit("stable same-track seated posture must emit recovery evidence")
+
+    false_recovery_engine = PoseFactorGraphEngine(prolonged_lying_seconds=180)
+    false_recovery_engine.update(1, frame("lying", [363.7, 227.0, 460.8, 288.8]), monotonic_at=0.0)
+    for sample_time in (0.2, 0.4, 2.0):
+        false_recovery = false_recovery_engine.update(
+            1,
+            frame("sitting", [352.7, 203.4, 439.7, 290.4], confidence=0.8001),
+            monotonic_at=sample_time,
+        )
+    if false_recovery["physical_recoveries"]:
+        raise SystemExit("posture flicker without meaningful vertical lift must not resolve a floor incident")
 
     print(json.dumps({
         "ok": True,
@@ -403,6 +470,7 @@ def main() -> None:
         "edge_occlusion_preserves_lying_state": resumed_floor["prolonged_floor_lying_candidate"],
         "slow_lying_requires_confirmation": not slow_lie_track.get("review_ready"),
         "recovery_verified": True,
+        "false_seated_recovery_suppressed": True,
         "transitional_postures_preserve_floor_episode": True,
         "bystander_recovery_suppressed": True,
     }, ensure_ascii=False, indent=2))

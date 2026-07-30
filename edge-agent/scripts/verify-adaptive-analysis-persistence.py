@@ -155,6 +155,21 @@ class Storage:
     def camera_presence_status(self, camera_id: int, *, expected_interval_seconds: int = 5) -> dict:
         return {}
 
+    def latest_unresolved_event(
+        self,
+        *,
+        camera_id: int,
+        event_types: list[str],
+        track_id: str | None = None,
+    ) -> dict | None:
+        return None
+
+    def resolve_event_from_edge(self, event_id: int, **payload: object) -> dict | None:
+        return None
+
+    def enqueue_event_state_upload(self, event: dict, **payload: object) -> dict:
+        return {}
+
 
 class EventAgent:
     def emit(self, **payload: object) -> None:
@@ -195,12 +210,16 @@ def main() -> None:
         detect_agent,
         EventAgent(),
         activity_log_interval_seconds=600,
+        activity_posture_stability_seconds=5,
+        activity_absence_stability_seconds=15,
         risk_evidence_interval_seconds=0.5,
         monotonic_clock=clock,
     )
     camera = {"id": 24, "name": "客厅", "room": "客厅", "stream_url": "rtsp://camera", "enabled": True}
 
     first = worker.process_camera(camera, rules(), adaptive_pose=True)
+    if not first.get("ok"):
+        raise SystemExit(f"first no-person frame failed: {first}")
     if first.get("persisted") or first.get("activity_persisted"):
         raise SystemExit(f"first no-person frame wrote durable data: {first}")
     if storage.snapshots or storage.detections or storage.evaluations or camera_agent.saved:
@@ -208,6 +227,8 @@ def main() -> None:
 
     clock.value = 101.0
     second = worker.process_camera(camera, rules(), adaptive_pose=True)
+    if not second.get("ok"):
+        raise SystemExit(f"second no-person frame failed: {second}")
     if second.get("persisted"):
         raise SystemExit("ordinary high-frequency anchor was unexpectedly persisted")
     if storage.snapshots or storage.detections or storage.evaluations:
@@ -220,6 +241,8 @@ def main() -> None:
     detect_agent.risk = True
     clock.value = 102.0
     risk_frame = worker.process_camera(camera, rules(), adaptive_pose=True)
+    if not risk_frame.get("ok"):
+        raise SystemExit(f"formal risk frame failed: {risk_frame}")
     if not risk_frame.get("persisted") or risk_frame.get("persistence_reason") != "formal_risk_evidence":
         raise SystemExit(f"formal risk did not persist immediately: {risk_frame}")
     if storage.snapshots != 1 or storage.detections != 1 or storage.evaluations != 1 or camera_agent.saved != 1:
@@ -274,16 +297,46 @@ def main() -> None:
         raise SystemExit("continued presence wrote before the ten-minute heartbeat")
     if not worker._persist_activity_timeline_if_due(camera, presence_snapshot, visible_standing, now=1401.0):
         raise SystemExit("continued presence omitted the ten-minute heartbeat")
+    visible_unknown = {
+        **visible_standing,
+        "active_tracks": [{"track_id": "c24-p1", "posture": "unknown"}],
+    }
+    if worker._persist_activity_timeline_if_due(camera, presence_snapshot, visible_unknown, now=1401.5):
+        raise SystemExit("transient unknown posture unexpectedly split the activity timeline")
     visible_sitting = {
         **visible_standing,
         "active_tracks": [{"track_id": "c24-p1", "posture": "sitting"}],
     }
-    if not worker._persist_activity_timeline_if_due(camera, presence_snapshot, visible_sitting, now=1402.0):
-        raise SystemExit("posture transition was not persisted immediately")
-    if not worker._persist_activity_timeline_if_due(camera, presence_snapshot, absent, now=1403.0):
-        raise SystemExit("person departure did not close the structured activity session")
-    if storage.presence_upserts != 3 or storage.presence_closes != 1:
+    if worker._persist_activity_timeline_if_due(camera, presence_snapshot, visible_sitting, now=1402.0):
+        raise SystemExit("single-frame posture transition unexpectedly split the activity timeline")
+    sitting_with_closure = {
+        **visible_sitting,
+        "posture_episode_closures": [{"track_id": "c24-p1", "posture": "standing"}],
+    }
+    interval_count = storage.activity_intervals
+    worker._persist_activity_timeline_if_due(camera, presence_snapshot, sitting_with_closure, now=1402.5)
+    if storage.activity_intervals != interval_count:
+        raise SystemExit("posture episode closure bypassed the activity export stability window")
+    if worker._persist_activity_timeline_if_due(camera, presence_snapshot, visible_standing, now=1403.0):
+        raise SystemExit("recovered posture unexpectedly wrote an activity record")
+    if worker._persist_activity_timeline_if_due(camera, presence_snapshot, visible_sitting, now=1404.0):
+        raise SystemExit("new posture candidate unexpectedly wrote before the stability window")
+    if not worker._persist_activity_timeline_if_due(camera, presence_snapshot, visible_sitting, now=1409.0):
+        raise SystemExit("stable posture transition was not persisted after the stability window")
+    if worker._persist_activity_timeline_if_due(camera, presence_snapshot, absent, now=1410.0):
+        raise SystemExit("single-frame absence unexpectedly closed the structured activity session")
+    if worker._persist_activity_timeline_if_due(camera, presence_snapshot, visible_sitting, now=1414.0):
+        raise SystemExit("person return after a short absence unexpectedly split the activity timeline")
+    if worker._persist_activity_timeline_if_due(camera, presence_snapshot, absent, now=1415.0):
+        raise SystemExit("new absence candidate unexpectedly closed the structured activity session")
+    if worker._persist_activity_timeline_if_due(camera, presence_snapshot, absent, now=1429.9):
+        raise SystemExit("absence candidate closed before the stability window")
+    if not worker._persist_activity_timeline_if_due(camera, presence_snapshot, absent, now=1430.0):
+        raise SystemExit("stable person departure did not close the structured activity session")
+    if storage.presence_upserts != 4 or storage.presence_closes != 1:
         raise SystemExit(f"unexpected structured presence writes: {storage.__dict__}")
+    if storage.activity_intervals != 3:
+        raise SystemExit(f"unexpected activity interval writes: {storage.__dict__}")
     if storage.snapshots != 1 or camera_agent.saved != 1:
         raise SystemExit("structured activity unexpectedly persisted JPEG evidence")
 
@@ -298,6 +351,8 @@ def main() -> None:
         "risk_evidence_fps_limit": 2,
         "presence_quality_gate": True,
         "activity_heartbeat_seconds": 600,
+        "activity_posture_stability_seconds": 5,
+        "activity_absence_stability_seconds": 15,
     })
 
 

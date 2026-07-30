@@ -9,6 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.vision.temporal import TemporalObservationEngine
+from app.vision.pose_factor_graph import PoseFactorGraphEngine
 from app.worker import EdgeWorker
 
 
@@ -249,8 +250,32 @@ def main() -> None:
     fast_move.update(9, upright, monotonic_at=1.0)
     fast_track = str(upright["people"][0]["track_id"])
     low = analysis(person([140, 190, 390, 345], posture="lying"))
+    low["people"][0]["_continual_track_id_hint"] = fast_track
+    low["people"][0]["_continual_track_id_hint_verified"] = True
     fast_move.update(9, low, monotonic_at=1.35)
     assert_track(low, 0, fast_track, "fast posture transition must not create a new track")
+
+    # Production counterexample: a walker leaves at the left edge while a
+    # previously undetected person is already lying on the sofa. A stale,
+    # unverified display hint must not transfer the walker's safety history.
+    identity_swap = TemporalObservationEngine(history_size=12, track_ttl_seconds=10)
+    identity_graph = PoseFactorGraphEngine()
+    walking = analysis(person([17.5, 91.5, 64.2, 213.8], posture="standing"))
+    identity_swap.update(29, walking, monotonic_at=1.0)
+    identity_graph.update(29, walking, monotonic_at=1.0)
+    walking_track = str(walking["people"][0]["track_id"])
+    sofa_lying = analysis(person([73.1, 211.0, 150.1, 265.2], posture="lying"))
+    sofa_lying["people"][0]["_continual_track_id_hint"] = walking_track
+    identity_swap.update(29, sofa_lying, monotonic_at=1.72)
+    sofa_graph = identity_graph.update(29, sofa_lying, monotonic_at=1.72)
+    sofa_track = str(sofa_lying["people"][0]["track_id"])
+    if sofa_track == walking_track:
+        raise SystemExit("unverified abrupt transition must not inherit another person's safety track")
+    sofa_risk = (sofa_graph.get("tracks") or [{}])[0]
+    if sofa_graph.get("fast_fall_candidate") or sofa_risk.get("review_ready"):
+        raise SystemExit(f"identity replacement must not create immediate fall evidence: {sofa_graph}")
+    if float(sofa_risk.get("vertical_drop") or 0.0) != 0.0:
+        raise SystemExit(f"replacement person inherited another person's upright baseline: {sofa_risk}")
 
     # A body rotation can contract the observed box against the prior velocity
     # while still overlapping the same person clearly.

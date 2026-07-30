@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Condition, Event, Lock, Thread
@@ -18,6 +19,7 @@ NETWORK_CAPTURE_MIN_READS = 8
 NETWORK_CAPTURE_MAX_READS = 45
 DEMO_STREAM_PREFIXES = ("demo:", "sample:", "mock:")
 logger = logging.getLogger(__name__)
+MAX_PREVIEW_FPS = 30
 
 
 class CameraError(RuntimeError):
@@ -35,6 +37,14 @@ def next_stream_frame_delay(
     if now - next_deadline >= interval:
         return 0.0, float(now)
     return max(0.0, next_deadline - float(now)), next_deadline
+
+
+def bounded_stream_fps(value: Any, *, default: int = 15) -> int:
+    try:
+        requested = int(value)
+    except (TypeError, ValueError):
+        requested = int(default)
+    return max(1, min(requested, MAX_PREVIEW_FPS))
 
 
 def _load_cv2():
@@ -72,6 +82,16 @@ class _SharedStreamReader:
         self._frame: Any = None
         self._sequence = 0
         self._last_error = ""
+        self._last_error_at = ""
+        self._last_frame_at = ""
+        self._last_frame_monotonic: float | None = None
+        self._frame_arrivals: deque[float] = deque(maxlen=600)
+        self._read_samples: deque[tuple[float, float]] = deque(maxlen=600)
+        self._open_count = 0
+        self._read_failure_count = 0
+        self._source_width = 0
+        self._source_height = 0
+        self._advertised_fps = 0.0
 
     def start(self) -> None:
         self._thread.start()
@@ -96,6 +116,61 @@ class _SharedStreamReader:
                 return None, after_sequence, self._last_error
             return self._frame.copy(), self._sequence, self._last_error
 
+    def status(self) -> Dict[str, Any]:
+        now = time.monotonic()
+        with self._condition:
+            arrivals = [value for value in self._frame_arrivals if value >= now - 10.0]
+            reads = [value for value in self._read_samples if value[0] >= now - 10.0]
+            gaps_ms = [
+                (current - previous) * 1000.0
+                for previous, current in zip(arrivals, arrivals[1:])
+            ]
+            read_ms = [value[1] for value in reads]
+            frame_age = (
+                max(0.0, now - self._last_frame_monotonic)
+                if self._last_frame_monotonic is not None
+                else None
+            )
+            source_fps = (
+                (len(arrivals) - 1) / max(0.001, arrivals[-1] - arrivals[0])
+                if len(arrivals) >= 2
+                else 0.0
+            )
+            state = "streaming"
+            if self._last_error:
+                state = "retrying"
+            elif frame_age is None:
+                state = "warming"
+            elif frame_age > 2.0:
+                state = "stale"
+            return {
+                "state": state,
+                "source_fps": round(source_fps, 2),
+                "advertised_fps": round(self._advertised_fps, 2),
+                "latest_frame_age_ms": round(frame_age * 1000.0, 1) if frame_age is not None else None,
+                "frame_gap_ms_p95": round(self._percentile(gaps_ms, 0.95), 1),
+                "frame_gap_ms_max": round(max(gaps_ms), 1) if gaps_ms else 0.0,
+                "read_latency_ms_p95": round(self._percentile(read_ms, 0.95), 1),
+                "read_latency_ms_max": round(max(read_ms), 1) if read_ms else 0.0,
+                "decoded_frames": self._sequence,
+                "open_count": self._open_count,
+                "reconnect_count": max(0, self._open_count - 1),
+                "read_failure_count": self._read_failure_count,
+                "source_width": self._source_width,
+                "source_height": self._source_height,
+                "last_frame_at": self._last_frame_at,
+                "last_error": self._last_error,
+                "last_error_at": self._last_error_at,
+            }
+
+    @staticmethod
+    def _percentile(values: list[float], quantile: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * quantile))))
+        return float(ordered[index])
+
     def _run(self) -> None:
         cv2 = _load_cv2()
         cap = None
@@ -113,6 +188,7 @@ class _SharedStreamReader:
                         self._set_error("stream open failed")
                         self._stop.wait(0.35)
                         continue
+                    self._record_open(cv2, cap)
                     if reconnect_count:
                         logger.info(
                             "camera %s shared stream recovered after %s reconnect(s)",
@@ -121,9 +197,12 @@ class _SharedStreamReader:
                         )
                     reconnect_count = 0
 
+                read_started_at = time.monotonic()
                 ok, frame = cap.read()
+                read_finished_at = time.monotonic()
                 if not ok or frame is None:
                     reconnect_count += 1
+                    self._record_read_failure()
                     self._set_error("stream read failed")
                     logger.warning(
                         "camera %s shared stream read failed; reopening capture",
@@ -134,6 +213,7 @@ class _SharedStreamReader:
                     self._stop.wait(0.18)
                     continue
 
+                self._record_frame(frame, read_finished_at, (read_finished_at - read_started_at) * 1000.0)
                 self.agent._store_latest_frame(self.camera, frame, self.source_label)
                 with self._condition:
                     self._frame = frame.copy()
@@ -147,7 +227,35 @@ class _SharedStreamReader:
     def _set_error(self, message: str) -> None:
         with self._condition:
             self._last_error = message
+            self._last_error_at = datetime.now(timezone.utc).isoformat()
             self._condition.notify_all()
+
+    def _record_open(self, cv2: Any, cap: Any) -> None:
+        with self._condition:
+            self._open_count += 1
+            try:
+                advertised_fps = float(cap.get(cv2.CAP_PROP_FPS))
+            except (AttributeError, TypeError, ValueError):
+                advertised_fps = 0.0
+            if 0.0 < advertised_fps < 240.0:
+                self._advertised_fps = advertised_fps
+
+    def _record_read_failure(self) -> None:
+        with self._condition:
+            self._read_failure_count += 1
+
+    def _record_frame(self, frame: Any, arrived_at: float, read_latency_ms: float) -> None:
+        try:
+            height, width = frame.shape[:2]
+        except (AttributeError, ValueError):
+            height, width = 0, 0
+        with self._condition:
+            self._frame_arrivals.append(float(arrived_at))
+            self._read_samples.append((float(arrived_at), max(0.0, float(read_latency_ms))))
+            self._last_frame_monotonic = float(arrived_at)
+            self._last_frame_at = datetime.now(timezone.utc).isoformat()
+            self._source_width = int(width)
+            self._source_height = int(height)
 
 
 class CameraAgent:
@@ -207,15 +315,17 @@ class CameraAgent:
 
     def managed_stream_status(self) -> Dict[str, Any]:
         with self._shared_stream_lock:
-            streams = [
+            managed = list(self._managed_streams.items())
+        streams = []
+        for _key, (camera, reader) in managed:
+            streams.append(
                 {
-                    "key": key,
                     "camera_id": camera.get("id"),
                     "subscribers": reader.subscribers,
                     "running": reader._thread.is_alive(),
+                    **reader.status(),
                 }
-                for key, (camera, reader) in self._managed_streams.items()
-            ]
+            )
         return {"managed_stream_count": len(streams), "streams": streams}
 
     def resolve_capture_source(self, camera: Dict[str, Any]) -> Tuple[Any, int | None, str]:
@@ -505,7 +615,7 @@ class CameraAgent:
         last_sequence = 0
         last_good_frame = None
         black_frame_streak = 0
-        frame_interval = 1.0 / max(1, min(int(fps), 15))
+        frame_interval = 1.0 / bounded_stream_fps(fps)
         frame_deadline = time.monotonic()
         encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(35, min(int(jpeg_quality), 95))]
         black_confirm_frames = max(3, min(int(fps), 12))
@@ -680,7 +790,7 @@ class CameraAgent:
         max_width: int,
         max_height: int,
     ) -> Generator[bytes, None, None]:
-        delay = 1.0 / max(1, min(int(fps), 15))
+        delay = 1.0 / bounded_stream_fps(fps)
         encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(35, min(int(jpeg_quality), 95))]
         frame_index = 0
         while True:

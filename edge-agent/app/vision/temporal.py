@@ -22,6 +22,8 @@ LOW_POSTURE_CONTINUITY_MIN_SHAPE_SIMILARITY = 0.22
 DEFAULT_MIN_SHAPE_SIMILARITY = 0.28
 LOW_POSTURE_CONTINUITY_SCORE_BONUS = 0.12
 DIRECTION_REVERSAL_MIN_OBSERVED_IOU = 0.30
+ABRUPT_TRANSITION_MIN_OBSERVED_IOU = 0.05
+ABRUPT_TRANSITION_MAX_CENTER_DISTANCE = 0.20
 TRACK_MATCH_SCHEDULER_JITTER_SECONDS = 0.15
 PRESENCE_DIRECT_MIN_CONFIDENCE = 0.35
 PRESENCE_TRACKED_MIN_CONFIDENCE = 0.30
@@ -359,6 +361,10 @@ class TemporalObservationEngine:
                 or posture_item.get("_continual_track_id_hint")
                 or ""
             ),
+            "track_id_hint_verified": bool(
+                item.get("_continual_track_id_hint_verified")
+                or posture_item.get("_continual_track_id_hint_verified")
+            ),
             "source_item": item,
             "pose_item": posture_source,
         }
@@ -388,7 +394,19 @@ class TemporalObservationEngine:
         used_track_ids: set[str] = set()
         for detection_index, detection in enumerate(detections):
             hint = str(detection.get("track_id_hint") or "")
-            if hint and hint in candidate_ids and hint not in used_track_ids:
+            if (
+                hint
+                and detection.get("track_id_hint_verified")
+                and hint in candidate_ids
+                and hint not in used_track_ids
+                and self._assignment_score(
+                    detection,
+                    tracks[hint],
+                    now_mono=now_mono,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                ) > 0.0
+            ):
                 assignments[detection_index] = hint
                 used_track_ids.add(hint)
 
@@ -439,6 +457,10 @@ class TemporalObservationEngine:
         )
         shape_similarity = self._shape_similarity(detection["bbox"], track.get("bbox"))
         transition = self._credible_posture_transition(track.get("posture"), detection.get("posture"))
+        verified_transition_bridge = bool(
+            detection.get("track_id_hint_verified")
+            and str(detection.get("track_id_hint") or "") == str(track.get("track_id") or "")
+        )
         low_posture_continuity = self._credible_low_posture_continuity(
             track.get("posture"),
             detection.get("posture"),
@@ -448,6 +470,13 @@ class TemporalObservationEngine:
         if transition:
             distance_gate = max(distance_gate, 0.38)
         if predicted_iou < self.min_iou and predicted_distance > distance_gate:
+            return -math.inf
+        if (
+            transition
+            and observed_iou < ABRUPT_TRANSITION_MIN_OBSERVED_IOU
+            and predicted_distance > ABRUPT_TRANSITION_MAX_CENTER_DISTANCE
+            and not verified_transition_bridge
+        ):
             return -math.inf
         minimum_shape_similarity = (
             POSTURE_TRANSITION_MIN_SHAPE_SIMILARITY
@@ -648,9 +677,11 @@ class TemporalObservationEngine:
             source_item = detection.get("source_item")
             if isinstance(source_item, dict):
                 source_item["track_id"] = detection["track_id"]
+                source_item["identity_bridge_status"] = self._identity_bridge_status(detection)
             pose_item = detection.get("pose_item")
             if isinstance(pose_item, dict):
                 pose_item["track_id"] = detection["track_id"]
+                pose_item["identity_bridge_status"] = self._identity_bridge_status(detection)
         for pose in poses:
             if pose.get("track_id") or not self._valid_bbox(pose.get("bbox")):
                 continue
@@ -666,6 +697,17 @@ class TemporalObservationEngine:
         for item in [*people, *poses]:
             if isinstance(item, dict):
                 item.pop("_continual_track_id_hint", None)
+                item.pop("_continual_track_id_hint_verified", None)
+
+    @staticmethod
+    def _identity_bridge_status(detection: Dict[str, Any]) -> str:
+        hint = str(detection.get("track_id_hint") or "").strip()
+        assigned_track = str(detection.get("track_id") or "").strip()
+        if not hint:
+            return "not_requested"
+        if hint == assigned_track:
+            return "verified_hint" if detection.get("track_id_hint_verified") else "geometry_matched"
+        return "rejected_unverified_hint" if not detection.get("track_id_hint_verified") else "rejected_geometry"
 
     def _nearest_assignment(self, bbox: Any, assigned: list[Dict[str, Any]], width: float, height: float) -> Dict[str, Any] | None:
         if not assigned:

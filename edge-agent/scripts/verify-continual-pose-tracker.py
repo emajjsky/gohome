@@ -49,6 +49,9 @@ def main() -> None:
         raise SystemExit("observed pose frame pixels do not match its frame_id")
     if observed_frame["analysis_context"].get("detector_backend") != "yolo":
         raise SystemExit("observed frame lost its matching analysis context")
+    synchronized_observed = tracker.latest_synchronized_frame(24)
+    if synchronized_observed is None or not np.array_equal(synchronized_observed["frame"], frame):
+        raise SystemExit("privacy synchronization did not retain the observed frame")
     observed_metadata = tracker.latest_metadata(24)
     if observed_metadata.get("image_width") != 320 or observed_metadata.get("image_height") != 240:
         raise SystemExit(f"continual pose metadata lost source dimensions: {observed_metadata}")
@@ -187,6 +190,23 @@ def main() -> None:
         raise SystemExit("expired tracking window still requested camera frame copies")
     if tracker.latest_frame(24) is not None:
         raise SystemExit("expired tracking window retained stale display pixels")
+    if tracker.latest_synchronized_frame(24) is not None:
+        raise SystemExit("expired tracking window leaked stale privacy pixels")
+
+    empty_frame = np.full_like(frame, 57)
+    tracker.observe(
+        24,
+        empty_frame,
+        frame_id="24-empty-1",
+        captured_at="2026-07-17T02:00:00.800000+00:00",
+        poses=[],
+        context={"pose_model_status": "ready", "people": []},
+    )
+    synchronized_empty = tracker.latest_synchronized_frame(24)
+    if synchronized_empty is None or not np.array_equal(synchronized_empty["frame"], empty_frame):
+        raise SystemExit("model-confirmed empty frame was not retained for privacy rendering")
+    if synchronized_empty["tracking"].get("reason") != "no_observed_pose":
+        raise SystemExit("privacy empty frame lost its model-confirmed reason")
 
     clock["now"] = 101.0
     tracker.observe(

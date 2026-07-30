@@ -81,6 +81,12 @@ def main() -> None:
             raise SystemExit(f"sync report did not mark camera synced: {reports[-1]}")
         if "presence" not in reports[-1]["cameras"][0]:
             raise SystemExit("sync report must include camera presence status")
+        edge_event = storage.create_event(
+            event_type="fall_candidate",
+            summary="test fall",
+            level="critical",
+            camera_id=int(cameras[0]["id"]),
+        )
         storage.create_snapshot(
             camera_id=int(cameras[0]["id"]),
             image_path="presence-test.jpg",
@@ -107,6 +113,15 @@ def main() -> None:
         config_holder["payload"] = {
             **config_holder["payload"],
             "config_version": "camera-config-test-2",
+            "event_state_commands": [
+                {
+                    "command_id": "event-state-test-1",
+                    "edge_event_id": str(edge_event["id"]),
+                    "state": "resolved",
+                    "resolution": "handled",
+                    "updated_at": "2026-07-29T13:50:32Z",
+                }
+            ],
             "cameras": [
                 {
                     **config_holder["payload"]["cameras"][0],
@@ -135,6 +150,17 @@ def main() -> None:
             raise SystemExit(f"presence report did not include person observation: {presence}")
         if not presence.get("last_pet_seen_at") or presence.get("last_pet_count") != 1 or presence.get("pet_types") != ["cat"]:
             raise SystemExit(f"presence report did not include independent pet activity: {presence}")
+        synced_event = storage.get_event(int(edge_event["id"]))
+        if not synced_event or not synced_event.get("acknowledged") or synced_event.get("payload", {}).get("resolution") != "handled":
+            raise SystemExit(f"cloud event state did not update the edge event: {synced_event}")
+        command_reports = reports[-1].get("event_state_commands") or []
+        if len(command_reports) != 1 or command_reports[0].get("status") != "applied":
+            raise SystemExit(f"event state command was not reported as applied: {reports[-1]}")
+
+        duplicate = agent.process_once()
+        duplicate_reports = reports[-1].get("event_state_commands") or []
+        if duplicate.get("ok") is not True or len(duplicate_reports) != 1 or duplicate_reports[0].get("status") != "already_applied":
+            raise SystemExit(f"duplicate event state command was not idempotent: {duplicate_reports}")
 
         config_holder["payload"] = {
             "ok": True,

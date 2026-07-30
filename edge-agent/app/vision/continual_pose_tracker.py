@@ -56,6 +56,7 @@ class ContinualPoseTracker:
         "tags",
         "inference_runtime",
         "pose_factor_graph",
+        "people",
     }
 
     def __init__(
@@ -85,6 +86,7 @@ class ContinualPoseTracker:
         self._states: dict[int, Dict[str, Any]] = {}
         self._latest: dict[int, Dict[str, Any]] = {}
         self._latest_frames: dict[int, Any] = {}
+        self._latest_contexts: dict[int, Dict[str, Any]] = {}
         self._metrics: dict[int, Dict[str, Any]] = {}
         self._lock = RLock()
 
@@ -110,9 +112,10 @@ class ContinualPoseTracker:
         with self._lock:
             if not tracked_poses:
                 self._states.pop(camera_id, None)
-                self._latest_frames.pop(camera_id, None)
                 payload = self._empty_payload(camera_id, "empty", "no_observed_pose", frame_id, captured_at)
                 self._latest[camera_id] = payload
+                self._latest_frames[camera_id] = frame.copy()
+                self._latest_contexts[camera_id] = self._display_context(context or {})
                 return deepcopy(payload)
             self._states[camera_id] = {
                 "observed_monotonic": now,
@@ -141,6 +144,7 @@ class ContinualPoseTracker:
             )
             self._latest[camera_id] = payload
             self._latest_frames[camera_id] = frame.copy()
+            self._latest_contexts[camera_id] = self._display_context(context or {})
             metric = self._metric(camera_id)
             metric["observed_count"] += 1
             metric["last_state"] = "observed"
@@ -296,6 +300,31 @@ class ContinualPoseTracker:
                 "analysis_context": deepcopy(state.get("context") or {}),
             }
 
+    def latest_synchronized_frame(self, camera_id: int) -> Dict[str, Any] | None:
+        """Return one privacy-safe frame whose pixels and model/tracking data match."""
+        camera_id = int(camera_id)
+        self.has_anchor(camera_id)
+        with self._lock:
+            payload = self._latest.get(camera_id)
+            frame = self._latest_frames.get(camera_id)
+            if payload is None or frame is None:
+                return None
+            state = str(payload.get("state") or "")
+            if state in {"observed", "tracked", "coasting"}:
+                active = self._states.get(camera_id)
+                if active is None or str(payload.get("frame_id") or "") != str(active.get("display_frame_id") or ""):
+                    return None
+                context = active.get("context") or {}
+            elif state == "empty" and str(payload.get("reason") or "") == "no_observed_pose":
+                context = self._latest_contexts.get(camera_id) or {}
+            else:
+                return None
+            return {
+                "frame": frame.copy(),
+                "tracking": deepcopy(payload),
+                "analysis_context": deepcopy(context),
+            }
+
     def latest_metadata(self, camera_id: int) -> Dict[str, Any]:
         """Return display metadata without copying or encoding frame pixels."""
         camera_id = int(camera_id)
@@ -362,6 +391,7 @@ class ContinualPoseTracker:
             self._states.pop(camera_id, None)
             self._latest.pop(camera_id, None)
             self._latest_frames.pop(camera_id, None)
+            self._latest_contexts.pop(camera_id, None)
             self._metrics.pop(camera_id, None)
 
     def _prepare_pose(self, np: Any, pose: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -621,6 +651,7 @@ class ContinualPoseTracker:
     ) -> Dict[str, Any]:
         self._states.pop(camera_id, None)
         self._latest_frames.pop(camera_id, None)
+        self._latest_contexts.pop(camera_id, None)
         payload = self._empty_payload(camera_id, "expired", reason, frame_id, captured_at)
         payload["age_seconds"] = round(float(age_seconds), 4)
         self._latest[camera_id] = payload

@@ -25,6 +25,9 @@ class FakeCapture:
     def isOpened(self) -> bool:
         return not self.released
 
+    def get(self, _property: int) -> float:
+        return 15.0
+
     def read(self):
         if self.released:
             return False, None
@@ -117,6 +120,11 @@ def main() -> None:
     status = agent.managed_stream_status()
     if status.get("managed_stream_count") != 1:
         raise SystemExit(f"managed stream status is incorrect: {status}")
+    stream_status = status["streams"][0]
+    if stream_status.get("source_fps", 0) <= 0 or stream_status.get("decoded_frames", 0) <= 0:
+        raise SystemExit(f"shared stream capture metrics are missing: {stream_status}")
+    if stream_status.get("latest_frame_age_ms") is None or stream_status.get("advertised_fps") != 15.0:
+        raise SystemExit(f"shared stream freshness metrics are incorrect: {stream_status}")
     agent.reconcile_managed_streams([])
     if agent.managed_stream_status().get("managed_stream_count") != 0:
         raise SystemExit("removed camera retained a managed stream reader")
@@ -127,6 +135,7 @@ def main() -> None:
         "source_reads": counters["reads"],
         "subscribers": len(consumers),
         "managed_stream_survived_preview": True,
+        "capture_metrics": stream_status,
     })
 
 

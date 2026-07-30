@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from threading import Event, Thread
+from threading import Event, RLock, Thread
 from typing import Any, Callable, Dict
 import time
 from datetime import datetime, timezone
@@ -32,7 +32,12 @@ class EdgeWorker:
         history_cleanup_interval_seconds: float = 3600,
         history_cleanup_batch_size: int = 5000,
         completed_upload_retention_days: int = 7,
+        event_evidence_retention_hours: int = 24,
+        local_event_retention_days: int = 30,
+        local_runtime_budget_mb: int = 2048,
         activity_log_interval_seconds: float = 600.0,
+        activity_posture_stability_seconds: float = 5.0,
+        activity_absence_stability_seconds: float = 15.0,
         risk_evidence_interval_seconds: float = 0.5,
         local_storage_high_watermark_percent: float = 70.0,
         local_storage_critical_percent: float = 85.0,
@@ -53,7 +58,12 @@ class EdgeWorker:
         self.history_cleanup_interval_seconds = max(60.0, float(history_cleanup_interval_seconds))
         self.history_cleanup_batch_size = max(100, int(history_cleanup_batch_size))
         self.completed_upload_retention_days = max(1, int(completed_upload_retention_days))
+        self.event_evidence_retention_hours = max(1, int(event_evidence_retention_hours))
+        self.local_event_retention_days = max(1, int(local_event_retention_days))
+        self.local_runtime_budget_bytes = max(256, int(local_runtime_budget_mb)) * 1024 * 1024
         self.activity_log_interval_seconds = max(60.0, float(activity_log_interval_seconds))
+        self.activity_posture_stability_seconds = max(1.0, float(activity_posture_stability_seconds))
+        self.activity_absence_stability_seconds = max(1.0, float(activity_absence_stability_seconds))
         self.risk_evidence_interval_seconds = max(0.25, float(risk_evidence_interval_seconds))
         self.local_storage_high_watermark_percent = max(50.0, min(95.0, float(local_storage_high_watermark_percent)))
         self.local_storage_critical_percent = max(
@@ -75,6 +85,8 @@ class EdgeWorker:
         self.last_persisted_analysis_at: Dict[int, float] = {}
         self.last_activity_persisted_at: Dict[int, float] = {}
         self.last_activity_signature: Dict[int, tuple[Any, ...]] = {}
+        self.pending_activity_posture: Dict[int, tuple[tuple[Any, ...], float]] = {}
+        self.pending_activity_absence: Dict[int, float] = {}
         self.persistence_metrics: Dict[str, int] = {
             "analysis_cycles": 0,
             "image_writes": 0,
@@ -106,6 +118,10 @@ class EdgeWorker:
         self.last_continual_pose_error = ""
         self.continual_identity_bridge_count = 0
         self.last_continual_identity_bridge: Dict[str, Any] = {}
+        self._safety_state_lock = RLock()
+        self._safety_state_generation: Dict[int, int] = {}
+        self._camera_online_reconciled_ids: set[int] = set()
+        self.last_event_state_command: Dict[str, Any] = {}
 
     @property
     def is_running(self) -> bool:
@@ -232,11 +248,16 @@ class EdgeWorker:
             "persistence": {
                 "schema_version": "event-driven-persistence-v1",
                 "activity_log_interval_seconds": self.activity_log_interval_seconds,
+                "activity_posture_stability_seconds": self.activity_posture_stability_seconds,
+                "activity_absence_stability_seconds": self.activity_absence_stability_seconds,
+                "pending_activity_posture_cameras": sorted(self.pending_activity_posture),
+                "pending_activity_absence_cameras": sorted(self.pending_activity_absence),
                 "risk_evidence_interval_seconds": self.risk_evidence_interval_seconds,
                 "metrics": dict(self.persistence_metrics),
                 "last_reason_by_camera": dict(self.last_persistence_reason),
             },
             "runtime_reconciliation": self.runtime_reconciliation,
+            "last_event_state_command": dict(self.last_event_state_command),
             "last_error": self.last_error,
         }
 
@@ -286,12 +307,22 @@ class EdgeWorker:
         self.inference_scheduler.wake_all(now=self._monotonic_clock())
         self._wake.set()
 
-    def _reset_camera_runtime_memory(self, camera_id: int) -> None:
+    def _reset_camera_runtime_memory(
+        self,
+        camera_id: int,
+        *,
+        preserve_camera_error_state: bool = False,
+    ) -> None:
         camera_id = int(camera_id)
         self.temporal_engine.reset_camera(camera_id)
-        self.pose_factor_graph_engine.reset_camera(camera_id)
         self.inference_scheduler.reset_camera(camera_id)
-        self.rule_engine.reset_camera(camera_id)
+        with self._safety_state_lock:
+            self.pose_factor_graph_engine.reset_camera(camera_id)
+            self.rule_engine.reset_camera(
+                camera_id,
+                preserve_camera_error_state=preserve_camera_error_state,
+            )
+            self._safety_state_generation[camera_id] = self._safety_state_generation.get(camera_id, 0) + 1
         if self.continual_pose_tracker is not None:
             self.continual_pose_tracker.reset_camera(camera_id)
         if self.motion_gate is not None:
@@ -301,9 +332,44 @@ class EdgeWorker:
         self.last_persisted_analysis_at.pop(camera_id, None)
         self.last_activity_persisted_at.pop(camera_id, None)
         self.last_activity_signature.pop(camera_id, None)
+        self.pending_activity_posture.pop(camera_id, None)
+        self.pending_activity_absence.pop(camera_id, None)
         self.last_persistence_reason.pop(camera_id, None)
         self._last_tracked_frame_ids.pop(camera_id, None)
         self.observation_coverage_tracker.reset_camera(camera_id)
+
+    def apply_event_state_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        event_id = int(str(command.get("edge_event_id") or "").strip())
+        target_state = str(command.get("state") or "").strip().lower()
+        if target_state not in {"acknowledged", "resolved", "rejected"}:
+            raise ValueError(f"unsupported_event_state:{target_state}")
+        resolution = str(command.get("resolution") or "").strip()
+        if not resolution:
+            resolution = "false_positive" if target_state == "rejected" else "handled"
+        with self._safety_state_lock:
+            event = self.storage.get_event(event_id)
+            if event is None:
+                raise RuntimeError(f"edge_event_not_found:{event_id}")
+            updated = self.storage.update_event(
+                event_id,
+                {"acknowledged": True, "resolution": resolution},
+            )
+            if updated is None:
+                raise RuntimeError(f"edge_event_update_failed:{event_id}")
+            camera_id = int(updated["camera_id"])
+            self.rule_engine.clear_safety_incident(camera_id)
+            self.pose_factor_graph_engine.clear_safety_incident(camera_id)
+            self._safety_state_generation[camera_id] = self._safety_state_generation.get(camera_id, 0) + 1
+            self.latest_evaluations.pop(camera_id, None)
+        self.last_event_state_command = {
+            "command_id": str(command.get("command_id") or ""),
+            "edge_event_id": event_id,
+            "camera_id": camera_id,
+            "state": target_state,
+            "resolution": resolution,
+            "applied_at": datetime.now(timezone.utc).isoformat(),
+        }
+        return dict(self.last_event_state_command)
 
     def _run_continual_tracking(self) -> None:
         while not self._stop.is_set():
@@ -357,21 +423,31 @@ class EdgeWorker:
                 retention_hours=self.history_retention_hours,
             )
             used_percent = float(storage_status.get("disk_used_percent") or 0.0)
+            runtime_bytes = int(storage_status.get("runtime_allocated_bytes") or 0)
             effective_retention_hours = self.history_retention_hours
             pressure = "normal"
-            if used_percent >= self.local_storage_critical_percent:
+            if (
+                used_percent >= self.local_storage_critical_percent
+                or runtime_bytes >= self.local_runtime_budget_bytes
+            ):
                 effective_retention_hours = 1
                 pressure = "critical"
-            elif used_percent >= self.local_storage_high_watermark_percent:
+            elif (
+                used_percent >= self.local_storage_high_watermark_percent
+                or runtime_bytes >= int(self.local_runtime_budget_bytes * 0.8)
+            ):
                 effective_retention_hours = min(self.history_retention_hours, 2)
                 pressure = "high"
 
             cleanup_batches = []
-            for _ in range(4):
+            max_batches = 20 if pressure == "critical" else 8 if pressure == "high" else 4
+            for _ in range(max_batches):
                 batch = self.storage.prune_runtime_history(
                     snapshot_dir=self.snapshot_dir,
                     retention_hours=effective_retention_hours,
                     completed_upload_retention_days=self.completed_upload_retention_days,
+                    event_evidence_retention_hours=self.event_evidence_retention_hours,
+                    local_event_retention_days=self.local_event_retention_days,
                     batch_size=self.history_cleanup_batch_size,
                     discard_live_preview_uploads=True,
                 )
@@ -395,6 +471,7 @@ class EdgeWorker:
                 "batch_count": len(cleanup_batches),
                 "storage_pressure": pressure,
                 "effective_retention_hours": effective_retention_hours,
+                "runtime_budget_bytes": self.local_runtime_budget_bytes,
                 "storage": storage_status,
             }
             self.last_history_cleanup_result["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -440,7 +517,9 @@ class EdgeWorker:
                 now=self._monotonic_clock(),
             )
             self._publish_continual_pose_anchor(camera_id, frame=frame, capture=capture, analysis=analysis)
-            self.pose_factor_graph_engine.update(camera_id, analysis, config=rules)
+            with self._safety_state_lock:
+                safety_generation = self._safety_state_generation.get(camera_id, 0)
+                self.pose_factor_graph_engine.update(camera_id, analysis, config=rules)
             self._attach_temporal_evidence(camera_id, analysis)
             persistence_now = self._monotonic_clock()
             persistence_reason = self._analysis_persistence_reason(
@@ -463,9 +542,31 @@ class EdgeWorker:
                     reason=persistence_reason,
                 )
             self._attach_temporal_evidence(camera_id, analysis)
+            with self._safety_state_lock:
+                camera_recovery = self.rule_engine.record_camera_online(camera_id)
             self.storage.update_camera_status(camera_id, "online")
+            if camera_recovery and camera_recovery.get("confirmed"):
+                self._resolve_recovered_camera_incidents(camera, camera_recovery)
+            elif camera_id not in self._camera_online_reconciled_ids:
+                self._resolve_recovered_camera_incidents(
+                    camera,
+                    {
+                        "schema_version": "gohome-camera-recovery-v1",
+                        "confirmed": True,
+                        "failure_count": 0,
+                        "duration_seconds": 0.0,
+                        "last_error": "",
+                        "recovered_at": datetime.now(timezone.utc).isoformat(),
+                        "reason": "current_stream_online",
+                    },
+                )
+            self._camera_online_reconciled_ids.add(camera_id)
 
-            evaluation = self.rule_engine.evaluate_snapshot(camera, snapshot, analysis, rules)
+            with self._safety_state_lock:
+                if safety_generation != self._safety_state_generation.get(camera_id, 0):
+                    self.pose_factor_graph_engine.update(camera_id, analysis, config=rules)
+                    safety_generation = self._safety_state_generation.get(camera_id, 0)
+                evaluation = self.rule_engine.evaluate_snapshot(camera, snapshot, analysis, rules)
             if not should_persist and self._requires_durable_candidate(evaluation):
                 snapshot, detection_result = self._persist_analysis_frame(
                     camera,
@@ -500,13 +601,15 @@ class EdgeWorker:
                 )
             self.latest_evaluations[camera_id] = persisted_evaluation or evaluation_dict
             self._close_observation_logs(camera, evaluation)
-            self._resolve_recovered_fall_incident(camera, evaluation)
-            self._emit_candidates(
-                camera,
-                evaluation=evaluation,
-                detection_result_id=int(detection_result["id"]) if detection_result else None,
-                rule_evaluation_id=int(persisted_evaluation["id"]) if persisted_evaluation else None,
-            )
+            with self._safety_state_lock:
+                if safety_generation == self._safety_state_generation.get(camera_id, 0):
+                    self._resolve_recovered_fall_incident(camera, evaluation)
+                    self._emit_candidates(
+                        camera,
+                        evaluation=evaluation,
+                        detection_result_id=int(detection_result["id"]) if detection_result else None,
+                        rule_evaluation_id=int(persisted_evaluation["id"]) if persisted_evaluation else None,
+                    )
             self.previous_frames[camera_id] = frame.copy()
             return {
                 "ok": True,
@@ -522,8 +625,9 @@ class EdgeWorker:
         except CameraError as exc:
             self.storage.update_camera_status(camera_id, "offline", str(exc))
             self.storage.close_camera_runtime_state(camera_id, reason="camera_offline")
-            self._reset_camera_runtime_memory(camera_id)
-            evaluation = self.rule_engine.evaluate_camera_error(camera, rules, str(exc))
+            self._reset_camera_runtime_memory(camera_id, preserve_camera_error_state=True)
+            with self._safety_state_lock:
+                evaluation = self.rule_engine.evaluate_camera_error(camera, rules, str(exc))
             evaluation_dict = evaluation.to_dict()
             persisted_evaluation = self.storage.create_rule_evaluation(
                 camera_id=camera_id,
@@ -586,7 +690,17 @@ class EdgeWorker:
     ) -> None:
         if self.continual_pose_tracker is None:
             return
-        if str(analysis.get("pose_model_status") or "") != "ready":
+        pose_status = str(analysis.get("pose_model_status") or "")
+        backend_status = analysis.get("inference_backend_status")
+        model_confirmed_empty = (
+            pose_status == "disabled"
+            and str(analysis.get("inference_backend") or "") == "hailo"
+            and isinstance(backend_status, dict)
+            and str(backend_status.get("status") or "") == "ready"
+            and int(analysis.get("person_count") or 0) == 0
+            and not list(analysis.get("people") or [])
+        )
+        if pose_status not in {"ready", "not_visible"} and not model_confirmed_empty:
             return
         poses = [
             pose
@@ -611,7 +725,18 @@ class EdgeWorker:
         if self.continual_pose_tracker is None:
             return
         tracking = self.continual_pose_tracker.latest(int(camera_id))
-        if str(tracking.get("state") or "") not in {"observed", "tracked"}:
+        if str(tracking.get("state") or "") != "tracked" or tracking.get("display_only_stale"):
+            return
+        quality = tracking.get("quality") if isinstance(tracking.get("quality"), dict) else {}
+        tracked_points = int(quality.get("tracked_point_count") or 0)
+        forward_backward_error = float(quality.get("forward_backward_error") or 999.0)
+        geometry_scale = float(quality.get("geometry_scale") or 0.0)
+        verified_identity_bridge = bool(
+            tracked_points >= 6
+            and forward_backward_error <= 1.8
+            and 0.65 <= geometry_scale <= 1.45
+        )
+        if not verified_identity_bridge:
             return
         tracked_poses = [
             pose
@@ -643,6 +768,7 @@ class EdgeWorker:
             if target_index in used_targets or tracked_index in used_tracks:
                 continue
             targets[target_index]["_continual_track_id_hint"] = str(tracked_poses[tracked_index]["track_id"])
+            targets[target_index]["_continual_track_id_hint_verified"] = True
             if targets is pose_targets:
                 matching_person = max(
                     person_targets,
@@ -651,6 +777,7 @@ class EdgeWorker:
                 )
                 if matching_person is not None and self._bbox_iou(matching_person["bbox"], targets[target_index]["bbox"]) >= 0.12:
                     matching_person["_continual_track_id_hint"] = str(tracked_poses[tracked_index]["track_id"])
+                    matching_person["_continual_track_id_hint_verified"] = True
             self.continual_identity_bridge_count += 1
             self.last_continual_identity_bridge = {
                 "camera_id": int(camera_id),
@@ -816,16 +943,25 @@ class EdgeWorker:
             state = "visible" if temporal.get("credible_person_present") else "absent"
         closures = list(temporal.get("posture_episode_closures") or [])
         if state == "uncertain" and not closures:
+            self.pending_activity_absence.pop(camera_id, None)
             return False
 
-        signature = self._activity_signature(temporal, state=state)
+        raw_signature = self._activity_signature(temporal, state=state)
         previous_signature = self.last_activity_signature.get(camera_id)
+        signature = self._stable_activity_signature(
+            camera_id,
+            raw_signature,
+            previous_signature=previous_signature,
+            now=now,
+        )
+        effective_state = str(signature[0])
+        transition_pending = effective_state != state
         last_persisted_at = self.last_activity_persisted_at.get(camera_id)
         interval_due = (
             last_persisted_at is None
             or max(0.0, float(now) - float(last_persisted_at)) >= self.activity_log_interval_seconds
         )
-        first_visible_observation = previous_signature is None and state == "visible"
+        first_visible_observation = previous_signature is None and effective_state == "visible"
         state_changed = previous_signature is not None and signature[:2] != previous_signature[:2]
         posture_changed = previous_signature is not None and signature[2:] != previous_signature[2:]
         should_write = bool(
@@ -833,7 +969,7 @@ class EdgeWorker:
             or first_visible_observation
             or state_changed
             or posture_changed
-            or (state == "visible" and interval_due)
+            or (effective_state == "visible" and interval_due and not transition_pending)
         )
         if not should_write:
             if previous_signature is None and state == "absent":
@@ -855,21 +991,26 @@ class EdgeWorker:
             return False
 
         wrote = False
-        if state != "uncertain":
-            wrote = self._update_presence_session(camera, snapshot, temporal) or wrote
+        if effective_state != "uncertain":
+            wrote = self._update_presence_session(
+                camera,
+                snapshot,
+                temporal,
+                persistence_state=effective_state,
+            ) or wrote
         wrote = bool(self._persist_posture_episodes(camera, snapshot, temporal)) or wrote
-        export_jobs = [] if state == "uncertain" else self.storage.advance_activity_export(
+        export_jobs = [] if effective_state == "uncertain" else self.storage.advance_activity_export(
             camera_id=camera_id,
             room=str(camera.get("room") or ""),
             observed_at=str(snapshot.get("captured_at") or snapshot.get("created_at") or ""),
-            visible=state == "visible",
-            person_count=int(temporal.get("credible_person_count") or 0),
+            visible=effective_state == "visible",
+            person_count=int(signature[1]),
             postures=signature[2],
             confidence=self._activity_confidence(temporal),
-            flush=bool(previous_signature is not None and (interval_due or state_changed or posture_changed or closures)),
+            flush=bool(previous_signature is not None and (interval_due or state_changed or posture_changed)),
             reason=(
-                "person_not_visible" if state == "absent"
-                else "posture_changed" if posture_changed or closures
+                "person_not_visible" if effective_state == "absent"
+                else "posture_changed" if posture_changed
                 else "activity_heartbeat" if interval_due
                 else "person_visible"
             ),
@@ -881,6 +1022,45 @@ class EdgeWorker:
         if wrote:
             self.persistence_metrics["structured_activity_writes"] += 1
         return wrote
+
+    def _stable_activity_signature(
+        self,
+        camera_id: int,
+        signature: tuple[Any, ...],
+        *,
+        previous_signature: tuple[Any, ...] | None,
+        now: float,
+    ) -> tuple[Any, ...]:
+        state, person_count, postures = signature
+        if previous_signature is not None and previous_signature[0] == "visible" and state == "absent":
+            pending_since = self.pending_activity_absence.setdefault(camera_id, float(now))
+            if max(0.0, float(now) - pending_since) < self.activity_absence_stability_seconds:
+                return previous_signature
+            self.pending_activity_absence.pop(camera_id, None)
+        else:
+            self.pending_activity_absence.pop(camera_id, None)
+        if previous_signature is None or state != previous_signature[0] or state != "visible":
+            self.pending_activity_posture.pop(camera_id, None)
+            return signature
+
+        meaningful_postures = tuple(item for item in postures if item and item != "unknown")
+        previous_postures = tuple(previous_signature[2])
+        if not meaningful_postures and previous_postures:
+            self.pending_activity_posture.pop(camera_id, None)
+            return previous_signature
+
+        candidate = (state, person_count, meaningful_postures or tuple(postures))
+        if candidate == previous_signature:
+            self.pending_activity_posture.pop(camera_id, None)
+            return candidate
+        pending = self.pending_activity_posture.get(camera_id)
+        if pending is None or pending[0] != candidate:
+            self.pending_activity_posture[camera_id] = (candidate, float(now))
+            return previous_signature
+        if max(0.0, float(now) - pending[1]) < self.activity_posture_stability_seconds:
+            return previous_signature
+        self.pending_activity_posture.pop(camera_id, None)
+        return candidate
 
     @staticmethod
     def _activity_signature(temporal: Dict[str, Any], *, state: str) -> tuple[Any, ...]:
@@ -916,11 +1096,13 @@ class EdgeWorker:
         camera: Dict[str, Any],
         snapshot: Dict[str, Any],
         temporal: Dict[str, Any],
+        *,
+        persistence_state: str | None = None,
     ) -> bool:
         camera_id = int(camera["id"])
         observed_at = str(snapshot.get("captured_at") or snapshot.get("created_at") or "")
         snapshot_id = int(snapshot["id"]) if snapshot.get("id") else None
-        persistence_state = str(temporal.get("presence_persistence_state") or "")
+        persistence_state = str(persistence_state or temporal.get("presence_persistence_state") or "")
         if not persistence_state:
             persistence_state = "visible" if temporal.get("person_present") else "absent"
         if persistence_state == "visible":
@@ -1214,5 +1396,35 @@ class EdgeWorker:
                 state="resolved",
                 resolution="person_upright_again",
                 observed_at=evaluated_at,
+                evidence=recovery,
+            )
+
+    def _resolve_recovered_camera_incidents(
+        self,
+        camera: Dict[str, Any],
+        recovery: Dict[str, Any],
+    ) -> None:
+        camera_id = int(camera["id"])
+        observed_at = str(recovery.get("recovered_at") or datetime.now(timezone.utc).isoformat())
+        for _ in range(20):
+            event = self.storage.latest_unresolved_event(
+                camera_id=camera_id,
+                event_types=["camera_offline"],
+            )
+            if not event:
+                return
+            resolved = self.storage.resolve_event_from_edge(
+                int(event["id"]),
+                resolution="camera_reconnected",
+                resolved_at=observed_at,
+                evidence=recovery,
+            )
+            if not resolved:
+                return
+            self.storage.enqueue_event_state_upload(
+                resolved,
+                state="resolved",
+                resolution="camera_reconnected",
+                observed_at=observed_at,
                 evidence=recovery,
             )

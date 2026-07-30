@@ -7,8 +7,22 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 import json
+import secrets
 import sqlite3
 import time
+
+
+TERMINAL_UPLOAD_HTTP_STATUS_CODES = {400, 405, 410, 413, 415, 422}
+
+
+class UploadRequestError(RuntimeError):
+    def __init__(self, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = int(status_code)
+
+    @property
+    def retryable(self) -> bool:
+        return self.status_code not in TERMINAL_UPLOAD_HTTP_STATUS_CODES
 
 
 class UploadAgent:
@@ -26,6 +40,7 @@ class UploadAgent:
         self.device_id_resolver = device_id_resolver
         self.token_resolver = token_resolver
         self.remote_camera_id_resolver = remote_camera_id_resolver or (lambda camera_id: camera_id)
+        self._worker_id = f"upload-agent-{secrets.token_hex(6)}"
         self._stop = Event()
         self._wake = Event()
         self._thread: Thread | None = None
@@ -119,7 +134,10 @@ class UploadAgent:
         failed = 0
         for _ in range(limit):
             try:
-                job = self.storage.claim_next_upload_job()
+                job = self.storage.claim_next_upload_job(
+                    lease_seconds=max(30, int(getattr(self.settings, "upload_job_lease_seconds", 120))),
+                    worker_id=self._worker_id,
+                )
             except sqlite3.OperationalError as exc:
                 if "locked" not in str(exc).lower():
                     raise
@@ -136,14 +154,64 @@ class UploadAgent:
             processed += 1
             try:
                 result = self._process_job(job)
+            except UploadRequestError as exc:
+                if not exc.retryable:
+                    result = {
+                        "uploaded": False,
+                        "terminal": True,
+                        "reason": "request_rejected",
+                        "http_status": exc.status_code,
+                        "error": str(exc)[:1000],
+                    }
+                    persisted = self.storage.complete_upload_job(
+                        int(job["id"]),
+                        result,
+                        claim_token=str(job.get("claim_token") or ""),
+                    )
+                    if persisted is None:
+                        failed += 1
+                        self.last_error = "upload_job_lease_lost"
+                        continue
+                    completed += 1
+                    self.last_error = ""
+                    self.last_result = {
+                        "job_id": int(job["id"]),
+                        "job_type": job.get("job_type"),
+                        "result": result,
+                    }
+                    continue
+                failed += 1
+                retry_after = self._retry_delay_seconds(int(job.get("attempt_count") or 1))
+                self.storage.fail_upload_job(
+                    int(job["id"]),
+                    str(exc),
+                    retry_after_seconds=retry_after,
+                    claim_token=str(job.get("claim_token") or ""),
+                )
+                self.last_error = str(exc)
+                continue
             except Exception as exc:
                 failed += 1
                 retry_after = self._retry_delay_seconds(int(job.get("attempt_count") or 1))
-                self.storage.fail_upload_job(int(job["id"]), str(exc), retry_after_seconds=retry_after)
+                self.storage.fail_upload_job(
+                    int(job["id"]),
+                    str(exc),
+                    retry_after_seconds=retry_after,
+                    claim_token=str(job.get("claim_token") or ""),
+                )
                 self.last_error = str(exc)
                 continue
             completed += 1
-            self.storage.complete_upload_job(int(job["id"]), result)
+            persisted = self.storage.complete_upload_job(
+                int(job["id"]),
+                result,
+                claim_token=str(job.get("claim_token") or ""),
+            )
+            if persisted is None:
+                failed += 1
+                completed -= 1
+                self.last_error = "upload_job_lease_lost"
+                continue
             self.last_error = ""
             self.last_uploaded_at = self._utc_iso()
             self.last_result = {
@@ -179,6 +247,8 @@ class UploadAgent:
 
     def _process_job(self, job: Dict[str, Any]) -> Dict[str, Any]:
         job_type = str(job.get("job_type") or "")
+        if job_type == "event_evidence_finalize":
+            return self._finalize_event_evidence(job)
         if job_type == "media_upload":
             return self._upload_media(job)
         if job_type == "event_upload":
@@ -188,6 +258,27 @@ class UploadAgent:
         if job_type == "activity_interval_upload":
             return self._upload_activity_interval(job)
         raise ValueError(f"Unsupported upload job type: {job_type}")
+
+    def _finalize_event_evidence(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(job.get("payload") or {})
+        event_id = int(payload.get("event_id") or job.get("event_id") or 0)
+        if not event_id:
+            raise ValueError("event evidence finalization job has no event_id")
+        event = self.storage.finalize_event_evidence(
+            event_id,
+            settle_seconds=float(payload.get("settle_seconds") or 0.8),
+            max_wait_seconds=float(payload.get("max_wait_seconds") or 2.5),
+        )
+        queued = self.storage.enqueue_event_upload_jobs(event)
+        finalization = event.get("payload", {}).get("evidence_finalization") or {}
+        return {
+            "finalized": True,
+            "target": "event_evidence",
+            "event_id": event_id,
+            "reason": str(finalization.get("reason") or ""),
+            "selected_snapshot_id": finalization.get("selected_snapshot_id"),
+            "queued_job_ids": [int(item["id"]) for item in queued],
+        }
 
     def _upload_media(self, job: Dict[str, Any]) -> Dict[str, Any]:
         payload = job.get("payload") or {}
@@ -238,7 +329,14 @@ class UploadAgent:
         payload = dict(job.get("payload") or {})
         event_id = int(payload.get("event_id") or job.get("event_id") or 0)
         camera_id, local_camera_id = self._camera_ids(job, payload)
-        media_jobs = self.storage.completed_upload_jobs(event_id=event_id, job_type="media_upload") if event_id else []
+        all_media_jobs = self.storage.upload_jobs_for_event(event_id=event_id, job_type="media_upload") if event_id else []
+        incomplete_media_jobs = [item for item in all_media_jobs if item.get("status") != "completed"]
+        if incomplete_media_jobs:
+            raise RuntimeError(
+                "event evidence uploads are incomplete: "
+                + ",".join(f"{item.get('id')}:{item.get('status')}" for item in incomplete_media_jobs)
+            )
+        media_jobs = all_media_jobs
         primary_job = next(
             (
                 item for item in media_jobs
@@ -392,7 +490,10 @@ class UploadAgent:
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"{method} {url} failed: HTTP {exc.code} {detail}") from exc
+            raise UploadRequestError(
+                f"{method} {url} failed: HTTP {exc.code} {detail}",
+                status_code=int(exc.code),
+            ) from exc
         except URLError as exc:
             raise RuntimeError(f"{method} {url} failed: {exc.reason}") from exc
         if not raw:

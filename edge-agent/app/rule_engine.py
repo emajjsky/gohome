@@ -8,6 +8,11 @@ from typing import Any, Dict, Optional
 
 DYNAMIC_FLOOR_BOTTOM_Y = 0.88
 BODY_ROTATION_MOTION_WINDOW_SECONDS = 0.75
+FAST_FACTOR_GRAPH_CONFIRM_SECONDS = 0.75
+DYNAMIC_LOW_CONFIRM_SECONDS = 1.5
+CAMERA_OFFLINE_CONFIRM_FAILURES = 3
+CAMERA_OFFLINE_CONFIRM_SECONDS = 15.0
+CAMERA_OFFLINE_FAILURE_GAP_SECONDS = 60.0
 
 
 def utc_now() -> datetime:
@@ -60,16 +65,28 @@ class RuleEngine:
         self.last_person_seen_at: Dict[int, datetime] = {}
         self.fall_tracks: Dict[int, Dict[str, Any]] = {}
         self.fall_upright_states: Dict[int, Dict[str, Any]] = {}
+        self.fall_transition_motion_states: Dict[int, Dict[str, Any]] = {}
+        self.camera_error_states: Dict[int, Dict[str, Any]] = {}
         self.fire_confirm_counts: Dict[int, int] = {}
         self.prolonged_floor_tracks: Dict[int, set[str]] = {}
 
-    def reset_camera(self, camera_id: int) -> None:
+    def reset_camera(self, camera_id: int, *, preserve_camera_error_state: bool = False) -> None:
         camera_id = int(camera_id)
         self.last_motion_at.pop(camera_id, None)
         self.last_person_seen_at.pop(camera_id, None)
         self.fall_tracks.pop(camera_id, None)
         self.fall_upright_states.pop(camera_id, None)
+        self.fall_transition_motion_states.pop(camera_id, None)
         self.fire_confirm_counts.pop(camera_id, None)
+        self.prolonged_floor_tracks.pop(camera_id, None)
+        if not preserve_camera_error_state:
+            self.camera_error_states.pop(camera_id, None)
+
+    def clear_safety_incident(self, camera_id: int) -> None:
+        camera_id = int(camera_id)
+        self.fall_tracks.pop(camera_id, None)
+        self.fall_upright_states.pop(camera_id, None)
+        self.fall_transition_motion_states.pop(camera_id, None)
         self.prolonged_floor_tracks.pop(camera_id, None)
 
     def evaluate_snapshot(
@@ -369,14 +386,59 @@ class RuleEngine:
         error: str,
     ) -> RuleEvaluation:
         now = utc_now()
+        camera_id = int(camera["id"])
+        previous = self.camera_error_states.get(camera_id) or {}
+        last_failed_at = previous.get("last_failed_at")
+        if (
+            not isinstance(last_failed_at, datetime)
+            or max(0.0, (now - last_failed_at).total_seconds()) > CAMERA_OFFLINE_FAILURE_GAP_SECONDS
+        ):
+            previous = {
+                "first_failed_at": now,
+                "failure_count": 0,
+                "alert_emitted": False,
+            }
+        first_failed_at = previous.get("first_failed_at")
+        if not isinstance(first_failed_at, datetime):
+            first_failed_at = now
+        failure_count = int(previous.get("failure_count") or 0) + 1
+        duration_seconds = max(0.0, (now - first_failed_at).total_seconds())
+        confirmed = bool(
+            failure_count >= CAMERA_OFFLINE_CONFIRM_FAILURES
+            and duration_seconds >= CAMERA_OFFLINE_CONFIRM_SECONDS
+        )
+        emit_event = bool(
+            rules.get("offline_enabled")
+            and confirmed
+            and not previous.get("alert_emitted")
+        )
+        error_state = {
+            **previous,
+            "first_failed_at": first_failed_at,
+            "last_failed_at": now,
+            "failure_count": failure_count,
+            "duration_seconds": round(duration_seconds, 3),
+            "last_error": str(error or ""),
+            "confirmed": confirmed,
+            "alert_emitted": bool(previous.get("alert_emitted") or emit_event),
+        }
+        self.camera_error_states[camera_id] = error_state
         candidate = None
-        if rules.get("offline_enabled"):
+        if emit_event:
             rule = {
                 "id": "camera_offline",
                 "label": "摄像头离线提醒",
-                "reason": "edge-agent 无法打开或读取摄像头视频流。",
+                "reason": "连续多次无法打开或读取摄像头视频流，达到离线确认窗口。",
+                "observed": {
+                    "failure_count": failure_count,
+                    "failure_duration_seconds": round(duration_seconds, 3),
+                },
+                "threshold": {
+                    "required_failures": CAMERA_OFFLINE_CONFIRM_FAILURES,
+                    "required_seconds": CAMERA_OFFLINE_CONFIRM_SECONDS,
+                },
             }
-            summary = f"{camera.get('name', '摄像头')} 无法连接：{error}"
+            summary = f"{camera.get('name', '摄像头')} 持续无法连接：{error}"
             candidate = EventCandidate(
                 event_type="camera_offline",
                 summary=summary,
@@ -390,17 +452,51 @@ class RuleEngine:
                         level="critical",
                         analysis={"tags": ["camera_offline"]},
                         rule=rule,
-                        extra={"error": error},
+                        extra={
+                            "error": error,
+                            "failure_count": failure_count,
+                            "failure_duration_seconds": round(duration_seconds, 3),
+                        },
                     ),
                 },
             )
         return RuleEvaluation(
-            camera_id=int(camera["id"]),
+            camera_id=camera_id,
             snapshot_id=None,
             evaluated_at=now.isoformat(),
             candidates=[candidate] if candidate else [],
-            state={"camera_state": "offline", "error": error},
+            state={
+                "camera_state": "offline" if confirmed else "reconnecting",
+                "error": error,
+                "failure_count": failure_count,
+                "failure_duration_seconds": round(duration_seconds, 3),
+                "confirmation": {
+                    "required_failures": CAMERA_OFFLINE_CONFIRM_FAILURES,
+                    "required_seconds": CAMERA_OFFLINE_CONFIRM_SECONDS,
+                    "confirmed": confirmed,
+                },
+            },
         )
+
+    def record_camera_online(self, camera_id: int) -> Dict[str, Any] | None:
+        previous = self.camera_error_states.pop(int(camera_id), None)
+        if not previous:
+            return None
+        recovered_at = utc_now()
+        first_failed_at = previous.get("first_failed_at")
+        duration_seconds = (
+            max(0.0, (recovered_at - first_failed_at).total_seconds())
+            if isinstance(first_failed_at, datetime)
+            else float(previous.get("duration_seconds") or 0.0)
+        )
+        return {
+            "schema_version": "gohome-camera-recovery-v1",
+            "confirmed": bool(previous.get("alert_emitted")),
+            "failure_count": int(previous.get("failure_count") or 0),
+            "duration_seconds": round(duration_seconds, 3),
+            "last_error": str(previous.get("last_error") or ""),
+            "recovered_at": recovered_at.isoformat(),
+        }
 
     def _candidate(
         self,
@@ -470,7 +566,7 @@ class RuleEngine:
         confirm_frames = max(2, int(rules.get("fall_confirm_frames") or 2))
         confirm_seconds = max(0, int(rules.get("fall_confirm_seconds", 4)))
         dynamic_confirm_frames = max(3, confirm_frames)
-        dynamic_confirm_seconds = min(float(confirm_seconds), 2.0)
+        dynamic_confirm_seconds = min(float(confirm_seconds), DYNAMIC_LOW_CONFIRM_SECONDS)
         recover_frames = max(2, int(rules.get("fall_recover_frames") or 2))
         fall_evidence = self._fall_evidence(analysis)
         target = self._fall_target(analysis, fall_evidence)
@@ -484,9 +580,27 @@ class RuleEngine:
             and graph_target.get("quality_gate")
             and graph_target.get("required_factors_confirmed")
         )
+        graph_temporal_ready = bool(
+            graph_candidate
+            and graph_target.get("quality_gate")
+            and graph_target.get("required_factors_confirmed")
+            and graph_target.get("sustained_floor_lying_after_descent")
+        )
         upright_before = self.fall_upright_states.get(camera_id) or {}
         upright_targets = self._upright_targets(analysis)
-        transition = self._fall_transition(target, upright_before, now, analysis, rules)
+        transition_motion = self._record_transition_motion(camera_id, now, analysis)
+        transition = self._fall_transition(
+            target,
+            upright_before,
+            now,
+            analysis,
+            rules,
+            transition_motion=transition_motion,
+        )
+        identity_gate_failed = str(transition.get("reason") or "") == "track_identity_missing"
+        if identity_gate_failed:
+            graph_review_ready = False
+            graph_temporal_ready = False
         normal_lying_zone = bool(target and target.get("normal_lying_zone"))
 
         fall_score_ok = fall_score >= fall_score_threshold
@@ -500,14 +614,26 @@ class RuleEngine:
         same_observed_target = bool(previous and target and self._same_fall_target(previous.get("target"), target))
         transition_confirmed = (
             bool(transition.get("confirmed"))
-            or graph_candidate
+            or graph_review_ready
+            or graph_temporal_ready
             or bool(previous.get("transition_confirmed") and same_observed_target)
         )
         fast_transition_confirmed = bool(
-            graph_candidate
+            graph_review_ready
+            or graph_temporal_ready
+            or (graph_candidate and transition.get("confirmed"))
             or (previous.get("fast_transition_confirmed") and same_observed_target)
         )
-        dynamic_scene_override = bool(normal_lying_zone and graph_candidate)
+        dynamic_scene_override = bool(
+            normal_lying_zone
+            and graph_candidate
+            and not identity_gate_failed
+            and (
+                graph_review_ready
+                or graph_temporal_ready
+                or bool(transition.get("confirmed"))
+            )
+        )
         scene_suppressed = bool(normal_lying_zone and not dynamic_scene_override)
         strong_candidate = strong_visual_candidate and transition_confirmed and not scene_suppressed
         inference_runtime = (
@@ -577,6 +703,7 @@ class RuleEngine:
                 or (
                     track.get("fast_transition_confirmed")
                     and int(track.get("confirm_count") or 0) >= confirm_frames
+                    and duration >= FAST_FACTOR_GRAPH_CONFIRM_SECONDS
                 )
             )
             dynamic_path_confirmed = bool(
@@ -585,7 +712,9 @@ class RuleEngine:
                 and duration >= dynamic_confirm_seconds
             )
             standard_path_confirmed = bool(
-                int(track.get("confirm_count") or 0) >= confirm_frames
+                not track.get("fast_transition_confirmed")
+                and not graph_review_ready
+                and int(track.get("confirm_count") or 0) >= confirm_frames
                 and duration >= confirm_seconds
             )
             if fast_path_confirmed or dynamic_path_confirmed or standard_path_confirmed:
@@ -714,6 +843,7 @@ class RuleEngine:
             "confirm_seconds": confirm_seconds,
             "dynamic_confirm_frames": dynamic_confirm_frames,
             "dynamic_confirm_seconds": dynamic_confirm_seconds,
+            "fast_factor_graph_confirm_seconds": FAST_FACTOR_GRAPH_CONFIRM_SECONDS,
             "dynamic_floor_bottom_y": DYNAMIC_FLOOR_BOTTOM_Y,
             "recover_frames": recover_frames,
             "transition_window_seconds": int(transition.get("window_seconds") or 20),
@@ -899,6 +1029,11 @@ class RuleEngine:
         height = max(1.0, float(analysis.get("image_height") or 360))
         targets = []
         poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
+        eligible_poses = [
+            pose for pose in poses
+            if pose.get("person_evidence_eligible") is not False
+            and self._valid_bbox(pose.get("bbox"))
+        ]
         for pose in poses:
             posture = str(pose.get("posture") or "")
             if posture not in {
@@ -914,11 +1049,13 @@ class RuleEngine:
             })
         if targets:
             return targets
+        if eligible_poses:
+            return []
         people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
         for person in people:
             if person.get("fall_candidate") or person.get("presence_candidate") or not self._valid_bbox(person.get("bbox")):
                 continue
-            if float(person.get("aspect_ratio") or 0.0) > 1.25:
+            if float(person.get("aspect_ratio") or 0.0) > 0.80:
                 continue
             targets.append({
                 **self._normalized_target(person, width, height, posture="person_upright"),
@@ -952,6 +1089,38 @@ class RuleEngine:
             "targets": retained[-24:],
         }
 
+    def _record_transition_motion(
+        self,
+        camera_id: int,
+        now: datetime,
+        analysis: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        previous = self.fall_transition_motion_states.get(camera_id)
+        poses = analysis.get("poses") if isinstance(analysis.get("poses"), list) else []
+        transitional_pose = any(
+            pose.get("person_evidence_eligible") is not False
+            and self._valid_bbox(pose.get("bbox"))
+            and str(pose.get("posture") or "") in {"sitting", "squatting", "bending", "upper_body"}
+            for pose in poses
+        )
+        if transitional_pose:
+            previous = {
+                "observed_at": now,
+                "motion_score": round(float(analysis.get("motion_score") or 0.0), 4),
+            }
+            self.fall_transition_motion_states[camera_id] = previous
+        if not previous:
+            return None
+        observed_at = previous.get("observed_at")
+        if not isinstance(observed_at, datetime):
+            self.fall_transition_motion_states.pop(camera_id, None)
+            return None
+        age_seconds = max(0.0, (now - observed_at).total_seconds())
+        if age_seconds > BODY_ROTATION_MOTION_WINDOW_SECONDS:
+            self.fall_transition_motion_states.pop(camera_id, None)
+            return None
+        return {**previous, "age_seconds": round(age_seconds, 3)}
+
     def _normalized_target(self, item: Dict[str, Any], width: float, height: float, *, posture: str) -> Dict[str, Any]:
         bbox = [float(value) for value in item.get("bbox")]
         x1, y1, x2, y2 = bbox
@@ -977,6 +1146,8 @@ class RuleEngine:
         now: datetime,
         analysis: Dict[str, Any],
         rules: Dict[str, Any],
+        *,
+        transition_motion: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         window_seconds = max(5, int(rules.get("fall_transition_window_seconds") or 20))
         min_vertical_drop = max(0.05, float(rules.get("fall_min_vertical_drop") or 0.12))
@@ -1064,6 +1235,11 @@ class RuleEngine:
                 if age <= BODY_ROTATION_MOTION_WINDOW_SECONDS
             ]
         )
+        if transition_motion:
+            recent_motion_score = max(
+                recent_motion_score,
+                float(transition_motion.get("motion_score") or 0.0),
+            )
         body_aspect_change = (
             target_aspect - float(rotation_baseline.get("body_aspect") or 0.0)
             if rotation_baseline is not None and target_aspect > 0.0
@@ -1086,6 +1262,9 @@ class RuleEngine:
             "body_rotation_confirmed": body_rotation_confirmed,
             "body_aspect_change": None if body_aspect_change is None else round(float(body_aspect_change), 4),
             "rotation_motion_score": round(recent_motion_score, 4),
+            "transition_motion_age_seconds": (
+                transition_motion.get("age_seconds") if transition_motion else None
+            ),
         })
         return result
 

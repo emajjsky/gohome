@@ -53,6 +53,12 @@ body.admin-web-page .material-symbols-outlined[data-icon] { font-size: 0; }
 body.admin-web-page .material-symbols-outlined[data-icon]::before { content: attr(data-icon); font-family: Arial, sans-serif; font-size: 16px; font-weight: 700; }
 body.admin-web-page .admin-sidebar-controls { padding: 0 4px 11px; border: 0; background: transparent; }
 body.admin-web-page .admin-sidebar-controls .status-pill { width: 100%; justify-content: flex-start; }
+body.admin-web-page .admin-privacy-panel { display: grid; gap: 8px; margin: 0 4px 11px; border-top: 1px solid var(--console-line); padding-top: 12px; }
+body.admin-web-page .admin-privacy-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+body.admin-web-page .admin-privacy-head strong { font-size: 11px; font-weight: 720; }
+body.admin-web-page .admin-privacy-head span { color: var(--console-muted); font-size: 9px; }
+body.admin-web-page .admin-privacy-panel .segmented-control { width: 100%; min-height: 32px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+body.admin-web-page .admin-privacy-panel .segmented-control button { min-height: 32px; padding: 0 5px; font-size: 10px; }
 body.admin-web-page .admin-sidebar-note, body.admin-web-page .admin-sidebar-status { margin: 0; border: 0; border-top: 1px solid var(--console-line); border-radius: 0; padding: 12px 5px; background: transparent; box-shadow: none; }
 body.admin-web-page .admin-sidebar-note span, body.admin-web-page .admin-sidebar-note strong { display: block; }
 body.admin-web-page .admin-sidebar-note span { color: var(--console-muted); font-size: 10px; }
@@ -110,12 +116,45 @@ body.admin-web-page .algorithm-switch-panel .primary-button { width: 100%; }
 
 /* Home monitor */
 body.admin-web-page .home-layout { max-width: 1480px; margin: 0 auto; }
+body.admin-web-page .device-binding-panel {
+  max-width: 1480px; min-height: 76px; display: grid; grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: center; gap: 22px; margin: 0 auto 16px; border-block: 1px solid var(--console-line);
+  padding: 12px 0; background: transparent;
+}
+body.admin-web-page .binding-primary { min-width: 0; display: flex; align-items: center; gap: 12px; }
+body.admin-web-page .binding-primary > div { min-width: 0; }
+body.admin-web-page .binding-primary strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
+body.admin-web-page .binding-primary p { margin: 4px 0 0; color: var(--console-muted); font-size: 10px; }
+body.admin-web-page .binding-facts { display: grid; grid-template-columns: repeat(3, minmax(88px, auto)); }
+body.admin-web-page .binding-facts > div { min-width: 0; border-left: 1px solid var(--console-line); padding: 0 15px; }
+body.admin-web-page .binding-facts span, body.admin-web-page .binding-facts strong { display: block; }
+body.admin-web-page .binding-facts span { color: var(--console-muted); font-size: 9px; }
+body.admin-web-page .binding-facts strong { margin-top: 4px; font-size: 11px; white-space: nowrap; }
+body.admin-web-page .cloud-sync-status.success { color: var(--console-success); }
+body.admin-web-page .cloud-sync-status.warning { color: #8a5a00; }
+body.admin-web-page .cloud-sync-status.bad { color: var(--console-danger); }
+body.admin-web-page .cloud-sync-status.muted { color: var(--console-muted); }
 body.admin-web-page .hero-monitor { padding: 0; background: transparent; }
 body.admin-web-page .monitor-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 0 0 10px; }
 body.admin-web-page .monitor-toolbar label { display: grid; grid-template-columns: auto minmax(180px, 320px); align-items: center; gap: 10px; color: var(--console-muted); font-size: 11px; }
 body.admin-web-page .stream-frame { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border: 0; border-radius: var(--console-radius); background: var(--console-video); }
 body.admin-web-page .stream-frame > img { width: 100%; height: 100%; display: block; object-fit: contain; }
+body.admin-web-page .stream-fps-badge {
+  position: absolute; z-index: 4; top: 12px; right: 12px; min-width: 70px; height: 25px;
+  display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(72, 218, 126, .34);
+  border-radius: 999px; padding: 0 8px; background: rgba(8, 22, 14, .78); color: #75ed9d;
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums;
+  white-space: nowrap; backdrop-filter: blur(8px);
+}
+body.admin-web-page .stream-fps-badge:not(.is-live) { border-color: rgba(255,255,255,.16); color: rgba(255,255,255,.62); }
 body.admin-web-page .stream-badge-row { position: absolute; inset: auto 0 0; display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; background: rgba(10,11,11,.82); color: #fff; font-family: ui-monospace, monospace; font-size: 10px; }
+
+@media (max-width: 900px) {
+  body.admin-web-page .device-binding-panel { grid-template-columns: 1fr; align-items: stretch; gap: 12px; }
+  body.admin-web-page .binding-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  body.admin-web-page .binding-facts > div:first-child { border-left: 0; padding-left: 0; }
+  body.admin-web-page .device-binding-panel > button { width: 100%; }
+}
 
 /* Algorithm command bar */
 body.admin-web-page .algorithm-cinema-console { max-width: 1600px; margin: 0 auto; }
@@ -260,6 +299,8 @@ body.admin-web-page .camera-test-result p { margin: 3px 0 0; color: var(--consol
   body.admin-web-page .admin-brand { min-height: 40px; padding: 0; }
   body.admin-web-page .admin-nav { display: flex; flex: 1; justify-content: flex-end; margin: 0; border: 0; padding: 0; }
   body.admin-web-page .admin-sidebar-controls, body.admin-web-page .admin-sidebar-note, body.admin-web-page .admin-sidebar-status, body.admin-web-page .algorithm-switch-panel, body.admin-web-page .admin-sidebar-session { display: none; }
+  body.admin-web-page .admin-privacy-panel { width: 232px; margin: 0; border: 0; padding: 0; }
+  body.admin-web-page .admin-privacy-head { display: none; }
   body.admin-web-page .admin-web-main { padding: 16px; }
   body.admin-web-page .algorithm-theater, body.admin-web-page .admin-camera-grid { grid-template-columns: 1fr; }
   body.admin-web-page .algorithm-evidence-rail { border-left: 0; border-top: 1px solid var(--console-line); }

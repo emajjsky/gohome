@@ -33,11 +33,16 @@ const state = {
   observationLogs: [],
   cloudVerifications: null,
   cameraConfigAuthority: null,
+  bindingClosesAt: 0,
   runtimeStatus: null,
   eventLogRecords: [],
   eventLogStatusFilter: "all",
   eventLogTypeFilter: "all",
   toastTimer: null,
+  videoPrivacyMode: "original",
+  videoPrivacyUpdatedAt: "",
+  videoPrivacyLoaded: false,
+  privacyTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -100,6 +105,74 @@ function showToast(message) {
   toast.classList.add("show");
   clearTimeout(state.toastTimer);
   state.toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
+}
+
+function normalizeVideoPrivacyMode(value) {
+  return ["original", "person_blur", "skeleton"].includes(String(value || ""))
+    ? String(value)
+    : "original";
+}
+
+function ensureVideoPrivacyControl() {
+  if (document.querySelector(".admin-privacy-panel")) return;
+  const sidebar = document.querySelector(".admin-sidebar");
+  if (!sidebar) return;
+  const panel = document.createElement("section");
+  panel.className = "admin-privacy-panel";
+  panel.setAttribute("aria-label", "家庭画面隐私");
+  panel.innerHTML = `
+    <div class="admin-privacy-head">
+      <strong>画面隐私</strong>
+      <span id="videoPrivacySyncState">家庭同步</span>
+    </div>
+    <div class="segmented-control privacy-mode-control" aria-label="隐私画面模式">
+      <button type="button" data-privacy-mode="original">原画</button>
+      <button type="button" data-privacy-mode="person_blur">模糊</button>
+      <button type="button" data-privacy-mode="skeleton">骨架</button>
+    </div>`;
+  const controls = sidebar.querySelector(".admin-sidebar-controls");
+  controls?.insertAdjacentElement("afterend", panel);
+  if (!controls) sidebar.querySelector(".admin-nav")?.insertAdjacentElement("afterend", panel);
+}
+
+function renderVideoPrivacyMode() {
+  document.querySelectorAll("[data-privacy-mode]").forEach((button) => {
+    const active = button.dataset.privacyMode === state.videoPrivacyMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  setText("videoPrivacySyncState", state.videoPrivacyLoaded ? "已同步" : "家庭同步");
+}
+
+async function loadVideoPrivacyMode({ refreshStream = true } = {}) {
+  const payload = await api("/api/admin/video-privacy");
+  const nextMode = normalizeVideoPrivacyMode(payload?.minimum_mode);
+  const changed = nextMode !== state.videoPrivacyMode;
+  state.videoPrivacyMode = nextMode;
+  state.videoPrivacyUpdatedAt = String(payload?.updated_at || "");
+  state.videoPrivacyLoaded = true;
+  renderVideoPrivacyMode();
+  if (changed && refreshStream && state.selectedCameraId) renderStream({ retry: true });
+  return payload;
+}
+
+async function updateVideoPrivacyMode(mode, button) {
+  const nextMode = normalizeVideoPrivacyMode(mode);
+  if (nextMode === state.videoPrivacyMode) return;
+  setBusy(button, true);
+  try {
+    const payload = await api("/api/admin/video-privacy", {
+      method: "PUT",
+      body: JSON.stringify({ minimum_mode: nextMode }),
+    });
+    state.videoPrivacyMode = normalizeVideoPrivacyMode(payload?.minimum_mode);
+    state.videoPrivacyUpdatedAt = String(payload?.updated_at || "");
+    state.videoPrivacyLoaded = true;
+    renderVideoPrivacyMode();
+    renderStream({ retry: true });
+  } finally {
+    setBusy(button, false);
+  }
 }
 
 async function hydrateAdminSession() {
@@ -316,9 +389,101 @@ async function loadDevice() {
   setText("setupDeviceName", device.name || "本地盒子");
   setText("setupDeviceUrl", device.api_base_url || "-");
   renderYoloState();
+  renderDeviceBinding();
   renderCameraConfigAuthority();
   renderAlgorithmDemo();
   prefillCameraForm();
+}
+
+function renderPairingCountdown() {
+  const target = $("pairingWindowState");
+  if (!target) return;
+  const remaining = Math.max(0, Math.ceil((state.bindingClosesAt - Date.now()) / 1000));
+  target.textContent = remaining > 0 ? `已开启 ${fmtDuration(remaining)}` : "未开启";
+}
+
+function syncStatusPresentation(sync) {
+  if (!sync.configured) return { label: "未连接", tone: "muted", detail: "云端同步尚未配置" };
+  if (!sync.running) return { label: "同步停止", tone: "bad", detail: "同步进程未运行" };
+  if (sync.last_error) {
+    const failures = Math.max(1, Number(sync.consecutive_failures || 1));
+    return {
+      label: failures >= 3 ? "同步异常" : "正在重试",
+      tone: failures >= 3 ? "bad" : "warning",
+      detail: `${fmtTime(sync.last_error_at)} · ${String(sync.last_error)}`,
+    };
+  }
+
+  const syncedAt = Date.parse(sync.last_sync_at || "");
+  if (!Number.isFinite(syncedAt)) {
+    return { label: "等待同步", tone: "warning", detail: "等待首次云端确认" };
+  }
+  const ageSeconds = Math.max(0, (Date.now() - syncedAt) / 1000);
+  if (ageSeconds > 60) {
+    return {
+      label: "同步延迟",
+      tone: "warning",
+      detail: `最近成功同步：${fmtTime(sync.last_sync_at)}`,
+    };
+  }
+  if (sync.last_result?.report_ok === false) {
+    return {
+      label: "等待云端确认",
+      tone: "warning",
+      detail: `最近同步：${fmtTime(sync.last_sync_at)}`,
+    };
+  }
+  return {
+    label: `已同步 ${new Date(syncedAt).toLocaleTimeString("zh-CN", { hour12: false })}`,
+    tone: "success",
+    detail: sync.last_recovered_at
+      ? `已恢复 · 最近成功同步：${fmtTime(sync.last_sync_at)}`
+      : `最近成功同步：${fmtTime(sync.last_sync_at)}`,
+  };
+}
+
+function renderDeviceBinding() {
+  if (pageName !== "home" || !state.device) return;
+  const binding = state.device.binding || { status: "unbound" };
+  const isBound = binding.status === "bound";
+  const sync = state.device.config_sync_agent || {};
+  const status = $("bindingStatus");
+  setText("bindingStatus", isBound ? "已绑定" : "未绑定");
+  if (status) status.className = `status-pill ${isBound ? "success" : "warning"}`;
+  setText("bindingFamily", isBound ? (binding.family_name || "已绑定家庭") : "未绑定家庭");
+  setText(
+    "bindingOwner",
+    isBound
+      ? `${binding.owner_display_name || "家庭创建者"} · ${binding.owner_account || "账号已保护"}`
+      : "可由家庭创建者通过回家 App 绑定"
+  );
+  setText("bindingTime", isBound ? fmtTime(binding.bound_at) : "-");
+  const syncStatus = syncStatusPresentation(sync);
+  setText("bindingCloudSync", syncStatus.label);
+  const syncTarget = $("bindingCloudSync");
+  if (syncTarget) {
+    syncTarget.className = `cloud-sync-status ${syncStatus.tone}`;
+    syncTarget.title = syncStatus.detail;
+  }
+  state.bindingClosesAt = Date.parse(state.device.pairing?.closes_at || "") || 0;
+  renderPairingCountdown();
+  const button = $("openPairingWindow");
+  if (button) {
+    button.hidden = isBound;
+  }
+}
+
+async function openPairingWindow(button) {
+  setBusy(button, true);
+  try {
+    const result = await api("/api/admin/pairing-window", { method: "POST" });
+    state.device.pairing = result.pairing;
+    state.bindingClosesAt = Date.parse(result.pairing?.closes_at || "") || 0;
+    renderPairingCountdown();
+    showToast("安全配对已开启 10 分钟，请返回 App 重新搜索盒子");
+  } finally {
+    setBusy(button, false);
+  }
 }
 
 function cameraConfigIsCloudManaged() {
@@ -813,13 +978,13 @@ function renderStream({ retry = false } = {}) {
     setText("streamStatus", "实时视频已连接");
   };
   const streamProfile = pageName === "algorithms"
-    ? { fps: 8, width: 640, height: 360, quality: 68, drop: 0, label: "同步姿态视频" }
-    : { fps: 8, width: 1280, height: 720, quality: 64, drop: 1, label: "720p 低延迟视频" };
-  state.serverAnnotated = pageName === "algorithms";
+    ? { fps: 15, width: 960, height: 540, quality: 70, drop: 0, label: "同步姿态视频" }
+    : { fps: 15, width: 1280, height: 720, quality: 64, drop: 1, label: "720p 低延迟视频" };
+  state.serverAnnotated = pageName === "algorithms" && state.videoPrivacyMode === "original";
   const streamPath = state.serverAnnotated
     ? `/api/cameras/${camera.id}/continual-pose/stream.mjpg`
     : `/api/cameras/${camera.id}/stream.mjpg`;
-  stream.src = `${streamPath}?fps=${streamProfile.fps}&width=${streamProfile.width}&height=${streamProfile.height}&quality=${streamProfile.quality}&drop=${streamProfile.drop}&t=${Date.now()}`;
+  stream.src = `${streamPath}?fps=${streamProfile.fps}&width=${streamProfile.width}&height=${streamProfile.height}&quality=${streamProfile.quality}&drop=${streamProfile.drop}&privacy_mode=${encodeURIComponent(state.videoPrivacyMode)}&t=${Date.now()}`;
   state.streamMaskTimer = setTimeout(() => {
     if (stream.getAttribute("src") && empty) empty.style.display = "none";
   }, 900);
@@ -1283,7 +1448,6 @@ function renderSnapshot(snapshot) {
   }
   if ($("snapshotEmpty")) $("snapshotEmpty").style.display = "none";
   setText("snapshotTime", fmtTime(snapshot.captured_at));
-  setText("streamFrameTime", fmtTime(snapshot.captured_at));
   setText("snapshotBrightness", fmtNumber(analysis.brightness ?? snapshot.brightness, 1));
   setText("snapshotContrast", fmtNumber(analysis.contrast, 1));
   setText("snapshotMotion", analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4));
@@ -1697,6 +1861,7 @@ function runtimeModeLabel(mode) {
 }
 
 function renderRuntimeStatus(payload = state.runtimeStatus) {
+  renderStreamHealth(payload);
   if (pageName !== "algorithms") return;
   const scheduler = payload?.inference_scheduler || {};
   const cameras = Array.isArray(scheduler.cameras) ? scheduler.cameras : [];
@@ -1713,8 +1878,40 @@ function renderRuntimeStatus(payload = state.runtimeStatus) {
   setText("runtimePose", poseRunning ? "姿态跟踪" : "姿态待命");
 }
 
+function renderStreamHealth(payload = state.runtimeStatus) {
+  const streams = Array.isArray(payload?.camera_streams?.streams)
+    ? payload.camera_streams.streams
+    : [];
+  const selected = streams.find((stream) => Number(stream.camera_id) === Number(state.selectedCameraId));
+  if (!selected) {
+    setText("streamFrameTime", state.selectedCameraId ? "等待源流" : "未选择摄像头");
+    setText("streamFpsBadge", "-- FPS");
+    $("streamFpsBadge")?.classList.remove("is-live");
+    return;
+  }
+  const fps = Number(selected.source_fps);
+  const ageMs = Number(selected.latest_frame_age_ms);
+  if (selected.state === "retrying") {
+    setText("streamFrameTime", "源流重连中");
+    setText("streamFpsBadge", "重连中");
+    $("streamFpsBadge")?.classList.remove("is-live");
+    return;
+  }
+  if (selected.state === "stale") {
+    setText("streamFrameTime", `源流延迟 ${Number.isFinite(ageMs) ? Math.round(ageMs) : "-"} ms`);
+    setText("streamFpsBadge", "源流延迟");
+    $("streamFpsBadge")?.classList.remove("is-live");
+    return;
+  }
+  const fpsLabel = Number.isFinite(fps) && fps > 0 ? `${fps.toFixed(1)} FPS` : "源流预热";
+  const ageLabel = Number.isFinite(ageMs) ? ` · 帧龄 ${Math.round(ageMs)} ms` : "";
+  setText("streamFrameTime", `${fpsLabel}${ageLabel}`);
+  setText("streamFpsBadge", Number.isFinite(fps) && fps > 0 ? `${fps.toFixed(1)} FPS` : "-- FPS");
+  $("streamFpsBadge")?.classList.toggle("is-live", Number.isFinite(fps) && fps > 0);
+}
+
 async function loadRuntimeStatus() {
-  if (pageName !== "algorithms") return;
+  if (!["home", "algorithms"].includes(pageName)) return;
   const payload = await api("/api/rules/runtime");
   state.runtimeStatus = payload;
   renderRuntimeStatus(payload);
@@ -2363,6 +2560,12 @@ function eventLogLifecycle(record) {
   const verificationStatus = String(cloud?.verification?.status || "");
   const syncStatus = String(record?.sync?.status || "local_only");
   if (syncStatus === "failed") return { key: "sync_error", label: "同步异常", tone: "bad" };
+  if (
+    local.type === "camera_offline"
+    && (local.payload?.resolution === "camera_reconnected" || local.camera_status === "online")
+  ) {
+    return { key: "closed", label: "当前已恢复", tone: "muted" };
+  }
   if (!cloud && ["pending", "uploading", "local_only"].includes(syncStatus)) {
     return { key: "verifying", label: syncStatus === "uploading" ? "正在上传" : "等待上传", tone: "watch" };
   }
@@ -2437,6 +2640,9 @@ function renderEventLog() {
     const resultReason = eventLogVerificationReason(record);
     const incidentId = cloud?.incident?.incident_id || "";
     const uploadError = record.sync?.event_upload?.last_error || record.sync?.media_upload?.last_error || "";
+    const displaySummary = local.type === "camera_offline" && local.camera_status === "online"
+      ? `${local.camera_name || "摄像头"} 曾发生连接中断，当前已恢复`
+      : (local.summary || eventTypeLabel(local.type));
     const thumbnail = local.snapshot_url
       ? `<button class="event-evidence-thumb" type="button" data-event-log-action="snapshot" data-url="${escapeHtml(local.snapshot_url)}"><img src="${escapeHtml(local.snapshot_url)}" alt=""><span>证据帧</span></button>`
       : '<div class="event-evidence-thumb empty"><span>无证据帧</span></div>';
@@ -2445,7 +2651,7 @@ function renderEventLog() {
         <header>
           <div>
             <span class="event-type-mark">${escapeHtml(eventTypeLabel(local.type))}</span>
-            <h2>${escapeHtml(local.summary || eventTypeLabel(local.type))}</h2>
+            <h2>${escapeHtml(displaySummary)}</h2>
             <p>${escapeHtml([local.camera_name || local.room || "盒子", fmtTime(local.occurred_at), `本地 #${local.id}`, cloud?.event_id ? `云端 #${cloud.event_id}` : ""].filter(Boolean).join(" · "))}</p>
           </div>
           <span class="status-pill ${escapeHtml(lifecycle.tone || "")}">${escapeHtml(lifecycle.label)}</span>
@@ -2969,7 +3175,14 @@ async function refreshAll() {
 }
 
 function bindEvents() {
+  document.querySelectorAll("[data-privacy-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      updateVideoPrivacyMode(button.dataset.privacyMode, button)
+        .catch((error) => showToast(userSafeError(error.message)));
+    });
+  });
   on("refreshAll", "click", refreshAll);
+  on("openPairingWindow", "click", (event) => openPairingWindow(event.currentTarget).catch((error) => showToast(userSafeError(error.message))));
   on("refreshEventLog", "click", (event) => {
     setBusy(event.currentTarget, true);
     loadEventLog()
@@ -3142,20 +3355,24 @@ function bindEvents() {
 
 document.addEventListener("DOMContentLoaded", () => {
   hydrateAdminSession();
+  ensureVideoPrivacyControl();
   bindEvents();
   if (pageName === "cameras") setCameraMode("lan");
   updatePreviewAlgorithmInfo();
-  refreshAll();
+  loadVideoPrivacyMode({ refreshStream: false })
+    .catch(() => null)
+    .finally(() => refreshAll());
   if (pageName === "cameras" && $("cameraDiscoveryList")) {
     setTimeout(() => discoverCameras($("discoverCameras")).catch(() => renderCameraDiscovery()), 400);
   }
   state.refreshTimer = setInterval(() => {
+    if (pageName === "home") loadDevice().catch(() => null);
     if (pageName === "home" && state.selectedCameraId) {
       loadSnapshot(state.selectedCameraId).catch(() => null);
       loadEvaluation(state.selectedCameraId).catch(() => null);
     }
     if (pageName === "home" || pageName === "algorithms") {
-      if (pageName === "algorithms") loadRuntimeStatus().catch(() => null);
+      loadRuntimeStatus().catch(() => null);
       loadCandidates().catch(() => null);
       loadObservationLogs().catch(() => null);
       loadUploadQueueSummary().catch(() => null);
@@ -3163,6 +3380,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (pageName === "events") loadEventLog().catch(() => null);
   }, 6000);
+  state.privacyTimer = setInterval(() => {
+    if (!document.hidden) loadVideoPrivacyMode().catch(() => null);
+  }, 5000);
+  setInterval(renderPairingCountdown, 1000);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       stopLiveAnalysisLoop();

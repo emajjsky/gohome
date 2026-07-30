@@ -11,7 +11,7 @@ STREAM_DISTRIBUTION_PROFILES: dict[str, dict[str, Any]] = {
     "default": {
         "label": "default",
         "distribution": "mjpeg",
-        "fps": 8,
+        "fps": 15,
         "width": 960,
         "height": 540,
         "quality": 60,
@@ -20,7 +20,7 @@ STREAM_DISTRIBUTION_PROFILES: dict[str, dict[str, Any]] = {
     "detail": {
         "label": "detail",
         "distribution": "mjpeg",
-        "fps": 8,
+        "fps": 24,
         "width": 960,
         "height": 540,
         "quality": 60,
@@ -29,7 +29,7 @@ STREAM_DISTRIBUTION_PROFILES: dict[str, dict[str, Any]] = {
     "monitor": {
         "label": "monitor",
         "distribution": "mjpeg",
-        "fps": 8,
+        "fps": 30,
         "width": 1280,
         "height": 720,
         "quality": 70,
@@ -38,7 +38,7 @@ STREAM_DISTRIBUTION_PROFILES: dict[str, dict[str, Any]] = {
     "mobile": {
         "label": "mobile",
         "distribution": "mjpeg",
-        "fps": 8,
+        "fps": 24,
         "width": 640,
         "height": 360,
         "quality": 55,

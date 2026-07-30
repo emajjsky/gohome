@@ -10,9 +10,6 @@ from pathlib import Path
 from typing import Any
 
 
-FOREIGN_PATH_MARKERS = ("/opt/homebrew/", "/Users/", "\\\\Users\\\\")
-
-
 def read_env(root: Path) -> dict[str, str]:
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
@@ -34,6 +31,18 @@ def import_version(module_name: str) -> str:
     return str(getattr(module, "__version__", "installed"))
 
 
+def configured_runtime_paths(cfg_text: str) -> list[Path]:
+    paths: list[Path] = []
+    for raw_line in cfg_text.splitlines():
+        key, separator, raw_value = raw_line.partition("=")
+        if not separator or key.strip() not in {"home", "executable"}:
+            continue
+        value = raw_value.strip()
+        if value:
+            paths.append(Path(value))
+    return paths
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify the Raspberry Pi vision runtime before service start.")
     parser.add_argument("--require-yolo", action="store_true")
@@ -53,14 +62,31 @@ def main() -> int:
 
     cfg_path = Path(sys.prefix) / "pyvenv.cfg"
     cfg_text = cfg_path.read_text(encoding="utf-8", errors="replace") if cfg_path.exists() else ""
-    foreign_marker = next((marker for marker in FOREIGN_PATH_MARKERS if marker in cfg_text), "")
+    expected_prefix = (root / ".venv").resolve()
+    active_prefix = Path(sys.prefix).resolve()
+    runtime_paths = configured_runtime_paths(cfg_text)
+    missing_runtime_paths = [str(path) for path in runtime_paths if not path.exists()]
+    environment_ok = bool(
+        cfg_path.is_file()
+        and active_prefix == expected_prefix
+        and runtime_paths
+        and not missing_runtime_paths
+    )
     add_check(
         checks,
         "python_environment",
-        not foreign_marker,
-        f"{sys.executable} ({platform.system()} {platform.machine()})"
-        if not foreign_marker
-        else f"foreign path marker found in {cfg_path}: {foreign_marker}",
+        environment_ok,
+        (
+            f"{sys.executable} ({platform.system()} {platform.machine()})"
+            if environment_ok
+            else json.dumps({
+                "active_prefix": str(active_prefix),
+                "expected_prefix": str(expected_prefix),
+                "config": str(cfg_path),
+                "configured_runtime_paths": [str(path) for path in runtime_paths],
+                "missing_runtime_paths": missing_runtime_paths,
+            }, ensure_ascii=False)
+        ),
     )
 
     yolo_model = root / str(env.get("GOHOME_YOLO_MODEL") or "yolo11n.pt")
