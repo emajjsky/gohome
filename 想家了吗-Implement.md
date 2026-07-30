@@ -11445,7 +11445,45 @@ Hailo 统一运行：
 
 - 根因是云端绑定已撤销后，隐私更新先请求云端并在 401 时提前失败；全局最小隐私级别仍停留在 `skeleton`，所以页面即使选择 `person_blur`，最终也会继续输出骨架模式。旧骨架渲染器还会先模糊人物再画骨架，进一步造成两个按钮视觉相同。
 - 配置同步改为本地先应用并持久化。云端不可用时接口返回本地成功、`synced=false` 和待同步错误；正式绑定恢复后再同步并清除错误，不能因公网故障阻断局域网隐私切换。
-- `original` 保留原画；`person_blur` 只模糊可信人物且不画骨架；`skeleton` 用不透明中性遮罩移除人物外观后再绘制骨架，背景保持原画。三种模式现在互斥且可辨认，安全推理始终使用未处理原始帧。
+- `original` 保留原画；`person_blur` 只模糊可信人物且不画骨架；`skeleton` 删除人物像素，以该摄像头积累的无人物背景恢复场景后只绘制骨架，禁止矩形填黑或模糊人物。三种模式互斥且可辨认，安全推理始终使用未处理原始帧。
+
+## 129. 2026-07-28 骨架替身背景重建与同帧隐私修正
+
+问题根因：
+
+- `PrivacyFrameRenderer._render_skeleton()` 原来对每个人物框调用 `_shield_region()`，把扩展后的完整矩形填成深灰色，再在矩形上绘制骨架。这既不是“骨架替换人”，也破坏了房间场景连续性。
+- 模糊模式与骨架模式的模型输入没有冲突，错误完全位于视频输出渲染层；因此本轮不修改 Hailo Pose、EACP、规则、事件、日志和云端多模态链。
+
+实现：
+
+- 新增 `app/vision/privacy_background.py`，按 `camera_id + width + height` 保存无人物背景，使用 LRU 将状态限制为最多 6 份，并提供摄像头重置和内存状态。
+- 骨架模式先建立人物隐私蒙版，再用该机位的干净背景替换人物区域，做有限照明匹配和边缘合成，最后绘制骨架及头部轮廓。原矩形 `_shield_region()` 已删除。
+- 首次没有干净背景时使用 OpenCV 场景修复生成不含人物像素的临时背景；只有连续 3 帧画面稳定且无人物才升级为真实背景，防止单帧漏检把人物残影写入背景。存在人物框但无可用姿态时仍隐藏人物，不绘制伪骨架。
+- 背景重建只处理对外视频帧，正式安全推理继续读取原始图像。人物模糊路径保持独立，三个隐私模式没有共享视觉效果。
+- `ContinualPoseTracker.latest_synchronized_frame()` 保留模型确认空场景、observed、tracked 和 coasting 的同帧像素及轻量上下文；`people` 进入显示上下文，使“有人框但无骨架”的人物仍被隐藏。
+- `PrivacyFrameRenderer` 只消费该同步包。当前摄像头 JPEG 只用于确定输出尺寸，不能再和异步 `latest_metadata()` 拼接；没有同步包时使用最近可信背景，没有背景时输出全帧中性安全色，禁止回退原画。
+- 人物模糊模式也在模型确认无人时预热背景。空场景使用 `frame_id` 去重，同一锚点被多个客户端或模式重复读取不能累计成 3 帧背景确认。
+
+验证与部署：
+
+- `verify-video-privacy.py` 增加真实背景恢复、非平坦矩形、首次安全兜底、状态边界、摄像头重置和最多 6 份背景回归，树莓派实机脚本通过。
+- 640x360 合成帧的完整 JPEG 解码、背景替换、骨架绘制和重新编码中位约 12.8 ms、P95 约 13.8 ms；单份背景约 691200 字节。
+- 仅部署 `privacy_background.py`、`privacy_stream.py` 和对应验证脚本，备份位于 `/home/gohome/gohome/edge-agent/backups/privacy-20260728-203338`；服务重启后 Hailo Pose/Object 均为 ready，Pose 中位约 13.98 ms，正式失败为 0。
+- 首轮真人输出抓取发现原实现不合格：camera 29 中人物保持可见、骨架和背景替换位于人物之前的位置，camera 30 存在人物可见但无骨架。这证明旧 `PrivacyMjpegStream/LiveRelay` 使用当前 JPEG 加异步姿态元数据，构成隐私泄露。发现后立即通过设备正式云端接口把 family 2、盒子和两路 App 中继统一降为 `person_blur`。
+- 同帧修复新增错帧泄露回归：构造“当前人物在右侧、旧姿态在左侧”的输入，输出必须忽略异步当前帧；同步包不可用时输出空间上均匀的安全帧。连续姿态、共享摄像头、节拍、同帧 API、视觉管线和 Python 编译回归通过。
+- 第二轮实机抓取在 camera 29 取得 241 帧，确认人物消失且骨架同步，但首次场景修复在左侧墙面留下发虚区域。随后增加模糊模式背景预热和锚点去重。
+- 最终实机抓取 200 帧，横向行走覆盖画面右侧、中部、沙发前和左侧边缘；选取的最高运动帧均只显示骨架，人物衣物、面部和肢体纹理不可见，电视墙、门框、地面和沙发保持清晰，无黑框、模糊补丁或旧位置骨架残留。该验收证明固定机位背景重建和同帧骨架替身可用。
+- 已通过 App 正式登录、播放票据、HTTPS MJPEG 和公网 `cloud_relay` 链路完成最终一致性验收。云端、盒子与两路 App 中继均为 `skeleton`，动态人物像素被完整移除，骨架随人物横向移动，Hailo Pose/Object 正式推理失败均为 0。
+- 动态验收曾捕获一帧姿态锚点交接时的旧空背景闪回。`PrivacyFrameRenderer` 已升级为 `privacy-frame-renderer-v5`，新增按摄像头和分辨率隔离、最多 6 份的最近安全场景缓存；缓存内容是完成去人但尚未绘制骨架的场景，丢锚时不得复用旧骨架或回退当前原画。
+- EACP idle 阶段补齐可信空场景契约：只有 Hailo 后端状态为 `ready`、`person_count=0` 且 `people=[]` 时，`pose_model_status=disabled` 的人物探测帧才可进入同步缓存。检测到人物后先输出安全场景，再由 active 节拍取得新鲜姿态锚点，避免服务重启后长期停留在中性兜底画面。
+- 最终公网静态复验对 camera 3、4 各连续抓取 32 帧，两路时间戳持续前进、房间场景实时更新，无中性画面或旧背景闪回；运行状态为 `online / synced / cloud_relay / skeleton`。本阶段骨架替身隐私链路完成，实例分割仍保持按可复现缺口启用的边界。
+- 修复重启后 21:40 的 camera 29 真人走动序列由事件驱动存储保留 11 张人物帧：21:40:27 至 21:40:34 为 8 张新鲜 `ready` Hailo 姿态锚点，序列首尾为受限跟踪帧，21:40:37 后连续恢复明确无人。用线上同一份 `privacy-frame-renderer-v5` 和每帧原子姿态元数据复放，人物从右侧、左侧到中央的全部帧均只显示随动骨架，衣物、面部和肢体纹理不可见，无旧人物、旧骨架或中性画面闪回；该序列未触发跌倒候选。
+- 最终稳定性检查：服务保持 `active` 且异常重启数为 0，进程 CPU 约 41%、RSS 约 283MB、温度 61.5 摄氏度、`throttled=0x0`；57GB 数据分区使用 23%，快照约 501MB、数据库约 582MB。Hailo Pose 累计 5241 次、Object 累计 1974 次正式推理均为 0 失败，配置同步、两路云中继和连续姿态错误均为空。
+
+下一步边界：
+
+- 盒子已安装 `/usr/share/hailo-models/yolov5n_seg_h8.hef`。实例分割用于把背景替换从扩展人物框细化为人物像素轮廓，应与 Pose/Object 共用现有 `GOHOME_SHARED` VDevice 并低频刷新蒙版，禁止运行独立 `hailo-seg` 服务争抢设备。
+- 固定摄像头的干净背景已经实现产品定义。实例分割不再作为立即前置项，只在动态背景、机位变化或遮挡造成可复现接缝时按需接入；不得为展示模型数量增加常驻 Hailo 负载。
 
 EACP 口径：
 
@@ -11478,3 +11516,440 @@ EACP 口径：
 - `verify-activity-interval-outbox.py` 覆盖姿态切段、离线间隙、人物离开、运行状态关闭、无媒体任务、云端 camera ID 映射和批量上传；模拟 HTTP 401 后任务保持 `failed`、保留原 payload 并写入 `next_attempt_at`，不会误标完成或丢失区间。
 - `verify-observation-coverage.py` 覆盖有效桶、人物样本、历史最后见人合并、黑屏降低覆盖率和摄像头 reset；原自适应持久化、worker、上传和配置同步回归通过。
 - 当前未部署盒子，未修改运行中的 Hailo/EACP/跌倒规则。设备 token 仍为 revoked，真实活动区间上传与云端报告必须等安全重新绑定后验收。
+
+## 128. 2026-07-28 多模态通知决策与 30 FPS 边界收口
+
+### 通知状态机
+
+- `local-app-server/server.js` 将 SafetyIncident 通知策略统一为 `confirmed-once-v1`。多模态 `person_count / posture / surface / emergency / confidence / reason / suggested_event_type` 原样保留到事件；`verifying / uncertain / rejected` 只记录，只有首次 `confirmed` 创建一条 incident 级幂等消息和一次投递。
+- 删除 `createIncidentReminderMessage()`、分钟桶和调度器持续提醒循环；进一步删除关怀调度器的全部历史事件补发分支。事件消息只在事件首次创建或首次 confirmed 时产生，后台调度不再把任何旧事件重新包装为 `event-alert`。
+- App 消息接口不再把缺少持久化消息的历史事件临时合成为开放消息。事件历史只在事件页展示；通知页只展示真实持久化且符合状态过滤的消息。
+- 多摄像头相关事件继续共享一个 incident。通知状态写入 `incident.notification`，包含 policy、decision、reason、message_id、notified_at 和 delivery_count，模型重跑与后续证据可审计但不能重复通知。
+- 长时间未见由独立的有效观察覆盖率规则确认后通知一次；视觉事件在多模态不可用或证据缺失时只记录，不能绕过复核。旧分钟提醒和旧 rejected/uncertain 结果消息只归档，事件、证据和投递审计不删除。
+
+### 回归
+
+- `verify-local-app-server.js` 新增三种真实编排探针：`confirmed` 验证唯一消息与唯一投递，`rejected` 验证事件保留且消息/投递计数不变，`uncertain` 验证事件保留且不通知。
+- 后台调度回归要求 `incident_reminders_created=0` 且不存在 `generated_by=incident-reminder`；PostgreSQL seed bundle 与恢复映射继续覆盖新增事件、媒体和模型任务。
+- `npm run verify:app-server` 通过；JavaScript 语法、差异空白检查通过。腾讯云已部署，生产调度从原 `family_id required for app message` 失败恢复为 succeeded，分钟提醒和历史事件补发计数均为 0。
+- 部署后的首个旧版本兼容周期曾回补 5 条历史摄像头离线消息；最终代码删除该旁路后，这 5 个明确消息 ID 已归档，原事件和投递审计保留。后续周期不会再次生成。
+
+### 30 FPS 结论
+
+- Hailo Pose 当前实机中位约 13 ms，说明 NPU 不是“只能几 FPS”。但现有本地同步流被 MJPEG 服务端编码上限限制在 15 FPS，公网 LiveRelay 是逐帧 JPEG 且配置 8 FPS；直接把两个数字改成 30 会增加 CPU 编码、上行带宽、队列延迟和热负载，不能形成稳定产品。
+- 产品可实现的目标是 `25-30 FPS` H.264/WebRTC 视频，加独立带时间戳的骨架数据通道，由客户端在 15-20 FPS 正式 Hailo 锚点之间做有界跟踪和插值，呈现 30 FPS 连续骨架。正式告警仍只使用新鲜 observed 锚点。
+- 单摄 25-30 FPS 正式姿态推理具备进一步压测价值；双摄各 30 FPS 正式推理尚无完整链路和热稳定证据，不能承诺。下一步先恢复云端绑定并完成当前 Hailo 端到端验收，再实施 MediaMTX/go2rtc/WebRTC 与客户端同步渲染。
+
+## 130. 2026-07-28 独立姿态通道与 iOS 30 Hz 骨架呈现部署
+
+### 架构与隐私边界
+
+- 当前摄像头实际源流为 HEVC 15 FPS。本阶段不引入 MediaMTX/go2rtc，也不把客户端 30 Hz 骨架绘制写成 30 FPS 视频；视频继续以真实源帧率、低积压和可恢复为目标。
+- 盒子新增 `PoseRelayAgent`，直接消费 `ContinualPoseTracker` 的 `observed / tracked / coasting / empty` 状态，生成不含像素的 `eacp-pose-relay-v1` 姿态包。每包最多 4 人、每人最多 24 个关键点，按状态和帧 ID 去重，并保持独立长连接会话。
+- 所有姿态包固定为 `display_only=true / formal_evidence_eligible=false`。KLT、coasting 和客户端插值不进入跌倒、恢复、多模态或通知证据；正式事件仍只接受新鲜 Hailo `observed` 锚点、同轨迹时序、规则状态和云端复核。
+- `LiveRelayAgent` 在骨架隐私模式下最多每秒上传一次已经去除人物像素且尚未绘制骨架的安全场景。安全场景上传失败与现有 MJPEG 中继隔离，不能拖断视频或算法主循环。
+
+### 云端与 iOS
+
+- 腾讯云新增设备鉴权的 `/api/v1/device/live-poses/upload` 与 `/api/v1/device/live-scenes/upload`，以及播放票据保护的 `/api/v1/video/cameras/:id/pose-stream` SSE 和 `/api/v1/video/cameras/:id/scene.mjpg`。姿态正文上限 96KB，场景必须为不超过 2MB 的完整 JPEG。
+- 姿态 TTL 为 1.5 秒，过期只发送一次 `expired` 清场；安全场景 TTL 为 30 秒。安全场景流禁止回退原画、旧事件截图或历史 snapshot，骨架模式的播放会话明确返回 `display_transport=safe-scene-pose-v1`。
+- 原生 iOS 的一个播放会话同时创建安全场景 MJPEG 与姿态 SSE。`TimelineView + Canvas` 以 30 Hz 绘制，用约 67ms 有界展示延迟插值前后姿态包，坐标变换与视频 aspect-fill 裁剪一致；姿态通道故障不终止视频 watchdog、重连、切摄像头或前后台生命周期。
+
+### 回归、部署与实测
+
+- 边缘姿态中继、安全场景故障隔离、隐私渲染、连续姿态、同步姿态流、自适应 worker、调度器和跌倒规则回归通过。云端 Node 全套 78 项中 77 项通过、1 项因测试环境无 PostgreSQL 跳过；iOS 118 项中 117 项通过、1 项为模拟器 Keychain entitlement 预期跳过。
+- 腾讯云生产文件已备份到 `/opt/gohome/backups/stage28-20260728-223536/server.js`，服务重启后公共 health 正常，新姿态与场景路由受鉴权保护。树莓派运行代码备份在 `/home/gohome/gohome/backups/stage28-20260728-224123`，运行模块经 checksum 对齐、全量 Python 编译和 `import app.main` 门禁后启动。
+- 实机两路 camera 29/30 均产生新鲜人物姿态：Hailo Pose 645 次成功、0 失败，中位 13.57ms、P95 32.81ms；Pipeline 中位 17.92ms、P95 67.29ms。两路姿态中继各约 295 包、错误数 0，安全场景上传成功且错误为空；进程约 42% CPU、RSS 约 245MB。
+- 最新原生包已使用开发者签名覆盖安装到 iPhone 15 Pro Max，未清除 App 数据。剩余验收是肉眼确认走动、转身、坐下、蹲下、离场和重新入场时的骨架贴合与清场，并记录首帧时间、长期延迟、温度、节流和隐私截图/视频；完成前不把阶段 28 标记为产品验收完成。
+
+## 131. 2026-07-28 活动轨迹姿态稳定器与伪区间清理
+
+问题与边界：
+
+- 阶段 28 真人走动后，盒子在约 5 分钟内生成 85 个活动区间，其中 80 个由 `posture_changed` 产生；平均持续 0.915 秒，最短 0.043 秒，主要在 `standing / sitting / unknown` 间往返。这是逐帧姿态标签抖动，不是有康养价值的生活轨迹。
+- 修正只位于活动日志导出层，不修改 Hailo Pose、EACP 连续跟踪、PoseFactorGraph、跌倒规则、风险证据或多模态通知。安全事件仍按原高频链路运行，不能因日志降频漏掉跌倒。
+
+实现与验证：
+
+- `EdgeWorker` 新增独立活动姿态稳定器和 `GOHOME_ACTIVITY_POSTURE_STABILITY_SECONDS`，默认 5 秒。人物出现和离场即时开闭区间；同一可见状态下的姿态变化必须连续稳定 5 秒才切段，短暂 `unknown` 继承上一个可信姿态；摄像头禁用、删除或重置时同步清空 pending 状态。
+- health 的 persistence 区增加稳定窗和 pending 摄像头，便于验收。普通 10 分钟活动心跳、状态变化、outbox 幂等、断网退避和观察覆盖率保持原结构。
+- 回归覆盖单帧变化不落库、恢复原姿态不落库、`unknown` 不切段、稳定 5 秒后切段、离场即时收口；自适应持久化、活动 outbox、观察覆盖率和自适应 worker 四组脚本均通过。
+- 新版部署后 health 显示 `activity_posture_stability_seconds=5`，首批 41 次分析为 0 图片、0 活动区间；Hailo、配置同步、两路姿态与安全场景中继均正常。
+
+数据清理：
+
+- 云端先备份 `/opt/gohome/backups/activity-jitter-20260728-225900.sql`，再按本轮部署时间窗和 `metadata.close_reason=posture_changed` 删除 80 条伪区间；5 条 `person_not_visible` 真实离场段保留。
+- 盒子使用 SQLite 在线 backup API 备份到 `/home/gohome/gohome/backups/activity-jitter-20260728-225900/agent.db`，删除对应 80 个已完成 outbox job，保留 5 个离场 job。事件、快照、检测结果、风险证据和其他历史记录均未删除。
+
+## 132. 2026-07-28 真人正常动作误报与通知策略生产修正
+
+现场反证：
+
+- 用户只执行走动、转身、坐下、下蹲、离场和重新入场，没有模拟跌倒；盒子仍生成事件 `2161`，云端生成事件 `298`，并发送 `edge-event-event:2161` 与 `incident-verification-incident-event:2161-uncertain` 两条通知。
+- 证据显示同一轨迹在 `standing / bending / lying / squatting` 间抖动，事件确认持续仅 `0.134s`。垂直下降为 `0.1724`、运动分数仅 `0.0049`、身体旋转未确认，transition 的 reason 为 `insufficient_descent`，却被旧逻辑写成 `confirmed=true`。
+
+边缘根因与修正：
+
+- 旧 `RuleEngine` 把任意 `fast_fall_candidate` 直接并入 `transition_confirmed`，随后两帧即可走 `fast_factor_graph` 路径，绕过下降/旋转证据和最短持续时间。
+- 因子图继续只负责生成可解释因素，不拥有告警权。只有 `review_ready + quality_gate + required_factors_confirmed` 可立即建立云端复核事件；非立即路径必须满足规则层下降/旋转，或满足因子图“持续地面躺卧且曾下降”的时序证据。
+- 非立即 fast-factor-graph 路径新增固定 `0.75s` 最短连续时间并保持至少两帧；普通标准路径不能复用 fast 标志绕过该门槛。新增与现场一致的低运动、下降不足、两帧间隔 `0.134s` 回归，要求不生成事件且保留 `insufficient_descent`。
+
+云端根因与修正：
+
+- 原生服务分支仍保留旧旁路：多模态任务因缺少事件图片返回 `unavailable` 时，事件接收层先生成 edge-event 通知，随后 `uncertain` 状态又生成第二条验证结果通知。
+- 视觉事件的 `verifying / pending / retrying / uncertain / unavailable / failed / rejected` 统一为 record-only。只有事故第一次进入 `confirmed` 才创建 `incident-alert-{incident_id}`，投递继续使用同一 message ID 的目标级幂等键。
+- 删除分钟事故提醒器和调度循环；后台关怀调度不再重复发送未确认视觉事件。长时间未见仍由独立覆盖率规则首次确认时通知一次。
+
+验证、部署与审计：
+
+- 边缘跌倒、PoseFactorGraph、自适应调度、活动 outbox、观察覆盖率回归通过；树莓派 `.venv-pi` 的 worker 实机回归通过。云端完整 Node 测试 80 项中 79 项通过，1 项仅因本机无 PostgreSQL 测试连接跳过；综合服务回归通过。
+- 腾讯云备份位于 `/opt/gohome/backups/stage29-20260728-232322`，盒子代码和数据库备份位于 `/home/gohome/gohome/backups/stage29-20260728-232322`。按云端先、盒子后的顺序部署，两个服务均 active、异常重启数 0。
+- 事件 `298/2161` 已标记 `false_positive`，两条错误消息已归档；事件、姿态、规则、多模态结果和投递记录均保留。盒子温度 `60.4C`、`throttled=0x0`。
+- 云端后台调度器原来直接读取未被 legacy PostgreSQL store 水合的 `activity_intervals`，每分钟触发 `undefined.filter`；改为 `NativeRepository.activityIntervalsForScheduler()`，JSON 与 PostgreSQL 都按家庭、上海自然日范围查询并保持时间排序。现网同时存在旧版 `activity-reporting.js`，与新版 server 的 `attention_items` 契约不一致并触发 `undefined.find`；同一部署单元已统一版本。
+- 修复后首次完整调度又暴露历史视觉候选旁路：旧的通用事件补发器为事件 `296/297/298` 创建 `event-alert-*`。统一入口现禁止 `fall_candidate / prolonged_floor_lying / fire_candidate` 走直接事件告警；这些事件只能由首次多模态 `confirmed` 生成事故级消息，`long_absence` 等非视觉规则仍保持首次告警。三条错误补建消息已归档，失败投递和事件审计保留。
+- 调度器仓储范围、上海日期边界、视觉候选禁止补发、长时间未见单次告警和重复运行幂等回归均通过。腾讯云第二份备份位于 `/opt/gohome/backups/stage31-scheduler-20260728-233653`；生产连续三轮 `succeeded`，最近两轮消息、事件告警、事故提醒和投递新增数均为 0，日志无 scheduler failed。
+- 23:25 的负例尝试只形成 camera 29 的 `0.804s / unknown` 人物区间，连续姿态 observed/tracked 计数为 0；虽然没有新增跌倒事件或推送，但画面没有形成足够人物覆盖，因此不能记为负例通过。必须在骨架清晰跟随的前提下重新执行正常动作序列。
+- 23:51 按相同动作重新执行后覆盖有效：camera 29 形成约 47 秒连续人物区间，camera 29/30 的 EACP 累计达到 `483/197 observed`、`167/169 tracked`，离场后区间均以 `person_not_visible` 正常关闭；5 个活动区间全部上传云端完成。
+- 本轮保存 51 张风险上下文帧。下蹲过程中一帧姿态头输出 `lying / pose_fall_candidate=true`，但垂直下降仅 `0.0158`、运动证据为 false；下一帧下降为 `0.1128`，仍低于 `0.12` 门槛，`required_factors_confirmed=false / review_ready=false`。51 条 RuleEvaluation 的匹配规则、候选和正分评估均为 0，EventCandidate 为 0，证明规则层正确吸收了单帧姿态误判。
+- 23:51 负例验收结果：边缘 Event 新增 0、云端 Event 新增 0、AppMessage 新增 0、NotificationDelivery 新增 0；Hailo Pose/Object 失败均为 0，配置同步、视频中继和姿态中继错误均为空。阶段 31 正常动作负例通过。
+- 本阶段尚未宣布跌倒正例通过。必须先完成一轮走动、转身、坐下、下蹲、离场/入场负例且无正式跌倒事件，再执行一次低风险模拟跌倒，要求三帧证据、多模态 confirmed、事故级单次通知和恢复时间线完整。
+
+## 133. 2026-07-29 跌倒正例时间线、证据编排与恢复判定修正
+
+正例时间线：
+
+- 23:54 的低风险模拟形成边缘事件 `2162` 和云端事件 `299`。同轨迹最后一次下蹲位于 `23:54:48.695`，首次躺倒位于 `23:54:49.588`，快速下降阶段约 `0.893s`；边缘事件在 `23:54:49.811` 建立，即正式躺倒姿态出现后约 `0.223s`。因此“一秒级摔倒”已被高频姿态链捕获，不能把安全模拟动作的总时长误写成算法必须等待的确认时间。
+- 事件使用 Hailo 后端，单次姿态推理 `16.47ms`，当时累计成功 `8546`、失败 `0`。证据窗口保留站立、下蹲、躺倒三张关键帧；规则门禁为 `required_factors_confirmed=true / review_ready=true`。
+
+根因与结构修正：
+
+- 原上传队列虽然给媒体更高优先级，但先提交 `event_upload` 数据库事务，再逐项提交媒体任务；上传线程可在事务间隙抢到事件。事件于 23:54:50 到云端，三张图在 23:54:52-55 才到，云端因此先写入 `missing_event_evidence` 且没有自动重试。
+- 边缘端现先持久化全部媒体任务，最后才公开事件任务；事件上传器还会检查同事件所有媒体任务均为 completed，否则保留事件并退避重试。当前帧同时保留真实抓拍时间，禁止以网络上传时间替代动作时间。
+- 云端新增事件证据归并器，以 `edge_event_id + edge_device_id + family_id` 关联迟到媒体，按 temporal bundle 和角色恢复 before/transition/current，三帧齐备后才创建多模态任务。服务重启和定时任务也会恢复历史 `missing_event_evidence / waiting_evidence`，但同一事件只允许一个模型任务。
+- 媒体 PostgreSQL 元数据新增 `evidence_frame_role` 持久化与水合；历史缺失角色可由 temporal bundle 的 snapshot path 恢复，不改写原图和事件审计。
+- 原恢复判定只要求同轨迹两帧 standing/sitting。事件 `2162` 在躺倒后约 `0.54s` 被姿态抖动识别为 sitting，但人体中心仅抬升画面高度约 `3%`，仍被误写为恢复。新判定要求同轨迹、站/坐姿态、相对地面参考中心至少抬升 `8%`，并连续稳定至少 `1.5s`；过渡低姿态、边缘裁切和抬升不足均保持地面事件开放。
+
+回放与验证：
+
+- 保存的三张事件证据已在生产自动归并并重新复核。Qwen 返回 `posture=fallen / surface=floor / emergency=true / confidence=0.96`，云端事件 `299` 进入 confirmed。
+- 数据库稳定为三张证据、一个模型任务、一条事故消息和一条通知投递，没有重复任务或重复通知。原错误恢复记录作为历史反证保留，不伪造为新版恢复验收结果。
+- 通知投递因现有 iPhone token 的 `token_ciphertext` 为空而失败；哈希不能反解原 token，必须由 App 再次向系统取得 APNs token 并登记。该失败没有触发重复发送。
+- PoseFactorGraph 新增“同轨迹 sitting 但仅抬升 3%”回归并正确拒绝恢复；上传队列、上传器、跌倒规则、运行留存和告警去重回归通过。云端 Node 测试 80 项中 79 项通过、1 项因本机无 PostgreSQL 地址跳过；综合接口验证包含“事件先到、三图后到”并确认只生成一次复核和一次通知。
+- 部署前备份：盒子 `/home/gohome/gohome/backups/stage31-evidence-recovery-20260729-0013.tar.gz`，云端 `/opt/gohome/backups/stage31-evidence-recovery-20260729-0013.tar.gz`。部署后两个服务均 active。
+
+当前边界：快速下降捕获、三图证据、多模态 confirmed 和 confirmed-only 幂等已通过；正式阶段仍需 App 重新登记 APNs token 后验证系统通知实际到达，并用新版恢复门禁完成一次同人稳定起身时间线。完成前阶段 31 正例保持“部分通过”。
+
+### APNs 原事故单次重投验收
+
+- 2026-07-29 07:49 App 重新登记 iPhone token 后，生产 `app_push_tokens.id=1` 恢复为 `active / sandbox`，加密密文长度为 129；服务端不保存或输出明文 token。
+- 复用原事故 `2162/299` 的既有投递 `34616`，先备份 PostgreSQL 到 `/opt/gohome/backups/apns-redelivery-20260729-080121.sql.gz`，再将同一记录恢复为 queued。没有新增 AppMessage、NotificationDelivery 或事故事件。
+- APNs 于 2026-07-29 08:01:27 接受请求，投递 `34616` 更新为 `sent`，HTTP 状态为 `200`，APNs ID 为 `5e52505f-3f81-4f9d-bb06-e1eeca089c4f`。数据库保持事故消息 1 条、投递 1 条。
+- `sent` 只表示 APNs 接受请求，Apple 不提供终端送达回执，因此 `delivered_at` 保持为空。用户随后确认 iPhone 已实际展示该系统通知，本次可按“APNs 接受 + 真机现场确认”记为通过；数据库字段仍不伪造设备送达时间。
+
+## 134. 2026-07-29 稳定躺倒证据延迟取帧与恢复门禁实机复验
+
+### 恢复门禁正反例
+
+- 边缘事件 `2174`（云端事件 `314`）在人物低位坐起时，人体中心相对地面参考仅抬升 `1.70%-4.99%`，正确拒绝恢复；随后直立抬升达到 `19.46%`，但同轨迹稳定时间只有 `0.438s`，下一帧又进入画面边缘裁切，因此该事件保持未恢复。该结果验证了“明显抬升但稳定不足或边缘裁切不能结案”的负门禁。
+- 边缘事件 `2173`（云端事件 `312`）提供独立正例：同轨迹 `c30-p2926` 由地面状态坐起，中心抬升 `18.49%` 并连续稳定 `1.598s`，恢复被正式确认。两个真实事件共同覆盖低位坐姿抖动拒绝、稳定起身确认和同轨迹约束，不再需要用历史错误恢复记录充当通过证据。
+
+### 事件 2174 多模态驳回根因
+
+- 事件 `2174` 的边缘规则判断本身成立：同轨迹 `c29-p2946`、垂直下降 `0.2177`、快速跌倒因子分 `0.9632`，事件在正式躺姿出现后快速建立。云端 Qwen 返回 `posture=bending / emergency=false / confidence=0.95`，因此事件只保留记录，没有创建消息或通知，符合 confirmed-only 策略。
+- 原始三帧发生在 `20:23:38.127 / 20:23:39.008 / 20:23:39.213`。transition/current 中人物双脚仍着地、双手撑地，真正稳定躺倒出现在稍后的 `20:23:40.472`；云端模型当时没有收到这一帧。根因是事件建立时立即冻结证据窗口，不是任意调整模型结论可以解决的问题。
+
+### 持久化延迟取证器
+
+- 跌倒事件继续立即持久化，但不再立即公开媒体和事件上传任务；边缘端先写入一个 `event_evidence_finalize` 持久化任务。任务在有界 settle 窗口后，从同一 `track_id` 的风险快照中选择最早稳定 `lying` 帧，再生成固定三角色 `before / transition / current` 和一个事件上传任务。
+- finalizer 使用 `role-aware-post-settle-v3`，只替换过早的 current，不改变 before/transition 语义；事件上传、三张媒体上传和 finalizer 均使用原 outbox 幂等键，进程重启后可继续执行。非跌倒事件保持原上传流程。
+- 使用 SQLite online backup 创建生产数据库副本后回放事件 `2174`，没有修改生产历史。finalizer 返回 `same_track_settled_lying`，选中快照 `751000`（`camera_29/20260729_202340_466350.jpg`，`20:23:40.472`）；输出仍严格为三张媒体和一个事件任务。该回放证明新策略能把真实稳定躺倒帧交给多模态模型，但不能冒充新代码下的现场端到端正例。
+
+### 回归、部署与当前稳定性
+
+- 上传队列、上传器、跌倒规则、PoseFactorGraph、自适应持久化/worker、连续跟踪、运行留存、上传锁重试、活动 outbox、姿态中继、安全场景中继和视频隐私回归均通过。第一次部署因盒子上旧版恢复测试只等待 `1s`、短于正式 `1.5s` 门禁而自动回滚；更新永久回归后重新部署通过，未降低正式恢复阈值。
+- 当前盒子备份为 `/home/gohome/gohome/backups/stage32-evidence-settle-20260729-2042.tar.gz`。部署文件 checksum 与工作区一致，`gohome-edge-agent` active，Hailo-8 可识别，Pose/Object 推理失败均为 `0`。
+- `20:35` 的真人正常走动和沙发附近坐下/俯身形成两路有效人物区间。camera 30 曾有一帧姿态头输出 lying，但同轨迹垂直下降只有 `0.0725`，低于正式 `0.12` 门槛，后续规则候选、边缘事件、云端事件、消息和通知新增均为 `0`；画面复核确认这是一轮正常动作，负例正确吸收。
+- 当前遗留性能项是媒体上传延迟：事件 `2174` 的三张小 JPEG 由单线程、默认 `5s` 周期串行上传，媒体全部完成约需 `18s`，事件上传约 `26s`，多模态完成约 `42s`。下一阶段先分别量化边缘传输和云端 PostgreSQL/COS 持久化耗时，再决定批量、唤醒或受控并发；不得在没有容量与幂等证明时直接增加上传线程。
+- 腾讯云生产 `local-app-server/server.js` 已包含 APNs、原生媒体和事件编排能力，明显新于工作区同名文件。后续必须先将生产权威源码安全归档回工作区并核对差异，禁止用当前本地副本覆盖腾讯云。
+
+当前边界：恢复门禁已经由真实正反例通过，稳定躺倒帧 finalizer 已完成代码、回归、部署和生产数据副本回放；尚缺新代码部署后的一次自然正例来验证“延迟取帧 -> 三图上传 -> 多模态 -> 单次通知”现场全链路。稳定性观察与上传延迟剖析继续进行，期间不修改算法阈值。
+
+## 135. 2026-07-29 上传任务租约与崩溃恢复（本地完成，未部署）
+
+### 根因与边界
+
+- 生产 SQLite 有 4 个历史任务永久停在 `uploading`。现有领取逻辑只读取 `pending / failed`，进程在网络请求后、完成落库前退出时，任务不会再次被领取。
+- 其中事件 `2067` 的三张媒体已经全部存在于云端，卡住的 transition 路径也有完全匹配的云端资产；直接把历史任务改回 pending 会重复创建 COS/媒体记录。其余三个任务属于已删除摄像头的过期状态。四项必须先备份并写审计原因，再单独退役，不能由通用恢复器盲目重传。
+
+### 本地实现
+
+- `upload_jobs` 增加 `claim_token / claimed_at / lease_expires_at`。新任务领取时生成当前 worker 唯一令牌和默认 120 秒租约；租约明确过期后，新进程才可重新领取并增加 attempt。
+- 完成和失败落库必须匹配当前领取令牌。旧进程即使在租约过期后返回，也不能覆盖新领取者的状态。
+- 历史 `uploading` 任务迁移后没有租约，恢复查询会主动忽略，保留给人工审计；这避免在云端媒体幂等完成前重传已成功但本地未落账的图片。
+- 新增 `verify-upload-lease-recovery.py`，覆盖重启后过期领取、旧令牌拒绝、有效令牌完成和历史无租约任务隔离；上传锁、事件三帧队列、上传器及运行留存回归继续通过，Python 编译和差异空白检查通过。
+
+当前边界：租约状态机只在工作区，未部署盒子。部署前必须先把腾讯云生产权威源码结构化归档回仓库，为媒体接口增加基于设备、边缘事件、快照路径和证据角色的服务端幂等，再备份 SQLite 并退役四个已核实孤儿任务。
+
+## 136. 2026-07-29 多人身份门禁与 30 分钟稳定性复验
+
+### 30 分钟运行观察
+
+- 同一服务进程完成 7 个采样点，PID 未变化，`gohome-edge-agent` 没有异常重启；两路摄像头在观察结束时均保持 active。期间出现短暂摄像头/配置读取超时，但实时中继自行恢复，没有人工重启。
+- 进程 CPU 从约 `29.2%` 上升到真人动作阶段约 `42.9%`，RSS 从 `303616KB` 增至 `334432KB`，温度从 `54.5C` 升至 `59.5C`，没有热节流迹象。
+- Hailo Pose 中位延迟约 `13.45ms`、失败 `0`；Object 中位延迟约 `33.58ms`、失败 `0`；视觉管线中位延迟约 `16.34ms`、P95 约 `49.82ms`。该结果证明当前双路自适应链可持续运行，但不等同于 24 小时老化测试。
+
+### 事件 2175/315 与 2176/316
+
+- 两次现场均为“沙发上已有躺卧者，同时另一人在画面边缘走动”，不是真实地面跌倒正例。延迟取证器都正确完成 `role-aware-post-settle-v3`，选出稳定 lying 当前帧，固定上传 before/transition/current 三张证据和一个事件。
+- 云端 Qwen 两次均返回 `posture=lying / surface=sofa / emergency=false / confidence=0.95`，事件只保留审计，不创建消息和通知；confirmed-only、多模态排除和单次通知边界工作正确。
+- 边缘端仍暴露身份错误。事件 `2175` 将左侧行走者的 `c29-p34` 继承给沙发躺卧者；生产框从 `[17.5,91.5,64.2,213.8]` 跳到 `[73.1,211.0,150.1,265.2]`，约 `0.72s` 内无有效重叠且中心距离约 `0.264`。事件 `2176` 明确给出 `track_identity_missing`，但因子图仍覆盖门禁生成正式事件。两项都不能记为正例通过。
+
+### 双层身份修复
+
+- 展示连续性和安全身份连续性分离：只有 KLT 状态为 `tracked`、不少于 6 个有效点、前后向误差不超过 `1.8`、几何缩放处于 `0.65-1.45` 且非 stale 时，才允许为突发站立到低姿态变化提供经过验证的身份桥。
+- 对低重叠且中心跳变过大的突发姿态变化，未经验证的展示 hint 不得继承安全 track，必须创建新轨迹；事件 `2175` 的生产框序列已固化为回归，验证新躺卧者不继承站立基线、垂直下降为 `0`、`review_ready=false`。
+- 多人场景下 `track_identity_missing` 成为 RuleEngine 硬门禁，因子图不得覆盖；沙发正常躺卧抑制继续生效。经过 KLT 质量门禁的快速同人跌倒仍可保持身份，不以压低检测灵敏度换取误报下降。
+- 定向和扩展回归、Python 编译及差异检查均已通过；过期的告警聚合回归已按阶段 32 的 finalizer 契约更新，验证聚合先写事件、finalizer 后生成的云端任务携带最新聚合，不改生产语义。
+- 部署前使用 SQLite online backup 及逐文件备份保存到 `/home/gohome/gohome/backups/stage32-identity-gate-20260729-identity-gate-2134`。仅替换 `temporal.py / worker.py / rule_engine.py` 和三份永久回归，未部署本地上传租约或云端文件。
+- 部署后盒子 checksum 与工作区一致，服务 PID 为 `25095`、异常重启 `0`；Hailo Pose/Object 均为 ready、失败 `0`，双摄与姿态中继 active。现场仍须先复验“沙发躺卧者 + 走动旁观者”零事件，再执行安全地面正例。
+
+### 部署后多人沙发负例
+
+- `21:37` 现场按“一个人保持沙发躺卧、另一人来回经过”的顺序复验。camera 29 同时保持沙发人物轨迹 `c29-p4` 和走动人物轨迹 `c29-p11`；走动者离开后的 `21:37:50-53` 连续四次 RuleEngine 明确返回 `track_identity_missing / confirmed=false / inherited=false`。
+- 全序列 `fast_fall_candidate=false / review_ready=false`，有效垂直下降均远低于 `0.12`，边缘正式候选和事件相对基线 `128640 / 2176` 均为零新增。
+- 腾讯云在同一时间窗事件、AppMessage 和 NotificationDelivery 均为零新增。该结果证明生产问题中的多人身份缺失现在被硬门禁拦截，多模态不再被无效边缘事件打扰。
+
+### 部署后地面正例 2177/317
+
+- `21:41:27` camera 29 建立边缘事件 `2177`，目标为同轨迹 `c29-p28`；从站立基线到躺倒的垂直下降为 `0.1858`，超过正式门槛 `0.12`，水平距离 `0.0455`，动作年龄 `1.623s`，`confirmed=true / inherited=false`。
+- 持久化 finalizer 返回 `same_track_settled_lying`，选中 `21:41:28.519` 的快照 `752258`；策略为 `role-aware-post-settle-v3`，云端事件 `317` 恰好关联 before/transition/current 三个资产 `598/599/600`。五个边缘 outbox 任务均一次完成。
+- Qwen `Qwen3.5-27B` 一次复核成功，返回 `posture=fallen / surface=floor / emergency=true / confidence=0.98`，事故进入 confirmed。云端只创建 AppMessage `34608` 和 NotificationDelivery `34623` 各一条。
+- 首轮 APNs 自动发送因 HTTP/2 pending stream canceled 连续三次失败，真机确认未收到；先备份 PostgreSQL 到 `/opt/gohome/backups/apns-redelivery-2177-20260729-2148.sql.gz`，随后只恢复原投递 `34623` 并重载服务，没有新增消息或投递。APNs 在 `21:48:47` 返回 `200`，ID `05238928-b058-484d-9689-056d8bb2a3f7`，但用户随后确认通知中心最新可见消息仍为 `21:17`，没有看到本次 `21:41` 事故通知。因此只能记为 APNs 接受，不能记为真机送达通过。
+- 本次起身同轨迹抬升达到 `14.48%`，但只稳定 `0.515s` 就进入画面边缘裁切，低于正式 `1.5s`；系统正确没有伪造自动恢复。仍需一次“起身后原地稳定”的现场恢复正例。APNs 同记录重投幂等已通过，但网络异常后的自动恢复策略仍须作为生产缺口加固，不能把人工重载写成自动通过。
+
+### 开放事故内重复动作与恢复边界
+
+- `21:54` 再次执行安全跌倒和起身。新轨迹 `c29-p68` 从站立到躺倒的垂直下降最高 `0.1769`，RuleEngine 持续处于 confirmed。App 实际已在 `21:50:32` 把云端事件 `317` 标为 `acknowledged=true / resolution=handled`，但盒子事件 `2177` 仍为 `acknowledged=0`，内存安全事故也未释放。此次没有建立第二个事件和通知的根因是云端确认未同步到盒子，不是正确的开放事故去重，不能作为去重正例。
+- 同轨迹在 `21:54:23.312` 进入 standing，中心抬升 `15.39%`；`21:54:24.431` 已积累 7 个恢复样本、稳定 `1.12s`，但 `21:54:25.460` 人物框进入右侧边缘并重置恢复门禁。因此结果继续保持未恢复，符合 `1.5s + 非边缘裁切 + 同轨迹` 的正式契约。
+- 不再通过降低门槛或反复要求真人摔倒换取通过。自动恢复能力已由事件 `2173/312` 的同轨迹抬升 `18.49%`、稳定 `1.598s` 真实正例证明；事件 `2177/317` 证明新 finalizer、三图、多模态 confirmed、单消息和单投递记录，但真机通知没有展示，且 App 确认未回流盒子。阶段 32 的算法主体证据成立，通知终端展示和人工处置双向同步必须分别补齐后才能宣称产品闭环通过。
+
+## 137. 2026-07-29 App 处置回流盒子与通知事实纠正
+
+### 根因
+
+- 云端事件 `317` 在 `21:50:32` 已由 App 写入 `acknowledged=true / resolution=handled`，事故 transition 来源为 `app_user`；盒子事件 `2177` 仍为未确认，RuleEngine 继续保留已发告警状态。原协议只有盒子向云端上传事件状态，没有云端向盒子下发 App 处置结果的通道。
+- `21:54` 的新轨迹 `c29-p68` 具备最高 `0.1769` 垂直下降和 confirmed 规则结果，却被盒子旧事故状态压住。该证据证明双向状态同步是安全逻辑组成部分，不能用通知去重解释。
+- 投递 `34623` 的 APNs `200` 只代表 Apple 接受请求。用户明确反馈没有看到 `21:41` 通知，最新可见通知为 `21:17`；文档已撤销“真机收到”的错误结论，`delivered_at` 继续为空。
+
+### 结构化修复
+
+- 云端设备配置新增 `event_state_commands`。命令按设备和家庭隔离，包含确定性 `command_id`、`edge_event_id`、云端事件 ID、目标状态、处置结果和更新时间；配置版本纳入命令指纹。首次上线仅对账最近 24 条设备事件，避免历史事件逐批回灌。
+- 盒子 `ConfigSyncAgent` 持久化最近 128 个已应用命令 ID，首次返回 `applied`，重复命令返回 `already_applied`，失败保留错误并等待下一轮；`/api/v1/device/sync` 同步上报逐命令结果。
+- `EdgeWorker.apply_event_state_command()` 在同一安全状态锁内更新 SQLite 事件、释放 RuleEngine 跌倒/恢复状态和 PoseFactorGraph 地面 episode，并使用安全状态 generation 防止正在处理的旧帧在清理后重新发出候选。该操作不重置摄像头、视频流、连续骨架跟踪、隐私模式或普通活动轨迹。
+- 云端把回执保存在设备 metadata 中，`applied / already_applied` 后停止下发；重复同步不重复更新盒子状态。新事件入云时显式保存 `device_id`，旧事件兼容从 edge payload 或摄像头归属解析设备。
+
+### 部署与验收
+
+- 云端源码与 PostgreSQL 备份位于 `/opt/gohome/backups/stage33-event-state-20260729-2225`；盒子代码和 SQLite online backup 位于 `/home/gohome/gohome/backups/stage33-event-state-20260729-2230`。云端先部署，盒子后部署。
+- 盒子在 `22:30:28` 应用 24 条首次对账命令，最后一条为 `event-state-8b0847a965db15106da1 / edge_event_id=2177 / resolved / handled`。本地事件 `2177` 已变为 `acknowledged=1`，payload 写入 `resolution=handled`。
+- 云端在 `22:30:32` 收到 24 条 `applied` 回执，最后一条同为 `2177`；下一次 `/api/v1/device/config` 的命令数为 `0`，证明双向同步和幂等停止下发成立。
+- 树莓派实机 `verify-config-sync-agent.py` 与 `verify-adaptive-edge-worker.py` 通过；服务 PID `26062`、异常重启 `0`，两路摄像头 online，最新 Hailo 推理约 `14.38ms`、失败 `0`，事件最大 ID 仍为 `2177`，同步过程没有制造新事件。
+
+当前边界：App 处置回流盒子已完成结构、回归和实机验收，后续新事故不会再被已处理旧事故长期压住。`2177` 不再重投，以免违反单事故单通知；APNs 终端展示仍须用独立测试通知或下一次自然 confirmed 事件验收，必须同时记录服务端接受和用户真机可见，二者不得混写。
+
+## 138. 2026-07-29 APNs 持久重试、终端回执与真机自检
+
+### 事实与边界
+
+- 用户再次确认没有看到 `21:41` 通知，手机最新可见内容为 `21:17`。生产投递 `34623` 的 `APNs 200` 仍只记为 Apple 接受，不能写成终端送达。
+- iPhone 本地去重记录显示 `event:317` 路由在 `21:50:18` 被 App 处理，但没有对应的前台展示记录。该信息只能证明 payload 进入过 App 路由，不能推翻用户“未看到通知”的现场结论。
+- 已安装真机包为 `1.0.0 (2)` 开发签名，实际包含 `aps-environment=development`；生产 token 为同一安装 ID、`sandbox / active`，23:01 重新登记成功。仓库旧 Web 壳的空 entitlement 不代表当前原生 App 包配置。
+
+### 结构化改造
+
+- APNs 每次请求增加 8 秒超时；瞬时网络错误继续复用原 `NotificationDelivery`，按 `2s / 5s / 10s / 20s / 30s / 60s / 120s / 300s` 最多 8 次有界退避。无效 token 仍立即撤销，APNs 已接受后绝不重投，同一事故不新建第二条消息或投递。
+- 推送 payload 新增 `delivery_id`。原生 App 在前台收到时回传 `received_foreground`，用户点击或由通知启动时回传 `opened`；云端在原投递的 `response_payload.receipts` 中幂等留痕，并分别写入 `delivered_at / clicked_at`。
+- App 的“提醒与内容偏好”现在区分授权、横幅、通知中心、锁屏和声音通道，并显示 token 是否连接；新增“发送测试通知”，通过现有 App 鉴权和正式队列生成独立测试消息，不直接调用 APNs、不污染跌倒事件。
+
+### 验证与部署
+
+- APNs 服务端 6 项回归通过，覆盖 Apple 接受但不宣称送达、事件路由、瞬时失败排队、回执幂等、无效 token 撤销和重复 token 收口；iOS 推送协调器 7 项测试通过。
+- 腾讯云部署前备份位于 `/opt/gohome/backups/stage35-push-receipts-20260729-2300`。`gohome-app` PID `1883560`、异常重启 `0`，health 为 PostgreSQL 正常；真机 Debug 包已保留 App 数据覆盖安装，签名包含 development APNs entitlement，token 于 `23:01:10` 刷新。
+
+当前边界：代码、生产服务和真机包已完成，终端展示仍等待一条独立测试通知的用户可见确认。只有同一测试投递同时出现 APNs 接受和 App 前台/点击回执，或用户明确确认系统通知可见，才可把阶段 35 的终端展示标记为通过。
+
+## 141. 2026-07-30 真实 FPS、通知秒级发送与 TestFlight 通道收口
+
+- 直接读取两台摄像头 `/CGI/Streaming/channels/1/type/1` 与 `type/2` 能力，主、子码流均只提供 `15/10/5/1`，当前上限 15 FPS。10 秒实测 camera 29 子码流约 12.1 FPS，camera 30 主、子码流约 15.1 FPS；厂家 App 的观感优势主要来自直接 HEVC 硬解、帧节奏和抖动缓存，不能据此声称源流为 30 FPS。
+- 管理端已部署右上角源流 FPS 角标，读取 `camera_streams.source_fps`；App 候选版显示成功 JPEG 解码和预显示后的滚动 FPS。两者都不读取 Hailo 模型吞吐，也不复制帧造数。
+- App 待发布版本在 URLSession delegate 和 ViewModel 两层均使用 `bufferingNewest(1)`，网络层完成 JPEG 分帧后丢弃旧完整帧，图片在后台解码并预显示；切换摄像头、标签和生命周期会取消旧连接。完整回归为 121 单测、22 UI 测试，零失败。
+- 腾讯云部署前备份位于 `/var/backups/gohome/apns-latency-20260730-023212`。APNs 调度默认由 5 秒改为 1 秒，健康 HTTP/2 会话复用，即时消息使用优先级 10，失败历史和 `provider_latency_ms / queued_to_sent_ms` 有界留存。独立 sandbox provider 探针 765ms 获得 APNs 200。
+- 当前数据库唯一有效手机令牌仍为 `sandbox`，说明现有登记来自 Xcode Debug 直装通道；TestFlight Release 应登记 `production`。后续不再默认直装手机，候选统一提升为 `1.0.0 (3)` 并通过 TestFlight 验收。APNs 接受仍不等于用户可见，终端回执和用户确认继续作为最终门禁。
+- `1.0.0 (3)` 已完成 generic iOS Release archive；上传步骤因 Xcode Accounts 没有团队 `X4M4T6Z4CJ` 的有效 App Store Connect 凭据而停止。浏览器登录不能替代 Xcode Accounts 登录，现有 APNs `.p8` 也不是 App Store Connect 上传密钥。归档保留，账号恢复后直接续传，不重新直装手机。
+
+## 139. 2026-07-30 双路实时中继、同步状态与云端调度去阻塞
+
+### 事实基线
+
+- 两路摄像头子码流均为 HEVC 640x360，元数据标称 `15 FPS`，但绕过盒子算法、云端和 App 后的实际交付率不同：camera 29 约 `11.2-12.0 FPS`，camera 30 约 `14.1-15.1 FPS`；TCP 与 UDP 基本一致，主码流 `/1/1` 在本轮测试中超时。厂商 App 很可能使用另一条压缩码流、原生 HEVC 硬件解码和有界抖动缓冲；当前产品链路为 `HEVC 解码 -> JPEG 编码 -> 逐帧 HTTPS 上传 -> 云端 MJPEG -> iOS JPEG 解码`，因此其观感更流畅不能只用 Hailo 推理 FPS 解释。
+- Hailo Pose 推理中位约 `13-16 ms`、失败为 `0`，不是当前视频瓶颈。完成本阶段后，云端 10 秒滚动接收常态为 camera 3 约 `14-15 FPS`、camera 4 约 `11-12 FPS`；不得宣称双路或骨架已经达到 30 FPS。
+- 盒子配置同步当前 `running=true / report_ok=true / consecutive_failures=0`，两路摄像头均为 `online/synced`。管理页截图中的“同步异常”来自旧瞬时失败状态，不代表当前持续故障。
+
+### 结构化修复
+
+- 边缘实时中继使用每路 4 个有界上传 worker、每线程持久 HTTP 连接和最新帧丢弃；上传携带 `stream_epoch_ms + sequence`，云端拒绝旧会话和乱序帧，不允许延迟队列累积。
+- 边缘状态新增 10 秒滚动 `completed_fps / accepted_fps / upload_latency P95/max / busy_drop_ratio`；云端 `/health` 新增每路接收 FPS、帧间隔、传输延迟、乱序拒绝、活跃视频/姿态连接数和 60 秒事件循环延迟。指标只驻留内存，不写 SQLite、PostgreSQL 或 COS。
+- 配置同步新增连续失败次数、失败时间和恢复时间。管理页仅连续失败 3 次后显示“同步异常”，单次失败显示“正在重试”，成功后显示恢复状态；隐私配置轮询由每秒一次改为每 5 秒一次，页面隐藏时停止。
+- 云端每分钟调度原先对 4 个家庭重复读取并计算 7 天活动区间，且无业务变化也执行全量 `store.save()`。生产 `scheduler_runs` 已积累 2058 条，单轮耗时约 `2.8-3.6s`，与两路视频和姿态同时出现 HTTP 499 的时间完全重合。
+- PostgreSQL 新增 `saveSchedulerRun()`，无业务变化时只 upsert 当前运行记录并将历史限制为 500 条；活动异常评估默认每家庭 10 分钟一次，后台每轮最多评估一个家庭。活动汇总复用上海时区格式器并缓存日期边界，4000 条区间本地基准约 `20.4ms/轮`，不改变七日规律和风险判定结果。
+
+### 部署与验收
+
+- 云端备份：`/opt/gohome/backups/stage37-stream-scheduler-metrics-20260730-0105`、`stage38-activity-insight-pacing-20260730-0110`、`stage39-activity-reporting-hotpath-20260730-0116`。盒子备份：`/home/gohome/gohome/backups/stage37-stream-sync-metrics-20260730-0106`。
+- 云端全量 Node 回归 `81 passed / 1 skipped`，边缘配置同步、上传并发、安全场景、姿态中继和视频节拍回归通过。部署后调度耗时降至 `7-8ms`，新版本时间窗 Nginx `499=0`；Node RSS 由约 `1.0GB` 降至约 `130-180MB`，服务异常重启为 `0`。
+- 当前剩余视频差距集中在 camera 4 的盒子取流/解码阶段。下一步先测本地解码输出与轨迹 ID 连续性，再决定摄像头编码配置或硬件解码传输；禁止通过伪造重复帧把 12-15 FPS 标成 30 FPS。长期要接近厂商 App 观感，应采用 H.264/HEVC 硬件解码的 WebRTC 或等价低延迟通道，MJPEG 仅作为兼容回退。
+
+## 140. 2026-07-30 源流健康诊断、iOS 解码与双定位边界
+
+### 已完成
+
+- 盒子每路共享解码器新增纯内存源流指标：实际/标称 FPS、最新帧龄、帧间隔与读取延迟 P95/max、解码帧数、分辨率、打开/重连/读取失败次数及最近错误时间；公开健康接口不返回 RTSP 地址或密钥。管理首页显示真实源流 FPS 与帧龄，不再用旧算法截图时间冒充实时视频时间。
+- 生产盒子当前两路均为 `streaming`，重连和读取失败均为 0；camera 29 实际约 `12 FPS`，camera 30 实际约 `15 FPS`。实时中继接收约 `11.4/14.3 FPS`、上传失败 0；Hailo Pose 中位约 `14 ms`、累计失败 0，证明当前主要差距位于源流抖动、JPEG 转码/传输和客户端显示链，而不是 Hailo 算力不足。
+- 截图中的顶部“同步异常”与左侧“已同步”冲突属于旧瞬时状态。当前现场为 `running=true / report_ok=true / last_error="" / consecutive_failures=0`；管理页已改为单次失败显示“正在重试”，连续 3 次才显示“同步异常”，成功后自动清除旧故障。
+- iOS 守护页将 JPEG 解码和 `preparingForDisplay()` 移到后台任务，SwiftUI 只接收预解码 `UIImage`，避免每帧在 `body` 和主线程重复解码。定向构建与 14 项测试通过，真机覆盖安装和 10-20 分钟观看仍待手机连接后完成。
+
+### 产品边界
+
+- 手机实时定位只用于计算“我与家的距离”；社区服务必须使用家庭/盒子的固定位置。当前先使用长者档案中的城市和区县，缺少家庭位置时禁用非紧急附近服务，不得回退到手机附近；`120` 紧急呼叫不受影响。
+- 后续需补齐家庭经纬度、坐标来源与更新时间的云端契约，以及 iOS CoreLocation 手机坐标和两点距离计算。视频长期方案仍是硬件解码的 H.264/HEVC WebRTC 或等价低延迟通道，现有 MJPEG 保留为兼容回退；实施前必须用端到端帧率、帧龄、抖动、CPU、温度和断线恢复数据验收。
+## 142. 2026-07-30 边缘循环存储、COS 证据、推送状态机与帧率能力收口
+
+### 已实现
+
+- `edge-agent/app/storage.py`、`worker.py`、`settings.py` 和 `main.py` 完成有界存储环。默认保留普通分析 6 小时、已同步事件证据 24 小时、轻量事件 30 天、完成上传任务 7 天，运行预算 2048 MB；磁盘高压和危急水位会缩短普通数据窗口并执行最多 20 批有界回收。
+- 事件增加 `cloud_sync_status / cloud_synced_at`。只有事件上传成功后才标记 completed；未上传、失败或状态不完整的事件不会被回收。已同步旧事件按最老优先释放 snapshot、detection、evaluation 和 candidate 关联，再删除过期事件与完成任务。
+- `runtime_storage_status()` 分别报告数据库、WAL/SHM、截图目录和 SQLite 可复用字节。随后已在完整备份、停服回收和上传队列核对后完成离线 `VACUUM`，结果记录于第 143 节。
+- `detection_results.analysis_json` 改为紧凑摘要，移除与 snapshot pose analysis 重复的大块 JSON。新增 `verify-storage-ring-retention.py`，验证未同步证据保留、已同步证据回收和最老优先策略。
+- 云端设备证据上传使用私有 COS 路径 `edge-evidence/<family>/<date>/<asset>`，资产保存 `storage_provider=cos`；App 仍通过 `/api/v1/video/assets/<id>` 家庭鉴权后获取签名跳转，本地磁盘只在 COS 禁用时降级。
+- 摄像头预览、LiveRelay 和同步姿态流移除旧 10/15 FPS 硬上限，统一使用 `MAX_PREVIEW_FPS=30` 和 `bounded_stream_fps()`。默认档位为 default 15、detail 24、monitor 30、mobile 24；只发送真实新帧，不复制源帧。LiveRelay 现为每路 4 个有界 worker、持久 HTTP 连接、源会话序号和云端乱序拒绝；Hailo 110 FPS 仍只表示特定模型吞吐，不代表端到端视频帧率。
+- iOS 姿态时间轴优先使用盒子 `captured_at`，网络接收时刻只估算传输偏移；无效或非单调源时间戳才回退接收时间，降低网络抖动造成的骨架跳动。
+- 通知队列修复了两个结构问题：排队时不再把 AppMessage 写成 delivered；调度器重复运行不再重置已有投递的 attempt、next_attempt_at、失败历史或终态。App 前台/点击回执才写 `delivered_at`，点击另外写 `clicked_at`。
+- `/health` 新增 `push_metrics`，包含 provider 配置、活跃 token、总数、queued、ready、最老排队秒数、重试次数、计划重试、sent、delivered、opened 和 failed。
+
+### 自动验证
+
+- 云端 `node --test local-app-server/test/*.test.js`：最新 87 项，86 通过、1 项因未提供本地真实 PostgreSQL 地址按设计跳过；完整 `npm test` 同时通过。
+- iOS：122 项单元测试执行，1 项环境跳过、0 失败；22 项 UI 测试全部通过、0 失败。
+- 盒子：存储环、共享解码、视频隐私、自适应 worker、同步姿态、连续跟踪、姿态因子图、时序观察、跌倒规则、告警去重、上传队列、上传租约恢复、数据库锁重试、配置同步和身份桥接全部通过。
+
+### 尚需实机完成
+
+- 双摄与 App 连续 20 分钟浸泡，记录真实源 FPS、中继接受 FPS、App 显示 FPS、延迟、骨架贴合、重连、CPU、温度和节流。
+- TestFlight build 3 登记 production token 后，只发送一次独立测试通知，核对同一 delivery 的 APNs sent、App delivered/opened 与用户实际可见结果。
+
+## 143. 2026-07-30 生产数据收缩、活动轨迹去抖、调度修复与实时链路复验
+
+### 边缘数据与上传队列
+
+- 生产数据库备份位于 `/home/gohome/backups/gohome-hardening-20260730-112044`。停服回收、WAL 处理和离线 `VACUUM` 后，`agent.db` 从约 1.10 GB 降至 `289,488,896` 字节，释放约 818 MB，`PRAGMA quick_check=ok`。
+- 历史事件最终分类为 `completed=83 / local_only=2101 / pending=0`。两条没有完整云端 `event_upload` 的旧事件 `1871/2067` 按事实收口为 `local_only`，不宣称已云端同步。
+- 旧恢复任务 `20315` 因不满足同轨稳定恢复契约，被云端 HTTP 400 拒绝，历史共重试 949 次。`UploadRequestError` 现将 `400/405/410/413/415/422` 记为终止审计结果，原任务保留 `uploaded=false / terminal=true / http_status=400`；`401/429/5xx` 和网络错误继续退避重试。
+- `Storage.init_schema()` 每次启动都重新对账事件上传状态；`_refresh_event_cloud_sync_status()` 在没有完成事件上传时明确回到 `local_only`。现网待上传、失败和上传中任务均为 0。
+
+### 活动轨迹抖动根因与修复
+
+- 现网 camera 29 在人物低位/遮挡场景中出现短时“可见/不可见”切换，旧逻辑每次立即关闭 `presence_session`，形成数秒一段的 `person_not_visible`，并累积 134 条 `activity_interval_upload`。
+- `EdgeWorker` 增加 `activity_absence_stability_seconds=15`。已经可见的活动段在短时漏检期间保持原状态，人物恢复后取消离场候选；只有连续缺失 15 秒才关闭。不确定弱命中会取消离场计时，不会提前切断。
+- 修复只作用于活动轨迹持久化，不改变 Hailo 推理、EACP 展示、跌倒/火灾规则、候选事件或恢复契约。部署后积压清零，新运行窗口为一个持续活动段，`activity_intervals_enqueued=0 / routine_image_writes_avoided=944 / image_writes=0`。
+- 部署备份：`/home/gohome/backups/activity-presence-grace-20260730-115941`、`/home/gohome/backups/upload-terminal-http-20260730-121009`、`/home/gohome/backups/event-sync-reconcile-20260730-121603`。
+
+### 云端调度、Nginx 与实时传输
+
+- 并发调度时用于表示 skipped 的内存占位记录没有 ID，旧逻辑却将其写入 PostgreSQL 空字符串主键，下一轮触发 `missing scheduler_runs.id`。调度编排现不持久化无 ID 记录，`saveSchedulerRun()` 也增加空 ID 门禁；唯一脏行已删除。
+- 云端备份位于 `/var/backups/gohome/scheduler-empty-id-20260730-113603` 和 `/var/backups/gohome/nginx-live-upload-20260730-114432.conf`。Nginx 已关闭三个高频上传成功请求的 access log，并移除 POST 请求不适用的 `Connection: upgrade`；`nginx -t` 通过。
+- 最终 45 秒采样：access log 增长 5,245 字节；云端 camera 3/4 接受 `14.0 / 12.6 FPS`，传输延迟 P95 `93 / 98 ms`，帧间隔 P95 `125 / 150 ms`，事件循环 P95 `1 ms`；Node CPU 约 44.3%、RSS 约 195 MB。
+- 盒子同窗口两路源流约 `15.05 / 14.97 FPS`，最新帧龄低于 80 ms，重连和读取失败为 0。Hailo Pose 中位约 13.6 ms、失败 0，不是当前视频瓶颈。
+- 当前 JPEG/HTTPS 逐帧链路已达到可用兼容水平，但仍不宣称 30 FPS。下一阶段将持久 H.264/H.265/WebRTC 作为正式低延迟视频通道，MJPEG 保留为降级。
+
+### 回归与剩余门禁
+
+- 云端完整 `npm test` 通过；`npm run test:native-server` 执行 87 项，86 通过、1 项因未设置本地 PostgreSQL 地址跳过。
+- 盒子通过 `verify-adaptive-analysis-persistence.py`、`verify-temporal-observation-engine.py`、`verify-activity-interval-outbox.py`、`verify-storage-ring-retention.py`、`verify-upload-queue.py`、`verify-upload-lease-recovery.py` 和 `verify-upload-lock-retry.py`，Python 编译通过。
+- 尚需用 TestFlight Release 在真机完成 20 分钟播放、切页/前后台恢复、骨架贴合、单次跌倒单次通知、误报只入事件不通知，以及 production APNs token 的 `sent/delivered/opened` 回执。
+
+## 144. 2026-07-30 TestFlight Build 3 正式上传
+
+- Xcode Accounts 从旧 `Personal Team` 缓存刷新为已加入 Apple Developer Program 的 `yihua tan` Individual Team，Team ID 为 `X4M4T6Z4CJ`；App Store Connect 上传权限恢复。
+- `GoHomeShell 1.0.0 (3)` 使用 `app-store-connect / automatic / upload` 完成正式导出上传。Apple 远程签名采用 `Apple Distribution: yihua tan (X4M4T6Z4CJ)` 和 `iOS Team Store Provisioning Profile: com.gohome.family`，最终 entitlement 为 `aps-environment=production`。
+- App Store Connect 返回 `UPLOAD SUCCEEDED with no errors`，Delivery UUID 为 `73c4d021-5d45-4723-8885-ff7b1f00ea81`，当前状态为 `PROCESSING`。
+- 本项只证明生产签名和上传通道通过。待 processing 完成后，仍需从 TestFlight 安装 Build 3，确认 production APNs token，并完成 20 分钟实时播放、切页/前后台、骨架贴合、延迟不累积、断流恢复和单次通知终端回执验收。
+
+## 145. 2026-07-30 TestFlight Build 4 通知中心修复
+
+- Build 3 的 production APNs token 和两次独立测试通知已在真机确认送达，但前台通知代理只返回 `banner / badge / sound`，缺少 `list`，因此前台横幅不会保留在 iOS 通知中心。该问题属于客户端展示缺口，不是 APNs 未发送。
+- `GoHomeAppDelegate` 统一使用可测试的前台展示选项 `banner / list / badge / sound`；`PushNotificationCoordinatorTests` 新增通知中心保留回归，未改变稳定消息 ID 去重、事件路由和回执规则。
+- Build 4 完整门禁通过：123 项 iOS 单元测试、22 项 UI 测试均为零失败；`verify-ios-release.js` 通过。Release archive 成功，版本为 `1.0.0 (4)`。
+- App Store Connect 上传成功且无错误，Delivery UUID 为 `477a252a-4426-4b94-8b9e-55bd21a660f5`。Apple 远程签名使用 `Apple Distribution: yihua tan`，最终 entitlement 为 `aps-environment=production`，当前状态为 processing。
+- 自动通知与测试通知继续分开验收：测试按钮只证明正式队列、APNs 和客户端展示链路；产品自动通知必须由新的 confirmed 安全事件或已配置的定时关怀触发。没有新事件或到期计划时不应生成通知。
+
+## 146. 2026-07-30 云端主动推送运维端点与 Build 4 回执
+
+- 新增 `POST /api/v1/internal/notifications/test`，只接受 `GOHOME_OPS_TOKEN`。端点校验家庭存在、APNs 已配置和 production token 有效，不使用静态 App token，也不绕过用户家庭权限。
+- `queueNotificationDelivery()` 增加显式 `target_token_ids`，目标不存在时返回空集合，禁止降级成家庭广播；`dispatchQueuedPushDeliveries()` 增加 `target_delivery_ids`，只调度本次创建的投递，不抢占或误发其他排队消息。
+- 运维端点按 `last_seen_at / updated_at / created_at` 选择家庭最近活跃的 production 安装，每次使用 UUID 创建独立测试消息，标记 `generated_by=ops-notification-test`，不写 `event_id`，不污染 confirmed 安全事件、日常关怀或事故去重状态。
+- 新增回归覆盖未授权 403、缺少 production token 409、sandbox 排除、旧安装排除、单安装单投递、单次 APNs 调用、敏感 token 密文不出响应以及不同请求互不去重。`npm run test:native-server` 共 88 项：87 通过、1 项 PostgreSQL 环境测试按设计跳过。
+- 生产以现网权威 `server.js` 为基线移植本次补丁，没有夹带工作树中尚未部署的定位、COS、视频参数等改动。服务和数据库备份位于 `/opt/gohome/backups/stage44-ops-push-20260730-162535`，部署后健康检查正常，未授权请求返回 403。
+- 服务器于 `2026-07-30 16:26:44 +08` 向家庭 `2` 的 Build 4 production 安装创建投递 `34636`。APNs 尝试次数为 1，状态先为 sent；App 于 `16:26:48` 对同一投递回传 delivered/opened，消息 `ops-notification-test-2-3dc97481-d0dd-422c-8f8e-509a05c9bf40` 没有事件 ID，也没有第二条投递。
+- 用户已确认前台横幅保留在 iOS 下拉通知中心并完成点击；服务端仍是投递 `34636` 的同一 delivered/opened 回执，没有第二条消息或投递。独立测试通知闭环完成，下一步等待真实 confirmed 事件或正常到期关怀验证自动业务触发；不得再次用运维测试通知代替产品自动通知。
+
+## 147. 2026-07-30 骨架独立姿态流与家庭固定位置
+
+### 骨架模式根因与修复
+
+- 原先骨架模式同时上传合成 JPEG 和姿态包，App 又把低频安全背景 JPEG 的到达率当作骨架 FPS，所以显示 `0.x-1.x FPS`。这不是 Hailo Pose 只有零点几帧；实测姿态推理中位约 `13.77 ms`、P95 约 `22.79 ms`。
+- `LiveRelayAgent` 在 skeleton 模式不再上传普通 `live-frame` JPEG，只按有界频率上传无人安全场景；`PoseRelayAgent` 继续独立发送 EACP 关键点包。这使骨架跟随与 JPEG 编码/上传解耦，同时降低盒子和云端负载。
+- 安全场景只使用已确认无人背景或中性启动场景。检测到人时保持最近无人场景，不上传模糊人像；客户端只在该背景上绘制实时骨架。
+- iOS `GuardViewModel` 分别统计 `displayFPS` 与 `poseUpdatesPerSecond`。原画/模糊显示 `x.x FPS`，骨架显示 `POSE x.x Hz`；`TimelineView` 的 30 Hz 只用于插值绘制，不作为模型或源视频性能结论。
+- 原画和人像模糊仍使用有界 MJPEG 兼容链路，本轮不更改其语义。长期流畅度仍需 H.264/H.265/WebRTC 持久链路，不通过重复帧伪造 30 FPS。
+
+### 家庭固定位置闭环
+
+- 盒子无 GPS，但绑定时手机通常在家中。`DeviceBindingView` 在绑定成功后自动请求 CoreLocation，反向地理编码完成后展示“确认家庭位置”；只有用户点击“设为家庭位置”才写入云端，也可选择稍后设置。
+- 绑定后会先读取长者资料。只有经纬度缺失时才出现确认面板，重新绑定不覆盖既有家庭位置。资料编辑页仍可后续人工更新。
+- 云端校验并保存 `home_latitude / home_longitude / home_location_label`，家庭首页返回结构化 `home_location`。首页距离只使用手机当前坐标与家庭固定坐标；社区 Apple Maps 查询显式使用家庭 `ll=latitude,longitude`，绝不回退到手机位置。
+- 生产云端只选择性合入家庭位置契约，没有以本地旧服务整体覆盖现网文件。部署备份为 `/opt/gohome/backups/stage45-home-location-20260730-212112`。
+
+### 验证状态
+
+- iOS 单元测试 `123 passed / 1 skipped / 0 failed`，UI 测试 `22 passed / 0 failed`，构建通过。本地云端家庭位置契约和隐私传输契约通过。
+- 盒子 Python 编译、服务、Hailo 和姿态中继已在部署后验证；skeleton 模式普通 `live-frame` 上传为空，安全场景和姿态包持续。当前开发机无法连通 `192.168.1.12:22`，因此备份目录名和 10-20 分钟最终现场观看留待网络恢复后补验。
+
+## 148. 2026-07-31 快速跌倒漏报与历史掉线状态修复
+
+### 现场结论
+
+- 截图中的“无法连接”来自历史摄像头掉线事件，不是当前在线状态。冰箱摄像头曾在 `22:08:15` 发生约 8 秒 RTSP 超时后自动恢复；旧规则一次失败就创建离线事件，造成事件页长期看起来仍未恢复。
+- `22:10:44.393` 检测到躺倒并进入 suspect，至 `22:10:46.021` 已持续 `1.634s`；`22:10:47.055` 短暂变为蹲姿后候选被清空。轨迹从 `c32-p6` 切到 `c32-p7`，旧因子图只认同一 ID，又被人物框站立兜底污染，因此没有本地正式事件、上传任务、云端多模态复核或 APNs 通知。
+
+### 结构性修复
+
+- 动态低位确认窗口由散落的 `2.0s` 收敛为常量 `DYNAMIC_LOW_CONFIRM_SECONDS=1.5`，仍需满足连续帧、低位姿态、旋转/运动和恢复门禁；快速因子图高置信路径保持独立。
+- 姿态因子图在单人场景允许有距离、尺度、时间和重叠约束的跨 ID 重关联，并记录来源轨迹；多人场景明确禁止跨 ID 继承，避免把不同人物的站立与倒地拼接成一次事件。
+- 站立基线与短时过渡运动拆分。存在有效躺、蹲、弯腰骨架时，不再用人物框推导 `person_upright`；过渡动作只在短窗口内提供旋转运动证据，不污染长期站立历史。
+- 摄像头错误状态按摄像头聚合，至少连续 3 次失败且持续 15 秒才发离线事件；60 秒以上间隔重新计数。恢复出帧后关闭未解决的离线事件、写入恢复审计并排队上传事件状态。
+- 管理端事件生命周期识别 `camera_reconnected` 和在线状态，将历史记录显示为“曾发生连接中断，当前已恢复”。
+
+### 验证与部署门禁
+
+- Python 编译、`verify-camera-stream-resilience.py`、`verify-pose-factor-graph.py`、`verify-fall-rule-engine.py`、`verify-alert-dedupe.py`、`verify-adaptive-edge-worker.py`、`verify-upload-queue.py`、`node --check edge-agent/admin/console.js` 和 `git diff --check` 均通过。
+- 快速跌倒回归在约 `1.6s` 形成事件；普通坐下、蹲下、多人换轨、沙发躺卧和画面边缘裁切等负样本保持通过。
+- 部署必须先备份盒子当前 `rule_engine.py`、`pose_factor_graph.py`、`worker.py`、`storage.py` 和 `console.js`，只选择性覆盖这 5 个文件。重启后需核对 `/health`、Hailo 零失败、双路 streaming、无新增瞬时离线事件、历史事件恢复状态和事件状态上传队列。
+
+### 生产部署与云端状态闭环
+
+- 盒子现网文件备份位于 `/home/gohome/backups/fall-camera-state-20260731-001440`，SQLite 在线备份为同目录 `agent-before-camera-state-requeue.db`。只部署 `rule_engine.py`、`pose_factor_graph.py`、`worker.py`、`storage.py` 和 `console.js`，生产 SHA256 与本地验证版本一致。
+- 重启后 Hailo Pose 状态 `ready`、失败数 0；camera 31/32 均为 `streaming`，重连和读取失败为 0，最新帧龄约 30-125 ms。重启后没有新增瞬时离线事件。
+- 首次恢复上传暴露出云端状态机只接受 `person_upright_again`，拒绝 `camera_reconnected` 并返回 HTTP 400。该问题不是再次重试可解决的网络故障，因此补齐云端同一事件状态接口：只接受带确认凭据的摄像头恢复，关闭原离线事件、写恢复证据、归档关联提醒并对重复请求幂等返回。
+- 云端 `server.js` 和 PostgreSQL 备份位于 `/opt/gohome/backups/stage46-camera-recovery-20260731-003851`。生产只应用 `handleDeviceEventState` 的两个精确补丁块，没有用本地脏工作树整体覆盖现网。
+- 盒子原 12 条终止任务保持原 ID 和幂等键重新排队，`attempt_count` 从 1 增至 2 后全部 `uploaded=true / target=app_server_event_state`；未新建事件、消息或投递。云端事件 `335-346` 均为 `acknowledged=true / resolution=camera_reconnected`，关联旧提醒已归档。
+- 新增 `device-event-state-sync.test.js` 回归覆盖：未确认恢复拒绝、合法恢复关闭事件、提醒归档和重复请求幂等。定向测试、全部 Node test、`verify:app-server` 和语法检查通过；仓库级 `npm test` 仍被既有 `index.html contains blocking loading copy` 前端门禁阻断，与本轮状态机改动无关，需在 App UI 支线单独清理。
