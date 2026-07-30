@@ -38,6 +38,7 @@ class PersonDetector:
         self._yolo_lock = RLock()
         self._cache_lock = RLock()
         self._detection_cache: dict[str, Dict[str, Any]] = {}
+        self._context_cache: dict[str, Dict[str, Any]] = {}
         self._cascade_cache: dict[str, Any | None] = {}
 
     def analyze(self, frame: Any, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -105,7 +106,34 @@ class PersonDetector:
                 model_status = "model_error"
                 model_message = str(exc)
 
-        person_count = len(people) if people or backend in {"yolo", "demo"} else None
+        return self.result_from_entities(
+            people,
+            pets=pets,
+            scene_objects=scene_objects,
+            backend=backend,
+            model_status=model_status,
+            model_message=model_message,
+            model_name=self.yolo_model_name if self.detector_backend == "yolo" else "",
+            detection_cached=detection_cached,
+            detection_cache_age_seconds=detection_cache_age_seconds,
+        )
+
+    def result_from_entities(
+        self,
+        people: list[Dict[str, Any]],
+        *,
+        pets: list[Dict[str, Any]] | None = None,
+        scene_objects: list[Dict[str, Any]] | None = None,
+        backend: str,
+        model_status: str,
+        model_message: str,
+        model_name: str,
+        detection_cached: bool = False,
+        detection_cache_age_seconds: float | None = None,
+    ) -> Dict[str, Any]:
+        pets = list(pets or [])
+        scene_objects = list(scene_objects or [])
+        person_count = len(people) if people or backend in {"yolo", "demo", "hailo"} else None
         presence_candidate_count = len([person for person in people if person.get("presence_candidate")])
         presence_enhanced = presence_candidate_count > 0
         tags: list[str] = []
@@ -140,7 +168,7 @@ class PersonDetector:
                 "presence_candidate_count": presence_candidate_count,
                 "detector_backend": backend,
                 "model_status": model_status,
-                "model_name": self.yolo_model_name if self.detector_backend == "yolo" else "",
+                "model_name": model_name,
                 "model_message": model_message,
                 "scene_objects": scene_objects,
                 "pets": pets,
@@ -154,7 +182,7 @@ class PersonDetector:
             "detector_backend": backend,
             "model_status": model_status,
             "model_message": model_message,
-            "model_name": self.yolo_model_name if self.detector_backend == "yolo" else "",
+            "model_name": model_name,
             "person_count": person_count,
             "presence_enhanced": presence_enhanced,
             "presence_candidate_count": presence_candidate_count,
@@ -167,6 +195,55 @@ class PersonDetector:
             "detection_cache_age_seconds": detection_cache_age_seconds,
             "tags": tags,
             "result": result,
+        }
+
+    def analyze_context(self, frame: Any, config: Dict[str, Any]) -> Dict[str, Any]:
+        if self.detector_backend != "yolo":
+            return {"pets": [], "scene_objects": [], "cached": False, "error": ""}
+        cache_key = str(config.get("camera_id") or "default")
+        interval = max(0.5, float(config.get("context_detection_interval_seconds") or 3.0))
+        now = time.monotonic()
+        with self._cache_lock:
+            cached = self._context_cache.get(cache_key)
+            if cached is not None and now - float(cached["stored_at"]) < interval:
+                return {
+                    "pets": deepcopy(cached["pets"]),
+                    "scene_objects": deepcopy(cached["scene_objects"]),
+                    "cached": True,
+                    "age_seconds": round(now - float(cached["stored_at"]), 4),
+                    "error": "",
+                }
+        try:
+            _, pets, scene_objects = self._detect_yolo_entities(
+                frame,
+                person_confidence=1.0,
+                pet_confidence=float(config.get("pet_yolo_confidence", 0.40)),
+                pet_enabled=bool(config.get("pet_detection_enabled", True)),
+                scene_confidence=float(config.get("scene_object_confidence", 0.30)),
+                scene_enabled=bool(config.get("scene_context_enabled", True)),
+            )
+        except RuntimeError as exc:
+            if cached is not None:
+                return {
+                    "pets": deepcopy(cached["pets"]),
+                    "scene_objects": deepcopy(cached["scene_objects"]),
+                    "cached": True,
+                    "age_seconds": round(now - float(cached["stored_at"]), 4),
+                    "error": str(exc),
+                }
+            return {"pets": [], "scene_objects": [], "cached": False, "error": str(exc)}
+        with self._cache_lock:
+            self._context_cache[cache_key] = {
+                "stored_at": now,
+                "pets": deepcopy(pets),
+                "scene_objects": deepcopy(scene_objects),
+            }
+        return {
+            "pets": pets,
+            "scene_objects": scene_objects,
+            "cached": False,
+            "age_seconds": 0.0,
+            "error": "",
         }
 
     def _cache_key(self, config: Dict[str, Any]) -> str:

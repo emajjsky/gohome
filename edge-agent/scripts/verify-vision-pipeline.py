@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import tempfile
 
 import numpy as np
 
@@ -13,6 +14,8 @@ if str(ROOT) not in sys.path:
 from app.detect_agent import DetectAgent
 from app.rule_engine import build_event_evidence
 from app.vision.fall import FallAnalyzer
+from app.vision.hailo_object import HailoObjectBackend, HailoObjectNmsDecoder
+from app.vision.hailo_pose import HailoPoseBackend, HailoPoseDecoder
 from app.vision.person_yolo import PersonDetector
 from app.vision.pipeline import VisionPipeline
 from app.vision.pose_rtmpose import RtmposeAnalyzer
@@ -85,9 +88,14 @@ def main() -> None:
     display_suppression = verify_display_content_suppression()
     display_pose_bypass = verify_display_pose_cannot_recreate_suppressed_person()
     scene_merge = verify_scene_context_survives_pose_merge()
+    normal_lying_fall = verify_normal_lying_is_not_fall_candidate()
+    hailo_box_fallback = verify_hailo_disables_box_fall_fallback()
     pet_isolation = verify_pet_detection_isolated_from_people_and_fall(normal)
     detector_cache = verify_person_detector_cache_is_motion_aware()
     pose_requires_person_box = verify_pose_requires_person_box()
+    hailo_decoder = verify_hailo_pose_decoder()
+    hailo_object = verify_hailo_object_decoder_and_cache()
+    hailo_fallback = verify_hailo_failure_falls_back()
 
     checks = {
         "black_screen": bool(black_result["black_screen"]),
@@ -154,6 +162,9 @@ def main() -> None:
         "display_pose_bypass_people": display_pose_bypass["refined_person_count"],
         "scene_merge_normal_lying": scene_merge["normal_lying_zone"],
         "scene_merge_label": scene_merge["scene_zone_label"],
+        "normal_lying_pose_fall_candidate": normal_lying_fall["pose_fall_candidate"],
+        "normal_lying_box_fall_candidate": normal_lying_fall["box_fall_candidate"],
+        "hailo_box_fall_people": hailo_box_fallback,
         "pet_count": pet_isolation["pet_count"],
         "pet_person_count": pet_isolation["person_count"],
         "pet_fall_candidate": pet_isolation["fall_candidate"],
@@ -163,6 +174,12 @@ def main() -> None:
         "detector_cache_calls": detector_cache["calls"],
         "detector_cache_motion_refresh": detector_cache["motion_refresh"],
         "pose_requires_person_box": pose_requires_person_box["fallback_calls"],
+        "hailo_decoder_count": hailo_decoder["count"],
+        "hailo_decoder_score": hailo_decoder["score"],
+        "hailo_object_classes": hailo_object["classes"],
+        "hailo_object_inference_calls": hailo_object["inference_calls"],
+        "hailo_object_cache_hit": hailo_object["cache_hit"],
+        "hailo_fallback_status": hailo_fallback,
         "pose_result_status": fire_result.get("algorithm_results", {}).get("pose", {}).get("status"),
         "pipeline_version": fire_result.get("pipeline_version"),
         "algorithm_results": sorted((fire_result.get("algorithm_results") or {}).keys()),
@@ -226,12 +243,24 @@ def main() -> None:
         raise SystemExit("a pose derived from suppressed TV content must not recreate a person")
     if not checks["scene_merge_normal_lying"] or checks["scene_merge_label"] != "couch":
         raise SystemExit("pose refinement must not erase a person box already matched to a couch or bed")
+    if checks["normal_lying_pose_fall_candidate"] or checks["normal_lying_box_fall_candidate"]:
+        raise SystemExit("normal bed/sofa lying must not leak into visual fall candidates")
+    if checks["hailo_box_fall_people"] != 0:
+        raise SystemExit("unified Hailo pose must disable the redundant box-only fall fallback")
     if checks["pet_count"] != 1 or checks["pet_person_count"] != 0:
         raise SystemExit("cat/dog detections must remain independent from person_count")
     if checks["detector_cache_calls"] != 2 or not checks["detector_cache_motion_refresh"]:
         raise SystemExit("person detector cache did not refresh on meaningful motion")
     if checks["pose_requires_person_box"] != 0:
         raise SystemExit("worker pose mode must not run a whole-frame fallback without a person box")
+    if checks["hailo_decoder_count"] != 1 or checks["hailo_decoder_score"] < 0.89:
+        raise SystemExit("Hailo YOLOv8 Pose decoder contract failed")
+    if checks["hailo_object_classes"] != [15, 57]:
+        raise SystemExit("Hailo YOLOv8 object NMS decoder contract failed")
+    if checks["hailo_object_inference_calls"] != 1 or not checks["hailo_object_cache_hit"]:
+        raise SystemExit("Hailo object cadence cache did not suppress duplicate inference")
+    if checks["hailo_fallback_status"] != "degraded":
+        raise SystemExit("Hailo runtime failure must degrade to the CPU path")
     if checks["pet_fall_candidate"]:
         raise SystemExit("cat/dog detections must never enter fall analysis")
     if checks["pet_event_evidence_count"] != 1:
@@ -600,6 +629,79 @@ def verify_scene_context_survives_pose_merge() -> dict:
         "normal_lying_zone": bool(refined and refined[0].get("normal_lying_zone")),
         "scene_zone_label": refined[0].get("scene_zone_label") if refined else None,
     }
+
+
+def verify_normal_lying_is_not_fall_candidate() -> dict:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+    )
+    pose = pipeline._pose_with_scene_context(
+        {
+            "poses": [],
+            "pose_count": 0,
+            "pose_fall_score": 0.0,
+            "pose_fall_candidate": False,
+            "pose_model_status": "ready",
+            "pose_action_hints": [],
+            "tags": [],
+            "result": None,
+        },
+        [{
+            "bbox": [120.0, 240.0, 430.0, 355.0],
+            "confidence": 0.86,
+            "posture": "lying",
+            "fall_score": 0.96,
+            "fall_evidence_eligible": True,
+            "normal_lying_zone": True,
+            "action_hints": ["lying", "fall_candidate"],
+        }],
+        {"pose_fall_threshold": 0.78},
+    )
+    box = FallAnalyzer().analyze(
+        [{
+            "bbox": [120.0, 240.0, 430.0, 355.0],
+            "confidence": 0.86,
+            "presence_candidate": False,
+            "fall_candidate": True,
+            "normal_lying_zone": True,
+            "aspect_ratio": 2.70,
+            "area_ratio": 0.15,
+            "height_ratio": 0.32,
+            "center_y_ratio": 0.83,
+            "frame_width": 640,
+            "frame_height": 360,
+        }],
+        {},
+    )
+    return {
+        "pose_fall_candidate": bool(pose.get("pose_fall_candidate")),
+        "box_fall_candidate": bool(box.get("fall_candidate")),
+    }
+
+
+def verify_hailo_disables_box_fall_fallback() -> int:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+    )
+    people = [{
+        "bbox": [220.0, 240.0, 440.0, 359.0],
+        "confidence": 0.88,
+        "fall_candidate": True,
+        "frame_width": 640,
+        "frame_height": 360,
+    }]
+    return len(pipeline._people_for_fall_alerts(
+        people,
+        people,
+        {},
+        box_fallback_enabled=False,
+    ))
 
 
 def synthetic_weak_fall_people() -> list[dict]:
@@ -1117,6 +1219,87 @@ def verify_activity_temporal_candidates() -> dict:
         "daze_candidate": bool(daze.get("daze_candidate")),
         "sample_count": min(int(meal_temporal.get("sample_count") or 0), int(daze_temporal.get("sample_count") or 0)),
     }
+
+
+def verify_hailo_pose_decoder() -> dict:
+    outputs = {}
+    for grid_size in (20, 40, 80):
+        outputs[f"boxes-{grid_size}"] = np.zeros((1, grid_size, grid_size, 64), dtype=np.float32)
+        outputs[f"scores-{grid_size}"] = np.zeros((1, grid_size, grid_size, 1), dtype=np.float32)
+        outputs[f"keypoints-{grid_size}"] = np.zeros((1, grid_size, grid_size, 51), dtype=np.float32)
+    outputs["scores-20"][0, 10, 10, 0] = 0.9
+    outputs["keypoints-20"][0, 10, 10] = np.tile([0.5, 0.5, 4.0], 17)
+    result = HailoPoseDecoder().decode(
+        outputs,
+        original_width=640,
+        original_height=360,
+        confidence=0.25,
+        max_poses=3,
+    )
+    return {"count": len(result["boxes"]), "score": float(result["scores"][0])}
+
+
+def verify_hailo_object_decoder_and_cache() -> dict:
+    output = np.zeros((1, 80, 5, 100), dtype=np.float32)
+    output[0, 15, :, 0] = [0.30, 0.20, 0.70, 0.45, 0.88]
+    output[0, 57, :, 0] = [0.45, 0.48, 0.82, 0.92, 0.77]
+    decoded = HailoObjectNmsDecoder().decode(
+        {"nms": output},
+        original_width=640,
+        original_height=360,
+        class_thresholds={15: 0.40, 57: 0.30},
+    )
+
+    class Runtime:
+        input_shape = (640, 640, 3)
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def infer(self, image: np.ndarray) -> dict:
+            self.calls += 1
+            return {"nms": output}
+
+        def close(self) -> None:
+            return None
+
+    runtime = Runtime()
+    variable_output = [np.empty((0, 5), dtype=np.float32) for _ in range(80)]
+    variable_output[15] = np.array([[0.30, 0.20, 0.70, 0.45, 0.88]], dtype=np.float32)
+    variable_output[57] = np.array([[0.45, 0.48, 0.82, 0.92, 0.77]], dtype=np.float32)
+    runtime_output = variable_output
+
+    def infer_variable(image: np.ndarray) -> dict:
+        runtime.calls += 1
+        return {"nms": runtime_output}
+
+    runtime.infer = infer_variable  # type: ignore[method-assign]
+    with tempfile.NamedTemporaryFile(suffix=".hef") as model:
+        backend = HailoObjectBackend(
+            model_path=model.name,
+            runtime_factory=lambda _path: runtime,
+        )
+        frame = np.zeros((360, 640, 3), dtype=np.uint8)
+        first = backend.analyze(frame, {"camera_id": 1, "hailo_object_interval_seconds": 1.0})
+        second = backend.analyze(frame, {"camera_id": 1, "hailo_object_interval_seconds": 1.0})
+        backend.close()
+    return {
+        "classes": sorted(int(item["class_id"]) for item in decoded),
+        "inference_calls": runtime.calls,
+        "cache_hit": bool(first and second and not first.get("cached") and second.get("cached")),
+    }
+
+
+def verify_hailo_failure_falls_back() -> str:
+    with tempfile.NamedTemporaryFile(suffix=".hef") as model:
+        backend = HailoPoseBackend(
+            model_path=model.name,
+            runtime_factory=lambda _path: (_ for _ in ()).throw(RuntimeError("runtime unavailable")),
+        )
+        frame = np.zeros((120, 160, 3), dtype=np.uint8)
+        if backend.analyze(frame, {}) is not None:
+            raise SystemExit("failed Hailo runtime must not return an accelerated result")
+        return str(backend.status().get("status") or "")
 
 
 if __name__ == "__main__":

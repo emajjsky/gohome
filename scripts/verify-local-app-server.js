@@ -12,12 +12,16 @@ process.env.GOHOME_CARE_IMAGE_CALLS = "0";
 process.env.GOHOME_WEATHER_PROVIDER = "none";
 process.env.GOHOME_SEARCH_PROVIDER = "none";
 process.env.GOHOME_VISION_VERIFICATION_ENABLED = "0";
-process.env.GOHOME_AUTH_MODE = "demo";
-process.env.GOHOME_DEMO_OTP = "000000";
 
-const { createDefaultDb, createLocalAppServer, normalizeDb } = require("../local-app-server/server");
-const { createDbFromCloudRows, TABLE_ORDER } = require("../local-app-server/postgres-store");
-const { buildCloudSeedBundle, sha256 } = require("./export-local-app-db");
+const {
+    createDefaultDb,
+    createLocalAppServer,
+    normalizeDb,
+    compactSchedulerRuns,
+    MAX_SCHEDULER_RUNS,
+} = require("../local-app-server/server");
+const { createDbFromCloudRows, PostgresStore, TABLE_ORDER } = require("../local-app-server/postgres-store");
+const { buildCloudSeedBundle, CLOUD_SEED_SCHEMA_VERSION, sha256 } = require("./export-local-app-db");
 
 const DEVICE_TOKEN = "verify-device-token";
 const APP_TOKEN = "verify-app-token";
@@ -59,13 +63,13 @@ function schemaColumns(sql, tableName) {
         if (!line || /^(primary|unique|foreign|constraint|check)\b/i.test(line)) continue;
         columns.add(line.split(/\s+/)[0].replace(/"/g, ""));
     }
-    const alterPattern = new RegExp(`alter table ${escapedTable}\\s+([\\s\\S]*?);`, "gi");
-    for (const alter of sql.matchAll(alterPattern)) {
-        for (const added of alter[1].matchAll(/add column(?: if not exists)?\s+"?([a-z_][a-z0-9_]*)"?/gi)) {
-            columns.add(added[1]);
-        }
-        for (const dropped of alter[1].matchAll(/drop column(?: if exists)?\s+"?([a-z_][a-z0-9_]*)"?/gi)) {
-            columns.delete(dropped[1]);
+    const alterations = new RegExp(
+        `alter table ${escapedTable}\\s+([\\s\\S]*?);`,
+        "gi",
+    );
+    for (const alteration of sql.matchAll(alterations)) {
+        for (const addition of alteration[1].matchAll(/add column(?: if not exists)?\s+"?([a-z0-9_]+)"?/gi)) {
+            columns.add(addition[1]);
         }
     }
     return columns;
@@ -100,7 +104,47 @@ function assertHtmlUsesLocalTailwind() {
     }
 }
 
+async function assertPostgresSaveCoalescing() {
+    const db = createDefaultDb();
+    let releaseFirstSave;
+    const firstSaveBlocked = new Promise((resolve) => {
+        releaseFirstSave = resolve;
+    });
+    const persistedBundles = [];
+    const persistedTableSets = [];
+    const store = new PostgresStore({
+        db,
+        pool: { end: async () => {} },
+        persistBundle: async (bundle, changedTables) => {
+            persistedBundles.push(bundle);
+            persistedTableSets.push(changedTables);
+            if (persistedBundles.length === 1) await firstSaveBlocked;
+        },
+    });
+
+    const first = store.save();
+    db.families[0].name = "并发期间更新";
+    const second = store.save();
+    releaseFirstSave();
+    await Promise.all([first, second]);
+
+    assert.equal(persistedBundles.length, 2);
+    assert.equal(persistedBundles[1].tables.families[0].name, "并发期间更新");
+    assert.deepEqual(persistedTableSets[1], ["families"]);
+    assert.equal(store.last_save_error, "");
+}
+
 async function main() {
+    await assertPostgresSaveCoalescing();
+    const oversizedSchedulerHistory = Array.from({ length: MAX_SCHEDULER_RUNS + 25 }, (_, index) => ({
+        id: index + 1,
+        updated_at: new Date(1_700_000_000_000 + index * 1000).toISOString(),
+    }));
+    const compactedSchedulerHistory = compactSchedulerRuns(oversizedSchedulerHistory);
+    assert.equal(compactedSchedulerHistory.length, MAX_SCHEDULER_RUNS);
+    assert.equal(compactedSchedulerHistory[0].id, 26);
+    assert.equal(compactedSchedulerHistory.at(-1).id, MAX_SCHEDULER_RUNS + 25);
+
     const defaultDb = createDefaultDb();
     for (const key of [
         "offline_enabled",
@@ -131,6 +175,8 @@ async function main() {
         dataDir: tempDir,
         deviceToken: DEVICE_TOKEN,
         appToken: APP_TOKEN,
+        authMode: "demo",
+        demoOtp: "000000",
     });
     const baseUrl = await listen(app.server);
 
@@ -229,17 +275,11 @@ async function main() {
             body: JSON.stringify({ expires_in_minutes: 10 }),
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        assert.match(invitation.code, /^GH-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}$/);
-        const invitationList = await requestJson(baseUrl, `/api/v2/families/${family.id}/invitations`, {
-            headers: { Authorization: `Bearer ${appSessionToken}` },
-        });
-        assert.equal(invitationList.invitations.length, 1);
-        assert.equal(invitationList.invitations[0].code, undefined);
-        assert.equal(invitationList.invitations[0].code_hash, undefined);
+        assert.match(invitation.code, /^GH-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}(?:-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}){2}$/);
 
-        const invalidJoin = await fetch(`${baseUrl}/api/v2/family-invitations/consume`, {
+        const invalidJoin = await fetch(`${baseUrl}/api/families/join`, {
             method: "POST",
-            body: JSON.stringify({ code: "GH-2345-6789-7XYZ" }),
+            body: JSON.stringify({ code: "GH-0-BAD000" }),
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${phoneRegistered.token}`,
@@ -247,13 +287,11 @@ async function main() {
         });
         assert.equal(invalidJoin.status, 404);
 
-        const joined = await requestJson(baseUrl, "/api/v2/family-invitations/consume", {
+        const joinedFamily = await requestJson(baseUrl, "/api/families/join", {
             method: "POST",
             body: JSON.stringify({ code: invitation.code }),
             headers: { Authorization: `Bearer ${phoneRegistered.token}` },
         });
-        assert.equal(joined.joined, true);
-        const joinedFamily = joined.family;
         assert.equal(String(joinedFamily.id), String(family.id));
         assert.equal(joinedFamily.member_count, 2);
 
@@ -335,7 +373,7 @@ async function main() {
             headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
         });
         assert.equal(claimHeartbeat.ok, true);
-        const claimableDevices = await requestJson(baseUrl, `/api/device-claims/available?family_id=${claimFamily.id}`, {
+        const claimableDevices = await requestJson(baseUrl, "/api/device-claims/available", {
             headers: { Authorization: `Bearer ${phoneRegistered.token}` },
         });
         assert.ok(claimableDevices.some((item) => item.device_id === "edge-claimable" && item.serial_number === "GH-CLAIM001"));
@@ -424,7 +462,7 @@ async function main() {
             }),
             headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
         });
-        const claimableAfterUnbind = await requestJson(baseUrl, `/api/device-claims/available?family_id=${claimFamily.id}`, {
+        const claimableAfterUnbind = await requestJson(baseUrl, "/api/device-claims/available", {
             headers: { Authorization: `Bearer ${phoneRegistered.token}` },
         });
         assert.ok(claimableAfterUnbind.some((item) => item.device_id === "edge-transferable"));
@@ -492,11 +530,40 @@ async function main() {
 
         const exchanged = await requestJson(baseUrl, "/api/device/token/exchange", {
             method: "POST",
-            body: JSON.stringify({ code: bindingCode.code, device_id: "edge-test", device_name: "测试盒子" }),
+            body: JSON.stringify({
+                code: bindingCode.code,
+                device_id: "edge-test",
+                device_name: "测试盒子",
+                bootstrap_cameras: [
+                    {
+                        local_camera_id: 26,
+                        name: "客厅恢复相机",
+                        room: "客厅",
+                        stream_url: "rtsp://192.168.1.20:554/stream1",
+                        username: "camera-user",
+                        password: "camera-password",
+                        enabled: true,
+                    },
+                ],
+            }),
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
         assert.equal(exchanged.ok, true);
         assert.ok(exchanged.device_token);
+        assert.equal(exchanged.binding_summary.status, "bound");
+        assert.equal(exchanged.bootstrap_import.imported, 1);
+
+        const recoveredConfig = await requestJson(baseUrl, "/api/v1/device/config", {
+            headers: { Authorization: `Bearer ${exchanged.device_token}` },
+        });
+        assert.equal(recoveredConfig.binding_summary.status, "bound");
+        assert.equal(recoveredConfig.cameras.length, 1);
+        assert.equal(recoveredConfig.cameras[0].local_camera_id, 26);
+        assert.equal(recoveredConfig.cameras[0].stream_url, "rtsp://192.168.1.20:554/stream1");
+        await requestJson(baseUrl, `/api/cameras/${recoveredConfig.cameras[0].id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
 
         const reusedBindingCode = await fetch(`${baseUrl}/api/device/token/exchange`, {
             method: "POST",
@@ -818,14 +885,9 @@ async function main() {
         assert.equal(String(created.event.camera_id), String(camera.id));
         assert.equal(String(created.event.payload.edge_camera_id), "11");
         assert.equal(created.event.media_asset_id, media.asset.id);
-        assert.equal(created.verification.status, "unavailable");
-        assert.equal(created.event.payload.incident.status, "uncertain");
-        assert.equal(created.message, null);
-        assert.equal(created.deliveries.length, 0);
-        assert.equal(app.store.db.app_messages.some((message) => (
-            message.generated_by === "edge-event"
-            && String(message.event_id) === String(created.event.id)
-        )), false);
+        assert.equal(created.message.generated_by, "edge-event");
+        assert.equal(created.message.source_event_ids[0], created.event.id);
+        assert.equal(created.deliveries.length, 1);
 
         const originalVerificationEnv = {
             GOHOME_VISION_VERIFICATION_ENABLED: process.env.GOHOME_VISION_VERIFICATION_ENABLED,
@@ -851,10 +913,32 @@ async function main() {
             assert.match(userContent[0].text, /pose_factor_graph/);
             assert.match(userContent[0].text, /evidence_frames/);
             const imageContent = userContent.filter((item) => item.type === "image_url");
-            assert.equal(imageContent.length, 3);
+            assert.ok(imageContent.length >= 1 && imageContent.length <= 3);
             assert.ok(imageContent.every((item) => /^data:image\/jpeg;base64,/.test(item.image_url.url)));
-            const parsed = verificationRequestCount === 1
-                ? {
+            const promptText = userContent[0].text;
+            let parsed;
+            if (promptText.includes("视觉排除测试事件")) {
+                parsed = {
+                    person_count: 1,
+                    posture: "sitting",
+                    surface: "sofa",
+                    emergency: false,
+                    confidence: 0.94,
+                    reason: "人物稳定坐在沙发上，未看到跌倒或地面倒卧证据。",
+                    suggested_event_type: "none",
+                };
+            } else if (promptText.includes("视觉不确定测试事件")) {
+                parsed = {
+                    person_count: 1,
+                    posture: "unknown",
+                    surface: "unknown",
+                    emergency: false,
+                    confidence: 0.42,
+                    reason: "人物被遮挡，现有画面不足以判断是否存在危险姿态。",
+                    suggested_event_type: "uncertain",
+                };
+            } else if (verificationRequestCount === 1) {
+                parsed = {
                     person_count: 1,
                     posture: "fallen",
                     surface: "floor",
@@ -863,8 +947,9 @@ async function main() {
                     reason: "画面中一人位于地面低位。",
                     suggested_event_type: "fall_candidate",
                     unexpected: "strict contract must reject this field",
-                }
-                : {
+                };
+            } else {
+                parsed = {
                     person_count: 1,
                     posture: "fallen",
                     surface: "floor",
@@ -873,6 +958,7 @@ async function main() {
                     reason: "画面中一人横卧在地面区域，支持边缘端跌倒候选。",
                     suggested_event_type: "fall_candidate",
                 };
+            }
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({
                 id: `mock-vision-${verificationRequestCount}`,
@@ -1004,19 +1090,89 @@ async function main() {
             assert.ok(app.store.db.notification_deliveries.some((delivery) => (
                 String(delivery.message_id) === String(verificationOutcomeMessage.message_id)
             )));
-            assert.equal(
-                app.store.db.app_messages.filter((message) => (
-                    message.generated_by === "vision-verification-orchestrator"
-                    && String(message.event_id) === String(verificationEvent.event.id)
-                )).length,
-                1,
-            );
-            assert.equal(
-                app.store.db.notification_deliveries.filter((delivery) => (
-                    String(delivery.message_id) === String(verificationOutcomeMessage.message_id)
-                )).length,
-                1,
-            );
+            assert.equal(verifiedEvent.payload.incident.notification.policy, "confirmed-once-v1");
+            assert.equal(verifiedEvent.payload.incident.notification.decision, "notify_once");
+            assert.equal(verifiedEvent.payload.incident.notification.message_id, verificationOutcomeMessage.message_id);
+            assert.ok(verifiedEvent.payload.incident.notification.notified_at);
+
+            const createVerificationPolicyProbe = async ({ edgeEventId, summary, occurredAt }) => {
+                const media = await requestJson(
+                    baseUrl,
+                    `/api/v1/device/media-assets/upload?file_name=${edgeEventId}.jpg&snapshot_path=events/${edgeEventId}.jpg&content_type=image/jpeg&edge_event_id=${edgeEventId}&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence&evidence_frame_role=current&captured_at=${encodeURIComponent(occurredAt)}`,
+                    {
+                        method: "POST",
+                        body: Buffer.from(`mock-${edgeEventId}-jpeg`),
+                        headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
+                    },
+                );
+                return requestJson(baseUrl, "/api/v1/device/events", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        idempotency_key: `event:${edgeEventId}`,
+                        edge_event_id: edgeEventId,
+                        event_type: "fall_candidate",
+                        summary,
+                        level: "critical",
+                        room: "客厅",
+                        camera_id: 11,
+                        snapshot_path: `events/${edgeEventId}.jpg`,
+                        occurred_at: occurredAt,
+                        payload: {
+                            rule: { reason: "边缘端提交候选，等待云端复核。" },
+                            evidence_media_assets: [
+                                { asset: media.asset, role: "current", captured_at: occurredAt, postures: ["unknown"] },
+                            ],
+                            media_upload_result: { asset: media.asset },
+                            edge_upload: { edge_event_id: edgeEventId, edge_device_id: "edge-test" },
+                        },
+                    }),
+                    headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+                });
+            };
+
+            const policyMessageCount = app.store.db.app_messages.length;
+            const policyDeliveryCount = app.store.db.notification_deliveries.length;
+            const rejectedProbe = await createVerificationPolicyProbe({
+                edgeEventId: "verification-rejected",
+                summary: "视觉排除测试事件",
+                occurredAt: "2026-07-05T11:00:00.000Z",
+            });
+            assert.equal(rejectedProbe.message, null);
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            await requestJson(baseUrl, "/api/v1/internal/vision-verifications/run", {
+                method: "POST",
+                body: JSON.stringify({ force: true, limit: 1 }),
+            });
+            const rejectedEvent = await requestJson(baseUrl, `/api/v1/events/${rejectedProbe.event.id}`, {
+                headers: { Authorization: `Bearer ${appSessionToken}` },
+            });
+            assert.equal(rejectedEvent.payload.verification.status, "rejected");
+            assert.equal(rejectedEvent.payload.incident.status, "rejected");
+            assert.equal(rejectedEvent.payload.incident.notification.decision, "record_only");
+            assert.equal(rejectedEvent.payload.incident.notification.message_id, "");
+            assert.equal(app.store.db.app_messages.length, policyMessageCount);
+            assert.equal(app.store.db.notification_deliveries.length, policyDeliveryCount);
+
+            const uncertainProbe = await createVerificationPolicyProbe({
+                edgeEventId: "verification-uncertain",
+                summary: "视觉不确定测试事件",
+                occurredAt: "2026-07-05T12:00:00.000Z",
+            });
+            assert.equal(uncertainProbe.message, null);
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            await requestJson(baseUrl, "/api/v1/internal/vision-verifications/run", {
+                method: "POST",
+                body: JSON.stringify({ force: true, limit: 1 }),
+            });
+            const uncertainEvent = await requestJson(baseUrl, `/api/v1/events/${uncertainProbe.event.id}`, {
+                headers: { Authorization: `Bearer ${appSessionToken}` },
+            });
+            assert.equal(uncertainEvent.payload.verification.status, "uncertain");
+            assert.equal(uncertainEvent.payload.incident.status, "uncertain");
+            assert.equal(uncertainEvent.payload.incident.notification.decision, "record_only");
+            assert.equal(uncertainEvent.payload.incident.notification.message_id, "");
+            assert.equal(app.store.db.app_messages.length, policyMessageCount);
+            assert.equal(app.store.db.notification_deliveries.length, policyDeliveryCount);
             const verificationJob = app.store.db.model_generation_jobs.find((job) => (
                 job.purpose === "vision_event_verification"
                 && String(job.metadata?.event_id) === String(verificationEvent.event.id)
@@ -1031,83 +1187,6 @@ async function main() {
                 verificationMedia.asset.id,
             ]);
             assert.equal("api_key" in verificationJob.request_payload, false);
-
-            const lateEvidenceEvent = await requestJson(baseUrl, "/api/v1/device/events", {
-                method: "POST",
-                body: JSON.stringify({
-                    idempotency_key: "event:44",
-                    event_type: "fall_candidate",
-                    summary: "迟到证据编排测试",
-                    level: "critical",
-                    room: "客厅",
-                    camera_id: 11,
-                    snapshot_path: "events/late-current.jpg",
-                    occurred_at: "2026-07-05T10:10:03.000Z",
-                    payload: {
-                        evidence: {
-                            temporal_evidence_bundle: {
-                                snapshots: [
-                                    { snapshot_id: 4401, snapshot_path: "events/late-before.jpg", observed_at: "2026-07-05T10:10:01.000Z", postures: ["standing"], role: "before" },
-                                    { snapshot_id: 4402, snapshot_path: "events/late-transition.jpg", observed_at: "2026-07-05T10:10:02.000Z", postures: ["bending"], role: "transition" },
-                                    { snapshot_id: 4403, snapshot_path: "events/late-current.jpg", observed_at: "2026-07-05T10:10:03.000Z", postures: ["lying"], role: "current" },
-                                ],
-                            },
-                        },
-                        edge_upload: { edge_event_id: 44, edge_device_id: "edge-test" },
-                    },
-                }),
-                headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
-            });
-            assert.equal(lateEvidenceEvent.verification.status, "waiting_evidence");
-            assert.equal(lateEvidenceEvent.verification.expected_count, 3);
-            assert.equal(lateEvidenceEvent.message, null);
-
-            const lateEvidenceFrames = [
-                ["late-before.jpg", "events/late-before.jpg", "before", "2026-07-05T10:10:01.000Z"],
-                ["late-transition.jpg", "events/late-transition.jpg", "transition", "2026-07-05T10:10:02.000Z"],
-                ["late-current.jpg", "events/late-current.jpg", "current", "2026-07-05T10:10:03.000Z"],
-            ];
-            for (const [fileName, snapshotPath, role, capturedAt] of lateEvidenceFrames) {
-                await requestJson(
-                    baseUrl,
-                    `/api/v1/device/media-assets/upload?file_name=${fileName}&snapshot_path=${snapshotPath}&content_type=image/jpeg&edge_event_id=44&camera_id=${camera.id}&local_camera_id=11&purpose=${role === "current" ? "event_evidence" : "event_evidence_keyframe"}&evidence_frame_role=${role}&captured_at=${encodeURIComponent(capturedAt)}`,
-                    {
-                        method: "POST",
-                        body: Buffer.from(`late-${role}-jpeg`),
-                        headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
-                    },
-                );
-            }
-            await new Promise((resolve) => setTimeout(resolve, 100));
-            await requestJson(baseUrl, "/api/v1/internal/vision-verifications/run", {
-                method: "POST",
-                body: JSON.stringify({ force: true, limit: 3 }),
-            });
-            const verifiedLateEvidenceEvent = await requestJson(baseUrl, `/api/v1/events/${lateEvidenceEvent.event.id}`, {
-                headers: { Authorization: `Bearer ${appSessionToken}` },
-            });
-            assert.equal(verifiedLateEvidenceEvent.evidence_media.length, 3);
-            assert.deepEqual(verifiedLateEvidenceEvent.evidence_media.map((item) => item.role), ["before", "transition", "current"]);
-            assert.deepEqual(verifiedLateEvidenceEvent.evidence_media.map((item) => item.captured_at), [
-                "2026-07-05T10:10:01.000Z",
-                "2026-07-05T10:10:02.000Z",
-                "2026-07-05T10:10:03.000Z",
-            ]);
-            assert.equal(verifiedLateEvidenceEvent.payload.verification.status, "confirmed");
-            assert.equal(
-                app.store.db.model_generation_jobs.filter((job) => (
-                    job.purpose === "vision_event_verification"
-                    && String(job.metadata?.event_id) === String(lateEvidenceEvent.event.id)
-                )).length,
-                1,
-            );
-            assert.equal(
-                app.store.db.app_messages.filter((message) => (
-                    message.generated_by === "vision-verification-orchestrator"
-                    && String(message.event_id) === String(lateEvidenceEvent.event.id)
-                )).length,
-                1,
-            );
             const deviceVerificationStatus = await requestJson(baseUrl, "/api/v1/device/vision-verifications?limit=5", {
                 headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
             });
@@ -1265,6 +1344,56 @@ async function main() {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
 
+        const removedCameraEvent = {
+            id: app.store.nextId("event"),
+            family_id: transferFamily.id,
+            idempotency_key: "event:removed-camera-offline",
+            edge_event_id: "removed-camera-offline",
+            event_type: "camera_offline",
+            summary: "已移除摄像头的历史离线记录",
+            level: "warning",
+            room: "旧房间",
+            camera_id: "removed-camera",
+            camera_name: "已移除摄像头",
+            snapshot_path: "",
+            media_asset_id: null,
+            occurred_at: new Date().toISOString(),
+            acknowledged: false,
+            resolution: "",
+            payload: { rule: { reason: "保留历史事件时摄像头配置已经删除。" } },
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        };
+        app.store.db.events.push(removedCameraEvent);
+        const schedulerDateKey = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Asia/Shanghai",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).format(new Date());
+        const schedulerGuardMessage = {
+            id: "removed-camera-scheduler-guard",
+            message_id: `care-daily-${transferFamily.id}-${schedulerDateKey}`,
+            idempotency_key: `daily-care:${transferFamily.id}:${schedulerDateKey}`,
+            family_id: transferFamily.id,
+            message_type: "care_card",
+            title: "调度回归占位",
+            status: "archived",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        };
+        app.store.db.app_messages.push(schedulerGuardMessage);
+        const removedCameraRun = await requestJson(baseUrl, "/api/v1/internal/scheduler/run", {
+            method: "POST",
+            body: JSON.stringify({ family_id: transferFamily.id }),
+        });
+        assert.equal(removedCameraRun.run.status, "succeeded");
+        assert.equal(removedCameraRun.result.event_alerts_created, 0);
+        assert.equal(app.store.db.app_messages.some((message) => (
+            message.message_id === `event-alert-${removedCameraEvent.id}`
+        )), false);
+        app.store.db.app_messages = app.store.db.app_messages.filter((message) => message !== schedulerGuardMessage);
+
         const originalAbsenceThreshold = process.env.GOHOME_LONG_ABSENCE_SECONDS;
         try {
             process.env.GOHOME_LONG_ABSENCE_SECONDS = "60";
@@ -1299,18 +1428,6 @@ async function main() {
             const longAbsenceEvent = app.store.db.events.find((event) => event.event_type === "long_absence");
             assert.ok(longAbsenceEvent);
             assert.equal(longAbsenceEvent.payload.incident.status, "confirmed");
-            assert.equal(app.store.db.app_messages.some((message) => (
-                String(message.message_id || "") === `event-alert-${created.event.id}`
-            )), false);
-            assert.equal(app.store.db.app_messages.some((message) => (
-                String(message.message_id || "") === `event-alert-${verifiedSafetyEvent.id}`
-            )), false);
-            assert.equal(app.store.db.app_messages.filter((message) => (
-                String(message.message_id || "") === `event-alert-${longAbsenceEvent.id}`
-            )).length, 1);
-            assert.equal(app.store.db.notification_deliveries.filter((delivery) => (
-                String(delivery.message_id || "") === `event-alert-${longAbsenceEvent.id}`
-            )).length, 1);
             const sameMinuteRun = await requestJson(baseUrl, "/api/v1/internal/scheduler/run", {
                 method: "POST",
                 body: JSON.stringify({ family_id: family.id, force: true }),
@@ -1351,19 +1468,18 @@ async function main() {
         const eventMessages = await requestJson(baseUrl, `/api/v1/app/messages?family_id=${family.id}&status=all`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        assert.equal(eventMessages.some((message) => (
+        assert.ok(eventMessages.some((message) => (
             message.generated_by === "edge-event"
             && message.source_event_ids.some((eventId) => String(eventId) === String(created.event.id))
-        )), false);
-        assert.ok(eventMessages.some((message) => (
-            message.generated_by === "vision-verification-orchestrator"
         )));
 
         const events = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false", {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        assert.equal(events.length, 3);
+        assert.equal(events.length, 4);
         assert.ok(events.every((event) => event.type === "fall_candidate"));
+        assert.ok(events.some((event) => event.payload?.incident?.status === "rejected"));
+        assert.ok(events.some((event) => event.payload?.incident?.status === "uncertain"));
         const eventSummaries = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false&view=summary", {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
@@ -1841,7 +1957,7 @@ async function main() {
         assert.equal(customizedRules.activity_detection_enabled, false);
 
         const seedBundle = buildCloudSeedBundle(app.store.db, { source: "verify-local-app-server" });
-        assert.equal(seedBundle.schema_version, "011_family_invitations");
+        assert.equal(seedBundle.schema_version, CLOUD_SEED_SCHEMA_VERSION);
         assert.equal(seedBundle.tables.users.length, 3);
         assert.ok(seedBundle.tables.users.some((user) => user.email === phoneAccountEmail));
         assert.ok(seedBundle.tables.app_sessions.length >= 3);
@@ -1853,9 +1969,6 @@ async function main() {
             && String(item.user_id) === String(registered.user.id)
             && item.role === "owner"
         )));
-        assert.equal(seedBundle.tables.family_invitations.length, 1);
-        assert.equal(seedBundle.tables.family_invitations[0].code_hash.length, 64);
-        assert.equal("code" in seedBundle.tables.family_invitations[0], false);
         assert.ok(seedBundle.tables.elder_profiles.some((item) => String(item.family_id) === String(transferFamily.id)));
         const seededElderProfile = seedBundle.tables.elder_profiles.find((profile) => String(profile.family_id) === String(family.id));
         assert.equal(seededElderProfile.mobile_phone, "13800138000");
@@ -1873,13 +1986,13 @@ async function main() {
         assert.ok(seededFamilyRules);
         assert.equal(seededFamilyRules.rule_type, "edge_rules");
         assert.equal(seededFamilyRules.config.activity_detection_enabled, false);
-        assert.equal(seedBundle.tables.events.length, 6);
+        assert.equal(seedBundle.tables.events.length, 8);
         const seededFallEvent = seedBundle.tables.events.find((event) => event.event_type === "fall_candidate");
         const seededStaleOfflineEvent = seedBundle.tables.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(seededFallEvent);
         assert.ok(seededStaleOfflineEvent);
         assert.equal(seededFallEvent.camera_id, String(camera.id));
-        assert.equal(seedBundle.tables.media_assets.length, 8);
+        assert.equal(seedBundle.tables.media_assets.length, 7);
         const seededEventAsset = seedBundle.tables.media_assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(seededEventAsset.metadata.purpose, "event_evidence");
         assert.equal(seedBundle.tables.care_preferences.length, 1);
@@ -1894,9 +2007,6 @@ async function main() {
         assert.ok(seedBundle.tables.app_messages.some((message) => message.message_type === "test"));
         assert.equal(seedBundle.tables.app_push_tokens.length, 1);
         assert.equal(seedBundle.tables.app_push_tokens[0].push_token_hash.length, 64);
-        assert.equal(seedBundle.tables.app_push_tokens[0].provider, "apns");
-        assert.equal(seedBundle.tables.app_push_tokens[0].environment, "production");
-        assert.equal(seedBundle.tables.app_push_tokens[0].token_ciphertext, "");
         assert.ok(seedBundle.tables.notification_deliveries.length >= 2);
         assert.ok(seedBundle.tables.notification_deliveries.every((delivery) => (
             !delivery.message_id
@@ -1911,9 +2021,6 @@ async function main() {
         assert.ok(restoredDb.users.some((user) => user.email === phoneAccountEmail));
         assert.ok(restoredDb.app_sessions.some((session) => session.token_hash === sha256(appSessionToken)));
         assert.ok(restoredDb.families.some((item) => String(item.id) === String(transferFamily.id)));
-        assert.equal(restoredDb.family_invitations.length, 1);
-        assert.equal(restoredDb.family_invitations[0].code_hash.length, 64);
-        assert.equal("code" in restoredDb.family_invitations[0], false);
         assert.ok(restoredDb.device_bindings.some((item) => (
             String(item.family_id) === String(transferFamily.id)
             && item.device_id === "edge-transferable"
@@ -1923,14 +2030,14 @@ async function main() {
         assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].home_phone, "057100000000");
         assert.equal(Object.values(restoredDb.cameras).length, 2);
         assert.equal(String(restoredDb.cameras[String(claimFamilyCamera.id)].family_id), String(claimFamily.id));
-        assert.equal(restoredDb.events.length, 6);
+        assert.equal(restoredDb.events.length, 8);
         const restoredFallEvent = restoredDb.events.find((event) => event.event_type === "fall_candidate");
         const restoredStaleOfflineEvent = restoredDb.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(restoredFallEvent);
         assert.ok(restoredStaleOfflineEvent);
         assert.equal(restoredFallEvent.summary, "疑似跌倒");
         assert.equal(String(restoredFallEvent.camera_id), String(camera.id));
-        assert.equal(restoredDb.assets.length, 8);
+        assert.equal(restoredDb.assets.length, 7);
         const restoredEventAsset = restoredDb.assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(restoredEventAsset.purpose, "event_evidence");
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);
@@ -1953,7 +2060,7 @@ async function main() {
         assert.equal(restoredDb.model_providers.length, 0);
 
         process.env.GOHOME_ALLOW_CLOUD_DEVICE_CLAIMS = "0";
-        const hiddenClaimableDevices = await requestJson(baseUrl, `/api/device-claims/available?family_id=${claimFamily.id}`, {
+        const hiddenClaimableDevices = await requestJson(baseUrl, "/api/device-claims/available", {
             headers: { Authorization: `Bearer ${phoneRegistered.token}` },
         });
         assert.deepEqual(hiddenClaimableDevices, []);

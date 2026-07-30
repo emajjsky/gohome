@@ -25,7 +25,10 @@ FAST_FALL_MIN_POSTURE_RELIABILITY = 0.55
 EVIDENCE_RELIABILITY_FLOOR = 0.75
 FAST_FALL_IMMEDIATE_REVIEW_WINDOW_SECONDS = 3.0
 RECENT_DESCENT_EVIDENCE_SECONDS = 3.0
+SPATIAL_REACQUISITION_SECONDS = 10.0
 FRAME_EDGE_MARGIN_PIXELS = 2.0
+RECOVERY_STABILITY_SECONDS = 1.5
+RECOVERY_MIN_CENTER_LIFT = 0.08
 
 
 class PoseFactorGraphEngine:
@@ -39,11 +42,15 @@ class PoseFactorGraphEngine:
         upright_window_seconds: float = 20.0,
         prolonged_lying_seconds: float = 180.0,
         recovery_samples: int = 2,
+        recovery_stability_seconds: float = RECOVERY_STABILITY_SECONDS,
+        recovery_min_center_lift: float = RECOVERY_MIN_CENTER_LIFT,
         min_posture_confidence: float = 0.40,
     ) -> None:
         self.upright_window_seconds = max(5.0, float(upright_window_seconds))
         self.prolonged_lying_seconds = max(10.0, float(prolonged_lying_seconds))
         self.recovery_samples = max(1, int(recovery_samples))
+        self.recovery_stability_seconds = max(0.5, float(recovery_stability_seconds))
+        self.recovery_min_center_lift = max(0.03, float(recovery_min_center_lift))
         self.min_posture_confidence = max(0.0, min(1.0, float(min_posture_confidence)))
         self._states: dict[int, dict[str, Dict[str, Any]]] = {}
 
@@ -87,6 +94,20 @@ class PoseFactorGraphEngine:
             normal_lying_zone = bool(target.get("normal_lying_zone"))
             frame_edge_clipped = bool(target.get("frame_edge_clipped"))
             recent_upright = state.get("upright") if isinstance(state.get("upright"), dict) else None
+            if recent_upright is None:
+                recent_upright = self._spatially_reacquire_upright(
+                    states,
+                    current_track_id=track_id,
+                    target=target,
+                    target_count=len(targets),
+                    posture=posture,
+                    posture_confidence=posture_confidence,
+                    center=center,
+                    now_mono=now_mono,
+                    fall_min_vertical_drop=fall_min_vertical_drop,
+                )
+                if recent_upright is not None:
+                    state["upright"] = recent_upright
             recent_upright = self._update_baseline(
                 state,
                 posture=posture,
@@ -113,6 +134,7 @@ class PoseFactorGraphEngine:
             recovery = self._update_floor_episode(
                 state,
                 target=target,
+                center=center,
                 posture=posture,
                 posture_confidence=posture_confidence,
                 normal_lying_zone=normal_lying_zone,
@@ -167,7 +189,63 @@ class PoseFactorGraphEngine:
         analysis["pose_factor_graph"] = result
         return result
 
+    def _spatially_reacquire_upright(
+        self,
+        states: dict[str, Dict[str, Any]],
+        *,
+        current_track_id: str,
+        target: Dict[str, Any],
+        target_count: int,
+        posture: str,
+        posture_confidence: float,
+        center: list[float],
+        now_mono: float,
+        fall_min_vertical_drop: float,
+    ) -> Dict[str, Any] | None:
+        if (
+            target_count != 1
+            or posture != "lying"
+            or posture_confidence < self.min_posture_confidence
+        ):
+            return None
+        if str(target.get("identity_bridge_status") or "") == "rejected_unverified_hint":
+            return None
+        candidates = []
+        for source_track_id, source_state in states.items():
+            if source_track_id == current_track_id:
+                continue
+            upright = source_state.get("upright") if isinstance(source_state.get("upright"), dict) else None
+            if upright is None:
+                continue
+            last_seen = source_state.get("last_seen_monotonic")
+            upright_seen = upright.get("monotonic_at")
+            if last_seen is None or upright_seen is None:
+                continue
+            track_gap = max(0.0, now_mono - float(last_seen))
+            upright_age = max(0.0, now_mono - float(upright_seen))
+            if track_gap > SPATIAL_REACQUISITION_SECONDS or upright_age > SPATIAL_REACQUISITION_SECONDS:
+                continue
+            upright_center = upright.get("center")
+            if not isinstance(upright_center, list) or len(upright_center) != 2:
+                continue
+            horizontal_distance = abs(float(center[0]) - float(upright_center[0]))
+            vertical_drop = float(center[1]) - float(upright_center[1])
+            if horizontal_distance > 0.28 or vertical_drop < fall_min_vertical_drop:
+                continue
+            candidates.append((vertical_drop, -horizontal_distance, upright_age, source_track_id, upright))
+        if not candidates:
+            return None
+        _drop, _distance, _age, source_track_id, upright = max(candidates)
+        return {
+            **upright,
+            "identity_match": "single_person_spatial_reacquisition",
+            "source_track_id": source_track_id,
+        }
+
     def reset_camera(self, camera_id: int) -> None:
+        self._states.pop(int(camera_id), None)
+
+    def clear_safety_incident(self, camera_id: int) -> None:
         self._states.pop(int(camera_id), None)
 
     def _update_floor_episode(
@@ -175,6 +253,7 @@ class PoseFactorGraphEngine:
         state: Dict[str, Any],
         *,
         target: Dict[str, Any],
+        center: list[float],
         posture: str,
         posture_confidence: float,
         normal_lying_zone: bool,
@@ -199,24 +278,37 @@ class PoseFactorGraphEngine:
             "bbox": [round(float(value), 1) for value in target.get("bbox") or []],
             "sample_count": 0,
             "required_samples": self.recovery_samples,
+            "duration_seconds": 0.0,
+            "required_seconds": self.recovery_stability_seconds,
+            "center_lift": 0.0,
+            "required_center_lift": self.recovery_min_center_lift,
             "identity_match": "same_track",
         }
         if lying:
             if not had_floor_episode:
                 state["lying_started_monotonic"] = now_mono
                 state["lying_started_at"] = timestamp
+                state["floor_reference_center"] = list(center)
+            else:
+                floor_center = state.get("floor_reference_center")
+                if not isinstance(floor_center, list) or float(center[1]) > float(floor_center[1]):
+                    state["floor_reference_center"] = list(center)
             state["recovery_count"] = 0
+            state.pop("recovery_started_monotonic", None)
             recovery["reason"] = "floor_lying_active"
             return recovery
         if not had_floor_episode:
             state["recovery_count"] = 0
+            state.pop("recovery_started_monotonic", None)
             return recovery
         if frame_edge_clipped:
             state["recovery_count"] = 0
+            state.pop("recovery_started_monotonic", None)
             recovery["reason"] = "frame_edge_clipped"
             return recovery
         if not is_physical_recovery_posture(posture, posture_confidence):
             state["recovery_count"] = 0
+            state.pop("recovery_started_monotonic", None)
             recovery["reason"] = (
                 "transitional_low_posture"
                 if posture in TRANSITIONAL_LOW_POSTURES
@@ -224,17 +316,42 @@ class PoseFactorGraphEngine:
             )
             return recovery
 
+        floor_center = state.get("floor_reference_center")
+        center_lift = (
+            float(floor_center[1]) - float(center[1])
+            if isinstance(floor_center, list) and len(floor_center) >= 2
+            else 0.0
+        )
+        recovery["center_lift"] = round(center_lift, 4)
+        if center_lift < self.recovery_min_center_lift:
+            state["recovery_count"] = 0
+            state.pop("recovery_started_monotonic", None)
+            recovery["reason"] = "insufficient_vertical_recovery"
+            return recovery
+
         sample_count = int(state.get("recovery_count") or 0) + 1
         state["recovery_count"] = sample_count
+        started = state.get("recovery_started_monotonic")
+        if started is None:
+            started = now_mono
+            state["recovery_started_monotonic"] = now_mono
+        duration_seconds = max(0.0, now_mono - float(started))
+        confirmed = bool(
+            sample_count >= self.recovery_samples
+            and duration_seconds >= self.recovery_stability_seconds
+        )
         recovery.update({
-            "confirmed": sample_count >= self.recovery_samples,
-            "reason": "same_track_stable_upright" if sample_count >= self.recovery_samples else "awaiting_stable_upright",
+            "confirmed": confirmed,
+            "reason": "same_track_stable_upright" if confirmed else "awaiting_stable_upright",
             "sample_count": sample_count,
+            "duration_seconds": round(duration_seconds, 3),
         })
         if recovery["confirmed"]:
             recovery["observed_at"] = timestamp
             state.pop("lying_started_monotonic", None)
             state.pop("lying_started_at", None)
+            state.pop("floor_reference_center", None)
+            state.pop("recovery_started_monotonic", None)
         return recovery
 
     def _update_baseline(
@@ -363,6 +480,7 @@ class PoseFactorGraphEngine:
             "center": list(center),
             "bbox": list(bbox),
             "posture": posture,
+            "identity_match": "same_track",
         }
 
     def _graph(
@@ -388,6 +506,7 @@ class PoseFactorGraphEngine:
         vertical_drop = 0.0
         horizontal_distance = 1.0
         recent_upright_ok = False
+        identity_match = "none"
         if recent_upright:
             upright_monotonic = recent_upright.get("monotonic_at")
             upright_age = max(
@@ -398,6 +517,7 @@ class PoseFactorGraphEngine:
             vertical_drop = float(center[1]) - float(upright_center[1])
             horizontal_distance = abs(float(center[0]) - float(upright_center[0]))
             recent_upright_ok = upright_age <= self.upright_window_seconds
+            identity_match = str(recent_upright.get("identity_match") or "same_track")
 
         low_posture = posture == "lying" or (posture in {"squatting", "low_body"} and center[1] >= 0.62)
         direct_motion = bool(
@@ -429,7 +549,7 @@ class PoseFactorGraphEngine:
             recent_descent_ok = recent_descent_age <= RECENT_DESCENT_EVIDENCE_SECONDS
         factors = {
             "recent_upright": recent_upright_ok,
-            "same_track_continuity": recent_upright_ok,
+            "same_track_continuity": recent_upright_ok and identity_match == "same_track",
             "vertical_drop": vertical_drop_evidence,
             "spatial_consistency": horizontal_distance <= 0.28,
             "low_posture": low_posture,
@@ -481,6 +601,12 @@ class PoseFactorGraphEngine:
                 and upright_age <= FAST_FALL_IMMEDIATE_REVIEW_WINDOW_SECONDS
                 and vertical_drop >= fall_min_vertical_drop * 1.5
             )
+            or (
+                identity_match == "single_person_spatial_reacquisition"
+                and upright_age is not None
+                and upright_age <= SPATIAL_REACQUISITION_SECONDS
+                and vertical_drop >= fall_min_vertical_drop * 1.5
+            )
         )
         prolonged_candidate = bool(
             posture == "lying" and confidence >= self.min_posture_confidence
@@ -499,6 +625,10 @@ class PoseFactorGraphEngine:
             "normal_lying_zone": normal_lying_zone,
             "scene_zone_id": target.get("scene_zone_id"),
             "scene_zone_label": target.get("scene_zone_label"),
+            "identity_match": identity_match,
+            "upright_source_track_id": (
+                recent_upright.get("source_track_id") if recent_upright else None
+            ),
             "recent_upright_age_seconds": None if upright_age is None else round(upright_age, 3),
             "vertical_drop": round(vertical_drop, 4),
             "horizontal_distance": round(horizontal_distance, 4),

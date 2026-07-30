@@ -70,12 +70,18 @@
         const evidenceLabel = frameCount > 1 ? `${frameCount} 张关键帧` : "事件证据";
         if (status === "pending" || status === "verifying") return `云端正在复核${evidenceLabel}`;
         if (status === "retrying") return "云端复核暂时失败，系统正在自动重试";
-        if (status === "confirmed") return `云端视觉复核支持这条提醒：${result.reason || "建议立即确认老人状态"}`;
-        if (status === "rejected") return `云端视觉复核暂未看到明确紧急线索：${result.reason || "仍建议结合实时画面确认"}`;
-        if (status === "uncertain") return `云端视觉证据不足，需要人工确认：${result.reason || "请查看截图和实时画面"}`;
+        if (status === "confirmed") return `云端复核确认存在风险：${compactText(result.reason || "请尽快确认家中情况")}`;
+        if (status === "rejected") return `云端复核已排除异常：${compactText(result.reason || "未发现跌倒或其他紧急情况")}`;
+        if (status === "uncertain") return `云端证据不足：${compactText(result.reason || "请查看截图或联系家中确认")}`;
         if (status === "failed") return "云端复核未完成，当前提醒仍以家庭盒子的边缘判断为准";
         if (status === "unavailable") return "当前没有可用的云端复核结果，提醒仍以家庭盒子判断为准";
         return "";
+    }
+
+    function compactText(value, maximum = 110) {
+        const text = String(value || "").replace(/\s+/g, " ").trim();
+        if (text.length <= maximum) return text;
+        return `${text.slice(0, maximum - 3)}...`;
     }
 
     function syncActionState(event) {
@@ -174,28 +180,6 @@
         return String(value);
     }
 
-    function metricLabel(key) {
-        const labels = {
-            no_person_seconds: "连续无人",
-            no_motion_seconds: "静止时长",
-            motion_score: "运动分数",
-            brightness: "亮度",
-            contrast: "对比度",
-            people: "人体框",
-            camera_state: "摄像头状态",
-            person_state: "人物状态",
-            motion_state: "画面状态",
-            error: "错误信息",
-        };
-        return labels[key] || key;
-    }
-
-    function summarizeMetrics(metrics) {
-        const entries = Object.entries(metrics || {}).filter(([, value]) => value !== null && value !== undefined && value !== "");
-        if (!entries.length) return "";
-        return entries.map(([key, value]) => `${metricLabel(key)} ${fmtMetricValue(key, value)}`).join("，");
-    }
-
     function durationText(event, payload, rule) {
         const observed = rule?.observed || {};
         const seconds = payload.no_motion_seconds
@@ -209,28 +193,31 @@
     }
 
     function durationHint(event, _payload, rule) {
-        const observedSummary = summarizeMetrics(rule?.observed);
-        return rule?.label || observedSummary || GoHomeEdge.eventLabel(event.type);
+        return rule?.label || GoHomeEdge.eventLabel(event.type);
     }
 
     function factText(event, _payload, rule) {
         const label = rule?.label || GoHomeEdge.eventLabel(event.type);
-        const reason = rule?.reason ? `，原因是：${cleanReason(event, rule.reason)}` : "";
-        return `${GoHomeEdge.fmtDateTime(event.occurred_at)}，${event.camera_name || "摄像头"} 触发了${label}${reason}`;
+        return `${GoHomeEdge.fmtDateTime(event.occurred_at)}，${event.camera_name || event.room || "家庭摄像头"}记录到${label}。`;
     }
 
-    function factSubText(payload, rule) {
-        const observed = summarizeMetrics(rule?.observed);
-        const threshold = summarizeMetrics(rule?.threshold);
-        const state = summarizeMetrics(payload?.evaluation?.state);
-        const parts = [];
-        if (observed) parts.push(`当前观测：${observed}`);
-        if (threshold) parts.push(`规则阈值：${threshold}`);
-        if (state) parts.push(`评估状态：${state}`);
-        const verification = verificationText({ payload });
-        if (verification) parts.push(verification);
-        if (!parts.length) return `原始亮度：${Number(payload?.brightness || 0).toFixed(0)}。`;
-        return `${parts.join("。")}。`;
+    function factSubText(event, payload, rule) {
+        const verification = verificationText(event);
+        if (verification) {
+            return `${verification.replace(/[。！？.!?]+$/g, "")}。事件画面和处理记录已保留。`;
+        }
+        const frameCount = Array.isArray(event?.evidence_media) ? event.evidence_media.length : 0;
+        const evidence = frameCount > 1 ? `已保留 ${frameCount} 张连续关键帧` : "已保留事件画面";
+        if (event.type === "fall_candidate") {
+            return `家庭盒子连续捕捉到人物姿态快速变化，${evidence}，正在等待云端复核。`;
+        }
+        if (event.type === "prolonged_floor_lying") {
+            return `家庭盒子持续检测到人员在非床或沙发区域躺卧，${evidence}。`;
+        }
+        if (event.type === "long_absence") {
+            return "参与守护的摄像头保持在线，但长时间未检测到家中人员。";
+        }
+        return compactText(cleanReason(event, rule?.reason) || detailNote(event), 150);
     }
 
     function escapeHtml(value) {
@@ -257,6 +244,9 @@
         }
         if (source === "edge_admin" || (status === "rejected" && transition?.resolution === "false_positive")) {
             return { icon: "rule", title: "已核对为算法误报", detail: "记录和证据保留，用于后续校准。", tone: "" };
+        }
+        if (source === "edge_recovery" || status === "recovered") {
+            return { icon: "person_check", title: "已重新检测到站立姿态", detail: "当前危险姿态可能已解除，刚才的事件仍等待你确认。", tone: "" };
         }
         if (source === "presence_recovery" || status === "resolved") {
             return { icon: "person_check", title: "家中状态已经恢复", detail: "摄像头重新检测到老人，本次提醒自动结束。", tone: "" };
@@ -391,7 +381,7 @@
         const verification = verificationText(event);
         setText("edgeDetailNote", verification || cleanReason(event, rule.reason) || detailNote(event));
         setText("edgeDetailFact", factText(event, payload, rule));
-        setText("edgeDetailFactSub", factSubText(payload, rule));
+        setText("edgeDetailFactSub", factSubText(event, payload, rule));
         renderTimeline(event);
         await renderEvidenceFrames(event);
         syncActionState(event);

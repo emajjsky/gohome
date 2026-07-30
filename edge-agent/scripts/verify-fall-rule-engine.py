@@ -169,8 +169,8 @@ def main() -> None:
 
     seated_engine = RuleEngine()
     seated_engine.evaluate_snapshot(camera, {"id": 1010}, make_upright_analysis(), rules)
-    seated_engine.evaluate_snapshot(camera, {"id": 1011}, make_pose_fall_analysis(normal_lying_zone=False, fast_graph=True), rules)
-    seated_engine.evaluate_snapshot(camera, {"id": 1012}, make_pose_fall_analysis(normal_lying_zone=False, fast_graph=True), rules)
+    seated_engine.evaluate_snapshot(camera, {"id": 1011}, make_pose_fall_analysis(normal_lying_zone=False), rules)
+    seated_engine.evaluate_snapshot(camera, {"id": 1012}, make_pose_fall_analysis(normal_lying_zone=False), rules)
     seated_recovery = seated_engine.evaluate_snapshot(
         camera,
         {"id": 1013},
@@ -248,7 +248,7 @@ def main() -> None:
             make_pose_fall_analysis(normal_lying_zone=True, fast_graph=True),
             fast_rules,
         )
-        current_time[0] = fast_start + timedelta(seconds=2.75)
+        current_time[0] = fast_start + timedelta(seconds=3.35)
         fast_third = fast_engine.evaluate_snapshot(
             camera,
             {"id": 2204},
@@ -267,6 +267,45 @@ def main() -> None:
         raise SystemExit("two current factor-graph fall frames must create an event inside a normal lying zone")
     if fast_third.state.get("fall_confirm_seconds", 0) >= fast_rules["fall_confirm_seconds"]:
         raise SystemExit("fast-fall path did not exercise the short dynamic confirmation branch")
+
+    live_false_positive_engine = RuleEngine()
+    try:
+        current_time = [fast_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        upright = make_upright_analysis()
+        upright["motion_score"] = 0.0049
+        upright["poses"][0]["posture"] = "standing"
+        live_false_positive_engine.evaluate_snapshot(camera, {"id": 2220}, upright, fast_rules)
+        false_sequence = []
+        for snapshot_id, seconds in ((2221, 0.10), (2222, 0.234)):
+            current_time[0] = fast_start + timedelta(seconds=seconds)
+            analysis = make_pose_fall_analysis(normal_lying_zone=False, fast_graph=True)
+            analysis["motion_score"] = 0.0049
+            for target in [*analysis["people"], *analysis["poses"]]:
+                target["bbox"] = [80.0, 170.0, 230.0, 224.1]
+                target["track_id"] = "person-1"
+            graph_target = analysis["pose_factor_graph"]["fast_fall_track"]
+            graph_target.update({
+                "bbox": [80.0, 170.0, 230.0, 224.1],
+                "track_id": "person-1",
+                "review_ready": False,
+                "quality_gate": True,
+                "required_factors_confirmed": True,
+            })
+            false_sequence.append(live_false_positive_engine.evaluate_snapshot(
+                camera,
+                {"id": snapshot_id},
+                analysis,
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if any(item.candidates for item in false_sequence):
+        raise SystemExit("0.134-second sit/squat posture jitter must not create a fall event")
+    if any(item.state.get("fall_transition_confirmed") for item in false_sequence):
+        raise SystemExit("factor-graph candidate must not override insufficient descent evidence")
+    if false_sequence[-1].state.get("fall_transition", {}).get("reason") != "insufficient_descent":
+        raise SystemExit(f"live false-positive regression lost its evidence contract: {false_sequence[-1].state}")
 
     sustained_graph = PoseFactorGraphEngine(prolonged_lying_seconds=180)
     sustained_engine = RuleEngine()
@@ -302,7 +341,7 @@ def main() -> None:
             fast_rules,
         )
 
-        current_time[0] = sustained_start + timedelta(seconds=2.85)
+        current_time[0] = sustained_start + timedelta(seconds=3.5)
         sustained_third_analysis = make_shallow_floor_lying_analysis()
         sustained_graph.update(1, sustained_third_analysis, monotonic_at=2.85)
         sustained_confirmed = sustained_engine.evaluate_snapshot(
@@ -340,7 +379,7 @@ def main() -> None:
             make_pose_fall_analysis(normal_lying_zone=False),
             fast_rules,
         )
-        current_time[0] = dynamic_start + timedelta(seconds=3.1)
+        current_time[0] = dynamic_start + timedelta(seconds=2.6)
         dynamic_confirmed = dynamic_engine.evaluate_snapshot(
             camera,
             {"id": 2303},
@@ -587,6 +626,28 @@ def main() -> None:
         rule_engine_module.utc_now = original_clock
     if any(result.candidates for result in multi_person_results):
         raise SystemExit("an upright bystander must not confirm another person's seated posture as a fall")
+
+    missing_identity_engine = RuleEngine()
+    missing_identity_engine.evaluate_snapshot(
+        camera,
+        {"id": 2750},
+        make_multi_person_upright_analysis(),
+        fast_rules,
+    )
+    missing_identity = missing_identity_engine.evaluate_snapshot(
+        camera,
+        {"id": 2751},
+        make_multi_person_missing_identity_graph_analysis(),
+        fast_rules,
+    )
+    if missing_identity.candidates:
+        raise SystemExit("factor-graph evidence must not override missing identity in a multi-person scene")
+    if missing_identity.state.get("fall_transition_confirmed"):
+        raise SystemExit(f"missing target identity was incorrectly inherited: {missing_identity.state}")
+    if missing_identity.state.get("fall_transition", {}).get("reason") != "track_identity_missing":
+        raise SystemExit(f"missing identity rejection is not auditable: {missing_identity.state}")
+    if not missing_identity.state.get("fall_scene_suppressed"):
+        raise SystemExit("missing identity must not override normal sofa lying suppression")
 
     track_jump_engine = RuleEngine()
     try:
@@ -1126,6 +1187,40 @@ def make_multi_person_seated_analysis() -> dict:
     analysis["poses"][0]["fall_score"] = 0.18
     analysis["people"][0]["bbox"] = [74, 125, 138, 238]
     analysis["motion_score"] = 0.01
+    return analysis
+
+
+def make_multi_person_missing_identity_graph_analysis() -> dict:
+    analysis = make_pose_fall_analysis(normal_lying_zone=True)
+    target = analysis["poses"][0]
+    target["track_id"] = "new-sofa-person"
+    analysis["people"][0]["track_id"] = "new-sofa-person"
+    bystander = {
+        "bbox": [16, 90, 73, 214],
+        "confidence": 0.82,
+        "source": "rtmpose",
+        "track_id": "bystander",
+        "posture": "standing",
+        "person_evidence_eligible": True,
+        "fall_score": 0.08,
+    }
+    analysis["poses"].append(bystander)
+    analysis["person_count"] = 2
+    analysis["pose_count"] = 2
+    analysis["motion_score"] = 0.0043
+    analysis["pose_factor_graph"] = {
+        "fast_fall_candidate": True,
+        "fast_fall_score": 0.93,
+        "fast_fall_track": {
+            **target,
+            "fast_fall_candidate": True,
+            "fast_fall_score": 0.93,
+            "review_ready": True,
+            "quality_gate": True,
+            "required_factors_confirmed": True,
+        },
+        "tracks": [],
+    }
     return analysis
 
 

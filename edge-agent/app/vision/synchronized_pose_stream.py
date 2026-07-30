@@ -4,7 +4,7 @@ import re
 import time
 from typing import Any, Dict, Generator
 
-from ..camera_agent import _load_cv2, next_stream_frame_delay
+from ..camera_agent import _load_cv2, bounded_stream_fps, next_stream_frame_delay
 
 
 DEFAULT_SKELETON_EDGES = (
@@ -43,7 +43,7 @@ class SynchronizedPoseStream:
     ) -> Generator[bytes, None, None]:
         cv2 = _load_cv2()
         camera_id = int(camera["id"])
-        interval = 1.0 / max(1, min(int(fps), 10))
+        interval = 1.0 / bounded_stream_fps(fps)
         deadline = time.monotonic()
         last_frame_id = ""
         encode_params = [

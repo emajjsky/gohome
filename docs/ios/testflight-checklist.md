@@ -2,7 +2,7 @@
 
 Distributed baseline: `1.0.0 (4)`
 
-Candidate under validation: `1.0.0 (4)` (installed from TestFlight)
+Candidate under validation: `1.0.0 (5)` (source consolidation and release gates in progress)
 
 ## Automated Gates
 
@@ -14,6 +14,7 @@ Candidate under validation: `1.0.0 (4)` (installed from TestFlight)
 - [x] Build 4 generic iOS device archive succeeds with automatic signing.
 - [x] App Store Connect accepts Build 4 with production APNs entitlement.
 - [x] App Store Connect finishes processing and exposes Build 4 to TestFlight.
+- [ ] Build 5 is archived from the sole native project on `main`, uploaded, processed, and installable from TestFlight.
 
 ## Physical Device
 

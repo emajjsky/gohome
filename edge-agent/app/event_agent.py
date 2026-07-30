@@ -48,11 +48,15 @@ class EventAgent:
             rule_evaluation_id=rule_evaluation_id,
             candidate_id=candidate_id,
             payload=payload or {},
+            cloud_sync_status="pending",
         )
         if candidate_id is not None:
             self.storage.update_event_candidate_status(candidate_id, "promoted", promoted_event_id=event["id"])
 
-        self.storage.enqueue_event_upload_jobs(event)
+        if event_type == "fall_candidate":
+            self.storage.enqueue_event_evidence_finalize(event)
+        else:
+            self.storage.enqueue_event_upload_jobs(event)
 
         rules = self.storage.get_rules()
         if rules.get("notification_enabled") and self._should_notify(event_type, level):

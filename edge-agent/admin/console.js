@@ -402,6 +402,46 @@ function renderPairingCountdown() {
   target.textContent = remaining > 0 ? `已开启 ${fmtDuration(remaining)}` : "未开启";
 }
 
+function syncStatusPresentation(sync) {
+  if (!sync.configured) return { label: "未连接", tone: "muted", detail: "云端同步尚未配置" };
+  if (!sync.running) return { label: "同步停止", tone: "bad", detail: "同步进程未运行" };
+  if (sync.last_error) {
+    const failures = Math.max(1, Number(sync.consecutive_failures || 1));
+    return {
+      label: failures >= 3 ? "同步异常" : "正在重试",
+      tone: failures >= 3 ? "bad" : "warning",
+      detail: `${fmtTime(sync.last_error_at)} · ${String(sync.last_error)}`,
+    };
+  }
+
+  const syncedAt = Date.parse(sync.last_sync_at || "");
+  if (!Number.isFinite(syncedAt)) {
+    return { label: "等待同步", tone: "warning", detail: "等待首次云端确认" };
+  }
+  const ageSeconds = Math.max(0, (Date.now() - syncedAt) / 1000);
+  if (ageSeconds > 60) {
+    return {
+      label: "同步延迟",
+      tone: "warning",
+      detail: `最近成功同步：${fmtTime(sync.last_sync_at)}`,
+    };
+  }
+  if (sync.last_result?.report_ok === false) {
+    return {
+      label: "等待云端确认",
+      tone: "warning",
+      detail: `最近同步：${fmtTime(sync.last_sync_at)}`,
+    };
+  }
+  return {
+    label: `已同步 ${new Date(syncedAt).toLocaleTimeString("zh-CN", { hour12: false })}`,
+    tone: "success",
+    detail: sync.last_recovered_at
+      ? `已恢复 · 最近成功同步：${fmtTime(sync.last_sync_at)}`
+      : `最近成功同步：${fmtTime(sync.last_sync_at)}`,
+  };
+}
+
 function renderDeviceBinding() {
   if (pageName !== "home" || !state.device) return;
   const binding = state.device.binding || { status: "unbound" };
@@ -418,10 +458,13 @@ function renderDeviceBinding() {
       : "可由家庭创建者通过回家 App 绑定"
   );
   setText("bindingTime", isBound ? fmtTime(binding.bound_at) : "-");
-  setText(
-    "bindingCloudSync",
-    sync.last_error ? "同步异常" : sync.last_sync_at ? "已同步" : sync.configured ? "等待同步" : "未连接"
-  );
+  const syncStatus = syncStatusPresentation(sync);
+  setText("bindingCloudSync", syncStatus.label);
+  const syncTarget = $("bindingCloudSync");
+  if (syncTarget) {
+    syncTarget.className = `cloud-sync-status ${syncStatus.tone}`;
+    syncTarget.title = syncStatus.detail;
+  }
   state.bindingClosesAt = Date.parse(state.device.pairing?.closes_at || "") || 0;
   renderPairingCountdown();
   const button = $("openPairingWindow");
@@ -935,8 +978,8 @@ function renderStream({ retry = false } = {}) {
     setText("streamStatus", "实时视频已连接");
   };
   const streamProfile = pageName === "algorithms"
-    ? { fps: 12, width: 960, height: 540, quality: 70, drop: 0, label: "同步姿态视频" }
-    : { fps: 10, width: 1280, height: 720, quality: 64, drop: 1, label: "720p 低延迟视频" };
+    ? { fps: 15, width: 960, height: 540, quality: 70, drop: 0, label: "同步姿态视频" }
+    : { fps: 15, width: 1280, height: 720, quality: 64, drop: 1, label: "720p 低延迟视频" };
   state.serverAnnotated = pageName === "algorithms" && state.videoPrivacyMode === "original";
   const streamPath = state.serverAnnotated
     ? `/api/cameras/${camera.id}/continual-pose/stream.mjpg`
@@ -1405,7 +1448,6 @@ function renderSnapshot(snapshot) {
   }
   if ($("snapshotEmpty")) $("snapshotEmpty").style.display = "none";
   setText("snapshotTime", fmtTime(snapshot.captured_at));
-  setText("streamFrameTime", fmtTime(snapshot.captured_at));
   setText("snapshotBrightness", fmtNumber(analysis.brightness ?? snapshot.brightness, 1));
   setText("snapshotContrast", fmtNumber(analysis.contrast, 1));
   setText("snapshotMotion", analysis.motion_score === null || analysis.motion_score === undefined ? "-" : fmtNumber(analysis.motion_score, 4));
@@ -1819,6 +1861,7 @@ function runtimeModeLabel(mode) {
 }
 
 function renderRuntimeStatus(payload = state.runtimeStatus) {
+  renderStreamHealth(payload);
   if (pageName !== "algorithms") return;
   const scheduler = payload?.inference_scheduler || {};
   const cameras = Array.isArray(scheduler.cameras) ? scheduler.cameras : [];
@@ -1835,8 +1878,40 @@ function renderRuntimeStatus(payload = state.runtimeStatus) {
   setText("runtimePose", poseRunning ? "姿态跟踪" : "姿态待命");
 }
 
+function renderStreamHealth(payload = state.runtimeStatus) {
+  const streams = Array.isArray(payload?.camera_streams?.streams)
+    ? payload.camera_streams.streams
+    : [];
+  const selected = streams.find((stream) => Number(stream.camera_id) === Number(state.selectedCameraId));
+  if (!selected) {
+    setText("streamFrameTime", state.selectedCameraId ? "等待源流" : "未选择摄像头");
+    setText("streamFpsBadge", "-- FPS");
+    $("streamFpsBadge")?.classList.remove("is-live");
+    return;
+  }
+  const fps = Number(selected.source_fps);
+  const ageMs = Number(selected.latest_frame_age_ms);
+  if (selected.state === "retrying") {
+    setText("streamFrameTime", "源流重连中");
+    setText("streamFpsBadge", "重连中");
+    $("streamFpsBadge")?.classList.remove("is-live");
+    return;
+  }
+  if (selected.state === "stale") {
+    setText("streamFrameTime", `源流延迟 ${Number.isFinite(ageMs) ? Math.round(ageMs) : "-"} ms`);
+    setText("streamFpsBadge", "源流延迟");
+    $("streamFpsBadge")?.classList.remove("is-live");
+    return;
+  }
+  const fpsLabel = Number.isFinite(fps) && fps > 0 ? `${fps.toFixed(1)} FPS` : "源流预热";
+  const ageLabel = Number.isFinite(ageMs) ? ` · 帧龄 ${Math.round(ageMs)} ms` : "";
+  setText("streamFrameTime", `${fpsLabel}${ageLabel}`);
+  setText("streamFpsBadge", Number.isFinite(fps) && fps > 0 ? `${fps.toFixed(1)} FPS` : "-- FPS");
+  $("streamFpsBadge")?.classList.toggle("is-live", Number.isFinite(fps) && fps > 0);
+}
+
 async function loadRuntimeStatus() {
-  if (pageName !== "algorithms") return;
+  if (!["home", "algorithms"].includes(pageName)) return;
   const payload = await api("/api/rules/runtime");
   state.runtimeStatus = payload;
   renderRuntimeStatus(payload);
@@ -2485,6 +2560,12 @@ function eventLogLifecycle(record) {
   const verificationStatus = String(cloud?.verification?.status || "");
   const syncStatus = String(record?.sync?.status || "local_only");
   if (syncStatus === "failed") return { key: "sync_error", label: "同步异常", tone: "bad" };
+  if (
+    local.type === "camera_offline"
+    && (local.payload?.resolution === "camera_reconnected" || local.camera_status === "online")
+  ) {
+    return { key: "closed", label: "当前已恢复", tone: "muted" };
+  }
   if (!cloud && ["pending", "uploading", "local_only"].includes(syncStatus)) {
     return { key: "verifying", label: syncStatus === "uploading" ? "正在上传" : "等待上传", tone: "watch" };
   }
@@ -2559,6 +2640,9 @@ function renderEventLog() {
     const resultReason = eventLogVerificationReason(record);
     const incidentId = cloud?.incident?.incident_id || "";
     const uploadError = record.sync?.event_upload?.last_error || record.sync?.media_upload?.last_error || "";
+    const displaySummary = local.type === "camera_offline" && local.camera_status === "online"
+      ? `${local.camera_name || "摄像头"} 曾发生连接中断，当前已恢复`
+      : (local.summary || eventTypeLabel(local.type));
     const thumbnail = local.snapshot_url
       ? `<button class="event-evidence-thumb" type="button" data-event-log-action="snapshot" data-url="${escapeHtml(local.snapshot_url)}"><img src="${escapeHtml(local.snapshot_url)}" alt=""><span>证据帧</span></button>`
       : '<div class="event-evidence-thumb empty"><span>无证据帧</span></div>';
@@ -2567,7 +2651,7 @@ function renderEventLog() {
         <header>
           <div>
             <span class="event-type-mark">${escapeHtml(eventTypeLabel(local.type))}</span>
-            <h2>${escapeHtml(local.summary || eventTypeLabel(local.type))}</h2>
+            <h2>${escapeHtml(displaySummary)}</h2>
             <p>${escapeHtml([local.camera_name || local.room || "盒子", fmtTime(local.occurred_at), `本地 #${local.id}`, cloud?.event_id ? `云端 #${cloud.event_id}` : ""].filter(Boolean).join(" · "))}</p>
           </div>
           <span class="status-pill ${escapeHtml(lifecycle.tone || "")}">${escapeHtml(lifecycle.label)}</span>
@@ -3282,12 +3366,13 @@ document.addEventListener("DOMContentLoaded", () => {
     setTimeout(() => discoverCameras($("discoverCameras")).catch(() => renderCameraDiscovery()), 400);
   }
   state.refreshTimer = setInterval(() => {
+    if (pageName === "home") loadDevice().catch(() => null);
     if (pageName === "home" && state.selectedCameraId) {
       loadSnapshot(state.selectedCameraId).catch(() => null);
       loadEvaluation(state.selectedCameraId).catch(() => null);
     }
     if (pageName === "home" || pageName === "algorithms") {
-      if (pageName === "algorithms") loadRuntimeStatus().catch(() => null);
+      loadRuntimeStatus().catch(() => null);
       loadCandidates().catch(() => null);
       loadObservationLogs().catch(() => null);
       loadUploadQueueSummary().catch(() => null);
@@ -3296,8 +3381,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (pageName === "events") loadEventLog().catch(() => null);
   }, 6000);
   state.privacyTimer = setInterval(() => {
-    loadVideoPrivacyMode().catch(() => null);
-  }, 1000);
+    if (!document.hidden) loadVideoPrivacyMode().catch(() => null);
+  }, 5000);
   setInterval(renderPairingCountdown, 1000);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {

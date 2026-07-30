@@ -27,7 +27,7 @@ from .app_runtime_guard_service import AppRuntimeGuardService
 from .apns_relay_service import APNSRelayService
 from .app_push_service import AppPushService
 from .box_init_service import ADMIN_SESSION_COOKIE, DEFAULT_ADMIN_PASSWORD, BoxInitService
-from .camera_agent import CameraAgent, CameraError
+from .camera_agent import CameraAgent, CameraError, bounded_stream_fps
 from .camera_config_authority import camera_config_authority
 from .config_sync_agent import ConfigSyncAgent
 from .detect_agent import DetectAgent
@@ -35,6 +35,7 @@ from .device_binding_state import DeviceBindingState
 from .edge_bootstrap_service import EdgeBootstrapService
 from .event_agent import EventAgent
 from .live_relay_agent import LiveRelayAgent
+from .pose_relay_agent import PoseRelayAgent
 from .notifier import Notifier
 from .object_storage_service import ObjectStorageService, build_object_storage_router
 from .package_service import PackageService
@@ -433,6 +434,19 @@ def validated_pair_return_url(raw_url: str) -> str:
 
 def cloud_pair_device(code: str) -> Dict[str, Any]:
     identity = local_device_identity()
+    bootstrap_cameras = [
+        {
+            "local_camera_id": camera.get("id"),
+            "name": camera.get("name") or "摄像头",
+            "room": camera.get("room") or "",
+            "stream_url": camera.get("stream_url") or "",
+            "username": camera.get("username"),
+            "password": camera.get("password"),
+            "enabled": bool(camera.get("enabled", True)),
+        }
+        for camera in storage.list_cameras(include_secret=True)
+        if str(camera.get("stream_url") or "").strip()
+    ]
     payload = json.dumps({
         "code": code,
         "device_id": identity["device_id"],
@@ -444,6 +458,7 @@ def cloud_pair_device(code: str) -> Dict[str, Any]:
             "api_port": identity["api_port"],
             "pairing_method": "lan",
         },
+        "bootstrap_cameras": bootstrap_cameras,
     }, ensure_ascii=False).encode("utf-8")
     request = UrlRequest(
         f"{settings.app_server_base_url}/api/device/token/exchange",
@@ -1198,6 +1213,16 @@ detect_agent = DetectAgent(
     pose_cache_max_motion=settings.pose_cache_max_motion,
     activity_window_seconds=settings.activity_window_seconds,
     activity_max_samples=settings.activity_max_samples,
+    inference_backend=settings.inference_backend,
+    hailo_pose_model=settings.hailo_pose_model,
+    hailo_pose_confidence=settings.hailo_pose_confidence,
+    hailo_pose_nms_iou=settings.hailo_pose_nms_iou,
+    hailo_object_mode=settings.hailo_object_mode,
+    hailo_object_model=settings.hailo_object_model,
+    hailo_object_confidence=settings.hailo_object_confidence,
+    hailo_object_interval_seconds=settings.hailo_object_interval_seconds,
+    hailo_retry_seconds=settings.hailo_retry_seconds,
+    context_detection_interval_seconds=settings.context_detection_interval_seconds,
 )
 notifier = Notifier(settings)
 event_agent = EventAgent(storage, notifier, settings.event_throttle_seconds)
@@ -1216,22 +1241,27 @@ worker = EdgeWorker(
     camera_agent,
     detect_agent,
     event_agent,
-    live_frame_upload_enabled=(
-        settings.live_frame_upload_enabled
-        and settings.upload_worker_enabled
-        and bool(settings.app_server_base_url)
-    ),
-    live_frame_upload_interval_seconds=settings.live_frame_upload_interval_seconds,
-    remote_camera_id_resolver=remote_camera_id_for_local_camera,
     snapshot_dir=settings.snapshot_dir,
     history_retention_hours=settings.history_retention_hours,
     history_cleanup_interval_seconds=settings.history_cleanup_interval_seconds,
     history_cleanup_batch_size=settings.history_cleanup_batch_size,
     completed_upload_retention_days=settings.completed_upload_retention_days,
+    event_evidence_retention_hours=settings.event_evidence_retention_hours,
+    local_event_retention_days=settings.local_event_retention_days,
+    local_runtime_budget_mb=settings.local_runtime_budget_mb,
+    activity_log_interval_seconds=settings.activity_log_interval_seconds,
+    activity_posture_stability_seconds=settings.activity_posture_stability_seconds,
+    activity_absence_stability_seconds=settings.activity_absence_stability_seconds,
+    risk_evidence_interval_seconds=settings.risk_evidence_interval_seconds,
+    local_storage_high_watermark_percent=settings.local_storage_high_watermark_percent,
+    local_storage_critical_percent=settings.local_storage_critical_percent,
     inference_scheduler=AdaptiveInferenceScheduler(
         idle_interval_seconds=settings.inference_idle_interval_seconds,
         active_interval_seconds=settings.inference_active_interval_seconds,
         risk_interval_seconds=settings.inference_risk_interval_seconds,
+        accelerated_idle_interval_seconds=settings.inference_accelerated_idle_interval_seconds,
+        accelerated_active_interval_seconds=settings.inference_accelerated_active_interval_seconds,
+        accelerated_risk_interval_seconds=settings.inference_accelerated_risk_interval_seconds,
         resource_monitor=resource_monitor,
         max_starvation_seconds=settings.inference_max_starvation_seconds,
     ),
@@ -1265,6 +1295,7 @@ config_sync_agent = ConfigSyncAgent(
     device_id_resolver=current_device_id,
     token_resolver=read_local_device_token,
     binding_summary_writer=binding_state.write,
+    event_state_handler=worker.apply_event_state_command,
     runtime_status_resolver=lambda: {
         "worker_running": worker.is_running,
         "lan_url": f"http://{local_ip()}:{settings.port}",
@@ -1284,6 +1315,7 @@ config_sync_agent = ConfigSyncAgent(
             "last_cleanup": worker.last_history_cleanup_result,
         },
     },
+    presence_status_resolver=worker.camera_presence_status,
 )
 privacy_frame_renderer = PrivacyFrameRenderer(worker.continual_pose_tracker)
 privacy_mjpeg_stream = PrivacyMjpegStream(camera_agent, privacy_frame_renderer)
@@ -1297,6 +1329,14 @@ live_relay_agent = LiveRelayAgent(
     privacy_mode_resolver=config_sync_agent.video_privacy_mode,
     privacy_mode_observer=lambda mode: config_sync_agent.observe_video_privacy_mode(mode, wake=True),
     privacy_renderer=privacy_frame_renderer,
+)
+pose_relay_agent = PoseRelayAgent(
+    storage=storage,
+    settings=settings,
+    tracker=worker.continual_pose_tracker,
+    device_id_resolver=current_device_id,
+    token_resolver=read_local_device_token,
+    remote_camera_id_resolver=remote_camera_id_for_local_camera,
 )
 package_service = PackageService(storage=storage, settings=settings, object_storage=object_storage_service)
 app_runtime_guard = AppRuntimeGuardService(
@@ -1537,6 +1577,7 @@ def on_startup() -> None:
         worker.start()
     upload_agent.start()
     live_relay_agent.start()
+    pose_relay_agent.start()
     config_sync_agent.start()
     app_runtime_guard.start()
 
@@ -1545,6 +1586,7 @@ def on_startup() -> None:
 def on_shutdown() -> None:
     app_runtime_guard.stop()
     config_sync_agent.stop()
+    pose_relay_agent.stop()
     live_relay_agent.stop()
     upload_agent.stop()
     worker.stop()
@@ -1552,12 +1594,38 @@ def on_shutdown() -> None:
 
 @app.get("/health")
 def health() -> Dict[str, Any]:
+    worker_status = worker.runtime_status()
+    vision_status = worker_status.get("vision_runtime") or {}
+    pose_status = vision_status.get("inference_backend") or {}
+    context_status = vision_status.get("context_inference_backend") or {}
     return {
         "status": "ok",
         "service": "gohome-edge-agent",
         "worker_running": worker.is_running,
+        "vision_runtime": {
+            "pose": {
+                key: pose_status.get(key)
+                for key in (
+                    "schema_version", "mode", "status", "last_latency_ms",
+                    "latency_summary_ms", "successful_inferences", "failed_inferences",
+                )
+            },
+            "context": {
+                key: context_status.get(key)
+                for key in (
+                    "schema_version", "mode", "status", "last_latency_ms",
+                    "latency_summary_ms", "successful_inferences", "failed_inferences", "cache_count",
+                )
+            },
+            "pipeline_latency_ms": vision_status.get("pipeline_latency_ms") or {},
+        },
+        "persistence": worker_status.get("persistence") or {},
+        "camera_streams": worker_status.get("camera_streams") or {},
+        "continual_pose": worker_status.get("continual_pose") or {},
+        "continual_pose_error": str(worker_status.get("continual_pose_error") or ""),
         "config_sync_agent": config_sync_agent.status(),
         "live_relay_agent": live_relay_agent.status(),
+        "pose_relay_agent": pose_relay_agent.status(),
         "lan_url": f"http://{local_ip()}:{settings.port}",
         "distribution": video_distribution_service.service_info(),
         "app_runtime": app_runtime_guard.status(),
@@ -1652,8 +1720,9 @@ def admin_video_privacy() -> Dict[str, Any]:
         "ok": True,
         "minimum_mode": config_sync_agent.video_privacy_mode(),
         "camera_modes": dict(relay.get("camera_privacy_modes") or {}),
-        "synced": not bool(config_sync_agent.last_error),
-        "updated_at": config_sync_agent.last_sync_at or "",
+        "synced": not bool(config_sync_agent.last_video_privacy_error),
+        "updated_at": config_sync_agent.last_video_privacy_sync_at or "",
+        "sync_error": config_sync_agent.last_video_privacy_error,
     }
 
 
@@ -3299,7 +3368,7 @@ def camera_mjpeg_stream(
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
-    fps = max(1, min(int(fps), 15))
+    fps = bounded_stream_fps(fps)
     width = max(320, min(int(width), 1920))
     height = max(180, min(int(height), 1080))
     quality = max(35, min(int(quality), 95))
@@ -3334,7 +3403,7 @@ def camera_mjpeg_stream(
 @app.get("/api/cameras/{camera_id}/continual-pose/stream.mjpg")
 def synchronized_camera_pose_stream(
     camera_id: int,
-    fps: int = 8,
+    fps: int = 12,
     width: int = 960,
     height: int = 540,
     quality: int = 72,
@@ -3353,7 +3422,7 @@ def synchronized_camera_pose_stream(
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
-    fps = max(1, min(int(fps), 10))
+    fps = bounded_stream_fps(fps)
     width = max(320, min(int(width), 1280))
     height = max(180, min(int(height), 720))
     quality = max(40, min(int(quality), 90))

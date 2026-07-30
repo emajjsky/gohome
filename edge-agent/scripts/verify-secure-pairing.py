@@ -62,6 +62,7 @@ def main() -> None:
             camera_agent=SimpleNamespace(),
             device_id_resolver=lambda: "edge-test",
             token_resolver=lambda: "revoked-token",
+            presence_status_resolver=lambda *_args, **_kwargs: {},
             binding_summary_writer=callbacks.append,
         )
         error = HTTPError(

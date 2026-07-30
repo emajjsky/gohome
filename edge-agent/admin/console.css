@@ -130,11 +130,23 @@ body.admin-web-page .binding-facts > div { min-width: 0; border-left: 1px solid 
 body.admin-web-page .binding-facts span, body.admin-web-page .binding-facts strong { display: block; }
 body.admin-web-page .binding-facts span { color: var(--console-muted); font-size: 9px; }
 body.admin-web-page .binding-facts strong { margin-top: 4px; font-size: 11px; white-space: nowrap; }
+body.admin-web-page .cloud-sync-status.success { color: var(--console-success); }
+body.admin-web-page .cloud-sync-status.warning { color: #8a5a00; }
+body.admin-web-page .cloud-sync-status.bad { color: var(--console-danger); }
+body.admin-web-page .cloud-sync-status.muted { color: var(--console-muted); }
 body.admin-web-page .hero-monitor { padding: 0; background: transparent; }
 body.admin-web-page .monitor-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 0 0 10px; }
 body.admin-web-page .monitor-toolbar label { display: grid; grid-template-columns: auto minmax(180px, 320px); align-items: center; gap: 10px; color: var(--console-muted); font-size: 11px; }
 body.admin-web-page .stream-frame { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border: 0; border-radius: var(--console-radius); background: var(--console-video); }
 body.admin-web-page .stream-frame > img { width: 100%; height: 100%; display: block; object-fit: contain; }
+body.admin-web-page .stream-fps-badge {
+  position: absolute; z-index: 4; top: 12px; right: 12px; min-width: 70px; height: 25px;
+  display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(72, 218, 126, .34);
+  border-radius: 999px; padding: 0 8px; background: rgba(8, 22, 14, .78); color: #75ed9d;
+  font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums;
+  white-space: nowrap; backdrop-filter: blur(8px);
+}
+body.admin-web-page .stream-fps-badge:not(.is-live) { border-color: rgba(255,255,255,.16); color: rgba(255,255,255,.62); }
 body.admin-web-page .stream-badge-row { position: absolute; inset: auto 0 0; display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; background: rgba(10,11,11,.82); color: #fff; font-family: ui-monospace, monospace; font-size: 10px; }
 
 @media (max-width: 900px) {

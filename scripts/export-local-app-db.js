@@ -5,6 +5,8 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
+const CLOUD_SEED_SCHEMA_VERSION = "011_family_invitations";
+
 function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
@@ -715,7 +717,7 @@ function buildCloudSeedBundle(db, options = {}) {
     const counts = Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, rows.length]));
 
     return {
-        schema_version: "011_family_invitations",
+        schema_version: CLOUD_SEED_SCHEMA_VERSION,
         exported_at: exportedAt,
         source: options.source || "local-app-server-json",
         counts,
@@ -787,6 +789,7 @@ if (require.main === module) {
 
 module.exports = {
     buildCloudSeedBundle,
+    CLOUD_SEED_SCHEMA_VERSION,
     schedulerRunRow,
     sha256,
 };

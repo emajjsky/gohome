@@ -21,7 +21,9 @@ class ConfigSyncAgent:
         device_id_resolver: Callable[[], str],
         token_resolver: Callable[[], str],
         runtime_status_resolver: Callable[[], Dict[str, Any]] | None = None,
+        presence_status_resolver: Callable[..., Dict[str, Any]] | None = None,
         binding_summary_writer: Callable[[Dict[str, Any] | None], Any] | None = None,
+        event_state_handler: Callable[[Dict[str, Any]], Dict[str, Any]] | None = None,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.storage = storage
@@ -30,7 +32,9 @@ class ConfigSyncAgent:
         self.device_id_resolver = device_id_resolver
         self.token_resolver = token_resolver
         self.runtime_status_resolver = runtime_status_resolver or (lambda: {})
+        self.presence_status_resolver = presence_status_resolver or self.storage.camera_presence_status
         self.binding_summary_writer = binding_summary_writer
+        self.event_state_handler = event_state_handler or self._apply_event_state_to_storage
         self.monotonic_clock = monotonic_clock or time.monotonic
         self._stop = Event()
         self._wake = Event()
@@ -41,6 +45,9 @@ class ConfigSyncAgent:
         self.last_sync_at: str | None = None
         self.last_config_version = ""
         self.last_error = ""
+        self.last_error_at: str | None = None
+        self.last_recovered_at: str | None = None
+        self.consecutive_failures = 0
         self.last_result: Dict[str, Any] = {}
         self.last_video_privacy_sync_at: str | None = None
         self.last_video_privacy_error = ""
@@ -87,6 +94,9 @@ class ConfigSyncAgent:
             "last_sync_at": self.last_sync_at,
             "last_config_version": self.last_config_version,
             "last_error": self.last_error,
+            "last_error_at": self.last_error_at,
+            "last_recovered_at": self.last_recovered_at,
+            "consecutive_failures": self.consecutive_failures,
             "last_result": self.last_result,
             "video_privacy_mode": self.video_privacy_mode(),
             "last_video_privacy_sync_at": self.last_video_privacy_sync_at,
@@ -107,17 +117,34 @@ class ConfigSyncAgent:
 
     def update_video_privacy(self, mode: str) -> Dict[str, Any]:
         requested_mode = normalize_privacy_mode(mode)
-        response = self._request_json(
-            "PUT",
-            "/api/v1/device/video-privacy",
-            json_body={"minimum_mode": requested_mode},
-        )
-        self.observe_video_privacy_mode(
-            normalize_privacy_mode(response.get("minimum_mode"), requested_mode),
-        )
+        changed = self.observe_video_privacy_mode(requested_mode)
+        if changed:
+            self._persist_video_privacy_mode()
         self.wake()
+        try:
+            response = self._request_json(
+                "PUT",
+                "/api/v1/device/video-privacy",
+                json_body={"minimum_mode": requested_mode},
+            )
+        except Exception as exc:
+            self.last_video_privacy_error = str(exc)
+            return {
+                "ok": True,
+                "synced": False,
+                "minimum_mode": self.current_video_privacy_mode,
+                "updated_at": self._utc_iso(),
+                "sync_error": self.last_video_privacy_error,
+            }
+
+        cloud_mode = normalize_privacy_mode(response.get("minimum_mode"), requested_mode)
+        if self.observe_video_privacy_mode(cloud_mode):
+            self._persist_video_privacy_mode()
+        self.last_video_privacy_sync_at = self._utc_iso()
+        self.last_video_privacy_error = ""
         return {
             "ok": bool(response.get("ok", True)),
+            "synced": True,
             "minimum_mode": self.current_video_privacy_mode,
             "updated_at": str(response.get("updated_at") or ""),
         }
@@ -134,7 +161,7 @@ class ConfigSyncAgent:
         report_response = self._request_json("POST", "/api/v1/device/sync", json_body=report_payload)
         self.last_config_version = str(config.get("config_version") or "")
         self.last_sync_at = self._utc_iso()
-        self.last_error = ""
+        self._record_sync_success()
         self.last_result = {
             "config_version": self.last_config_version,
             "applied": apply_result,
@@ -173,7 +200,7 @@ class ConfigSyncAgent:
                 try:
                     self.process_once()
                 except Exception as exc:
-                    self.last_error = str(exc)
+                    self._record_sync_failure(str(exc))
                     self.last_result = {"ok": False, "error": str(exc)}
             interval = max(1.0, float(getattr(self.settings, "config_sync_interval_seconds", 10)))
             privacy_interval = max(
@@ -192,6 +219,17 @@ class ConfigSyncAgent:
                     self.process_video_privacy_once()
                 except Exception as exc:
                     self.last_video_privacy_error = str(exc)
+
+    def _record_sync_failure(self, error: str) -> None:
+        self.last_error = str(error)
+        self.last_error_at = self._utc_iso()
+        self.consecutive_failures += 1
+
+    def _record_sync_success(self) -> None:
+        if self.consecutive_failures > 0 or self.last_error:
+            self.last_recovered_at = self._utc_iso()
+        self.last_error = ""
+        self.consecutive_failures = 0
 
     def _apply_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         state = self._load_state()
@@ -273,6 +311,10 @@ class ConfigSyncAgent:
         if rules_result.get("applied"):
             state["rules_version"] = rules_result.get("rules_version") or ""
         maintenance_result = self._apply_maintenance(config.get("maintenance") or {}, state)
+        event_state_result = self._apply_event_state_commands(
+            config.get("event_state_commands") or [],
+            state,
+        )
         self._save_state(state)
 
         return {
@@ -282,6 +324,91 @@ class ConfigSyncAgent:
             "camera_reports": reports,
             "rules": rules_result,
             "maintenance": maintenance_result,
+            "event_state_commands": event_state_result,
+        }
+
+    def _apply_event_state_commands(
+        self,
+        commands: list[Dict[str, Any]],
+        state: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        completed = list(state.get("applied_event_state_commands") or [])
+        completed_ids = {
+            str(item.get("command_id") or "")
+            for item in completed
+            if isinstance(item, dict) and item.get("command_id")
+        }
+        reports: list[Dict[str, Any]] = []
+        applied = 0
+        skipped = 0
+        failed = 0
+
+        for raw_command in commands:
+            command = dict(raw_command) if isinstance(raw_command, dict) else {}
+            command_id = str(command.get("command_id") or "").strip()
+            edge_event_id = str(command.get("edge_event_id") or "").strip()
+            target_state = str(command.get("state") or "").strip().lower()
+            base_report = {
+                "command_id": command_id,
+                "edge_event_id": edge_event_id,
+                "state": target_state,
+            }
+            if not command_id or not edge_event_id or target_state not in {"acknowledged", "resolved", "rejected"}:
+                failed += 1
+                reports.append({**base_report, "status": "failed", "error": "invalid_event_state_command"})
+                continue
+            if command_id in completed_ids:
+                skipped += 1
+                reports.append({**base_report, "status": "already_applied", "applied": False})
+                continue
+            try:
+                result = self.event_state_handler(command) or {}
+                completed_record = {
+                    **base_report,
+                    "resolution": str(command.get("resolution") or ""),
+                    "applied_at": self._utc_iso(),
+                }
+                completed.append(completed_record)
+                completed_ids.add(command_id)
+                applied += 1
+                reports.append({
+                    **base_report,
+                    "status": "applied",
+                    "applied": True,
+                    "camera_id": result.get("camera_id"),
+                    "resolution": str(result.get("resolution") or command.get("resolution") or ""),
+                })
+            except Exception as exc:
+                failed += 1
+                reports.append({**base_report, "status": "failed", "applied": False, "error": str(exc)})
+
+        state["applied_event_state_commands"] = completed[-128:]
+        return {
+            "applied": applied,
+            "skipped": skipped,
+            "failed": failed,
+            "reports": reports,
+        }
+
+    def _apply_event_state_to_storage(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        event_id = int(str(command.get("edge_event_id") or "").strip())
+        event = self.storage.get_event(event_id)
+        if event is None:
+            raise RuntimeError(f"edge_event_not_found:{event_id}")
+        target_state = str(command.get("state") or "").strip().lower()
+        resolution = str(command.get("resolution") or "").strip()
+        if not resolution:
+            resolution = "false_positive" if target_state == "rejected" else "handled"
+        updated = self.storage.update_event(
+            event_id,
+            {"acknowledged": True, "resolution": resolution},
+        )
+        if updated is None:
+            raise RuntimeError(f"edge_event_update_failed:{event_id}")
+        return {
+            "event_id": event_id,
+            "camera_id": updated.get("camera_id"),
+            "resolution": resolution,
         }
 
     def _persist_video_privacy_mode(self) -> None:
@@ -409,7 +536,7 @@ class ConfigSyncAgent:
             "sync_status": "synced" if not last_error else "edge_error",
             "last_error": last_error,
             "action": action,
-            "presence": self.storage.camera_presence_status(
+            "presence": self.presence_status_resolver(
                 int(local_camera["id"]),
                 expected_interval_seconds=int(self.storage.get_rules().get("capture_interval_seconds") or 5),
             ),
@@ -432,6 +559,9 @@ class ConfigSyncAgent:
             },
             "runtime": runtime,
             "maintenance": apply_result.get("maintenance") or {},
+            "event_state_commands": (
+                (apply_result.get("event_state_commands") or {}).get("reports") or []
+            ),
             "cameras": apply_result.get("camera_reports") or [],
         }
 

@@ -32,6 +32,14 @@ class Storage:
             "fall_detection_enabled": True,
             "activity_detection_enabled": True,
         }
+        self.events = {
+            2177: {
+                "id": 2177,
+                "camera_id": 24,
+                "acknowledged": False,
+                "payload": {},
+            }
+        }
 
     def reconcile_camera_runtime_state(self, *, close_stale_open: bool) -> dict:
         return {"close_stale_open": close_stale_open}
@@ -44,6 +52,19 @@ class Storage:
 
     def close_camera_runtime_state(self, camera_id: int, *, reason: str) -> None:
         raise SystemExit(f"enabled camera {camera_id} was unexpectedly closed: {reason}")
+
+    def get_event(self, event_id: int) -> dict | None:
+        event = self.events.get(int(event_id))
+        return dict(event) if event else None
+
+    def update_event(self, event_id: int, patch: dict) -> dict | None:
+        event = self.events.get(int(event_id))
+        if event is None:
+            return None
+        event["acknowledged"] = bool(patch.get("acknowledged", event["acknowledged"]))
+        if patch.get("resolution"):
+            event["payload"] = {**event.get("payload", {}), "resolution": patch["resolution"]}
+        return dict(event)
 
 
 class ContinualTracker:
@@ -173,15 +194,14 @@ def main() -> None:
     if analysis_runtime.get("mode") != "active" or not analysis_runtime.get("pose_requested"):
         raise SystemExit(f"persisted analysis mode does not match scheduler state: {analysis_runtime}")
 
-    persistence_rules = {"capture_interval_seconds": 5}
-    if not worker._should_persist_analysis(24, {}, {}, persistence_rules, now=200.0):
-        raise SystemExit("first analysis frame must establish a durable baseline")
+    persistence_rules = {"capture_interval_seconds": 600}
+    if worker._should_persist_analysis(24, {}, {}, persistence_rules, now=200.0):
+        raise SystemExit("ordinary analysis must remain memory-only")
     worker.last_persisted_analysis_at[24] = 200.0
-    worker.last_persisted_person_state[24] = False
     if worker._should_persist_analysis(24, {}, {}, persistence_rules, now=201.0):
         raise SystemExit("ordinary high-frequency anchors must not all be written to disk")
-    if not worker._should_persist_analysis(24, {"person_count": 1}, {}, persistence_rules, now=201.05):
-        raise SystemExit("no-person to person transition must be persisted immediately")
+    if worker._should_persist_analysis(24, {"person_count": 1}, {}, persistence_rules, now=201.05):
+        raise SystemExit("person activity must use structured persistence instead of JPEG baselines")
     if not worker._should_persist_analysis(
         24,
         {"pose_factor_graph": {"fast_fall_candidate": True}},
@@ -190,8 +210,8 @@ def main() -> None:
         now=201.1,
     ):
         raise SystemExit("fall-risk anchor must be persisted immediately")
-    if not worker._should_persist_analysis(24, {}, {}, persistence_rules, now=205.0):
-        raise SystemExit("durable baseline was not refreshed at the persistence interval")
+    if worker._should_persist_analysis(24, {}, {}, persistence_rules, now=800.0):
+        raise SystemExit("routine analysis interval must not restore periodic JPEG persistence")
 
     runtime = worker.runtime_status()
     if runtime.get("inference_scheduler", {}).get("schema_version") != "eacp-scheduler-v1":
@@ -200,6 +220,9 @@ def main() -> None:
         raise SystemExit(f"worker runtime omitted continual pose tracker: {runtime}")
     if runtime.get("continual_pose", {}).get("schema_version") != continual_tracker.version:
         raise SystemExit(f"worker runtime omitted continual pose metrics: {runtime}")
+    persistence = runtime.get("persistence", {})
+    if persistence.get("schema_version") != "event-driven-persistence-v1":
+        raise SystemExit(f"worker runtime omitted persistence contract: {runtime}")
 
     observed_analysis = {
         "pose_model_status": "ready",
@@ -215,11 +238,34 @@ def main() -> None:
         raise SystemExit("fresh worker pose did not become a continual tracking anchor")
     worker._publish_continual_pose_anchor(
         24,
+        frame="model-confirmed-empty-frame",
+        capture={"frame_id": "24-empty", "captured_at": "2026-07-17T00:00:00.05+00:00"},
+        analysis={"pose_model_status": "not_visible", "poses": [], "people": []},
+    )
+    if len(continual_tracker.observed) != 2 or continual_tracker.observed[-1]["poses"]:
+        raise SystemExit("model-confirmed empty frame did not refresh the synchronized privacy scene")
+    worker._publish_continual_pose_anchor(
+        24,
+        frame="hailo-idle-empty-frame",
+        capture={"frame_id": "24-idle-empty", "captured_at": "2026-07-17T00:00:00.06+00:00"},
+        analysis={
+            "pose_model_status": "disabled",
+            "inference_backend": "hailo",
+            "inference_backend_status": {"status": "ready"},
+            "person_count": 0,
+            "people": [],
+            "poses": [],
+        },
+    )
+    if len(continual_tracker.observed) != 3 or continual_tracker.observed[-1]["poses"]:
+        raise SystemExit("Hailo idle person probe did not refresh the synchronized empty scene")
+    worker._publish_continual_pose_anchor(
+        24,
         frame="cached-frame",
         capture={"frame_id": "24-101", "captured_at": "2026-07-17T00:00:00.1+00:00"},
         analysis={"pose_model_status": "cached", "poses": observed_analysis["poses"]},
     )
-    if len(continual_tracker.observed) != 1:
+    if len(continual_tracker.observed) != 3:
         raise SystemExit("cached pose was incorrectly promoted to a fresh model anchor")
 
     tracked_payload = worker.observe_stream_frame(
@@ -242,12 +288,33 @@ def main() -> None:
     worker._run_continual_tracking_iteration()
     if continual_tracker.frames[-1]["frame_id"] != "24-latest":
         raise SystemExit("independent continual tracking loop did not consume the latest cached frame")
-    if abs(worker._continual_tracking_interval_seconds() - 0.1) > 0.001:
-        raise SystemExit("continual tracking loop is running faster than its effective tracker interval")
+    if abs(worker._continual_tracking_interval_seconds() - 0.067) > 0.001:
+        raise SystemExit("continual tracking loop did not use the accelerated tracker interval")
 
     worker._reset_camera_runtime_memory(24)
     if continual_tracker.reset != [24]:
         raise SystemExit("camera lifecycle reset left continual pose state behind")
+
+    worker.rule_engine.fall_tracks[24] = {
+        "stage": "confirmed",
+        "alert_emitted": True,
+        "target": {"track_id": "c24-p68"},
+    }
+    worker.pose_factor_graph_engine._states[24] = {
+        "c24-p68": {"lying_started_monotonic": 100.0}
+    }
+    command_result = worker.apply_event_state_command({
+        "command_id": "event-state-test-2177",
+        "edge_event_id": "2177",
+        "state": "resolved",
+        "resolution": "handled",
+    })
+    if command_result.get("camera_id") != 24:
+        raise SystemExit(f"event state command returned the wrong camera: {command_result}")
+    if not worker.storage.get_event(2177).get("acknowledged"):
+        raise SystemExit("event state command did not acknowledge the local event")
+    if 24 in worker.rule_engine.fall_tracks or 24 in worker.pose_factor_graph_engine._states:
+        raise SystemExit("event state command left stale fall safety state in memory")
 
     print({
         "ok": True,

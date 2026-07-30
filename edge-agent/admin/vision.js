@@ -299,7 +299,7 @@ function renderStream() {
     }
     setText("streamStatus", "视频流不可用");
   };
-  stream.src = `/api/cameras/${camera.id}/stream.mjpg?fps=6&t=${Date.now()}`;
+  stream.src = `/api/cameras/${camera.id}/stream.mjpg?fps=8&drop=1&t=${Date.now()}`;
   state.streamMaskTimer = setTimeout(() => {
     if (stream.getAttribute("src") && empty) empty.style.display = "none";
   }, 900);

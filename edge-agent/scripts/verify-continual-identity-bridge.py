@@ -17,7 +17,13 @@ class Tracker:
         assert camera_id == 24
         return {
             "state": "tracked",
+            "display_only_stale": False,
             "formal_evidence_eligible": False,
+            "quality": {
+                "tracked_point_count": 9,
+                "forward_backward_error": 0.4,
+                "geometry_scale": 1.02,
+            },
             "poses": [{
                 "track_id": "c24-p1",
                 "bbox": [190.0, 62.0, 300.0, 334.0],
@@ -56,11 +62,15 @@ def main() -> None:
         raise SystemExit("identity bridge did not record its accepted KLT match")
     if moved["people"][0].get("_continual_track_id_hint") != track_id:
         raise SystemExit(f"credible KLT continuation did not attach an identity hint: {moved}")
+    if moved["people"][0].get("_continual_track_id_hint_verified") is not True:
+        raise SystemExit(f"credible KLT continuation was not marked as verified: {moved}")
     engine.update(24, moved, monotonic_at=1.7)
     if moved["people"][0].get("track_id") != track_id:
         raise SystemExit(f"model anchor ignored the credible KLT identity bridge: {moved}")
     if "_continual_track_id_hint" in moved["people"][0]:
         raise SystemExit("internal identity hint leaked into persisted analysis")
+    if "_continual_track_id_hint_verified" in moved["people"][0]:
+        raise SystemExit("internal identity verification leaked into persisted analysis")
 
     far = analysis([500.0, 30.0, 620.0, 340.0])
     worker._attach_continual_identity_hints(24, far)

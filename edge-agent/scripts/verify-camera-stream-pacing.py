@@ -8,11 +8,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.camera_agent import next_stream_frame_delay
+from app.camera_agent import bounded_stream_fps, next_stream_frame_delay
 from app.video_profiles import STREAM_DISTRIBUTION_PROFILES
 
 
 def main() -> None:
+    if bounded_stream_fps(60) != 30 or bounded_stream_fps(0) != 1 or bounded_stream_fps("24") != 24:
+        raise SystemExit("preview FPS capability bounds are inconsistent")
     delay, next_deadline = next_stream_frame_delay(
         previous_deadline=100.0,
         now=100.04,
@@ -33,15 +35,23 @@ def main() -> None:
     if abs(next_deadline - 100.40) > 0.0001:
         raise SystemExit(f"late stream did not reset its deadline: {next_deadline}")
 
+    expected_fps = {
+        "default": 15,
+        "detail": 24,
+        "monitor": 30,
+        "mobile": 24,
+    }
     for profile_id, profile in STREAM_DISTRIBUTION_PROFILES.items():
-        if int(profile["fps"]) != 8:
-            raise SystemExit(f"{profile_id} profile is not unified at 8 FPS")
+        if int(profile["fps"]) != expected_fps[profile_id]:
+            raise SystemExit(
+                f"{profile_id} profile target mismatch: {profile['fps']} != {expected_fps[profile_id]}"
+            )
         if int(profile["drop"]) != 1:
             raise SystemExit(f"{profile_id} profile still drains multiple source frames")
 
     print({
         "ok": True,
-        "target_fps": 8,
+        "target_fps": expected_fps,
         "profiles": sorted(STREAM_DISTRIBUTION_PROFILES),
         "decoder_time_deducted": True,
         "late_deadline_reset": True,

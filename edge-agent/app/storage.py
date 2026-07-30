@@ -313,6 +313,8 @@ class Storage:
                     occurred_at TEXT NOT NULL,
                     acknowledged INTEGER NOT NULL DEFAULT 0,
                     payload TEXT NOT NULL DEFAULT '{}',
+                    cloud_sync_status TEXT NOT NULL DEFAULT 'local_only',
+                    cloud_synced_at TEXT,
                     FOREIGN KEY(camera_id) REFERENCES cameras(id),
                     FOREIGN KEY(snapshot_id) REFERENCES snapshots(id),
                     FOREIGN KEY(detection_result_id) REFERENCES detection_results(id),
@@ -346,6 +348,9 @@ class Storage:
                     attempt_count INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT NOT NULL DEFAULT '',
                     next_attempt_at TEXT,
+                    claim_token TEXT NOT NULL DEFAULT '',
+                    claimed_at TEXT,
+                    lease_expires_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     completed_at TEXT,
@@ -422,6 +427,18 @@ class Storage:
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY(camera_id) REFERENCES cameras(id),
                     FOREIGN KEY(representative_snapshot_id) REFERENCES snapshots(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS activity_export_cursors (
+                    camera_id INTEGER PRIMARY KEY,
+                    segment_started_at TEXT NOT NULL,
+                    last_observed_at TEXT NOT NULL,
+                    person_count_max INTEGER NOT NULL DEFAULT 1,
+                    postures_json TEXT NOT NULL DEFAULT '[]',
+                    confidence REAL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(camera_id) REFERENCES cameras(id)
                 );
 
                 CREATE TABLE IF NOT EXISTS device_sync_states (
@@ -677,6 +694,16 @@ class Storage:
             self._ensure_column(conn, "events", "detection_result_id", "INTEGER")
             self._ensure_column(conn, "events", "rule_evaluation_id", "INTEGER")
             self._ensure_column(conn, "events", "candidate_id", "INTEGER")
+            self._ensure_column(conn, "events", "cloud_sync_status", "TEXT NOT NULL DEFAULT 'local_only'")
+            self._ensure_column(conn, "events", "cloud_synced_at", "TEXT")
+            upload_job_columns = self._table_columns(conn, "upload_jobs")
+            requires_upload_lease_migration = "lease_expires_at" not in upload_job_columns
+            self._ensure_column(conn, "upload_jobs", "claim_token", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "upload_jobs", "claimed_at", "TEXT")
+            self._ensure_column(conn, "upload_jobs", "lease_expires_at", "TEXT")
+            if requires_upload_lease_migration:
+                self._migrate_legacy_upload_claims(conn)
+            self._migrate_event_cloud_sync_status(conn)
             self._ensure_column(conn, "rules", "person_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column(conn, "rules", "fall_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column(conn, "rules", "fall_score_threshold", "REAL NOT NULL DEFAULT 0.50")
@@ -754,6 +781,8 @@ class Storage:
                     ON posture_episodes(camera_id, status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_posture_episodes_track_status
                     ON posture_episodes(camera_id, track_id, status, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_activity_export_cursors_updated_at
+                    ON activity_export_cursors(updated_at, camera_id);
                 """
             )
 
@@ -763,9 +792,18 @@ class Storage:
         snapshot_dir: Path,
         retention_hours: int = 24,
         completed_upload_retention_days: int = 7,
+        event_evidence_retention_hours: int = 24,
+        local_event_retention_days: int = 30,
         batch_size: int = 5000,
+        discard_live_preview_uploads: bool = True,
     ) -> Dict[str, Any]:
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, int(retention_hours)))).isoformat()
+        event_evidence_cutoff = (
+            datetime.now(timezone.utc) - timedelta(hours=max(1, int(event_evidence_retention_hours)))
+        ).isoformat()
+        event_cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=max(1, int(local_event_retention_days)))
+        ).isoformat()
         upload_cutoff = (
             datetime.now(timezone.utc) - timedelta(days=max(1, int(completed_upload_retention_days)))
         ).isoformat()
@@ -775,6 +813,123 @@ class Storage:
 
         with self.connect() as conn:
             conn.execute("PRAGMA foreign_keys = OFF")
+
+            # Once the complete event and all of its evidence are accepted by
+            # the cloud, local heavyweight inference rows become a cache. Keep
+            # a short replay window, then detach them so normal age pruning can
+            # recycle the oldest pages without risking unsent evidence.
+            synced_event_rows = conn.execute(
+                """
+                SELECT id
+                FROM events
+                WHERE cloud_sync_status = 'completed'
+                  AND cloud_synced_at IS NOT NULL
+                  AND cloud_synced_at < ?
+                  AND occurred_at < ?
+                  AND (
+                      snapshot_id IS NOT NULL
+                      OR detection_result_id IS NOT NULL
+                      OR rule_evaluation_id IS NOT NULL
+                      OR candidate_id IS NOT NULL
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM upload_jobs pending
+                      WHERE pending.event_id = events.id
+                        AND pending.status != 'completed'
+                  )
+                ORDER BY occurred_at, id
+                LIMIT ?
+                """,
+                (event_evidence_cutoff, event_evidence_cutoff, limit),
+            ).fetchall()
+            synced_event_ids = [int(row["id"]) for row in synced_event_rows]
+            if synced_event_ids:
+                placeholders = ",".join("?" for _ in synced_event_ids)
+                deleted["event_runtime_links"] = conn.execute(
+                    f"""
+                    UPDATE events
+                    SET snapshot_id = NULL,
+                        detection_result_id = NULL,
+                        rule_evaluation_id = NULL,
+                        candidate_id = NULL
+                    WHERE id IN ({placeholders})
+                    """,
+                    synced_event_ids,
+                ).rowcount
+            else:
+                deleted["event_runtime_links"] = 0
+
+            expired_event_rows = conn.execute(
+                """
+                SELECT id
+                FROM events
+                WHERE occurred_at < ?
+                  AND (
+                      (cloud_sync_status = 'completed' AND cloud_synced_at IS NOT NULL)
+                      OR cloud_sync_status = 'local_only'
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM upload_jobs pending
+                      WHERE pending.event_id = events.id
+                        AND pending.status != 'completed'
+                  )
+                ORDER BY occurred_at, id
+                LIMIT ?
+                """,
+                (event_cutoff, limit),
+            ).fetchall()
+            expired_event_ids = [int(row["id"]) for row in expired_event_rows]
+            if expired_event_ids:
+                placeholders = ",".join("?" for _ in expired_event_ids)
+                conn.execute(
+                    f"UPDATE event_candidates SET promoted_event_id = NULL WHERE promoted_event_id IN ({placeholders})",
+                    expired_event_ids,
+                )
+                deleted["event_ingests"] = conn.execute(
+                    f"DELETE FROM event_ingests WHERE event_id IN ({placeholders})",
+                    expired_event_ids,
+                ).rowcount
+                deleted["expired_event_upload_jobs"] = conn.execute(
+                    f"DELETE FROM upload_jobs WHERE event_id IN ({placeholders}) AND status = 'completed'",
+                    expired_event_ids,
+                ).rowcount
+                deleted["events"] = conn.execute(
+                    f"DELETE FROM events WHERE id IN ({placeholders})",
+                    expired_event_ids,
+                ).rowcount
+            else:
+                deleted["event_ingests"] = 0
+                deleted["expired_event_upload_jobs"] = 0
+                deleted["events"] = 0
+
+            deleted["live_preview_upload_jobs"] = 0
+            if discard_live_preview_uploads:
+                deleted["live_preview_upload_jobs"] = conn.execute(
+                    """
+                    DELETE FROM upload_jobs
+                    WHERE id IN (
+                        SELECT id FROM upload_jobs
+                        WHERE object_type = 'live_frame'
+                          AND status != 'uploading'
+                        ORDER BY id
+                        LIMIT ?
+                    )
+                    """,
+                    (limit,),
+                ).rowcount
+
+            deleted["observation_logs"] = conn.execute(
+                """
+                DELETE FROM observation_logs
+                WHERE id IN (
+                    SELECT id FROM observation_logs
+                    WHERE status = 'closed' AND updated_at < ?
+                    ORDER BY id
+                    LIMIT ?
+                )
+                """,
+                (cutoff, limit),
+            ).rowcount
 
             deleted["presence_sessions"] = conn.execute(
                 """
@@ -938,6 +1093,35 @@ class Storage:
             removed_paths = [str(row["image_path"] or "") for row in snapshot_rows]
             if snapshot_ids:
                 placeholders = ",".join("?" for _ in snapshot_ids)
+                # Closed runtime summaries and completed jobs remain useful
+                # after their short-lived local preview image expires.
+                conn.execute(
+                    f"""
+                    UPDATE presence_sessions
+                    SET representative_snapshot_id = NULL
+                    WHERE status != 'open'
+                      AND representative_snapshot_id IN ({placeholders})
+                    """,
+                    snapshot_ids,
+                )
+                conn.execute(
+                    f"""
+                    UPDATE posture_episodes
+                    SET representative_snapshot_id = NULL
+                    WHERE status != 'open'
+                      AND representative_snapshot_id IN ({placeholders})
+                    """,
+                    snapshot_ids,
+                )
+                conn.execute(
+                    f"""
+                    UPDATE upload_jobs
+                    SET snapshot_id = NULL
+                    WHERE status = 'completed'
+                      AND snapshot_id IN ({placeholders})
+                    """,
+                    snapshot_ids,
+                )
                 deleted["snapshots"] = conn.execute(
                     f"DELETE FROM snapshots WHERE id IN ({placeholders})",
                     snapshot_ids,
@@ -963,6 +1147,8 @@ class Storage:
 
         return {
             "cutoff": cutoff,
+            "event_evidence_cutoff": event_evidence_cutoff,
+            "event_cutoff": event_cutoff,
             "deleted": deleted,
             "deleted_snapshot_files": deleted_files,
             "skipped_snapshot_files": skipped_files,
@@ -971,19 +1157,169 @@ class Storage:
 
     def runtime_storage_status(self, snapshot_dir: Path, *, retention_hours: int = 24) -> Dict[str, Any]:
         disk = shutil.disk_usage(self.db_path.parent)
+        used_percent = (float(disk.used) / float(disk.total) * 100.0) if disk.total else 0.0
+        database_bytes = self.db_path.stat().st_size if self.db_path.exists() else 0
+        wal_path = Path(f"{self.db_path}-wal")
+        shm_path = Path(f"{self.db_path}-shm")
+        database_sidecar_bytes = sum(
+            path.stat().st_size for path in (wal_path, shm_path) if path.exists()
+        )
+        snapshot_bytes = 0
+        if snapshot_dir.exists():
+            for candidate in snapshot_dir.rglob("*"):
+                try:
+                    if candidate.is_file():
+                        snapshot_bytes += candidate.stat().st_size
+                except OSError:
+                    continue
+        freelist_bytes = 0
+        try:
+            with self.connect() as conn:
+                page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+                freelist_count = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
+                freelist_bytes = page_size * freelist_count
+        except sqlite3.Error:
+            freelist_bytes = 0
         return {
-            "database_bytes": self.db_path.stat().st_size if self.db_path.exists() else 0,
+            "database_bytes": database_bytes,
+            "database_sidecar_bytes": database_sidecar_bytes,
+            "database_reusable_bytes": freelist_bytes,
+            "snapshot_bytes": snapshot_bytes,
+            "runtime_allocated_bytes": database_bytes + database_sidecar_bytes + snapshot_bytes,
+            "runtime_live_bytes": max(0, database_bytes - freelist_bytes) + database_sidecar_bytes + snapshot_bytes,
             "disk_total_bytes": disk.total,
             "disk_used_bytes": disk.used,
             "disk_free_bytes": disk.free,
+            "disk_used_percent": round(used_percent, 2),
             "retention_hours": max(1, int(retention_hours)),
             "snapshot_dir": str(snapshot_dir),
         }
 
+    def _table_columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
+        return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-        if column not in columns:
+        if column not in self._table_columns(conn, table):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _migrate_event_cloud_sync_status(self, conn: sqlite3.Connection) -> None:
+        # This classification is intentionally one-shot. Re-running it at every
+        # boot would turn newly-created local events into pending uploads.
+        conn.execute(
+            """
+            UPDATE events
+            SET
+                cloud_sync_status = CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM upload_jobs unfinished
+                        WHERE unfinished.event_id = events.id
+                          AND unfinished.status != 'completed'
+                    ) THEN 'pending'
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM upload_jobs uploaded
+                        WHERE uploaded.event_id = events.id
+                          AND uploaded.job_type = 'event_upload'
+                          AND uploaded.status = 'completed'
+                    ) THEN 'completed'
+                    ELSE 'local_only'
+                END,
+                cloud_synced_at = CASE
+                    WHEN NOT EXISTS (
+                        SELECT 1
+                        FROM upload_jobs unfinished
+                        WHERE unfinished.event_id = events.id
+                          AND unfinished.status != 'completed'
+                    ) AND EXISTS (
+                        SELECT 1
+                        FROM upload_jobs uploaded
+                        WHERE uploaded.event_id = events.id
+                          AND uploaded.job_type = 'event_upload'
+                          AND uploaded.status = 'completed'
+                    ) THEN (
+                        SELECT MAX(COALESCE(completed_at, updated_at, created_at))
+                        FROM upload_jobs uploaded
+                        WHERE uploaded.event_id = events.id
+                          AND uploaded.job_type = 'event_upload'
+                          AND uploaded.status = 'completed'
+                    )
+                    ELSE NULL
+                END
+            """
+        )
+
+    def _migrate_legacy_upload_claims(self, conn: sqlite3.Connection) -> None:
+        # Older workers could leave a row in uploading forever after a process
+        # restart because they had no claim lease. Make those rows retryable
+        # exactly once when lease columns are introduced.
+        timestamp = now_iso()
+        conn.execute(
+            """
+            UPDATE upload_jobs
+            SET
+                status = 'failed',
+                last_error = CASE
+                    WHEN TRIM(COALESCE(last_error, '')) = ''
+                        THEN 'legacy_upload_claim_recovered'
+                    ELSE SUBSTR(last_error || '; legacy_upload_claim_recovered', 1, 1000)
+                END,
+                next_attempt_at = ?,
+                claim_token = '',
+                claimed_at = NULL,
+                lease_expires_at = NULL,
+                updated_at = ?
+            WHERE status = 'uploading'
+            """,
+            (timestamp, timestamp),
+        )
+
+    def _refresh_event_cloud_sync_status(
+        self,
+        conn: sqlite3.Connection,
+        event_id: int,
+        *,
+        synced_at: Optional[str] = None,
+    ) -> None:
+        unfinished = conn.execute(
+            """
+            SELECT 1
+            FROM upload_jobs
+            WHERE event_id = ? AND status != 'completed'
+            LIMIT 1
+            """,
+            (int(event_id),),
+        ).fetchone()
+        if unfinished is not None:
+            conn.execute(
+                "UPDATE events SET cloud_sync_status = 'pending', cloud_synced_at = NULL WHERE id = ?",
+                (int(event_id),),
+            )
+            return
+        completed_event_upload = conn.execute(
+            """
+            SELECT COALESCE(completed_at, updated_at, created_at) AS synced_at
+            FROM upload_jobs
+            WHERE event_id = ? AND job_type = 'event_upload' AND status = 'completed'
+            ORDER BY COALESCE(completed_at, updated_at, created_at) DESC, id DESC
+            LIMIT 1
+            """,
+            (int(event_id),),
+        ).fetchone()
+        if completed_event_upload is None:
+            conn.execute(
+                "UPDATE events SET cloud_sync_status = 'local_only', cloud_synced_at = NULL WHERE id = ?",
+                (int(event_id),),
+            )
+            return
+        conn.execute(
+            """
+            UPDATE events
+            SET cloud_sync_status = 'completed', cloud_synced_at = ?
+            WHERE id = ?
+            """,
+            (synced_at or str(completed_event_upload["synced_at"] or now_iso()), int(event_id)),
+        )
 
     def _camera_to_dict(self, row: sqlite3.Row, include_secret: bool = False) -> Dict[str, Any]:
         data = dict(row)
@@ -2423,6 +2759,39 @@ class Storage:
         model_name = analysis.get("model_name")
         if detector_backend == "yolo" and not model_name:
             model_name = analysis.get("yolo_model")
+        persisted_analysis_keys = (
+            "pipeline_version",
+            "model_version",
+            "detector_backend",
+            "model_name",
+            "image_width",
+            "image_height",
+            "brightness",
+            "contrast",
+            "black_screen",
+            "motion_score",
+            "motion_detected",
+            "person_count",
+            "pet_count",
+            "pose_count",
+            "fall_candidate",
+            "fall_score",
+            "pose_fall_candidate",
+            "pose_fall_score",
+            "fire_candidate",
+            "fire_event_candidate",
+            "fire_score",
+            "meal_candidate",
+            "stillness_candidate",
+            "daze_candidate",
+            "tags",
+        )
+        persisted_analysis = {
+            key: analysis.get(key)
+            for key in persisted_analysis_keys
+            if key in analysis
+        }
+        persisted_analysis["schema_version"] = "gohome-detection-summary-v1"
         created_at = now_iso()
         with self.connect() as conn:
             cursor = conn.execute(
@@ -2448,7 +2817,7 @@ class Storage:
                     json.dumps(objects, ensure_ascii=False),
                     json.dumps(quality_flags, ensure_ascii=False),
                     json.dumps(raw_confidence_summary, ensure_ascii=False),
-                    json.dumps(analysis or {}, ensure_ascii=False),
+                    json.dumps(persisted_analysis, ensure_ascii=False),
                     created_at,
                 ),
             )
@@ -3222,6 +3591,12 @@ class Storage:
     def close_camera_runtime_state(self, camera_id: int, *, reason: str) -> Dict[str, int]:
         timestamp = now_iso()
         with self.connect() as conn:
+            activity_jobs = self._close_activity_export_cursor(
+                conn,
+                camera_id=int(camera_id),
+                reason=str(reason or "camera_stopped"),
+                timestamp=timestamp,
+            )
             observation_cursor = conn.execute(
                 """
                 UPDATE observation_logs
@@ -3256,6 +3631,7 @@ class Storage:
             "observation_logs_closed": int(observation_cursor.rowcount or 0),
             "presence_sessions_closed": int(presence_cursor.rowcount or 0),
             "posture_episodes_closed": int(posture_cursor.rowcount or 0),
+            "activity_intervals_enqueued": len(activity_jobs),
         }
 
     def reconcile_camera_runtime_state(self, *, close_stale_open: bool = False) -> Dict[str, int]:
@@ -3297,7 +3673,21 @@ class Storage:
             stale_observation_count = 0
             stale_presence_count = 0
             stale_posture_count = 0
+            stale_activity_count = 0
             if close_stale_open:
+                activity_camera_ids = [
+                    int(row["camera_id"])
+                    for row in conn.execute("SELECT camera_id FROM activity_export_cursors").fetchall()
+                ]
+                stale_activity_count = sum(
+                    len(self._close_activity_export_cursor(
+                        conn,
+                        camera_id=camera_id,
+                        reason="worker_restart",
+                        timestamp=timestamp,
+                    ))
+                    for camera_id in activity_camera_ids
+                )
                 stale_observation_cursor = conn.execute(
                     """
                     UPDATE observation_logs
@@ -3338,6 +3728,7 @@ class Storage:
             "stale_observation_logs_closed": stale_observation_count,
             "stale_presence_sessions_closed": stale_presence_count,
             "stale_posture_episodes_closed": stale_posture_count,
+            "stale_activity_intervals_enqueued": stale_activity_count,
         }
 
     def create_snapshot(
@@ -3425,6 +3816,14 @@ class Storage:
                 (int(camera_id), f"-{window_seconds} seconds"),
             ).fetchone()
             historical = conn.execute(
+                """
+                SELECT MAX(last_seen_at) AS last_person_seen_at
+                FROM presence_sessions
+                WHERE camera_id = ?
+                """,
+                (int(camera_id),),
+            ).fetchone()
+            snapshot_historical = conn.execute(
                 "SELECT MAX(captured_at) AS last_person_seen_at FROM snapshots WHERE camera_id = ? AND person_count > 0",
                 (int(camera_id),),
             ).fetchone()
@@ -3435,7 +3834,10 @@ class Storage:
         observed_samples = int(row["observed_samples"] or 0)
         return {
             "last_observed_at": row["last_observed_at"],
-            "last_person_seen_at": historical["last_person_seen_at"],
+            "last_person_seen_at": max(
+                filter(None, [historical["last_person_seen_at"], snapshot_historical["last_person_seen_at"]]),
+                default=None,
+            ),
             "observation_window_minutes": max(1, int(window_minutes)),
             "observed_samples": observed_samples,
             "person_samples": int(row["person_samples"] or 0),
@@ -3936,6 +4338,215 @@ class Storage:
             ).fetchone()
         return self._package_execution_to_dict(row)
 
+    def advance_activity_export(
+        self,
+        *,
+        camera_id: int,
+        room: str,
+        observed_at: str,
+        visible: bool,
+        person_count: int,
+        postures: Iterable[str],
+        confidence: Optional[float],
+        flush: bool,
+        reason: str,
+        max_gap_seconds: float,
+    ) -> list[Dict[str, Any]]:
+        observed = self._parse_iso_datetime(observed_at)
+        clean_postures = sorted({str(item or "").strip() for item in postures if str(item or "").strip()})
+        bounded_confidence = None if confidence is None else max(0.0, min(1.0, float(confidence)))
+        timestamp = now_iso()
+        jobs: list[Dict[str, Any]] = []
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM activity_export_cursors WHERE camera_id = ?",
+                (int(camera_id),),
+            ).fetchone()
+            if cursor is not None:
+                started = self._parse_iso_datetime(str(cursor["segment_started_at"]))
+                last_observed = self._parse_iso_datetime(str(cursor["last_observed_at"]))
+                stale = (observed - last_observed).total_seconds() > max(60.0, float(max_gap_seconds))
+                previous_postures = json.loads(cursor["postures_json"] or "[]")
+                signature_changed = clean_postures != sorted(str(item) for item in previous_postures)
+                if not visible or flush or stale or signature_changed:
+                    ended = last_observed if stale else observed
+                    if ended > started:
+                        jobs.extend(self._enqueue_activity_interval_chunks(
+                            conn,
+                            camera_id=int(camera_id),
+                            room=str(room or ""),
+                            started_at=started,
+                            ended_at=ended,
+                            person_count=max(int(cursor["person_count_max"] or 1), 1),
+                            postures=previous_postures,
+                            confidence=cursor["confidence"],
+                            reason="observation_gap" if stale else str(reason or "activity_update"),
+                            timestamp=timestamp,
+                        ))
+
+            if visible:
+                reset = cursor is None or bool(flush) or (
+                    cursor is not None
+                    and (
+                        (observed - self._parse_iso_datetime(str(cursor["last_observed_at"]))).total_seconds()
+                        > max(60.0, float(max_gap_seconds))
+                        or clean_postures != sorted(str(item) for item in json.loads(cursor["postures_json"] or "[]"))
+                    )
+                )
+                if reset:
+                    conn.execute(
+                        """
+                        INSERT INTO activity_export_cursors (
+                            camera_id, segment_started_at, last_observed_at, person_count_max,
+                            postures_json, confidence, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(camera_id) DO UPDATE SET
+                            segment_started_at = excluded.segment_started_at,
+                            last_observed_at = excluded.last_observed_at,
+                            person_count_max = excluded.person_count_max,
+                            postures_json = excluded.postures_json,
+                            confidence = excluded.confidence,
+                            updated_at = excluded.updated_at
+                        """,
+                        (
+                            int(camera_id), observed.isoformat(), observed.isoformat(),
+                            max(1, int(person_count)), json.dumps(clean_postures, ensure_ascii=False),
+                            bounded_confidence, timestamp, timestamp,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE activity_export_cursors
+                        SET last_observed_at = ?,
+                            person_count_max = MAX(person_count_max, ?),
+                            confidence = CASE
+                                WHEN confidence IS NULL THEN ?
+                                WHEN ? IS NULL THEN confidence
+                                ELSE (confidence + ?) / 2.0
+                            END,
+                            updated_at = ?
+                        WHERE camera_id = ?
+                        """,
+                        (
+                            observed.isoformat(), max(1, int(person_count)), bounded_confidence,
+                            bounded_confidence, bounded_confidence, timestamp, int(camera_id),
+                        ),
+                    )
+            else:
+                conn.execute("DELETE FROM activity_export_cursors WHERE camera_id = ?", (int(camera_id),))
+        return jobs
+
+    def _enqueue_activity_interval_chunks(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        camera_id: int,
+        room: str,
+        started_at: datetime,
+        ended_at: datetime,
+        person_count: int,
+        postures: Iterable[str],
+        confidence: Optional[float],
+        reason: str,
+        timestamp: str,
+    ) -> list[Dict[str, Any]]:
+        jobs: list[Dict[str, Any]] = []
+        chunk_start = started_at
+        max_chunk = timedelta(hours=6)
+        while chunk_start < ended_at:
+            chunk_end = min(ended_at, chunk_start + max_chunk)
+            source_hash = hashlib.sha256(
+                f"{camera_id}|{chunk_start.isoformat()}|{chunk_end.isoformat()}".encode("utf-8")
+            ).hexdigest()[:24]
+            source_interval_id = f"camera-{camera_id}-{source_hash}"
+            idempotency_key = f"activity-interval:{source_interval_id}"
+            payload = {
+                "schema_version": "gohome-activity-interval-v1",
+                "source_interval_id": source_interval_id,
+                "local_camera_id": int(camera_id),
+                "room": str(room or ""),
+                "started_at": chunk_start.isoformat(),
+                "ended_at": chunk_end.isoformat(),
+                "person_count_max": max(1, int(person_count)),
+                "postures": sorted({str(item or "").strip() for item in postures if str(item or "").strip()}),
+                "confidence": None if confidence is None else round(max(0.0, min(1.0, float(confidence))), 4),
+                "metadata": {
+                    "source": "edge_presence_timeline",
+                    "close_reason": str(reason or "activity_update"),
+                    "contains_media": False,
+                },
+            }
+            insert_cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO upload_jobs (
+                    job_type, object_type, status, priority, idempotency_key,
+                    family_id, device_id, event_id, snapshot_id, camera_id,
+                    payload_json, attempt_count, last_error, next_attempt_at,
+                    created_at, updated_at, completed_at
+                ) VALUES (
+                    'activity_interval_upload', 'activity_interval', 'pending', 70, ?,
+                    NULL, '', NULL, NULL, ?, ?, 0, '', NULL, ?, ?, NULL
+                )
+                """,
+                (idempotency_key, int(camera_id), json.dumps(payload, ensure_ascii=False), timestamp, timestamp),
+            )
+            if int(insert_cursor.rowcount or 0) > 0:
+                row = conn.execute(
+                    "SELECT * FROM upload_jobs WHERE idempotency_key = ? LIMIT 1",
+                    (idempotency_key,),
+                ).fetchone()
+                job = self._upload_job_to_dict(row)
+                if job is not None:
+                    jobs.append(job)
+            chunk_start = chunk_end
+        return jobs
+
+    def _close_activity_export_cursor(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        camera_id: int,
+        reason: str,
+        timestamp: str,
+    ) -> list[Dict[str, Any]]:
+        cursor = conn.execute(
+            """
+            SELECT aec.*, c.room AS camera_room
+            FROM activity_export_cursors aec
+            LEFT JOIN cameras c ON c.id = aec.camera_id
+            WHERE aec.camera_id = ?
+            """,
+            (int(camera_id),),
+        ).fetchone()
+        if cursor is None:
+            return []
+        started = self._parse_iso_datetime(str(cursor["segment_started_at"]))
+        ended = self._parse_iso_datetime(str(cursor["last_observed_at"]))
+        jobs = []
+        if ended > started:
+            jobs = self._enqueue_activity_interval_chunks(
+                conn,
+                camera_id=int(camera_id),
+                room=str(cursor["camera_room"] or ""),
+                started_at=started,
+                ended_at=ended,
+                person_count=max(1, int(cursor["person_count_max"] or 1)),
+                postures=json.loads(cursor["postures_json"] or "[]"),
+                confidence=cursor["confidence"],
+                reason=str(reason or "camera_stopped"),
+                timestamp=timestamp,
+            )
+        conn.execute("DELETE FROM activity_export_cursors WHERE camera_id = ?", (int(camera_id),))
+        return jobs
+
+    @staticmethod
+    def _parse_iso_datetime(value: str) -> datetime:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
     def create_event(
         self,
         event_type: str,
@@ -3949,16 +4560,21 @@ class Storage:
         candidate_id: Optional[int] = None,
         payload: Optional[Dict[str, Any]] = None,
         occurred_at: Optional[str] = None,
+        cloud_sync_status: str = "local_only",
     ) -> Dict[str, Any]:
         event_occurred_at = str(occurred_at or "").strip() or now_iso()
+        normalized_sync_status = str(cloud_sync_status or "local_only").strip()
+        if normalized_sync_status not in {"local_only", "pending", "completed"}:
+            raise ValueError("Unsupported event cloud sync status")
         with self.connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO events (
                     camera_id, detection_result_id, rule_evaluation_id, candidate_id,
-                    type, room, summary, level, snapshot_id, occurred_at, payload
+                    type, room, summary, level, snapshot_id, occurred_at, payload,
+                    cloud_sync_status, cloud_synced_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
                 """,
                 (
                     camera_id,
@@ -3972,6 +4588,7 @@ class Storage:
                     snapshot_id,
                     event_occurred_at,
                     json.dumps(payload or {}, ensure_ascii=False),
+                    normalized_sync_status,
                 ),
             )
             event_id = int(cursor.lastrowid)
@@ -4000,6 +4617,7 @@ class Storage:
         event_id: Optional[int] = None,
         snapshot_id: Optional[int] = None,
         camera_id: Optional[int] = None,
+        next_attempt_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         clean_key = str(idempotency_key or "").strip()
         clean_type = str(job_type or "").strip()
@@ -4018,7 +4636,7 @@ class Storage:
                         payload_json, attempt_count, last_error, next_attempt_at,
                         created_at, updated_at, completed_at
                     )
-                    VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, 0, '', NULL, ?, ?, NULL)
+                    VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, 0, '', ?, ?, ?, NULL)
                     """,
                     (
                         clean_type,
@@ -4031,11 +4649,21 @@ class Storage:
                         int(snapshot_id) if snapshot_id else None,
                         int(camera_id) if camera_id else None,
                         json.dumps(payload or {}, ensure_ascii=False),
+                        str(next_attempt_at or "").strip() or None,
                         timestamp,
                         timestamp,
                     ),
                 )
                 job_id = int(cursor.lastrowid)
+                if event_id:
+                    conn.execute(
+                        """
+                        UPDATE events
+                        SET cloud_sync_status = 'pending', cloud_synced_at = NULL
+                        WHERE id = ?
+                        """,
+                        (int(event_id),),
+                    )
             except sqlite3.IntegrityError:
                 row = conn.execute(
                     "SELECT * FROM upload_jobs WHERE idempotency_key = ? LIMIT 1",
@@ -4050,6 +4678,169 @@ class Storage:
         if job is None:
             raise RuntimeError("Upload job was not persisted")
         return job
+
+    def enqueue_event_evidence_finalize(
+        self,
+        event: Dict[str, Any],
+        *,
+        settle_seconds: float = 0.8,
+        max_wait_seconds: float = 2.5,
+    ) -> Dict[str, Any]:
+        from datetime import datetime, timedelta, timezone
+
+        event_id = int(event["id"])
+        occurred_at = str(event.get("occurred_at") or now_iso())
+        try:
+            occurred = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+        except ValueError:
+            occurred = datetime.now(timezone.utc)
+        if occurred.tzinfo is None:
+            occurred = occurred.replace(tzinfo=timezone.utc)
+        settle = max(0.3, min(float(settle_seconds), 2.0))
+        max_wait = max(settle, min(float(max_wait_seconds), 5.0))
+        return self.enqueue_upload_job(
+            job_type="event_evidence_finalize",
+            object_type="event_evidence",
+            idempotency_key=f"event-evidence-finalize:{event_id}",
+            priority=3,
+            event_id=event_id,
+            snapshot_id=int(event["snapshot_id"]) if event.get("snapshot_id") else None,
+            camera_id=int(event["camera_id"]) if event.get("camera_id") else None,
+            next_attempt_at=(occurred + timedelta(seconds=settle)).isoformat(),
+            payload={
+                "schema_version": "gohome-event-evidence-finalize-v1",
+                "event_id": event_id,
+                "settle_seconds": settle,
+                "max_wait_seconds": max_wait,
+                "occurred_at": occurred_at,
+            },
+        )
+
+    def finalize_event_evidence(
+        self,
+        event_id: int,
+        *,
+        settle_seconds: float = 0.8,
+        max_wait_seconds: float = 2.5,
+    ) -> Dict[str, Any]:
+        from datetime import datetime, timedelta, timezone
+
+        event = self.get_event(int(event_id))
+        if event is None:
+            raise ValueError("event evidence finalization target was not found")
+        payload = dict(event.get("payload") or {})
+        existing_finalization = payload.get("evidence_finalization")
+        if isinstance(existing_finalization, dict) and existing_finalization.get("finalized"):
+            return event
+        if event.get("type") != "fall_candidate" or not event.get("camera_id"):
+            payload["evidence_finalization"] = {
+                "schema_version": "gohome-event-evidence-finalize-v1",
+                "finalized": True,
+                "reason": "settled_frame_not_required",
+                "finalized_at": now_iso(),
+            }
+            with self.connect() as conn:
+                conn.execute(
+                    "UPDATE events SET payload = ? WHERE id = ?",
+                    (json.dumps(payload, ensure_ascii=False), int(event_id)),
+                )
+            return self.get_event(int(event_id)) or event
+
+        occurred_text = str(event.get("occurred_at") or now_iso())
+        try:
+            occurred = datetime.fromisoformat(occurred_text.replace("Z", "+00:00"))
+        except ValueError:
+            occurred = datetime.now(timezone.utc)
+        if occurred.tzinfo is None:
+            occurred = occurred.replace(tzinfo=timezone.utc)
+        settle = max(0.3, min(float(settle_seconds), 2.0))
+        max_wait = max(settle, min(float(max_wait_seconds), 5.0))
+        target_at = (occurred + timedelta(seconds=settle)).isoformat()
+        deadline_at = (occurred + timedelta(seconds=max_wait)).isoformat()
+
+        evidence = payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {}
+        original_bundle = evidence.get("temporal_evidence_bundle") if isinstance(evidence, dict) else {}
+        if not isinstance(original_bundle, dict) or not original_bundle:
+            original_bundle = payload.get("temporal_evidence_bundle") if isinstance(payload.get("temporal_evidence_bundle"), dict) else {}
+        track_id = str(original_bundle.get("track_id") or "")
+        selected_snapshot: Optional[Dict[str, Any]] = None
+        selected_track: Optional[Dict[str, Any]] = None
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM snapshots
+                WHERE camera_id = ? AND captured_at >= ? AND captured_at <= ?
+                ORDER BY captured_at ASC, id ASC
+                """,
+                (int(event["camera_id"]), target_at, deadline_at),
+            ).fetchall()
+        for row in rows:
+            snapshot = self._snapshot_to_dict(row)
+            analysis = snapshot.get("analysis") if isinstance(snapshot.get("analysis"), dict) else {}
+            graph = analysis.get("pose_factor_graph") if isinstance(analysis.get("pose_factor_graph"), dict) else {}
+            tracks = graph.get("tracks") if isinstance(graph.get("tracks"), list) else []
+            matching = next(
+                (
+                    item for item in tracks
+                    if isinstance(item, dict)
+                    and track_id
+                    and str(item.get("track_id") or "") == track_id
+                    and str(item.get("posture") or "") == "lying"
+                ),
+                None,
+            )
+            if matching is None:
+                continue
+            selected_snapshot = snapshot
+            selected_track = matching
+            break
+
+        original_snapshots = original_bundle.get("snapshots") if isinstance(original_bundle.get("snapshots"), list) else []
+        stable_roles = [
+            dict(item)
+            for item in original_snapshots
+            if isinstance(item, dict) and str(item.get("role") or "") in {"before", "transition"}
+        ][:2]
+        if selected_snapshot is not None and selected_track is not None:
+            stable_roles.append({
+                "snapshot_id": int(selected_snapshot["id"]),
+                "snapshot_path": str(selected_snapshot.get("image_path") or ""),
+                "observed_at": str(selected_snapshot.get("captured_at") or ""),
+                "postures": [str(selected_track.get("posture") or "lying")],
+                "motion_score": selected_snapshot.get("motion_score"),
+                "role": "current",
+            })
+            finalized_bundle = {
+                **original_bundle,
+                "schema_version": "temporal-evidence-bundle-v1",
+                "selection_policy": "role-aware-post-settle-v3",
+                "window_ended_at": str(selected_snapshot.get("captured_at") or ""),
+                "snapshots": stable_roles,
+            }
+            evidence = {**evidence, "temporal_evidence_bundle": finalized_bundle}
+            payload["evidence"] = evidence
+            payload["temporal_evidence_bundle"] = finalized_bundle
+            snapshot_id = int(selected_snapshot["id"])
+            reason = "same_track_settled_lying"
+        else:
+            snapshot_id = int(event["snapshot_id"]) if event.get("snapshot_id") else None
+            reason = "settled_same_track_frame_unavailable"
+        payload["evidence_finalization"] = {
+            "schema_version": "gohome-event-evidence-finalize-v1",
+            "finalized": True,
+            "reason": reason,
+            "track_id": track_id,
+            "target_at": target_at,
+            "deadline_at": deadline_at,
+            "selected_snapshot_id": snapshot_id,
+            "finalized_at": now_iso(),
+        }
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE events SET snapshot_id = ?, payload = ? WHERE id = ?",
+                (snapshot_id, json.dumps(payload, ensure_ascii=False), int(event_id)),
+            )
+        return self.get_event(int(event_id)) or event
 
     def enqueue_event_upload_jobs(self, event: Dict[str, Any]) -> list[Dict[str, Any]]:
         event_id = int(event["id"])
@@ -4083,22 +4874,10 @@ class Storage:
             {},
         )
         evidence_selection_policy = str(temporal_bundle.get("selection_policy") or "")
-        jobs = [
-            self.enqueue_upload_job(
-                job_type="event_upload",
-                object_type="event",
-                idempotency_key=f"event:{event_id}",
-                priority=10 if event.get("level") == "critical" else 50,
-                event_id=event_id,
-                snapshot_id=snapshot_id,
-                camera_id=camera_id,
-                payload={
-                    **base_payload,
-                    "target": "app_server",
-                    "endpoint": "/api/v1/device/events",
-                },
-            )
-        ]
+        # Persist all evidence jobs before making the event job visible to the
+        # uploader thread. Otherwise it can claim the event between commits and
+        # submit an evidence-free incident even though evidence is being queued.
+        jobs: list[Dict[str, Any]] = []
         if snapshot_id:
             jobs.append(
                 self.enqueue_upload_job(
@@ -4115,6 +4894,7 @@ class Storage:
                         "content_type": "image/jpeg",
                         "purpose": evidence_purpose,
                         "evidence_frame_role": "current",
+                        "captured_at": str(current_evidence.get("observed_at") or event.get("occurred_at") or ""),
                         "evidence_selection_policy": evidence_selection_policy,
                         "postures": (
                             current_evidence.get("postures")
@@ -4168,6 +4948,22 @@ class Storage:
                     },
                 )
             )
+        jobs.append(
+            self.enqueue_upload_job(
+                job_type="event_upload",
+                object_type="event",
+                idempotency_key=f"event:{event_id}",
+                priority=10 if event.get("level") == "critical" else 50,
+                event_id=event_id,
+                snapshot_id=snapshot_id,
+                camera_id=camera_id,
+                payload={
+                    **base_payload,
+                    "target": "app_server",
+                    "endpoint": "/api/v1/device/events",
+                },
+            )
+        )
         return jobs
 
     def list_upload_jobs(
@@ -4219,19 +5015,36 @@ class Storage:
             ).fetchall()
         return [job for row in rows if (job := self._upload_job_to_dict(row)) is not None]
 
-    def claim_next_upload_job(self) -> Optional[Dict[str, Any]]:
+    def claim_next_upload_job(
+        self,
+        *,
+        lease_seconds: int = 120,
+        worker_id: str = "",
+    ) -> Optional[Dict[str, Any]]:
         timestamp = now_iso()
+        lease_expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=max(30, int(lease_seconds)))
+        ).isoformat()
+        claim_token = f"{str(worker_id or 'upload-worker').strip()}:{secrets.token_urlsafe(18)}"
         with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 """
                 SELECT *
                 FROM upload_jobs
-                WHERE status IN ('pending', 'failed')
-                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                WHERE (
+                        status IN ('pending', 'failed')
+                        AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                      )
+                   OR (
+                        status = 'uploading'
+                        AND lease_expires_at IS NOT NULL
+                        AND lease_expires_at <= ?
+                      )
                 ORDER BY priority ASC, created_at ASC
                 LIMIT 1
                 """,
-                (timestamp,),
+                (timestamp, timestamp),
             ).fetchone()
             if row is None:
                 return None
@@ -4241,57 +5054,113 @@ class Storage:
                 UPDATE upload_jobs
                 SET status = 'uploading',
                     attempt_count = attempt_count + 1,
-                    last_error = '',
+                    last_error = CASE
+                        WHEN status = 'uploading' THEN 'upload_lease_expired; reclaimed'
+                        ELSE ''
+                    END,
+                    claim_token = ?,
+                    claimed_at = ?,
+                    lease_expires_at = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (timestamp, job_id),
+                (claim_token, timestamp, lease_expires_at, timestamp, job_id),
             )
             claimed = conn.execute("SELECT * FROM upload_jobs WHERE id = ? LIMIT 1", (job_id,)).fetchone()
         return self._upload_job_to_dict(claimed)
 
-    def complete_upload_job(self, job_id: int, result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def complete_upload_job(
+        self,
+        job_id: int,
+        result: Dict[str, Any],
+        *,
+        claim_token: str = "",
+    ) -> Optional[Dict[str, Any]]:
         timestamp = now_iso()
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM upload_jobs WHERE id = ? LIMIT 1", (int(job_id),)).fetchone()
             job = self._upload_job_to_dict(row)
             if job is None:
                 return None
+            expected_token = str(claim_token or "").strip()
+            if expected_token and (
+                str(job.get("status") or "") != "uploading"
+                or str(job.get("claim_token") or "") != expected_token
+            ):
+                return None
             payload = dict(job.get("payload") or {})
             payload["upload_result"] = result
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE upload_jobs
                 SET status = 'completed',
                     payload_json = ?,
                     last_error = '',
                     next_attempt_at = NULL,
+                    claim_token = '',
+                    lease_expires_at = NULL,
                     updated_at = ?,
                     completed_at = ?
                 WHERE id = ?
+                  AND (? = '' OR (status = 'uploading' AND claim_token = ?))
                 """,
-                (json.dumps(payload, ensure_ascii=False), timestamp, timestamp, int(job_id)),
+                (
+                    json.dumps(payload, ensure_ascii=False),
+                    timestamp,
+                    timestamp,
+                    int(job_id),
+                    expected_token,
+                    expected_token,
+                ),
             )
+            if cursor.rowcount != 1:
+                return None
+            if job.get("event_id"):
+                self._refresh_event_cloud_sync_status(
+                    conn,
+                    int(job["event_id"]),
+                    synced_at=timestamp if str(job.get("job_type") or "") == "event_upload" else None,
+                )
             updated = conn.execute("SELECT * FROM upload_jobs WHERE id = ? LIMIT 1", (int(job_id),)).fetchone()
         return self._upload_job_to_dict(updated)
 
-    def fail_upload_job(self, job_id: int, error: str, *, retry_after_seconds: int = 60) -> Optional[Dict[str, Any]]:
+    def fail_upload_job(
+        self,
+        job_id: int,
+        error: str,
+        *,
+        retry_after_seconds: int = 60,
+        claim_token: str = "",
+    ) -> Optional[Dict[str, Any]]:
         from datetime import datetime, timedelta, timezone
 
         timestamp = now_iso()
         next_attempt_at = (datetime.now(timezone.utc) + timedelta(seconds=max(5, int(retry_after_seconds)))).isoformat()
+        expected_token = str(claim_token or "").strip()
         with self.connect() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE upload_jobs
                 SET status = 'failed',
                     last_error = ?,
                     next_attempt_at = ?,
+                    claim_token = '',
+                    lease_expires_at = NULL,
                     updated_at = ?
                 WHERE id = ?
+                  AND (? = '' OR (status = 'uploading' AND claim_token = ?))
                 """,
-                (str(error or "")[:1000], next_attempt_at, timestamp, int(job_id)),
+                (
+                    str(error or "")[:1000],
+                    next_attempt_at,
+                    timestamp,
+                    int(job_id),
+                    expected_token,
+                    expected_token,
+                ),
             )
+            if cursor.rowcount != 1:
+                return None
             row = conn.execute("SELECT * FROM upload_jobs WHERE id = ? LIMIT 1", (int(job_id),)).fetchone()
         return self._upload_job_to_dict(row)
 
@@ -4327,6 +5196,24 @@ class Storage:
                 FROM upload_jobs
                 WHERE event_id = ? AND job_type = ? AND status = 'completed'
                 ORDER BY priority ASC, completed_at ASC, id ASC
+                """,
+                (int(event_id), str(job_type or "").strip()),
+            ).fetchall()
+        return [job for row in rows if (job := self._upload_job_to_dict(row)) is not None]
+
+    def upload_jobs_for_event(
+        self,
+        *,
+        event_id: int,
+        job_type: str,
+    ) -> list[Dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM upload_jobs
+                WHERE event_id = ? AND job_type = ?
+                ORDER BY priority ASC, created_at ASC, id ASC
                 """,
                 (int(event_id), str(job_type or "").strip()),
             ).fetchall()
@@ -4408,6 +5295,9 @@ class Storage:
                 SELECT
                     e.*,
                     c.name AS camera_name,
+                    c.status AS camera_status,
+                    c.last_seen_at AS camera_last_seen_at,
+                    c.last_error AS camera_last_error,
                     s.image_path AS snapshot_path,
                     ec.status AS candidate_status
                 FROM events e
@@ -4429,6 +5319,9 @@ class Storage:
                 SELECT
                     e.*,
                     c.name AS camera_name,
+                    c.status AS camera_status,
+                    c.last_seen_at AS camera_last_seen_at,
+                    c.last_error AS camera_last_error,
                     s.image_path AS snapshot_path,
                     ec.status AS candidate_status
                 FROM events e

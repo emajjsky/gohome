@@ -758,6 +758,9 @@ class PostgresStore {
         this.pool = options.pool;
         this.db = options.db;
         this.persistedTables = mergePersistedTables({}, options.persistedTables || {});
+        this.persistBundle = options.persistBundle || ((bundle) => (
+            persistRowDeltas(this.pool, bundle, this.persistedTables)
+        ));
         this.pendingSave = Promise.resolve();
         this.last_save_error = "";
     }
@@ -774,7 +777,11 @@ class PostgresStore {
         this.pendingSave = this.pendingSave
             .catch(() => undefined)
             .then(async () => {
-                this.persistedTables = await persistRowDeltas(this.pool, bundle, this.persistedTables);
+                const changedTables = TABLE_ORDER.filter((table) => (
+                    changedRows(table, bundle.tables[table] || [], this.persistedTables[table] || []).length > 0
+                ));
+                const persisted = await this.persistBundle(bundle, changedTables);
+                this.persistedTables = persisted || mergePersistedTables({}, bundle.tables);
             })
             .then(() => {
                 this.last_save_error = "";

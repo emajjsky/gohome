@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,12 +67,19 @@ def main() -> None:
     if safety_state.index("analysis.fire_candidate") < safety_state.index("if (personCount > 0 || poses.length > 0)"):
         raise SystemExit("weak fire evidence still outranks normal person activity")
 
+    expected_css_asset = re.search(r'/admin/console\.css\?v=([^"\']+)', (ROOT / "admin" / "index.html").read_text(encoding="utf-8"))
+    expected_js_asset = re.search(r'/admin/console\.js\?v=([^"\']+)', (ROOT / "admin" / "index.html").read_text(encoding="utf-8"))
+    if not expected_css_asset or not expected_js_asset or expected_css_asset.group(1) != expected_js_asset.group(1):
+        raise SystemExit("index.html must load one matching console asset version")
+    expected_asset_version = expected_css_asset.group(1)
     for page in ("index.html", "algorithms.html", "events.html", "cameras.html"):
         page_html = (ROOT / "admin" / page).read_text(encoding="utf-8")
         if '/admin/console.css' not in page_html:
             raise SystemExit(f"{page} does not load the shared management-console stylesheet")
-        if "20260727-privacy-3" not in page_html:
-            raise SystemExit(f"{page} does not load the current privacy-control assets")
+        if f'/admin/console.css?v={expected_asset_version}' not in page_html:
+            raise SystemExit(f"{page} does not load the current management-console stylesheet")
+        if f'/admin/console.js?v={expected_asset_version}' not in page_html:
+            raise SystemExit(f"{page} does not load the current management-console script")
     if "gradient" in console_css:
         raise SystemExit("management-console stylesheet must not rely on decorative gradients")
     if "function ensureVideoPrivacyControl" not in console:

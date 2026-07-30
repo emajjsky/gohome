@@ -103,14 +103,111 @@ def main() -> None:
     scheduler.observe(
         24,
         {
+            "inference_backend": "hailo",
+            "person_count": 1,
+            "motion_detected": True,
+        },
+        now=101.55,
+    )
+    accelerated_active = scheduler.camera_state(24, now=101.55)
+    if (
+        not accelerated_active["accelerated"]
+        or abs(float(accelerated_active["interval_seconds"]) - 0.067) > 0.0001
+    ):
+        raise SystemExit(f"Hailo active cadence was not enabled: {accelerated_active}")
+
+    accelerated_probe_scheduler = AdaptiveInferenceScheduler(
+        idle_interval_seconds=1.0,
+        active_interval_seconds=0.5,
+        risk_interval_seconds=0.2,
+        active_hold_seconds=4.0,
+        risk_hold_seconds=2.0,
+    )
+    accelerated_probe_scheduler.reconcile([30], now=150.0)
+    accelerated_probe_scheduler.mark_started(30, now=150.0)
+    accelerated_probe_scheduler.observe(
+        30,
+        {"inference_backend": "hailo", "person_count": 0, "motion_detected": False},
+        now=150.04,
+    )
+    accelerated_probe_scheduler.signal_activity(30, now=150.2, source="motion_gate")
+    motion_probe = accelerated_probe_scheduler.camera_state(30, now=150.2)
+    if motion_probe["mode"] != "idle" or float(motion_probe["next_due_in_seconds"]) > 0.001:
+        raise SystemExit(f"Hailo motion did not remain an immediate idle probe: {motion_probe}")
+    accelerated_probe_scheduler.mark_started(30, now=150.2)
+    accelerated_probe_scheduler.observe(
+        30,
+        {"inference_backend": "hailo", "person_count": 0, "motion_detected": True},
+        now=150.24,
+    )
+    motion_only_result = accelerated_probe_scheduler.camera_state(30, now=150.24)
+    if motion_only_result["mode"] != "idle" or motion_only_result["pose_required"]:
+        raise SystemExit(f"Hailo motion-only result consumed active pose budget: {motion_only_result}")
+    accelerated_probe_scheduler.mark_started(30, now=150.7)
+    accelerated_probe_scheduler.observe(
+        30,
+        {"inference_backend": "hailo", "person_count": 1, "motion_detected": True},
+        now=150.74,
+    )
+    confirmed_person_result = accelerated_probe_scheduler.camera_state(30, now=150.74)
+    if confirmed_person_result["mode"] != "active" or not confirmed_person_result["pose_required"]:
+        raise SystemExit(f"Hailo person result did not sustain active mode: {confirmed_person_result}")
+
+    scheduler.mark_started(24, now=101.6)
+    scheduler.observe(
+        24,
+        {
+            "inference_backend": "hailo",
             "person_count": 1,
             "motion_detected": True,
             "fall_candidate": True,
             "pose_factor_graph": {"fast_fall_candidate": True},
         },
-        now=101.7,
+        now=101.65,
     )
-    risk = scheduler.camera_state(24, now=101.7)
+    accelerated_risk = scheduler.camera_state(24, now=101.65)
+    if (
+        accelerated_risk["mode"] != "risk"
+        or not accelerated_risk["accelerated"]
+        or abs(float(accelerated_risk["interval_seconds"]) - 0.05) > 0.0001
+    ):
+        raise SystemExit(f"Hailo risk cadence was not enabled: {accelerated_risk}")
+
+    scheduler.mark_started(24, now=101.667)
+    scheduler.observe(
+        24,
+        {
+            "inference_backend": "cpu",
+            "person_count": 1,
+            "pose_factor_graph": {"fast_fall_candidate": True},
+        },
+        now=101.70,
+    )
+    risk = scheduler.camera_state(24, now=101.70)
+    if risk["accelerated"] or abs(float(risk["interval_seconds"]) - 0.2) > 0.0001:
+        raise SystemExit(f"CPU fallback did not restore the CPU risk cadence: {risk}")
+
+    scheduler.mark_error(24, now=101.8)
+    errored = scheduler.camera_state(24, now=101.8)
+    if errored["accelerated"]:
+        raise SystemExit(f"scheduler error retained accelerated mode: {errored}")
+    if abs(float(errored["next_due_at"]) - 103.8) > 0.0001:
+        raise SystemExit(f"scheduler error backoff is incorrect: {errored}")
+
+    scheduler.reset_camera(24)
+    scheduler.reconcile([24, 25], now=101.9)
+    scheduler.mark_started(24, now=101.9)
+    scheduler.observe(
+        24,
+        {
+            "person_count": 1,
+            "motion_detected": True,
+            "fall_candidate": True,
+            "pose_factor_graph": {"fast_fall_candidate": True},
+        },
+        now=102.0,
+    )
+    risk = scheduler.camera_state(24, now=102.0)
     if risk["mode"] != "risk" or abs(float(risk["interval_seconds"]) - 0.2) > 0.0001:
         raise SystemExit(f"fall candidate did not enter burst mode: {risk}")
 
@@ -126,13 +223,44 @@ def main() -> None:
             "pose_fall_score": 0.96,
             "people": [{"normal_lying_zone": True}],
             "poses": [{"posture": "lying", "normal_lying_zone": True}],
-            "pose_factor_graph": {"fast_fall_candidate": False, "fast_fall_score": 0.29},
+            "pose_factor_graph": {
+                "fast_fall_candidate": False,
+                "fast_fall_score": 0.68,
+                "tracks": [{
+                    "normal_lying_zone": True,
+                    "factors": {"vertical_drop": False, "motion": False},
+                }],
+            },
         },
         now=102.1,
     )
     normal_lying = scheduler.camera_state(25, now=102.1)
     if normal_lying["mode"] != "active":
         raise SystemExit(f"normal bed/sofa lying incorrectly entered risk mode: {normal_lying}")
+
+    scheduler.reset_camera(25)
+    scheduler.reconcile([24, 25], now=102.15)
+    scheduler.mark_started(25, now=102.15)
+    scheduler.observe(
+        25,
+        {
+            "person_count": 1,
+            "people": [{"normal_lying_zone": True}],
+            "poses": [{"posture": "lying", "normal_lying_zone": True}],
+            "pose_factor_graph": {
+                "fast_fall_candidate": False,
+                "fast_fall_score": 0.68,
+                "tracks": [{
+                    "normal_lying_zone": True,
+                    "factors": {"vertical_drop": True, "motion": True},
+                }],
+            },
+        },
+        now=102.19,
+    )
+    sofa_impact = scheduler.camera_state(25, now=102.19)
+    if sofa_impact["mode"] != "risk":
+        raise SystemExit(f"same-track sofa impact failed to enter risk mode: {sofa_impact}")
 
     scheduler.reset_camera(25)
     scheduler.reconcile([24, 25], now=102.2)
@@ -249,6 +377,7 @@ def main() -> None:
         "active_interval_seconds": active["interval_seconds"],
         "risk_interval_seconds": risk["interval_seconds"],
         "normal_lying_mode": normal_lying["mode"],
+        "sofa_impact_mode": sofa_impact["mode"],
         "floor_lying_mode": floor_lying["mode"],
         "seated_score_mode": seated_score["mode"],
         "independent_camera_rotation": True,
@@ -257,6 +386,12 @@ def main() -> None:
         "starvation_guard": True,
         "thermal_cooldown": True,
         "motion_wakeup": True,
+        "hailo_motion_probe_only": motion_only_result["mode"] == "idle",
+        "hailo_person_sustains_active": confirmed_person_result["mode"] == "active",
+        "hailo_active_interval_seconds": accelerated_active["interval_seconds"],
+        "hailo_risk_interval_seconds": accelerated_risk["interval_seconds"],
+        "cpu_fallback_interval_seconds": risk["interval_seconds"],
+        "error_clears_acceleration": not errored["accelerated"],
     })
 
 

@@ -114,6 +114,13 @@ open receipts advance the same record to `delivered`, and an open receipt additi
 sets `clicked_at`. `/health` reports backlog age, retry pressure, sent, delivered,
 opened, and failed counts without conflating them.
 
+Build 5 consolidation checkpoint on 2026-07-31: the native App, cloud contracts, and
+latest Hailo/EACP edge pipeline are being merged into one `main` source line. The
+release must be generated only from `ios-shell/GoHomeShell.xcodeproj`, display
+`GoHome`, retain `com.gohome.family`, use production APNs entitlement, and contain no
+legacy WebView application root. Archive upload, Apple processing, and TestFlight
+physical-device acceptance remain separate gates.
+
 - [ ] **Gate 4: Messaging and distribution**
 
 Run:
