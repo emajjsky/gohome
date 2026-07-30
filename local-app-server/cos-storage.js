@@ -20,6 +20,9 @@ function createDisabledStorage() {
         async headObject() {
             throw new Error("COS storage is not configured");
         },
+        async putObject() {
+            throw new Error("COS storage is not configured");
+        },
         async deleteObject() {},
     };
 }
@@ -66,6 +69,16 @@ function createCosStorage(options = {}) {
         },
         async headObject({ key }) {
             return client.headObject({ Bucket: bucket, Region: region, Key: key });
+        },
+        async putObject({ key, body, contentType }) {
+            if (!key) throw new Error("COS object key is required");
+            return client.putObject({
+                Bucket: bucket,
+                Region: region,
+                Key: key,
+                Body: body,
+                ContentType: contentType || "application/octet-stream",
+            });
         },
         async deleteObject({ key }) {
             if (!key) return;

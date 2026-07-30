@@ -818,9 +818,14 @@ async function main() {
         assert.equal(String(created.event.camera_id), String(camera.id));
         assert.equal(String(created.event.payload.edge_camera_id), "11");
         assert.equal(created.event.media_asset_id, media.asset.id);
-        assert.equal(created.message.generated_by, "edge-event");
-        assert.equal(created.message.source_event_ids[0], created.event.id);
-        assert.equal(created.deliveries.length, 1);
+        assert.equal(created.verification.status, "unavailable");
+        assert.equal(created.event.payload.incident.status, "uncertain");
+        assert.equal(created.message, null);
+        assert.equal(created.deliveries.length, 0);
+        assert.equal(app.store.db.app_messages.some((message) => (
+            message.generated_by === "edge-event"
+            && String(message.event_id) === String(created.event.id)
+        )), false);
 
         const originalVerificationEnv = {
             GOHOME_VISION_VERIFICATION_ENABLED: process.env.GOHOME_VISION_VERIFICATION_ENABLED,
@@ -999,6 +1004,19 @@ async function main() {
             assert.ok(app.store.db.notification_deliveries.some((delivery) => (
                 String(delivery.message_id) === String(verificationOutcomeMessage.message_id)
             )));
+            assert.equal(
+                app.store.db.app_messages.filter((message) => (
+                    message.generated_by === "vision-verification-orchestrator"
+                    && String(message.event_id) === String(verificationEvent.event.id)
+                )).length,
+                1,
+            );
+            assert.equal(
+                app.store.db.notification_deliveries.filter((delivery) => (
+                    String(delivery.message_id) === String(verificationOutcomeMessage.message_id)
+                )).length,
+                1,
+            );
             const verificationJob = app.store.db.model_generation_jobs.find((job) => (
                 job.purpose === "vision_event_verification"
                 && String(job.metadata?.event_id) === String(verificationEvent.event.id)
@@ -1013,6 +1031,83 @@ async function main() {
                 verificationMedia.asset.id,
             ]);
             assert.equal("api_key" in verificationJob.request_payload, false);
+
+            const lateEvidenceEvent = await requestJson(baseUrl, "/api/v1/device/events", {
+                method: "POST",
+                body: JSON.stringify({
+                    idempotency_key: "event:44",
+                    event_type: "fall_candidate",
+                    summary: "迟到证据编排测试",
+                    level: "critical",
+                    room: "客厅",
+                    camera_id: 11,
+                    snapshot_path: "events/late-current.jpg",
+                    occurred_at: "2026-07-05T10:10:03.000Z",
+                    payload: {
+                        evidence: {
+                            temporal_evidence_bundle: {
+                                snapshots: [
+                                    { snapshot_id: 4401, snapshot_path: "events/late-before.jpg", observed_at: "2026-07-05T10:10:01.000Z", postures: ["standing"], role: "before" },
+                                    { snapshot_id: 4402, snapshot_path: "events/late-transition.jpg", observed_at: "2026-07-05T10:10:02.000Z", postures: ["bending"], role: "transition" },
+                                    { snapshot_id: 4403, snapshot_path: "events/late-current.jpg", observed_at: "2026-07-05T10:10:03.000Z", postures: ["lying"], role: "current" },
+                                ],
+                            },
+                        },
+                        edge_upload: { edge_event_id: 44, edge_device_id: "edge-test" },
+                    },
+                }),
+                headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+            });
+            assert.equal(lateEvidenceEvent.verification.status, "waiting_evidence");
+            assert.equal(lateEvidenceEvent.verification.expected_count, 3);
+            assert.equal(lateEvidenceEvent.message, null);
+
+            const lateEvidenceFrames = [
+                ["late-before.jpg", "events/late-before.jpg", "before", "2026-07-05T10:10:01.000Z"],
+                ["late-transition.jpg", "events/late-transition.jpg", "transition", "2026-07-05T10:10:02.000Z"],
+                ["late-current.jpg", "events/late-current.jpg", "current", "2026-07-05T10:10:03.000Z"],
+            ];
+            for (const [fileName, snapshotPath, role, capturedAt] of lateEvidenceFrames) {
+                await requestJson(
+                    baseUrl,
+                    `/api/v1/device/media-assets/upload?file_name=${fileName}&snapshot_path=${snapshotPath}&content_type=image/jpeg&edge_event_id=44&camera_id=${camera.id}&local_camera_id=11&purpose=${role === "current" ? "event_evidence" : "event_evidence_keyframe"}&evidence_frame_role=${role}&captured_at=${encodeURIComponent(capturedAt)}`,
+                    {
+                        method: "POST",
+                        body: Buffer.from(`late-${role}-jpeg`),
+                        headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
+                    },
+                );
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            await requestJson(baseUrl, "/api/v1/internal/vision-verifications/run", {
+                method: "POST",
+                body: JSON.stringify({ force: true, limit: 3 }),
+            });
+            const verifiedLateEvidenceEvent = await requestJson(baseUrl, `/api/v1/events/${lateEvidenceEvent.event.id}`, {
+                headers: { Authorization: `Bearer ${appSessionToken}` },
+            });
+            assert.equal(verifiedLateEvidenceEvent.evidence_media.length, 3);
+            assert.deepEqual(verifiedLateEvidenceEvent.evidence_media.map((item) => item.role), ["before", "transition", "current"]);
+            assert.deepEqual(verifiedLateEvidenceEvent.evidence_media.map((item) => item.captured_at), [
+                "2026-07-05T10:10:01.000Z",
+                "2026-07-05T10:10:02.000Z",
+                "2026-07-05T10:10:03.000Z",
+            ]);
+            assert.equal(verifiedLateEvidenceEvent.payload.verification.status, "confirmed");
+            assert.equal(
+                app.store.db.model_generation_jobs.filter((job) => (
+                    job.purpose === "vision_event_verification"
+                    && String(job.metadata?.event_id) === String(lateEvidenceEvent.event.id)
+                )).length,
+                1,
+            );
+            assert.equal(
+                app.store.db.app_messages.filter((message) => (
+                    message.generated_by === "vision-verification-orchestrator"
+                    && String(message.event_id) === String(lateEvidenceEvent.event.id)
+                )).length,
+                1,
+            );
             const deviceVerificationStatus = await requestJson(baseUrl, "/api/v1/device/vision-verifications?limit=5", {
                 headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
             });
@@ -1193,15 +1288,8 @@ async function main() {
                 body: JSON.stringify({ family_id: family.id, force: true }),
             });
             assert.equal(absenceRun.result.long_absence_events_created, 1);
-            assert.ok(
-                absenceRun.result.incident_reminders_created >= 2,
-                JSON.stringify(app.store.db.events.map((event) => ({
-                    summary: event.summary,
-                    status: event.payload?.incident?.status,
-                    primary_event_id: event.payload?.incident?.primary_event_id,
-                    acknowledged: event.acknowledged,
-                }))),
-            );
+            assert.equal(absenceRun.result.incident_reminders_created, 0);
+            assert.equal(app.store.db.app_messages.some((message) => message.generated_by === "incident-reminder"), false);
             const validationEventIds = new Set(app.store.db.events.filter((event) => event.payload?.validation?.test_event).map((event) => String(event.id)));
             assert.ok(validationEventIds.size > 0);
             assert.equal(
@@ -1211,6 +1299,18 @@ async function main() {
             const longAbsenceEvent = app.store.db.events.find((event) => event.event_type === "long_absence");
             assert.ok(longAbsenceEvent);
             assert.equal(longAbsenceEvent.payload.incident.status, "confirmed");
+            assert.equal(app.store.db.app_messages.some((message) => (
+                String(message.message_id || "") === `event-alert-${created.event.id}`
+            )), false);
+            assert.equal(app.store.db.app_messages.some((message) => (
+                String(message.message_id || "") === `event-alert-${verifiedSafetyEvent.id}`
+            )), false);
+            assert.equal(app.store.db.app_messages.filter((message) => (
+                String(message.message_id || "") === `event-alert-${longAbsenceEvent.id}`
+            )).length, 1);
+            assert.equal(app.store.db.notification_deliveries.filter((delivery) => (
+                String(delivery.message_id || "") === `event-alert-${longAbsenceEvent.id}`
+            )).length, 1);
             const sameMinuteRun = await requestJson(baseUrl, "/api/v1/internal/scheduler/run", {
                 method: "POST",
                 body: JSON.stringify({ family_id: family.id, force: true }),
@@ -1251,15 +1351,18 @@ async function main() {
         const eventMessages = await requestJson(baseUrl, `/api/v1/app/messages?family_id=${family.id}&status=all`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        assert.ok(eventMessages.some((message) => (
+        assert.equal(eventMessages.some((message) => (
             message.generated_by === "edge-event"
             && message.source_event_ids.some((eventId) => String(eventId) === String(created.event.id))
+        )), false);
+        assert.ok(eventMessages.some((message) => (
+            message.generated_by === "vision-verification-orchestrator"
         )));
 
         const events = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false", {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        assert.equal(events.length, 2);
+        assert.equal(events.length, 3);
         assert.ok(events.every((event) => event.type === "fall_candidate"));
         const eventSummaries = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false&view=summary", {
             headers: { Authorization: `Bearer ${appSessionToken}` },
@@ -1770,13 +1873,13 @@ async function main() {
         assert.ok(seededFamilyRules);
         assert.equal(seededFamilyRules.rule_type, "edge_rules");
         assert.equal(seededFamilyRules.config.activity_detection_enabled, false);
-        assert.equal(seedBundle.tables.events.length, 5);
+        assert.equal(seedBundle.tables.events.length, 6);
         const seededFallEvent = seedBundle.tables.events.find((event) => event.event_type === "fall_candidate");
         const seededStaleOfflineEvent = seedBundle.tables.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(seededFallEvent);
         assert.ok(seededStaleOfflineEvent);
         assert.equal(seededFallEvent.camera_id, String(camera.id));
-        assert.equal(seedBundle.tables.media_assets.length, 5);
+        assert.equal(seedBundle.tables.media_assets.length, 8);
         const seededEventAsset = seedBundle.tables.media_assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(seededEventAsset.metadata.purpose, "event_evidence");
         assert.equal(seedBundle.tables.care_preferences.length, 1);
@@ -1820,14 +1923,14 @@ async function main() {
         assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].home_phone, "057100000000");
         assert.equal(Object.values(restoredDb.cameras).length, 2);
         assert.equal(String(restoredDb.cameras[String(claimFamilyCamera.id)].family_id), String(claimFamily.id));
-        assert.equal(restoredDb.events.length, 5);
+        assert.equal(restoredDb.events.length, 6);
         const restoredFallEvent = restoredDb.events.find((event) => event.event_type === "fall_candidate");
         const restoredStaleOfflineEvent = restoredDb.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(restoredFallEvent);
         assert.ok(restoredStaleOfflineEvent);
         assert.equal(restoredFallEvent.summary, "疑似跌倒");
         assert.equal(String(restoredFallEvent.camera_id), String(camera.id));
-        assert.equal(restoredDb.assets.length, 5);
+        assert.equal(restoredDb.assets.length, 8);
         const restoredEventAsset = restoredDb.assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(restoredEventAsset.purpose, "event_evidence");
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);

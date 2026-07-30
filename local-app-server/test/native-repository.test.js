@@ -258,6 +258,54 @@ test('JSON activity deletion is creator-only and retention follows family settin
   assert.deepEqual(repo.deleteActivityHistory('user-a', 'family-a'), { deleted: 1 });
 });
 
+test('scheduler activity reads are family scoped, date bounded, and chronological in JSON storage', () => {
+  const data = fixture();
+  data.activity_intervals = [
+    { id: 'later', family_id: 'family-a', started_at: '2026-07-22T08:00:00.000Z', ended_at: '2026-07-22T08:10:00.000Z' },
+    { id: 'other-family', family_id: 'family-b', started_at: '2026-07-21T01:00:00.000Z', ended_at: '2026-07-21T01:10:00.000Z' },
+    { id: 'before-range', family_id: 'family-a', started_at: '2026-07-20T15:00:00.000Z', ended_at: '2026-07-20T15:30:00.000Z' },
+    { id: 'earlier', family_id: 'family-a', started_at: '2026-07-20T16:00:00.000Z', ended_at: '2026-07-20T16:10:00.000Z' },
+    { id: 'after-range', family_id: 'family-a', started_at: '2026-07-22T16:00:00.000Z', ended_at: '2026-07-22T16:10:00.000Z' },
+  ];
+  const repo = new JsonNativeRepository(data);
+
+  const result = repo.activityIntervalsForScheduler('family-a', {
+    start_date: '2026-07-21',
+    end_date: '2026-07-22',
+  });
+
+  assert.deepEqual(result.map((item) => item.id), ['earlier', 'later']);
+  result[0].id = 'mutated';
+  assert.equal(data.activity_intervals.find((item) => item.id === 'earlier').id, 'earlier');
+});
+
+test('PostgreSQL scheduler activity reads query the requested family and Shanghai date range', async () => {
+  const calls = [];
+  const pool = {
+    async query(text, values) {
+      calls.push({ text, values });
+      return {
+        rowCount: 1,
+        rows: [{ id: 'activity-a', family_id: values[0] }],
+      };
+    },
+  };
+  const repo = new PostgresNativeRepository(pool);
+
+  const result = await repo.activityIntervalsForScheduler('family-a', {
+    start_date: '2026-07-21',
+    end_date: '2026-07-27',
+  });
+
+  assert.deepEqual(result, [{ id: 'activity-a', family_id: 'family-a' }]);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].text, /from activity_intervals/i);
+  assert.match(calls[0].text, /family_id = \$1/i);
+  assert.match(calls[0].text, /ended_at > \(\$2::date::timestamp at time zone 'Asia\/Shanghai'\)/i);
+  assert.match(calls[0].text, /started_at < \(\(\$3::date \+ 1\)::timestamp at time zone 'Asia\/Shanghai'\)/i);
+  assert.deepEqual(calls[0].values, ['family-a', '2026-07-21', '2026-07-27']);
+});
+
 test('JSON memory writes reject cross-family assets without leaving partial records', () => {
   const data = fixture();
   data.assets = [{ id: 10, family_id: 'family-b' }];

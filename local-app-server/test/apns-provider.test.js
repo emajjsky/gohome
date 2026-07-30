@@ -1,9 +1,10 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
-const { createApnsProvider } = require('../apns-provider');
+const { createApnsProvider, createPersistentHttp2Requester } = require('../apns-provider');
 
 function providerWith(request) {
   const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -51,4 +52,37 @@ test('APNs migration persists only encrypted delivery material', () => {
   assert.match(sql, /token_ciphertext text not null/);
   assert.match(sql, /environment in \('sandbox', 'production'\)/);
   assert.doesNotMatch(sql, /push_token_plaintext/);
+});
+
+test('APNs requester reuses one healthy HTTP2 session', async () => {
+  let connections = 0;
+  const session = new EventEmitter();
+  session.closed = false;
+  session.destroyed = false;
+  session.close = () => { session.closed = true; };
+  session.destroy = () => { session.destroyed = true; };
+  session.request = () => {
+    const stream = new EventEmitter();
+    stream.setEncoding = () => {};
+    stream.end = () => {
+      queueMicrotask(() => {
+        stream.emit('response', { ':status': 200 });
+        stream.emit('end');
+      });
+    };
+    return stream;
+  };
+  const requester = createPersistentHttp2Requester({
+    connect: () => {
+      connections += 1;
+      return session;
+    },
+  });
+
+  await requester({ authority: 'https://api.push.apple.com', headers: {}, body: '{}' });
+  await requester({ authority: 'https://api.push.apple.com', headers: {}, body: '{}' });
+
+  assert.equal(connections, 1);
+  requester.close();
+  assert.equal(session.closed, true);
 });

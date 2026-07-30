@@ -122,9 +122,82 @@ test('video privacy is one family state shared by app playback and the edge devi
     assert.equal(playback.response.status, 200);
     assert.equal(playback.body.privacy_mode, 'skeleton');
     assert.equal(playback.body.minimum_privacy_mode, 'skeleton');
+    assert.equal(playback.body.display_transport, 'safe-scene-pose-v1');
+    assert.equal(playback.body.pose_stream_path, `/api/v1/video/cameras/${camera.body.id}/pose-stream`);
+    assert.equal(playback.body.scene_stream_path, `/api/v1/video/cameras/${camera.body.id}/scene.mjpg`);
+
+    const posePacket = {
+      schema_version: 'eacp-pose-relay-v1',
+      camera_id: 24,
+      frame_id: 'frame-100',
+      captured_at: new Date().toISOString(),
+      state: 'observed',
+      source: 'observed',
+      image_width: 640,
+      image_height: 360,
+      poses: [{
+        track_id: 'person-1',
+        confidence: 0.91,
+        bbox: [120, 20, 400, 350],
+        keypoints: [{ name: 'nose', x: 220, y: 60, confidence: 0.95, visible: true }],
+      }],
+      display_only: true,
+      formal_evidence_eligible: false,
+    };
+    const poseUpload = await request(
+      baseURL,
+      `/api/v1/device/live-poses/upload?camera_id=${camera.body.id}&local_camera_id=24`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${deviceToken}` },
+        body: JSON.stringify(posePacket),
+      },
+    );
+    assert.equal(poseUpload.response.status, 200);
+    assert.equal(poseUpload.body.frame_id, 'frame-100');
+
+    const unsafePose = await request(
+      baseURL,
+      `/api/v1/device/live-poses/upload?camera_id=${camera.body.id}&local_camera_id=24`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${deviceToken}` },
+        body: JSON.stringify({ ...posePacket, formal_evidence_eligible: true }),
+      },
+    );
+    assert.equal(unsafePose.response.status, 400);
+
+    const jpeg = Buffer.from([0xff, 0xd8, 0x12, 0x34, 0xff, 0xd9]);
+    const sceneUpload = await fetch(
+      `${baseURL}/api/v1/device/live-scenes/upload?camera_id=${camera.body.id}&local_camera_id=24`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${deviceToken}`, 'Content-Type': 'image/jpeg' },
+        body: jpeg,
+      },
+    );
+    assert.equal(sceneUpload.status, 200);
+
+    const playbackQuery = `playback_ticket=${encodeURIComponent(playback.body.ticket)}&privacy_mode=skeleton`;
+    const poseStream = await fetch(`${baseURL}${playback.body.pose_stream_path}?${playbackQuery}`);
+    assert.equal(poseStream.status, 200);
+    assert.match(poseStream.headers.get('content-type') || '', /^text\/event-stream/);
+    const poseReader = poseStream.body.getReader();
+    const poseChunk = await poseReader.read();
+    assert.match(Buffer.from(poseChunk.value).toString('utf8'), /"frame_id":"frame-100"/);
+    await poseReader.cancel();
+
+    const sceneStream = await fetch(`${baseURL}${playback.body.scene_stream_path}?${playbackQuery}`);
+    assert.equal(sceneStream.status, 200);
+    assert.equal(sceneStream.headers.get('x-gohome-stream-state'), 'safe_scene_relay');
+    const sceneReader = sceneStream.body.getReader();
+    const sceneChunk = await sceneReader.read();
+    const sceneBytes = Buffer.from(sceneChunk.value);
+    assert.ok(sceneBytes.includes(jpeg));
+    await sceneReader.cancel();
 
     const upload = await fetch(
-      `${baseURL}/api/v1/device/live-frames/upload?camera_id=${camera.body.id}&local_camera_id=24&privacy_mode=original`,
+      `${baseURL}/api/v1/device/live-frames/upload?camera_id=${camera.body.id}&local_camera_id=24&privacy_mode=original&stream_epoch_ms=1000&sequence=2`,
       {
         method: 'POST',
         headers: {
@@ -138,6 +211,50 @@ test('video privacy is one family state shared by app playback and the edge devi
     const uploadBody = await upload.json();
     assert.equal(uploadBody.received_privacy_mode, 'original');
     assert.equal(uploadBody.requested_privacy_mode, 'skeleton');
+    assert.equal(uploadBody.accepted, true);
+    assert.equal(uploadBody.source_sequence, 2);
+
+    const staleUpload = await fetch(
+      `${baseURL}/api/v1/device/live-frames/upload?camera_id=${camera.body.id}&local_camera_id=24&privacy_mode=original&stream_epoch_ms=1000&sequence=1`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${deviceToken}`,
+          'Content-Type': 'image/jpeg',
+        },
+        body: Buffer.from([0xff, 0xd8, 0x01, 0xff, 0xd9]),
+      },
+    );
+    assert.equal(staleUpload.status, 200);
+    const staleUploadBody = await staleUpload.json();
+    assert.equal(staleUploadBody.accepted, false);
+    assert.equal(staleUploadBody.stale_ignored, true);
+    assert.equal(staleUploadBody.source_sequence, 2);
+
+    const nextSessionUpload = await fetch(
+      `${baseURL}/api/v1/device/live-frames/upload?camera_id=${camera.body.id}&local_camera_id=24&privacy_mode=original&stream_epoch_ms=1001&sequence=1`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${deviceToken}`,
+          'Content-Type': 'image/jpeg',
+        },
+        body: Buffer.from([0xff, 0xd8, 0x02, 0xff, 0xd9]),
+      },
+    );
+    assert.equal(nextSessionUpload.status, 200);
+    const nextSessionUploadBody = await nextSessionUpload.json();
+    assert.equal(nextSessionUploadBody.accepted, true);
+    assert.equal(nextSessionUploadBody.stream_epoch_ms, 1001);
+    assert.equal(nextSessionUploadBody.source_sequence, 1);
+
+    const health = await request(baseURL, '/health');
+    assert.equal(health.response.status, 200);
+    const streamMetric = health.body.stream_metrics.cameras[String(camera.body.id)];
+    assert.ok(streamMetric.accepted_fps_10s > 0);
+    assert.equal(streamMetric.stale_rejections, 1);
+    assert.ok(streamMetric.transport_latency_ms_max >= streamMetric.transport_latency_ms_p95);
+    assert.deepEqual(health.body.stream_metrics.active_clients, { video: 0, pose: 0, scene: 0 });
 
     const boxUpdated = await request(baseURL, '/api/v1/device/video-privacy', {
       method: 'PUT',

@@ -18,7 +18,7 @@ const {
     repositoryError,
 } = require("./repository");
 
-const USER_COLUMNS = "id, email, display_name, phone, status, created_at, updated_at";
+const USER_COLUMNS = "id, email, display_name, phone, status, metadata, created_at, updated_at";
 const FAMILY_COLUMNS = "f.id, f.name, f.status, f.timezone, f.metadata, f.created_at, f.updated_at, fm.role, (select count(*)::int from family_members active_members where active_members.family_id = f.id and active_members.status = 'active') as member_count";
 
 function row(result) {
@@ -102,6 +102,49 @@ class PostgresNativeRepository extends NativeRepository {
         if (!["owner", "creator"].includes(role)) {
             throw repositoryError(result.rowCount ? "family management permission required" : "family access denied", 403);
         }
+    }
+
+    async accountProfile(userId) {
+        const user = row(await this.pool.query(
+            `select ${USER_COLUMNS} from users where id = $1 and status = 'active'`,
+            [textId(userId)],
+        ));
+        if (!user) throw repositoryError("user not found", 404);
+        return user;
+    }
+
+    async updateAccountProfile(userId, input = {}) {
+        const current = await this.accountProfile(userId);
+        const displayName = String(input.display_name ?? current.display_name ?? "").trim();
+        if (!displayName || displayName.length > 40) throw repositoryError("display_name must contain 1 to 40 characters", 400);
+        const metadata = current.metadata && typeof current.metadata === "object" ? { ...current.metadata } : {};
+        for (const key of ["city", "district"]) {
+            if (Object.prototype.hasOwnProperty.call(input, key)) metadata[key] = String(input[key] || "").trim().slice(0, 40);
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "avatar_asset_id")) {
+            const assetId = String(input.avatar_asset_id || "").trim();
+            if (assetId) {
+                const asset = row(await this.pool.query(
+                    `select a.id
+                     from media_assets a
+                     where a.id = $1
+                       and a.content_type like 'image/%'
+                       and exists (
+                           select 1 from family_members fm
+                           where fm.family_id = a.family_id and fm.user_id = $2 and fm.status = 'active'
+                       )`,
+                    [assetId, textId(userId)],
+                ));
+                if (!asset) throw repositoryError("avatar image is unavailable", 400);
+            }
+            metadata.avatar_asset_id = assetId;
+        }
+        return row(await this.pool.query(
+            `update users set display_name = $2, metadata = $3::jsonb, updated_at = now()
+             where id = $1 and status = 'active'
+             returning ${USER_COLUMNS}`,
+            [textId(userId), displayName, JSON.stringify(metadata)],
+        ));
     }
 
     async bootstrapForUser(userId) {
@@ -1156,6 +1199,21 @@ class PostgresNativeRepository extends NativeRepository {
         const [rangeStart] = dayBoundsShanghai(startDate);
         const [, rangeEnd] = dayBoundsShanghai(endDate);
         if (rangeEnd <= rangeStart) throw repositoryError("invalid activity date range", 400);
+        return rows(await this.pool.query(
+            `select * from activity_intervals
+             where family_id = $1
+               and ended_at > ($2::date::timestamp at time zone 'Asia/Shanghai')
+               and started_at < (($3::date + 1)::timestamp at time zone 'Asia/Shanghai')
+             order by started_at asc`,
+            [textId(familyId), startDate, endDate],
+        ));
+    }
+
+    async activityIntervalsForScheduler(familyId, options = {}) {
+        const startDate = String(options.start_date || "");
+        const endDate = String(options.end_date || "");
+        dayBoundsShanghai(startDate);
+        dayBoundsShanghai(endDate);
         return rows(await this.pool.query(
             `select * from activity_intervals
              where family_id = $1

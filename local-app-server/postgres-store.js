@@ -1,6 +1,6 @@
 "use strict";
 
-const { buildCloudSeedBundle } = require("../scripts/export-local-app-db");
+const { buildCloudSeedBundle, schedulerRunRow } = require("../scripts/export-local-app-db");
 
 const TABLE_ORDER = [
     "users",
@@ -378,6 +378,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             storage_key: asset.storage_key || "",
             edge_event_id: asset.edge_event_id || "",
             purpose: metadataValue(asset, "purpose", ""),
+            evidence_frame_role: metadataValue(asset, "evidence_frame_role", ""),
             local_camera_id: metadataValue(asset, "local_camera_id", null),
             captured_at: iso(metadataValue(asset, "captured_at", null)),
             size: Number(asset.size_bytes || 0),
@@ -781,6 +782,40 @@ class PostgresStore {
             .catch((error) => {
                 this.last_save_error = error.message || String(error);
                 throw error;
+            });
+        return this.pendingSave;
+    }
+
+    saveSchedulerRun(run, { retention = 500 } = {}) {
+        const row = schedulerRunRow(run);
+        if (!textId(row.id)) return this.pendingSave;
+        const retained = Math.max(100, Math.trunc(Number(retention) || 500));
+        this.pendingSave = this.pendingSave
+            .catch(() => undefined)
+            .then(async () => {
+                const client = await this.pool.connect();
+                try {
+                    await client.query("begin");
+                    await client.query("select pg_advisory_xact_lock(hashtext('gohome-app-store'))");
+                    await upsertRows(client, "scheduler_runs", [row]);
+                    await client.query(
+                        "delete from scheduler_runs where id in (select id from scheduler_runs order by created_at desc offset $1)",
+                        [retained],
+                    );
+                    await client.query("commit");
+                    const rows = rowsByPrimaryKey("scheduler_runs", this.persistedTables.scheduler_runs || []);
+                    rows.set(textId(row.id), comparable(row));
+                    this.persistedTables.scheduler_runs = [...rows.values()]
+                        .sort((first, second) => Date.parse(second.created_at || 0) - Date.parse(first.created_at || 0))
+                        .slice(0, retained);
+                    this.last_save_error = "";
+                } catch (error) {
+                    await client.query("rollback");
+                    this.last_save_error = error.message || String(error);
+                    throw error;
+                } finally {
+                    client.release();
+                }
             });
         return this.pendingSave;
     }

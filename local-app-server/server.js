@@ -684,7 +684,7 @@ function createLocalAppServer(options = {}) {
             const profile = source.elder || existingElderProfile(familyId, "elder_primary") || {};
             const weather = await fetchWeatherSignal({
                 familyId,
-                city: profile.city || "杭州",
+                city: profile.city || "",
             });
             return {
                 ...source,
@@ -704,11 +704,101 @@ function createLocalAppServer(options = {}) {
     const careCardGenerationJobs = new Map();
     const liveFrameCache = new Map();
     const liveFrameSequence = new Map();
+    const livePoseCache = new Map();
+    const liveSceneCache = new Map();
+    const liveSceneSequence = new Map();
+    const activityInsightNextEvaluationAt = new Map();
+    const liveStreamMetrics = new Map();
+    const activeStreamClients = { video: 0, pose: 0, scene: 0 };
+    const eventLoopDelaySamples = [];
+    let expectedEventLoopTick = Date.now() + 100;
+    const eventLoopDelayTimer = setInterval(() => {
+        const now = Date.now();
+        eventLoopDelaySamples.push({ at: now, delay_ms: Math.max(0, now - expectedEventLoopTick) });
+        expectedEventLoopTick = now + 100;
+        const cutoff = now - 60000;
+        while (eventLoopDelaySamples.length && eventLoopDelaySamples[0].at < cutoff) {
+            eventLoopDelaySamples.shift();
+        }
+    }, 100);
+    eventLoopDelayTimer.unref?.();
     let schedulerRunning = false;
     let visionVerificationRunning = false;
     let memoryUploadCleanupRunning = false;
     let apnsDispatchRunning = false;
     const LIVE_FRAME_TTL_MS = 10000;
+    const LIVE_POSE_TTL_MS = 1500;
+    const LIVE_SCENE_TTL_MS = 30000;
+
+    function percentile(values, ratio) {
+        if (!values.length) return 0;
+        const sorted = [...values].sort((first, second) => first - second);
+        const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * ratio)));
+        return sorted[index];
+    }
+
+    function pruneStreamMetric(metric, now = Date.now()) {
+        const cutoff = now - 60000;
+        while (metric.accepted_at_ms.length && metric.accepted_at_ms[0] < cutoff) metric.accepted_at_ms.shift();
+        while (metric.transport_latency.length && metric.transport_latency[0].at < cutoff) metric.transport_latency.shift();
+    }
+
+    function cameraStreamMetric(cameraId) {
+        const key = String(cameraId);
+        if (!liveStreamMetrics.has(key)) {
+            liveStreamMetrics.set(key, {
+                accepted_at_ms: [],
+                transport_latency: [],
+                stale_rejections: 0,
+                last_received_at: "",
+            });
+        }
+        return liveStreamMetrics.get(key);
+    }
+
+    function recordLiveFrameMetric(cameraId, { accepted, capturedAt, receivedAtMs }) {
+        const metric = cameraStreamMetric(cameraId);
+        pruneStreamMetric(metric, receivedAtMs);
+        if (!accepted) {
+            metric.stale_rejections += 1;
+            return;
+        }
+        metric.accepted_at_ms.push(receivedAtMs);
+        metric.last_received_at = new Date(receivedAtMs).toISOString();
+        const capturedAtMs = Date.parse(capturedAt || "");
+        if (Number.isFinite(capturedAtMs)) {
+            metric.transport_latency.push({ at: receivedAtMs, value: Math.max(0, receivedAtMs - capturedAtMs) });
+        }
+    }
+
+    function streamMetricsSnapshot() {
+        const now = Date.now();
+        const cameras = {};
+        for (const [cameraId, metric] of liveStreamMetrics.entries()) {
+            pruneStreamMetric(metric, now);
+            const recent = metric.accepted_at_ms.filter((timestamp) => timestamp >= now - 10000);
+            const gaps = recent.slice(1).map((timestamp, index) => timestamp - recent[index]);
+            const latencies = metric.transport_latency
+                .filter((sample) => sample.at >= now - 10000)
+                .map((sample) => sample.value);
+            cameras[cameraId] = {
+                accepted_fps_10s: Number((recent.length / 10).toFixed(2)),
+                frame_gap_ms_p95: Number(percentile(gaps, 0.95).toFixed(2)),
+                frame_gap_ms_max: Number((gaps.length ? Math.max(...gaps) : 0).toFixed(2)),
+                transport_latency_ms_p95: Number(percentile(latencies, 0.95).toFixed(2)),
+                transport_latency_ms_max: Number((latencies.length ? Math.max(...latencies) : 0).toFixed(2)),
+                stale_rejections: metric.stale_rejections,
+                last_received_at: metric.last_received_at,
+            };
+        }
+        const loopDelays = eventLoopDelaySamples.map((sample) => sample.delay_ms);
+        return {
+            cameras,
+            active_clients: { ...activeStreamClients },
+            event_loop_delay_ms_p95: Number(percentile(loopDelays, 0.95).toFixed(2)),
+            event_loop_delay_ms_max: Number((loopDelays.length ? Math.max(...loopDelays) : 0).toFixed(2)),
+        };
+    }
 
     ensureDir(mediaDir);
 
@@ -1349,10 +1439,10 @@ function createLocalAppServer(options = {}) {
             id: elderId,
             elder_id: elderId,
             family_id: Number(familyId),
-            display_name: "张阿姨",
+            display_name: "家中长辈",
             relationship: "母亲",
             age: null,
-            city: "杭州",
+            city: "",
             district: "",
             phone: "",
             mobile_phone: "",
@@ -1384,6 +1474,20 @@ function createLocalAppServer(options = {}) {
         const family = selectedFamily(familyId);
         if (!family) return null;
         return store.db.elder_profiles[elderProfileKey(family.id, elderId)] || null;
+    }
+
+    function publicElderProfile(profile) {
+        if (!profile) return null;
+        const metadata = profile.metadata && typeof profile.metadata === "object" ? profile.metadata : {};
+        const home = metadata.home_location && typeof metadata.home_location === "object"
+            ? metadata.home_location
+            : {};
+        return {
+            ...profile,
+            home_latitude: profile.home_latitude ?? home.latitude ?? null,
+            home_longitude: profile.home_longitude ?? home.longitude ?? null,
+            home_location_label: String(profile.home_location_label || home.label || ""),
+        };
     }
 
     function publicBinding(binding) {
@@ -1892,9 +1996,9 @@ function createLocalAppServer(options = {}) {
 
     function streamProfileConfig(profile) {
         const normalized = String(profile || "mobile").trim().toLowerCase();
-        if (normalized === "detail") return { fps: 8, width: 1280, height: 720, quality: 78, drop: 1 };
-        if (normalized === "monitor") return { fps: 8, width: 960, height: 540, quality: 70, drop: 1 };
-        return { fps: 8, width: 720, height: 405, quality: 64, drop: 1 };
+        if (normalized === "detail") return { fps: 24, width: 1280, height: 720, quality: 78, drop: 1 };
+        if (normalized === "monitor") return { fps: 30, width: 960, height: 540, quality: 70, drop: 1 };
+        return { fps: 24, width: 720, height: 405, quality: 64, drop: 1 };
     }
 
     function cameraStreamProxyTarget(req, cameraId) {
@@ -2019,7 +2123,86 @@ function createLocalAppServer(options = {}) {
     }
 
     function deviceConfigVersion(familyId = null, deviceId = currentEdgeDeviceId()) {
-        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion(familyId)}|${rulesVersion(familyId)}|${JSON.stringify(videoPrivacyForFamily(familyId))}|${JSON.stringify(bindingSummaryForDevice(deviceId, familyId))}`).digest("hex").slice(0, 12)}`;
+        return `device-config-${crypto.createHash("sha1").update(`${cameraConfigVersion(familyId)}|${rulesVersion(familyId)}|${JSON.stringify(videoPrivacyForFamily(familyId))}|${JSON.stringify(bindingSummaryForDevice(deviceId, familyId))}|${JSON.stringify(eventStateCommandsForDevice(deviceId, familyId))}`).digest("hex").slice(0, 12)}`;
+    }
+
+    function eventStateCommandReceipts(deviceId) {
+        const device = store.db.devices[String(deviceId || "")] || {};
+        const receipts = objectValue(device.metadata).event_state_command_receipts;
+        return Array.isArray(receipts) ? receipts.filter((item) => item && typeof item === "object") : [];
+    }
+
+    function eventStateCommandsForDevice(deviceId, familyId = null) {
+        const cleanDeviceId = String(deviceId || "").trim();
+        const cleanFamilyId = familyId === null || familyId === undefined ? "" : String(familyId);
+        const completed = new Set(
+            eventStateCommandReceipts(cleanDeviceId)
+                .filter((item) => ["applied", "already_applied"].includes(String(item.status || "")))
+                .map((item) => String(item.command_id || ""))
+                .filter(Boolean),
+        );
+        return store.db.events
+            .filter((event) => {
+                if (!event?.edge_event_id) return false;
+                const camera = store.db.cameras[String(event.camera_id || "")] || {};
+                const eventDeviceId = String(
+                    event.device_id
+                    || event.payload?.edge_device_id
+                    || event.payload?.edge_upload?.edge_device_id
+                    || camera.device_id
+                    || "",
+                );
+                if (cleanDeviceId && eventDeviceId !== cleanDeviceId) return false;
+                if (cleanFamilyId && String(event.family_id || "") !== cleanFamilyId) return false;
+                const incidentStatus = String(event.payload?.incident?.status || "").toLowerCase();
+                return Boolean(event.acknowledged || event.resolution || incidentStatus === "rejected");
+            })
+            .map((event) => {
+                const resolution = String(event.resolution || "").trim();
+                const incidentStatus = String(event.payload?.incident?.status || "").toLowerCase();
+                const state = resolution === "false_positive" || incidentStatus === "rejected"
+                    ? "rejected"
+                    : resolution
+                    ? "resolved"
+                    : "acknowledged";
+                const updatedAt = String(event.updated_at || event.created_at || event.occurred_at || "");
+                const identity = [event.id, event.edge_event_id, state, resolution, updatedAt].join(":");
+                return {
+                    command_id: `event-state-${crypto.createHash("sha1").update(identity).digest("hex").slice(0, 20)}`,
+                    edge_event_id: String(event.edge_event_id),
+                    cloud_event_id: String(event.id),
+                    state,
+                    resolution,
+                    updated_at: updatedAt,
+                };
+            })
+            .sort((left, right) => String(left.updated_at).localeCompare(String(right.updated_at)))
+            .slice(-24)
+            .filter((command) => !completed.has(command.command_id));
+    }
+
+    function mergeEventStateCommandReceipts(deviceId, reports, receivedAt) {
+        const byId = new Map(
+            eventStateCommandReceipts(deviceId)
+                .filter((item) => item.command_id)
+                .map((item) => [String(item.command_id), item]),
+        );
+        for (const rawReport of Array.isArray(reports) ? reports : []) {
+            if (!rawReport || typeof rawReport !== "object") continue;
+            const commandId = String(rawReport.command_id || "").trim();
+            const status = String(rawReport.status || "").trim();
+            if (!commandId || !["applied", "already_applied", "failed"].includes(status)) continue;
+            byId.set(commandId, {
+                command_id: commandId,
+                edge_event_id: String(rawReport.edge_event_id || ""),
+                state: String(rawReport.state || ""),
+                resolution: String(rawReport.resolution || ""),
+                status,
+                error: String(rawReport.error || ""),
+                reported_at: receivedAt,
+            });
+        }
+        return [...byId.values()].slice(-128);
     }
 
     function deviceCameraConfig(camera) {
@@ -2058,6 +2241,7 @@ function createLocalAppServer(options = {}) {
             video_privacy: videoPrivacyForFamily(familyId),
             maintenance: objectValue(objectValue(device.metadata).maintenance_command),
             binding_summary: bindingSummaryForDevice(deviceId, familyId),
+            event_state_commands: eventStateCommandsForDevice(deviceId, familyId),
         };
     }
 
@@ -2072,6 +2256,7 @@ function createLocalAppServer(options = {}) {
                 if (!evidenceAsset) return null;
                 return {
                     asset_id: evidenceAsset.id,
+                    url: `/api/v1/video/assets/${encodeURIComponent(evidenceAsset.id)}`,
                     role: entry.role || evidenceAsset.evidence_frame_role || "evidence",
                     captured_at: entry.captured_at || evidenceAsset.captured_at || evidenceAsset.created_at || "",
                     postures: Array.isArray(entry.postures) ? entry.postures : [],
@@ -2094,7 +2279,9 @@ function createLocalAppServer(options = {}) {
             acknowledged: Boolean(event.acknowledged),
             resolution: event.resolution || "",
             snapshot_path: event.snapshot_path || asset?.snapshot_path || "",
-            snapshot_url: event.snapshot_path || asset?.snapshot_path || "",
+            snapshot_url: asset
+                ? `/api/v1/video/assets/${encodeURIComponent(asset.id)}`
+                : (event.snapshot_path || ""),
             media_asset_id: asset?.id || null,
             evidence_media: evidenceMedia,
             payload: event.payload || {},
@@ -2443,6 +2630,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function publicAppMessage(message) {
+        const delivery = notificationMessageDeliverySummary(message);
         return {
             id: message.message_id || message.id,
             message_id: message.message_id || message.id,
@@ -2462,7 +2650,9 @@ function createLocalAppServer(options = {}) {
             status: message.status || "open",
             generated_by: message.generated_by || "notification-service",
             scheduled_for: message.scheduled_for || "",
-            delivered_at: message.delivered_at || "",
+            delivery_status: delivery.status,
+            delivery_summary: delivery.counts,
+            delivered_at: message.delivered_at || delivery.delivered_at,
             read_at: message.read_at || "",
             created_at: message.created_at,
             updated_at: message.updated_at,
@@ -2499,6 +2689,7 @@ function createLocalAppServer(options = {}) {
             user_id: token.user_id || "",
             app_install_id: token.app_install_id || "",
             platform: token.platform || "",
+            environment: token.environment || "production",
             token_preview: token.token_preview || "",
             status: token.status || "active",
             device_name: token.device_name || "",
@@ -2511,6 +2702,87 @@ function createLocalAppServer(options = {}) {
 
     function appPushProviderConfigured() {
         return apnsProvider.configured === true;
+    }
+
+    function deliveriesForMessage(message) {
+        const messageId = String(message?.message_id || message?.id || message || "");
+        if (!messageId) return [];
+        return store.db.notification_deliveries.filter((delivery) => String(delivery.message_id || "") === messageId);
+    }
+
+    function notificationMessageDeliverySummary(message) {
+        const deliveries = deliveriesForMessage(message);
+        const counts = {
+            total: deliveries.length,
+            queued: 0,
+            sent: 0,
+            delivered: 0,
+            opened: 0,
+            failed: 0,
+            in_app_only: 0,
+        };
+        let deliveredAt = "";
+        for (const delivery of deliveries) {
+            const status = String(delivery.status || "queued");
+            if (status === "queued") counts.queued += 1;
+            if (status === "failed") counts.failed += 1;
+            if (["app_message_only", "simulated"].includes(status)) counts.in_app_only += 1;
+            if (delivery.sent_at || ["sent", "delivered"].includes(status)) counts.sent += 1;
+            if (delivery.delivered_at || status === "delivered") {
+                counts.delivered += 1;
+                const value = String(delivery.delivered_at || "");
+                if (value && (!deliveredAt || value < deliveredAt)) deliveredAt = value;
+            }
+            if (delivery.clicked_at) counts.opened += 1;
+        }
+        let status = "none";
+        if (counts.in_app_only) status = "in_app_only";
+        if (counts.failed) status = "failed";
+        if (counts.queued) status = "queued";
+        if (counts.sent) status = "sent";
+        if (counts.delivered) status = "delivered";
+        if (counts.opened) status = "opened";
+        return { status, counts, delivered_at: deliveredAt };
+    }
+
+    function syncMessageDeliveryState(messageId, timestamp = nowIso()) {
+        const message = store.db.app_messages.find((item) => String(item.message_id || item.id) === String(messageId || ""));
+        if (!message) return null;
+        const summary = notificationMessageDeliverySummary(message);
+        if (summary.delivered_at && !message.delivered_at) {
+            message.delivered_at = summary.delivered_at;
+            message.updated_at = timestamp;
+        }
+        return message;
+    }
+
+    function pushDeliveryMetrics() {
+        const now = Date.now();
+        const deliveries = store.db.notification_deliveries.filter((delivery) => (
+            delivery.provider === "apns" && delivery.target_type === "push_token"
+        ));
+        const queued = deliveries.filter((delivery) => delivery.status === "queued");
+        const queuedTimes = queued.map((delivery) => Date.parse(delivery.created_at || "")).filter(Number.isFinite);
+        const attempted = deliveries.filter((delivery) => Number(delivery.response_payload?.attempt_count || 0) > 0);
+        const attempts = attempted.reduce((total, delivery) => total + Number(delivery.response_payload?.attempt_count || 0), 0);
+        return {
+            provider_configured: appPushProviderConfigured(),
+            dispatch_running: apnsDispatchRunning,
+            active_tokens: store.db.app_push_tokens.filter((token) => String(token.status || "active") === "active").length,
+            total: deliveries.length,
+            queued: queued.length,
+            ready: queued.filter((delivery) => (
+                (!delivery.scheduled_for || Date.parse(delivery.scheduled_for) <= now)
+                && (!delivery.response_payload?.next_attempt_at || Date.parse(delivery.response_payload.next_attempt_at) <= now)
+            )).length,
+            oldest_queued_age_seconds: queuedTimes.length ? Math.max(0, Math.floor((now - Math.min(...queuedTimes)) / 1000)) : 0,
+            retry_attempts: Math.max(0, attempts - attempted.length),
+            retries_scheduled: queued.filter((delivery) => Boolean(delivery.response_payload?.next_attempt_at)).length,
+            sent: deliveries.filter((delivery) => Boolean(delivery.sent_at)).length,
+            delivered: deliveries.filter((delivery) => Boolean(delivery.delivered_at)).length,
+            opened: deliveries.filter((delivery) => Boolean(delivery.clicked_at)).length,
+            failed: deliveries.filter((delivery) => delivery.status === "failed").length,
+        };
     }
 
     function tokenPreview(value) {
@@ -2550,7 +2822,7 @@ function createLocalAppServer(options = {}) {
             idempotency_key: idempotencyKey,
             metadata: payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {},
             scheduled_for: payload.scheduled_for || "",
-            delivered_at: payload.delivered_at || "",
+            delivered_at: payload.delivered_at || message?.delivered_at || "",
             updated_at: timestamp,
         };
         if (!message) {
@@ -2576,13 +2848,21 @@ function createLocalAppServer(options = {}) {
         const familyId = normalizeNumber(message.family_id, null);
         if (!familyId) return [];
         const channel = String(options.channel || "app_push");
-        const activeTokens = store.db.app_push_tokens.filter((token) => (
-            Number(token.family_id) === Number(familyId)
-            && String(token.status || "active") === "active"
-        ));
+        const requestedTokenIds = Array.isArray(options.target_token_ids)
+            ? new Set(options.target_token_ids.map((value) => String(value || "")).filter(Boolean))
+            : null;
+        const activeTokenHashes = new Set();
+        const activeTokens = store.db.app_push_tokens.filter((token) => {
+            if (Number(token.family_id) !== Number(familyId) || String(token.status || "active") !== "active") return false;
+            if (requestedTokenIds && !requestedTokenIds.has(String(token.id || ""))) return false;
+            const key = String(token.push_token_hash || token.id || "");
+            if (activeTokenHashes.has(key)) return false;
+            activeTokenHashes.add(key);
+            return true;
+        });
         const targets = activeTokens.length
             ? activeTokens.map((token) => ({ type: "push_token", id: token.id, user_id: token.user_id || "" }))
-            : [{ type: "family", id: String(familyId), user_id: "" }];
+            : (requestedTokenIds ? [] : [{ type: "family", id: String(familyId), user_id: "" }]);
         const deliveries = [];
         for (const target of targets) {
             const idempotencyKey = [
@@ -2593,7 +2873,9 @@ function createLocalAppServer(options = {}) {
                 target.id,
             ].join(":");
             let delivery = store.db.notification_deliveries.find((item) => String(item.idempotency_key || "") === idempotencyKey);
-            if (delivery && ["sent", "delivered"].includes(String(delivery.status || ""))) {
+            // The dispatcher owns retry state. Scheduler reruns must not reset
+            // attempts, retry deadlines, or terminal outcomes for this key.
+            if (delivery) {
                 deliveries.push(delivery);
                 continue;
             }
@@ -2627,8 +2909,8 @@ function createLocalAppServer(options = {}) {
                 delivery = {
                     id: store.nextId("notification_delivery"),
                     ...patch,
-                    sent_at: status === "simulated" || status === "app_message_only" ? timestamp : "",
-                    delivered_at: status === "simulated" || status === "app_message_only" ? timestamp : "",
+                    sent_at: "",
+                    delivered_at: "",
                     clicked_at: "",
                     created_at: timestamp,
                 };
@@ -2638,8 +2920,6 @@ function createLocalAppServer(options = {}) {
             }
             deliveries.push(delivery);
         }
-        if (!message.delivered_at) message.delivered_at = timestamp;
-        message.updated_at = timestamp;
         return deliveries;
     }
 
@@ -2649,6 +2929,7 @@ function createLocalAppServer(options = {}) {
             : null;
         const gohome = {
             route: message?.event_id ? "event" : "home",
+            delivery_id: String(delivery.id || ""),
             message_id: String(message?.message_id || delivery.message_id || ""),
             event_id: String(message?.event_id || ""),
             camera_id: String(event?.camera_id || ""),
@@ -2666,14 +2947,23 @@ function createLocalAppServer(options = {}) {
         };
     }
 
-    async function dispatchQueuedPushDeliveries({ limit = 20 } = {}) {
+    function apnsRetryDelayMs(attemptCount) {
+        const delays = [1000, 2000, 5000, 10000, 20000, 30000, 60000, 120000];
+        return delays[Math.min(Math.max(0, Number(attemptCount || 1) - 1), delays.length - 1)];
+    }
+
+    async function dispatchQueuedPushDeliveries({ limit = 20, target_delivery_ids = null } = {}) {
         if (!appPushProviderConfigured() || apnsDispatchRunning) return { attempted: 0, sent: 0, failed: 0 };
         apnsDispatchRunning = true;
         const result = { attempted: 0, sent: 0, failed: 0 };
         try {
             const now = Date.now();
+            const requestedDeliveryIds = Array.isArray(target_delivery_ids)
+                ? new Set(target_delivery_ids.map((value) => String(value || "")).filter(Boolean))
+                : null;
             const deliveries = store.db.notification_deliveries
                 .filter((item) => item.provider === "apns" && item.target_type === "push_token" && item.status === "queued")
+                .filter((item) => !requestedDeliveryIds || requestedDeliveryIds.has(String(item.id || "")))
                 .filter((item) => !item.scheduled_for || Date.parse(item.scheduled_for) <= now)
                 .filter((item) => !item.response_payload?.next_attempt_at || Date.parse(item.response_payload.next_attempt_at) <= now)
                 .slice(0, Math.max(1, Math.min(100, Number(limit) || 20)));
@@ -2683,12 +2973,20 @@ function createLocalAppServer(options = {}) {
                     String(item.id) === String(delivery.target_id) && String(item.status || "active") === "active"
                 ));
                 const attemptCount = Number(delivery.response_payload?.attempt_count || 0) + 1;
-                const timestamp = nowIso();
+                const attemptStartedAt = nowIso();
+                const attemptStartedMs = Date.now();
+                const previousFailures = Array.isArray(delivery.response_payload?.failure_history)
+                    ? delivery.response_payload.failure_history
+                    : [];
                 if (!token?.token_ciphertext) {
                     delivery.status = "failed";
                     delivery.error_message = "Encrypted APNs token is unavailable; device must register again.";
-                    delivery.response_payload = { attempt_count: attemptCount };
-                    delivery.updated_at = timestamp;
+                    delivery.response_payload = {
+                        attempt_count: attemptCount,
+                        attempt_started_at: attemptStartedAt,
+                        attempt_finished_at: nowIso(),
+                    };
+                    delivery.updated_at = nowIso();
                     result.failed += 1;
                     continue;
                 }
@@ -2698,24 +2996,33 @@ function createLocalAppServer(options = {}) {
                         tokenCiphertext: token.token_ciphertext,
                         environment: token.environment || "production",
                         payload: notificationPayload(delivery, message),
-                        priority: message?.priority === "high" ? 10 : 5,
+                        priority: delivery.scheduled_for ? 5 : 10,
                     });
+                    const finishedAt = nowIso();
                     delivery.status = "sent";
                     delivery.error_message = "";
-                    delivery.sent_at = timestamp;
+                    delivery.sent_at = finishedAt;
                     delivery.response_payload = {
                         attempt_count: attemptCount,
                         apns_id: response.apnsId || "",
                         status_code: response.statusCode || 200,
+                        attempt_started_at: attemptStartedAt,
+                        attempt_finished_at: finishedAt,
+                        provider_latency_ms: Date.now() - attemptStartedMs,
+                        queued_to_sent_ms: Math.max(0, Date.now() - Date.parse(delivery.created_at || finishedAt)),
+                        ...(previousFailures.length ? { failure_history: previousFailures.slice(-8) } : {}),
                     };
+                    delivery.updated_at = finishedAt;
                     result.sent += 1;
                 } catch (error) {
+                    const finishedAt = nowIso();
+                    const providerLatencyMs = Date.now() - attemptStartedMs;
                     const invalidToken = ["BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered"].includes(String(error.reason || ""));
                     if (invalidToken) {
                         token.status = "revoked";
-                        token.updated_at = timestamp;
+                        token.updated_at = finishedAt;
                     }
-                    const retry = error.retryable === true && attemptCount < 3;
+                    const retry = error.retryable === true && attemptCount < 8;
                     delivery.status = retry ? "queued" : "failed";
                     delivery.error_message = String(error.reason || error.message || "APNs delivery failed").slice(0, 240);
                     delivery.response_payload = {
@@ -2723,11 +3030,21 @@ function createLocalAppServer(options = {}) {
                         apns_id: String(error.apnsId || ""),
                         status_code: Number(error.statusCode || 0),
                         reason: String(error.reason || ""),
-                        ...(retry ? { next_attempt_at: new Date(Date.now() + (2 ** attemptCount) * 5000).toISOString() } : {}),
+                        attempt_started_at: attemptStartedAt,
+                        attempt_finished_at: finishedAt,
+                        provider_latency_ms: providerLatencyMs,
+                        failure_history: [...previousFailures, {
+                            attempt: attemptCount,
+                            occurred_at: finishedAt,
+                            status_code: Number(error.statusCode || 0),
+                            reason: String(error.reason || error.message || "APNs delivery failed").slice(0, 160),
+                            provider_latency_ms: providerLatencyMs,
+                        }].slice(-8),
+                        ...(retry ? { next_attempt_at: new Date(Date.now() + apnsRetryDelayMs(attemptCount)).toISOString() } : {}),
                     };
                     if (!retry) result.failed += 1;
+                    delivery.updated_at = finishedAt;
                 }
-                delivery.updated_at = timestamp;
             }
             if (result.attempted > 0) await store.save();
             return result;
@@ -2863,22 +3180,23 @@ function createLocalAppServer(options = {}) {
         });
     }
 
-    function activityOverviewForScheduler(familyId, date, evaluationAt) {
+    async function activityOverviewForScheduler(familyId, date, evaluationAt) {
         const dates = activityDateKeysEndingAt(date, 7);
-        const intervals = store.db.activity_intervals.filter((item) => (
-            Number(item.family_id) === Number(familyId)
-        ));
+        const intervals = await nativeRepository.activityIntervalsForScheduler(familyId, {
+            start_date: dates[0],
+            end_date: dates[dates.length - 1],
+        });
         return buildActivityOverview(date, groupIntervalsByDate(dates, intervals), { evaluationAt });
     }
 
-    function createActivityInsightMessage(family, preferences) {
+    async function createActivityInsightMessage(family, preferences) {
         const activityHistory = preferences.metadata?.activity_history || {};
         if (activityHistory.tracking_enabled === false || activityHistory.anomaly_reminders_enabled === false) return null;
         const evaluationAt = activityEvaluationNow();
         const date = dateKeyShanghai(evaluationAt);
         const messageId = `activity-insight-${family.id}-${date}`;
         if (store.db.app_messages.some((item) => String(item.message_id || "") === messageId)) return null;
-        const overview = activityOverviewForScheduler(family.id, date, evaluationAt);
+        const overview = await activityOverviewForScheduler(family.id, date, evaluationAt);
         const priorities = ["night_activity", "activity_reduced", "routine_shift"];
         const insight = priorities
             .map((type) => overview.attention_items.find((item) => item.type === type))
@@ -2925,7 +3243,25 @@ function createLocalAppServer(options = {}) {
         });
     }
 
+    function activityInsightEvaluationDue(familyId, preferences, evaluationAt = Date.now()) {
+        const activityHistory = preferences?.metadata?.activity_history || {};
+        if (activityHistory.tracking_enabled === false || activityHistory.anomaly_reminders_enabled === false) return false;
+        const date = dateKeyShanghai(new Date(evaluationAt));
+        const messageId = `activity-insight-${familyId}-${date}`;
+        if (store.db.app_messages.some((item) => String(item.message_id || "") === messageId)) return false;
+        return evaluationAt >= Number(activityInsightNextEvaluationAt.get(String(familyId)) || 0);
+    }
+
+    function deferActivityInsightEvaluation(familyId, evaluationAt = Date.now()) {
+        const intervalSeconds = Math.max(
+            60,
+            normalizeNumber(process.env.GOHOME_ACTIVITY_INSIGHT_INTERVAL_SECONDS, 600),
+        );
+        activityInsightNextEvaluationAt.set(String(familyId), evaluationAt + intervalSeconds * 1000);
+    }
+
     function createEventAlertMessage(event) {
+        if (!directEventAlertEligible(event)) return null;
         const camera = store.db.cameras[String(event.camera_id)] || {};
         return upsertAppMessage({
             message_id: `event-alert-${event.id}`,
@@ -2949,14 +3285,20 @@ function createLocalAppServer(options = {}) {
         });
     }
 
+    function directEventAlertEligible(event) {
+        if (!event || event.acknowledged) return false;
+        if (VISION_VERIFICATION_EVENT_TYPES.has(String(event.event_type || ""))) return false;
+        const incidentStatus = String(event.payload?.incident?.status || "");
+        if (["rejected", "resolved"].includes(incidentStatus)) return false;
+        return !String(event.resolution || "").trim();
+    }
+
     const SAFETY_INCIDENT_TYPES = new Set([
         "fall_candidate",
         "prolonged_floor_lying",
         "fire_candidate",
         "long_absence",
     ]);
-
-    const INCIDENT_REMINDER_STATUSES = new Set(["active", "verifying", "confirmed", "uncertain"]);
 
     function incidentCorrelationWindowMs() {
         return Math.max(5000, normalizeNumber(process.env.GOHOME_INCIDENT_CORRELATION_WINDOW_SECONDS, 45) * 1000);
@@ -3039,8 +3381,6 @@ function createLocalAppServer(options = {}) {
             resolved_at: existing.resolved_at || "",
             recovery_status: existing.recovery_status || "",
             recovered_at: existing.recovered_at || "",
-            last_reminder_bucket: existing.last_reminder_bucket || "",
-            reminder_count: Number(existing.reminder_count || 0),
             source_event_ids: [...new Set([...(existing.source_event_ids || []), event.id])],
             source_camera_ids: [...new Set([...(existing.source_camera_ids || []), event.camera_id].filter(Boolean))],
             transitions: Array.isArray(existing.transitions) ? existing.transitions.slice(-24) : [],
@@ -3063,51 +3403,27 @@ function createLocalAppServer(options = {}) {
     }
 
     function createVerificationOutcomeMessage(event, status, verification = {}) {
+        if (status !== "confirmed") return null;
         const primary = incidentPrimaryEvent(event);
         if (isValidationEvent(primary)) return null;
         const incident = ensureSafetyIncident(primary);
         if (!incident || !primary.family_id) return null;
         const result = verification.result || {};
-        const copies = {
-            confirmed: {
-                title: primary.summary || "家中异常已经确认",
-                subtitle: `${primary.room || primary.camera_name || "家里"} · 云端复核确认`,
-                body: result.reason || "云端视觉模型支持边缘端异常判断，请尽快查看并联系老人。",
-                priority: "high",
-                message_type: "alert",
-            },
-            rejected: {
-                title: "刚才的异常已经排除",
-                subtitle: `${primary.room || primary.camera_name || "家里"} · 云端复核完成`,
-                body: result.reason || "云端复核未发现需要告警的异常，原始记录仍会保留用于追溯。",
-                priority: "normal",
-                message_type: "explain",
-            },
-            uncertain: {
-                title: "这条异常需要你确认",
-                subtitle: `${primary.room || primary.camera_name || "家里"} · 云端无法明确判断`,
-                body: result.reason || verification.error || "云端复核证据不足，请查看事件截图并联系老人确认。",
-                priority: "high",
-                message_type: "alert",
-            },
-        };
-        const copy = copies[status];
-        if (!copy) return null;
-        const messageId = `incident-verification-${incident.incident_id}-${status}`;
+        const messageId = `incident-alert-${incident.incident_id}`;
         return upsertAppMessage({
             message_id: messageId,
             idempotency_key: messageId,
             family_id: primary.family_id,
             event_id: primary.id,
-            message_type: copy.message_type,
-            title: copy.title,
-            subtitle: copy.subtitle,
-            body: copy.body,
+            message_type: "alert",
+            title: primary.summary || "家中异常已经确认",
+            subtitle: `${primary.room || primary.camera_name || "家里"} · 云端复核确认`,
+            body: result.reason || "云端视觉模型支持边缘端异常判断，请尽快查看并联系老人。",
             facts: [primary.event_type, status, result.confidence !== undefined ? `置信度 ${Math.round(Number(result.confidence) * 100)}%` : ""].filter(Boolean),
-            actions: [{ key: "open_event", label: status === "rejected" ? "查看记录" : "查看事件", event_id: primary.id }],
+            actions: [{ key: "open_event", label: "查看事件", event_id: primary.id }],
             source_event_ids: incident.source_event_ids || [primary.id],
             source: [{ type: "safety_incident", id: incident.incident_id }],
-            priority: copy.priority,
+            priority: "high",
             generated_by: "vision-verification-orchestrator",
             metadata: { verification_status: status, model: verification.model || "" },
         });
@@ -3151,7 +3467,7 @@ function createLocalAppServer(options = {}) {
             primary.resolution = "vision_rejected";
             archiveIncidentMessages(primaryIncident.incident_id);
         }
-        if (nextStatus === previousStatus || nextStatus === "verifying") {
+        if (nextStatus !== "confirmed" || previousStatus === "confirmed" || primary.acknowledged) {
             return { status: nextStatus, message: null, deliveries: [] };
         }
         const message = createVerificationOutcomeMessage(primary, nextStatus, event.payload?.verification || {});
@@ -3201,40 +3517,6 @@ function createLocalAppServer(options = {}) {
             archiveIncidentMessages(incident.incident_id);
         }
         return linkedEvents;
-    }
-
-    function incidentMinuteBucket(date = new Date()) {
-        return date.toISOString().slice(0, 16);
-    }
-
-    function createIncidentReminderMessage(event, bucket = incidentMinuteBucket()) {
-        if (isValidationEvent(event)) return null;
-        const incident = ensureSafetyIncident(event);
-        if (!incident || event.acknowledged || !INCIDENT_REMINDER_STATUSES.has(incident.status)) return null;
-        if (incident.last_reminder_bucket === bucket) return null;
-        const incidentAgeMs = Date.now() - Date.parse(incident.started_at || event.occurred_at || "");
-        if (!Number.isFinite(incidentAgeMs) || incidentAgeMs < 60000) return null;
-        const message = upsertAppMessage({
-            message_id: `incident-reminder-${event.id}-${bucket}`,
-            idempotency_key: `incident-reminder:${event.id}:${bucket}`,
-            family_id: event.family_id,
-            event_id: event.id,
-            message_type: "alert",
-            title: event.summary || "家里有紧急提醒待确认",
-            subtitle: `${event.room || event.camera_name || "家里"} · 尚未确认收到`,
-            body: event.event_type === "long_absence"
-                ? "所有守护摄像头持续未检测到老人，请尽快联系家里确认情况。"
-                : "这条安全提醒尚未确认收到，请尽快查看事件并联系老人。",
-            facts: [event.event_type, `提醒 ${incident.reminder_count + 1} 次`],
-            actions: [{ key: "open_event", label: "立即确认", event_id: event.id }],
-            source_event_ids: [event.id],
-            source: [{ type: "safety_incident", id: incident.incident_id }],
-            priority: "high",
-            generated_by: "incident-reminder",
-        });
-        incident.last_reminder_bucket = bucket;
-        incident.reminder_count += 1;
-        return message;
     }
 
     function familyPresenceThresholdSeconds() {
@@ -3433,6 +3715,13 @@ function createLocalAppServer(options = {}) {
             updated_at: timestamp,
         };
         store.db.scheduler_runs.push(run);
+        const schedulerRunRetention = Math.max(
+            100,
+            Math.trunc(normalizeNumber(process.env.GOHOME_SCHEDULER_RUN_RETENTION, 500)),
+        );
+        if (store.db.scheduler_runs.length > schedulerRunRetention) {
+            store.db.scheduler_runs.splice(0, store.db.scheduler_runs.length - schedulerRunRetention);
+        }
         const result = {
             families_checked: 0,
             care_cards_generated: 0,
@@ -3450,6 +3739,7 @@ function createLocalAppServer(options = {}) {
                 (!scopeFamilyId || Number(family.id) === Number(scopeFamilyId))
                 && String(family.status || "active") !== "disabled"
             ));
+            let activityInsightEvaluationBudget = String(options.job_type || "") === "background_scheduler" ? 1 : Infinity;
             for (const family of families) {
                 result.families_checked += 1;
                 const preferences = carePreferences(family.id);
@@ -3461,26 +3751,18 @@ function createLocalAppServer(options = {}) {
                 const createdAbsence = Math.max(0, store.db.events.length - beforePresenceEvents);
                 result.long_absence_events_created += createdAbsence;
                 if (absenceEvent && createdAbsence) {
-                    queueNotificationDelivery(createEventAlertMessage(absenceEvent));
-                }
-                const safetyEvents = store.db.events.filter((event) => (
-                    Number(event.family_id) === Number(family.id)
-                    && SAFETY_INCIDENT_TYPES.has(event.event_type)
-                    && !event.acknowledged
-                    && INCIDENT_REMINDER_STATUSES.has(event.payload?.incident?.status)
-                    && String(event.payload?.incident?.primary_event_id || event.id) === String(event.id)
-                ));
-                for (const event of safetyEvents) {
-                    const beforeMessages = store.db.app_messages.length;
-                    const reminder = createIncidentReminderMessage(event);
-                    if (reminder) queueNotificationDelivery(reminder);
-                    result.incident_reminders_created += Math.max(0, store.db.app_messages.length - beforeMessages);
+                    const absenceMessage = createEventAlertMessage(absenceEvent);
+                    if (absenceMessage) queueNotificationDelivery(absenceMessage);
                 }
                 if (rules.home_status?.exception_push_enabled !== false) {
                     const beforeInsightMessages = store.db.app_messages.length;
                     const beforeInsightDeliveries = store.db.notification_deliveries.length;
-                    const insightMessage = createActivityInsightMessage(family, preferences);
-                    if (insightMessage) queueNotificationDelivery(insightMessage);
+                    if (activityInsightEvaluationBudget > 0 && activityInsightEvaluationDue(family.id, preferences)) {
+                        activityInsightEvaluationBudget -= 1;
+                        deferActivityInsightEvaluation(family.id);
+                        const insightMessage = await createActivityInsightMessage(family, preferences);
+                        if (insightMessage) queueNotificationDelivery(insightMessage);
+                    }
                     result.activity_insight_messages_created += Math.max(0, store.db.app_messages.length - beforeInsightMessages);
                     result.notification_deliveries_created += Math.max(0, store.db.notification_deliveries.length - beforeInsightDeliveries);
                 }
@@ -3519,7 +3801,7 @@ function createLocalAppServer(options = {}) {
                         const beforeMessages = store.db.app_messages.length;
                         const beforeDeliveries = store.db.notification_deliveries.length;
                         const message = createEventAlertMessage(event);
-                        queueNotificationDelivery(message);
+                        if (message) queueNotificationDelivery(message);
                         result.event_alerts_created += Math.max(0, store.db.app_messages.length - beforeMessages);
                         result.notification_deliveries_created += Math.max(0, store.db.notification_deliveries.length - beforeDeliveries);
                     }
@@ -3540,6 +3822,28 @@ function createLocalAppServer(options = {}) {
         } finally {
             schedulerRunning = false;
         }
+    }
+
+    function persistSchedulerOutcome(outcome) {
+        if (!outcome?.run?.id) return Promise.resolve();
+        const result = outcome?.result || {};
+        const mutationKeys = [
+            "care_cards_generated",
+            "app_messages_created",
+            "notification_deliveries_created",
+            "return_home_messages_created",
+            "activity_insight_messages_created",
+            "event_alerts_created",
+            "incident_reminders_created",
+            "long_absence_events_created",
+        ];
+        const changedBusinessState = mutationKeys.some((key) => Number(result[key] || 0) > 0);
+        if (store.kind === "postgres" && !changedBusinessState && typeof store.saveSchedulerRun === "function") {
+            return store.saveSchedulerRun(outcome.run, {
+                retention: normalizeNumber(process.env.GOHOME_SCHEDULER_RUN_RETENTION, 500),
+            });
+        }
+        return store.save();
     }
 
     function modelJob(payload) {
@@ -4019,6 +4323,82 @@ function createLocalAppServer(options = {}) {
         return target.startsWith(root) ? target : "";
     }
 
+    function eventTemporalEvidenceSnapshots(event) {
+        const evidence = event.payload?.evidence || {};
+        const bundle = evidence.temporal_evidence_bundle || event.payload?.temporal_evidence_bundle || {};
+        return Array.isArray(bundle.snapshots) ? bundle.snapshots.slice(0, 3) : [];
+    }
+
+    function eventEvidenceAssetRole(event, asset, orderedIndex, orderedCount) {
+        const explicit = String(asset?.evidence_frame_role || asset?.metadata?.evidence_frame_role || "").trim();
+        if (["before", "transition", "current"].includes(explicit)) return explicit;
+        const snapshot = eventTemporalEvidenceSnapshots(event).find((item) => (
+            String(item?.snapshot_path || "") === String(asset?.snapshot_path || "")
+        ));
+        const bundleRole = String(snapshot?.role || "").trim();
+        if (["before", "transition", "current"].includes(bundleRole)) return bundleRole;
+        if (String(asset?.purpose || asset?.metadata?.purpose || "") === "event_evidence") return "current";
+        if (orderedIndex === 0) return "before";
+        if (orderedIndex === orderedCount - 1) return "current";
+        return "transition";
+    }
+
+    function synchronizeEventEvidence(event, preferredAsset = null) {
+        if (!event || !event.payload) return { assets: [], expected_count: 1, ready: false };
+        const edgeEventId = String(event.edge_event_id || event.payload?.edge_upload?.edge_event_id || "");
+        const edgeDeviceId = String(event.device_id || event.payload?.edge_upload?.edge_device_id || "");
+        let assets = store.db.assets.filter((asset) => (
+            edgeEventId
+            && String(asset.edge_event_id || "") === edgeEventId
+            && (!edgeDeviceId || String(asset.device_id || "") === edgeDeviceId)
+            && (!event.family_id || String(asset.family_id || "") === String(event.family_id))
+            && String(asset.purpose || asset.metadata?.purpose || "").startsWith("event_evidence")
+        ));
+        if (preferredAsset?.id && !assets.some((asset) => String(asset.id) === String(preferredAsset.id))) {
+            assets.push(preferredAsset);
+        }
+        assets = assets
+            .filter((asset, index, items) => items.findIndex((item) => String(item.id) === String(asset.id)) === index)
+            .sort((a, b) => String(a.captured_at || a.created_at || "").localeCompare(String(b.captured_at || b.created_at || "")))
+            .slice(-3);
+        assets.forEach((asset, index) => {
+            asset.evidence_frame_role = eventEvidenceAssetRole(event, asset, index, assets.length);
+            asset.metadata = {
+                ...(asset.metadata || {}),
+                evidence_frame_role: asset.evidence_frame_role,
+            };
+        });
+        const roleOrder = { before: 0, transition: 1, current: 2 };
+        assets.sort((a, b) => (
+            (roleOrder[a.evidence_frame_role] ?? 3) - (roleOrder[b.evidence_frame_role] ?? 3)
+            || String(a.captured_at || a.created_at || "").localeCompare(String(b.captured_at || b.created_at || ""))
+        ));
+        const entries = assets.map((asset) => {
+            const source = eventTemporalEvidenceSnapshots(event).find((item) => (
+                String(item?.snapshot_path || "") === String(asset.snapshot_path || "")
+            ));
+            return {
+                asset_id: asset.id,
+                role: asset.evidence_frame_role || "evidence",
+                captured_at: String(source?.observed_at || asset.captured_at || asset.created_at || ""),
+                snapshot_id: normalizeNumber(source?.snapshot_id, null),
+                postures: Array.isArray(source?.postures) ? source.postures.map(String).slice(0, 8) : [],
+            };
+        });
+        event.payload.evidence_media_assets = entries;
+        const current = assets.find((asset) => asset.evidence_frame_role === "current") || assets[assets.length - 1] || null;
+        if (current) {
+            event.media_asset_id = current.id;
+            event.snapshot_path = current.snapshot_path || event.snapshot_path || "";
+        }
+        const expectedCount = Math.max(1, Math.min(3, eventTemporalEvidenceSnapshots(event).length || 1));
+        return {
+            assets,
+            expected_count: expectedCount,
+            ready: assets.length >= expectedCount && Boolean(current),
+        };
+    }
+
     function visionEvidenceAssets(event, primaryAsset = null) {
         const roleOrder = { before: 0, transition: 1, current: 2, evidence: 3 };
         const ids = [];
@@ -4153,11 +4533,14 @@ function createLocalAppServer(options = {}) {
         const validationProbe = Boolean(event.payload?.validation?.vision_verification_probe);
         if (!VISION_VERIFICATION_EVENT_TYPES.has(event.event_type) || (isValidationEvent(event) && !validationProbe)) return null;
         event.payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+        const synchronized = synchronizeEventEvidence(event, asset);
         const assets = visionEvidenceAssets(event, asset);
-        if (!assets.length) {
+        if (!synchronized.ready || assets.length < synchronized.expected_count) {
             event.payload.verification = {
-                status: "unavailable",
-                reason: "missing_event_evidence",
+                status: "waiting_evidence",
+                reason: "awaiting_event_evidence",
+                received_count: assets.length,
+                expected_count: synchronized.expected_count,
                 updated_at: nowIso(),
             };
             return null;
@@ -4217,6 +4600,20 @@ function createLocalAppServer(options = {}) {
         const force = normalizeBool(options.force);
         const result = { ok: true, processed: 0, succeeded: 0, retrying: 0, failed: 0, skipped: 0 };
         try {
+            for (const event of store.db.events) {
+                const verification = event.payload?.verification || {};
+                if (
+                    VISION_VERIFICATION_EVENT_TYPES.has(event.event_type)
+                    && !verificationJobForEvent(event.id)
+                    && (
+                        verification.status === "waiting_evidence"
+                        || verification.reason === "missing_event_evidence"
+                        || verification.reason === "awaiting_event_evidence"
+                    )
+                ) {
+                    queueVisionVerification(event, null);
+                }
+            }
             const now = Date.now();
             const jobs = store.db.model_generation_jobs
                 .filter((job) => job.purpose === "vision_event_verification")
@@ -4455,10 +4852,14 @@ function createLocalAppServer(options = {}) {
             && entry.value.recommendations.some((item) => String(item?.image_url || "").trim() === target)
         ));
         if (cached) return true;
-        return store.db.care_cards.some((card) => (
+        if (store.db.care_cards.some((card) => (
             Array.isArray(card?.content_recommendations)
             && card.content_recommendations.some((item) => String(item?.image_url || "").trim() === target)
-        ));
+        ))) return true;
+        if (store.db.content_recommendations.some((item) => (
+            String(item?.image_url || item?.metadata?.image_url || "").trim() === target
+        ))) return true;
+        return store.db.product_catalog.some((item) => String(item?.image_url || "").trim() === target);
     }
 
     async function proxyContentImage(targetUrl) {
@@ -4532,7 +4933,7 @@ function createLocalAppServer(options = {}) {
     function unavailableWeatherSignal({ familyId, city, provider, reason, detail = "" }) {
         return {
             family_id: Number(familyId || 0),
-            city: city || "杭州",
+            city: city || "",
             available: false,
             provider,
             reason,
@@ -4585,10 +4986,13 @@ function createLocalAppServer(options = {}) {
 
     async function fetchQWeatherSignal({ familyId, city }) {
         const runtime = weatherRuntimeConfig();
-        if (!runtime.api_key) {
-            return unavailableWeatherSignal({ familyId, city, provider: "qweather", reason: "not_configured" });
+        const targetCity = String(city || "").trim();
+        if (!targetCity) {
+            return unavailableWeatherSignal({ familyId, city: "", provider: "qweather", reason: "home_location_missing" });
         }
-        const targetCity = String(city || "杭州").trim() || "杭州";
+        if (!runtime.api_key) {
+            return unavailableWeatherSignal({ familyId, city: targetCity, provider: "qweather", reason: "not_configured" });
+        }
         const cacheKey = `weather:qweather:${targetCity}`;
         const cached = cachedProviderValue(cacheKey, 20 * 60 * 1000);
         if (cached) return { ...cached, family_id: Number(familyId || cached.family_id || 0) };
@@ -4662,7 +5066,10 @@ function createLocalAppServer(options = {}) {
     }
 
     async function fetchOpenMeteoSignal({ familyId, city }) {
-        const targetCity = String(city || "杭州").trim() || "杭州";
+        const targetCity = String(city || "").trim();
+        if (!targetCity) {
+            return unavailableWeatherSignal({ familyId, city: "", provider: "open-meteo", reason: "home_location_missing" });
+        }
         const cacheKey = `weather:open-meteo:${targetCity}`;
         const cached = cachedProviderValue(cacheKey, 20 * 60 * 1000);
         if (cached) return { ...cached, family_id: Number(familyId || cached.family_id || 0) };
@@ -6432,6 +6839,270 @@ function createLocalAppServer(options = {}) {
         return item;
     }
 
+    function relayCameraId(req, url) {
+        const issuedToken = issuedDeviceTokenFromRequest(req);
+        const rawCameraId = url.searchParams.get("camera_id");
+        const localCameraId = url.searchParams.get("local_camera_id") || rawCameraId;
+        const mappedCamera = resolveAppCameraForDeviceCameraId(rawCameraId, {
+            local_camera_id: localCameraId,
+            edge_camera_id: localCameraId,
+        }, issuedToken?.device_id || "");
+        const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
+        if (!cameraId) return null;
+        if (issuedToken?.device_id && mappedCamera?.device_id
+            && String(mappedCamera.device_id) !== String(issuedToken.device_id)) return null;
+        return {
+            cameraId,
+            localCameraId: normalizeNumber(localCameraId, null),
+            deviceId: issuedToken?.device_id || mappedCamera?.device_id || "",
+        };
+    }
+
+    function finitePoseNumber(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function validatePosePacket(payload, cameraId) {
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+        const states = new Set(["observed", "tracked", "coasting", "empty", "expired"]);
+        const state = String(payload.state || payload.source || "empty");
+        if (!states.has(state)) return null;
+        if (payload.display_only !== true || payload.formal_evidence_eligible !== false) return null;
+        const imageWidth = Math.max(0, Math.min(8192, Math.trunc(finitePoseNumber(payload.image_width) || 0)));
+        const imageHeight = Math.max(0, Math.min(8192, Math.trunc(finitePoseNumber(payload.image_height) || 0)));
+        const poses = [];
+        for (const sourcePose of (Array.isArray(payload.poses) ? payload.poses.slice(0, 4) : [])) {
+            if (!sourcePose || typeof sourcePose !== "object") return null;
+            const keypoints = [];
+            for (const sourcePoint of (Array.isArray(sourcePose.keypoints) ? sourcePose.keypoints.slice(0, 24) : [])) {
+                const x = finitePoseNumber(sourcePoint?.x);
+                const y = finitePoseNumber(sourcePoint?.y);
+                const confidence = finitePoseNumber(sourcePoint?.confidence);
+                const name = String(sourcePoint?.name || "").slice(0, 40);
+                if (!name || x === null || y === null || confidence === null) return null;
+                keypoints.push({
+                    name,
+                    x: Math.max(-256, Math.min((imageWidth || 8192) + 256, x)),
+                    y: Math.max(-256, Math.min((imageHeight || 8192) + 256, y)),
+                    confidence: Math.max(0, Math.min(1, confidence)),
+                    visible: sourcePoint.visible === true,
+                });
+            }
+            if (!keypoints.length) return null;
+            const bbox = Array.isArray(sourcePose.bbox) && sourcePose.bbox.length === 4
+                ? sourcePose.bbox.map(finitePoseNumber)
+                : [];
+            if (bbox.some((value) => value === null)) return null;
+            poses.push({
+                track_id: String(sourcePose.track_id || "").slice(0, 96),
+                confidence: Math.max(0, Math.min(1, finitePoseNumber(sourcePose.confidence) || 0)),
+                bbox,
+                keypoints,
+            });
+        }
+        return {
+            schema_version: "eacp-pose-relay-v1",
+            camera_id: Number(cameraId),
+            frame_id: String(payload.frame_id || "").slice(0, 160),
+            captured_at: String(payload.captured_at || "").slice(0, 64),
+            state,
+            source: state,
+            image_width: imageWidth,
+            image_height: imageHeight,
+            poses: ["observed", "tracked", "coasting"].includes(state) ? poses : [],
+            display_only: true,
+            formal_evidence_eligible: false,
+        };
+    }
+
+    async function handleDeviceLivePoseUpload(req, res, url) {
+        if (!requireDevice(req, res)) return;
+        const relayCamera = relayCameraId(req, url);
+        if (!relayCamera) {
+            writeError(res, 400, "camera_id is invalid for this device");
+            return;
+        }
+        const content = await readBody(req, 96 * 1024);
+        let payload;
+        try {
+            payload = JSON.parse(content.toString("utf8"));
+        } catch (_error) {
+            writeError(res, 400, "pose payload must be valid JSON");
+            return;
+        }
+        const packet = validatePosePacket(payload, relayCamera.cameraId);
+        if (!packet) {
+            writeError(res, 400, "pose payload is invalid");
+            return;
+        }
+        const receivedAt = nowIso();
+        livePoseCache.set(String(relayCamera.cameraId), {
+            ...packet,
+            local_camera_id: relayCamera.localCameraId,
+            device_id: relayCamera.deviceId,
+            received_at: receivedAt,
+            received_at_ms: Date.now(),
+        });
+        write(res, 200, {
+            ok: true,
+            camera_id: relayCamera.cameraId,
+            frame_id: packet.frame_id,
+            received_at: receivedAt,
+        });
+    }
+
+    async function handleDeviceLiveSceneUpload(req, res, url) {
+        if (!requireDevice(req, res)) return;
+        const relayCamera = relayCameraId(req, url);
+        if (!relayCamera) {
+            writeError(res, 400, "camera_id is invalid for this device");
+            return;
+        }
+        const contentType = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+        if (contentType !== "image/jpeg") {
+            writeError(res, 415, "safe scene must be image/jpeg");
+            return;
+        }
+        const content = await readBody(req, 2 * 1024 * 1024);
+        if (content.length < 4 || content[0] !== 0xff || content[1] !== 0xd8
+            || content[content.length - 2] !== 0xff || content[content.length - 1] !== 0xd9) {
+            writeError(res, 400, "safe scene must be a complete JPEG");
+            return;
+        }
+        const cameraKey = String(relayCamera.cameraId);
+        const sequence = Number(liveSceneSequence.get(cameraKey) || 0) + 1;
+        liveSceneSequence.set(cameraKey, sequence);
+        const receivedAt = nowIso();
+        const frameId = `${relayCamera.cameraId}-${Date.now()}-${sequence}`;
+        liveSceneCache.set(cameraKey, {
+            frame_id: frameId,
+            frame: content,
+            camera_id: relayCamera.cameraId,
+            local_camera_id: relayCamera.localCameraId,
+            device_id: relayCamera.deviceId,
+            content_type: "image/jpeg",
+            captured_at: url.searchParams.get("captured_at") || receivedAt,
+            received_at: receivedAt,
+            received_at_ms: Date.now(),
+            privacy_mode: "skeleton",
+        });
+        write(res, 200, { ok: true, camera_id: relayCamera.cameraId, scene_frame_id: frameId, received_at: receivedAt });
+    }
+
+    function latestLiveScene(cameraId) {
+        const scene = liveSceneCache.get(String(cameraId));
+        if (!scene?.frame || Date.now() - Number(scene.received_at_ms || 0) > LIVE_SCENE_TTL_MS) return null;
+        return scene;
+    }
+
+    function writeSafeSceneMjpegStream(req, res, cameraId) {
+        const boundary = `gohome-scene-${crypto.randomBytes(4).toString("hex")}`;
+        let closed = false;
+        activeStreamClients.scene += 1;
+        if (typeof req.setTimeout === "function") req.setTimeout(0);
+        if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
+        res.writeHead(200, {
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store, no-transform",
+            "Connection": "keep-alive",
+            "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
+            "X-Accel-Buffering": "no",
+            "X-GoHome-Stream-State": "safe_scene_relay",
+            "X-GoHome-Privacy-Mode": "skeleton",
+        });
+        if (typeof res.flushHeaders === "function") res.flushHeaders();
+        const writer = createLatestFrameMjpegWriter(res, {
+            boundary,
+            getLatestFrame: () => {
+                const scene = latestLiveScene(cameraId);
+                if (!scene) return null;
+                return {
+                    key: `scene:${scene.frame_id}`,
+                    frame: scene.frame,
+                    contentType: "image/jpeg",
+                    capturedAt: scene.captured_at || scene.received_at,
+                    source: "safe_scene",
+                    assetId: "",
+                    privacyMode: "skeleton",
+                };
+            },
+        });
+        writer.writeLatest({ force: true });
+        const timer = setInterval(writer.writeLatest, 250);
+        function closeStream() {
+            if (closed) return;
+            closed = true;
+            activeStreamClients.scene = Math.max(0, activeStreamClients.scene - 1);
+            clearInterval(timer);
+            writer.close();
+        }
+        req.on("close", closeStream);
+        res.on("close", closeStream);
+    }
+
+    function writePoseSseStream(req, res, cameraId) {
+        let closed = false;
+        let lastPacketKey = "";
+        let staleEmitted = false;
+        activeStreamClients.pose += 1;
+        if (typeof req.setTimeout === "function") req.setTimeout(0);
+        if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
+        res.writeHead(200, {
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store, no-transform",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "X-Accel-Buffering": "no",
+        });
+        if (typeof res.flushHeaders === "function") res.flushHeaders();
+        const emit = (packet) => res.write(`event: pose\ndata: ${JSON.stringify(packet)}\n\n`);
+        const tick = () => {
+            if (closed || res.destroyed || res.writableEnded) return;
+            const cached = livePoseCache.get(String(cameraId));
+            const fresh = cached && Date.now() - Number(cached.received_at_ms || 0) <= LIVE_POSE_TTL_MS;
+            if (fresh) {
+                const packetKey = `${cached.state}:${cached.frame_id}:${cached.received_at_ms}`;
+                if (packetKey !== lastPacketKey) {
+                    lastPacketKey = packetKey;
+                    staleEmitted = false;
+                    const { received_at_ms: _receivedAtMs, ...packet } = cached;
+                    emit(packet);
+                }
+            } else if (!staleEmitted) {
+                staleEmitted = true;
+                lastPacketKey = "";
+                emit({
+                    schema_version: "eacp-pose-relay-v1",
+                    camera_id: Number(cameraId),
+                    frame_id: "",
+                    captured_at: nowIso(),
+                    state: "expired",
+                    source: "expired",
+                    image_width: cached?.image_width || 0,
+                    image_height: cached?.image_height || 0,
+                    poses: [],
+                    display_only: true,
+                    formal_evidence_eligible: false,
+                });
+            }
+        };
+        tick();
+        const packetTimer = setInterval(tick, 50);
+        const heartbeatTimer = setInterval(() => {
+            if (!closed && !res.destroyed && !res.writableEnded) res.write(": keepalive\n\n");
+        }, 15000);
+        function closeStream() {
+            if (closed) return;
+            closed = true;
+            activeStreamClients.pose = Math.max(0, activeStreamClients.pose - 1);
+            clearInterval(packetTimer);
+            clearInterval(heartbeatTimer);
+        }
+        req.on("close", closeStream);
+        res.on("close", closeStream);
+    }
+
     function latestRelayFrame(cameraId, privacyMode = "original") {
         const resolvedPrivacyMode = normalizeVideoPrivacyMode(privacyMode);
         const live = latestLiveFrame(cameraId, resolvedPrivacyMode);
@@ -6481,9 +7152,10 @@ function createLocalAppServer(options = {}) {
         const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
         const profile = new URL(req.url, "http://local").searchParams.get("profile") || "mobile";
         const resolvedPrivacyMode = normalizeVideoPrivacyMode(privacyMode);
-        const relayFps = profile === "mobile" ? 5 : streamProfileConfig(profile).fps;
+        const relayFps = streamProfileConfig(profile).fps;
         const relayIntervalMs = Math.ceil(1000 / Math.max(1, relayFps));
         let closed = false;
+        activeStreamClients.video += 1;
 
         if (typeof req.setTimeout === "function") req.setTimeout(0);
         if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
@@ -6508,6 +7180,7 @@ function createLocalAppServer(options = {}) {
         function closeStream() {
             if (closed) return;
             closed = true;
+            activeStreamClients.video = Math.max(0, activeStreamClients.video - 1);
             clearInterval(timer);
             writer.close();
         }
@@ -6535,11 +7208,39 @@ function createLocalAppServer(options = {}) {
             writeError(res, 400, "camera_id is required");
             return;
         }
-        const sequence = Number(liveFrameSequence.get(String(cameraId)) || 0) + 1;
-        liveFrameSequence.set(String(cameraId), sequence);
         const receivedAt = nowIso();
         const privacyMode = normalizeVideoPrivacyMode(url.searchParams.get("privacy_mode"));
         const cacheKey = liveFrameCacheKey(cameraId, privacyMode);
+        const streamEpochMs = Math.max(0, Math.trunc(normalizeNumber(url.searchParams.get("stream_epoch_ms"), 0)));
+        const sourceSequence = Math.max(0, Math.trunc(normalizeNumber(url.searchParams.get("sequence"), 0)));
+        const current = liveFrameCache.get(cacheKey);
+        const orderedUpload = streamEpochMs > 0 && sourceSequence > 0;
+        const staleUpload = orderedUpload && current?.stream_epoch_ms > 0 && (
+            streamEpochMs < current.stream_epoch_ms
+            || (streamEpochMs === current.stream_epoch_ms && sourceSequence <= current.source_sequence)
+        );
+        if (staleUpload) {
+            recordLiveFrameMetric(cameraId, {
+                accepted: false,
+                capturedAt: url.searchParams.get("captured_at"),
+                receivedAtMs: Date.now(),
+            });
+            write(res, 200, {
+                ok: true,
+                accepted: false,
+                stale_ignored: true,
+                camera_id: cameraId,
+                live_frame_id: current.frame_id,
+                received_at: receivedAt,
+                received_privacy_mode: privacyMode,
+                requested_privacy_mode: activeVideoPrivacyMode(cameraId),
+                stream_epoch_ms: current.stream_epoch_ms,
+                source_sequence: current.source_sequence,
+            });
+            return;
+        }
+        const sequence = Number(liveFrameSequence.get(String(cameraId)) || 0) + 1;
+        liveFrameSequence.set(String(cameraId), sequence);
         liveFrameCache.set(cacheKey, {
             frame_id: `${cameraId}-${Date.now()}-${sequence}`,
             frame: content,
@@ -6552,14 +7253,25 @@ function createLocalAppServer(options = {}) {
             received_at_ms: Date.now(),
             size: content.length,
             privacy_mode: privacyMode,
+            stream_epoch_ms: streamEpochMs,
+            source_sequence: sourceSequence,
+        });
+        recordLiveFrameMetric(cameraId, {
+            accepted: true,
+            capturedAt: url.searchParams.get("captured_at") || receivedAt,
+            receivedAtMs: Date.now(),
         });
         write(res, 200, {
             ok: true,
+            accepted: true,
+            stale_ignored: false,
             camera_id: cameraId,
             live_frame_id: liveFrameCache.get(cacheKey).frame_id,
             received_at: receivedAt,
             received_privacy_mode: privacyMode,
             requested_privacy_mode: activeVideoPrivacyMode(cameraId),
+            stream_epoch_ms: streamEpochMs,
+            source_sequence: sourceSequence,
         });
     }
 
@@ -6728,10 +7440,7 @@ function createLocalAppServer(options = {}) {
         const assetId = store.nextId("asset");
         const fileName = path.basename(url.searchParams.get("file_name") || `asset-${assetId}.jpg`).replace(/[^\w.\-]+/g, "_");
         const dateDir = new Date().toISOString().slice(0, 10);
-        const relativePath = path.join(dateDir, `${assetId}-${fileName}`);
-        const target = path.join(mediaDir, relativePath);
-        ensureDir(path.dirname(target));
-        fs.writeFileSync(target, content);
+        const relativePath = `${dateDir}/${assetId}-${fileName}`;
         const snapshotPath = String(url.searchParams.get("snapshot_path") || relativePath).replace(/^\/+/, "");
         const rawCameraId = url.searchParams.get("camera_id");
         const localCameraId = url.searchParams.get("local_camera_id") || rawCameraId;
@@ -6740,15 +7449,28 @@ function createLocalAppServer(options = {}) {
             edge_camera_id: localCameraId,
         }, issuedToken?.device_id || "");
         const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
+        const familyId = issuedToken?.family_id || mappedCamera?.family_id || null;
+        const contentType = url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg";
+        const storageKey = `edge-evidence/${familyId || "unbound"}/${relativePath}`;
+        const useCos = Boolean(cosStorage.enabled);
+        if (useCos) {
+            await cosStorage.putObject({ key: storageKey, body: content, contentType });
+        } else {
+            const target = path.join(mediaDir, relativePath);
+            ensureDir(path.dirname(target));
+            await fs.promises.writeFile(target, content);
+        }
         const asset = {
             id: assetId,
-            family_id: issuedToken?.family_id || mappedCamera?.family_id || null,
+            family_id: familyId,
             device_id: issuedToken?.device_id || mappedCamera?.device_id || "",
             camera_id: cameraId,
             file_name: fileName,
-            content_type: url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg",
+            content_type: contentType,
             snapshot_path: snapshotPath,
-            relative_path: relativePath,
+            relative_path: useCos ? "" : relativePath,
+            storage_provider: useCos ? "cos" : "local",
+            storage_key: useCos ? storageKey : relativePath,
             edge_event_id: url.searchParams.get("edge_event_id") || "",
             purpose: url.searchParams.get("purpose") || "",
             evidence_frame_role: url.searchParams.get("evidence_frame_role") || "",
@@ -6757,10 +7479,27 @@ function createLocalAppServer(options = {}) {
             size: content.length,
             created_at: nowIso(),
             updated_at: nowIso(),
-            url: `/api/v1/video/media/snapshots/${encodeURIComponent(snapshotPath)}`,
+            url: `/api/v1/video/assets/${encodeURIComponent(assetId)}`,
         };
         store.db.assets.push(asset);
+        let queuedVerification = false;
+        for (const event of store.db.events) {
+            const eventEdgeId = String(event.edge_event_id || event.payload?.edge_upload?.edge_event_id || "");
+            const eventDeviceId = String(event.device_id || event.payload?.edge_upload?.edge_device_id || "");
+            if (
+                eventEdgeId === String(asset.edge_event_id || "")
+                && (!eventDeviceId || eventDeviceId === String(asset.device_id || ""))
+            ) {
+                queuedVerification = Boolean(queueVisionVerification(event, asset)) || queuedVerification;
+            }
+        }
         await store.save();
+        if (queuedVerification) {
+            setImmediate(() => {
+                processVisionVerificationJobs({ limit: 1 })
+                    .catch((error) => console.error(`vision verification failed: ${error.message || error}`));
+            });
+        }
         write(res, 200, { ok: true, asset });
     }
 
@@ -7398,6 +8137,7 @@ function createLocalAppServer(options = {}) {
         const event = {
             id: store.nextId("event"),
             family_id: camera?.family_id || store.db.devices[String(camera?.device_id || "")]?.family_id || null,
+            device_id: issuedToken?.device_id || camera?.device_id || null,
             idempotency_key: String(payload.idempotency_key || stableId("event-")),
             edge_event_id: edgeEventId || null,
             event_type: String(payload.event_type || "event"),
@@ -7431,7 +8171,13 @@ function createLocalAppServer(options = {}) {
         const verificationJob = queueVisionVerification(event, asset);
         let message = null;
         let deliveries = [];
-        if (event.family_id && !isValidationEvent(event) && !correlatedPrimary && !verificationJob) {
+        if (
+            event.family_id
+            && !isValidationEvent(event)
+            && !correlatedPrimary
+            && !verificationJob
+            && !VISION_VERIFICATION_EVENT_TYPES.has(event.event_type)
+        ) {
             message = upsertAppMessage({
                 message_id: `edge-event-${event.idempotency_key}`,
                 family_id: event.family_id,
@@ -7735,6 +8481,11 @@ function createLocalAppServer(options = {}) {
         const detectorBackend = String(payload.detector_backend || runtime.detector_backend || existingDevice.detector_backend || "").trim();
         const yoloModel = String(payload.yolo_model || runtime.yolo_model || existingDevice.yolo_model || "").trim();
         const yoloImgsz = normalizeNumber(payload.yolo_imgsz ?? runtime.yolo_imgsz ?? existingDevice.yolo_imgsz, null);
+        const eventStateCommandReceipts = mergeEventStateCommandReceipts(
+            deviceId,
+            payload.event_state_commands,
+            receivedAt,
+        );
 
         if (issuedToken) {
             issuedToken.device_id = deviceId;
@@ -7765,6 +8516,7 @@ function createLocalAppServer(options = {}) {
             metadata: {
                 ...objectValue(existingDevice.metadata),
                 serial_number: objectValue(existingDevice.metadata).serial_number || deviceSerial({ ...existingDevice, device_id: deviceId }),
+                event_state_command_receipts: eventStateCommandReceipts,
             },
             sync_status: String(reportedStatus.sync_status || payload.sync_status || "reported"),
             last_error: String(reportedStatus.last_error || payload.last_error || ""),
@@ -7837,7 +8589,7 @@ function createLocalAppServer(options = {}) {
             device_id: deviceId,
             received_at: receivedAt,
             reported_config_version: store.db.devices[deviceId].reported_config_version,
-            current_config_version: deviceConfigVersion(deviceFamilyId),
+            current_config_version: deviceConfigVersion(deviceFamilyId, deviceId),
             rules_version: rulesVersion(deviceFamilyId),
             updated_cameras: updatedCameras,
             config: deviceConfigPayload({
@@ -8078,6 +8830,8 @@ function createLocalAppServer(options = {}) {
                     events: store.db.events.length,
                     assets: store.db.assets.length,
                     pending_media_uploads: store.db.media_upload_intents.length,
+                    stream_metrics: streamMetricsSnapshot(),
+                    push_metrics: pushDeliveryMetrics(),
                     updated_at: store.db.updated_at,
                 };
                 if (isLocalRequest(req) && process.env.NODE_ENV !== "production") {
@@ -8411,7 +9165,7 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 404, "老人资料尚未填写。");
                     return;
                 }
-                write(res, 200, profile);
+                write(res, 200, publicElderProfile(profile));
                 return;
             }
 
@@ -8423,16 +9177,41 @@ function createLocalAppServer(options = {}) {
                 const payload = await parseJsonBody(req);
                 const key = elderProfileKey(familyId, elderId);
                 const existing = store.db.elder_profiles[key] || defaultElderProfile(familyId, elderId);
+                const latitude = Number(payload.home_latitude);
+                const longitude = Number(payload.home_longitude);
+                const hasHomeCoordinate = Number.isFinite(latitude) && Number.isFinite(longitude)
+                    && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
+                const metadata = {
+                    ...(existing.metadata && typeof existing.metadata === "object" ? existing.metadata : {}),
+                    ...(payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {}),
+                };
+                if (hasHomeCoordinate) {
+                    metadata.home_location = {
+                        latitude,
+                        longitude,
+                        label: String(payload.home_location_label || "").trim().slice(0, 120),
+                        city: String(payload.city || existing.city || "").trim().slice(0, 40),
+                        district: String(payload.district || existing.district || "").trim().slice(0, 40),
+                        source: "family_setup_phone",
+                        updated_at: nowIso(),
+                    };
+                }
                 store.db.elder_profiles[key] = {
                     ...existing,
                     ...payload,
+                    metadata,
+                    home_latitude: hasHomeCoordinate ? latitude : existing.home_latitude,
+                    home_longitude: hasHomeCoordinate ? longitude : existing.home_longitude,
+                    home_location_label: hasHomeCoordinate
+                        ? metadata.home_location.label
+                        : existing.home_location_label,
                     id: elderId,
                     elder_id: elderId,
                     family_id: familyId,
                     updated_at: nowIso(),
                 };
                 await store.save();
-                write(res, 200, store.db.elder_profiles[key]);
+                write(res, 200, publicElderProfile(store.db.elder_profiles[key]));
                 return;
             }
 
@@ -8476,7 +9255,7 @@ function createLocalAppServer(options = {}) {
                 if (!requireFamilyAccess(req, res, familyId)) return;
                 const elderId = url.searchParams.get("elder_id") || "elder_primary";
                 const profile = existingElderProfile(familyId, elderId) || {};
-                const city = url.searchParams.get("city") || profile.city || "杭州";
+                const city = url.searchParams.get("city") || profile.city || "";
                 write(res, 200, await fetchWeatherSignal({ familyId, city }));
                 return;
             }
@@ -8958,8 +9737,42 @@ function createLocalAppServer(options = {}) {
                 if (privacyMode) {
                     response.privacy_mode = privacyMode;
                     response.minimum_privacy_mode = privacyMode;
+                    if (privacyMode === "skeleton") {
+                        const cameraId = encodeURIComponent(String(ticketPayload.camera_id));
+                        response.pose_stream_path = `/api/v1/video/cameras/${cameraId}/pose-stream`;
+                        response.scene_stream_path = `/api/v1/video/cameras/${cameraId}/scene.mjpg`;
+                        response.display_transport = "safe-scene-pose-v1";
+                    } else {
+                        response.display_transport = "mjpeg-v1";
+                    }
                 }
                 write(res, 200, response);
+                return;
+            }
+
+            const poseStreamMatch = pathname.match(/^\/api\/v1\/video\/cameras\/([^/]+)\/pose-stream$/);
+            if (req.method === "GET" && poseStreamMatch) {
+                const cameraId = decodeURIComponent(poseStreamMatch[1]);
+                if (!requireApp(req, res)) return;
+                if (!requireCameraAccess(req, res, cameraId)) return;
+                if (streamPrivacyMode(req, cameraId) !== "skeleton") {
+                    writeError(res, 403, "pose stream requires skeleton privacy mode");
+                    return;
+                }
+                writePoseSseStream(req, res, cameraId);
+                return;
+            }
+
+            const sceneStreamMatch = pathname.match(/^\/api\/v1\/video\/cameras\/([^/]+)\/scene\.mjpg$/);
+            if (req.method === "GET" && sceneStreamMatch) {
+                const cameraId = decodeURIComponent(sceneStreamMatch[1]);
+                if (!requireApp(req, res)) return;
+                if (!requireCameraAccess(req, res, cameraId)) return;
+                if (streamPrivacyMode(req, cameraId) !== "skeleton") {
+                    writeError(res, 403, "safe scene stream requires skeleton privacy mode");
+                    return;
+                }
+                writeSafeSceneMjpegStream(req, res, cameraId);
                 return;
             }
 
@@ -9046,6 +9859,16 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "POST" && pathname === "/api/v1/device/live-frames/upload") {
                 await handleDeviceLiveFrameUpload(req, res, url);
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/device/live-poses/upload") {
+                await handleDeviceLivePoseUpload(req, res, url);
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/device/live-scenes/upload") {
+                await handleDeviceLiveSceneUpload(req, res, url);
                 return;
             }
 
@@ -9432,6 +10255,90 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
+            if (req.method === "POST" && pathname === "/api/v1/internal/notifications/test") {
+                if (!requireOps(req, res)) return;
+                if (!appPushProviderConfigured()) {
+                    writeError(res, 503, "APNs provider is not configured.");
+                    return;
+                }
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const familyId = normalizeNumber(payload.family_id, null);
+                if (!familyId) {
+                    writeError(res, 400, "family_id required");
+                    return;
+                }
+                if (!selectedFamily(familyId)) {
+                    writeError(res, 404, "family not found");
+                    return;
+                }
+                const environment = ["sandbox", "production"].includes(String(payload.environment || "").toLowerCase())
+                    ? String(payload.environment).toLowerCase()
+                    : "production";
+                const requestedUserId = normalizeNumber(payload.user_id, null);
+                const requestedInstallId = String(payload.app_install_id || "").trim();
+                const targetToken = store.db.app_push_tokens
+                    .filter((token) => Number(token.family_id) === Number(familyId))
+                    .filter((token) => String(token.status || "active") === "active")
+                    .filter((token) => String(token.provider || "apns") === "apns")
+                    .filter((token) => String(token.environment || "production") === environment)
+                    .filter((token) => Boolean(token.token_ciphertext))
+                    .filter((token) => !requestedUserId || Number(token.user_id) === Number(requestedUserId))
+                    .filter((token) => !requestedInstallId || String(token.app_install_id || "") === requestedInstallId)
+                    .filter((token) => Boolean(familyMemberForUser(token.user_id, familyId)))
+                    .sort((first, second) => {
+                        const secondTime = Date.parse(second.last_seen_at || second.updated_at || second.created_at || "") || 0;
+                        const firstTime = Date.parse(first.last_seen_at || first.updated_at || first.created_at || "") || 0;
+                        return secondTime - firstTime;
+                    })[0] || null;
+                if (!targetToken) {
+                    writeError(res, 409, `No active ${environment} APNs installation found for this family.`);
+                    return;
+                }
+                const requestId = crypto.randomUUID();
+                const message = upsertAppMessage({
+                    message_id: `ops-notification-test-${familyId}-${requestId}`,
+                    family_id: familyId,
+                    user_id: targetToken.user_id || "",
+                    message_type: "test",
+                    title: String(payload.title || "服务器主动推送验收").trim().slice(0, 80),
+                    subtitle: String(payload.subtitle || "这条通知由回家云端主动发送。").trim().slice(0, 160),
+                    body: String(payload.body || "用于验证 TestFlight、APNs 与通知中心的真实闭环。").trim().slice(0, 300),
+                    facts: ["服务器主动触发", "单安装单次投递"],
+                    actions: [{ key: "open_home", label: "打开回家" }],
+                    priority: "normal",
+                    generated_by: "ops-notification-test",
+                    idempotency_key: `ops-notification-test:${requestId}`,
+                    metadata: {
+                        ops_test_id: requestId,
+                        target_install_id: targetToken.app_install_id || "",
+                        target_environment: environment,
+                        requested_at: nowIso(),
+                    },
+                });
+                const deliveries = queueNotificationDelivery(message, {
+                    target_token_ids: [targetToken.id],
+                });
+                if (deliveries.length !== 1) {
+                    writeError(res, 409, "Unable to create a single targeted APNs delivery.");
+                    return;
+                }
+                await store.save();
+                const dispatch = await dispatchQueuedPushDeliveries({
+                    limit: 1,
+                    target_delivery_ids: deliveries.map((delivery) => delivery.id),
+                });
+                await store.save();
+                write(res, 200, {
+                    ok: true,
+                    request_id: requestId,
+                    target: publicAppPushToken(targetToken),
+                    message: publicAppMessage(message),
+                    deliveries: deliveries.map(publicNotificationDelivery),
+                    dispatch,
+                });
+                return;
+            }
+
             if (req.method === "GET" && pathname === "/api/v1/internal/vision-verifications/status") {
                 if (!requireOps(req, res)) return;
                 const jobs = store.db.model_generation_jobs
@@ -9604,6 +10511,59 @@ function createLocalAppServer(options = {}) {
                 return;
             }
 
+            if (req.method === "POST" && pathname === "/api/v1/notifications/receipts") {
+                if (!requireApp(req, res)) return;
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const deliveryId = String(payload.delivery_id || "").trim();
+                const receiptState = String(payload.state || "").trim().toLowerCase();
+                if (!deliveryId || !["received_foreground", "opened"].includes(receiptState)) {
+                    writeError(res, 400, "delivery_id and a valid receipt state are required");
+                    return;
+                }
+                const delivery = store.db.notification_deliveries.find((item) => String(item.id) === deliveryId);
+                if (!delivery) {
+                    writeError(res, 404, "notification delivery not found");
+                    return;
+                }
+                if (!requireFamilyAccess(req, res, delivery.family_id)) return;
+                const timestamp = nowIso();
+                const appInstallId = String(payload.app_install_id || "").trim();
+                const user = activeAppUser(req);
+                const targetToken = store.db.app_push_tokens.find((item) => (
+                    String(item.id) === String(delivery.target_id || "")
+                    && String(item.app_install_id || "") === appInstallId
+                    && Number(item.user_id) === Number(user.id)
+                    && String(item.status || "active") === "active"
+                ));
+                if (delivery.target_type !== "push_token" || !appInstallId || !targetToken) {
+                    writeError(res, 403, "notification receipt target does not match this app installation");
+                    return;
+                }
+                const receiptKey = `${receiptState}:${appInstallId || "unknown"}`;
+                const responsePayload = delivery.response_payload && typeof delivery.response_payload === "object"
+                    ? delivery.response_payload
+                    : {};
+                const receipts = Array.isArray(responsePayload.receipts) ? [...responsePayload.receipts] : [];
+                if (!receipts.some((item) => String(item.key || "") === receiptKey)) {
+                    receipts.push({
+                        key: receiptKey,
+                        state: receiptState,
+                        app_install_id: appInstallId,
+                        app_version: String(payload.app_version || "").slice(0, 40),
+                        occurred_at: timestamp,
+                    });
+                }
+                delivery.response_payload = { ...responsePayload, receipts: receipts.slice(-12) };
+                delivery.status = "delivered";
+                delivery.delivered_at = delivery.delivered_at || timestamp;
+                if (receiptState === "opened") delivery.clicked_at = delivery.clicked_at || timestamp;
+                delivery.updated_at = timestamp;
+                syncMessageDeliveryState(delivery.message_id, timestamp);
+                await store.save();
+                write(res, 200, { ok: true, delivery: publicNotificationDelivery(delivery) });
+                return;
+            }
+
             if (req.method === "POST" && pathname === "/api/v1/notifications/test") {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req).catch(() => ({}));
@@ -9696,6 +10656,13 @@ function createLocalAppServer(options = {}) {
                 } else {
                     Object.assign(token, patch);
                 }
+                for (const duplicate of store.db.app_push_tokens) {
+                    if (String(duplicate.id) === String(token.id)) continue;
+                    if (String(duplicate.push_token_hash || "") !== tokenHash) continue;
+                    if (String(duplicate.status || "active") !== "active") continue;
+                    duplicate.status = "revoked";
+                    duplicate.updated_at = timestamp;
+                }
                 await store.save();
                 write(res, 200, publicAppPushToken(token));
                 return;
@@ -9782,7 +10749,7 @@ function createLocalAppServer(options = {}) {
         });
     }
     if (appPushProviderConfigured()) {
-        const intervalMs = Math.max(1000, normalizeNumber(process.env.GOHOME_APNS_DISPATCH_INTERVAL_MS, 5000));
+        const intervalMs = Math.max(1000, normalizeNumber(process.env.GOHOME_APNS_DISPATCH_INTERVAL_MS, 1000));
         const dispatch = () => {
             dispatchQueuedPushDeliveries()
                 .catch((error) => console.error(`APNs dispatch failed: ${error.message || error}`));
@@ -9794,6 +10761,7 @@ function createLocalAppServer(options = {}) {
         server.on("close", () => {
             clearInterval(apnsDispatchTimer);
             clearTimeout(initialApnsDispatchTimer);
+            apnsProvider.close?.();
         });
     }
     const activityCleanupEnabled = options.activityCleanupEnabled ?? !["0", "false", "no"].includes(
@@ -9820,7 +10788,7 @@ function createLocalAppServer(options = {}) {
         const intervalMs = Math.max(60000, normalizeNumber(process.env.GOHOME_SCHEDULER_INTERVAL_MS, 60000));
         schedulerTimer = setInterval(() => {
             runNotificationScheduler({ job_type: "background_scheduler" })
-                .then(() => store.save())
+                .then(persistSchedulerOutcome)
                 .catch((error) => {
                     console.error(`scheduler failed: ${error.message || error}`);
                 });
@@ -9845,6 +10813,7 @@ function createLocalAppServer(options = {}) {
             clearTimeout(initialTimer);
         });
     }
+    server.on("close", () => clearInterval(eventLoopDelayTimer));
     return {
         server,
         store,
@@ -9855,6 +10824,8 @@ function createLocalAppServer(options = {}) {
         cleanupExpiredMemoryUploads,
         cleanupExpiredActivityIntervals: () => nativeRepository.cleanupExpiredActivityIntervals(),
         dispatchQueuedPushDeliveries,
+        queueNotificationDelivery,
+        upsertAppMessage,
     };
 }
 

@@ -30,12 +30,12 @@ function quoteIdentifier(value) {
 function copyNativeMigrations(targetDir) {
   const files = fs
     .readdirSync(migrationsDir)
-    .filter((file) => /^(001|002|003|004|005|010|011)_.+\.sql$/.test(file))
+    .filter((file) => /^(001|002|003|004|005|010|011|012)_.+\.sql$/.test(file))
     .sort();
 
   assert.deepEqual(
     files.map((file) => file.slice(0, 3)),
-    ['001', '002', '003', '004', '005', '010', '011'],
+    ['001', '002', '003', '004', '005', '010', '011', '012'],
   );
 
   for (const file of files) {
@@ -141,6 +141,7 @@ test(
           ['005', 'applied'],
           ['010', 'applied'],
           ['011', 'applied'],
+          ['012', 'applied'],
         ],
       );
       assert.deepEqual(
@@ -153,6 +154,7 @@ test(
           ['005', 'skipped'],
           ['010', 'skipped'],
           ['011', 'skipped'],
+          ['012', 'skipped'],
         ],
       );
 
@@ -185,6 +187,15 @@ test(
         uniqueIndex.rows[0].indexdef,
         /UNIQUE INDEX .* \(family_id, message_id\)/,
       );
+
+      const deliveryMessageIndex = await client.query(
+        `select indexdef from pg_indexes
+         where schemaname = $1 and tablename = 'notification_deliveries'
+           and indexname = 'notification_deliveries_message_id_idx'`,
+        [schemaName],
+      );
+      assert.equal(deliveryMessageIndex.rowCount, 1);
+      assert.match(deliveryMessageIndex.rows[0].indexdef, /\(message_id\)/);
 
       const productConstraints = await constraintDefinitions(
         client,

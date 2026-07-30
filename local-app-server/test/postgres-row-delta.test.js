@@ -68,6 +68,50 @@ test('explicit row deletion is parameterized and updates the persisted snapshot'
   await assert.rejects(store.deleteRow('cameras; drop table users', 'camera-1'), /unsupported postgres table/);
 });
 
+test('scheduler run persistence updates one row and prunes retained history without a full save', async () => {
+  const pool = recordingPool();
+  const persisted = emptyTables();
+  persisted.scheduler_runs = [{ id: 'run-old', created_at: '2026-07-01T00:00:00.000Z' }];
+  const store = new PostgresStore({ pool, db: {}, persistedTables: persisted });
+  const run = {
+    id: 'run-new',
+    job_type: 'background_scheduler',
+    status: 'succeeded',
+    result: { families_checked: 4 },
+    started_at: '2026-07-30T00:00:00.000Z',
+    finished_at: '2026-07-30T00:00:00.100Z',
+    created_at: '2026-07-30T00:00:00.000Z',
+    updated_at: '2026-07-30T00:00:00.100Z',
+  };
+
+  await store.saveSchedulerRun(run, { retention: 100 });
+
+  const sql = pool.queries.map((query) => query.text.trim());
+  assert.equal(sql.filter((text) => /^insert into scheduler_runs/i.test(text)).length, 1);
+  assert.equal(sql.some((text) => /^insert into (?!scheduler_runs)/i.test(text)), false);
+  const retentionDelete = pool.queries.find((query) => /^delete from scheduler_runs/i.test(query.text.trim()));
+  assert.ok(retentionDelete);
+  assert.deepEqual(retentionDelete.values, [100]);
+  assert.equal(store.persistedTables.scheduler_runs.some((item) => item.id === 'run-new'), true);
+});
+
+test('scheduler run persistence ignores overlap placeholders without an id', async () => {
+  const pool = recordingPool();
+  const persisted = emptyTables();
+  persisted.scheduler_runs = [{ id: 'run-existing', created_at: '2026-07-30T00:00:00.000Z' }];
+  const store = new PostgresStore({ pool, db: {}, persistedTables: persisted });
+
+  await store.saveSchedulerRun({
+    id: null,
+    job_type: 'background_scheduler',
+    status: 'skipped',
+    result: { skipped: [{ reason: 'scheduler_already_running' }] },
+  });
+
+  assert.equal(pool.queries.length, 0);
+  assert.deepEqual(store.persistedTables.scheduler_runs, persisted.scheduler_runs);
+});
+
 test('postgres date values retain their Shanghai calendar day after hydration', () => {
   const rows = emptyTables();
   rows.care_cards = [{
@@ -127,6 +171,7 @@ test('media asset metadata survives PostgreSQL serialization and hydration', () 
         pixel_height: 720,
         uploaded_by: 'user-1',
       },
+      evidence_frame_role: 'current',
       created_at: timestamp,
       updated_at: timestamp,
     }],
@@ -136,11 +181,13 @@ test('media asset metadata survives PostgreSQL serialization and hydration', () 
   assert.equal(persisted.metadata.duration_seconds, 42.5);
   assert.equal(persisted.metadata.pixel_width, 1280);
   assert.equal(persisted.metadata.uploaded_by, 'user-1');
+  assert.equal(persisted.metadata.evidence_frame_role, 'current');
 
   const db = createDbFromCloudRows(bundle.tables, { created_at: timestamp });
   assert.equal(db.assets[0].metadata.duration_seconds, 42.5);
   assert.equal(db.assets[0].metadata.pixel_height, 720);
   assert.equal(db.assets[0].purpose, 'family_memory');
+  assert.equal(db.assets[0].evidence_frame_role, 'current');
 });
 
 test('media upload intents survive PostgreSQL serialization and hydration without credentials', () => {

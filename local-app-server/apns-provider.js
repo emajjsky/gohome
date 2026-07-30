@@ -37,32 +37,72 @@ function readPrivateKey(options) {
     return keyPath && fs.existsSync(keyPath) ? fs.readFileSync(keyPath, "utf8") : "";
 }
 
-function defaultRequest({ authority, headers, body }) {
-    return new Promise((resolve, reject) => {
-        const client = http2.connect(authority);
-        const request = client.request(headers);
+function createPersistentHttp2Requester(options = {}) {
+    const connect = options.connect || http2.connect;
+    const sessions = new Map();
+
+    function discard(authority, client) {
+        if (sessions.get(authority) === client) sessions.delete(authority);
+        if (!client.destroyed) client.destroy();
+    }
+
+    function session(authority) {
+        const existing = sessions.get(authority);
+        if (existing && !existing.closed && !existing.destroyed) return existing;
+        const client = connect(authority);
+        sessions.set(authority, client);
+        const retire = () => {
+            if (sessions.get(authority) === client) sessions.delete(authority);
+        };
+        client.once("close", retire);
+        client.once("goaway", retire);
+        client.on("error", retire);
+        return client;
+    }
+
+    const request = ({ authority, headers, body, timeoutMs = 8000 }) => new Promise((resolve, reject) => {
+        const client = session(authority);
+        let stream;
+        try {
+            stream = client.request(headers);
+        } catch (error) {
+            discard(authority, client);
+            reject(error);
+            return;
+        }
         const chunks = [];
         let responseHeaders = {};
         let settled = false;
+        const timeout = setTimeout(() => {
+            fail(new Error(`APNs request timed out after ${timeoutMs}ms`));
+        }, Math.max(1000, Number(timeoutMs) || 8000));
         const fail = (error) => {
             if (settled) return;
             settled = true;
-            client.destroy();
+            clearTimeout(timeout);
+            discard(authority, client);
             reject(error);
         };
-        client.once("error", fail);
-        request.setEncoding("utf8");
-        request.on("response", (value) => { responseHeaders = value; });
-        request.on("data", (chunk) => chunks.push(chunk));
-        request.on("end", () => {
+        stream.setEncoding("utf8");
+        stream.on("response", (value) => { responseHeaders = value; });
+        stream.on("data", (chunk) => chunks.push(chunk));
+        stream.on("end", () => {
             if (settled) return;
             settled = true;
-            client.close();
+            clearTimeout(timeout);
             resolve({ headers: responseHeaders, body: chunks.join("") });
         });
-        request.on("error", fail);
-        request.end(body);
+        stream.on("error", fail);
+        stream.end(body);
     });
+
+    request.close = () => {
+        for (const client of sessions.values()) {
+            if (!client.destroyed) client.close();
+        }
+        sessions.clear();
+    };
+    return request;
 }
 
 function createApnsProvider(options = {}) {
@@ -72,7 +112,8 @@ function createApnsProvider(options = {}) {
     const topic = String(options.topic || process.env.GOHOME_APNS_TOPIC || "com.gohome.family").trim();
     const privateKey = readPrivateKey(options);
     const tokenKey = encryptionKey(options.tokenEncryptionKey || process.env.GOHOME_PUSH_TOKEN_ENCRYPTION_KEY);
-    const request = options.request || defaultRequest;
+    const requestTimeoutMs = Math.max(1000, Number(options.requestTimeoutMs || process.env.GOHOME_APNS_REQUEST_TIMEOUT_MS || 8000));
+    const request = options.request || createPersistentHttp2Requester();
     const configured = providerName === "apns" && Boolean(teamId && keyId && topic && privateKey && tokenKey);
     let cachedJwt = "";
     let cachedJwtAt = 0;
@@ -138,6 +179,7 @@ function createApnsProvider(options = {}) {
                     "apns-priority": String(priority),
                 },
                 body: JSON.stringify(payload),
+                timeoutMs: requestTimeoutMs,
             });
         } catch (error) {
             throw new ApnsError(error.message || "APNs network request failed", { retryable: true, apnsId });
@@ -157,7 +199,7 @@ function createApnsProvider(options = {}) {
         });
     }
 
-    return { configured, encryptToken, decryptToken, send };
+    return { configured, encryptToken, decryptToken, send, close: () => request.close?.() };
 }
 
-module.exports = { ApnsError, createApnsProvider };
+module.exports = { ApnsError, createApnsProvider, createPersistentHttp2Requester };

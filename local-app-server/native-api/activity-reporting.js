@@ -1,14 +1,22 @@
 "use strict";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SHANGHAI_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+});
+const SHANGHAI_TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+});
+const DAY_BOUNDS_CACHE = new Map();
 
 function dateKeyShanghai(value = new Date()) {
-    return new Intl.DateTimeFormat("en-CA", {
-        timeZone: "Asia/Shanghai",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-    }).format(value);
+    return SHANGHAI_DATE_FORMATTER.format(value);
 }
 
 function dateKeysEndingAt(dateKey, count) {
@@ -23,11 +31,16 @@ function dayBoundsShanghai(dateKey) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ""))) {
         throw Object.assign(new Error("invalid activity date"), { statusCode: 400 });
     }
+    const cached = DAY_BOUNDS_CACHE.get(dateKey);
+    if (cached) return cached;
     const start = Date.parse(`${dateKey}T00:00:00+08:00`);
     if (!Number.isFinite(start) || dateKeyShanghai(new Date(start)) !== dateKey) {
         throw Object.assign(new Error("invalid activity date"), { statusCode: 400 });
     }
-    return [start, start + DAY_MS];
+    const bounds = Object.freeze([start, start + DAY_MS]);
+    if (DAY_BOUNDS_CACHE.size >= 64) DAY_BOUNDS_CACHE.delete(DAY_BOUNDS_CACHE.keys().next().value);
+    DAY_BOUNDS_CACHE.set(dateKey, bounds);
+    return bounds;
 }
 
 function clipIntervalToDate(interval, dateKey) {
@@ -69,12 +82,7 @@ function durationMinutes(ranges) {
 }
 
 function minuteOfShanghaiDay(value) {
-    const parts = new Intl.DateTimeFormat("en-GB", {
-        timeZone: "Asia/Shanghai",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
-    }).formatToParts(new Date(value)).reduce((result, part) => {
+    const parts = SHANGHAI_TIME_FORMATTER.formatToParts(new Date(value)).reduce((result, part) => {
         if (part.type !== "literal") result[part.type] = part.value;
         return result;
     }, {});

@@ -88,6 +88,43 @@ function careMessageView(message) {
     };
 }
 
+function accountProfileView(user) {
+    const metadata = user?.metadata && typeof user.metadata === "object" ? user.metadata : {};
+    const avatarAssetId = String(metadata.avatar_asset_id || "").trim();
+    return {
+        id: String(user?.id || ""),
+        phone: String(user?.phone || ""),
+        display_name: String(user?.display_name || "").trim(),
+        city: String(metadata.city || "").trim(),
+        district: String(metadata.district || "").trim(),
+        avatar_asset_id: avatarAssetId,
+        avatar_url: avatarAssetId ? `/api/v1/video/assets/${encodeURIComponent(avatarAssetId)}?variant=grid` : "",
+        updated_at: user?.updated_at || null,
+    };
+}
+
+function homeLocationView(elder) {
+    const metadata = elder?.metadata && typeof elder.metadata === "object" ? elder.metadata : {};
+    const stored = metadata.home_location && typeof metadata.home_location === "object"
+        ? metadata.home_location
+        : {};
+    const latitude = Number(elder?.home_latitude ?? stored.latitude);
+    const longitude = Number(elder?.home_longitude ?? stored.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)
+        || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+        return null;
+    }
+    return {
+        latitude,
+        longitude,
+        label: String(elder?.home_location_label || stored.label || "").trim(),
+        city: String(elder?.city || stored.city || "").trim(),
+        district: String(elder?.district || stored.district || "").trim(),
+        source: String(stored.source || "family_profile"),
+        updated_at: stored.updated_at || elder?.updated_at || null,
+    };
+}
+
 function memoryView(memory) {
     const media = Array.isArray(memory?.media) ? memory.media : [];
     const comments = Array.isArray(memory?.comments) ? memory.comments : [];
@@ -157,6 +194,14 @@ class NativeViewService {
             unread_count: Math.max(0, Number(source.unread_count || 0)),
         };
         return { ...payload, revision: revisionFor(payload) };
+    }
+
+    async accountProfile(userId) {
+        return { profile: accountProfileView(await this.repository.accountProfile(userId)) };
+    }
+
+    async updateAccountProfile(userId, input) {
+        return { profile: accountProfileView(await this.repository.updateAccountProfile(userId, input)) };
     }
 
     async accountExport(userId) {
@@ -234,6 +279,7 @@ class NativeViewService {
             weather: source.weather || null,
             calendar: Array.isArray(source.calendar) ? source.calendar : [],
             distance: source.distance || null,
+            home_location: homeLocationView(source.elder),
             critical_alert: criticalAlertView(source.critical_alert),
             care_message: careMessageView(source.care_message),
             articles: (source.articles || []).map(articleView).filter((article) => article && article.title),
@@ -375,4 +421,4 @@ class NativeViewService {
     }
 }
 
-module.exports = { NativeViewService, activityIntervalView, articleView, careMessageView, criticalAlertView, memoryView, revisionFor };
+module.exports = { NativeViewService, accountProfileView, activityIntervalView, articleView, careMessageView, criticalAlertView, memoryView, revisionFor };

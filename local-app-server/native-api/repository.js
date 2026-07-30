@@ -542,6 +542,14 @@ function applyAccountDeletionToDb(db, userId, plan) {
 }
 
 class NativeRepository {
+    accountProfile(_userId) {
+        throw new Error("NativeRepository.accountProfile is not implemented");
+    }
+
+    updateAccountProfile(_userId, _input) {
+        throw new Error("NativeRepository.updateAccountProfile is not implemented");
+    }
+
     bootstrapForUser(_userId) {
         throw new Error("NativeRepository.bootstrapForUser is not implemented");
     }
@@ -707,6 +715,41 @@ class JsonNativeRepository extends NativeRepository {
         const id = textId(userId);
         const user = (this.db.users || []).find((item) => textId(item.id) === id);
         if (!user) throw repositoryError("user not found", 404);
+        return clone(user);
+    }
+
+    accountProfile(userId) {
+        return this.user(userId);
+    }
+
+    updateAccountProfile(userId, input = {}) {
+        const id = textId(userId);
+        const user = (this.db.users || []).find((item) => textId(item.id) === id);
+        if (!user) throw repositoryError("user not found", 404);
+        const displayName = String(input.display_name ?? user.display_name ?? "").trim();
+        if (!displayName || displayName.length > 40) throw repositoryError("display_name must contain 1 to 40 characters", 400);
+        const metadata = user.metadata && typeof user.metadata === "object" ? { ...user.metadata } : {};
+        for (const key of ["city", "district"]) {
+            if (Object.prototype.hasOwnProperty.call(input, key)) metadata[key] = String(input[key] || "").trim().slice(0, 40);
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "avatar_asset_id")) {
+            const assetId = String(input.avatar_asset_id || "").trim();
+            if (assetId) {
+                const asset = (this.db.assets || []).find((item) => textId(item.id) === assetId);
+                const canAccess = asset && this.db.family_members.some((member) => (
+                    textId(member.user_id) === id
+                    && textId(member.family_id) === textId(asset.family_id)
+                    && String(member.status || "active") === "active"
+                ));
+                if (!asset || !canAccess || !String(asset.content_type || "").toLowerCase().startsWith("image/")) {
+                    throw repositoryError("avatar image is unavailable", 400);
+                }
+            }
+            metadata.avatar_asset_id = assetId;
+        }
+        user.display_name = displayName;
+        user.metadata = metadata;
+        user.updated_at = this.clock();
         return clone(user);
     }
 
@@ -1383,6 +1426,20 @@ class JsonNativeRepository extends NativeRepository {
                 if (textId(item.family_id) !== textId(familyId)) return false;
                 return Date.parse(item.ended_at || "") > rangeStart && Date.parse(item.started_at || "") < rangeEnd;
             })
+            .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at)));
+    }
+
+    activityIntervalsForScheduler(familyId, options = {}) {
+        const startDate = String(options.start_date || "");
+        const endDate = String(options.end_date || "");
+        const [rangeStart] = dayBoundsShanghai(startDate);
+        const [, rangeEnd] = dayBoundsShanghai(endDate);
+        return clone(this.db.activity_intervals
+            .filter((item) => (
+                textId(item.family_id) === textId(familyId)
+                && Date.parse(item.ended_at || "") > rangeStart
+                && Date.parse(item.started_at || "") < rangeEnd
+            ))
             .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at)));
     }
 

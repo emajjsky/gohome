@@ -120,6 +120,22 @@ function cameraDeviceId(db, camera) {
     return nullableTextId(camera.device_id || defaultDeviceId(db));
 }
 
+function schedulerRunRow(run, exportedAt = new Date().toISOString()) {
+    return {
+        id: textId(run.id),
+        family_id: nullableTextId(run.family_id),
+        job_type: String(run.job_type || "care_notification"),
+        status: String(run.status || "running"),
+        scope: run.scope && typeof run.scope === "object" ? run.scope : {},
+        result: run.result && typeof run.result === "object" ? run.result : {},
+        error_message: String(run.error_message || ""),
+        started_at: iso(run.started_at, exportedAt),
+        finished_at: iso(run.finished_at),
+        created_at: iso(run.created_at, exportedAt),
+        updated_at: iso(run.updated_at, iso(run.created_at, exportedAt)),
+    };
+}
+
 function buildCloudSeedBundle(db, options = {}) {
     const exportedAt = options.exportedAt || new Date().toISOString();
     const fallbackFamilyId = defaultFamilyId(db);
@@ -433,6 +449,7 @@ function buildCloudSeedBundle(db, options = {}) {
             purpose: String(asset.purpose || asset.metadata?.purpose || ""),
             local_camera_id: nullableTextId(asset.local_camera_id || asset.metadata?.local_camera_id),
             captured_at: iso(asset.captured_at || asset.metadata?.captured_at),
+            evidence_frame_role: String(asset.evidence_frame_role || asset.metadata?.evidence_frame_role || ""),
         },
         created_at: iso(asset.created_at, exportedAt),
         updated_at: iso(asset.updated_at, iso(asset.created_at, exportedAt)),
@@ -605,19 +622,9 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(delivery.updated_at, iso(delivery.created_at, exportedAt)),
     })).filter((delivery) => delivery.family_id && delivery.idempotency_key);
 
-    const schedulerRuns = toArray(db.scheduler_runs).map((run) => ({
-        id: textId(run.id),
-        family_id: nullableTextId(run.family_id),
-        job_type: String(run.job_type || "care_notification"),
-        status: String(run.status || "running"),
-        scope: run.scope && typeof run.scope === "object" ? run.scope : {},
-        result: run.result && typeof run.result === "object" ? run.result : {},
-        error_message: String(run.error_message || ""),
-        started_at: iso(run.started_at, exportedAt),
-        finished_at: iso(run.finished_at),
-        created_at: iso(run.created_at, exportedAt),
-        updated_at: iso(run.updated_at, iso(run.created_at, exportedAt)),
-    })).filter((run) => run.id);
+    const schedulerRuns = toArray(db.scheduler_runs)
+        .map((run) => schedulerRunRow(run, exportedAt))
+        .filter((run) => run.id);
 
     const modelGenerationJobs = toArray(db.model_generation_jobs)
         .filter((job) => !validationEventIds.has(textId(job.metadata?.event_id)))
@@ -780,5 +787,6 @@ if (require.main === module) {
 
 module.exports = {
     buildCloudSeedBundle,
+    schedulerRunRow,
     sha256,
 };

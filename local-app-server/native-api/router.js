@@ -14,6 +14,15 @@ class NativeApiRouter {
     }
 
     async dispatch({ method, url, userId, headers = {}, body = {} }) {
+        if (url.pathname === "/api/v2/account/profile") {
+            if (method === "GET") {
+                return { status: 200, body: await this.viewService.accountProfile(userId) };
+            }
+            if (method === "PATCH") {
+                return { status: 200, body: await this.viewService.updateAccountProfile(userId, body) };
+            }
+        }
+
         if (method === "GET" && url.pathname === "/api/v2/account/export") {
             return {
                 status: 200,
