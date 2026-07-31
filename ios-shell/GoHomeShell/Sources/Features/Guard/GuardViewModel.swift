@@ -222,13 +222,11 @@ final class GuardViewModel: ObservableObject {
     private func receivePose(_ packet: PosePacket) {
         guard packet.displayOnly, !packet.formalEvidenceEligible else { return }
         let next = TimedPosePacket(packet: packet, receivedAt: Date())
+        poseUpdatesPerSecond = poseRateMeter.record(at: ProcessInfo.processInfo.systemUptime)
         if packet.isDisplaySafe {
             poseTimeline = PoseTimeline(previous: poseTimeline.current, current: next)
-            poseUpdatesPerSecond = poseRateMeter.record(at: ProcessInfo.processInfo.systemUptime)
         } else {
             poseTimeline = PoseTimeline(previous: nil, current: next)
-            poseRateMeter.reset()
-            poseUpdatesPerSecond = 0
         }
     }
 

@@ -19,9 +19,9 @@ Candidate under validation: `1.0.0 (5)` (available to the internal TestFlight gr
 
 ## Physical Device
 
-- [ ] Cold launch reaches usable content without a blocking full-screen loader.
+- [x] Cold launch reaches usable content without a blocking full-screen loader.
 - [ ] Warm launch restores the signed-in household and cached tab content.
-- [ ] Home, Guard, Memory, Community, and Profile switch without reloading the app shell.
+- [x] Home, Guard, Memory, Community, and Profile switch without reloading the app shell.
 - [ ] Backgrounding and foregrounding preserve the selected tab and current navigation.
 - [ ] Logout clears private cached data and relaunch returns to authentication.
 
@@ -81,3 +81,10 @@ every failed item. A blocked item is not a pass.
 
 Debug installs are used only for explicitly approved local diagnosis. Release acceptance
 uses TestFlight; a direct Xcode install must never be presented as the distributed build.
+
+Build 5 physical checkpoint on 2026-07-31: the TestFlight install opened directly to the
+restored household, all five native tabs were browsable, and live camera video opened.
+Skeleton mode exposed that its rate badge depended on person-bearing pose packets. The
+main-line fix now always reports decoded scene FPS and appends measured pose Hz when pose
+packets arrive; 148 iOS tests and release metadata validation pass. A later TestFlight
+build must verify that fix on the physical device before the FPS gate closes.

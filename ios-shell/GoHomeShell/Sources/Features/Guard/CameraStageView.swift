@@ -44,7 +44,7 @@ struct CameraStageView: View {
         }
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 6) {
-                if state == .playing, activeRate > 0 {
+                if shouldShowRate {
                     HStack(spacing: 5) {
                         Circle()
                             .fill(Color(red: 0.31, green: 0.86, blue: 0.49))
@@ -81,14 +81,15 @@ struct CameraStageView: View {
         }
     }
 
-    private var activeRate: Double {
-        privacyMode == .skeleton ? poseUpdatesPerSecond : displayFPS
+    var shouldShowRate: Bool {
+        state == .playing && (displayFPS > 0 || poseUpdatesPerSecond > 0)
     }
 
-    private var rateText: String {
-        privacyMode == .skeleton
-            ? String(format: "POSE %.1f Hz", activeRate)
-            : String(format: "%.1f FPS", activeRate)
+    var rateText: String {
+        guard privacyMode == .skeleton, poseUpdatesPerSecond > 0 else {
+            return String(format: "%.1f FPS", displayFPS)
+        }
+        return String(format: "%.1f FPS · POSE %.1f Hz", displayFPS, poseUpdatesPerSecond)
     }
 
     private var iconName: String {

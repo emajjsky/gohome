@@ -131,6 +131,16 @@ internal-group assignment completed on 2026-07-31; Build 5 is available to the
 acceptance remain pending and must not be reported as complete until the device checks
 pass.
 
+Build 5 physical checkpoint on 2026-07-31: the TestFlight install cold-launched into the
+restored household, all five native tabs were browsable, and live camera video opened.
+Skeleton mode revealed a display-metric defect: the badge used only person-bearing pose
+packets, so it disappeared before detection or while the person was out of frame. The
+main-line fix keeps measured decoded FPS visible in every privacy mode, adds measured pose
+Hz when available, and no longer resets pose rate on a valid empty packet. The complete
+iOS suite passes 148 of 148 tests. Physical verification of the fix requires the next
+TestFlight build; cellular streaming, location, automatic business push, and fall-event
+acceptance remain open.
+
 - [ ] **Gate 4: Messaging and distribution**
 
 Run:

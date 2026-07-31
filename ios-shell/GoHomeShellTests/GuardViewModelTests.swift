@@ -15,6 +15,34 @@ final class GuardViewModelTests: XCTestCase {
         XCTAssertEqual(meter.record(at: 20), 0)
     }
 
+    func testSkeletonRateLabelKeepsDecodedFPSAndAddsPoseRate() {
+        let stage = CameraStageView(
+            image: nil,
+            state: .playing,
+            displayFPS: 12.4,
+            poseUpdatesPerSecond: 8.2,
+            privacyMode: .skeleton,
+            poseTimeline: .empty
+        )
+
+        XCTAssertTrue(stage.shouldShowRate)
+        XCTAssertEqual(stage.rateText, "12.4 FPS · POSE 8.2 Hz")
+    }
+
+    func testSkeletonRateLabelFallsBackToDecodedFPSBeforePosePacketsArrive() {
+        let stage = CameraStageView(
+            image: nil,
+            state: .playing,
+            displayFPS: 11.7,
+            poseUpdatesPerSecond: 0,
+            privacyMode: .skeleton,
+            poseTimeline: .empty
+        )
+
+        XCTAssertTrue(stage.shouldShowRate)
+        XCTAssertEqual(stage.rateText, "11.7 FPS")
+    }
+
     func testGuardCameraCatalogUsesCanonicalProfileCameras() {
         let profile = ProfileData(
             elder: nil,
@@ -246,6 +274,27 @@ final class GuardViewModelTests: XCTestCase {
         XCTAssertGreaterThan(model.poseUpdatesPerSecond, 0)
         model.stop()
     }
+
+    @MainActor
+    func testSkeletonPoseRateDoesNotResetWhenPersonLeavesTheFrame() async throws {
+        let client = RecordingStreamClient()
+        let model = GuardViewModel(streamClient: client, initialPrivacyMode: .skeleton)
+
+        model.select(cameraID: "camera-a")
+        try await waitUntil { await client.hasStarted(cameraID: "camera-a") }
+        await client.yieldPose(guardPosePacket(frameID: "pose-1", x: 120), cameraID: "camera-a")
+        await client.yieldPose(guardEmptyPosePacket(frameID: "pose-2"), cameraID: "camera-a")
+        try await waitUntil {
+            await MainActor.run {
+                model.poseTimeline.current?.packet.frameID == "pose-2"
+                    && model.poseUpdatesPerSecond > 0
+            }
+        }
+
+        XCTAssertEqual(model.poseTimeline.current?.packet.state, "empty")
+        XCTAssertGreaterThan(model.poseUpdatesPerSecond, 0)
+        model.stop()
+    }
 }
 
 private func guardPosePacket(frameID: String, x: Double) -> PosePacket {
@@ -263,6 +312,21 @@ private func guardPosePacket(frameID: String, x: Double) -> PosePacket {
             bbox: [90, 20, 220, 350],
             keypoints: [PoseKeypoint(name: "nose", x: x, y: 60, confidence: 0.9, visible: true)]
         )],
+        displayOnly: true,
+        formalEvidenceEligible: false
+    )
+}
+
+private func guardEmptyPosePacket(frameID: String) -> PosePacket {
+    PosePacket(
+        schemaVersion: "eacp-pose-relay-v1",
+        cameraID: 2,
+        frameID: frameID,
+        capturedAt: "2026-07-28T08:00:00Z",
+        state: "empty",
+        imageWidth: 640,
+        imageHeight: 360,
+        poses: [],
         displayOnly: true,
         formalEvidenceEligible: false
     )
