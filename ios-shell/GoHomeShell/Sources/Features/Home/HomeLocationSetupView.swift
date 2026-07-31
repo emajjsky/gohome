@@ -20,7 +20,7 @@ enum HomeLocationProfileUpdate {
             homePhone: profile.homePhone,
             homeLatitude: latitude,
             homeLongitude: longitude,
-            homeLocationLabel: label.isEmpty ? profile.homeLocationLabel : label
+            homeLocationLabel: label.isEmpty ? "家庭位置" : label
         )
     }
 }

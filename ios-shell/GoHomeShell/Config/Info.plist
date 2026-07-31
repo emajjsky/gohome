@@ -71,7 +71,7 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>用于选择并发布仅家庭成员可见的照片或短视频。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>用于获取回家距离，并在你选择时为家庭记忆添加地点。</string>
+	<string>用于计算回家距离，并在你主动确认时设置家庭位置或为家庭记忆添加地点。</string>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>weixin</string>

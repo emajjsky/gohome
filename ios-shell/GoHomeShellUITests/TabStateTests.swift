@@ -86,6 +86,27 @@ final class TabStateTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["家庭位置未设置"].waitForExistence(timeout: 2))
     }
 
+    func testCreatorCanCorrectAnExistingHomeLocationFromHomeAndCommunity() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-uiTestState", "-uiTestMain", "-uiTestHome", "-uiTestProfile", "-uiTestFixedHomeLocation",
+        ]
+        app.launch()
+
+        let homeEdit = app.buttons["home-location-edit"]
+        for _ in 0..<4 where !homeEdit.exists { app.swipeUp() }
+        XCTAssertTrue(homeEdit.waitForExistence(timeout: 2))
+        homeEdit.tap()
+        XCTAssertTrue(app.navigationBars["设置家庭位置"].waitForExistence(timeout: 2))
+        app.buttons["取消"].tap()
+
+        app.tabBars.buttons["社区"].tap()
+        let communityEdit = app.buttons["community-home-location-edit"]
+        XCTAssertTrue(communityEdit.waitForExistence(timeout: 2))
+        communityEdit.tap()
+        XCTAssertTrue(app.navigationBars["设置家庭位置"].waitForExistence(timeout: 2))
+    }
+
     func testGuardCombinesLiveTimelineAndEventsWithoutKeepingVideoMounted() {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTestState", "-uiTestMain"]

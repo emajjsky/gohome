@@ -35,18 +35,26 @@ final class MemoryLocationProvider: NSObject, ObservableObject, @preconcurrency 
 
     private let manager = CLLocationManager()
     private let geocoder = CLGeocoder()
+    private var requestStartedAt: Date?
+    private var requestID: UUID?
+    private var timeoutTask: Task<Void, Never>?
 
     override init() {
         super.init()
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
     }
 
     func requestLocation() {
+        timeoutTask?.cancel()
+        manager.stopUpdatingLocation()
+        geocoder.cancelGeocode()
         errorMessage = nil
         placeName = nil
         resolvedLocation = nil
         coordinate = nil
+        requestStartedAt = nil
+        requestID = UUID()
 
         switch manager.authorizationStatus {
         case .notDetermined:
@@ -54,7 +62,7 @@ final class MemoryLocationProvider: NSObject, ObservableObject, @preconcurrency 
             manager.requestWhenInUseAuthorization()
         case .authorizedAlways, .authorizedWhenInUse:
             isLocating = true
-            manager.requestLocation()
+            beginLocationUpdates()
         case .denied, .restricted:
             isLocating = false
             errorMessage = "请在系统设置中开启位置权限"
@@ -68,7 +76,7 @@ final class MemoryLocationProvider: NSObject, ObservableObject, @preconcurrency 
         switch manager.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse:
             guard isLocating else { return }
-            manager.requestLocation()
+            beginLocationUpdates()
         case .denied, .restricted:
             isLocating = false
             errorMessage = "请在系统设置中开启位置权限"
@@ -80,15 +88,20 @@ final class MemoryLocationProvider: NSObject, ObservableObject, @preconcurrency 
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else {
-            finishWithError("暂时无法获取位置")
-            return
-        }
+        guard isLocating, let requestStartedAt, let requestID else { return }
+        guard let location = locations.reversed().first(where: {
+            LocationSamplePolicy.accepts($0, requestedAt: requestStartedAt)
+        }) else { return }
+        manager.stopUpdatingLocation()
+        timeoutTask?.cancel()
+        self.requestStartedAt = nil
         coordinate = location.coordinate
+        isLocating = false
+        errorMessage = nil
 
         geocoder.reverseGeocodeLocation(location, preferredLocale: Locale(identifier: "zh_CN")) { [weak self] placemarks, error in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.requestID == requestID else { return }
                 guard error == nil, let placemark = placemarks?.first else {
                     self.finishWithError("位置名称获取失败")
                     return
@@ -105,15 +118,36 @@ final class MemoryLocationProvider: NSObject, ObservableObject, @preconcurrency 
                 self.placeName = location.displayName
                 self.isLocating = false
                 self.errorMessage = nil
+                self.requestID = nil
             }
         }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        if (error as? CLError)?.code == .locationUnknown { return }
         finishWithError("暂时无法获取位置")
     }
 
+    private func beginLocationUpdates() {
+        requestStartedAt = Date()
+        manager.startUpdatingLocation()
+        timeoutTask?.cancel()
+        timeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 12_000_000_000)
+            } catch {
+                return
+            }
+            guard let self, self.isLocating, self.coordinate == nil else { return }
+            self.finishWithError("没有取得可用的新位置，请移到窗边后重试")
+        }
+    }
+
     private func finishWithError(_ message: String) {
+        manager.stopUpdatingLocation()
+        timeoutTask?.cancel()
+        requestStartedAt = nil
+        requestID = nil
         isLocating = false
         errorMessage = message
     }

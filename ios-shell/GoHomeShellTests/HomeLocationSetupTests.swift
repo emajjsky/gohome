@@ -62,6 +62,6 @@ final class HomeLocationSetupTests: XCTestCase {
         XCTAssertEqual(payload.district, "西湖区")
         XCTAssertEqual(payload.homeLatitude, 30.2741)
         XCTAssertEqual(payload.homeLongitude, 120.1551)
-        XCTAssertEqual(payload.homeLocationLabel, "西湖区 · 杭州市")
+        XCTAssertEqual(payload.homeLocationLabel, "家庭位置")
     }
 }

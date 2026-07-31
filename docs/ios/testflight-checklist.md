@@ -2,7 +2,7 @@
 
 Distributed baseline: `1.0.0 (5)`
 
-Candidate under validation: `1.0.0 (6)` (processed and assigned to the internal TestFlight group; physical install pending)
+Candidate under validation: `1.0.0 (7)` (source fix pending final gates and upload)
 
 ## Automated Gates
 
@@ -17,6 +17,7 @@ Candidate under validation: `1.0.0 (6)` (processed and assigned to the internal 
 - [x] Build 5 is archived from the sole native project on `main` and accepted for upload.
 - [x] Build 5 finishes Apple processing and is installable from TestFlight.
 - [x] Build 6 is archived from the sole native project on `main`, processed by Apple, and assigned to `比赛内测`.
+- [ ] Build 7 rejects cached location samples, is archived from the sole native project, processed by Apple, and assigned to `比赛内测`.
 
 ## Physical Device
 
@@ -108,3 +109,13 @@ archived `GoHome 1.0.0 (6)` from the sole native project and App Store Connect a
 Delivery UUID `7a905a03-83ba-4e02-bd95-4a8457e6f8d4`. Apple processing completed and
 the build is assigned to `比赛内测`. Physical installation and the open acceptance
 items above remain required.
+
+Build 6 physical location checkpoint on 2026-07-31: the App accepted an iOS cached
+coordinate from an earlier trip and saved it as the fixed home location. Existing
+locations also lacked a discoverable correction action. Build 6 therefore fails the
+fixed-home-location gate. The Build 7 source candidate accepts only coordinates
+produced after the current request begins, enforces a 200-meter accuracy ceiling,
+uses a bounded 12-second update window, and exposes creator-only correction actions
+from both Home and Community. It also applies the same freshness policy when
+calculating the phone-to-home distance. TestFlight installation and correction at the
+physical home remain required before this gate can pass.

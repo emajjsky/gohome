@@ -59,10 +59,27 @@ struct CommunityView: View {
                         .foregroundStyle(GoHomeTheme.mutedInk)
                 }
             } else {
-                Label(homeLocationLabel, systemImage: "location.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(GoHomeTheme.mutedInk)
-                    .lineLimit(1)
+                if let onSetHomeLocation {
+                    Button(action: onSetHomeLocation) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "location.fill")
+                            Text(homeLocationLabel)
+                                .lineLimit(1)
+                            Text("更改")
+                                .foregroundStyle(GoHomeTheme.ink)
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("更新家庭位置，当前为\(homeLocationLabel)")
+                    .accessibilityIdentifier("community-home-location-edit")
+                } else {
+                    Label(homeLocationLabel, systemImage: "location.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                        .lineLimit(1)
+                }
             }
         }
     }

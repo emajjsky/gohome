@@ -71,11 +71,24 @@ struct MainTabView: View {
         self.onFamilyChanged = onFamilyChanged
         self.onAccountProfileChanged = onAccountProfileChanged
         let hasHomeFixture = ProcessInfo.processInfo.arguments.contains("-uiTestHome")
+        let hasFixedHomeLocation = ProcessInfo.processInfo.arguments.contains("-uiTestFixedHomeLocation")
         let hasSurfaceFixture = ProcessInfo.processInfo.arguments.contains("-uiTestSurface")
         _homeModel = StateObject(wrappedValue: HomeViewModel(
             repository: repository,
             scope: scope,
-            seed: hasHomeFixture ? Self.uiTestHome : nil
+            seed: hasHomeFixture ? Self.uiTestHome(
+                homeLocation: hasFixedHomeLocation
+                    ? HomeLocation(
+                        latitude: 30.2146,
+                        longitude: 120.1573,
+                        label: "西湖区 · 杭州市",
+                        city: "杭州市",
+                        district: "西湖区",
+                        source: "profile",
+                        updatedAt: "2026-07-31T10:00:00+08:00"
+                    )
+                    : nil
+            ) : nil
         ))
         let seedEvents = ProcessInfo.processInfo.arguments.contains("-uiTestEvent") || hasHomeFixture
             ? Self.uiTestEvents
@@ -231,7 +244,7 @@ struct MainTabView: View {
         }
     }
 
-    private static var uiTestHome: HomeResponse {
+    private static func uiTestHome(homeLocation: HomeLocation?) -> HomeResponse {
         HomeResponse(
             family: nil,
             weather: HomeWeather(city: "杭州", temperature: 29, condition: "晴"),
@@ -244,6 +257,7 @@ struct MainTabView: View {
                 homeLatitude: 30.2146,
                 homeLongitude: 120.1573
             ),
+            homeLocation: homeLocation,
             criticalAlert: HomeCriticalAlert(
                 id: "ui-test-event-1",
                 title: "客厅有一条安全事件待确认",

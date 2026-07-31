@@ -205,22 +205,11 @@ struct DeviceBindingView: View {
             let profile = pendingProfile,
             let coordinate = homeLocationProvider.coordinate
         else { return }
-        let resolved = homeLocationProvider.resolvedLocation
-        let city = resolved?.city.nonEmpty ?? profile.city
-        let district = resolved?.district.nonEmpty ?? profile.district
-        let label = resolved?.displayName.nonEmpty
-            ?? [district, city].filter { !$0.isEmpty }.joined(separator: " · ")
-        let payload = ProfilePayload(
-            displayName: profile.displayName,
-            relationship: profile.relationship,
-            city: city,
-            district: district,
-            phone: profile.phone,
-            mobilePhone: profile.mobilePhone,
-            homePhone: profile.homePhone,
-            homeLatitude: coordinate.latitude,
-            homeLongitude: coordinate.longitude,
-            homeLocationLabel: label
+        let payload = HomeLocationProfileUpdate.payload(
+            preserving: profile,
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            location: homeLocationProvider.resolvedLocation
         )
         isSavingHomeLocation = true
         homeLocationError = nil
@@ -242,10 +231,6 @@ struct DeviceBindingView: View {
         pendingProfile = nil
         onComplete()
     }
-}
-
-private extension String {
-    var nonEmpty: String? { isEmpty ? nil : self }
 }
 
 private struct HomeLocationConfirmationView: View {
@@ -297,8 +282,8 @@ private struct HomeLocationConfirmationView: View {
                     .frame(height: 52)
                     .background(GoHomeTheme.ink, in: RoundedRectangle(cornerRadius: GoHomeTheme.controlRadius, style: .continuous))
                 }
-                .disabled(provider.coordinate == nil || provider.resolvedLocation == nil || isSaving)
-                .opacity(provider.coordinate == nil || provider.resolvedLocation == nil || isSaving ? 0.38 : 1)
+                .disabled(provider.coordinate == nil || isSaving)
+                .opacity(provider.coordinate == nil || isSaving ? 0.38 : 1)
 
                 Button("稍后设置", action: onSkip)
                     .font(.system(size: 14, weight: .semibold))
@@ -316,6 +301,7 @@ private struct HomeLocationConfirmationView: View {
 
     private var locationText: String {
         if let location = provider.resolvedLocation { return location.displayName }
+        if provider.coordinate != nil { return "已获取新位置，可确认保存" }
         return provider.isLocating ? "正在获取当前位置" : "绑定后可用于回家距离与家庭附近服务"
     }
 }

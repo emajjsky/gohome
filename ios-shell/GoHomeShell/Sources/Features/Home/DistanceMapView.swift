@@ -7,7 +7,20 @@ struct DistanceMapView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            GoHomeSectionHeader(title: "回家距离")
+            ZStack(alignment: .trailing) {
+                GoHomeSectionHeader(title: "回家距离")
+                if showsEditAction, let onSetHomeLocation {
+                    Button(action: onSetHomeLocation) {
+                        Label("更改", systemImage: "location.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(GoHomeTheme.ink)
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("更新家庭位置")
+                    .accessibilityIdentifier("home-location-edit")
+                }
+            }
             switch state {
             case let .value(kilometers, travelMinutes, user, home):
                 if let user, let home {
@@ -55,6 +68,13 @@ struct DistanceMapView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home-distance")
+    }
+
+    private var showsEditAction: Bool {
+        switch state {
+        case .homeRequired: return false
+        case .value, .permissionRequired: return true
+        }
     }
 }
 
