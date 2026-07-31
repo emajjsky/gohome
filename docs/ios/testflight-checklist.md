@@ -119,3 +119,9 @@ uses a bounded 12-second update window, and exposes creator-only correction acti
 from both Home and Community. It also applies the same freshness policy when
 calculating the phone-to-home distance. TestFlight installation and correction at the
 physical home remain required before this gate can pass.
+
+Build 7 upload checkpoint on 2026-07-31: the sole native project archived and exported
+`GoHome 1.0.0 (7)`. App Store Connect accepted the upload with Delivery UUID
+`7555c324-63d1-4657-8d44-d7c3e86a7d21`; the package has production APNs entitlement,
+`get-task-allow=false`, and is currently processing. Apple processing, internal-group
+assignment, TestFlight installation, and physical location correction remain open.
