@@ -1,8 +1,8 @@
 # iOS TestFlight Acceptance Checklist
 
-Distributed baseline: `1.0.0 (4)`
+Distributed baseline: `1.0.0 (5)`
 
-Candidate under validation: `1.0.0 (5)` (installed from the internal TestFlight group; physical acceptance in progress)
+Candidate under validation: `1.0.0 (6)` (processed and assigned to the internal TestFlight group; physical install pending)
 
 ## Automated Gates
 
@@ -16,6 +16,7 @@ Candidate under validation: `1.0.0 (5)` (installed from the internal TestFlight 
 - [x] App Store Connect finishes processing and exposes Build 4 to TestFlight.
 - [x] Build 5 is archived from the sole native project on `main` and accepted for upload.
 - [x] Build 5 finishes Apple processing and is installable from TestFlight.
+- [x] Build 6 is archived from the sole native project on `main`, processed by Apple, and assigned to `比赛内测`.
 
 ## Physical Device
 
@@ -100,3 +101,10 @@ profile, saves the fixed household coordinate through the existing profile contr
 then refreshes Home and Profile without unbinding the box or restarting the App. The
 next TestFlight build must verify save, relaunch persistence, phone-to-home distance,
 member read-only behavior, and household-based Community results.
+
+Build 6 release checkpoint on 2026-07-31: main passed 152 of 152 iOS tests,
+the fixed-home-location cloud contract test, and release metadata verification. Xcode
+archived `GoHome 1.0.0 (6)` from the sole native project and App Store Connect accepted
+Delivery UUID `7a905a03-83ba-4e02-bd95-4a8457e6f8d4`. Apple processing completed and
+the build is assigned to `比赛内测`. Physical installation and the open acceptance
+items above remain required.

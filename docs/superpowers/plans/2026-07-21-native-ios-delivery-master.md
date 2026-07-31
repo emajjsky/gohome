@@ -151,6 +151,14 @@ Existing users do not rebind the box or recreate camera configuration. The next
 TestFlight build must verify persistence, role boundaries, distance refresh, and
 household-based Community links on a physical phone.
 
+Build 6 release checkpoint on 2026-07-31: the main-line location recovery and skeleton
+rate fixes passed 152 of 152 iOS tests, the production home-location contract test, and
+release metadata verification. The sole native project produced `GoHome 1.0.0 (6)`;
+App Store Connect accepted Delivery UUID `7a905a03-83ba-4e02-bd95-4a8457e6f8d4`,
+finished processing it, and assigned it to the `比赛内测` internal group. The release is
+not accepted until a physical TestFlight install verifies skeleton FPS/POSE Hz, fixed
+home location persistence, phone-to-home distance, and household-based Community links.
+
 - [ ] **Gate 4: Messaging and distribution**
 
 Run:
