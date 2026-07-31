@@ -125,3 +125,12 @@ Build 7 upload checkpoint on 2026-07-31: the sole native project archived and ex
 `7555c324-63d1-4657-8d44-d7c3e86a7d21`; the package has production APNs entitlement,
 `get-task-allow=false`, and is currently processing. Apple processing, internal-group
 assignment, TestFlight installation, and physical location correction remain open.
+
+Skeleton transport checkpoint on 2026-07-31: edge and cloud no longer cap the
+safe-scene path at 1 FPS. Two-camera edge/cloud measurements are approximately 10-14 accepted
+scene FPS with zero Hailo failures and zero camera reconnects; a person-bearing camera
+produced 10.8 pose packets per second while an empty camera correctly stayed near idle.
+These are transport measurements, not TestFlight display acceptance. Keep the Guard
+screen open for 10-20 minutes, walk across each camera, background/foreground the App,
+switch tabs and return, then record decoded FPS, POSE Hz, visible lag, privacy leakage,
+temperature and reconnect count before checking the streaming gate.

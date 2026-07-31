@@ -131,11 +131,34 @@ def main() -> int:
     uploaded_frames = []
     uploaded_scenes = []
     skeleton_relay._post_frame = lambda *args, **kwargs: uploaded_frames.append((args, kwargs))
-    skeleton_relay._post_safe_scene = lambda camera_id, frame: uploaded_scenes.append((camera_id, frame))
+    scene_lock = Lock()
+    scene_active = 0
+    scene_max_active = 0
+
+    def delayed_scene_upload(camera_id, frame, **metadata):
+        nonlocal scene_active, scene_max_active
+        with scene_lock:
+            scene_active += 1
+            scene_max_active = max(scene_max_active, scene_active)
+            uploaded_scenes.append((camera_id, frame, metadata))
+        time.sleep(0.04)
+        with scene_lock:
+            scene_active -= 1
+
+    skeleton_relay._post_safe_scene = delayed_scene_upload
     skeleton_relay._run_camera({"id": 2}, skeleton_stop)
     assert uploaded_frames == []
-    assert uploaded_scenes == [(2, b"safe-scene")]
-    assert skeleton_renderer.scene_calls == 1
+    assert len(uploaded_scenes) == SettingsStub.live_relay_upload_workers
+    assert scene_max_active == SettingsStub.live_relay_upload_workers
+    assert skeleton_renderer.scene_calls == SettingsStub.live_relay_upload_workers
+    assert [item[2]["sequence"] for item in uploaded_scenes] == list(
+        range(1, SettingsStub.live_relay_upload_workers + 1)
+    )
+    scene_stats = skeleton_relay.status()["scene_cameras"]["2"]
+    assert scene_stats["submitted"] == SettingsStub.live_relay_upload_workers
+    assert scene_stats["completed"] == SettingsStub.live_relay_upload_workers
+    assert scene_stats["dropped_busy"] == 20 - SettingsStub.live_relay_upload_workers
+    assert scene_stats["failed"] == 0
     assert skeleton_relay._camera_privacy_modes[2] == "skeleton"
 
     print({
@@ -145,6 +168,7 @@ def main() -> int:
         "dropped_busy": stats["dropped_busy"],
         "ordered_upload": True,
         "skeleton_live_frame_uploads": 0,
+        "skeleton_scene_uploads": len(uploaded_scenes),
     })
     return 0
 

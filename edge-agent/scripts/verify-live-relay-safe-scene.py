@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+import json
 import sys
 
 
@@ -14,26 +16,13 @@ from app.live_relay_agent import LiveRelayAgent
 
 class SettingsStub:
     live_relay_enabled = True
-    live_scene_relay_interval_seconds = 1
+    live_relay_request_timeout_seconds = 2
     app_server_base_url = "https://example.invalid"
     device_api_token = "device-token"
     require_issued_device_token = False
 
 
-class RendererStub:
-    def __init__(self):
-        self.calls = 0
-
-    def safe_scene_jpeg(self, camera_id: int, frame: bytes, *, quality: int) -> bytes:
-        assert camera_id == 2
-        assert frame == b"source-jpeg"
-        assert quality == 55
-        self.calls += 1
-        return b"safe-scene-jpeg"
-
-
 def main() -> int:
-    renderer = RendererStub()
     relay = LiveRelayAgent(
         storage=None,
         settings=SettingsStub(),
@@ -41,28 +30,34 @@ def main() -> int:
         device_id_resolver=lambda: "edge-test",
         token_resolver=lambda: "issued-token",
         remote_camera_id_resolver=lambda camera_id: camera_id + 100,
-        privacy_renderer=renderer,
     )
+    captured_urls = []
 
-    def fail_upload(_camera_id: int, _frame: bytes) -> None:
-        raise RuntimeError("scene endpoint unavailable")
+    def capture_request(_camera_id, url, frame, _headers, _timeout):
+        assert frame == b"safe-scene-jpeg"
+        captured_urls.append(url)
+        return json.dumps({"accepted": True, "stale_ignored": False})
 
-    relay._post_safe_scene = fail_upload
-    relay._relay_safe_scene_if_due(2, b"source-jpeg", quality=55)
-    assert "scene endpoint unavailable" in relay.last_scene_error
+    relay._post_scene_keepalive = capture_request
+    relay._post_safe_scene(
+        2,
+        b"safe-scene-jpeg",
+        captured_at="2026-07-31T12:00:00+00:00",
+        stream_epoch_ms=123456,
+        sequence=7,
+    )
+    query = parse_qs(urlsplit(captured_urls[0]).query)
+    assert query["camera_id"] == ["102"]
+    assert query["local_camera_id"] == ["2"]
+    assert query["captured_at"] == ["2026-07-31T12:00:00+00:00"]
+    assert query["stream_epoch_ms"] == ["123456"]
+    assert query["sequence"] == ["7"]
+    metrics = relay.status()["scene_cameras"]["2"]
+    assert metrics["accepted_fps"] > 0
+    assert metrics["upload_latency_ms_max"] >= metrics["upload_latency_ms_p95"]
+    assert relay.last_scene_error == ""
     assert relay.last_error == ""
-    assert renderer.calls == 1
-
-    uploaded = []
-    relay._last_scene_relay_monotonic[2] = 0
-    relay._post_safe_scene = lambda camera_id, frame: uploaded.append((camera_id, frame))
-    relay._relay_safe_scene_if_due(2, b"source-jpeg", quality=55)
-    assert uploaded == [(2, b"safe-scene-jpeg")]
-    assert renderer.calls == 2
-
-    relay._relay_safe_scene_if_due(2, b"source-jpeg", quality=55)
-    assert renderer.calls == 2
-    print("live relay safe-scene isolation verified")
+    print("live relay safe-scene ordering metadata verified")
     return 0
 
 

@@ -159,6 +159,18 @@ finished processing it, and assigned it to the `比赛内测` internal group. Th
 not accepted until a physical TestFlight install verifies skeleton FPS/POSE Hz, fixed
 home location persistence, phone-to-home distance, and household-based Community links.
 
+Skeleton transport checkpoint on 2026-07-31: the `1 FPS` badge was traced to a
+one-second edge safe-scene throttle and a single synchronous upload connection, not to
+Hailo inference. The edge now retains the current environment, replaces only detected
+person regions, uploads through a bounded four-worker pipeline, and tags every scene
+with a stream epoch and source sequence. The cloud rejects stale concurrent arrivals,
+delivers safe-scene MJPEG at the requested profile cadence, and exposes separate scene
+FPS/latency metrics. A dual-camera run measured approximately 10-14 accepted scene FPS,
+10.8 pose packets per second on the person-bearing camera, zero Hailo failures, zero
+camera reconnects, and 70.5-74.3 degrees Celsius. This closes the code and transport
+root cause; TestFlight visual motion and 10-20 minute foreground/background acceptance
+remain open.
+
 - [ ] **Gate 4: Messaging and distribution**
 
 Run:

@@ -14,6 +14,8 @@ command -v rsync >/dev/null 2>&1 || {
 rsync -az \
   --exclude '.venv/' \
   --exclude '.venv-pi/' \
+  --exclude '__pycache__/' \
+  --exclude '*.pyc' \
   --exclude 'data/' \
   --exclude 'logs/' \
   --exclude '.env' \
@@ -92,5 +94,5 @@ ssh "$PI_SSH" "cd '$PI_ROOT' && rm -rf eval && find scripts -maxdepth 1 -type f 
   -o -name 'verify-upload-queue.py' \\
   -o -name 'verify-vision-pipeline.py' \\) -delete"
 
-ssh "$PI_SSH" "cd '$PI_ROOT' && .venv-pi/bin/python scripts/verify-vision-runtime.py --require-yolo --require-pose"
+ssh "$PI_SSH" "cd '$PI_ROOT' && .venv-pi/bin/python scripts/verify-vision-runtime.py --require-yolo --require-pose --require-hailo"
 echo "deployed without replacing Pi runtime or device data: $PI_SSH:$PI_ROOT"

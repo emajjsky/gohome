@@ -43,13 +43,14 @@ class LiveRelayAgent:
         self._camera_threads: Dict[int, Thread] = {}
         self._camera_stops: Dict[int, Event] = {}
         self._http_connections: Dict[tuple[int, int], Any] = {}
-        self._scene_http_connections: Dict[int, Any] = {}
+        self._scene_http_connections: Dict[tuple[int, int], Any] = {}
         self._http_connections_lock = Lock()
         self._upload_stats_lock = Lock()
         self._camera_upload_stats: Dict[int, Dict[str, int]] = {}
         self._camera_upload_samples: Dict[int, Any] = {}
+        self._scene_upload_stats: Dict[int, Dict[str, int]] = {}
+        self._scene_upload_samples: Dict[int, Any] = {}
         self._camera_privacy_modes: Dict[int, str] = {}
-        self._last_scene_relay_monotonic: Dict[int, float] = {}
         self.last_loop_started_at: str | None = None
         self.last_relay_at: str | None = None
         self.last_scene_relay_at: str | None = None
@@ -102,6 +103,7 @@ class LiveRelayAgent:
             "last_scene_error": self.last_scene_error,
             "last_result": self.last_result,
             "cameras": self._upload_stats_snapshot(),
+            "scene_cameras": self._upload_stats_snapshot(scene=True),
             "last_scene_result": self.last_scene_result,
             "privacy_mode": normalize_privacy_mode(self.privacy_mode_resolver()),
             "camera_privacy_modes": {
@@ -140,10 +142,11 @@ class LiveRelayAgent:
                     stop_event.set()
                 self._camera_threads.pop(camera_id, None)
                 self._camera_privacy_modes.pop(camera_id, None)
-                self._last_scene_relay_monotonic.pop(camera_id, None)
                 with self._upload_stats_lock:
                     self._camera_upload_stats.pop(camera_id, None)
                     self._camera_upload_samples.pop(camera_id, None)
+                    self._scene_upload_stats.pop(camera_id, None)
+                    self._scene_upload_samples.pop(camera_id, None)
                 self._close_connection(camera_id)
                 self._close_scene_connection(camera_id)
 
@@ -172,16 +175,18 @@ class LiveRelayAgent:
         self._camera_stops.clear()
         self._camera_threads.clear()
         self._camera_privacy_modes.clear()
-        self._last_scene_relay_monotonic.clear()
         with self._upload_stats_lock:
             self._camera_upload_stats.clear()
             self._camera_upload_samples.clear()
+            self._scene_upload_stats.clear()
+            self._scene_upload_samples.clear()
 
     def _run_camera(self, camera: Dict[str, Any], stop_event: Event) -> None:
         camera_id = int(camera["id"])
         while not self._stop.is_set() and not stop_event.is_set():
             executor: ThreadPoolExecutor | None = None
             pending: set[Future[Any]] = set()
+            pending_scenes: set[Future[Any]] = set()
             try:
                 fps = bounded_stream_fps(getattr(self.settings, "live_relay_fps", 30), default=30)
                 quality = max(35, min(int(getattr(self.settings, "live_relay_quality", 55)), 85))
@@ -209,14 +214,37 @@ class LiveRelayAgent:
                     if not frame:
                         continue
                     self._collect_upload_results(camera_id, pending)
-                    if len(pending) >= workers:
-                        self._record_upload_stat(camera_id, "dropped_busy")
-                        continue
+                    self._collect_upload_results(camera_id, pending_scenes, scene=True)
                     source_frame = frame
                     privacy_mode = normalize_privacy_mode(self.privacy_mode_resolver())
                     self._camera_privacy_modes[int(camera_id)] = privacy_mode
                     if privacy_mode == "skeleton":
-                        self._relay_safe_scene_if_due(camera_id, source_frame, quality=quality)
+                        if len(pending) + len(pending_scenes) >= workers:
+                            self._record_upload_stat(camera_id, "dropped_busy", scene=True)
+                            continue
+                        if self.privacy_renderer is None:
+                            self._record_upload_stat(camera_id, "failed", scene=True)
+                            self.last_scene_error = f"camera {camera_id}: privacy renderer unavailable"
+                            continue
+                        scene = self.privacy_renderer.safe_scene_jpeg(
+                            camera_id,
+                            source_frame,
+                            quality=quality,
+                        )
+                        sequence += 1
+                        captured_at = self._utc_iso()
+                        pending_scenes.add(executor.submit(
+                            self._post_safe_scene,
+                            camera_id,
+                            scene,
+                            captured_at=captured_at,
+                            stream_epoch_ms=stream_epoch_ms,
+                            sequence=sequence,
+                        ))
+                        self._record_upload_stat(camera_id, "submitted", scene=True)
+                        continue
+                    if len(pending) + len(pending_scenes) >= workers:
+                        self._record_upload_stat(camera_id, "dropped_busy")
                         continue
                     if self.privacy_renderer is not None:
                         frame = self.privacy_renderer.render_jpeg(
@@ -244,14 +272,17 @@ class LiveRelayAgent:
                 if executor is not None:
                     executor.shutdown(wait=True, cancel_futures=True)
                 self._collect_upload_results(camera_id, pending)
+                self._collect_upload_results(camera_id, pending_scenes, scene=True)
                 self._close_connection(camera_id)
+                self._close_scene_connection(camera_id)
 
     def _upload_worker_count(self) -> int:
         return max(1, min(int(getattr(self.settings, "live_relay_upload_workers", 4)), 4))
 
-    def _record_upload_stat(self, camera_id: int, field: str) -> None:
+    def _record_upload_stat(self, camera_id: int, field: str, *, scene: bool = False) -> None:
         with self._upload_stats_lock:
-            stats = self._camera_upload_stats.setdefault(int(camera_id), {
+            store = self._scene_upload_stats if scene else self._camera_upload_stats
+            stats = store.setdefault(int(camera_id), {
                 "submitted": 0,
                 "completed": 0,
                 "failed": 0,
@@ -259,21 +290,33 @@ class LiveRelayAgent:
             })
             stats[field] = int(stats.get(field, 0)) + 1
 
-    def _record_upload_sample(self, camera_id: int, latency_ms: float, *, accepted: bool) -> None:
+    def _record_upload_sample(
+        self,
+        camera_id: int,
+        latency_ms: float,
+        *,
+        accepted: bool,
+        scene: bool = False,
+    ) -> None:
         now = time.monotonic()
         with self._upload_stats_lock:
-            samples = self._camera_upload_samples.setdefault(int(camera_id), deque())
+            store = self._scene_upload_samples if scene else self._camera_upload_samples
+            samples = store.setdefault(int(camera_id), deque())
             samples.append((now, max(0.0, float(latency_ms)), bool(accepted)))
             cutoff = now - 60.0
             while samples and samples[0][0] < cutoff:
                 samples.popleft()
 
-    def _upload_stats_snapshot(self) -> Dict[str, Dict[str, Any]]:
+    def _upload_stats_snapshot(self, *, scene: bool = False) -> Dict[str, Dict[str, Any]]:
         now = time.monotonic()
         with self._upload_stats_lock:
             snapshot: Dict[str, Dict[str, Any]] = {}
-            for camera_id, stats in sorted(self._camera_upload_stats.items()):
-                samples = self._camera_upload_samples.get(camera_id, ())
+            stats_store = self._scene_upload_stats if scene else self._camera_upload_stats
+            sample_store = self._scene_upload_samples if scene else self._camera_upload_samples
+            camera_ids = sorted(set(stats_store) | set(sample_store))
+            for camera_id in camera_ids:
+                stats = stats_store.get(camera_id, {})
+                samples = sample_store.get(camera_id, ())
                 recent = [sample for sample in samples if sample[0] >= now - 10.0]
                 latencies = sorted(sample[1] for sample in recent)
                 accepted = sum(1 for sample in recent if sample[2])
@@ -295,46 +338,45 @@ class LiveRelayAgent:
         index = min(len(values) - 1, max(0, int((len(values) - 1) * percentile)))
         return values[index]
 
-    def _collect_upload_results(self, camera_id: int, pending: set[Future[Any]]) -> None:
+    def _collect_upload_results(
+        self,
+        camera_id: int,
+        pending: set[Future[Any]],
+        *,
+        scene: bool = False,
+    ) -> None:
         completed = {future for future in pending if future.done()}
         for future in completed:
             pending.discard(future)
             try:
                 future.result()
-                self._record_upload_stat(camera_id, "completed")
+                self._record_upload_stat(camera_id, "completed", scene=scene)
             except Exception as exc:
-                self._record_upload_stat(camera_id, "failed")
-                self.last_error = f"camera {camera_id}: {exc}"
+                self._record_upload_stat(camera_id, "failed", scene=scene)
+                if scene:
+                    self.last_scene_error = f"camera {camera_id}: {exc}"
+                else:
+                    self.last_error = f"camera {camera_id}: {exc}"
 
-    def _relay_safe_scene_if_due(self, local_camera_id: int, source_frame: bytes, *, quality: int) -> None:
-        if self.privacy_renderer is None:
-            return
-        interval = max(
-            0.5,
-            float(getattr(self.settings, "live_scene_relay_interval_seconds", 1.0)),
-        )
-        now = time.monotonic()
-        if now - self._last_scene_relay_monotonic.get(int(local_camera_id), 0.0) < interval:
-            return
-        self._last_scene_relay_monotonic[int(local_camera_id)] = now
-        try:
-            scene = self.privacy_renderer.safe_scene_jpeg(
-                int(local_camera_id),
-                source_frame,
-                quality=quality,
-            )
-            self._post_safe_scene(int(local_camera_id), scene)
-        except Exception as exc:
-            self.last_scene_error = f"camera {local_camera_id}: {exc}"
-            self._close_scene_connection(local_camera_id)
-
-    def _post_safe_scene(self, local_camera_id: int, frame: bytes) -> None:
+    def _post_safe_scene(
+        self,
+        local_camera_id: int,
+        frame: bytes,
+        *,
+        captured_at: str | None = None,
+        stream_epoch_ms: int | None = None,
+        sequence: int | None = None,
+    ) -> None:
         remote_camera_id = self.remote_camera_id_resolver(local_camera_id) or local_camera_id
         params = {
             "camera_id": str(remote_camera_id),
             "local_camera_id": str(local_camera_id),
-            "captured_at": self._utc_iso(),
+            "captured_at": captured_at or self._utc_iso(),
         }
+        if stream_epoch_ms is not None:
+            params["stream_epoch_ms"] = str(max(0, int(stream_epoch_ms)))
+        if sequence is not None:
+            params["sequence"] = str(max(0, int(sequence)))
         url = f"{self._base_url()}/api/v1/device/live-scenes/upload?{urlencode(params)}"
         headers = {
             "Authorization": f"Bearer {self._device_token()}",
@@ -343,12 +385,20 @@ class LiveRelayAgent:
             "Accept": "application/json",
         }
         timeout = max(1.0, float(getattr(self.settings, "live_relay_request_timeout_seconds", 2.0)))
+        started = time.monotonic()
         raw = self._post_scene_keepalive(local_camera_id, url, frame, headers, timeout)
         self.last_scene_relay_at = self._utc_iso()
         try:
             payload = json.loads(raw) if raw else {}
         except json.JSONDecodeError:
             payload = {}
+        accepted = payload.get("accepted") is not False and payload.get("stale_ignored") is not True
+        self._record_upload_sample(
+            local_camera_id,
+            (time.monotonic() - started) * 1000.0,
+            accepted=accepted,
+            scene=True,
+        )
         self.last_scene_result = {
             "camera_id": int(local_camera_id),
             "remote_camera_id": str(remote_camera_id),
@@ -469,7 +519,7 @@ class LiveRelayAgent:
         try:
             return self._post_scene_with_connection(local_camera_id, url, frame, headers, timeout)
         except Exception:
-            self._close_scene_connection(local_camera_id)
+            self._close_current_scene_connection(local_camera_id)
             return self._post_scene_with_connection(local_camera_id, url, frame, headers, timeout)
 
     def _post_scene_with_connection(
@@ -481,11 +531,14 @@ class LiveRelayAgent:
         timeout: float,
     ) -> str:
         parts = urlsplit(url)
-        connection = self._scene_http_connections.get(local_camera_id)
+        connection_key = (int(local_camera_id), get_ident())
+        with self._http_connections_lock:
+            connection = self._scene_http_connections.get(connection_key)
         if connection is None:
             connection_class = HTTPSConnection if parts.scheme == "https" else HTTPConnection
             connection = connection_class(parts.hostname, parts.port, timeout=timeout)
-            self._scene_http_connections[local_camera_id] = connection
+            with self._http_connections_lock:
+                self._scene_http_connections[connection_key] = connection
         path = f"{parts.path}?{parts.query}" if parts.query else (parts.path or "/")
         connection.request("POST", path, body=frame, headers={**headers, "Connection": "keep-alive"})
         response = connection.getresponse()
@@ -522,11 +575,28 @@ class LiveRelayAgent:
             camera_ids = {key[0] for key in self._http_connections}
         for camera_id in camera_ids:
             self._close_connection(camera_id)
-        for camera_id in list(self._scene_http_connections.keys()):
+        with self._http_connections_lock:
+            scene_camera_ids = {key[0] for key in self._scene_http_connections}
+        for camera_id in scene_camera_ids:
             self._close_scene_connection(camera_id)
 
     def _close_scene_connection(self, local_camera_id: int) -> None:
-        connection = self._scene_http_connections.pop(local_camera_id, None)
+        with self._http_connections_lock:
+            connections = [
+                self._scene_http_connections.pop(key)
+                for key in list(self._scene_http_connections)
+                if key[0] == int(local_camera_id)
+            ]
+        for connection in connections:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+    def _close_current_scene_connection(self, local_camera_id: int) -> None:
+        connection_key = (int(local_camera_id), get_ident())
+        with self._http_connections_lock:
+            connection = self._scene_http_connections.pop(connection_key, None)
         if connection is not None:
             try:
                 connection.close()

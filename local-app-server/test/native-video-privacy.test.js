@@ -169,7 +169,7 @@ test('video privacy is one family state shared by app playback and the edge devi
 
     const jpeg = Buffer.from([0xff, 0xd8, 0x12, 0x34, 0xff, 0xd9]);
     const sceneUpload = await fetch(
-      `${baseURL}/api/v1/device/live-scenes/upload?camera_id=${camera.body.id}&local_camera_id=24`,
+      `${baseURL}/api/v1/device/live-scenes/upload?camera_id=${camera.body.id}&local_camera_id=24&stream_epoch_ms=2000&sequence=2`,
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${deviceToken}`, 'Content-Type': 'image/jpeg' },
@@ -177,6 +177,24 @@ test('video privacy is one family state shared by app playback and the edge devi
       },
     );
     assert.equal(sceneUpload.status, 200);
+    const sceneUploadBody = await sceneUpload.json();
+    assert.equal(sceneUploadBody.accepted, true);
+    assert.equal(sceneUploadBody.source_sequence, 2);
+
+    const staleScene = Buffer.from([0xff, 0xd8, 0x56, 0x78, 0xff, 0xd9]);
+    const staleSceneUpload = await fetch(
+      `${baseURL}/api/v1/device/live-scenes/upload?camera_id=${camera.body.id}&local_camera_id=24&stream_epoch_ms=2000&sequence=1`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${deviceToken}`, 'Content-Type': 'image/jpeg' },
+        body: staleScene,
+      },
+    );
+    assert.equal(staleSceneUpload.status, 200);
+    const staleSceneUploadBody = await staleSceneUpload.json();
+    assert.equal(staleSceneUploadBody.accepted, false);
+    assert.equal(staleSceneUploadBody.stale_ignored, true);
+    assert.equal(staleSceneUploadBody.source_sequence, 2);
 
     const playbackQuery = `playback_ticket=${encodeURIComponent(playback.body.ticket)}&privacy_mode=skeleton`;
     const poseStream = await fetch(`${baseURL}${playback.body.pose_stream_path}?${playbackQuery}`);
@@ -194,6 +212,7 @@ test('video privacy is one family state shared by app playback and the edge devi
     const sceneChunk = await sceneReader.read();
     const sceneBytes = Buffer.from(sceneChunk.value);
     assert.ok(sceneBytes.includes(jpeg));
+    assert.equal(sceneBytes.includes(staleScene), false);
     await sceneReader.cancel();
 
     const upload = await fetch(
@@ -254,6 +273,10 @@ test('video privacy is one family state shared by app playback and the edge devi
     assert.ok(streamMetric.accepted_fps_10s > 0);
     assert.equal(streamMetric.stale_rejections, 1);
     assert.ok(streamMetric.transport_latency_ms_max >= streamMetric.transport_latency_ms_p95);
+    const sceneMetric = health.body.stream_metrics.scene_cameras[String(camera.body.id)];
+    assert.ok(sceneMetric.accepted_fps_10s > 0);
+    assert.equal(sceneMetric.stale_rejections, 1);
+    assert.ok(sceneMetric.transport_latency_ms_max >= sceneMetric.transport_latency_ms_p95);
     assert.deepEqual(health.body.stream_metrics.active_clients, { video: 0, pose: 0, scene: 0 });
 
     const boxUpdated = await request(baseURL, '/api/v1/device/video-privacy', {

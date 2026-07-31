@@ -723,6 +723,7 @@ function createLocalAppServer(options = {}) {
     const liveSceneSequence = new Map();
     const activityInsightNextEvaluationAt = new Map();
     const liveStreamMetrics = new Map();
+    const liveSceneStreamMetrics = new Map();
     const activeStreamClients = { video: 0, pose: 0, scene: 0 };
     const eventLoopDelaySamples = [];
     let expectedEventLoopTick = Date.now() + 100;
@@ -757,21 +758,21 @@ function createLocalAppServer(options = {}) {
         while (metric.transport_latency.length && metric.transport_latency[0].at < cutoff) metric.transport_latency.shift();
     }
 
-    function cameraStreamMetric(cameraId) {
+    function cameraStreamMetric(store, cameraId) {
         const key = String(cameraId);
-        if (!liveStreamMetrics.has(key)) {
-            liveStreamMetrics.set(key, {
+        if (!store.has(key)) {
+            store.set(key, {
                 accepted_at_ms: [],
                 transport_latency: [],
                 stale_rejections: 0,
                 last_received_at: "",
             });
         }
-        return liveStreamMetrics.get(key);
+        return store.get(key);
     }
 
-    function recordLiveFrameMetric(cameraId, { accepted, capturedAt, receivedAtMs }) {
-        const metric = cameraStreamMetric(cameraId);
+    function recordStreamMetric(store, cameraId, { accepted, capturedAt, receivedAtMs }) {
+        const metric = cameraStreamMetric(store, cameraId);
         pruneStreamMetric(metric, receivedAtMs);
         if (!accepted) {
             metric.stale_rejections += 1;
@@ -785,10 +786,9 @@ function createLocalAppServer(options = {}) {
         }
     }
 
-    function streamMetricsSnapshot() {
-        const now = Date.now();
+    function streamCameraMetricsSnapshot(store, now) {
         const cameras = {};
-        for (const [cameraId, metric] of liveStreamMetrics.entries()) {
+        for (const [cameraId, metric] of store.entries()) {
             pruneStreamMetric(metric, now);
             const recent = metric.accepted_at_ms.filter((timestamp) => timestamp >= now - 10000);
             const gaps = recent.slice(1).map((timestamp, index) => timestamp - recent[index]);
@@ -805,9 +805,23 @@ function createLocalAppServer(options = {}) {
                 last_received_at: metric.last_received_at,
             };
         }
+        return cameras;
+    }
+
+    function recordLiveFrameMetric(cameraId, sample) {
+        recordStreamMetric(liveStreamMetrics, cameraId, sample);
+    }
+
+    function recordLiveSceneMetric(cameraId, sample) {
+        recordStreamMetric(liveSceneStreamMetrics, cameraId, sample);
+    }
+
+    function streamMetricsSnapshot() {
+        const now = Date.now();
         const loopDelays = eventLoopDelaySamples.map((sample) => sample.delay_ms);
         return {
-            cameras,
+            cameras: streamCameraMetricsSnapshot(liveStreamMetrics, now),
+            scene_cameras: streamCameraMetricsSnapshot(liveSceneStreamMetrics, now),
             active_clients: { ...activeStreamClients },
             event_loop_delay_ms_p95: Number(percentile(loopDelays, 0.95).toFixed(2)),
             event_loop_delay_ms_max: Number((loopDelays.length ? Math.max(...loopDelays) : 0).toFixed(2)),
@@ -7065,9 +7079,35 @@ function createLocalAppServer(options = {}) {
             return;
         }
         const cameraKey = String(relayCamera.cameraId);
+        const streamEpochMs = Math.max(0, Math.trunc(normalizeNumber(url.searchParams.get("stream_epoch_ms"), 0)));
+        const sourceSequence = Math.max(0, Math.trunc(normalizeNumber(url.searchParams.get("sequence"), 0)));
+        const current = liveSceneCache.get(cameraKey);
+        const orderedUpload = streamEpochMs > 0 && sourceSequence > 0;
+        const staleUpload = orderedUpload && current?.stream_epoch_ms > 0 && (
+            streamEpochMs < current.stream_epoch_ms
+            || (streamEpochMs === current.stream_epoch_ms && sourceSequence <= current.source_sequence)
+        );
+        const receivedAt = nowIso();
+        if (staleUpload) {
+            recordLiveSceneMetric(relayCamera.cameraId, {
+                accepted: false,
+                capturedAt: url.searchParams.get("captured_at"),
+                receivedAtMs: Date.now(),
+            });
+            write(res, 200, {
+                ok: true,
+                accepted: false,
+                stale_ignored: true,
+                camera_id: relayCamera.cameraId,
+                scene_frame_id: current.frame_id,
+                received_at: receivedAt,
+                stream_epoch_ms: current.stream_epoch_ms,
+                source_sequence: current.source_sequence,
+            });
+            return;
+        }
         const sequence = Number(liveSceneSequence.get(cameraKey) || 0) + 1;
         liveSceneSequence.set(cameraKey, sequence);
-        const receivedAt = nowIso();
         const frameId = `${relayCamera.cameraId}-${Date.now()}-${sequence}`;
         liveSceneCache.set(cameraKey, {
             frame_id: frameId,
@@ -7080,8 +7120,24 @@ function createLocalAppServer(options = {}) {
             received_at: receivedAt,
             received_at_ms: Date.now(),
             privacy_mode: "skeleton",
+            stream_epoch_ms: streamEpochMs,
+            source_sequence: sourceSequence,
         });
-        write(res, 200, { ok: true, camera_id: relayCamera.cameraId, scene_frame_id: frameId, received_at: receivedAt });
+        recordLiveSceneMetric(relayCamera.cameraId, {
+            accepted: true,
+            capturedAt: url.searchParams.get("captured_at") || receivedAt,
+            receivedAtMs: Date.now(),
+        });
+        write(res, 200, {
+            ok: true,
+            accepted: true,
+            stale_ignored: false,
+            camera_id: relayCamera.cameraId,
+            scene_frame_id: frameId,
+            received_at: receivedAt,
+            stream_epoch_ms: streamEpochMs,
+            source_sequence: sourceSequence,
+        });
     }
 
     function latestLiveScene(cameraId) {
@@ -7092,6 +7148,9 @@ function createLocalAppServer(options = {}) {
 
     function writeSafeSceneMjpegStream(req, res, cameraId) {
         const boundary = `gohome-scene-${crypto.randomBytes(4).toString("hex")}`;
+        const profile = new URL(req.url, "http://local").searchParams.get("profile") || "mobile";
+        const relayFps = streamProfileConfig(profile).fps;
+        const relayIntervalMs = Math.ceil(1000 / Math.max(1, relayFps));
         let closed = false;
         activeStreamClients.scene += 1;
         if (typeof req.setTimeout === "function") req.setTimeout(0);
@@ -7123,7 +7182,7 @@ function createLocalAppServer(options = {}) {
             },
         });
         writer.writeLatest({ force: true });
-        const timer = setInterval(writer.writeLatest, 250);
+        const timer = setInterval(writer.writeLatest, relayIntervalMs);
         function closeStream() {
             if (closed) return;
             closed = true;

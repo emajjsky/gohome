@@ -63,14 +63,18 @@ def main() -> int:
 
     cfg_path = Path(sys.prefix) / "pyvenv.cfg"
     cfg_text = cfg_path.read_text(encoding="utf-8", errors="replace") if cfg_path.exists() else ""
-    configured_venv = os.environ.get("GOHOME_PI_VENV_DIR") or env.get("GOHOME_PI_VENV_DIR") or str(root / ".venv")
-    expected_prefix = Path(configured_venv).expanduser().resolve()
     active_prefix = Path(sys.prefix).resolve()
+    configured_venv = os.environ.get("GOHOME_PI_VENV_DIR") or env.get("GOHOME_PI_VENV_DIR")
+    expected_prefixes = (
+        {Path(configured_venv).expanduser().resolve()}
+        if configured_venv
+        else {(root / ".venv").resolve(), (root / ".venv-pi").resolve()}
+    )
     runtime_paths = configured_runtime_paths(cfg_text)
     missing_runtime_paths = [str(path) for path in runtime_paths if not path.exists()]
     environment_ok = bool(
         cfg_path.is_file()
-        and active_prefix == expected_prefix
+        and active_prefix in expected_prefixes
         and runtime_paths
         and not missing_runtime_paths
     )
@@ -83,7 +87,7 @@ def main() -> int:
             if environment_ok
             else json.dumps({
                 "active_prefix": str(active_prefix),
-                "expected_prefix": str(expected_prefix),
+                "expected_prefixes": sorted(str(path) for path in expected_prefixes),
                 "config": str(cfg_path),
                 "configured_runtime_paths": [str(path) for path in runtime_paths],
                 "missing_runtime_paths": missing_runtime_paths,

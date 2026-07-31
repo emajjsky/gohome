@@ -15,7 +15,7 @@ from .synchronized_pose_stream import DEFAULT_SKELETON_EDGES
 class PrivacyFrameRenderer:
     """Render privacy-safe relay frames without changing safety inference inputs."""
 
-    version = "privacy-frame-renderer-v6"
+    version = "privacy-frame-renderer-v7"
 
     def __init__(
         self,
@@ -117,7 +117,7 @@ class PrivacyFrameRenderer:
         return rendered.tobytes()
 
     def safe_scene_jpeg(self, camera_id: int, jpeg: bytes, *, quality: int = 55) -> bytes:
-        """Return only a retained person-free scene for client-side pose rendering."""
+        """Return the current scene with only detected people replaced."""
         cv2 = _load_cv2()
         encoded = np.frombuffer(jpeg, dtype=np.uint8)
         frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
@@ -156,14 +156,15 @@ class PrivacyFrameRenderer:
     ) -> Any:
         height, width = frame.shape[:2]
         boxes = self._privacy_boxes(metadata, width, height)
-        if boxes:
-            return self._safe_fallback_scene(cv2, camera_id, frame)
+        mask = np.zeros((height, width), dtype=np.uint8)
+        for x1, y1, x2, y2 in boxes:
+            cv2.rectangle(mask, (x1, y1), (x2 - 1, y2 - 1), 255, -1)
         tracking = dict(metadata.get("tracking") or {})
         scene = self.background_reconstructor.reconstruct(
             cv2,
             camera_id,
             frame,
-            np.zeros((height, width), dtype=np.uint8),
+            mask,
             clear_token=str(tracking.get("frame_id") or ""),
         )
         self._store_safe_scene(camera_id, scene)

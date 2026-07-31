@@ -63,7 +63,6 @@ class Settings:
         self.pose_relay_enabled = os.getenv("GOHOME_POSE_RELAY_ENABLED", "1") == "1"
         self.pose_relay_fps = float(os.getenv("GOHOME_POSE_RELAY_FPS", "30"))
         self.pose_relay_request_timeout_seconds = float(os.getenv("GOHOME_POSE_RELAY_REQUEST_TIMEOUT_SECONDS", "2"))
-        self.live_scene_relay_interval_seconds = float(os.getenv("GOHOME_LIVE_SCENE_RELAY_INTERVAL_SECONDS", "1"))
         self.history_retention_hours = int(os.getenv("GOHOME_HISTORY_RETENTION_HOURS", "6"))
         self.history_cleanup_interval_seconds = float(os.getenv("GOHOME_HISTORY_CLEANUP_INTERVAL_SECONDS", "3600"))
         self.history_cleanup_batch_size = int(os.getenv("GOHOME_HISTORY_CLEANUP_BATCH_SIZE", "5000"))

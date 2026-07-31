@@ -169,6 +169,23 @@ def main() -> int:
     assert float(np.abs(safe_scene.astype(float) - clean_reference.astype(float)).mean()) < 24.0
     assert float(np.abs(safe_scene[person_slice].astype(float) - occupied_region.astype(float)).mean()) > 35.0
 
+    changed_scene = occupied.copy()
+    cv2.rectangle(changed_scene, (10, 55), (70, 120), (30, 220, 40), -1)
+    ok, changed_jpeg = cv2.imencode(".jpg", changed_scene, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+    assert ok
+    changed_safe_scene = decode(
+        cv2,
+        reconstructed_renderer.safe_scene_jpeg(1, changed_jpeg.tobytes(), quality=85),
+    )
+    changed_reference = decode(cv2, changed_jpeg.tobytes())
+    changed_region = np.s_[58:118, 12:68]
+    assert float(
+        np.abs(changed_safe_scene[changed_region].astype(float) - changed_reference[changed_region]).mean()
+    ) < 18.0
+    assert float(
+        np.abs(changed_safe_scene[person_slice].astype(float) - changed_reference[person_slice]).mean()
+    ) > 35.0
+
     deduplicated_renderer = PrivacyFrameRenderer(EmptyTrackerStub())
     zero_mask = np.zeros(clean.shape[:2], dtype=np.uint8)
     for _ in range(5):
