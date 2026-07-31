@@ -272,7 +272,12 @@ class HailoObjectBackend:
                 pass
 
     def _class_thresholds(self, config: Dict[str, Any]) -> Dict[int, float]:
-        thresholds = {0: max(0.20, float(config.get("yolo_confidence") or self.confidence))}
+        thresholds = {
+            0: max(
+                0.30,
+                float(config.get("hailo_object_person_confidence") or self.confidence),
+            )
+        }
         if config.get("pet_detection_enabled", True):
             pet_threshold = min(
                 float(config.get("pet_yolo_confidence") or 0.40),

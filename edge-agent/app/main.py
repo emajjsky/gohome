@@ -1619,6 +1619,7 @@ def health() -> Dict[str, Any]:
                 )
             },
             "pipeline_latency_ms": vision_status.get("pipeline_latency_ms") or {},
+            "human_evidence": vision_status.get("human_evidence") or {},
         },
         "persistence": worker_status.get("persistence") or {},
         "camera_streams": worker_status.get("camera_streams") or {},

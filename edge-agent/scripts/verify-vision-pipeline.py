@@ -75,6 +75,7 @@ def main() -> None:
     pose_fall_quality = verify_pose_fall_quality_gate()
     pose_candidate_partition = verify_pose_candidate_partition()
     pose_human_consistency = verify_pose_human_consistency_gate()
+    pose_evidence_provenance = verify_pipeline_requires_independent_person_evidence()
     pose_external_boxes = verify_pose_reuses_external_person_boxes()
     pose_detector_fallback = verify_pose_uses_detector_fallback_without_external_boxes()
     pose_empty_fallback = verify_pose_skips_estimator_when_fallback_detector_is_empty()
@@ -130,8 +131,17 @@ def main() -> None:
         "pose_furniture_hallucination_count": pose_human_consistency["furniture_count"],
         "pose_furniture_rejected_count": pose_human_consistency["furniture_rejected"],
         "pose_real_lying_retained_count": pose_human_consistency["real_lying_retained"],
-        "pose_occluded_seated_retained_count": pose_human_consistency["occluded_seated_retained"],
+        "pose_unconfirmed_seated_rejected_count": pose_human_consistency["unconfirmed_seated_rejected"],
         "pose_unmatched_low_confidence_rejected_count": pose_human_consistency["unmatched_low_confidence_rejected"],
+        "pose_static_high_confidence_rejected_count": pose_human_consistency["static_high_confidence_rejected"],
+        "pose_moving_retained_count": pose_human_consistency["moving_retained"],
+        "pose_frame_edge_rejected_count": pose_human_consistency["frame_edge_rejected"],
+        "pipeline_pose_only_person_count": pose_evidence_provenance["pose_only_person_count"],
+        "pipeline_pose_only_pose_count": pose_evidence_provenance["pose_only_pose_count"],
+        "pipeline_pose_only_fall_candidate": pose_evidence_provenance["pose_only_fall_candidate"],
+        "pipeline_pose_only_meal_candidate": pose_evidence_provenance["pose_only_meal_candidate"],
+        "pipeline_independent_person_count": pose_evidence_provenance["independent_person_count"],
+        "pipeline_independent_pose_count": pose_evidence_provenance["independent_pose_count"],
         "pose_external_box_count": pose_external_boxes["box_count"],
         "pose_external_detection_source": pose_external_boxes["detection_source"],
         "pose_external_fallback_calls": pose_external_boxes["fallback_calls"],
@@ -303,8 +313,21 @@ def main() -> None:
         raise SystemExit("top-level analysis did not expose the reused person box count")
     if checks["pose_real_lying_retained_count"] != 1:
         raise SystemExit("a genuine lying person matched by YOLO must remain visible")
-    if checks["pose_occluded_seated_retained_count"] != 1:
-        raise SystemExit("a coherent high-confidence occluded seated pose must remain visible")
+    if checks["pose_unconfirmed_seated_rejected_count"] != 1:
+        raise SystemExit("an unconfirmed static seated pose must not establish person presence")
+    if checks["pose_static_high_confidence_rejected_count"] != 1 or checks["pose_moving_retained_count"] != 1:
+        raise SystemExit("static pose evidence must wait for motion while a moving pose can establish a track")
+    if checks["pose_frame_edge_rejected_count"] != 1:
+        raise SystemExit("an unconfirmed static frame-edge pose must be rejected")
+    if any([
+        checks["pipeline_pose_only_person_count"],
+        checks["pipeline_pose_only_pose_count"],
+        checks["pipeline_pose_only_fall_candidate"],
+        checks["pipeline_pose_only_meal_candidate"],
+    ]):
+        raise SystemExit("pose-only furniture evidence leaked into person, fall, or activity state")
+    if checks["pipeline_independent_person_count"] != 1 or checks["pipeline_independent_pose_count"] != 1:
+        raise SystemExit("independent object-person evidence should preserve a matching pose")
     if checks["pose_transient_retry_count"] != 2 or not checks["pose_transient_retry_used"]:
         raise SystemExit("RTMPose transient NoneType failure should retry exactly once")
     if checks["pose_front_seated_posture"] != "sitting":
@@ -430,7 +453,7 @@ def verify_scene_context_rejects_human_shaped_furniture() -> int:
         {"bbox": [60.0, 180.0, 590.0, 355.0], "label": "couch", "confidence": 0.68},
     ]
     people = [{"bbox": [320.0, 195.0, 535.0, 350.0]}]
-    return len(pipeline._scene_objects_without_human_overlap(scene_objects, people, []))
+    return len(pipeline._scene_objects_without_human_overlap(scene_objects, people))
 
 
 def verify_display_content_suppression() -> dict:
@@ -508,6 +531,8 @@ def verify_pet_detection_isolated_from_people_and_fall(frame: np.ndarray) -> dic
         black_contrast_threshold=4,
         motion_threshold=0.015,
         detector_backend="yolo",
+        inference_backend="off",
+        hailo_object_mode="off",
     )
     pet = pipeline.person.pet_box(
         120.0,
@@ -919,20 +944,30 @@ def verify_pose_human_consistency_gate() -> dict:
         posture="lying",
         body_aspect=3.375,
     )
-    kept, rejected = pipeline._filter_pose_human_consistency([sofa_pose], [], furniture, {})
+    kept, rejected = pipeline._filter_pose_human_consistency(
+        [sofa_pose], [], furniture, {"camera_id": 901, "frame_width": 640, "frame_height": 360}
+    )
     real_lying, _ = pipeline._filter_pose_human_consistency(
         [sofa_pose],
         [{"bbox": [115.0, 140.0, 540.0, 286.0], "confidence": 0.81}],
         furniture,
-        {},
+        {
+            "camera_id": 902,
+            "frame_width": 640,
+            "frame_height": 360,
+            "frame_motion_score": 0.02,
+        },
     )
     seated_pose = synthetic_pose_candidate(
         bbox=[320.0, 105.0, 465.0, 338.0],
         confidence=0.61,
         posture="sitting",
         body_aspect=0.62,
+        detector_confidence=0.61,
     )
-    occluded_seated, _ = pipeline._filter_pose_human_consistency([seated_pose], [], furniture, {})
+    _, unconfirmed_seated = pipeline._filter_pose_human_consistency(
+        [seated_pose], [], furniture, {"camera_id": 903, "frame_width": 640, "frame_height": 360}
+    )
     low_confidence_pose = synthetic_pose_candidate(
         bbox=[258.0, 180.0, 475.0, 320.0],
         confidence=0.38,
@@ -943,14 +978,132 @@ def verify_pose_human_consistency_gate() -> dict:
         [low_confidence_pose],
         [],
         furniture,
-        {},
+        {"camera_id": 904, "frame_width": 640, "frame_height": 360},
+    )
+    high_confidence_pose = synthetic_pose_candidate(
+        bbox=[250.0, 72.0, 392.0, 340.0],
+        confidence=0.82,
+        posture="standing",
+        body_aspect=0.53,
+        detector_confidence=0.82,
+    )
+    _, static_high_confidence = pipeline._filter_pose_human_consistency(
+        [high_confidence_pose],
+        [],
+        [],
+        {"camera_id": 905, "frame_width": 640, "frame_height": 360},
+    )
+    moving_pose = synthetic_pose_candidate(
+        bbox=[250.0, 72.0, 392.0, 340.0],
+        confidence=0.82,
+        posture="standing",
+        body_aspect=0.53,
+        detector_confidence=0.82,
+    )
+    pipeline._filter_pose_human_consistency(
+        [moving_pose],
+        [],
+        [],
+        {"camera_id": 906, "frame_motion_score": 0.02, "frame_width": 640, "frame_height": 360},
+    )
+    shifted_moving_pose = {**moving_pose, "bbox": [270.0, 72.0, 412.0, 340.0]}
+    moving, _ = pipeline._filter_pose_human_consistency(
+        [shifted_moving_pose],
+        [],
+        [],
+        {"camera_id": 906, "frame_motion_score": 0.02, "frame_width": 640, "frame_height": 360},
+    )
+    edge_pose = synthetic_pose_candidate(
+        bbox=[0.0, 60.0, 150.0, 340.0],
+        confidence=0.90,
+        posture="standing",
+        body_aspect=0.54,
+        detector_confidence=0.90,
+    )
+    _, frame_edge_rejected = pipeline._filter_pose_human_consistency(
+        [edge_pose],
+        [],
+        [],
+        {"camera_id": 907, "frame_width": 640, "frame_height": 360},
     )
     return {
         "furniture_count": len(kept),
         "furniture_rejected": len(rejected),
         "real_lying_retained": len(real_lying),
-        "occluded_seated_retained": len(occluded_seated),
+        "unconfirmed_seated_rejected": len(unconfirmed_seated),
         "unmatched_low_confidence_rejected": len(low_confidence_rejected),
+        "static_high_confidence_rejected": len(static_high_confidence),
+        "moving_retained": len(moving),
+        "frame_edge_rejected": len(frame_edge_rejected),
+    }
+
+
+def verify_pipeline_requires_independent_person_evidence() -> dict:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+        pose_enabled=True,
+    )
+    keypoints = np.asarray([[
+        [150.0, 210.0], [145.0, 205.0], [155.0, 205.0], [140.0, 210.0], [160.0, 210.0],
+        [220.0, 200.0], [220.0, 240.0], [280.0, 195.0], [280.0, 245.0], [340.0, 190.0],
+        [340.0, 250.0], [360.0, 205.0], [360.0, 235.0], [430.0, 205.0], [430.0, 235.0],
+        [500.0, 205.0], [500.0, 235.0],
+    ]], dtype=np.float32)
+    accelerated = {
+        "boxes": np.asarray([[100.0, 150.0, 540.0, 290.0]], dtype=np.float32),
+        "keypoints": keypoints,
+        "keypoint_scores": np.full((1, 17), 0.90, dtype=np.float32),
+        "scores": np.asarray([0.58], dtype=np.float32),
+        "latency_ms": 12.0,
+        "model_name": "synthetic-pose.hef",
+    }
+    pipeline.hailo_pose.analyze = lambda frame, config: accelerated  # type: ignore[method-assign]
+
+    def object_result(frame, config):
+        detections = []
+        if int(config.get("camera_id") or 0) == 202:
+            detections.append({
+                "class_id": 0,
+                "confidence": 0.86,
+                "bbox": [105.0, 145.0, 545.0, 300.0],
+            })
+        return {
+            "detections": detections,
+            "backend": "hailo",
+            "model_name": "synthetic-object.hef",
+            "latency_ms": 11.0,
+            "cached": False,
+            "age_seconds": 0.0,
+        }
+
+    pipeline.hailo_object.analyze = object_result  # type: ignore[method-assign]
+    frame = np.full((360, 640, 3), 96, dtype=np.uint8)
+    base_config = {
+        "pose_detection_enabled": True,
+        "pose_cache_seconds": 0.0,
+        "activity_window_seconds": 5.0,
+    }
+    pose_only = pipeline.analyze(
+        frame,
+        previous_frame=frame.copy(),
+        config={**base_config, "camera_id": 201},
+    )
+    independent = pipeline.analyze(
+        frame,
+        previous_frame=np.zeros_like(frame),
+        config={**base_config, "camera_id": 202},
+    )
+    pipeline.close()
+    return {
+        "pose_only_person_count": int(pose_only.get("person_count") or 0),
+        "pose_only_pose_count": int(pose_only.get("pose_count") or 0),
+        "pose_only_fall_candidate": bool(pose_only.get("fall_candidate")),
+        "pose_only_meal_candidate": bool(pose_only.get("meal_candidate")),
+        "independent_person_count": int(independent.get("person_count") or 0),
+        "independent_pose_count": int(independent.get("pose_count") or 0),
     }
 
 
@@ -960,6 +1113,7 @@ def synthetic_pose_candidate(
     confidence: float,
     posture: str,
     body_aspect: float,
+    detector_confidence: float | None = None,
 ) -> dict:
     names = [
         "nose",
@@ -974,7 +1128,7 @@ def synthetic_pose_candidate(
         "left_ankle",
         "right_ankle",
     ]
-    return {
+    result = {
         "bbox": bbox,
         "confidence": confidence,
         "posture": posture,
@@ -986,6 +1140,9 @@ def synthetic_pose_candidate(
             for name in names
         ],
     }
+    if detector_confidence is not None:
+        result["detector_confidence"] = detector_confidence
+    return result
 
 
 def verify_pose_transient_retry() -> dict:

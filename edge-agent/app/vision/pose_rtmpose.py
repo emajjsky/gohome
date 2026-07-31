@@ -174,6 +174,7 @@ class RtmposeAnalyzer:
         keypoints: Any,
         scores: Any,
         source_person_boxes: list[list[float]],
+        source_person_scores: list[float] | None = None,
         model_name: str,
         model_message: str,
         backend: str,
@@ -186,6 +187,7 @@ class RtmposeAnalyzer:
             scores,
             frame,
             source_person_boxes=source_person_boxes,
+            source_person_scores=source_person_scores,
             pose_source=backend,
         )
         return self._result_from_raw_poses(
@@ -454,6 +456,7 @@ class RtmposeAnalyzer:
         frame: Any,
         *,
         source_person_boxes: list[list[float]] | None = None,
+        source_person_scores: list[float] | None = None,
         pose_source: str = "rtmpose",
     ) -> list[Dict[str, Any]]:
         import math
@@ -518,6 +521,11 @@ class RtmposeAnalyzer:
                 pose_payload["source_person_bbox"] = [
                     round(float(value), 1) for value in source_person_boxes[pose_index]
                 ]
+            if source_person_scores and pose_index < len(source_person_scores):
+                pose_payload["detector_confidence"] = round(
+                    float(source_person_scores[pose_index]),
+                    4,
+                )
             poses.append(pose_payload)
         poses.sort(key=lambda pose: float(pose.get("confidence") or 0.0), reverse=True)
         return poses

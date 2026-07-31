@@ -10,6 +10,7 @@ from .fall import FallAnalyzer
 from .fire import FireAnalyzer
 from .hailo_object import HailoObjectBackend
 from .hailo_pose import HailoPoseBackend
+from .human_evidence import HumanEvidenceGate
 from .person_yolo import PET_CLASS_LABELS, SCENE_CLASS_LABELS, PersonDetector
 from .pose_rtmpose import RtmposeAnalyzer
 from .quality import QualityAnalyzer
@@ -72,6 +73,7 @@ class VisionPipeline:
             "activity_window_seconds": activity_window_seconds,
             "activity_max_samples": activity_max_samples,
             "hailo_pose_confidence": hailo_pose_confidence,
+            "hailo_object_person_confidence": max(0.30, yolo_confidence),
             "hailo_object_interval_seconds": hailo_object_interval_seconds,
             "context_detection_interval_seconds": context_detection_interval_seconds,
         }
@@ -79,6 +81,7 @@ class VisionPipeline:
         self._activity_history: dict[str, deque[Dict[str, Any]]] = {}
         self._pipeline_latency_history: deque[float] = deque(maxlen=240)
         self._last_pipeline_latency_ms: float | None = None
+        self.human_evidence = HumanEvidenceGate()
         self.scene = SceneContextTracker()
         self.quality = QualityAnalyzer()
         self.person = PersonDetector(
@@ -129,53 +132,27 @@ class VisionPipeline:
         runtime_config = {**self.default_config, **(config or {})}
 
         quality = self.quality.analyze(frame, previous_frame, runtime_config)
+        frame_height, frame_width = frame.shape[:2]
+        runtime_config["frame_width"] = int(frame_width)
+        runtime_config["frame_height"] = int(frame_height)
         runtime_config["frame_motion_score"] = float(quality.get("motion_score") or 0.0)
         accelerated = self.hailo_pose.analyze(frame, runtime_config)
         accelerated_context = self.hailo_object.analyze(frame, runtime_config)
         context_runtime = self._hailo_context_entities(accelerated_context, frame)
-        if accelerated is not None:
-            height, width = frame.shape[:2]
-            boxes = accelerated["boxes"]
-            detection_scores = accelerated["scores"]
-            accelerated_people = [
-                self.person.person_box(
-                    *[float(value) for value in boxes[index]],
-                    width,
-                    height,
-                    confidence=float(detection_scores[index]),
-                    source="hailo",
-                    label="人形命中",
-                )
-                for index in range(len(boxes))
-            ]
-            if not context_runtime:
-                context_runtime = self.person.analyze_context(frame, runtime_config)
+        if context_runtime:
             person = self.person.result_from_entities(
-                accelerated_people,
+                context_runtime.get("people") or [],
                 pets=context_runtime.get("pets") or [],
                 scene_objects=context_runtime.get("scene_objects") or [],
                 backend="hailo",
-                model_status="ready",
-                model_message=f"Hailo 姿态推理 {accelerated['latency_ms']:.1f} ms。",
-                model_name=str(accelerated.get("model_name") or "yolov8s_pose_h8.hef"),
-                detection_cached=False,
+                model_status="ready_cached" if context_runtime.get("cached") else "ready",
+                model_message=f"Hailo 目标推理 {float(context_runtime.get('latency_ms') or 0.0):.1f} ms。",
+                model_name=str(context_runtime.get("model_name") or "yolov8s_h8.hef"),
+                detection_cached=bool(context_runtime.get("cached")),
+                detection_cache_age_seconds=context_runtime.get("age_seconds"),
             )
         else:
-            person = (
-                self.person.result_from_entities(
-                    context_runtime.get("people") or [],
-                    pets=context_runtime.get("pets") or [],
-                    scene_objects=context_runtime.get("scene_objects") or [],
-                    backend="hailo",
-                    model_status="ready_cached" if context_runtime.get("cached") else "ready",
-                    model_message=f"Hailo 目标推理 {float(context_runtime.get('latency_ms') or 0.0):.1f} ms。",
-                    model_name=str(context_runtime.get("model_name") or "yolov8s_h8.hef"),
-                    detection_cached=bool(context_runtime.get("cached")),
-                    detection_cache_age_seconds=context_runtime.get("age_seconds"),
-                )
-                if context_runtime
-                else self.person.analyze(frame, runtime_config)
-            )
+            person = self.person.analyze(frame, runtime_config)
         raw_people = list(person.get("people") or [])
         raw_pets = list(person.get("pets") or [])
         raw_pose = (
@@ -185,6 +162,7 @@ class VisionPipeline:
                 keypoints=accelerated["keypoints"],
                 scores=accelerated["keypoint_scores"],
                 source_person_boxes=[list(map(float, box)) for box in accelerated["boxes"]],
+                source_person_scores=[float(score) for score in accelerated["scores"]],
                 model_name=str(accelerated.get("model_name") or "yolov8s_pose_h8.hef"),
                 model_message=f"Hailo 姿态推理 {accelerated['latency_ms']:.1f} ms。",
                 backend="hailo",
@@ -197,7 +175,6 @@ class VisionPipeline:
         scene_candidates = self._scene_objects_without_human_overlap(
             list(person.get("scene_objects") or []),
             raw_people,
-            self._poses_for_person_evidence(list(pose.get("poses") or [])),
         )
         scene = self.scene.update(scene_candidates, runtime_config)
         raw_people, filtered_poses, screen_content_suppressed = self._suppress_display_content(
@@ -223,6 +200,8 @@ class VisionPipeline:
             raw_people,
             list(scene.get("scene_zones") or []),
             runtime_config,
+            frame=frame,
+            previous_frame=previous_frame,
         )
         if consistency_rejected:
             pose["rejected_poses"] = [*(pose.get("rejected_poses") or []), *consistency_rejected]
@@ -235,7 +214,7 @@ class VisionPipeline:
             and pose.get("pose_model_status") in {"ready", "not_visible"}
             and not person_poses
         ):
-            people = [person for person in people if not person.get("presence_candidate")]
+            people = []
         self._update_person_result_after_pose_refine(person, people, pose.get("poses") or [])
         self._update_pet_result(person, pets)
         self._update_person_scene_context(person, scene)
@@ -395,6 +374,7 @@ class VisionPipeline:
         return {
             "inference_backend": self.hailo_pose.status(),
             "context_inference_backend": self.hailo_object.status(),
+            "human_evidence": self.human_evidence.status(),
             "pipeline_latency_ms": {
                 "last": self._last_pipeline_latency_ms,
                 **self._latency_summary(self._pipeline_latency_history),
@@ -404,6 +384,7 @@ class VisionPipeline:
     def close(self) -> None:
         self.hailo_pose.close()
         self.hailo_object.close()
+        self.human_evidence.reset()
 
     def _hailo_context_entities(
         self,
@@ -672,12 +653,15 @@ class VisionPipeline:
         people: list[Dict[str, Any]],
         scene_zones: list[Dict[str, Any]],
         config: Dict[str, Any],
+        *,
+        frame: Any | None = None,
+        previous_frame: Any | None = None,
     ) -> tuple[list[Dict[str, Any]], list[Dict[str, Any]]]:
-        """Reject furniture-shaped pose hallucinations without weakening real occluded people."""
+        """Require person evidence that is independent from the pose detector itself."""
         if not config.get("pose_human_consistency_enabled", True):
             return poses, []
 
-        furniture_labels = {"couch", "bed", "chair", "dining table"}
+        furniture_labels = {"couch", "bed", "chair", "dining_table", "dining table", "tv"}
         stable_furniture = [
             zone
             for zone in scene_zones
@@ -685,11 +669,18 @@ class VisionPipeline:
             and str(zone.get("label") or "") in furniture_labels
             and self._valid_box(zone.get("bbox"))
         ]
-        max_unmatched_confidence = float(config.get("pose_furniture_max_unmatched_confidence") or 0.48)
-        min_furniture_overlap = float(config.get("pose_furniture_min_overlap") or 0.40)
-        min_wide_aspect = float(config.get("pose_furniture_min_wide_aspect") or 2.40)
+        min_furniture_overlap = float(config.get("pose_furniture_min_overlap") or 0.30)
         min_person_overlap = float(config.get("pose_human_yolo_min_overlap") or 0.18)
-        min_unmatched_confidence = float(config.get("pose_unmatched_person_min_confidence") or 0.42)
+        min_person_confidence = float(config.get("pose_human_object_min_confidence") or 0.30)
+        high_detector_confidence = float(config.get("pose_unmatched_high_detector_confidence") or 0.74)
+        moving_detector_confidence = float(config.get("pose_unmatched_moving_detector_confidence") or 0.52)
+        min_keypoint_confidence = float(config.get("pose_unmatched_min_keypoint_confidence") or 0.40)
+        min_motion = float(config.get("pose_unmatched_min_motion") or 0.012)
+        min_visible_keypoints = max(4, int(config.get("pose_unmatched_min_visible_keypoints") or 8))
+        min_core_keypoints = max(2, int(config.get("pose_unmatched_min_core_keypoints") or 4))
+        frame_width = float(config.get("frame_width") or 0.0)
+        frame_height = float(config.get("frame_height") or 0.0)
+        frame_motion = float(config.get("frame_motion_score") or 0.0)
         accepted: list[Dict[str, Any]] = []
         rejected: list[Dict[str, Any]] = []
 
@@ -702,18 +693,22 @@ class VisionPipeline:
                 self._box_overlap_ratio(bbox, person.get("bbox")) >= min_person_overlap
                 and self._boxes_share_center(bbox, person.get("bbox"))
                 for person in people
-                if not person.get("presence_candidate") and self._valid_box(person.get("bbox"))
+                if not person.get("presence_candidate")
+                and str(person.get("source") or "") != "pose_person"
+                and float(person.get("confidence") or 0.0) >= min_person_confidence
+                and self._valid_box(person.get("bbox"))
             )
-            confidence = float(pose.get("confidence") or 0.0)
-            if not matched_person and confidence < min_unmatched_confidence:
-                rejected.append(self._rejected_pose(
-                    pose,
-                    "unmatched_low_confidence_pose",
-                    pose_confidence=round(confidence, 4),
-                    minimum_confidence=round(min_unmatched_confidence, 4),
-                    yolo_person_matched=False,
-                ))
-                continue
+            keypoint_confidence = float(pose.get("confidence") or 0.0)
+            detector_confidence = float(pose.get("detector_confidence") or keypoint_confidence)
+            keypoints = pose.get("keypoints") if isinstance(pose.get("keypoints"), list) else []
+            visible = [point for point in keypoints if point.get("visible")]
+            core_visible = [
+                point for point in visible
+                if str(point.get("name") or "") in {
+                    "left_shoulder", "right_shoulder", "left_hip", "right_hip",
+                    "left_knee", "right_knee", "left_ankle", "right_ankle",
+                }
+            ]
             factors = pose.get("posture_factors") or {}
             aspect = float(factors.get("body_aspect") or 0.0)
             if aspect <= 0.0:
@@ -723,30 +718,142 @@ class VisionPipeline:
                 [self._box_intersection_ratio(bbox, zone.get("bbox")) for zone in stable_furniture],
                 default=0.0,
             )
-            furniture_hallucination = (
-                not matched_person
-                and confidence < max_unmatched_confidence
-                and aspect >= min_wide_aspect
-                and furniture_overlap >= min_furniture_overlap
+            source_bbox = pose.get("source_person_bbox") if self._valid_box(pose.get("source_person_bbox")) else bbox
+            local_motion = self._local_motion_score(
+                frame,
+                previous_frame,
+                source_bbox,
+                fallback=frame_motion,
             )
-            if furniture_hallucination:
+            touches_frame_edge = self._box_touches_frame_edge(
+                source_bbox,
+                frame_width=frame_width,
+                frame_height=frame_height,
+            )
+            quality_ok = (
+                keypoint_confidence >= min_keypoint_confidence
+                and len(visible) >= min_visible_keypoints
+                and len(core_visible) >= min_core_keypoints
+            )
+            moving_candidate = (
+                quality_ok
+                and detector_confidence >= moving_detector_confidence
+                and local_motion >= min_motion
+            )
+            high_confidence = quality_ok and detector_confidence >= high_detector_confidence
+
+            if not matched_person and furniture_overlap >= min_furniture_overlap and not (
+                high_confidence and moving_candidate
+            ):
                 rejected.append(self._rejected_pose(
                     pose,
                     "furniture_pose_hallucination",
                     furniture_overlap=round(furniture_overlap, 4),
                     body_aspect=round(aspect, 4),
-                    yolo_person_matched=False,
+                    independent_person_matched=False,
+                    detector_confidence=round(detector_confidence, 4),
+                    local_motion=round(local_motion, 5),
+                    frame_motion=round(frame_motion, 5),
+                ))
+                continue
+            if not matched_person and touches_frame_edge and not (high_confidence and moving_candidate):
+                rejected.append(self._rejected_pose(
+                    pose,
+                    "frame_edge_pose_hallucination",
+                    independent_person_matched=False,
+                    detector_confidence=round(detector_confidence, 4),
+                    local_motion=round(local_motion, 5),
+                    frame_motion=round(frame_motion, 5),
+                ))
+                continue
+            if not matched_person and not (high_confidence and moving_candidate):
+                rejected.append(self._rejected_pose(
+                    pose,
+                    "unconfirmed_pose_person",
+                    independent_person_matched=False,
+                    detector_confidence=round(detector_confidence, 4),
+                    keypoint_confidence=round(keypoint_confidence, 4),
+                    visible_keypoints=len(visible),
+                    core_keypoints=len(core_visible),
+                    local_motion=round(local_motion, 5),
+                    frame_motion=round(frame_motion, 5),
+                ))
+                continue
+            temporal_evidence = self.human_evidence.evaluate(
+                config.get("camera_id"),
+                source_bbox,
+                frame_width=frame_width,
+                frame_height=frame_height,
+                frame_motion=local_motion,
+                independent_person_matched=matched_person,
+                candidate_quality_ok=quality_ok,
+            )
+            if not temporal_evidence.get("confirmed"):
+                rejected.append(self._rejected_pose(
+                    pose,
+                    "static_unconfirmed_human_evidence",
+                    temporal_evidence=temporal_evidence,
+                    detector_confidence=round(detector_confidence, 4),
+                    keypoint_confidence=round(keypoint_confidence, 4),
                 ))
                 continue
             accepted.append({
                 **pose,
                 "human_consistency": {
-                    "yolo_person_matched": matched_person,
+                    "independent_person_matched": matched_person,
                     "furniture_overlap": round(furniture_overlap, 4),
                     "body_aspect": round(aspect, 4),
+                    "detector_confidence": round(detector_confidence, 4),
+                    "local_motion": round(local_motion, 5),
+                    "frame_motion": round(frame_motion, 5),
+                    "acceptance": "motion_confirmed_human_track",
+                    "temporal_evidence": temporal_evidence,
                 },
             })
         return accepted, rejected
+
+    def _local_motion_score(
+        self,
+        frame: Any | None,
+        previous_frame: Any | None,
+        bbox: Any,
+        *,
+        fallback: float,
+    ) -> float:
+        if frame is None or previous_frame is None or not self._valid_box(bbox):
+            return max(0.0, float(fallback))
+        if getattr(frame, "shape", None) != getattr(previous_frame, "shape", None):
+            return 0.0
+        try:
+            import numpy as np
+
+            height, width = frame.shape[:2]
+            x1, y1, x2, y2 = [float(value) for value in bbox]
+            left = max(0, min(width - 1, int(x1)))
+            top = max(0, min(height - 1, int(y1)))
+            right = max(left + 1, min(width, int(x2 + 1)))
+            bottom = max(top + 1, min(height, int(y2 + 1)))
+            current = frame[top:bottom:4, left:right:4].astype(np.float32, copy=False)
+            previous = previous_frame[top:bottom:4, left:right:4].astype(np.float32, copy=False)
+            if current.size == 0 or current.shape != previous.shape:
+                return 0.0
+            return float(np.abs(current - previous).mean() / 255.0)
+        except Exception:
+            return 0.0
+
+    def _box_touches_frame_edge(
+        self,
+        bbox: Any,
+        *,
+        frame_width: float,
+        frame_height: float,
+    ) -> bool:
+        if not self._valid_box(bbox) or frame_width <= 0.0 or frame_height <= 0.0:
+            return False
+        x1, y1, x2, y2 = [float(value) for value in bbox]
+        margin_x = max(3.0, frame_width * 0.012)
+        margin_y = max(3.0, frame_height * 0.012)
+        return x1 <= margin_x or y1 <= margin_y or x2 >= frame_width - margin_x or y2 >= frame_height - margin_y
 
     def _rejected_pose(self, pose: Dict[str, Any], reason: str, **details: Any) -> Dict[str, Any]:
         return {
@@ -764,11 +871,11 @@ class VisionPipeline:
         self,
         scene_objects: list[Dict[str, Any]],
         people: list[Dict[str, Any]],
-        poses: list[Dict[str, Any]],
     ) -> list[Dict[str, Any]]:
         human_boxes = [
             item.get("bbox")
-            for item in [*people, *poses]
+            for item in people
+            if str(item.get("source") or "") != "pose_person"
             if self._valid_box(item.get("bbox"))
         ]
         filtered = []
