@@ -98,6 +98,7 @@
 		E823592EBE6783C8C449E06A /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE166B0C27414D0408D563F7 /* LaunchTests.swift */; };
 		E8A0D6DAC831FFF9F5776F48 /* DeviceBindingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C7F5564D6AE495B1EF00A43 /* DeviceBindingView.swift */; };
 		EDE3ACD9BB7551960C0EAB04 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9DA656FBD483AB565E23D956 /* Assets.xcassets */; };
+		EE38CE13CC61BEE0AF169819 /* HomeLocationSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4226855E7D0FF072C6BAFE1B /* HomeLocationSetupView.swift */; };
 		EEF0A6806D61A87C3C96C7E6 /* MJPEGStreamClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33ED013B507F369CA3D90AA7 /* MJPEGStreamClientTests.swift */; };
 		F04355C863AA3286EF57DEF3 /* AppModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC18C86B265D5E9C147D9F6B /* AppModels.swift */; };
 		F0966C683EBD522BAA2A0BE5 /* FamilySetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E5D643974E4D0CA851DD413 /* FamilySetupView.swift */; };
@@ -107,6 +108,7 @@
 		F40FFC014EDD5A49AD8E65C1 /* CameraSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2314D73B8E3B7E21585AEB9D /* CameraSetupView.swift */; };
 		F5A19D9F4350E6540207F02D /* OnboardingModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE91B1212BE195D3FC142BA2 /* OnboardingModelTests.swift */; };
 		F680B2EAD6A1E8AA285C8810 /* AuthFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47A339FCF089033CD1A85EB1 /* AuthFlowTests.swift */; };
+		F87ACAFE581BF80799CFD7B2 /* HomeLocationSetupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EE007A514E0E3F723959D6B /* HomeLocationSetupTests.swift */; };
 		FD4E4E4BA72E5F4A5A5F822F /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8915B898A43BA9BA950395F9 /* APIClient.swift */; };
 		FDFA83FBC4444312C36942AE /* GoHomeAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 404872E385D000813D39D7C8 /* GoHomeAppDelegate.swift */; };
 		FE108A087F223229E5347327 /* MemoryVideoPlaybackStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B027CDDB2165FD2C73F0FD2F /* MemoryVideoPlaybackStoreTests.swift */; };
@@ -135,6 +137,7 @@
 		034F8DF1B2469B3F726E21D5 /* EventActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventActionTests.swift; sourceTree = "<group>"; };
 		07F18362615012A08B508843 /* EditorialFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorialFeed.swift; sourceTree = "<group>"; };
 		0D01161BF9C1C4B53931480F /* CitySelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CitySelectionView.swift; sourceTree = "<group>"; };
+		0EE007A514E0E3F723959D6B /* HomeLocationSetupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeLocationSetupTests.swift; sourceTree = "<group>"; };
 		10D4A21A561B17A4972C5E71 /* AppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoute.swift; sourceTree = "<group>"; };
 		133FEB218A86BD650E7A4F08 /* KeychainAuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainAuthStore.swift; sourceTree = "<group>"; };
 		153AA19D1DAA360F7C305E40 /* SessionContextStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionContextStoreTests.swift; sourceTree = "<group>"; };
@@ -162,6 +165,7 @@
 		3E5D643974E4D0CA851DD413 /* FamilySetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilySetupView.swift; sourceTree = "<group>"; };
 		404872E385D000813D39D7C8 /* GoHomeAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoHomeAppDelegate.swift; sourceTree = "<group>"; };
 		406032DDDD73BE44A3BA41BC /* ProductRecommendationsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductRecommendationsTests.swift; sourceTree = "<group>"; };
+		4226855E7D0FF072C6BAFE1B /* HomeLocationSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeLocationSetupView.swift; sourceTree = "<group>"; };
 		42DDFD5335CD648168DD8760 /* AuthAndCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthAndCacheTests.swift; sourceTree = "<group>"; };
 		455A3C6B639940E6F856AEB0 /* ActivityTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityTimelineView.swift; sourceTree = "<group>"; };
 		45941C67DB00D030A66468C4 /* CommunityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommunityView.swift; sourceTree = "<group>"; };
@@ -409,6 +413,7 @@
 				D2730983A40D8FA9915BB8BE /* EventPresentationTests.swift */,
 				2849E8DC39050E6E6187E138 /* EventsViewModelTests.swift */,
 				F11948718D182C31312EF0F0 /* GuardViewModelTests.swift */,
+				0EE007A514E0E3F723959D6B /* HomeLocationSetupTests.swift */,
 				2759F178F978589AE1353C84 /* HomeViewModelTests.swift */,
 				CF9313BF5A1F7F97EF5C4E54 /* LocationResolutionTests.swift */,
 				B027CDDB2165FD2C73F0FD2F /* MemoryVideoPlaybackStoreTests.swift */,
@@ -465,6 +470,7 @@
 				6E2484C2E61F757B95DDFA59 /* DistanceMapView.swift */,
 				07F18362615012A08B508843 /* EditorialFeed.swift */,
 				19190EA12A7B0EAC595A605A /* HomeDistanceLocationProvider.swift */,
+				4226855E7D0FF072C6BAFE1B /* HomeLocationSetupView.swift */,
 				88E6E4010D3EE24DEC0AAA29 /* HomeView.swift */,
 				E5EC34A06B9B64F2A81E3A18 /* HomeViewModel.swift */,
 				AB4F8D88CD928BF1002B6483 /* MasonryLayout.swift */,
@@ -668,6 +674,7 @@
 				6CE974EA45EB32AC617AF37B /* EventPresentationTests.swift in Sources */,
 				6BDCF5B3E6DCBF102FD6E291 /* EventsViewModelTests.swift in Sources */,
 				AA01C071F85F043A7248CF7D /* GuardViewModelTests.swift in Sources */,
+				F87ACAFE581BF80799CFD7B2 /* HomeLocationSetupTests.swift in Sources */,
 				21B21DC0A604910B2F10B6B0 /* HomeViewModelTests.swift in Sources */,
 				534644623660DEA287B580EA /* LocationResolutionTests.swift in Sources */,
 				EEF0A6806D61A87C3C96C7E6 /* MJPEGStreamClientTests.swift in Sources */,
@@ -750,6 +757,7 @@
 				2B513A5A8B2DE4A48ECBA34D /* GuardView.swift in Sources */,
 				9FE26DB79EA01C7FA539E446 /* GuardViewModel.swift in Sources */,
 				1BE32B97BFCBE9C564694C5B /* HomeDistanceLocationProvider.swift in Sources */,
+				EE38CE13CC61BEE0AF169819 /* HomeLocationSetupView.swift in Sources */,
 				922AEC2FEEF01923B88C589E /* HomeView.swift in Sources */,
 				058AEA67EE4BAE281F32468F /* HomeViewModel.swift in Sources */,
 				9B92A863465C0268BDF06FF8 /* KeychainAuthStore.swift in Sources */,

@@ -25,6 +25,7 @@ struct MainTabView: View {
     @State private var profilePath = NavigationPath()
     @State private var guardSection: GuardSection = .live
     @State private var notificationRouteTask: Task<Void, Never>?
+    @State private var showsHomeLocationSetup = false
 
     static var preview: MainTabView {
         let isMember = ProcessInfo.processInfo.arguments.contains("-uiTestMember")
@@ -114,7 +115,11 @@ struct MainTabView: View {
     var body: some View {
         TabView(selection: $selection) {
             GoHomeTabRoot(tab: .home, path: $homePath) {
-                HomeView(model: homeModel, apiClient: apiClient) { eventID in
+                HomeView(
+                    model: homeModel,
+                    apiClient: apiClient,
+                    onSetHomeLocation: homeLocationSetupAction
+                ) { eventID in
                     openEvent(eventID)
                 }
             }
@@ -139,7 +144,8 @@ struct MainTabView: View {
                 CommunityView(
                     model: recommendationsModel,
                     apiBaseURL: apiClient?.baseURL,
-                    homeLocation: homeModel.state.value?.homeLocation
+                    homeLocation: homeModel.state.value?.homeLocation,
+                    onSetHomeLocation: homeLocationSetupAction
                 )
             }
             GoHomeTabRoot(tab: .profile, path: $profilePath) {
@@ -169,6 +175,26 @@ struct MainTabView: View {
         .onReceive(pushNotifications.$pendingRoute.compactMap { $0 }) { route in
             open(route)
         }
+        .sheet(isPresented: $showsHomeLocationSetup) {
+            if let apiClient {
+                HomeLocationSetupView(
+                    service: OnboardingService(client: apiClient),
+                    familyID: family.id,
+                    profile: profileModel.state.value?.elder
+                ) {
+                    profileModel.refresh()
+                    homeModel.refresh()
+                }
+            }
+        }
+    }
+
+    private var homeLocationSetupAction: (() -> Void)? {
+        guard
+            apiClient != nil,
+            FamilyRole.resolve(familyRole: family.role, canEdit: false) == .creator
+        else { return nil }
+        return { showsHomeLocationSetup = true }
     }
 
     private var guardCameras: [HomeCamera] {

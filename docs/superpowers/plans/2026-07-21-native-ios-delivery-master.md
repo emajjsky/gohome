@@ -137,9 +137,19 @@ Skeleton mode revealed a display-metric defect: the badge used only person-beari
 packets, so it disappeared before detection or while the person was out of frame. The
 main-line fix keeps measured decoded FPS visible in every privacy mode, adds measured pose
 Hz when available, and no longer resets pose rate on a valid empty packet. The complete
-iOS suite passes 148 of 148 tests. Physical verification of the fix requires the next
+iOS suite now passes 152 of 152 tests. Physical verification of the fix requires the next
 TestFlight build; cellular streaming, location, automatic business push, and fall-event
 acceptance remain open.
+
+Build 5 also confirmed that an existing household created before fixed household
+coordinates were added has no recovery path: Home cannot calculate phone-to-home
+distance and Community correctly refuses to use the phone location. The main-line fix
+adds one creator-only native location sheet shared by Home and Community. It reads and
+preserves the existing cared-for profile, stores the fixed household coordinate and
+label through the production profile API, and refreshes both surfaces after save.
+Existing users do not rebind the box or recreate camera configuration. The next
+TestFlight build must verify persistence, role boundaries, distance refresh, and
+household-based Community links on a physical phone.
 
 - [ ] **Gate 4: Messaging and distribution**
 

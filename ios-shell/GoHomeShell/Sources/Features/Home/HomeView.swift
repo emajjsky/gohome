@@ -4,6 +4,7 @@ struct HomeView: View {
     @ObservedObject var model: HomeViewModel
     @StateObject private var distanceProvider = HomeDistanceLocationProvider()
     let apiClient: APIClient?
+    let onSetHomeLocation: (() -> Void)?
     let onOpenAlert: (String) -> Void
     private let referenceDate: Date
 
@@ -11,11 +12,13 @@ struct HomeView: View {
         model: HomeViewModel,
         apiClient: APIClient? = nil,
         referenceDate: Date = Date(),
+        onSetHomeLocation: (() -> Void)? = nil,
         onOpenAlert: @escaping (String) -> Void = { _ in }
     ) {
         self.model = model
         self.apiClient = apiClient
         self.referenceDate = referenceDate
+        self.onSetHomeLocation = onSetHomeLocation
         self.onOpenAlert = onOpenAlert
     }
 
@@ -36,7 +39,7 @@ struct HomeView: View {
                     days: HomePresentation.calendarDays(reference: referenceDate),
                     nextEvent: model.state.value?.calendar.first
                 )
-                DistanceMapView(state: distanceProvider.state)
+                DistanceMapView(state: distanceProvider.state, onSetHomeLocation: onSetHomeLocation)
                 if let staleReason = model.state.staleReason, model.state.value != nil {
                     Text(staleReason)
                         .font(.system(size: 11, weight: .medium))

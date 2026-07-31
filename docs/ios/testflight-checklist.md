@@ -2,7 +2,7 @@
 
 Distributed baseline: `1.0.0 (4)`
 
-Candidate under validation: `1.0.0 (5)` (available to the internal TestFlight group; physical install pending)
+Candidate under validation: `1.0.0 (5)` (installed from the internal TestFlight group; physical acceptance in progress)
 
 ## Automated Gates
 
@@ -69,6 +69,8 @@ Candidate under validation: `1.0.0 (5)` (available to the internal TestFlight gr
 
 - [ ] Recommendation cards open provenance before any official external source.
 - [ ] Source, suitability, disclosure, and verification date are visible.
+- [ ] The household creator can save one fixed home location without rebinding the box; Home shows the current phone-to-home distance and Community uses only the fixed household location.
+- [ ] Household members cannot change the fixed home location, and Community never falls back to the phone's current position.
 - [ ] Location denial leaves Memory usable and explains how to enable access.
 - [ ] Privacy and data controls reflect actual server behavior.
 - [ ] VoiceOver labels, Dynamic Type, and minimum touch targets remain usable.
@@ -86,5 +88,15 @@ Build 5 physical checkpoint on 2026-07-31: the TestFlight install opened directl
 restored household, all five native tabs were browsable, and live camera video opened.
 Skeleton mode exposed that its rate badge depended on person-bearing pose packets. The
 main-line fix now always reports decoded scene FPS and appends measured pose Hz when pose
-packets arrive; 148 iOS tests and release metadata validation pass. A later TestFlight
+packets arrive; the current main-line suite passes 152 iOS tests and release metadata
+validation. A later TestFlight
 build must verify that fix on the physical device before the FPS gate closes.
+
+The same Build 5 pass exposed a migration gap for households bound before fixed home
+coordinates were introduced: Home could not calculate return distance and Community
+showed that the household location was unset. Main now gives household creators one
+shared native setup flow from either surface. It preserves the existing cared-for
+profile, saves the fixed household coordinate through the existing profile contract,
+then refreshes Home and Profile without unbinding the box or restarting the App. The
+next TestFlight build must verify save, relaunch persistence, phone-to-home distance,
+member read-only behavior, and household-based Community results.

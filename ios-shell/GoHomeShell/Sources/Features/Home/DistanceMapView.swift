@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DistanceMapView: View {
     let state: HomeDistanceState
+    let onSetHomeLocation: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -37,11 +38,22 @@ struct DistanceMapView: View {
                     .foregroundStyle(GoHomeTheme.mutedInk)
             case .homeRequired:
                 RouteBand()
-                Label("在照护资料中设定家庭位置", systemImage: "house")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(GoHomeTheme.mutedInk)
+                if let onSetHomeLocation {
+                    Button(action: onSetHomeLocation) {
+                        Label("设置家庭位置", systemImage: "house")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(GoHomeTheme.ink)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("home-location-setup")
+                } else {
+                    Label("请家庭创建者设置家庭位置", systemImage: "house")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                }
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home-distance")
     }
 }

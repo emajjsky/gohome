@@ -52,6 +52,40 @@ final class TabStateTests: XCTestCase {
         XCTAssertFalse(app.webViews.firstMatch.exists)
     }
 
+    func testMissingHomeLocationCanOpenTheSharedSetupFlow() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTestState", "-uiTestMain", "-uiTestHome", "-uiTestProfile"]
+        app.launch()
+
+        let homeSetup = app.buttons["home-location-setup"]
+        for _ in 0..<4 where !homeSetup.exists { app.swipeUp() }
+        XCTAssertTrue(homeSetup.waitForExistence(timeout: 2))
+        homeSetup.tap()
+        XCTAssertTrue(app.navigationBars["设置家庭位置"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["home-location-use-current"].exists)
+        app.buttons["取消"].tap()
+
+        app.tabBars.buttons["社区"].tap()
+        let communitySetup = app.buttons["community-home-location-setup"]
+        XCTAssertTrue(communitySetup.waitForExistence(timeout: 2))
+        communitySetup.tap()
+        XCTAssertTrue(app.navigationBars["设置家庭位置"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["home-location-use-current"].exists)
+    }
+
+    func testHouseholdMemberCannotChangeTheFixedHomeLocation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTestState", "-uiTestMain", "-uiTestHome", "-uiTestProfile", "-uiTestMember"]
+        app.launch()
+
+        for _ in 0..<4 { app.swipeUp() }
+        XCTAssertFalse(app.buttons["home-location-setup"].exists)
+
+        app.tabBars.buttons["社区"].tap()
+        XCTAssertFalse(app.buttons["community-home-location-setup"].exists)
+        XCTAssertTrue(app.staticTexts["家庭位置未设置"].waitForExistence(timeout: 2))
+    }
+
     func testGuardCombinesLiveTimelineAndEventsWithoutKeepingVideoMounted() {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTestState", "-uiTestMain"]

@@ -4,6 +4,7 @@ struct CommunityView: View {
     @ObservedObject var model: ProductRecommendationsViewModel
     let apiBaseURL: URL?
     let homeLocation: HomeLocation?
+    let onSetHomeLocation: (() -> Void)?
     @Environment(\.openURL) private var openURL
 
     private let columns = [
@@ -44,9 +45,19 @@ struct CommunityView: View {
             }
             Spacer()
             if homeLocation == nil {
-                Label("家庭位置未设置", systemImage: "location.slash")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(GoHomeTheme.mutedInk)
+                if let onSetHomeLocation {
+                    Button(action: onSetHomeLocation) {
+                        Label("设置家庭位置", systemImage: "location")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(GoHomeTheme.ink)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("community-home-location-setup")
+                } else {
+                    Label("家庭位置未设置", systemImage: "location.slash")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                }
             } else {
                 Label(homeLocationLabel, systemImage: "location.fill")
                     .font(.system(size: 11, weight: .semibold))
@@ -99,10 +110,11 @@ struct CommunityView: View {
         guard let homeLocation else { return "" }
         let label = homeLocation.label.trimmingCharacters(in: .whitespacesAndNewlines)
         if !label.isEmpty { return label }
-        return [homeLocation.district, homeLocation.city]
+        let fallback = [homeLocation.district, homeLocation.city]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
+        return fallback.isEmpty ? "家庭位置" : fallback
     }
 }
 
