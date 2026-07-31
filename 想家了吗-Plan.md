@@ -3392,3 +3392,12 @@ Apple 付费开发者审核、APNs capability、`.p8` 和 TestFlight 仍是独�
 6. [x] 通过盒子 outbox、HTTP 401 退避保留、观察覆盖率、云端活动报告、早晚确定时钟、消息幂等、原生 `100/100` 单元测试和 `17/17` UI 自动化。
 7. [ ] 腾讯云部署本批服务端差异；恢复盒子设备绑定令牌后完成真实活动区间上传、断网补传、云端报告、APNs 和真机消息动作验收。
 8. [ ] 每日定时摘要、正式周报和多模态活动复核继续保持隐藏；时序风险模型等待真实困难样本和标签规范满足后再启动训练。
+
+## 15.20 主线统一与 TestFlight Build 5（2026-07-31）
+
+1. [x] 将原生 SwiftUI App、云端契约和最新 Hailo/EACP 边缘管线统一合入 `main`；删除旧 WebView iOS 运行入口，只保留 `ios-shell/GoHomeShell.xcodeproj` 一个发布工程。
+2. [x] 发布身份统一为显示名 `GoHome`、Bundle ID `com.gohome.family`、版本 `1.0.0 (5)`、团队 `X4M4T6Z4CJ`；Release 保留生产 APNs 和隐私清单。
+3. [x] 清理临时工作树和 7.7 GB 历史构建缓存；保留 Hailo 文档、研究资料、比赛素材和证据图片，不将其误删或混入发布包。
+4. [x] 自动化通过：云端 90 项中 89 项通过、1 项因本机未配置 PostgreSQL 集成 URL 跳过；边缘端 45/45；iOS 单元 123/123；iOS UI 22/22；发布元数据校验通过。
+5. [x] App Store Connect 已接受 Build 5 上传，Delivery UUID 为 `8eb7df01-0089-4f57-a319-850a907a5499`，上传完成时状态为 `PROCESSING`。
+6. [ ] 等待 Apple 处理完成并从 TestFlight 安装 Build 5；实机验收登录、盒子与摄像头同步、实时画面、三种隐私模式、定位、事件去重和自动业务推送后，才关闭本阶段。

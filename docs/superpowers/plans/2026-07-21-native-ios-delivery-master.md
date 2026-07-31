@@ -121,6 +121,14 @@ release must be generated only from `ios-shell/GoHomeShell.xcodeproj`, display
 legacy WebView application root. Archive upload, Apple processing, and TestFlight
 physical-device acceptance remain separate gates.
 
+Build 5 upload checkpoint on 2026-07-31: the unified `main` line passed 89 of 90 cloud
+tests with one PostgreSQL-environment skip, all 45 edge verification scripts, 123 iOS
+unit tests, 22 iOS UI tests, and release metadata validation. Xcode archived
+`GoHome 1.0.0 (5)` from the sole native project and App Store Connect accepted the
+upload with delivery UUID `8eb7df01-0089-4f57-a319-850a907a5499`. Apple processing and
+physical-device TestFlight acceptance remain pending and must not be reported as
+complete until the build is installable.
+
 - [ ] **Gate 4: Messaging and distribution**
 
 Run:
