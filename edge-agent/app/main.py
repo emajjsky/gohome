@@ -1615,6 +1615,7 @@ def health() -> Dict[str, Any]:
                 for key in (
                     "schema_version", "mode", "status", "last_latency_ms",
                     "latency_summary_ms", "successful_inferences", "failed_inferences", "cache_count",
+                    "pet_temporal",
                 )
             },
             "pipeline_latency_ms": vision_status.get("pipeline_latency_ms") or {},

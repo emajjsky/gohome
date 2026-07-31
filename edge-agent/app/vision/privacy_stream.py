@@ -15,7 +15,7 @@ from .synchronized_pose_stream import DEFAULT_SKELETON_EDGES
 class PrivacyFrameRenderer:
     """Render privacy-safe relay frames without changing safety inference inputs."""
 
-    version = "privacy-frame-renderer-v7"
+    version = "privacy-frame-renderer-v8"
 
     def __init__(
         self,
@@ -105,9 +105,34 @@ class PrivacyFrameRenderer:
             return None
         try:
             bundle = self.tracker.latest_synchronized_frame(camera_id)
-            return dict(bundle) if isinstance(bundle, dict) else None
+            if not isinstance(bundle, dict):
+                return None
+            tracking = bundle.get("tracking") if isinstance(bundle.get("tracking"), dict) else {}
+            if int(tracking.get("camera_id") or camera_id) != int(camera_id):
+                return None
+            return dict(bundle)
         except Exception:
             return None
+
+    def reset_camera(self, camera_id: int) -> None:
+        camera_id = int(camera_id)
+        self.background_reconstructor.reset_camera(camera_id)
+        with self._cache_lock:
+            for key in [item for item in self._render_cache if int(item[0]) == camera_id]:
+                self._render_cache.pop(key, None)
+            for key in [item for item in self._latest_safe_scenes if int(item[0]) == camera_id]:
+                self._latest_safe_scenes.pop(key, None)
+
+    def status(self) -> Dict[str, Any]:
+        with self._cache_lock:
+            render_cache_count = len(self._render_cache)
+            safe_scene_count = len(self._latest_safe_scenes)
+        return {
+            "schema_version": self.version,
+            "render_cache_count": render_cache_count,
+            "safe_scene_count": safe_scene_count,
+            "background": self.background_reconstructor.status(),
+        }
 
     def _encode_jpeg(self, cv2: Any, output: Any, quality: int) -> bytes:
         encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(40, min(int(quality), 85))]
@@ -207,7 +232,11 @@ class PrivacyFrameRenderer:
         if self.tracker is None:
             return {"tracking": {"state": "empty", "poses": []}}
         try:
-            return dict(self.tracker.latest_metadata(camera_id) or {})
+            metadata = dict(self.tracker.latest_metadata(camera_id) or {})
+            tracking = metadata.get("tracking") if isinstance(metadata.get("tracking"), dict) else {}
+            if int(tracking.get("camera_id") or camera_id) != int(camera_id):
+                return {"tracking": {"state": "empty", "poses": []}}
+            return metadata
         except Exception:
             return {"tracking": {"state": "empty", "poses": []}}
 

@@ -9,6 +9,7 @@ import time
 from typing import Any, Callable, Dict
 
 from .hailo_pose import HailoInferRuntime, HailoVDevicePool, preprocess_hailo_letterbox
+from .pet_temporal import PetTemporalStabilizer
 
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,7 @@ class HailoObjectBackend:
         self._latency_history: deque[float] = deque(maxlen=120)
         self._successful_inferences = 0
         self._failed_inferences = 0
+        self.pet_temporal = PetTemporalStabilizer()
 
     @property
     def enabled(self) -> bool:
@@ -179,15 +181,20 @@ class HailoObjectBackend:
                 model_input = preprocess_hailo_letterbox(frame, runtime.input_shape)
                 outputs = runtime.infer(model_input)
                 height, width = frame.shape[:2]
-                detections = self.decoder.decode(
+                raw_detections = self.decoder.decode(
                     outputs,
                     original_width=width,
                     original_height=height,
                     class_thresholds=self._class_thresholds(config),
                 )
+                detections, pet_temporal = self.pet_temporal.update(cache_key, raw_detections, now=now)
                 latency_ms = (time.perf_counter() - started_at) * 1000.0
                 result = {
                     "detections": detections,
+                    "raw_pet_candidate_count": sum(
+                        1 for detection in raw_detections if int(detection.get("class_id") or -1) in {15, 16}
+                    ),
+                    "pet_temporal": pet_temporal,
                     "backend": "hailo",
                     "model_name": self.model_path.name,
                     "latency_ms": round(latency_ms, 2),
@@ -238,12 +245,14 @@ class HailoObjectBackend:
                 "cache_count": len(self._cache),
                 "retry_in_seconds": round(max(0.0, self._retry_at - time.monotonic()), 2),
                 "shared_vdevice": HailoVDevicePool.status(),
+                "pet_temporal": self.pet_temporal.status(),
             }
 
     def close(self) -> None:
         with self._lock:
             self._close_runtime()
             self._cache.clear()
+            self.pet_temporal.reset()
 
     def _ensure_runtime(self) -> Any:
         if self._runtime is not None:
@@ -265,7 +274,10 @@ class HailoObjectBackend:
     def _class_thresholds(self, config: Dict[str, Any]) -> Dict[int, float]:
         thresholds = {0: max(0.20, float(config.get("yolo_confidence") or self.confidence))}
         if config.get("pet_detection_enabled", True):
-            pet_threshold = float(config.get("pet_yolo_confidence") or 0.40)
+            pet_threshold = min(
+                float(config.get("pet_yolo_confidence") or 0.40),
+                float(config.get("pet_candidate_confidence") or 0.28),
+            )
             thresholds.update({15: pet_threshold, 16: pet_threshold})
         if config.get("scene_context_enabled", True):
             scene_threshold = float(config.get("scene_object_confidence") or 0.30)

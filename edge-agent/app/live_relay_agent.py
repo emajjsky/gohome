@@ -42,6 +42,7 @@ class LiveRelayAgent:
         self._thread: Thread | None = None
         self._camera_threads: Dict[int, Thread] = {}
         self._camera_stops: Dict[int, Event] = {}
+        self._camera_signatures: Dict[int, tuple[Any, ...]] = {}
         self._http_connections: Dict[tuple[int, int], Any] = {}
         self._scene_http_connections: Dict[tuple[int, int], Any] = {}
         self._http_connections_lock = Lock()
@@ -113,6 +114,11 @@ class LiveRelayAgent:
                 )
                 for camera_id in sorted(self._camera_threads.keys())
             },
+            "privacy_renderer": (
+                self.privacy_renderer.status()
+                if callable(getattr(self.privacy_renderer, "status", None))
+                else {}
+            ),
         }
 
     def _run(self) -> None:
@@ -134,13 +140,22 @@ class LiveRelayAgent:
             if camera.get("enabled") and str(camera.get("stream_url") or "").strip()
         ]
         active_ids = {int(camera["id"]) for camera in cameras if camera.get("id")}
+        camera_signatures = {
+            int(camera["id"]): self._camera_signature(camera)
+            for camera in cameras
+            if camera.get("id")
+        }
         for camera_id in list(self._camera_threads.keys()):
             thread = self._camera_threads.get(camera_id)
-            if camera_id not in active_ids or thread is None or not thread.is_alive():
+            configuration_changed = self._camera_signatures.get(camera_id) != camera_signatures.get(camera_id)
+            if camera_id not in active_ids or thread is None or not thread.is_alive() or configuration_changed:
                 stop_event = self._camera_stops.pop(camera_id, None)
                 if stop_event:
                     stop_event.set()
+                if thread is not None and thread.is_alive():
+                    thread.join(timeout=5)
                 self._camera_threads.pop(camera_id, None)
+                self._camera_signatures.pop(camera_id, None)
                 self._camera_privacy_modes.pop(camera_id, None)
                 with self._upload_stats_lock:
                     self._camera_upload_stats.pop(camera_id, None)
@@ -149,6 +164,7 @@ class LiveRelayAgent:
                     self._scene_upload_samples.pop(camera_id, None)
                 self._close_connection(camera_id)
                 self._close_scene_connection(camera_id)
+                self._reset_privacy_camera(camera_id)
 
         for camera in cameras:
             camera_id = int(camera["id"])
@@ -157,6 +173,8 @@ class LiveRelayAgent:
                 continue
             stop_event = Event()
             self._camera_stops[camera_id] = stop_event
+            self._camera_signatures[camera_id] = camera_signatures[camera_id]
+            self._reset_privacy_camera(camera_id)
             thread = Thread(
                 target=self._run_camera,
                 args=(dict(camera), stop_event),
@@ -174,12 +192,29 @@ class LiveRelayAgent:
         self._close_connections()
         self._camera_stops.clear()
         self._camera_threads.clear()
+        for camera_id in list(self._camera_signatures):
+            self._reset_privacy_camera(camera_id)
+        self._camera_signatures.clear()
         self._camera_privacy_modes.clear()
         with self._upload_stats_lock:
             self._camera_upload_stats.clear()
             self._camera_upload_samples.clear()
             self._scene_upload_stats.clear()
             self._scene_upload_samples.clear()
+
+    def _camera_signature(self, camera: Dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            int(camera.get("id") or 0),
+            str(camera.get("stream_url") or "").strip(),
+            str(camera.get("username") or ""),
+            str(camera.get("password") or ""),
+            bool(camera.get("enabled", True)),
+        )
+
+    def _reset_privacy_camera(self, camera_id: int) -> None:
+        reset = getattr(self.privacy_renderer, "reset_camera", None)
+        if callable(reset):
+            reset(int(camera_id))
 
     def _run_camera(self, camera: Dict[str, Any], stop_event: Event) -> None:
         camera_id = int(camera["id"])

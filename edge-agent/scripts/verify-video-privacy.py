@@ -186,6 +186,26 @@ def main() -> int:
         np.abs(changed_safe_scene[person_slice].astype(float) - changed_reference[person_slice]).mean()
     ) > 35.0
 
+    foreign_clean = np.zeros_like(clean)
+    foreign_clean[:, :] = (220, 35, 180)
+    cv2.line(foreign_clean, (0, 170), (319, 10), (20, 245, 35), 22)
+    contaminated_renderer = PrivacyFrameRenderer(MutableTrackerStub(TrackerStub().latest_metadata(1)))
+    for _ in range(3):
+        contaminated_renderer.background_reconstructor._observe_clear_frame((1, 320, 180), foreign_clean)
+    isolated_scene = decode(
+        cv2,
+        contaminated_renderer.safe_scene_jpeg(1, occupied_jpeg.tobytes(), quality=85),
+    )
+    foreign_region = foreign_clean[person_slice]
+    assert float(np.abs(isolated_scene[person_slice].astype(float) - foreign_region.astype(float)).mean()) > 45.0
+    assert contaminated_renderer.background_reconstructor.status()["incompatible_background_rejections"] == 1
+
+    contaminated_renderer.reset_camera(1)
+    assert contaminated_renderer.background_reconstructor.status()["state_count"] == 0
+    renderer_status = contaminated_renderer.status()
+    assert renderer_status["schema_version"] == contaminated_renderer.version
+    assert renderer_status["background"]["schema_version"].startswith("privacy-background-reconstructor-")
+
     deduplicated_renderer = PrivacyFrameRenderer(EmptyTrackerStub())
     zero_mask = np.zeros(clean.shape[:2], dtype=np.uint8)
     for _ in range(5):

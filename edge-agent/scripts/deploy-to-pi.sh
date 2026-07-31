@@ -46,6 +46,7 @@ rsync -az \
   --exclude 'scripts/verify-dataset-readiness-audit.py' \
   --exclude 'scripts/verify-fall-rule-engine.py' \
   --exclude 'scripts/verify-observation-logs.py' \
+  --exclude 'scripts/verify-pet-temporal.py' \
   --exclude 'scripts/verify-pose-factor-graph.py' \
   --exclude 'scripts/verify-resource-monitor.py' \
   --exclude 'scripts/verify-upload-lock-retry.py' \
@@ -83,6 +84,7 @@ ssh "$PI_SSH" "cd '$PI_ROOT' && rm -rf eval && find scripts -maxdepth 1 -type f 
   -o -name 'verify-dataset-readiness-audit.py' \\
   -o -name 'verify-fall-rule-engine.py' \\
   -o -name 'verify-observation-logs.py' \\
+  -o -name 'verify-pet-temporal.py' \\
   -o -name 'verify-pose-factor-graph.py' \\
   -o -name 'verify-posture-classifier.py' \\
   -o -name 'verify-posture-episodes.py' \\

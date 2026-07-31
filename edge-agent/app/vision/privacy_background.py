@@ -18,17 +18,19 @@ class _BackgroundState:
     candidate: Any | None = None
     candidate_observations: int = 0
     last_clear_token: str = ""
+    validated_for_person: bool = False
 
 
 class PrivacyBackgroundReconstructor:
     """Keep bounded, camera-local clean scenes for skeleton-only privacy video."""
 
-    version = "privacy-background-reconstructor-v1"
+    version = "privacy-background-reconstructor-v2"
 
     def __init__(self, *, max_states: int = 6) -> None:
         self.max_states = max(1, int(max_states))
         self._states: OrderedDict[tuple[int, int, int], _BackgroundState] = OrderedDict()
         self._lock = RLock()
+        self._incompatible_background_rejections = 0
 
     def reconstruct(
         self,
@@ -48,7 +50,13 @@ class PrivacyBackgroundReconstructor:
             self._observe_clear_frame(key, frame, clear_token=clear_token)
             return frame.copy()
 
-        background = self._background_copy(key)
+        background, validated = self._background_copy(key)
+        if background is not None and not validated:
+            if not self._background_matches_current(background, frame, mask):
+                self._discard_background(key)
+                background = None
+            else:
+                self._mark_background_validated(key)
         if background is None:
             background = self._safe_fallback(cv2, frame, mask)
             self._store_provisional_background(key, background)
@@ -65,7 +73,7 @@ class PrivacyBackgroundReconstructor:
     def safe_scene(self, cv2: Any, camera_id: int, frame: Any) -> Any:
         """Return a retained person-free scene, or a non-revealing startup frame."""
         height, width = frame.shape[:2]
-        background = self._camera_background_copy(int(camera_id), width, height)
+        background = self._camera_background_copy(cv2, int(camera_id), width, height)
         if background is not None:
             return background
         border = np.concatenate(
@@ -86,6 +94,7 @@ class PrivacyBackgroundReconstructor:
                 "schema_version": self.version,
                 "state_count": len(self._states),
                 "max_states": self.max_states,
+                "incompatible_background_rejections": self._incompatible_background_rejections,
                 "memory_bytes": sum(
                     (int(state.frame.nbytes) if state.frame is not None else 0)
                     + (int(state.candidate.nbytes) if state.candidate is not None else 0)
@@ -99,6 +108,7 @@ class PrivacyBackgroundReconstructor:
                         "clean": state.clean,
                         "clear_observations": state.clear_observations,
                         "candidate_observations": state.candidate_observations,
+                        "validated_for_person": state.validated_for_person,
                     }
                     for key, state in self._states.items()
                 ],
@@ -123,6 +133,7 @@ class PrivacyBackgroundReconstructor:
             if state.clean and state.frame is not None:
                 state.frame = self._stable_update(state.frame, frame)
                 state.clear_observations += 1
+                state.validated_for_person = False
             else:
                 if state.candidate is None or not self._frames_stable(state.candidate, frame):
                     state.candidate = frame.copy()
@@ -136,19 +147,20 @@ class PrivacyBackgroundReconstructor:
                     state.clear_observations = state.candidate_observations
                     state.candidate = None
                     state.candidate_observations = 0
+                    state.validated_for_person = False
             state.last_used = now
 
-    def _background_copy(self, key: tuple[int, int, int]) -> Any | None:
+    def _background_copy(self, key: tuple[int, int, int]) -> tuple[Any | None, bool]:
         now = time.monotonic()
         with self._lock:
             state = self._states.get(key)
             if state is None or state.frame is None:
-                return None
+                return None, False
             state.last_used = now
             self._states.move_to_end(key)
-            return state.frame.copy()
+            return state.frame.copy(), bool(state.validated_for_person)
 
-    def _camera_background_copy(self, camera_id: int, width: int, height: int) -> Any | None:
+    def _camera_background_copy(self, cv2: Any, camera_id: int, width: int, height: int) -> Any | None:
         now = time.monotonic()
         with self._lock:
             exact_key = (camera_id, width, height)
@@ -170,6 +182,34 @@ class PrivacyBackgroundReconstructor:
             source = state.frame.copy()
         return cv2.resize(source, (width, height), interpolation=cv2.INTER_LINEAR)
 
+    def _discard_background(self, key: tuple[int, int, int]) -> None:
+        with self._lock:
+            self._states.pop(key, None)
+            self._incompatible_background_rejections += 1
+
+    def _mark_background_validated(self, key: tuple[int, int, int]) -> None:
+        with self._lock:
+            state = self._states.get(key)
+            if state is not None:
+                state.validated_for_person = True
+
+    def _background_matches_current(self, background: Any, frame: Any, mask: Any) -> bool:
+        if background.shape != frame.shape:
+            return False
+        height, width = frame.shape[:2]
+        step = max(3, min(height, width) // 64)
+        visible = mask[::step, ::step] == 0
+        if int(np.count_nonzero(visible)) < 256:
+            return False
+        current = frame[::step, ::step].astype(np.int16)[visible]
+        retained = background[::step, ::step].astype(np.int16)[visible]
+        color_shift = np.rint(np.median(current - retained, axis=0)).astype(np.int16)
+        residual = np.max(np.abs((current - retained) - color_shift), axis=1)
+        return bool(
+            float(np.median(residual)) <= 32.0
+            and float(np.mean(residual <= 52.0)) >= 0.52
+        )
+
     def _store_provisional_background(self, key: tuple[int, int, int], frame: Any) -> None:
         now = time.monotonic()
         with self._lock:
@@ -177,6 +217,7 @@ class PrivacyBackgroundReconstructor:
             if state.frame is None:
                 state.frame = frame.copy()
                 state.clean = False
+                state.validated_for_person = True
             state.last_used = now
 
     def _state(self, key: tuple[int, int, int], now: float) -> _BackgroundState:
