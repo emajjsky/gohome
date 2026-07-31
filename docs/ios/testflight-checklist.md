@@ -2,7 +2,7 @@
 
 Distributed baseline: `1.0.0 (4)`
 
-Candidate under validation: `1.0.0 (5)` (uploaded; Apple processing in progress)
+Candidate under validation: `1.0.0 (5)` (available to the internal TestFlight group; physical install pending)
 
 ## Automated Gates
 
@@ -15,7 +15,7 @@ Candidate under validation: `1.0.0 (5)` (uploaded; Apple processing in progress)
 - [x] App Store Connect accepts Build 4 with production APNs entitlement.
 - [x] App Store Connect finishes processing and exposes Build 4 to TestFlight.
 - [x] Build 5 is archived from the sole native project on `main` and accepted for upload.
-- [ ] Build 5 finishes Apple processing and is installable from TestFlight.
+- [x] Build 5 finishes Apple processing and is installable from TestFlight.
 
 ## Physical Device
 

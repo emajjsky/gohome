@@ -126,8 +126,10 @@ tests with one PostgreSQL-environment skip, all 45 edge verification scripts, 12
 unit tests, 22 iOS UI tests, and release metadata validation. Xcode archived
 `GoHome 1.0.0 (5)` from the sole native project and App Store Connect accepted the
 upload with delivery UUID `8eb7df01-0089-4f57-a319-850a907a5499`. Apple processing and
-physical-device TestFlight acceptance remain pending and must not be reported as
-complete until the build is installable.
+internal-group assignment completed on 2026-07-31; Build 5 is available to the
+`比赛内测` group with one internal tester. Physical-device installation and TestFlight
+acceptance remain pending and must not be reported as complete until the device checks
+pass.
 
 - [ ] **Gate 4: Messaging and distribution**
 
