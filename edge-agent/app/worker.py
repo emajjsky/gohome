@@ -394,6 +394,9 @@ class EdgeWorker:
             capture = self.camera_agent.latest_cached_frame(camera, max_age_seconds=0.5)
             if not capture:
                 continue
+            if not self._capture_identity_matches(camera, capture):
+                self.last_continual_pose_error = f"camera {camera_id}: frame source identity mismatch"
+                continue
             frame_id = str(capture.get("frame_id") or "")
             if self.motion_gate is not None:
                 gate = self.motion_gate.update(camera_id, capture["frame"], frame_id=frame_id)
@@ -493,6 +496,8 @@ class EdgeWorker:
         try:
             self.persistence_metrics["analysis_cycles"] += 1
             capture = self.camera_agent.capture_frame(camera)
+            if not self._capture_identity_matches(camera, capture):
+                raise RuntimeError(f"camera {camera_id}: frame source identity mismatch")
             frame = capture["frame"]
             pose_runtime_config = self._pose_runtime_config(camera_id, rules, adaptive=adaptive_pose)
             analysis_config = {
@@ -658,12 +663,16 @@ class EdgeWorker:
     ) -> Dict[str, Any] | None:
         if self.continual_pose_tracker is None or not camera.get("id"):
             return None
+        if not self._capture_identity_matches(camera, metadata):
+            self.last_continual_pose_error = f"camera {int(camera['id'])}: frame source identity mismatch"
+            return None
         try:
             payload = self.continual_pose_tracker.update_frame(
                 int(camera["id"]),
                 frame,
                 frame_id=str(metadata.get("frame_id") or ""),
                 captured_at=str(metadata.get("captured_at") or ""),
+                source_key=str(metadata.get("source_key") or ""),
             )
             risk_hint = payload.get("risk_hint") if isinstance(payload, dict) else None
             if isinstance(risk_hint, dict) and risk_hint.get("detected"):
@@ -690,6 +699,10 @@ class EdgeWorker:
     ) -> None:
         if self.continual_pose_tracker is None:
             return
+        camera = self._runtime_cameras.get(int(camera_id)) or {"id": int(camera_id)}
+        if not self._capture_identity_matches(camera, capture):
+            self.last_continual_pose_error = f"camera {int(camera_id)}: anchor source identity mismatch"
+            return
         pose_status = str(analysis.get("pose_model_status") or "")
         backend_status = analysis.get("inference_backend_status")
         model_confirmed_empty = (
@@ -715,11 +728,30 @@ class EdgeWorker:
                 captured_at=str(capture.get("captured_at") or ""),
                 poses=poses,
                 context=analysis,
+                source_key=str(capture.get("source_key") or ""),
             )
             analysis["continual_pose_anchor"] = payload
             self.last_continual_pose_error = ""
         except Exception as exc:
             self.last_continual_pose_error = str(exc)
+
+    def _capture_identity_matches(self, camera: Dict[str, Any], metadata: Dict[str, Any]) -> bool:
+        camera_id = int(camera.get("id") or 0)
+        if camera_id <= 0:
+            return False
+        frame_id = str(metadata.get("frame_id") or "")
+        if not frame_id.startswith(f"{camera_id}-"):
+            return False
+        captured_camera_id = metadata.get("camera_id")
+        if captured_camera_id not in (None, "") and int(captured_camera_id) != camera_id:
+            return False
+        source_key_resolver = getattr(self.camera_agent, "frame_source_key", None)
+        if callable(source_key_resolver):
+            expected_source_key = str(source_key_resolver(camera) or "")
+            actual_source_key = str(metadata.get("source_key") or "")
+            if not expected_source_key or actual_source_key != expected_source_key:
+                return False
+        return True
 
     def _attach_continual_identity_hints(self, camera_id: int, analysis: Dict[str, Any]) -> None:
         if self.continual_pose_tracker is None:

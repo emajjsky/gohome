@@ -40,13 +40,17 @@ class CameraAgentStub:
             time.sleep(0.001)
         self.stop_event.set()
 
+    def frame_source_key(self, camera):
+        return f"camera-{camera['id']}-source"
+
 
 class PrivacyRendererStub:
     def __init__(self) -> None:
         self.scene_calls = 0
 
-    def safe_scene_jpeg(self, _camera_id, _frame, *, quality):
+    def safe_scene_jpeg(self, _camera_id, _frame, *, quality, source_key):
         assert quality == SettingsStub.live_relay_quality
+        assert source_key == f"camera-{_camera_id}-source"
         self.scene_calls += 1
         return b"safe-scene"
 

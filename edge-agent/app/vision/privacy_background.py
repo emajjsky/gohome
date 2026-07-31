@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from collections import OrderedDict
-from dataclasses import dataclass
+from collections import deque
 from threading import RLock
 import time
 from typing import Any
@@ -9,28 +8,16 @@ from typing import Any
 import numpy as np
 
 
-@dataclass
-class _BackgroundState:
-    frame: Any | None = None
-    clean: bool = False
-    last_used: float = 0.0
-    clear_observations: int = 0
-    candidate: Any | None = None
-    candidate_observations: int = 0
-    last_clear_token: str = ""
-    validated_for_person: bool = False
-
-
 class PrivacyBackgroundReconstructor:
-    """Keep bounded, camera-local clean scenes for skeleton-only privacy video."""
+    """Remove people using pixels from the current camera frame only."""
 
-    version = "privacy-background-reconstructor-v2"
+    version = "privacy-background-reconstructor-v3"
 
-    def __init__(self, *, max_states: int = 6) -> None:
+    def __init__(self, *, max_states: int = 6, max_inpaint_dimension: int = 192) -> None:
         self.max_states = max(1, int(max_states))
-        self._states: OrderedDict[tuple[int, int, int], _BackgroundState] = OrderedDict()
+        self.max_inpaint_dimension = max(96, int(max_inpaint_dimension))
         self._lock = RLock()
-        self._incompatible_background_rejections = 0
+        self._camera_metrics: dict[int, dict[str, Any]] = {}
 
     def reconstruct(
         self,
@@ -40,42 +27,40 @@ class PrivacyBackgroundReconstructor:
         person_mask: Any,
         *,
         clear_token: str = "",
+        source_key: str = "",
     ) -> Any:
+        del clear_token
         height, width = frame.shape[:2]
-        key = (int(camera_id), int(width), int(height))
         mask = self._binary_mask(cv2, person_mask, width, height)
-        has_person = bool(cv2.countNonZero(mask))
-
-        if not has_person:
-            self._observe_clear_frame(key, frame, clear_token=clear_token)
+        if not bool(cv2.countNonZero(mask)):
+            self._record(int(camera_id), "clear_frames", source_key=source_key)
             return frame.copy()
 
-        background, validated = self._background_copy(key)
-        if background is not None and not validated:
-            if not self._background_matches_current(background, frame, mask):
-                self._discard_background(key)
-                background = None
-            else:
-                self._mark_background_validated(key)
-        if background is None:
-            background = self._safe_fallback(cv2, frame, mask)
-            self._store_provisional_background(key, background)
-
-        background = self._match_illumination(cv2, background, frame, mask)
-        return self._composite(cv2, frame, background, mask)
+        started = time.monotonic()
+        output = self._inpaint_current_frame(cv2, frame, mask)
+        self._record(
+            int(camera_id),
+            "person_frames",
+            source_key=source_key,
+            latency_ms=(time.monotonic() - started) * 1000.0,
+        )
+        return output
 
     def reset_camera(self, camera_id: int) -> None:
-        camera_id = int(camera_id)
         with self._lock:
-            for key in [item for item in self._states if item[0] == camera_id]:
-                self._states.pop(key, None)
+            self._camera_metrics.pop(int(camera_id), None)
 
-    def safe_scene(self, cv2: Any, camera_id: int, frame: Any) -> Any:
-        """Return a retained person-free scene, or a non-revealing startup frame."""
+    def safe_scene(
+        self,
+        cv2: Any,
+        camera_id: int,
+        frame: Any,
+        *,
+        source_key: str = "",
+    ) -> Any:
+        """Return a non-revealing frame when synchronized person metadata is unavailable."""
+        self._record(int(camera_id), "neutral_fallback_frames", source_key=source_key)
         height, width = frame.shape[:2]
-        background = self._camera_background_copy(cv2, int(camera_id), width, height)
-        if background is not None:
-            return background
         border = np.concatenate(
             (
                 frame[: max(1, height // 18)].reshape(-1, 3),
@@ -90,195 +75,94 @@ class PrivacyBackgroundReconstructor:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
-            return {
-                "schema_version": self.version,
-                "state_count": len(self._states),
-                "max_states": self.max_states,
-                "incompatible_background_rejections": self._incompatible_background_rejections,
-                "memory_bytes": sum(
-                    (int(state.frame.nbytes) if state.frame is not None else 0)
-                    + (int(state.candidate.nbytes) if state.candidate is not None else 0)
-                    for state in self._states.values()
-                ),
-                "states": [
-                    {
-                        "camera_id": key[0],
-                        "width": key[1],
-                        "height": key[2],
-                        "clean": state.clean,
-                        "clear_observations": state.clear_observations,
-                        "candidate_observations": state.candidate_observations,
-                        "validated_for_person": state.validated_for_person,
-                    }
-                    for key, state in self._states.items()
-                ],
-            }
+            cameras = []
+            for camera_id, metrics in sorted(self._camera_metrics.items()):
+                latencies = list(metrics.get("latencies_ms") or ())
+                cameras.append({
+                    "camera_id": camera_id,
+                    "source_key": str(metrics.get("source_key") or ""),
+                    "clear_frames": int(metrics.get("clear_frames") or 0),
+                    "person_frames": int(metrics.get("person_frames") or 0),
+                    "neutral_fallback_frames": int(metrics.get("neutral_fallback_frames") or 0),
+                    "inpaint_latency_ms_p50": round(self._percentile(latencies, 0.50), 2),
+                    "inpaint_latency_ms_p95": round(self._percentile(latencies, 0.95), 2),
+                })
+        return {
+            "schema_version": self.version,
+            "strategy": "current_frame_local_inpaint",
+            "max_inpaint_dimension": self.max_inpaint_dimension,
+            "retained_pixel_state": False,
+            "state_count": 0,
+            "max_states": self.max_states,
+            "memory_bytes": 0,
+            "cameras": cameras,
+        }
 
-    def _observe_clear_frame(
-        self,
-        key: tuple[int, int, int],
-        frame: Any,
-        *,
-        clear_token: str = "",
-    ) -> None:
-        now = time.monotonic()
-        with self._lock:
-            state = self._state(key, now)
-            token = str(clear_token or "")
-            if token and token == state.last_clear_token:
-                state.last_used = now
-                return
-            if token:
-                state.last_clear_token = token
-            if state.clean and state.frame is not None:
-                state.frame = self._stable_update(state.frame, frame)
-                state.clear_observations += 1
-                state.validated_for_person = False
-            else:
-                if state.candidate is None or not self._frames_stable(state.candidate, frame):
-                    state.candidate = frame.copy()
-                    state.candidate_observations = 1
-                else:
-                    state.candidate = self._stable_update(state.candidate, frame)
-                    state.candidate_observations += 1
-                if state.candidate_observations >= 3:
-                    state.frame = state.candidate.copy()
-                    state.clean = True
-                    state.clear_observations = state.candidate_observations
-                    state.candidate = None
-                    state.candidate_observations = 0
-                    state.validated_for_person = False
-            state.last_used = now
-
-    def _background_copy(self, key: tuple[int, int, int]) -> tuple[Any | None, bool]:
-        now = time.monotonic()
-        with self._lock:
-            state = self._states.get(key)
-            if state is None or state.frame is None:
-                return None, False
-            state.last_used = now
-            self._states.move_to_end(key)
-            return state.frame.copy(), bool(state.validated_for_person)
-
-    def _camera_background_copy(self, cv2: Any, camera_id: int, width: int, height: int) -> Any | None:
-        now = time.monotonic()
-        with self._lock:
-            exact_key = (camera_id, width, height)
-            exact = self._states.get(exact_key)
-            if exact is not None and exact.frame is not None:
-                exact.last_used = now
-                self._states.move_to_end(exact_key)
-                return exact.frame.copy()
-            candidates = [
-                (key, state)
-                for key, state in self._states.items()
-                if key[0] == camera_id and state.frame is not None
-            ]
-            if not candidates:
-                return None
-            key, state = max(candidates, key=lambda item: item[1].last_used)
-            state.last_used = now
-            self._states.move_to_end(key)
-            source = state.frame.copy()
-        return cv2.resize(source, (width, height), interpolation=cv2.INTER_LINEAR)
-
-    def _discard_background(self, key: tuple[int, int, int]) -> None:
-        with self._lock:
-            self._states.pop(key, None)
-            self._incompatible_background_rejections += 1
-
-    def _mark_background_validated(self, key: tuple[int, int, int]) -> None:
-        with self._lock:
-            state = self._states.get(key)
-            if state is not None:
-                state.validated_for_person = True
-
-    def _background_matches_current(self, background: Any, frame: Any, mask: Any) -> bool:
-        if background.shape != frame.shape:
-            return False
-        height, width = frame.shape[:2]
-        step = max(3, min(height, width) // 64)
-        visible = mask[::step, ::step] == 0
-        if int(np.count_nonzero(visible)) < 256:
-            return False
-        current = frame[::step, ::step].astype(np.int16)[visible]
-        retained = background[::step, ::step].astype(np.int16)[visible]
-        color_shift = np.rint(np.median(current - retained, axis=0)).astype(np.int16)
-        residual = np.max(np.abs((current - retained) - color_shift), axis=1)
-        return bool(
-            float(np.median(residual)) <= 32.0
-            and float(np.mean(residual <= 52.0)) >= 0.52
-        )
-
-    def _store_provisional_background(self, key: tuple[int, int, int], frame: Any) -> None:
-        now = time.monotonic()
-        with self._lock:
-            state = self._state(key, now)
-            if state.frame is None:
-                state.frame = frame.copy()
-                state.clean = False
-                state.validated_for_person = True
-            state.last_used = now
-
-    def _state(self, key: tuple[int, int, int], now: float) -> _BackgroundState:
-        state = self._states.get(key)
-        if state is None:
-            while len(self._states) >= self.max_states:
-                self._states.popitem(last=False)
-            state = _BackgroundState(last_used=now)
-            self._states[key] = state
-        self._states.move_to_end(key)
-        return state
-
-    def _stable_update(self, background: Any, frame: Any) -> Any:
-        difference = np.max(
-            np.abs(frame.astype(np.int16) - background.astype(np.int16)),
-            axis=2,
-        )
-        stable = difference <= 24
-        updated = background.copy()
-        if np.any(stable):
-            blended = (
-                background[stable].astype(np.uint16) * 7
-                + frame[stable].astype(np.uint16)
-            ) // 8
-            updated[stable] = blended.astype(np.uint8)
-        return updated
-
-    def _frames_stable(self, first: Any, second: Any) -> bool:
-        difference = np.max(
-            np.abs(second.astype(np.int16) - first.astype(np.int16)),
-            axis=2,
-        )
-        return float(np.mean(difference <= 28)) >= 0.82
-
-    def _safe_fallback(self, cv2: Any, frame: Any, mask: Any) -> Any:
-        radius = max(3, min(11, int(round(min(frame.shape[:2]) * 0.018))))
+    def _inpaint_current_frame(self, cv2: Any, frame: Any, mask: Any) -> Any:
+        radius = max(3, min(9, int(round(min(frame.shape[:2]) * 0.015))))
         expanded = cv2.dilate(mask, np.ones((7, 7), dtype=np.uint8), iterations=1)
-        return cv2.inpaint(frame, expanded, radius, cv2.INPAINT_TELEA)
+        points = cv2.findNonZero(expanded)
+        if points is None:
+            return frame.copy()
+        x, y, width, height = cv2.boundingRect(points)
+        margin = max(8, radius * 3)
+        x1 = max(0, x - margin)
+        y1 = max(0, y - margin)
+        x2 = min(frame.shape[1], x + width + margin)
+        y2 = min(frame.shape[0], y + height + margin)
+        crop = frame[y1:y2, x1:x2]
+        crop_mask = expanded[y1:y2, x1:x2]
+        crop_height, crop_width = crop.shape[:2]
+        scale = min(1.0, self.max_inpaint_dimension / max(crop_width, crop_height))
+        if scale < 1.0:
+            working_size = (
+                max(1, int(round(crop_width * scale))),
+                max(1, int(round(crop_height * scale))),
+            )
+            working_crop = cv2.resize(crop, working_size, interpolation=cv2.INTER_AREA)
+            working_mask = cv2.resize(crop_mask, working_size, interpolation=cv2.INTER_NEAREST)
+            working_radius = max(2, int(round(radius * scale)))
+            repaired = cv2.inpaint(working_crop, working_mask, working_radius, cv2.INPAINT_TELEA)
+            repaired = cv2.resize(repaired, (crop_width, crop_height), interpolation=cv2.INTER_LINEAR)
+        else:
+            repaired = cv2.inpaint(crop, crop_mask, radius, cv2.INPAINT_TELEA)
+        output = frame.copy()
+        output[y1:y2, x1:x2] = repaired
+        return output
 
-    def _match_illumination(self, cv2: Any, background: Any, frame: Any, mask: Any) -> Any:
-        visible = mask == 0
-        if int(np.count_nonzero(visible)) < 256:
-            return background
-        current_mean = np.median(frame[visible], axis=0)
-        background_mean = np.median(background[visible], axis=0)
-        shift = np.clip(current_mean - background_mean, -28.0, 28.0)
-        if float(np.max(np.abs(shift))) < 1.0:
-            return background
-        return np.clip(background.astype(np.int16) + np.rint(shift).astype(np.int16), 0, 255).astype(np.uint8)
+    def _record(
+        self,
+        camera_id: int,
+        field: str,
+        *,
+        source_key: str,
+        latency_ms: float | None = None,
+    ) -> None:
+        with self._lock:
+            metrics = self._camera_metrics.get(camera_id)
+            if metrics is None:
+                while len(self._camera_metrics) >= self.max_states:
+                    self._camera_metrics.pop(next(iter(self._camera_metrics)))
+                metrics = {
+                    "source_key": str(source_key or ""),
+                    "clear_frames": 0,
+                    "person_frames": 0,
+                    "neutral_fallback_frames": 0,
+                    "latencies_ms": deque(maxlen=240),
+                }
+                self._camera_metrics[camera_id] = metrics
+            elif source_key and source_key != metrics.get("source_key"):
+                metrics["source_key"] = str(source_key)
+            metrics[field] = int(metrics.get(field) or 0) + 1
+            if latency_ms is not None:
+                metrics["latencies_ms"].append(max(0.0, float(latency_ms)))
 
-    def _composite(self, cv2: Any, frame: Any, background: Any, mask: Any) -> Any:
-        outer = cv2.dilate(mask, np.ones((9, 9), dtype=np.uint8), iterations=1)
-        alpha = cv2.GaussianBlur(outer, (9, 9), 0)
-        alpha[mask > 0] = 255
-        alpha16 = alpha.astype(np.uint16)[..., None]
-        output = (
-            background.astype(np.uint16) * alpha16
-            + frame.astype(np.uint16) * (255 - alpha16)
-            + 127
-        ) // 255
-        return output.astype(np.uint8)
+    def _percentile(self, values: list[float], quantile: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * quantile))))
+        return float(ordered[index])
 
     def _binary_mask(self, cv2: Any, mask: Any, width: int, height: int) -> Any:
         array = np.asarray(mask, dtype=np.uint8)

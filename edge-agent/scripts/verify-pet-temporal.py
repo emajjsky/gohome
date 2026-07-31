@@ -25,17 +25,30 @@ def main() -> int:
 
     first, first_status = stabilizer.update(
         1,
-        [detection(15, 0.36), detection(16, 0.29, 21.0)],
+        [detection(15, 0.44), detection(16, 0.29, 21.0)],
         now=1.0,
     )
     assert first == []
     assert first_status["candidate_count"] == 2
     assert first_status["observation_count"] == 1
 
-    confirmed, confirmed_status = stabilizer.update(1, [detection(15, 0.42, 23.0)], now=2.0)
+    confirmed, confirmed_status = stabilizer.update(1, [detection(15, 0.48, 23.0)], now=2.0)
     assert [item["class_id"] for item in confirmed] == [15]
     assert confirmed[0]["temporal_hits"] == 2
     assert confirmed_status["confirmed_count"] == 1
+
+    uncertain = PetTemporalStabilizer()
+    for index in range(5):
+        low_confidence, low_status = uncertain.update(
+            3,
+            [detection(16, 0.31, 20.0 + index)],
+            now=10.0 + index,
+        )
+        assert low_confidence == []
+    assert low_status["confirmed_count"] == 0
+    assert low_status["uncertain_count"] == 1
+    assert uncertain.status()["uncertain_track_count"] == 1
+    assert uncertain.status()["final_class_confidence"] == 0.40
 
     confused, _ = stabilizer.update(1, [detection(16, 0.55, 25.0)], now=3.0)
     assert [item["class_id"] for item in confused] == [15]

@@ -18,13 +18,14 @@ class _PetTrack:
     hits: int = 0
     class_hits: Dict[int, int] = field(default_factory=dict)
     class_scores: Dict[int, float] = field(default_factory=dict)
+    class_weights: Dict[int, float] = field(default_factory=dict)
     confirmed_class_id: int | None = None
 
 
 class PetTemporalStabilizer:
     """Confirm and classify small pet detections across camera-local observations."""
 
-    version = "pet-temporal-stabilizer-v1"
+    version = "pet-temporal-stabilizer-v2"
 
     def __init__(
         self,
@@ -33,12 +34,14 @@ class PetTemporalStabilizer:
         hold_seconds: float = 2.2,
         score_decay: float = 0.82,
         class_margin: float = 0.08,
+        final_class_confidence: float = 0.40,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.confirmation_hits = max(2, int(confirmation_hits))
         self.hold_seconds = max(0.5, float(hold_seconds))
         self.score_decay = max(0.5, min(0.98, float(score_decay)))
         self.class_margin = max(0.0, float(class_margin))
+        self.final_class_confidence = max(0.0, min(1.0, float(final_class_confidence)))
         self._clock = monotonic_clock or time.monotonic
         self._tracks: dict[str, list[_PetTrack]] = {}
 
@@ -72,6 +75,10 @@ class PetTemporalStabilizer:
                 class_id: score * self.score_decay
                 for class_id, score in track.class_scores.items()
             }
+            track.class_weights = {
+                class_id: weight * self.score_decay
+                for class_id, weight in track.class_weights.items()
+            }
 
         used_tracks: set[int] = set()
         groups = self._candidate_groups(candidates)
@@ -90,27 +97,35 @@ class PetTemporalStabilizer:
             self._observe(tracks[match_index], group, observed_at)
 
         confirmed = []
+        rejected_low_confidence = 0
         for track in tracks:
             self._update_confirmation(track)
             class_id = track.confirmed_class_id
             if class_id is None or observed_at - track.last_seen > self.hold_seconds:
                 continue
+            class_confidence = self._class_confidence(track, class_id)
+            if class_confidence < self.final_class_confidence:
+                rejected_low_confidence += 1
+                continue
             output = deepcopy(track.last_detection)
             output["class_id"] = class_id
             output["bbox"] = list(track.bbox)
-            output["confidence"] = round(self._class_confidence(track, class_id), 4)
+            output["confidence"] = round(class_confidence, 4)
             output["temporal_confirmed"] = True
             output["temporal_hits"] = int(track.class_hits.get(class_id, 0))
             output["temporal_cached"] = bool(observed_at > track.last_seen)
             confirmed.append(output)
 
         self._tracks[camera_key] = tracks[:8]
+        uncertain_count = sum(1 for track in tracks if self._uncertain_track(track))
         return [*passthrough, *confirmed], {
             "schema_version": self.version,
             "candidate_count": len(candidates),
             "observation_count": len(groups),
             "track_count": len(tracks),
             "confirmed_count": len(confirmed),
+            "uncertain_count": uncertain_count,
+            "rejected_low_confidence_count": rejected_low_confidence,
         }
 
     def reset_camera(self, camera_id: Any) -> None:
@@ -120,12 +135,15 @@ class PetTemporalStabilizer:
         self._tracks.clear()
 
     def status(self) -> Dict[str, Any]:
+        tracks = [track for camera_tracks in self._tracks.values() for track in camera_tracks]
         return {
             "schema_version": self.version,
             "camera_count": len(self._tracks),
-            "track_count": sum(len(tracks) for tracks in self._tracks.values()),
+            "track_count": len(tracks),
+            "uncertain_track_count": sum(1 for track in tracks if self._uncertain_track(track)),
             "confirmation_hits": self.confirmation_hits,
             "hold_seconds": self.hold_seconds,
+            "final_class_confidence": self.final_class_confidence,
         }
 
     def _observe(self, track: _PetTrack, group: list[Dict[str, Any]], observed_at: float) -> None:
@@ -139,6 +157,7 @@ class PetTemporalStabilizer:
             confidence = max(0.0, min(1.0, float(candidate.get("confidence") or 0.0)))
             track.class_hits[class_id] = int(track.class_hits.get(class_id, 0)) + 1
             track.class_scores[class_id] = float(track.class_scores.get(class_id, 0.0)) + confidence
+            track.class_weights[class_id] = float(track.class_weights.get(class_id, 0.0)) + 1.0
 
     def _candidate_groups(self, candidates: list[Dict[str, Any]]) -> list[list[Dict[str, Any]]]:
         groups: list[list[Dict[str, Any]]] = []
@@ -162,14 +181,23 @@ class PetTemporalStabilizer:
         winner_id, winner_score = ranked[0]
         runner_score = ranked[1][1] if len(ranked) > 1 else 0.0
         winner_hits = int(track.class_hits.get(winner_id, 0))
+        winner_confidence = self._class_confidence(track, winner_id)
         if track.confirmed_class_id is None:
-            if winner_hits >= self.confirmation_hits and winner_score - runner_score >= self.class_margin:
+            if (
+                winner_hits >= self.confirmation_hits
+                and winner_score - runner_score >= self.class_margin
+                and winner_confidence >= self.final_class_confidence
+            ):
                 track.confirmed_class_id = int(winner_id)
             return
         if winner_id == track.confirmed_class_id:
             return
         current_score = float(track.class_scores.get(track.confirmed_class_id, 0.0))
-        if winner_hits >= self.confirmation_hits + 1 and winner_score >= current_score * 1.35:
+        if (
+            winner_hits >= self.confirmation_hits + 1
+            and winner_score >= current_score * 1.35
+            and winner_confidence >= self.final_class_confidence
+        ):
             track.confirmed_class_id = int(winner_id)
 
     def _best_track(
@@ -191,8 +219,17 @@ class PetTemporalStabilizer:
         return max(scored, default=(0.0, None))[1]
 
     def _class_confidence(self, track: _PetTrack, class_id: int) -> float:
-        hits = max(1, int(track.class_hits.get(class_id, 0)))
-        return max(0.0, min(1.0, float(track.class_scores.get(class_id, 0.0)) / hits))
+        weight = max(1e-6, float(track.class_weights.get(class_id, 0.0)))
+        return max(0.0, min(1.0, float(track.class_scores.get(class_id, 0.0)) / weight))
+
+    def _uncertain_track(self, track: _PetTrack) -> bool:
+        if track.confirmed_class_id is not None or not track.class_scores:
+            return False
+        winner_id = max(track.class_scores, key=track.class_scores.get)
+        return (
+            int(track.class_hits.get(winner_id, 0)) >= self.confirmation_hits
+            and self._class_confidence(track, winner_id) < self.final_class_confidence
+        )
 
     def _iou(self, first: list[float], second: list[float]) -> float:
         width = max(0.0, min(first[2], second[2]) - max(first[0], second[0]))

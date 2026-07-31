@@ -55,9 +55,16 @@ class HailoVDevicePool:
 
 
 class HailoPoseDecoder:
-    def __init__(self, *, input_size: int = 640, nms_iou: float = 0.70) -> None:
+    def __init__(
+        self,
+        *,
+        input_size: int = 640,
+        nms_iou: float = 0.70,
+        nms_containment: float = 0.88,
+    ) -> None:
         self.input_size = int(input_size)
         self.nms_iou = float(nms_iou)
+        self.nms_containment = float(nms_containment)
 
     def decode(
         self,
@@ -105,7 +112,13 @@ class HailoPoseDecoder:
         boxes = boxes[candidate_indices]
         keypoints = keypoints[candidate_indices]
         scores = scores[candidate_indices]
-        keep = self._nms(boxes, scores, self.nms_iou, max_poses=max_poses)
+        keep = self._nms(
+            boxes,
+            scores,
+            self.nms_iou,
+            containment_threshold=self.nms_containment,
+            max_poses=max_poses,
+        )
         boxes = boxes[keep]
         keypoints = keypoints[keep]
         scores = scores[keep]
@@ -180,7 +193,14 @@ class HailoPoseDecoder:
         return 1.0 / (1.0 + np.exp(-clipped))
 
     @staticmethod
-    def _nms(boxes: Any, scores: Any, threshold: float, *, max_poses: int) -> list[int]:
+    def _nms(
+        boxes: Any,
+        scores: Any,
+        threshold: float,
+        *,
+        containment_threshold: float = 0.88,
+        max_poses: int,
+    ) -> list[int]:
         import numpy as np
 
         x1, y1, x2, y2 = boxes.T
@@ -198,7 +218,14 @@ class HailoPoseDecoder:
             intersection = intersection_width * intersection_height
             union = areas[current] + areas[rest] - intersection
             iou = np.divide(intersection, union, out=np.zeros_like(intersection), where=union > 0)
-            order = rest[iou < threshold]
+            smaller_area = np.minimum(areas[current], areas[rest])
+            containment = np.divide(
+                intersection,
+                smaller_area,
+                out=np.zeros_like(intersection),
+                where=smaller_area > 0,
+            )
+            order = rest[(iou < threshold) & (containment < containment_threshold)]
         return keep
 
     @staticmethod

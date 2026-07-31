@@ -1236,7 +1236,29 @@ def verify_hailo_pose_decoder() -> dict:
         confidence=0.25,
         max_poses=3,
     )
-    return {"count": len(result["boxes"]), "score": float(result["scores"][0])}
+    containment_boxes = np.asarray(
+        [
+            [0.0, 0.0, 100.0, 200.0],
+            [20.0, 20.0, 80.0, 110.0],
+            [120.0, 0.0, 220.0, 200.0],
+        ],
+        dtype=np.float32,
+    )
+    containment_scores = np.asarray([0.90, 0.72, 0.84], dtype=np.float32)
+    containment_keep = HailoPoseDecoder._nms(
+        containment_boxes,
+        containment_scores,
+        0.70,
+        containment_threshold=0.88,
+        max_poses=3,
+    )
+    if containment_keep != [0, 2]:
+        raise SystemExit(f"contained duplicate pose was not suppressed: {containment_keep}")
+    return {
+        "count": len(result["boxes"]),
+        "score": float(result["scores"][0]),
+        "contained_duplicate_suppressed": True,
+    }
 
 
 def verify_hailo_object_decoder_and_cache() -> dict:

@@ -7,6 +7,7 @@ from threading import Condition, Event, Lock, Thread
 from typing import Any, Dict, Generator, Tuple
 from urllib.parse import quote, urlsplit, urlunsplit
 import base64
+import hashlib
 import logging
 import os
 import time
@@ -404,6 +405,8 @@ class CameraAgent:
                 "source": f"{cached['source']} cached",
                 "frame_id": cached["frame_id"],
                 "captured_at": cached["captured_at"],
+                "camera_id": cached["camera_id"],
+                "source_key": cached["source_key"],
             }
 
     def _store_latest_frame(
@@ -417,11 +420,13 @@ class CameraAgent:
         except (AttributeError, ValueError):
             return None
         key = self._frame_cache_key(camera)
+        camera_id = int(camera.get("id") or 0)
+        source_key = self.frame_source_key(camera)
         captured_at = datetime.now(timezone.utc).isoformat()
         with self._frame_cache_lock:
             sequence = self._frame_sequences.get(key, 0) + 1
             self._frame_sequences[key] = sequence
-            frame_id = f"{camera.get('id') or 'source'}-{sequence}"
+            frame_id = f"{camera_id or 'source'}-{sequence}"
             self._frame_cache[key] = {
                 "frame": frame.copy(),
                 "width": width,
@@ -430,8 +435,15 @@ class CameraAgent:
                 "monotonic": time.monotonic(),
                 "frame_id": frame_id,
                 "captured_at": captured_at,
+                "camera_id": camera_id,
+                "source_key": source_key,
             }
-        return {"frame_id": frame_id, "captured_at": captured_at}
+        return {
+            "frame_id": frame_id,
+            "captured_at": captured_at,
+            "camera_id": camera_id,
+            "source_key": source_key,
+        }
 
     def frame_data_url(self, frame: Any, jpeg_quality: int = 62, max_width: int = 768) -> str:
         cv2 = _load_cv2()
@@ -452,6 +464,12 @@ class CameraAgent:
         camera_id = camera.get("id")
         stream_url = str(camera.get("stream_url", "")).strip()
         return f"{camera_id or 'source'}::{stream_url}"
+
+    def frame_source_key(self, camera: Dict[str, Any]) -> str:
+        camera_id = int(camera.get("id") or 0)
+        stream_url = str(camera.get("stream_url") or "").strip()
+        identity = f"{camera_id}\0{stream_url}".encode("utf-8", errors="strict")
+        return hashlib.sha256(identity).hexdigest()[:24]
 
     def _managed_reader(self, camera: Dict[str, Any]) -> _SharedStreamReader | None:
         key = self._frame_cache_key(camera)

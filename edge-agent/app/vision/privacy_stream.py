@@ -15,7 +15,7 @@ from .synchronized_pose_stream import DEFAULT_SKELETON_EDGES
 class PrivacyFrameRenderer:
     """Render privacy-safe relay frames without changing safety inference inputs."""
 
-    version = "privacy-frame-renderer-v8"
+    version = "privacy-frame-renderer-v9"
 
     def __init__(
         self,
@@ -25,10 +25,17 @@ class PrivacyFrameRenderer:
         self.tracker = tracker
         self.background_reconstructor = background_reconstructor or PrivacyBackgroundReconstructor()
         self._render_cache: OrderedDict[tuple[Any, ...], bytes] = OrderedDict()
-        self._latest_safe_scenes: OrderedDict[tuple[int, int, int], Any] = OrderedDict()
         self._cache_lock = RLock()
 
-    def render_jpeg(self, camera_id: int, jpeg: bytes, mode: str, *, quality: int = 55) -> bytes:
+    def render_jpeg(
+        self,
+        camera_id: int,
+        jpeg: bytes,
+        mode: str,
+        *,
+        quality: int = 55,
+        source_key: str = "",
+    ) -> bytes:
         resolved_mode = normalize_privacy_mode(mode)
         if resolved_mode == "original":
             return jpeg
@@ -39,15 +46,16 @@ class PrivacyFrameRenderer:
         if frame is None or frame.size == 0:
             raise RuntimeError("privacy frame decode failed")
 
-        synchronized = self._synchronized_bundle(int(camera_id))
+        synchronized = self._synchronized_bundle(int(camera_id), source_key=source_key)
         if synchronized is not None:
             source = synchronized.get("frame")
             tracking = dict(synchronized.get("tracking") or {})
             if source is None or not str(tracking.get("frame_id") or ""):
-                output = self._safe_fallback_scene(cv2, int(camera_id), frame)
+                output = self._safe_fallback_scene(cv2, int(camera_id), frame, source_key=source_key)
                 return self._encode_jpeg(cv2, output, quality)
             cache_key = (
                 int(camera_id),
+                str(source_key or ""),
                 resolved_mode,
                 str(tracking.get("frame_id")),
                 int(frame.shape[1]),
@@ -77,30 +85,43 @@ class PrivacyFrameRenderer:
                     output_frame,
                     np.zeros(output_frame.shape[:2], dtype=np.uint8),
                     clear_token=str(tracking.get("frame_id") or ""),
+                    source_key=source_key,
                 )
             if resolved_mode == "person_blur":
                 output = self._render_person_blur(cv2, output_frame, metadata)
             else:
-                output = self._render_skeleton(cv2, int(camera_id), output_frame, metadata)
+                output = self._render_skeleton(
+                    cv2,
+                    int(camera_id),
+                    output_frame,
+                    metadata,
+                    source_key=source_key,
+                )
             rendered = self._encode_jpeg(cv2, output, quality)
             self._store_cached_render(cache_key, rendered)
             return rendered
 
         if self._supports_synchronized_frames():
-            output = self._safe_fallback_scene(cv2, int(camera_id), frame)
+            output = self._safe_fallback_scene(cv2, int(camera_id), frame, source_key=source_key)
             return self._encode_jpeg(cv2, output, quality)
 
         metadata = self._tracking_metadata(int(camera_id))
         if resolved_mode == "person_blur":
             output = self._render_person_blur(cv2, frame, metadata)
         else:
-            output = self._render_skeleton(cv2, int(camera_id), frame, metadata)
+            output = self._render_skeleton(
+                cv2,
+                int(camera_id),
+                frame,
+                metadata,
+                source_key=source_key,
+            )
         return self._encode_jpeg(cv2, output, quality)
 
     def _supports_synchronized_frames(self) -> bool:
         return self.tracker is not None and callable(getattr(self.tracker, "latest_synchronized_frame", None))
 
-    def _synchronized_bundle(self, camera_id: int) -> Dict[str, Any] | None:
+    def _synchronized_bundle(self, camera_id: int, *, source_key: str = "") -> Dict[str, Any] | None:
         if not self._supports_synchronized_frames():
             return None
         try:
@@ -108,7 +129,13 @@ class PrivacyFrameRenderer:
             if not isinstance(bundle, dict):
                 return None
             tracking = bundle.get("tracking") if isinstance(bundle.get("tracking"), dict) else {}
-            if int(tracking.get("camera_id") or camera_id) != int(camera_id):
+            if int(tracking.get("camera_id") or 0) != int(camera_id):
+                return None
+            frame_id = str(tracking.get("frame_id") or "")
+            if not frame_id.startswith(f"{int(camera_id)}-"):
+                return None
+            tracked_source_key = str(tracking.get("source_key") or bundle.get("source_key") or "")
+            if source_key and tracked_source_key != str(source_key):
                 return None
             return dict(bundle)
         except Exception:
@@ -120,17 +147,13 @@ class PrivacyFrameRenderer:
         with self._cache_lock:
             for key in [item for item in self._render_cache if int(item[0]) == camera_id]:
                 self._render_cache.pop(key, None)
-            for key in [item for item in self._latest_safe_scenes if int(item[0]) == camera_id]:
-                self._latest_safe_scenes.pop(key, None)
 
     def status(self) -> Dict[str, Any]:
         with self._cache_lock:
             render_cache_count = len(self._render_cache)
-            safe_scene_count = len(self._latest_safe_scenes)
         return {
             "schema_version": self.version,
             "render_cache_count": render_cache_count,
-            "safe_scene_count": safe_scene_count,
             "background": self.background_reconstructor.status(),
         }
 
@@ -141,14 +164,21 @@ class PrivacyFrameRenderer:
             raise RuntimeError("privacy frame encode failed")
         return rendered.tobytes()
 
-    def safe_scene_jpeg(self, camera_id: int, jpeg: bytes, *, quality: int = 55) -> bytes:
+    def safe_scene_jpeg(
+        self,
+        camera_id: int,
+        jpeg: bytes,
+        *,
+        quality: int = 55,
+        source_key: str = "",
+    ) -> bytes:
         """Return the current scene with only detected people replaced."""
         cv2 = _load_cv2()
         encoded = np.frombuffer(jpeg, dtype=np.uint8)
         frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
         if frame is None or frame.size == 0:
             raise RuntimeError("safe scene frame decode failed")
-        synchronized = self._synchronized_bundle(int(camera_id))
+        synchronized = self._synchronized_bundle(int(camera_id), source_key=source_key)
         if synchronized is not None:
             source = synchronized.get("frame")
             tracking = dict(synchronized.get("tracking") or {})
@@ -167,9 +197,18 @@ class PrivacyFrameRenderer:
                 }
             else:
                 metadata = self._tracking_metadata(int(camera_id))
+        elif self._supports_synchronized_frames():
+            scene = self._safe_fallback_scene(cv2, int(camera_id), frame, source_key=source_key)
+            return self._encode_jpeg(cv2, scene, quality)
         else:
             metadata = self._tracking_metadata(int(camera_id))
-        scene = self._person_free_scene(cv2, int(camera_id), frame, metadata)
+        scene = self._person_free_scene(
+            cv2,
+            int(camera_id),
+            frame,
+            metadata,
+            source_key=source_key,
+        )
         return self._encode_jpeg(cv2, scene, quality)
 
     def _person_free_scene(
@@ -178,6 +217,8 @@ class PrivacyFrameRenderer:
         camera_id: int,
         frame: Any,
         metadata: Dict[str, Any],
+        *,
+        source_key: str = "",
     ) -> Any:
         height, width = frame.shape[:2]
         boxes = self._privacy_boxes(metadata, width, height)
@@ -191,8 +232,8 @@ class PrivacyFrameRenderer:
             frame,
             mask,
             clear_token=str(tracking.get("frame_id") or ""),
+            source_key=source_key,
         )
-        self._store_safe_scene(camera_id, scene)
         return scene
 
     def _cached_render(self, key: tuple[Any, ...]) -> bytes | None:
@@ -209,24 +250,20 @@ class PrivacyFrameRenderer:
             while len(self._render_cache) > 32:
                 self._render_cache.popitem(last=False)
 
-    def _safe_fallback_scene(self, cv2: Any, camera_id: int, frame: Any) -> Any:
-        height, width = frame.shape[:2]
-        key = (int(camera_id), int(width), int(height))
-        with self._cache_lock:
-            scene = self._latest_safe_scenes.get(key)
-            if scene is not None:
-                self._latest_safe_scenes.move_to_end(key)
-                return scene.copy()
-        return self.background_reconstructor.safe_scene(cv2, int(camera_id), frame)
-
-    def _store_safe_scene(self, camera_id: int, scene: Any) -> None:
-        height, width = scene.shape[:2]
-        key = (int(camera_id), int(width), int(height))
-        with self._cache_lock:
-            self._latest_safe_scenes[key] = scene.copy()
-            self._latest_safe_scenes.move_to_end(key)
-            while len(self._latest_safe_scenes) > 6:
-                self._latest_safe_scenes.popitem(last=False)
+    def _safe_fallback_scene(
+        self,
+        cv2: Any,
+        camera_id: int,
+        frame: Any,
+        *,
+        source_key: str = "",
+    ) -> Any:
+        return self.background_reconstructor.safe_scene(
+            cv2,
+            int(camera_id),
+            frame,
+            source_key=source_key,
+        )
 
     def _tracking_metadata(self, camera_id: int) -> Dict[str, Any]:
         if self.tracker is None:
@@ -253,6 +290,8 @@ class PrivacyFrameRenderer:
         camera_id: int,
         frame: Any,
         metadata: Dict[str, Any],
+        *,
+        source_key: str = "",
     ) -> Any:
         tracking = dict(metadata.get("tracking") or {})
         state = str(tracking.get("state") or "empty")
@@ -267,8 +306,8 @@ class PrivacyFrameRenderer:
             frame,
             mask,
             clear_token=str(tracking.get("frame_id") or ""),
+            source_key=source_key,
         )
-        self._store_safe_scene(camera_id, canvas)
         if state not in {"observed", "tracked", "coasting"}:
             return canvas
 
@@ -463,6 +502,7 @@ class PrivacyMjpegStream:
         drop_stale_frames: int,
     ) -> Generator[bytes, None, None]:
         requested_mode = normalize_privacy_mode(privacy_mode)
+        source_key = str(self.camera_agent.frame_source_key(camera) or "")
         for chunk in self.camera_agent.mjpeg_frames(
             camera,
             fps=fps,
@@ -484,6 +524,7 @@ class PrivacyMjpegStream:
                     jpeg,
                     mode,
                     quality=jpeg_quality,
+                    source_key=source_key,
                 )
             except Exception:
                 if mode == "original":

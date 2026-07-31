@@ -75,7 +75,7 @@ class ContinualTracker:
         self.frames = []
         self.reset = []
 
-    def observe(self, camera_id, frame, *, frame_id, captured_at, poses, context=None):
+    def observe(self, camera_id, frame, *, frame_id, captured_at, poses, context=None, source_key=""):
         self.observed.append({
             "camera_id": camera_id,
             "frame": frame,
@@ -83,11 +83,17 @@ class ContinualTracker:
             "captured_at": captured_at,
             "poses": poses,
             "context": context or {},
+            "source_key": source_key,
         })
         return {"state": "observed", "pose_count": len(poses)}
 
-    def update_frame(self, camera_id, frame, *, frame_id, captured_at):
-        self.frames.append({"camera_id": camera_id, "frame_id": frame_id, "captured_at": captured_at})
+    def update_frame(self, camera_id, frame, *, frame_id, captured_at, source_key=""):
+        self.frames.append({
+            "camera_id": camera_id,
+            "frame_id": frame_id,
+            "captured_at": captured_at,
+            "source_key": source_key,
+        })
         return {
             "state": "tracked",
             "pose_count": 1,
@@ -277,6 +283,7 @@ def main() -> None:
         "camera_id": 25,
         "frame_id": "25-200",
         "captured_at": "2026-07-17T00:00:00.2+00:00",
+        "source_key": "",
     }]:
         raise SystemExit("shared stream frame was not sent to the continual tracker")
     if not isinstance(tracked_payload, dict) or not tracked_payload.get("risk_hint", {}).get("detected"):

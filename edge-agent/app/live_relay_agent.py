@@ -218,6 +218,7 @@ class LiveRelayAgent:
 
     def _run_camera(self, camera: Dict[str, Any], stop_event: Event) -> None:
         camera_id = int(camera["id"])
+        source_key = str(self.camera_agent.frame_source_key(camera) or "")
         while not self._stop.is_set() and not stop_event.is_set():
             executor: ThreadPoolExecutor | None = None
             pending: set[Future[Any]] = set()
@@ -265,6 +266,7 @@ class LiveRelayAgent:
                             camera_id,
                             source_frame,
                             quality=quality,
+                            source_key=source_key,
                         )
                         sequence += 1
                         captured_at = self._utc_iso()
@@ -287,6 +289,7 @@ class LiveRelayAgent:
                             frame,
                             privacy_mode,
                             quality=quality,
+                            source_key=source_key,
                         )
                     sequence += 1
                     captured_at = self._utc_iso()

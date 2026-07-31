@@ -22,6 +22,7 @@ class TrackerStub:
             "image_width": 320,
             "image_height": 180,
             "tracking": {
+                "camera_id": 1,
                 "state": "observed",
                 "poses": [{
                     "bbox": [110, 25, 210, 175],
@@ -161,13 +162,12 @@ def main() -> int:
     )
     clean_reference = decode(cv2, clean_jpeg.tobytes())
     reconstructed_region = reconstructed[20:178, 90:230]
-    clean_region = clean_reference[20:178, 90:230]
     occupied_region = decode(cv2, occupied_jpeg.tobytes())[20:178, 90:230]
-    assert float(np.abs(reconstructed_region.astype(float) - clean_region.astype(float)).mean()) < 24.0
     assert float(np.abs(reconstructed_region.astype(float) - occupied_region.astype(float)).mean()) > 35.0
     assert float(np.std(reconstructed_region.astype(float))) > 20.0
-    assert float(np.abs(safe_scene.astype(float) - clean_reference.astype(float)).mean()) < 24.0
     assert float(np.abs(safe_scene[person_slice].astype(float) - occupied_region.astype(float)).mean()) > 35.0
+    assert float(np.abs(reconstructed[outside_slice].astype(float) - occupied[outside_slice].astype(float)).mean()) < 12.0
+    assert float(np.abs(safe_scene[outside_slice].astype(float) - occupied[outside_slice].astype(float)).mean()) < 12.0
 
     changed_scene = occupied.copy()
     cv2.rectangle(changed_scene, (10, 55), (70, 120), (30, 220, 40), -1)
@@ -189,51 +189,75 @@ def main() -> int:
     foreign_clean = np.zeros_like(clean)
     foreign_clean[:, :] = (220, 35, 180)
     cv2.line(foreign_clean, (0, 170), (319, 10), (20, 245, 35), 22)
-    contaminated_renderer = PrivacyFrameRenderer(MutableTrackerStub(TrackerStub().latest_metadata(1)))
+    contaminated_tracker = MutableTrackerStub(EmptyTrackerStub().latest_metadata(1))
+    contaminated_renderer = PrivacyFrameRenderer(contaminated_tracker)
     for _ in range(3):
-        contaminated_renderer.background_reconstructor._observe_clear_frame((1, 320, 180), foreign_clean)
+        contaminated_renderer.render_jpeg(1, clean_jpeg.tobytes(), "skeleton", quality=85)
+    contaminated_tracker.metadata = TrackerStub().latest_metadata(1)
     isolated_scene = decode(
         cv2,
         contaminated_renderer.safe_scene_jpeg(1, occupied_jpeg.tobytes(), quality=85),
     )
     foreign_region = foreign_clean[person_slice]
     assert float(np.abs(isolated_scene[person_slice].astype(float) - foreign_region.astype(float)).mean()) > 45.0
-    assert contaminated_renderer.background_reconstructor.status()["incompatible_background_rejections"] == 1
-
     contaminated_renderer.reset_camera(1)
     assert contaminated_renderer.background_reconstructor.status()["state_count"] == 0
     renderer_status = contaminated_renderer.status()
     assert renderer_status["schema_version"] == contaminated_renderer.version
     assert renderer_status["background"]["schema_version"].startswith("privacy-background-reconstructor-")
 
-    deduplicated_renderer = PrivacyFrameRenderer(EmptyTrackerStub())
+    partially_foreign = clean.copy()
+    partially_foreign[person_slice] = foreign_clean[person_slice]
+    partial_tracker = MutableTrackerStub(EmptyTrackerStub().latest_metadata(1))
+    partial_renderer = PrivacyFrameRenderer(partial_tracker)
+    ok, partially_foreign_jpeg = cv2.imencode(
+        ".jpg",
+        partially_foreign,
+        [int(cv2.IMWRITE_JPEG_QUALITY), 90],
+    )
+    assert ok
+    for _ in range(3):
+        partial_renderer.render_jpeg(1, partially_foreign_jpeg.tobytes(), "skeleton", quality=85)
+    partial_tracker.metadata = TrackerStub().latest_metadata(1)
+    isolated_partial = decode(
+        cv2,
+        partial_renderer.render_jpeg(1, occupied_jpeg.tobytes(), "skeleton", quality=85),
+    )
+    assert float(
+        np.abs(isolated_partial[person_slice].astype(float) - foreign_clean[person_slice].astype(float)).mean()
+    ) > 45.0
+
+    stateless_renderer = PrivacyFrameRenderer(EmptyTrackerStub())
     zero_mask = np.zeros(clean.shape[:2], dtype=np.uint8)
     for _ in range(5):
-        deduplicated_renderer.background_reconstructor.reconstruct(
+        stateless_renderer.background_reconstructor.reconstruct(
             cv2,
             1,
             clean,
             zero_mask,
             clear_token="empty-anchor-1",
         )
-    deduplicated_status = deduplicated_renderer.background_reconstructor.status()["states"][0]
-    assert deduplicated_status["candidate_observations"] == 1
+    stateless_status = stateless_renderer.background_reconstructor.status()
+    assert stateless_status["retained_pixel_state"] is False
+    assert stateless_status["memory_bytes"] == 0
+    assert stateless_status["max_inpaint_dimension"] == 192
+    assert stateless_status["cameras"][0]["clear_frames"] == 5
 
     fallback_renderer = PrivacyFrameRenderer(PersonWithoutPoseTrackerStub())
     fallback = decode(cv2, fallback_renderer.render_jpeg(7, occupied_jpeg.tobytes(), "skeleton", quality=85))
     assert float(np.abs(fallback[person_slice].astype(float) - occupied_region).mean()) > 18.0
     fallback_status = fallback_renderer.background_reconstructor.status()
-    assert fallback_status["state_count"] == 1
-    assert fallback_status["states"][0]["clean"] is False
+    assert fallback_status["state_count"] == 0
+    assert fallback_status["cameras"][0]["person_frames"] == 1
 
     bounded_renderer = PrivacyFrameRenderer(EmptyTrackerStub())
     for camera_id in range(10):
         bounded_renderer.render_jpeg(camera_id, clean_jpeg.tobytes(), "skeleton", quality=60)
-    assert bounded_renderer.background_reconstructor.status()["state_count"] == 6
+    assert len(bounded_renderer.background_reconstructor.status()["cameras"]) == 6
     bounded_renderer.background_reconstructor.reset_camera(9)
     assert all(
-        state["camera_id"] != 9
-        for state in bounded_renderer.background_reconstructor.status()["states"]
+        camera["camera_id"] != 9
+        for camera in bounded_renderer.background_reconstructor.status()["cameras"]
     )
 
     supplied_wrong_frame = clean.copy()
@@ -241,39 +265,41 @@ def main() -> int:
     exact_frame = clean.copy()
     cv2.rectangle(exact_frame, (110, 25), (210, 175), (245, 245, 245), -1)
     exact_metadata = TrackerStub().latest_metadata(1)
-    exact_metadata["tracking"]["frame_id"] = "camera-1-exact-7"
+    exact_metadata["tracking"]["frame_id"] = "1-exact-7"
+    exact_metadata["tracking"]["source_key"] = "camera-1-source"
     synchronized_renderer = PrivacyFrameRenderer(SynchronizedTrackerStub(exact_frame, exact_metadata))
-    synchronized_renderer.background_reconstructor._observe_clear_frame((1, 320, 180), clean)
-    synchronized_renderer.background_reconstructor._observe_clear_frame((1, 320, 180), clean)
-    synchronized_renderer.background_reconstructor._observe_clear_frame((1, 320, 180), clean)
     ok, wrong_jpeg = cv2.imencode(".jpg", supplied_wrong_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
     assert ok
     synchronized_output = decode(
         cv2,
-        synchronized_renderer.render_jpeg(1, wrong_jpeg.tobytes(), "skeleton", quality=85),
+        synchronized_renderer.render_jpeg(
+            1,
+            wrong_jpeg.tobytes(),
+            "skeleton",
+            quality=85,
+            source_key="camera-1-source",
+        ),
     )
     wrong_person_region = synchronized_output[25:175, 225:315]
     clean_wrong_region = clean[25:175, 225:315]
     assert float(np.abs(wrong_person_region.astype(float) - clean_wrong_region.astype(float)).mean()) < 18.0
 
+    wrong_source = decode(
+        cv2,
+        synchronized_renderer.render_jpeg(
+            1,
+            wrong_jpeg.tobytes(),
+            "skeleton",
+            quality=85,
+            source_key="camera-2-source",
+        ),
+    )
+    assert float(np.max(np.std(wrong_source.astype(float), axis=(0, 1)))) < 2.0
+
     unavailable_renderer = PrivacyFrameRenderer(SynchronizedTrackerStub(exact_frame, exact_metadata))
     unavailable_renderer.tracker.latest_synchronized_frame = lambda _camera_id: None
     unavailable = decode(cv2, unavailable_renderer.render_jpeg(1, wrong_jpeg.tobytes(), "skeleton", quality=85))
     assert float(np.max(np.std(unavailable.astype(float), axis=(0, 1)))) < 2.0
-
-    current_scene = exact_frame.copy()
-    cv2.rectangle(current_scene, (8, 8), (72, 20), (12, 220, 35), -1)
-    recent_renderer = PrivacyFrameRenderer(SynchronizedTrackerStub(current_scene, exact_metadata))
-    for _ in range(3):
-        recent_renderer.background_reconstructor._observe_clear_frame((1, 320, 180), clean)
-    recent_renderer.render_jpeg(1, wrong_jpeg.tobytes(), "skeleton", quality=85)
-    recent_renderer.tracker.latest_synchronized_frame = lambda _camera_id: None
-    recent_fallback = decode(
-        cv2,
-        recent_renderer.render_jpeg(1, wrong_jpeg.tobytes(), "skeleton", quality=85),
-    )
-    assert float(np.abs(recent_fallback[8:20, 8:72].astype(float) - current_scene[8:20, 8:72]).mean()) < 18.0
-    assert float(np.abs(recent_fallback[person_slice].astype(float) - clean_reference[person_slice]).mean()) < 18.0
 
     try:
         renderer.render_jpeg(1, b"not-a-jpeg", "person_blur")

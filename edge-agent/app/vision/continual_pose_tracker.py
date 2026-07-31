@@ -99,6 +99,7 @@ class ContinualPoseTracker:
         captured_at: str,
         poses: list[Dict[str, Any]],
         context: Dict[str, Any] | None = None,
+        source_key: str = "",
     ) -> Dict[str, Any]:
         cv2, np = self._vision_modules()
         camera_id = int(camera_id)
@@ -112,7 +113,14 @@ class ContinualPoseTracker:
         with self._lock:
             if not tracked_poses:
                 self._states.pop(camera_id, None)
-                payload = self._empty_payload(camera_id, "empty", "no_observed_pose", frame_id, captured_at)
+                payload = self._empty_payload(
+                    camera_id,
+                    "empty",
+                    "no_observed_pose",
+                    frame_id,
+                    captured_at,
+                    source_key=source_key,
+                )
                 self._latest[camera_id] = payload
                 self._latest_frames[camera_id] = frame.copy()
                 self._latest_contexts[camera_id] = self._display_context(context or {})
@@ -128,6 +136,7 @@ class ContinualPoseTracker:
                 "image_height": int(frame.shape[0]),
                 "poses": tracked_poses,
                 "context": self._display_context(context or {}),
+                "source_key": str(source_key or ""),
             }
             payload = self._payload(
                 camera_id,
@@ -141,6 +150,7 @@ class ContinualPoseTracker:
                     "forward_backward_error": 0.0,
                     "geometry_scale": 1.0,
                 },
+                source_key=source_key,
             )
             self._latest[camera_id] = payload
             self._latest_frames[camera_id] = frame.copy()
@@ -158,6 +168,7 @@ class ContinualPoseTracker:
         *,
         frame_id: str,
         captured_at: str,
+        source_key: str = "",
     ) -> Dict[str, Any]:
         cv2, np = self._vision_modules()
         camera_id = int(camera_id)
@@ -166,7 +177,29 @@ class ContinualPoseTracker:
         with self._lock:
             state = self._states.get(camera_id)
             if state is None:
-                payload = self._empty_payload(camera_id, "empty", "no_anchor", frame_id, captured_at)
+                payload = self._empty_payload(
+                    camera_id,
+                    "empty",
+                    "no_anchor",
+                    frame_id,
+                    captured_at,
+                    source_key=source_key,
+                )
+                self._latest[camera_id] = payload
+                return deepcopy(payload)
+            active_source_key = str(state.get("source_key") or "")
+            if source_key and active_source_key and str(source_key) != active_source_key:
+                self._states.pop(camera_id, None)
+                self._latest_frames.pop(camera_id, None)
+                self._latest_contexts.pop(camera_id, None)
+                payload = self._empty_payload(
+                    camera_id,
+                    "expired",
+                    "source_changed",
+                    frame_id,
+                    captured_at,
+                    source_key=source_key,
+                )
                 self._latest[camera_id] = payload
                 return deepcopy(payload)
             if str(frame_id or "") and str(frame_id) == str(state.get("frame_id") or ""):
@@ -236,6 +269,7 @@ class ContinualPoseTracker:
             state["image_width"] = int(frame.shape[1])
             state["image_height"] = int(frame.shape[0])
             state["poses"] = next_poses
+            state["source_key"] = str(source_key or active_source_key)
             payload = self._payload(
                 camera_id,
                 state="tracked",
@@ -255,6 +289,7 @@ class ContinualPoseTracker:
                     "formal_evidence_eligible": False,
                 },
                 display_only_stale=anchor_age > self.max_age_seconds,
+                source_key=str(source_key or active_source_key),
             )
             self._latest[camera_id] = payload
             self._latest_frames[camera_id] = frame.copy()
@@ -298,6 +333,7 @@ class ContinualPoseTracker:
                 "frame": frame.copy(),
                 "tracking": deepcopy(payload),
                 "analysis_context": deepcopy(state.get("context") or {}),
+                "source_key": str(state.get("source_key") or payload.get("source_key") or ""),
             }
 
     def latest_synchronized_frame(self, camera_id: int) -> Dict[str, Any] | None:
@@ -323,6 +359,7 @@ class ContinualPoseTracker:
                 "frame": frame.copy(),
                 "tracking": deepcopy(payload),
                 "analysis_context": deepcopy(context),
+                "source_key": str(payload.get("source_key") or ""),
             }
 
     def latest_metadata(self, camera_id: int) -> Dict[str, Any]:
@@ -340,6 +377,7 @@ class ContinualPoseTracker:
                 "analysis_context": deepcopy(state.get("context") or {}),
                 "image_width": int(state.get("image_width") or 0),
                 "image_height": int(state.get("image_height") or 0),
+                "source_key": str(tracking.get("source_key") or state.get("source_key") or ""),
             }
 
     def has_anchor(self, camera_id: int) -> bool:
@@ -629,6 +667,7 @@ class ContinualPoseTracker:
             poses=poses,
             quality=previous_quality,
             display_only_stale=True,
+            source_key=str(state.get("source_key") or ""),
         )
         state["display_frame_id"] = str(frame_id or "")
         self._latest[camera_id] = payload
@@ -649,10 +688,17 @@ class ContinualPoseTracker:
         captured_at: str,
         age_seconds: float,
     ) -> Dict[str, Any]:
-        self._states.pop(camera_id, None)
+        state = self._states.pop(camera_id, None) or {}
         self._latest_frames.pop(camera_id, None)
         self._latest_contexts.pop(camera_id, None)
-        payload = self._empty_payload(camera_id, "expired", reason, frame_id, captured_at)
+        payload = self._empty_payload(
+            camera_id,
+            "expired",
+            reason,
+            frame_id,
+            captured_at,
+            source_key=str(state.get("source_key") or ""),
+        )
         payload["age_seconds"] = round(float(age_seconds), 4)
         self._latest[camera_id] = payload
         metric = self._metric(camera_id)
@@ -690,6 +736,7 @@ class ContinualPoseTracker:
         risk_hint: Dict[str, Any] | None = None,
         display_only_stale: bool = False,
         reason: str = "",
+        source_key: str = "",
     ) -> Dict[str, Any]:
         return {
             "schema_version": self.version,
@@ -698,6 +745,7 @@ class ContinualPoseTracker:
             "reason": str(reason or ""),
             "frame_id": str(frame_id or ""),
             "captured_at": str(captured_at or ""),
+            "source_key": str(source_key or ""),
             "age_seconds": round(float(age_seconds), 4),
             "pose_count": len(poses),
             "poses": poses,
@@ -714,6 +762,8 @@ class ContinualPoseTracker:
         reason: str,
         frame_id: str,
         captured_at: str,
+        *,
+        source_key: str = "",
     ) -> Dict[str, Any]:
         return {
             "schema_version": self.version,
@@ -722,6 +772,7 @@ class ContinualPoseTracker:
             "reason": str(reason or ""),
             "frame_id": str(frame_id or ""),
             "captured_at": str(captured_at or ""),
+            "source_key": str(source_key or ""),
             "age_seconds": None,
             "pose_count": 0,
             "poses": [],
