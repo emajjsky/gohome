@@ -20,23 +20,21 @@ class SilentNotifier:
 
 
 def candidate(event_type: str, snapshot_id: int, score: float) -> dict:
-    if event_type == "fire_candidate":
-        summary = "客厅摄像头 检测到疑似明火视觉线索。"
-    elif event_type == "fall_candidate":
+    if event_type == "fall_candidate":
         summary = "客厅摄像头 检测到快速倒地过程。"
     else:
         summary = "客厅摄像头 画面疑似黑屏或遮挡。"
     return {
         "event_type": event_type,
         "summary": summary,
-        "level": "critical" if event_type == "fire_candidate" else "warning",
+        "level": "critical" if event_type == "fall_candidate" else "warning",
         "snapshot_id": snapshot_id,
         "payload": {
             "rule": {"id": event_type, "reason": "验证候选去重。"},
             "evidence": {
                 "schema_version": "gohome-event-evidence-v1",
-                "event_category": "safety_alert" if event_type == "fire_candidate" else "device_alert",
-                "metrics": {"fire_score": score},
+                "event_category": "safety_alert" if event_type == "fall_candidate" else "device_alert",
+                "metrics": {"score": score},
             },
         },
     }
@@ -62,30 +60,19 @@ def main() -> None:
                 camera_id=int(camera["id"]),
                 detection_result_id=None,
                 rule_evaluation_id=None,
-                candidate=candidate("fire_candidate", index + 1, score),
+                candidate=candidate("black_screen", index + 1, score),
                 evaluated_at=(base_time + timedelta(minutes=index * 5)).isoformat(),
             )
             storage.update_event_candidate_status(int(row["id"]), "promoted", promoted_event_id=100 + index)
             promoted_ids.append(int(row["id"]))
-        black = storage.create_event_candidate(
-            camera_id=int(camera["id"]),
-            detection_result_id=None,
-            rule_evaluation_id=None,
-            candidate=candidate("black_screen", 9, 0.0),
-            evaluated_at=datetime.now(timezone.utc).isoformat(),
-        )
-        storage.update_event_candidate_status(int(black["id"]), "promoted", promoted_event_id=200)
-
         active = storage.list_event_candidates(limit=10, status="active")
-        fire_rows = [row for row in active if row["event_type"] == "fire_candidate"]
-        if len(fire_rows) != 1:
-            raise SystemExit(f"expected one active fire candidate, got {len(fire_rows)}: {active}")
-        if int(fire_rows[0]["id"]) != promoted_ids[-1]:
-            raise SystemExit(f"expected latest fire candidate {promoted_ids[-1]}, got {fire_rows[0]['id']}")
+        black_rows = [row for row in active if row["event_type"] == "black_screen"]
+        if len(black_rows) != 1:
+            raise SystemExit(f"expected one active black-screen candidate, got {len(black_rows)}: {active}")
+        if int(black_rows[0]["id"]) != promoted_ids[-1]:
+            raise SystemExit(f"expected latest black-screen candidate {promoted_ids[-1]}, got {black_rows[0]['id']}")
 
         event_agent = EventAgent(storage, notifier=SilentNotifier(), throttle_seconds=300)
-        if event_agent._throttle_seconds("fire_candidate") < 1800:
-            raise SystemExit("fire throttle should be at least 30 minutes")
 
         first_fall_candidate = storage.create_event_candidate(
             camera_id=int(camera["id"]),
@@ -181,8 +168,7 @@ def main() -> None:
                 {
                     "ok": True,
                     "active_count": len(active),
-                    "latest_fire_candidate_id": fire_rows[0]["id"],
-                    "fire_throttle_seconds": event_agent._throttle_seconds("fire_candidate"),
+                    "latest_black_screen_candidate_id": black_rows[0]["id"],
                     "fall_aggregation_window_seconds": event_agent._throttle_seconds("fall_candidate"),
                     "aggregated_candidate_id": repeated_fall_candidate["id"],
                     "later_event_id": later_fall["id"],

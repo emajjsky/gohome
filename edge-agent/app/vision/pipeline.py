@@ -7,7 +7,6 @@ from typing import Any, Dict
 
 from .activity import ActivityAnalyzer
 from .fall import FallAnalyzer
-from .fire import FireAnalyzer
 from .hailo_object import HailoObjectBackend
 from .hailo_pose import HailoPoseBackend
 from .human_evidence import HumanEvidenceGate
@@ -92,7 +91,6 @@ class VisionPipeline:
         )
         self.fall = FallAnalyzer()
         self.activity = ActivityAnalyzer()
-        self.fire = FireAnalyzer()
         self.pose = RtmposeAnalyzer(
             enabled=pose_enabled,
             mode=pose_mode,
@@ -248,20 +246,12 @@ class VisionPipeline:
             }
         activity_temporal = self._activity_temporal_features(people, pose.get("poses") or [], quality, pose, runtime_config)
         activity = self.activity.analyze(people, pose.get("poses") or [], quality.get("motion_score"), runtime_config, temporal=activity_temporal)
-        fire = self.fire.analyze(
-            quality["sample"],
-            runtime_config,
-            previous_sample=quality.get("previous_sample"),
-            motion_score=quality.get("motion_score"),
-        )
-
         tags = self._dedupe_tags([
             *quality.get("tags", []),
             *person.get("tags", []),
             *pose.get("tags", []),
             *fall.get("tags", []),
             *activity.get("tags", []),
-            *fire.get("tags", []),
             *(["pet_detected"] if pets else []),
             *(["scene_normal_lying_surface"] if scene.get("normal_lying_zones") else []),
         ])
@@ -272,7 +262,6 @@ class VisionPipeline:
             "pose": pose["result"].to_dict(),
             "fall": fall["result"].to_dict(),
             "activity": activity["result"].to_dict(),
-            "fire": fire["result"].to_dict(),
         }
 
         thresholds = {
@@ -283,11 +272,6 @@ class VisionPipeline:
             "yolo_imgsz": int(runtime_config.get("yolo_imgsz", 640)),
             "pose_fall_threshold": float(runtime_config.get("pose_fall_threshold", 0.90)),
             "pose_cache_seconds": float(runtime_config.get("pose_cache_seconds", 1.8)),
-            "fire_score_threshold": float(runtime_config.get("fire_score_threshold", 0.035)),
-            "fire_event_score_threshold": float(runtime_config.get("fire_event_score_threshold", 0.12)),
-            "fire_motion_threshold": float(runtime_config.get("fire_motion_threshold", 0.035)),
-            "fire_temporal_threshold": float(runtime_config.get("fire_temporal_threshold", 0.018)),
-            "fire_confirm_frames": int(runtime_config.get("fire_confirm_frames", 5)),
         }
 
         result = {
@@ -350,12 +334,6 @@ class VisionPipeline:
             "stillness_candidate": activity["stillness_candidate"],
             "daze_score": activity.get("daze_score"),
             "daze_candidate": activity.get("daze_candidate"),
-            "fire_score": fire["fire_score"],
-            "fire_candidate": fire["fire_candidate"],
-            "fire_event_candidate": fire.get("fire_event_candidate", False),
-            "fire_temporal_candidate": fire.get("fire_temporal_candidate", False),
-            "fire_temporal_score": fire.get("fire_temporal_score"),
-            "fire_features": fire.get("fire_features") or {},
             "algorithm_results": algorithm_results,
             "tags": tags,
         }

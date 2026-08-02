@@ -21,7 +21,6 @@ def analysis(*people: dict) -> dict:
         "poses": [],
         "motion_score": 0.02,
         "fall_candidate": False,
-        "fire_candidate": False,
     }
 
 
@@ -184,14 +183,6 @@ def main() -> None:
     if recorder.track_id != "event-target":
         raise SystemExit(f"dynamic event evidence must follow the highest-risk pose track: {recorder.track_id}")
     dynamic_evidence_track = recorder.track_id
-    worker._attach_temporal_evidence(12, {
-        "poses": [{"track_id": "near-fire", "fall_score": 0.24}],
-        "pose_factor_graph": {},
-        "fire_event_candidate": True,
-    })
-    if recorder.track_id is not None:
-        raise SystemExit(f"fire evidence must remain scene-wide instead of following a person: {recorder.track_id}")
-
     engine.reset_camera(1)
     if engine.recent_history(1):
         raise SystemExit("camera reset must clear temporal history")

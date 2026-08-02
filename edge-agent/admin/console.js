@@ -1045,7 +1045,6 @@ function tagLabel(tag) {
     pose_hand_near_face: "手部接近面部",
     no_person_detected: "暂未检测到人",
     fall_candidate: "跌倒观察候选",
-    fire_candidate: "火灾视觉线索",
     meal_candidate: "用餐观察候选",
     stillness_candidate: "静止观察候选",
     daze_candidate: "久坐观察候选",
@@ -1065,7 +1064,7 @@ function algorithmVisibleTags(snapshot, mode = "unified") {
     unified: [
       "black_screen", "low_motion", "person_detected", "no_person_detected", "person_presence_candidate",
       "pose_detected", "pose_tracked", "pose_validated_person", "pose_low_body", "pose_fall_candidate",
-      "pose_hand_near_face", "fall_candidate", "fire_candidate", "meal_candidate", "stillness_candidate",
+      "pose_hand_near_face", "fall_candidate", "meal_candidate", "stillness_candidate",
       "daze_candidate",
     ],
     quality: ["black_screen", "low_motion"],
@@ -1074,7 +1073,6 @@ function algorithmVisibleTags(snapshot, mode = "unified") {
     fall: ["fall_candidate", "pose_fall_candidate", "pose_low_body", "person_detected", "pose_detected", "pose_tracked"],
     meal: ["meal_candidate", "pose_hand_near_face", "person_detected", "pose_detected", "pose_tracked"],
     night: ["person_detected", "low_motion"],
-    fire: ["fire_candidate"],
     camera: ["black_screen", "low_motion"],
   };
   const allowed = new Set(allowlist[mode] || allowlist.quality);
@@ -1092,16 +1090,8 @@ function algorithmNormalTagLabel(mode = "unified", snapshot = state.latestSnapsh
   if (mode === "meal") return "未形成用餐候选";
   if (mode === "stillness") return "活动正常";
   if (mode === "night") return "夜间规则待命";
-  if (mode === "fire") return "未确认火灾线索";
   if (mode === "camera") return analysis.black_screen ? "摄像头异常" : "链路正常";
   return analysis.black_screen ? "质量异常" : "质量正常";
-}
-
-function hasConfirmedFireEvent() {
-  const candidates = Array.isArray(state.latestEvaluation?.candidates) ? state.latestEvaluation.candidates : [];
-  const evaluationState = state.latestEvaluation?.state || {};
-  return evaluationState.activity_state === "fire_candidate"
-    || candidates.some((candidate) => candidate?.event_type === "fire_candidate");
 }
 
 function unifiedSafetyState(snapshot) {
@@ -1127,8 +1117,6 @@ function unifiedSafetyState(snapshot) {
   if (fallReview) {
     return { level: "watch", title: "跌倒过程复核中", detail: fallStageInfo(fallRuntime.stage, { personCount }).detail };
   }
-  if (hasConfirmedFireEvent()) return { level: "critical", title: "火灾事件已触发", detail: "连续视觉证据已满足事件规则" };
-  if (analysis.fire_event_candidate) return { level: "watch", title: "火灾过程复核中", detail: "动态火焰线索等待连续帧确认" };
   if (personCount > 0 || poses.length > 0) {
     return { level: "hit", title: `人物活动正常`, detail: context || `持续跟踪 ${personCount || poses.length} 人` };
   }
@@ -1136,7 +1124,7 @@ function unifiedSafetyState(snapshot) {
   return {
     level: "idle",
     title: "当前画面无人",
-    detail: analysis.fire_candidate ? "存在弱火焰视觉线索，未形成事件" : (sceneSummary ? `场景 ${sceneSummary}` : "持续巡检中"),
+    detail: sceneSummary ? `场景 ${sceneSummary}` : "持续巡检中",
   };
 }
 
@@ -1440,7 +1428,6 @@ function renderSnapshot(snapshot) {
   setText("snapshotPeople", petCount ? `${personCount} / 宠${petCount}` : personCount);
   setText("snapshotPoseCount", analysis.pose_count ?? snapshotPoses(snapshot).length);
   setText("snapshotSceneCount", unifiedSceneTargets(snapshot).length);
-  setText("snapshotFireState", analysis.fire_event_candidate ? "事件候选" : analysis.fire_candidate ? "线索复核" : "正常");
   setText("snapshotQualityState", analysis.black_screen ? "异常" : "正常");
   const visibleTags = algorithmVisibleTags(snapshot);
   setText("snapshotTags", visibleTags.length ? visibleTags.map(tagLabel).join("，") : algorithmNormalTagLabel("unified", snapshot));
@@ -2194,7 +2181,7 @@ function evidencePills(candidate) {
 }
 
 const algorithmRecordScope = Object.freeze({
-  candidateTypes: ["fall_candidate", "fire_candidate", "black_screen", "camera_offline", "no_person", "no_motion"],
+  candidateTypes: ["fall_candidate", "black_screen", "camera_offline", "no_person", "no_motion"],
   observationTypes: ["no_person", "no_motion"],
   candidateTitle: "最近安全记录",
   observationTitle: "最近生活观察",
@@ -2469,7 +2456,6 @@ async function loadRules() {
     ["personDetectionEnabled", "person_detection_enabled"],
     ["fallDetectionEnabled", "fall_detection_enabled"],
     ["activityDetectionEnabled", "activity_detection_enabled"],
-    ["fireDetectionEnabled", "fire_detection_enabled"],
     ["notificationEnabled", "notification_enabled"],
   ]) {
     if ($(id)) $(id).checked = Boolean(rules[key]);
@@ -2505,7 +2491,6 @@ async function saveRules(button) {
         person_detection_enabled: $("personDetectionEnabled").checked,
         fall_detection_enabled: $("fallDetectionEnabled").checked,
         activity_detection_enabled: Boolean($("activityDetectionEnabled")?.checked),
-        fire_detection_enabled: Boolean($("fireDetectionEnabled")?.checked),
         notification_enabled: $("notificationEnabled").checked,
       }),
     });

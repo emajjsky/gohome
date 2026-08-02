@@ -672,11 +672,6 @@ class Storage:
                     fall_confirm_seconds INTEGER NOT NULL DEFAULT 4,
                     fall_recover_frames INTEGER NOT NULL DEFAULT 2,
                     activity_detection_enabled INTEGER NOT NULL DEFAULT 1,
-                    fire_detection_enabled INTEGER NOT NULL DEFAULT 1,
-                    fire_event_score_threshold REAL NOT NULL DEFAULT 0.12,
-                    fire_motion_threshold REAL NOT NULL DEFAULT 0.035,
-                    fire_temporal_threshold REAL NOT NULL DEFAULT 0.018,
-                    fire_confirm_frames INTEGER NOT NULL DEFAULT 5,
                     no_person_seconds INTEGER NOT NULL,
                     offline_enabled INTEGER NOT NULL,
                     notification_enabled INTEGER NOT NULL,
@@ -711,16 +706,12 @@ class Storage:
             self._ensure_column(conn, "rules", "fall_confirm_seconds", "INTEGER NOT NULL DEFAULT 4")
             self._ensure_column(conn, "rules", "fall_recover_frames", "INTEGER NOT NULL DEFAULT 2")
             self._ensure_column(conn, "rules", "activity_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
-            self._ensure_column(conn, "rules", "fire_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
-            self._ensure_column(conn, "rules", "fire_event_score_threshold", "REAL NOT NULL DEFAULT 0.12")
-            self._ensure_column(conn, "rules", "fire_motion_threshold", "REAL NOT NULL DEFAULT 0.035")
-            self._ensure_column(conn, "rules", "fire_temporal_threshold", "REAL NOT NULL DEFAULT 0.018")
-            self._ensure_column(conn, "rules", "fire_confirm_frames", "INTEGER NOT NULL DEFAULT 5")
             self._ensure_column(conn, "rules", "no_person_seconds", "INTEGER NOT NULL DEFAULT 300")
             self._ensure_column(conn, "rules", "motion_threshold", "REAL NOT NULL DEFAULT 0.015")
             self._ensure_column(conn, "rules", "black_brightness_threshold", "REAL NOT NULL DEFAULT 18")
             self._ensure_column(conn, "rules", "black_contrast_threshold", "REAL NOT NULL DEFAULT 4")
             self._ensure_column(conn, "rules", "yolo_confidence", "REAL NOT NULL DEFAULT 0.20")
+            self._drop_obsolete_rules_columns(conn)
             exists = conn.execute("SELECT id FROM rules WHERE id = 1").fetchone()
             if not exists:
                 conn.execute(
@@ -742,17 +733,12 @@ class Storage:
                         fall_confirm_seconds,
                         fall_recover_frames,
                         activity_detection_enabled,
-                        fire_detection_enabled,
-                        fire_event_score_threshold,
-                        fire_motion_threshold,
-                        fire_temporal_threshold,
-                        fire_confirm_frames,
                         no_person_seconds,
                         offline_enabled,
                         notification_enabled,
                         updated_at
                     )
-                    VALUES (1, 5, 0.015, 18, 4, 0.20, 300, 1, 1, 1, 1, 0.50, 2, 4, 2, 1, 1, 0.12, 0.035, 0.018, 5, 300, 1, 1, ?)
+                    VALUES (1, 5, 0.015, 18, 4, 0.20, 300, 1, 1, 1, 1, 0.50, 2, 4, 2, 1, 300, 1, 1, ?)
                     """,
                     (now_iso(),),
                 )
@@ -1202,6 +1188,20 @@ class Storage:
         if column not in self._table_columns(conn, table):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
+    def _drop_obsolete_rules_columns(self, conn: sqlite3.Connection) -> None:
+        obsolete_columns = (
+            "fire_detection_enabled",
+            "fire_event_score_threshold",
+            "fire_motion_threshold",
+            "fire_temporal_threshold",
+            "fire_confirm_frames",
+        )
+        columns = self._table_columns(conn, "rules")
+        for column in obsolete_columns:
+            if column in columns:
+                conn.execute(f"ALTER TABLE rules DROP COLUMN {column}")
+                columns.remove(column)
+
     def _migrate_event_cloud_sync_status(self, conn: sqlite3.Connection) -> None:
         # This classification is intentionally one-shot. Re-running it at every
         # boot would turn newly-created local events into pending uploads.
@@ -1346,11 +1346,6 @@ class Storage:
             "fall_confirm_seconds",
             "fall_recover_frames",
             "activity_detection_enabled",
-            "fire_detection_enabled",
-            "fire_event_score_threshold",
-            "fire_motion_threshold",
-            "fire_temporal_threshold",
-            "fire_confirm_frames",
             "no_person_seconds",
             "offline_enabled",
             "notification_enabled",
@@ -2778,9 +2773,6 @@ class Storage:
             "fall_score",
             "pose_fall_candidate",
             "pose_fall_score",
-            "fire_candidate",
-            "fire_event_candidate",
-            "fire_score",
             "meal_candidate",
             "stillness_candidate",
             "daze_candidate",
@@ -5961,7 +5953,6 @@ class Storage:
             "person_detection_enabled",
             "fall_detection_enabled",
             "activity_detection_enabled",
-            "fire_detection_enabled",
             "offline_enabled",
             "notification_enabled",
         ]:
@@ -5985,11 +5976,6 @@ class Storage:
             "fall_confirm_seconds",
             "fall_recover_frames",
             "activity_detection_enabled",
-            "fire_detection_enabled",
-            "fire_event_score_threshold",
-            "fire_motion_threshold",
-            "fire_temporal_threshold",
-            "fire_confirm_frames",
             "no_person_seconds",
             "offline_enabled",
             "notification_enabled",
@@ -6020,11 +6006,6 @@ class Storage:
                     fall_confirm_seconds = ?,
                     fall_recover_frames = ?,
                     activity_detection_enabled = ?,
-                    fire_detection_enabled = ?,
-                    fire_event_score_threshold = ?,
-                    fire_motion_threshold = ?,
-                    fire_temporal_threshold = ?,
-                    fire_confirm_frames = ?,
                     no_person_seconds = ?,
                     offline_enabled = ?,
                     notification_enabled = ?,
@@ -6047,11 +6028,6 @@ class Storage:
                     int(next_values["fall_confirm_seconds"]),
                     int(next_values["fall_recover_frames"]),
                     1 if next_values["activity_detection_enabled"] else 0,
-                    1 if next_values["fire_detection_enabled"] else 0,
-                    float(next_values["fire_event_score_threshold"]),
-                    float(next_values["fire_motion_threshold"]),
-                    float(next_values["fire_temporal_threshold"]),
-                    int(next_values["fire_confirm_frames"]),
                     int(next_values["no_person_seconds"]),
                     1 if next_values["offline_enabled"] else 0,
                     1 if next_values["notification_enabled"] else 0,

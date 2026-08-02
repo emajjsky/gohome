@@ -26,7 +26,6 @@ SAMPLE_TASKS = [
     "person",
     "pose",
     "fall",
-    "fire",
     "activity",
     "quality",
     "negative",

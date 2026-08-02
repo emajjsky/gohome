@@ -80,8 +80,6 @@ class EventAgent:
             return max(30, min(self.throttle_seconds, 60))
         if event_type in {"no_motion", "no_person"}:
             return max(self.throttle_seconds, 3600)
-        if event_type == "fire_candidate":
-            return max(self.throttle_seconds, 1800)
         if event_type in {"black_screen", "camera_offline"}:
             return max(self.throttle_seconds, 900)
         return self.throttle_seconds
@@ -89,4 +87,4 @@ class EventAgent:
     def _should_notify(self, event_type: str, level: str) -> bool:
         if level != "critical":
             return False
-        return event_type in {"fall_candidate", "prolonged_floor_lying", "fire_candidate", "camera_offline"}
+        return event_type in {"fall_candidate", "prolonged_floor_lying", "camera_offline"}

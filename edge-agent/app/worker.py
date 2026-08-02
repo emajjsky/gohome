@@ -920,7 +920,7 @@ class EdgeWorker:
         if not isinstance(evidence_track, dict):
             prolonged_tracks = factor_graph.get("prolonged_floor_lying_tracks") or []
             evidence_track = prolonged_tracks[0] if prolonged_tracks else None
-        if not isinstance(evidence_track, dict) and not bool(analysis.get("fire_event_candidate")):
+        if not isinstance(evidence_track, dict):
             tracked_poses = [
                 pose for pose in (analysis.get("poses") or [])
                 if isinstance(pose, dict) and pose.get("track_id")
@@ -1296,7 +1296,6 @@ class EdgeWorker:
         visual_risk = any(bool(analysis.get(key)) for key in (
             "fall_candidate",
             "pose_fall_candidate",
-            "fire_event_candidate",
         ))
         factor_graph = analysis.get("pose_factor_graph")
         graph_risk = isinstance(factor_graph, dict) and (

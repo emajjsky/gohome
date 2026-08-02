@@ -49,23 +49,17 @@ def main() -> None:
     render_overlay = function_source(console, "function renderDetectionOverlay", "function renderPoseSkeleton")
     if "serverAnnotated" not in render_overlay:
         raise SystemExit("algorithm console can still draw a second asynchronous pose overlay")
-    if "analysis.fire_candidate || analysis.fire_event_candidate" in render_overlay:
-        raise SystemExit("weak fire evidence can still replace the primary overlay status")
 
     safety_state = function_source(console, "function unifiedSafetyState", "function overlayPeopleForMode")
     priority_tokens = [
         "if (analysis.black_screen)",
         'if (fallRuntime.stage === "confirmed")',
         "if (fallReview)",
-        "if (hasConfirmedFireEvent())",
-        "if (analysis.fire_event_candidate)",
         "if (personCount > 0 || poses.length > 0)",
     ]
     priority_positions = [safety_state.index(token) for token in priority_tokens]
     if priority_positions != sorted(priority_positions):
         raise SystemExit("primary safety status priority is not deterministic")
-    if safety_state.index("analysis.fire_candidate") < safety_state.index("if (personCount > 0 || poses.length > 0)"):
-        raise SystemExit("weak fire evidence still outranks normal person activity")
 
     expected_css_asset = re.search(r'/admin/console\.css\?v=([^"\']+)', (ROOT / "admin" / "index.html").read_text(encoding="utf-8"))
     expected_js_asset = re.search(r'/admin/console\.js\?v=([^"\']+)', (ROOT / "admin" / "index.html").read_text(encoding="utf-8"))

@@ -32,31 +32,10 @@ def main() -> None:
     black = np.zeros((240, 320, 3), dtype=np.uint8)
     gradient = np.tile(np.linspace(60, 132, 320, dtype=np.uint8), (240, 1))
     normal = np.dstack([gradient, np.roll(gradient, 24, axis=1), np.full_like(gradient, 96)])
-    fire = normal.copy()
-    fire_patch_y, fire_patch_x = np.indices((80, 80))
-    fire_block = ((fire_patch_x // 8 + fire_patch_y // 8) % 3)
-    fire_r = np.choose(fire_block, [255, 220, 185]).astype(np.uint8)
-    fire_g = np.choose(fire_block, [210, 150, 95]).astype(np.uint8)
-    fire_b = np.choose(fire_block, [16, 24, 8]).astype(np.uint8)
-    fire[40:120, 180:260] = np.dstack([fire_b, fire_g, fire_r])
-    red_light = normal.copy()
-    red_light[40:120, 180:260] = [20, 30, 230]
     seated_half_body = synthetic_seated_half_body_frame()
 
     black_result = agent.analyze_frame_with_config(black)
-    fire_result = agent.analyze_frame_with_config(fire)
-    shifted_fire = normal.copy()
-    shifted_fire[38:118, 184:264] = np.dstack([fire_b, np.roll(fire_g, 2, axis=1), np.roll(fire_r, 3, axis=0)])
-    dynamic_fire_result = agent.analyze_frame_with_config(
-        shifted_fire,
-        previous_frame=fire,
-        config={
-            "fire_event_score_threshold": 0.02,
-            "fire_motion_threshold": 0.001,
-            "fire_temporal_threshold": 0.001,
-        },
-    )
-    red_light_result = agent.analyze_frame_with_config(red_light)
+    normal_result = agent.analyze_frame_with_config(normal)
     demo_result = agent.analyze_frame_with_config(normal, config={"force_demo_vision": True})
     default_presence_result = analyze_with_mocked_yolo_miss(seated_half_body)
     presence_result = analyze_with_mocked_yolo_miss(
@@ -100,11 +79,6 @@ def main() -> None:
 
     checks = {
         "black_screen": bool(black_result["black_screen"]),
-        "fire_candidate": bool(fire_result["fire_candidate"]),
-        "fire_event_candidate_without_previous": bool(fire_result.get("fire_event_candidate")),
-        "dynamic_fire_event_candidate": bool(dynamic_fire_result.get("fire_event_candidate")),
-        "dynamic_fire_temporal_score": dynamic_fire_result.get("fire_temporal_score"),
-        "red_light_fire_candidate": bool(red_light_result["fire_candidate"]),
         "demo_person_count": demo_result.get("person_count"),
         "default_classical_presence_person_count": default_presence_result.get("person_count"),
         "presence_person_count": presence_result.get("person_count"),
@@ -190,21 +164,13 @@ def main() -> None:
         "hailo_object_inference_calls": hailo_object["inference_calls"],
         "hailo_object_cache_hit": hailo_object["cache_hit"],
         "hailo_fallback_status": hailo_fallback,
-        "pose_result_status": fire_result.get("algorithm_results", {}).get("pose", {}).get("status"),
-        "pipeline_version": fire_result.get("pipeline_version"),
-        "algorithm_results": sorted((fire_result.get("algorithm_results") or {}).keys()),
+        "pose_result_status": normal_result.get("algorithm_results", {}).get("pose", {}).get("status"),
+        "pipeline_version": normal_result.get("pipeline_version"),
+        "algorithm_results": sorted((normal_result.get("algorithm_results") or {}).keys()),
     }
-    expected_algorithms = ["activity", "fall", "fire", "person", "pose", "quality"]
+    expected_algorithms = ["activity", "fall", "person", "pose", "quality"]
     if not checks["black_screen"]:
         raise SystemExit("black screen check failed")
-    if not checks["fire_candidate"]:
-        raise SystemExit("fire candidate check failed")
-    if checks["fire_event_candidate_without_previous"]:
-        raise SystemExit("static fire visual candidate should not become formal event candidate")
-    if not checks["dynamic_fire_event_candidate"]:
-        raise SystemExit("dynamic fire event candidate check failed")
-    if checks["red_light_fire_candidate"]:
-        raise SystemExit("red light false-positive check failed")
     if checks["algorithm_results"] != expected_algorithms:
         raise SystemExit(f"algorithm result keys mismatch: {checks['algorithm_results']}")
     if not isinstance(checks["demo_person_count"], int) or checks["demo_person_count"] < 1:

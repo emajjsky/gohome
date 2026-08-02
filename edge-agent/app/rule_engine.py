@@ -20,7 +20,7 @@ def utc_now() -> datetime:
 
 
 def event_category(event_type: str) -> str:
-    if event_type in {"fall_candidate", "prolonged_floor_lying", "fire_candidate"}:
+    if event_type in {"fall_candidate", "prolonged_floor_lying"}:
         return "safety_alert"
     if event_type in {"black_screen", "camera_offline"}:
         return "device_alert"
@@ -67,7 +67,6 @@ class RuleEngine:
         self.fall_upright_states: Dict[int, Dict[str, Any]] = {}
         self.fall_transition_motion_states: Dict[int, Dict[str, Any]] = {}
         self.camera_error_states: Dict[int, Dict[str, Any]] = {}
-        self.fire_confirm_counts: Dict[int, int] = {}
         self.prolonged_floor_tracks: Dict[int, set[str]] = {}
 
     def reset_camera(self, camera_id: int, *, preserve_camera_error_state: bool = False) -> None:
@@ -77,7 +76,6 @@ class RuleEngine:
         self.fall_tracks.pop(camera_id, None)
         self.fall_upright_states.pop(camera_id, None)
         self.fall_transition_motion_states.pop(camera_id, None)
-        self.fire_confirm_counts.pop(camera_id, None)
         self.prolonged_floor_tracks.pop(camera_id, None)
         if not preserve_camera_error_state:
             self.camera_error_states.pop(camera_id, None)
@@ -115,9 +113,6 @@ class RuleEngine:
             "fall_score": analysis.get("fall_score"),
             "fall_state": "clear",
             "fall_confirm_count": 0,
-            "fire_score": analysis.get("fire_score"),
-            "fire_state": "clear",
-            "fire_confirm_count": 0,
         }
 
         if analysis.get("black_screen") and rules.get("black_screen_enabled"):
@@ -276,57 +271,6 @@ class RuleEngine:
                 )
             )
 
-        fire_score = float(analysis.get("fire_score") or 0.0)
-        motion_score = analysis.get("motion_score")
-        fire_threshold = float((analysis.get("thresholds") or {}).get("fire_score_threshold") or 0.035)
-        fire_event_threshold = max(fire_threshold, float(rules.get("fire_event_score_threshold") or 0.12))
-        fire_motion_threshold = float(rules.get("fire_motion_threshold") or 0.035)
-        fire_temporal_threshold = float(rules.get("fire_temporal_threshold") or 0.018)
-        fire_confirm_frames = max(5, int(rules.get("fire_confirm_frames") or 5))
-        fire_temporal_score = analysis.get("fire_temporal_score")
-        fire_event_candidate = bool(analysis.get("fire_event_candidate"))
-        fire_visual_hit = fire_event_candidate and fire_score >= fire_event_threshold
-        fire_motion_ok = motion_score is not None and float(motion_score) >= fire_motion_threshold
-        fire_temporal_ok = fire_temporal_score is not None and float(fire_temporal_score) >= fire_temporal_threshold
-        if fire_visual_hit and fire_motion_ok and fire_temporal_ok:
-            self.fire_confirm_counts[camera_id] = self.fire_confirm_counts.get(camera_id, 0) + 1
-            state["fire_state"] = "confirming"
-        else:
-            self.fire_confirm_counts[camera_id] = 0
-            if bool(analysis.get("fire_candidate")):
-                state["fire_state"] = "visual_only"
-        state["fire_confirm_count"] = self.fire_confirm_counts.get(camera_id, 0)
-        fire_confirmed = state["fire_confirm_count"] >= fire_confirm_frames
-        if rules.get("fire_detection_enabled") and fire_confirmed:
-            state["activity_state"] = "fire_candidate"
-            candidates.append(
-                self._candidate(
-                    event_type="fire_candidate",
-                    summary=f"{camera.get('name', '摄像头')} 检测到疑似明火视觉线索。",
-                    level="critical",
-                    snapshot_id=snapshot_id,
-                    analysis=analysis,
-                    rule={
-                        "id": "fire_candidate",
-                        "label": "火灾应急报警",
-                        "reason": "连续帧中出现橙黄高亮纹理且画面存在变化，达到火灾视觉线索阈值。",
-                        "observed": {
-                            "fire_score": fire_score,
-                            "motion_score": motion_score,
-                            "temporal_score": fire_temporal_score,
-                            "confirm_frames": state["fire_confirm_count"],
-                            "fire_features": analysis.get("fire_features") or {},
-                        },
-                        "threshold": {
-                            "fire_score": fire_event_threshold,
-                            "motion_score": fire_motion_threshold,
-                            "temporal_score": fire_temporal_threshold,
-                            "confirm_frames": fire_confirm_frames,
-                        },
-                    },
-                )
-            )
-
         motion_detected = bool(analysis.get("motion_detected"))
         if motion_detected:
             self.last_motion_at[camera_id] = now
@@ -361,7 +305,7 @@ class RuleEngine:
                     )
 
         if rules.get("activity_detection_enabled"):
-            critical_state = state.get("activity_state") in {"fall_candidate", "fire_candidate"}
+            critical_state = state.get("activity_state") == "fall_candidate"
             if analysis.get("meal_candidate") and not critical_state:
                 state["activity_state"] = "meal_candidate"
             elif analysis.get("daze_candidate") and not critical_state:
@@ -1327,9 +1271,8 @@ def build_event_evidence(
         "no_person": ["person", "pose"],
         "fall_candidate": ["person", "pose", "fall"],
         "prolonged_floor_lying": ["person", "pose", "fall"],
-        "fire_candidate": ["quality", "fire"],
         "camera_offline": [],
-    }.get(event_type, ["quality", "person", "pose", "activity", "fall", "fire"])
+    }.get(event_type, ["quality", "person", "pose", "activity", "fall"])
 
     return {
         "schema_version": "gohome-event-evidence-v1",
@@ -1363,8 +1306,6 @@ def build_event_evidence(
             "meal_score": analysis.get("meal_score"),
             "stillness_score": analysis.get("stillness_score"),
             "daze_score": analysis.get("daze_score"),
-            "fire_score": analysis.get("fire_score"),
-            "fire_temporal_score": analysis.get("fire_temporal_score"),
         },
         "flags": {
             "black_screen": bool(analysis.get("black_screen")),
@@ -1374,8 +1315,6 @@ def build_event_evidence(
             "meal_candidate": bool(analysis.get("meal_candidate")),
             "stillness_candidate": bool(analysis.get("stillness_candidate")),
             "daze_candidate": bool(analysis.get("daze_candidate")),
-            "fire_candidate": bool(analysis.get("fire_candidate")),
-            "fire_event_candidate": bool(analysis.get("fire_event_candidate")),
         },
         "objects": {
             "people": [

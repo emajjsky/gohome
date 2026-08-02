@@ -21,5 +21,3 @@ fi
 "$PYTHON_BIN" scripts/eval-person.py
 "$PYTHON_BIN" scripts/eval-pose.py --pose-enabled
 "$PYTHON_BIN" scripts/eval-fall.py
-"$PYTHON_BIN" scripts/eval-fire.py --target visual
-"$PYTHON_BIN" scripts/eval-fire.py --target event

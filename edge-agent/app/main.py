@@ -124,7 +124,6 @@ def vision_runtime_capabilities() -> Dict[str, bool]:
         "no_person_detection": person_available,
         "fall_candidate": person_available or pose_available,
         "activity_candidate": True,
-        "fire_candidate": True,
         "pose_detection": pose_available,
         "yolo_runtime": yolo_available,
         "pose_runtime": pose_available,
