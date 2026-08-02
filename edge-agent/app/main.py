@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from .app_runtime_guard_service import AppRuntimeGuardService
 from .apns_relay_service import APNSRelayService
 from .app_push_service import AppPushService
-from .box_init_service import ADMIN_SESSION_COOKIE, DEFAULT_ADMIN_PASSWORD, BoxInitService
+from .box_init_service import ADMIN_SESSION_COOKIE, AdminLoginThrottled, BoxInitService
 from .camera_agent import CameraAgent, CameraError, bounded_stream_fps
 from .camera_config_authority import camera_config_authority
 from .config_sync_agent import ConfigSyncAgent
@@ -1677,8 +1677,20 @@ def admin_auth_status(request: Request) -> Dict[str, Any]:
 
 
 @app.post("/api/admin/auth/login")
-def admin_auth_login(payload: AdminLogin, response: Response) -> Dict[str, Any]:
-    session = box_init_service.authenticate(payload.username.strip(), payload.password)
+def admin_auth_login(payload: AdminLogin, request: Request, response: Response) -> Dict[str, Any]:
+    client_ip = request.client.host if request.client else "unknown"
+    try:
+        session = box_init_service.authenticate(
+            payload.username.strip(),
+            payload.password,
+            client_ip=client_ip,
+        )
+    except AdminLoginThrottled as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=f"登录尝试过于频繁，请在 {exc.retry_after_seconds} 秒后重试。",
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
     if not session:
         raise HTTPException(status_code=401, detail="用户名或密码不正确。")
     response.set_cookie(
@@ -1739,12 +1751,13 @@ def update_admin_video_privacy(payload: VideoPrivacyUpdate) -> Dict[str, Any]:
 
 @app.post("/api/admin/auth/change-password")
 def admin_auth_change_password(payload: AdminPasswordChange, request: Request, response: Response) -> Dict[str, Any]:
-    if payload.new_password == payload.old_password or payload.new_password == DEFAULT_ADMIN_PASSWORD:
-        raise HTTPException(status_code=400, detail="新密码不能继续使用初始密码。")
+    if payload.new_password == payload.old_password:
+        raise HTTPException(status_code=400, detail="新密码不能与当前密码相同。")
     changed = box_init_service.change_password(
         request.cookies.get(ADMIN_SESSION_COOKIE, ""),
         payload.old_password,
         payload.new_password,
+        client_ip=request.client.host if request.client else "unknown",
     )
     if not changed:
         raise HTTPException(status_code=401, detail="旧密码不正确或登录已过期。")

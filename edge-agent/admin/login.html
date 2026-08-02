@@ -26,13 +26,13 @@
       <form id="adminLoginForm" class="admin-login-form">
         <div>
           <h2>登录后台</h2>
-          <p>开发阶段初始账号：admin / 123456</p>
+          <p>使用盒子初始化时生成的一次性管理凭据。</p>
         </div>
         <label>用户名
           <input id="adminUsername" name="username" autocomplete="username" value="admin">
         </label>
         <label>密码
-          <input id="adminPassword" name="password" type="password" autocomplete="current-password" placeholder="初始密码 123456">
+          <input id="adminPassword" name="password" type="password" autocomplete="current-password" placeholder="管理密码">
         </label>
         <button id="adminLoginButton" class="primary-button" type="submit">
           <span class="material-symbols-outlined">login</span>
@@ -49,10 +49,10 @@
           <input id="adminOldPassword" name="old_password" type="password" autocomplete="current-password">
         </label>
         <label>新密码
-          <input id="adminNewPassword" name="new_password" type="password" autocomplete="new-password" minlength="6">
+          <input id="adminNewPassword" name="new_password" type="password" autocomplete="new-password" minlength="10">
         </label>
         <label>确认新密码
-          <input id="adminConfirmPassword" name="confirm_password" type="password" autocomplete="new-password" minlength="6">
+          <input id="adminConfirmPassword" name="confirm_password" type="password" autocomplete="new-password" minlength="10">
         </label>
         <button id="adminPasswordButton" class="primary-button" type="submit">
           <span class="material-symbols-outlined">key</span>
@@ -64,6 +64,6 @@
       <p id="adminLoginMessage" class="admin-login-message" role="status" aria-live="polite"></p>
     </section>
   </main>
-  <script src="/admin/login.js?v=20260702-auth-2"></script>
+  <script src="/admin/login.js?v=20260802-auth-3"></script>
 </body>
 </html>

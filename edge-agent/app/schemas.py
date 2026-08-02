@@ -33,7 +33,7 @@ class AdminLogin(BaseModel):
 
 class AdminPasswordChange(BaseModel):
     old_password: str = Field(..., min_length=1, max_length=128)
-    new_password: str = Field(..., min_length=6, max_length=128)
+    new_password: str = Field(..., min_length=10, max_length=128)
 
 
 class VideoPrivacyUpdate(BaseModel):

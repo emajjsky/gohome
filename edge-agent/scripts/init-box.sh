@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BOX_USER="${GOHOME_BOX_USER:-${SUDO_USER:-$(id -un)}}"
 BOX_HOSTNAME="${GOHOME_BOX_HOSTNAME:-gohome}"
-ADMIN_MUST_CHANGE_PASSWORD="${GOHOME_ADMIN_MUST_CHANGE_PASSWORD:-0}"
 COMMAND="${1:-init}"
 
 cd "$AGENT_ROOT"
@@ -32,13 +31,13 @@ PYTHON_BIN="$(select_python_bin)" || {
 }
 
 case "$COMMAND" in
-  init|status|reset-admin)
+  init|status|reset-admin|credential)
     ;;
   --reset-admin)
     COMMAND="reset-admin"
     ;;
   *)
-    echo "usage: bash scripts/init-box.sh [init|status|reset-admin]" >&2
+    echo "usage: bash scripts/init-box.sh [init|status|reset-admin|credential]" >&2
     exit 2
     ;;
 esac
@@ -54,21 +53,19 @@ install -d -m 0755 "$AGENT_ROOT/data"
 install -d -m 0755 "$AGENT_ROOT/data/snapshots"
 install -d -m 0755 "$AGENT_ROOT/data/runtime"
 
-password_change_flag="--no-force-password-change"
-if [[ "$ADMIN_MUST_CHANGE_PASSWORD" == "1" || "$ADMIN_MUST_CHANGE_PASSWORD" == "true" ]]; then
-  password_change_flag="--force-password-change"
-fi
-
-"$PYTHON_BIN" -m app.box_init_service "$COMMAND" --username admin --password 123456 "$password_change_flag"
+"$PYTHON_BIN" -m app.box_init_service "$COMMAND" --username admin
 
 if [[ "${EUID}" -eq 0 && -n "$BOX_USER" && "$BOX_USER" != "root" ]]; then
   chown -R "$BOX_USER:$BOX_USER" "$AGENT_ROOT/data" || true
 fi
 
-cat <<'EOF'
+if [[ "$COMMAND" == "init" || "$COMMAND" == "reset-admin" ]]; then
+  cat <<'EOF'
 
 GoHome box initialized.
 Admin URL: http://gohome.local/admin
-Initial admin: admin / 123456
-Development default: initial password can be used directly
+Admin username: admin
+The one-time credential printed above must be changed after first login.
+Retrieve a pending credential locally: bash scripts/init-box.sh credential
 EOF
+fi

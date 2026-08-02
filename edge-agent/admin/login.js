@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(window.location.search);
 const nextUrl = params.get("next") || "/admin/index.html";
 let lastPassword = "";
+let loginLockTimer = null;
 
 function setMessage(message, tone = "") {
   const node = $("adminLoginMessage");
@@ -27,8 +28,31 @@ async function api(path, options = {}) {
   });
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
-  if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(data?.detail || `HTTP ${response.status}`);
+    error.retryAfter = Number(response.headers.get("Retry-After") || 0);
+    throw error;
+  }
   return data;
+}
+
+function lockLoginButton(seconds) {
+  const button = $("adminLoginButton");
+  let remaining = Math.max(1, Math.ceil(Number(seconds) || 0));
+  window.clearInterval(loginLockTimer);
+  button.disabled = true;
+  const render = () => {
+    button.innerHTML = `<span class="material-symbols-outlined">schedule</span>${remaining} 秒后重试`;
+    remaining -= 1;
+    if (remaining < 0) {
+      window.clearInterval(loginLockTimer);
+      loginLockTimer = null;
+      button.disabled = false;
+      button.innerHTML = button.dataset.originalText;
+    }
+  };
+  render();
+  loginLockTimer = window.setInterval(render, 1000);
 }
 
 function showPasswordChange() {
@@ -88,8 +112,9 @@ async function login(event) {
     window.location.replace(nextUrl);
   } catch (error) {
     setMessage(error.message || "登录失败", "bad");
+    if (error.retryAfter > 0) lockLoginButton(error.retryAfter);
   } finally {
-    setBusy(button, false);
+    if (!loginLockTimer) setBusy(button, false);
   }
 }
 
