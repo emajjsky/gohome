@@ -15,6 +15,7 @@ EXPECTED_HTML = {
     "login.html",
 }
 EXPECTED_JS = {"console.js", "login.js"}
+EXPECTED_ASSETS: set[str] = set()
 EXPECTED_PAGE_SCRIPTS = {
     "algorithms.html": ["console.js"],
     "cameras.html": ["console.js"],
@@ -48,10 +49,20 @@ def local_admin_script(source: str) -> str | None:
 def main() -> None:
     actual_html = {path.name for path in ADMIN.glob("*.html")}
     actual_js = {path.name for path in ADMIN.glob("*.js")}
+    actual_assets = {
+        path.relative_to(ADMIN).as_posix()
+        for path in (ADMIN / "assets").glob("**/*")
+        if path.is_file()
+    }
     if actual_html != EXPECTED_HTML:
         raise SystemExit({"unexpected_html": sorted(actual_html - EXPECTED_HTML), "missing_html": sorted(EXPECTED_HTML - actual_html)})
     if actual_js != EXPECTED_JS:
         raise SystemExit({"unexpected_js": sorted(actual_js - EXPECTED_JS), "missing_js": sorted(EXPECTED_JS - actual_js)})
+    if actual_assets != EXPECTED_ASSETS:
+        raise SystemExit({
+            "unexpected_assets": sorted(actual_assets - EXPECTED_ASSETS),
+            "missing_assets": sorted(EXPECTED_ASSETS - actual_assets),
+        })
 
     dependencies: dict[str, list[str]] = {}
     for page_name in sorted(EXPECTED_HTML):
@@ -69,6 +80,7 @@ def main() -> None:
         "ok": True,
         "pages": sorted(EXPECTED_HTML),
         "scripts": sorted(EXPECTED_JS),
+        "assets": sorted(EXPECTED_ASSETS),
         "dependencies": dependencies,
     })
 
