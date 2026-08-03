@@ -12515,3 +12515,32 @@ P4 风险升频边界：
 - EACP 服务/API 专项通过；真实 person 帧报告生成 `1 TP / 1 TN`，但因样本和 split 不足正确标记不可声明质量。
 - GMDCSA24 稀疏序列在本机 CPU/basic 配置生成完整 v2 报告并正确标记不可声明质量；该运行结果只用于验证报告链路，不作为算法性能结论。
 - 状态：GH-042 代码与文档根因已消除，后续工作是采集授权数据、建立独立 split、训练/消融和树莓派长时实机质量对齐，不再通过调几个阈值伪造结论。
+
+## 178. 2026-08-03 空房基线事务与场景复核分离
+
+### 根因
+
+- `PrivacyBackgroundReconstructor._invalidate()` 在任一显著场景不匹配时同时清空内存背景、取消 calibrated 并删除 `.npz`，电视、灯光或短暂画面变化可能永久丢失校准。
+- `begin_calibration()` 先删除旧基线再采集新候选；校准超时、人物进入或磁盘失败后没有取消操作，状态长期停留在 calibrating。
+- 流代复验、局部场景变化、摄像头移动和持久资产生命周期共用 `generation_validated/calibrated` 两个布尔值，管理端只能把所有失败显示成“未校准”。
+- 内存先切 ready、磁盘后写入，异常时可能出现当前进程可用但重启后回退；同一路重复请求还可能并发覆盖同一临时文件。
+
+### 状态机与提交顺序
+
+- 持久键固定为 `camera_id + configured_source_key + resolution`；流代变化只重置运行复验，不创建或删除基线。
+- 校准候选保留独立 reference、float average、观察数和拒绝数。提交顺序为候选完成、压缩临时文件、fsync、权限收紧、原子 replace、内存切换、revision/hash 更新。
+- 同一路 active 时拒绝第二次校准。取消会清候选、结束 active、保留旧背景并进入 revalidation_required；持久化失败清除 `.tmp` 并由 API 返回 503 结构化错误。
+- 运行场景评估先抵消整体 BGR 色偏，再按可见采样点计算中位残差和匹配率。局部变化和灯光变化继续输出；强几何变化进入 scene_review_required，baseline、SHA-256 和磁盘文件保持不变。
+- 人物遮挡导致可见区域不足时沿用已经验证的流代，不把大面积人体掩码当作摄像头移动。合成前再次校验 baseline revision、active 状态和 generation ready，防止校准并发期间输出旧背景。
+
+### 跨层行为
+
+- `PrivacyFrameRenderer` 暴露 cancel calibration；管理校准接口在成功、超时、人物/分割阻断、持久化失败和未知异常路径都完成一次明确 finalize。
+- `LiveRelayAgent` 将阻断原因映射为 calibrating、revalidating、scene_review_required 或 calibration_required，云端状态不再统一伪装成未校准。
+- 管理端场景变化显示“场景变化，需重校准”，已有基线使用“重校准”动作；未校准仍显示“校准”。
+
+### 自动验证
+
+- `verify-video-privacy.py` 覆盖局部电视变化、整体灯光变化、真实场景平移、基线文件保留、重启恢复、并发校准拒绝、失败候选取消、磁盘 replace 失败无临时垃圾、成功新基线替换及 SHA-256 变化。
+- 新增 `verify-privacy-calibration-api.py`，锁定成功唤醒中继、超时取消、磁盘失败 503 和 active 请求不被第二次请求破坏。
+- `verify-live-relay-upload-pipeline.py` 增加四类隐私阻断状态映射；纯骨架与中继专项通过。完成完整边缘回归后进入双摄树莓派和 TestFlight 实机验收。

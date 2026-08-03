@@ -24,9 +24,16 @@ class PrivacyCalibrationRequired(RuntimeError):
 class _BackgroundState:
     background: Any | None = None
     calibrated: bool = False
+    baseline_revision: int = 0
+    baseline_sha256: str = ""
     active_generation: str = ""
     generation_validated: bool = False
     revalidation_observations: int = 0
+    scene_status: str = "calibration_required"
+    scene_match_observations: int = 0
+    scene_mismatch_observations: int = 0
+    last_scene_match_ratio: float | None = None
+    last_scene_median_residual: float | None = None
     calibration_active: bool = False
     calibration_id: str = ""
     calibration_reference: Any | None = None
@@ -37,7 +44,7 @@ class _BackgroundState:
     recent_person_mask: Any | None = None
     recent_person_at: float = 0.0
     person_frames: int = 0
-    scene_invalidations: int = 0
+    scene_review_events: int = 0
     composites: int = 0
     last_error: str = ""
     last_used: float = 0.0
@@ -47,7 +54,7 @@ class _BackgroundState:
 class PrivacyBackgroundReconstructor:
     """Compose pure-skeleton scenes from an explicitly calibrated empty room."""
 
-    version = "privacy-background-calibration-v1"
+    version = "privacy-background-calibration-v2"
 
     def __init__(
         self,
@@ -86,11 +93,12 @@ class PrivacyBackgroundReconstructor:
         now = self._clock()
         with self._lock:
             state = self._state(key, now)
-            state.background = None
-            state.calibrated = False
+            if state.calibration_active:
+                raise PrivacyCalibrationRequired(camera_id, "calibration_in_progress")
             state.active_generation = generation
             state.generation_validated = False
             state.revalidation_observations = 0
+            state.scene_status = "calibrating"
             state.calibration_active = True
             state.calibration_id = str(calibration_id)
             state.calibration_reference = None
@@ -102,8 +110,30 @@ class PrivacyBackgroundReconstructor:
             state.recent_person_at = 0.0
             state.last_error = ""
             state.last_used = now
-        self._remove_persisted(key)
-        return self._state_status(key, state)
+            return self._state_status(key, state)
+
+    def cancel_calibration(
+        self,
+        camera_id: int,
+        *,
+        source_key: str,
+        width: int,
+        height: int,
+        reason: str,
+    ) -> dict[str, Any]:
+        key, generation = self._state_key(camera_id, source_key, width, height)
+        with self._lock:
+            state = self._state(key, self._clock())
+            state.active_generation = generation
+            state.generation_validated = False
+            state.revalidation_observations = 0
+            state.calibration_active = False
+            state.calibration_reference = None
+            state.calibration_average = None
+            state.calibration_observations = 0
+            state.scene_status = "revalidation_required" if state.background is not None else "calibration_required"
+            state.last_error = str(reason or "calibration_cancelled")
+            return self._state_status(key, state)
 
     def observe_calibration(
         self,
@@ -120,7 +150,6 @@ class PrivacyBackgroundReconstructor:
         key, generation = self._state_key(camera_id, source_key, width, height)
         mask = self._binary_mask(cv2, person_mask, width, height)
         now = self._clock()
-        completed_background = None
         with self._lock:
             state = self._state(key, now)
             if not state.calibration_active:
@@ -167,17 +196,23 @@ class PrivacyBackgroundReconstructor:
                     0,
                     255,
                 ).astype(np.uint8)
+                self._persist(key, completed_background)
                 state.background = completed_background
                 state.calibrated = True
+                state.baseline_revision += 1
+                state.baseline_sha256 = self._background_sha256(completed_background)
                 state.generation_validated = True
                 state.revalidation_observations = self.revalidation_frames
+                state.scene_status = "stable"
+                state.scene_match_observations = 0
+                state.scene_mismatch_observations = 0
+                state.last_scene_match_ratio = 1.0
+                state.last_scene_median_residual = 0.0
                 state.calibration_active = False
                 state.calibration_reference = None
                 state.calibration_average = None
                 state.last_error = ""
             result = self._state_status(key, state)
-        if completed_background is not None:
-            self._persist(key, completed_background)
         return result
 
     def reconstruct(
@@ -198,28 +233,57 @@ class PrivacyBackgroundReconstructor:
         with self._lock:
             state = self._state(key, self._clock())
             self._activate_generation(state, generation)
+            if state.calibration_active:
+                raise PrivacyCalibrationRequired(camera_id, "calibration_in_progress")
+            mask = self._protected_mask(cv2, state, mask)
             background = None if state.background is None else state.background.copy()
+            baseline_revision = state.baseline_revision
+            generation_validated = state.generation_validated
+            scene_status = state.scene_status
 
         if background is None:
             raise PrivacyCalibrationRequired(camera_id)
 
-        mask = self._protected_mask(cv2, state, mask)
-        if not state.generation_validated:
+        if not generation_validated:
             if bool(cv2.countNonZero(mask)):
-                raise PrivacyCalibrationRequired(camera_id, "stream_revalidation_required")
-            self._revalidate_generation(cv2, key, state, background, frame)
-            if not state.generation_validated:
-                raise PrivacyCalibrationRequired(camera_id, "stream_revalidation_required")
+                raise PrivacyCalibrationRequired(
+                    camera_id,
+                    "scene_revalidation_required"
+                    if scene_status == "scene_review_required"
+                    else "stream_revalidation_required",
+                )
+            generation_ready, blocked_reason = self._revalidate_generation(
+                key,
+                baseline_revision,
+                background,
+                frame,
+            )
+            if not generation_ready:
+                raise PrivacyCalibrationRequired(camera_id, blocked_reason)
 
+        assessment = self._scene_assessment(background, frame, excluded_mask=mask)
         if not bool(cv2.countNonZero(mask)):
-            if not self._scene_matches(background, frame):
-                self._invalidate(key, state, "scene_changed")
-                raise PrivacyCalibrationRequired(camera_id, "scene_changed")
+            if not assessment["accepted"]:
+                self._mark_scene_review(key, baseline_revision, assessment)
+                raise PrivacyCalibrationRequired(camera_id, "scene_revalidation_required")
+            self._record_scene_match(key, baseline_revision, assessment)
             return frame.copy()
 
-        if not self._scene_matches(background, frame, excluded_mask=mask):
-            self._invalidate(key, state, "scene_changed")
-            raise PrivacyCalibrationRequired(camera_id, "scene_changed")
+        if assessment["status"] != "insufficient_visible_area":
+            if not assessment["accepted"]:
+                self._mark_scene_review(key, baseline_revision, assessment)
+                raise PrivacyCalibrationRequired(camera_id, "scene_revalidation_required")
+            self._record_scene_match(key, baseline_revision, assessment)
+
+        with self._lock:
+            current = self._states.get(key)
+            if (
+                current is None
+                or current.baseline_revision != baseline_revision
+                or current.calibration_active
+                or not current.generation_validated
+            ):
+                raise PrivacyCalibrationRequired(camera_id, "background_state_changed")
 
         expanded = self._expand_person_mask(cv2, frame, background, mask)
         output = frame.copy()
@@ -304,6 +368,9 @@ class PrivacyBackgroundReconstructor:
             if persisted is not None:
                 state.background = persisted
                 state.calibrated = True
+                state.baseline_revision = 1
+                state.baseline_sha256 = self._background_sha256(persisted)
+                state.scene_status = "revalidation_required"
             self._states[key] = state
         state.last_used = now
         self._states.move_to_end(key)
@@ -315,6 +382,7 @@ class PrivacyBackgroundReconstructor:
         state.active_generation = generation
         state.generation_validated = False
         state.revalidation_observations = 0
+        state.scene_status = "revalidation_required" if state.background is not None else "calibration_required"
         state.recent_person_mask = None
         state.recent_person_at = 0.0
 
@@ -334,37 +402,76 @@ class PrivacyBackgroundReconstructor:
 
     def _revalidate_generation(
         self,
-        cv2: Any,
         key: tuple[int, str, int, int],
-        state: _BackgroundState,
+        baseline_revision: int,
         background: Any,
         frame: Any,
-    ) -> None:
+    ) -> tuple[bool, str]:
+        assessment = self._scene_assessment(background, frame)
         with self._lock:
-            if self._scene_matches(background, frame):
+            state = self._states.get(key)
+            if state is None or state.baseline_revision != baseline_revision:
+                return False, "background_state_changed"
+            if assessment["accepted"]:
                 state.revalidation_observations += 1
+                state.scene_status = str(assessment["status"])
                 state.last_error = ""
+                self._store_scene_metrics(state, assessment)
                 if state.revalidation_observations >= self.revalidation_frames:
                     state.generation_validated = True
             else:
                 state.revalidation_observations = 0
+                state.scene_status = "scene_review_required"
                 state.last_error = "stream_revalidation_failed"
+                self._store_scene_metrics(state, assessment)
             state.last_used = self._clock()
             self._states.move_to_end(key)
+            if state.generation_validated:
+                return True, ""
+            return (
+                False,
+                "stream_revalidation_required"
+                if assessment["accepted"]
+                else "scene_revalidation_required",
+            )
 
-    def _invalidate(
+    def _mark_scene_review(
         self,
         key: tuple[int, str, int, int],
-        state: _BackgroundState,
-        reason: str,
+        baseline_revision: int,
+        assessment: dict[str, Any],
     ) -> None:
         with self._lock:
-            state.background = None
-            state.calibrated = False
+            state = self._states.get(key)
+            if state is None or state.baseline_revision != baseline_revision:
+                return
             state.generation_validated = False
-            state.scene_invalidations += 1
-            state.last_error = str(reason)
-        self._remove_persisted(key)
+            state.revalidation_observations = 0
+            state.scene_status = "scene_review_required"
+            state.scene_mismatch_observations += 1
+            state.scene_review_events += 1
+            state.last_error = str(assessment.get("reason") or "scene_revalidation_required")
+            self._store_scene_metrics(state, assessment)
+
+    def _record_scene_match(
+        self,
+        key: tuple[int, str, int, int],
+        baseline_revision: int,
+        assessment: dict[str, Any],
+    ) -> None:
+        with self._lock:
+            state = self._states.get(key)
+            if state is None or state.baseline_revision != baseline_revision:
+                return
+            state.scene_status = str(assessment["status"])
+            state.scene_match_observations += 1
+            state.scene_mismatch_observations = 0
+            state.last_error = ""
+            self._store_scene_metrics(state, assessment)
+
+    def _store_scene_metrics(self, state: _BackgroundState, assessment: dict[str, Any]) -> None:
+        state.last_scene_match_ratio = assessment.get("match_ratio")
+        state.last_scene_median_residual = assessment.get("median_residual")
 
     def _calibration_frame_matches(self, reference: Any, frame: Any) -> bool:
         if reference.shape != frame.shape:
@@ -372,21 +479,49 @@ class PrivacyBackgroundReconstructor:
         delta = np.max(np.abs(frame.astype(np.int16) - reference.astype(np.int16)), axis=2)
         return bool(float(np.median(delta)) <= 6.0 and float(np.mean(delta <= 20.0)) >= 0.96)
 
-    def _scene_matches(self, background: Any, frame: Any, excluded_mask: Any | None = None) -> bool:
+    def _scene_assessment(
+        self,
+        background: Any,
+        frame: Any,
+        excluded_mask: Any | None = None,
+    ) -> dict[str, Any]:
         if background.shape != frame.shape:
-            return False
+            return {
+                "accepted": False,
+                "status": "scene_review_required",
+                "reason": "resolution_changed",
+                "match_ratio": 0.0,
+                "median_residual": None,
+            }
         height, width = frame.shape[:2]
         step = max(3, min(height, width) // 64)
         visible = np.ones(frame[::step, ::step].shape[:2], dtype=bool)
         if excluded_mask is not None:
             visible &= excluded_mask[::step, ::step] == 0
         if int(np.count_nonzero(visible)) < 256:
-            return False
+            return {
+                "accepted": False,
+                "status": "insufficient_visible_area",
+                "reason": "insufficient_visible_area",
+                "match_ratio": None,
+                "median_residual": None,
+            }
         current = frame[::step, ::step].astype(np.int16)[visible]
         retained = background[::step, ::step].astype(np.int16)[visible]
         color_shift = np.rint(np.median(current - retained, axis=0)).astype(np.int16)
         residual = np.max(np.abs((current - retained) - color_shift), axis=1)
-        return bool(float(np.median(residual)) <= 24.0 and float(np.mean(residual <= 44.0)) >= 0.68)
+        median_residual = float(np.median(residual))
+        match_ratio = float(np.mean(residual <= 44.0))
+        accepted = bool(median_residual <= 24.0 and match_ratio >= 0.68)
+        status = "stable" if median_residual <= 12.0 and match_ratio >= 0.90 else "local_change"
+        return {
+            "accepted": accepted,
+            "status": status if accepted else "scene_review_required",
+            "reason": "" if accepted else "scene_geometry_changed",
+            "match_ratio": round(match_ratio, 4),
+            "median_residual": round(median_residual, 3),
+            "color_shift_bgr": [int(value) for value in color_shift],
+        }
 
     def _expand_person_mask(self, cv2: Any, frame: Any, background: Any, mask: Any) -> Any:
         points = cv2.findNonZero(mask)
@@ -447,12 +582,22 @@ class PrivacyBackgroundReconstructor:
                 if state.calibration_active
                 else "ready"
                 if state.calibrated and state.generation_validated
+                else "scene_review_required"
+                if state.calibrated and state.scene_status == "scene_review_required"
                 else "revalidating"
                 if state.calibrated
                 else "calibration_required"
             ),
             "ready": bool(state.calibrated and state.generation_validated),
             "calibrated": bool(state.calibrated),
+            "baseline_retained": state.background is not None,
+            "baseline_revision": state.baseline_revision,
+            "baseline_sha256": state.baseline_sha256,
+            "scene_status": state.scene_status,
+            "scene_match_observations": state.scene_match_observations,
+            "scene_mismatch_observations": state.scene_mismatch_observations,
+            "last_scene_match_ratio": state.last_scene_match_ratio,
+            "last_scene_median_residual": state.last_scene_median_residual,
             "calibration_active": bool(state.calibration_active),
             "calibration_id": state.calibration_id,
             "calibration_observations": state.calibration_observations,
@@ -461,7 +606,7 @@ class PrivacyBackgroundReconstructor:
             "revalidation_observations": state.revalidation_observations,
             "revalidation_required_frames": self.revalidation_frames,
             "person_frames": state.person_frames,
-            "scene_invalidations": state.scene_invalidations,
+            "scene_review_events": state.scene_review_events,
             "composites": state.composites,
             "last_error": state.last_error,
             "render_latency_ms_p50": round(self._percentile(list(state.latencies_ms), 0.50), 2),
@@ -479,12 +624,16 @@ class PrivacyBackgroundReconstructor:
         if path is None:
             return
         temporary = path.with_suffix(".tmp")
-        with temporary.open("wb") as handle:
-            np.savez_compressed(handle, background=np.asarray(background, dtype=np.uint8))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
+        try:
+            with temporary.open("wb") as handle:
+                np.savez_compressed(handle, background=np.asarray(background, dtype=np.uint8))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, path)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
 
     def _load_persisted(self, key: tuple[int, str, int, int]) -> Any | None:
         path = self._persisted_path(key)
@@ -499,17 +648,15 @@ class PrivacyBackgroundReconstructor:
         except (OSError, ValueError, KeyError):
             return None
 
-    def _remove_persisted(self, key: tuple[int, str, int, int]) -> None:
-        path = self._persisted_path(key)
-        if path is not None:
-            path.unlink(missing_ok=True)
-
     def _percentile(self, values: list[float], quantile: float) -> float:
         if not values:
             return 0.0
         ordered = sorted(values)
         index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * quantile))))
         return float(ordered[index])
+
+    def _background_sha256(self, background: Any) -> str:
+        return sha256(np.ascontiguousarray(background, dtype=np.uint8).tobytes()).hexdigest()
 
     def _binary_mask(self, cv2: Any, mask: Any, width: int, height: int) -> Any:
         array = np.asarray(mask, dtype=np.uint8)

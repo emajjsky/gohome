@@ -1680,7 +1680,27 @@ def calibrate_privacy_background(camera_id: int) -> Dict[str, Any]:
     deadline = time.monotonic() + 12.0
     calibration_id = f"cal-{uuid4().hex}"
     started = False
+    finalized = False
+    calibration_source_key = ""
+    calibration_width = 0
+    calibration_height = 0
+    failure_reason = "calibration_timeout"
     last_status: Dict[str, Any] = {}
+
+    def cancel_started_calibration(reason: str) -> Dict[str, Any]:
+        nonlocal finalized, last_status
+        if not started or finalized:
+            return last_status
+        last_status = privacy_frame_renderer.cancel_calibration(
+            camera_id,
+            source_key=calibration_source_key,
+            width=calibration_width,
+            height=calibration_height,
+            reason=str(reason or "calibration_cancelled"),
+        )
+        finalized = True
+        return last_status
+
     try:
         for capture in camera_agent.raw_frames(
             camera,
@@ -1697,6 +1717,9 @@ def calibrate_privacy_background(camera_id: int) -> Dict[str, Any]:
             frame_id = str(capture.get("frame_id") or "")
             if not started:
                 height, width = frame.shape[:2]
+                calibration_source_key = source_key
+                calibration_width = int(width)
+                calibration_height = int(height)
                 privacy_frame_renderer.begin_calibration(
                     camera_id,
                     source_key=source_key,
@@ -1714,20 +1737,42 @@ def calibrate_privacy_background(camera_id: int) -> Dict[str, Any]:
                 captured_monotonic=capture.get("captured_monotonic"),
             )
             if last_status.get("ready"):
+                finalized = True
                 live_relay_agent.wake()
                 return {"ok": True, "calibration": last_status}
             if time.monotonic() >= deadline:
                 break
     except PrivacyCalibrationRequired as exc:
+        failure_reason = exc.reason
+        cancel_started_calibration(failure_reason)
         raise HTTPException(
             status_code=409,
-            detail={"code": exc.reason, "message": "校准暂时无法完成，请确认画面无人后重试。"},
+            detail={
+                "code": exc.reason,
+                "message": "校准暂时无法完成，请确认画面无人后重试。",
+                "calibration": last_status,
+            },
         ) from exc
+    except OSError as exc:
+        failure_reason = "calibration_persistence_failed"
+        cancel_started_calibration(failure_reason)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": failure_reason,
+                "message": "校准背景暂时无法安全保存，请检查盒子存储后重试。",
+                "calibration": last_status,
+            },
+        ) from exc
+    finally:
+        if started and not finalized:
+            failure_reason = str(last_status.get("last_error") or failure_reason)
+            cancel_started_calibration(failure_reason)
 
     raise HTTPException(
         status_code=409,
         detail={
-            "code": str(last_status.get("last_error") or "calibration_timeout"),
+            "code": str(last_status.get("last_error") or failure_reason),
             "message": "未取得连续稳定的空房画面，请确认画面无人且摄像头固定后重试。",
             "calibration": last_status,
         },

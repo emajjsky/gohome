@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import sys
 import time
+from unittest.mock import patch
 
 import numpy as np
 
@@ -79,10 +80,10 @@ class SyntheticSegmentation:
         captured_monotonic=None,
         person_evidence=False,
     ):
-        del captured_monotonic, person_evidence
+        del captured_monotonic
         configured_source = str(source_key).split(":g", 1)[0]
         background = self.backgrounds.get(configured_source)
-        if background is None or background.shape != frame.shape:
+        if not person_evidence or background is None or background.shape != frame.shape:
             mask = np.zeros(frame.shape[:2], dtype=np.uint8)
         else:
             delta = np.max(np.abs(frame.astype(np.int16) - background.astype(np.int16)), axis=2)
@@ -445,6 +446,34 @@ def main() -> int:
         )
         assert mean_delta(persisted_skeleton, occupied_a, PERSON_SLICE) > 24.0
 
+        local_change = clean_a.copy()
+        cv2.rectangle(local_change, (235, 28), (312, 92), (245, 230, 45), -1)
+        local_change_render = render(
+            persisted,
+            tracker,
+            local_change,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-local-tv-change",
+            person=False,
+            mode="skeleton",
+        )
+        assert mean_delta(local_change_render, local_change) < 8.0
+        assert persisted.background_reconstructor.status()["states"][0]["baseline_retained"] is True
+
+        lighting_change = np.clip(clean_a.astype(np.int16) + np.asarray([18, 12, 22]), 0, 255).astype(np.uint8)
+        lighting_render = render(
+            persisted,
+            tracker,
+            lighting_change,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-lighting-change",
+            person=False,
+            mode="skeleton",
+        )
+        assert mean_delta(lighting_render, lighting_change) < 12.0
+
         moved_scene = np.roll(clean_a, 52, axis=1)
         assert_calibration_required(lambda: render(
             persisted,
@@ -455,7 +484,184 @@ def main() -> int:
             frame_id="1-moved-scene",
             person=False,
             mode="skeleton",
-        ), "scene_changed")
+        ), "scene_revalidation_required")
+        assert_calibration_required(lambda: render(
+            persisted,
+            tracker,
+            moved_scene,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-moved-scene-repeat",
+            person=False,
+            mode="skeleton",
+        ), "scene_revalidation_required")
+        moved_status = persisted.background_reconstructor.status()["states"][0]
+        assert moved_status["ready"] is False
+        assert moved_status["calibrated"] is True
+        assert moved_status["baseline_retained"] is True
+        assert moved_status["scene_status"] == "scene_review_required"
+        retained_baseline_sha256 = moved_status["baseline_sha256"]
+        assert len(retained_baseline_sha256) == 64
+        assert list(Path(temporary_dir).glob("camera-1-*.npz"))
+
+        restarted_after_move = PrivacyFrameRenderer(
+            tracker,
+            PrivacyBackgroundReconstructor(storage_dir=temporary_dir),
+            SyntheticSegmentation({"camera-a": clean_a}),
+        )
+        for sequence in range(restarted_after_move.background_reconstructor.revalidation_frames - 1):
+            assert_calibration_required(lambda sequence=sequence: render(
+                restarted_after_move,
+                tracker,
+                clean_a,
+                camera_id=1,
+                source_key=source_a_g1,
+                frame_id=f"1-restart-revalidate-{sequence}",
+                person=False,
+                mode="skeleton",
+            ), "stream_revalidation_required")
+        render(
+            restarted_after_move,
+            tracker,
+            clean_a,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-restart-revalidate-complete",
+            person=False,
+            mode="skeleton",
+        )
+        assert restarted_after_move.background_reconstructor.status()["states"][0]["baseline_sha256"] == retained_baseline_sha256
+
+        restarted_after_move.begin_calibration(
+            1,
+            source_key=source_a_g1,
+            width=320,
+            height=180,
+            calibration_id="failed-recalibration",
+        )
+        assert_calibration_required(lambda: restarted_after_move.begin_calibration(
+            1,
+            source_key=source_a_g1,
+            width=320,
+            height=180,
+            calibration_id="concurrent-recalibration",
+        ), "calibration_in_progress")
+        tracker.payload = metadata(
+            camera_id=1,
+            person=True,
+            frame_id="1-failed-recalibration-person",
+            source_key=source_a_g1,
+        )
+        failed_recalibration = restarted_after_move.observe_calibration_frame(
+            1,
+            occupied_a,
+            source_key=source_a_g1,
+            frame_id="1-failed-recalibration-person",
+            captured_monotonic=tracker.payload["tracking"]["captured_monotonic"],
+        )
+        assert failed_recalibration["last_error"] == "person_present"
+        cancelled = restarted_after_move.cancel_calibration(
+            1,
+            source_key=source_a_g1,
+            width=320,
+            height=180,
+            reason="person_present",
+        )
+        assert cancelled["calibration_active"] is False
+        assert cancelled["calibrated"] is True
+        assert cancelled["baseline_retained"] is True
+        assert cancelled["baseline_sha256"] == retained_baseline_sha256
+
+        restarted_after_move.segmentation_backend.backgrounds["camera-a"] = moved_scene.copy()
+        recalibrated = calibrate(
+            restarted_after_move,
+            tracker,
+            moved_scene,
+            camera_id=1,
+            source_key=source_a_g1,
+        )
+        assert recalibrated["baseline_revision"] >= 2
+        assert recalibrated["baseline_sha256"] != retained_baseline_sha256
+        occupied_moved = occupied_scene(cv2, moved_scene)
+        replaced_baseline = render(
+            restarted_after_move,
+            tracker,
+            occupied_moved,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-recalibrated-person",
+            person=True,
+            mode="skeleton",
+        )
+        assert mean_delta(replaced_baseline, occupied_moved, PERSON_SLICE) > 24.0
+
+        failure_dir = Path(temporary_dir) / "persistence-failure"
+        failing_background = PrivacyBackgroundReconstructor(storage_dir=failure_dir)
+        failing_renderer = PrivacyFrameRenderer(
+            tracker,
+            failing_background,
+            SyntheticSegmentation({"camera-a": clean_a}),
+        )
+        calibrate(
+            failing_renderer,
+            tracker,
+            clean_a,
+            camera_id=1,
+            source_key=source_a_g1,
+        )
+        committed_revision = failing_background.status()["states"][0]["baseline_revision"]
+        committed_sha256 = failing_background.status()["states"][0]["baseline_sha256"]
+        failing_renderer.begin_calibration(
+            1,
+            source_key=source_a_g1,
+            width=320,
+            height=180,
+            calibration_id="persistence-failure",
+        )
+        persistence_failed = False
+        for sequence in range(failing_background.confirmation_frames):
+            frame_id = f"1-persistence-failure-{sequence}"
+            captured_monotonic = time.monotonic()
+            tracker.payload = metadata(
+                camera_id=1,
+                person=False,
+                frame_id=frame_id,
+                source_key=source_a_g1,
+            )
+            tracker.payload["tracking"]["captured_monotonic"] = captured_monotonic
+            try:
+                if sequence == failing_background.confirmation_frames - 1:
+                    with patch("app.vision.privacy_background.os.replace", side_effect=OSError("simulated persistence failure")):
+                        failing_renderer.observe_calibration_frame(
+                            1,
+                            moved_scene,
+                            source_key=source_a_g1,
+                            frame_id=frame_id,
+                            captured_monotonic=captured_monotonic,
+                        )
+                else:
+                    failing_renderer.observe_calibration_frame(
+                        1,
+                        moved_scene,
+                        source_key=source_a_g1,
+                        frame_id=frame_id,
+                        captured_monotonic=captured_monotonic,
+                    )
+            except OSError:
+                persistence_failed = True
+                break
+        assert persistence_failed is True
+        failed_commit = failing_renderer.cancel_calibration(
+            1,
+            source_key=source_a_g1,
+            width=320,
+            height=180,
+            reason="persistence_failed",
+        )
+        assert failed_commit["baseline_revision"] == committed_revision
+        assert failed_commit["baseline_retained"] is True
+        assert failed_commit["baseline_sha256"] == committed_sha256
+        assert not list(failure_dir.glob("*.tmp"))
 
         rejecting = PrivacyFrameRenderer(
             tracker,
@@ -502,6 +708,12 @@ def main() -> int:
         "person_blur_is_separate": True,
         "explicit_calibration": True,
         "persistent_calibration": True,
+        "transactional_recalibration": True,
+        "concurrent_calibration_rejected": True,
+        "persistence_failure_preserves_baseline": True,
+        "local_scene_change_retained": True,
+        "lighting_change_retained": True,
+        "camera_move_preserves_baseline": True,
         "stream_generation_revalidation": True,
         "adjacent_pose_rejected": True,
         "camera_isolation": True,

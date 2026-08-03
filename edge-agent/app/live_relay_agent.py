@@ -327,7 +327,7 @@ class LiveRelayAgent:
                     except PrivacyCalibrationRequired as exc:
                         self._record_upload_stat(camera_id, "privacy_blocked")
                         self._camera_privacy_states[camera_id] = {
-                            "status": "calibration_required",
+                            "status": self._privacy_block_status(exc.reason),
                             "reason": exc.reason,
                         }
                         continue
@@ -372,6 +372,17 @@ class LiveRelayAgent:
         if not ok:
             raise RuntimeError("live relay frame encoding failed")
         return encoded.tobytes()
+
+    @staticmethod
+    def _privacy_block_status(reason: str) -> str:
+        normalized = str(reason or "calibration_required")
+        if normalized == "calibration_in_progress":
+            return "calibrating"
+        if normalized == "scene_revalidation_required":
+            return "scene_review_required"
+        if normalized in {"stream_revalidation_required", "background_state_changed"}:
+            return "revalidating"
+        return "calibration_required"
 
     def _record_upload_stat(self, camera_id: int, field: str) -> None:
         with self._upload_stats_lock:

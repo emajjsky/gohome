@@ -178,6 +178,10 @@ def main() -> int:
     assert skeleton_stats["failed"] == 0
     assert skeleton_relay._camera_privacy_modes[2] == "skeleton"
     assert skeleton_relay.status()["camera_privacy_states"]["2"]["status"] == "ready"
+    assert LiveRelayAgent._privacy_block_status("calibration_in_progress") == "calibrating"
+    assert LiveRelayAgent._privacy_block_status("stream_revalidation_required") == "revalidating"
+    assert LiveRelayAgent._privacy_block_status("scene_revalidation_required") == "scene_review_required"
+    assert LiveRelayAgent._privacy_block_status("segmentation_unavailable") == "calibration_required"
 
     print({
         "ok": True,

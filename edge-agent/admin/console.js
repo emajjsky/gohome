@@ -148,13 +148,16 @@ function renderVideoPrivacyMode() {
         ? "已校准"
         : item.status === "calibrating"
           ? `${Number(item.calibration_observations || 0)}/${Number(item.calibration_required_frames || 8)}`
+          : item.status === "scene_review_required"
+            ? "场景变化，需重校准"
           : item.status === "revalidating"
             ? "复验中"
             : "未校准";
+      const actionLabel = item.calibrated ? "重校准" : "校准";
       return `
         <div class="privacy-calibration-row">
           <span><strong>${escapeHtml(item.room || item.name || "摄像头 " + item.camera_id)}</strong><small>${escapeHtml(status)}</small></span>
-          ${item.ready ? '<i class="status-dot ok" aria-hidden="true"></i>' : `<button type="button" data-calibrate-camera="${Number(item.camera_id)}">校准</button>`}
+          ${item.ready ? '<i class="status-dot ok" aria-hidden="true"></i>' : `<button type="button" data-calibrate-camera="${Number(item.camera_id)}">${actionLabel}</button>`}
         </div>`;
     })
     .join("");

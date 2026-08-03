@@ -365,6 +365,23 @@ class PrivacyFrameRenderer:
             calibration_id=str(calibration_id),
         )
 
+    def cancel_calibration(
+        self,
+        camera_id: int,
+        *,
+        source_key: str,
+        width: int,
+        height: int,
+        reason: str,
+    ) -> Dict[str, Any]:
+        return self.background_reconstructor.cancel_calibration(
+            int(camera_id),
+            source_key=str(source_key or ""),
+            width=int(width),
+            height=int(height),
+            reason=str(reason or "calibration_cancelled"),
+        )
+
     def observe_calibration_frame(
         self,
         camera_id: int,
