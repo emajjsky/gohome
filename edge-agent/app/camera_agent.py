@@ -24,6 +24,8 @@ MAX_PREVIEW_FPS = 30
 STREAM_RECONNECT_BASE_SECONDS = 0.5
 STREAM_RECONNECT_MAX_SECONDS = 8.0
 STREAM_FROZEN_RECONNECT_SECONDS = 3.0
+STREAM_NEAR_BLACK_RECONNECT_SECONDS = 0.75
+STREAM_NEAR_BLACK_CONFIRM_FRAMES = 5
 
 
 class CameraError(RuntimeError):
@@ -112,6 +114,9 @@ class _SharedStreamReader:
         self._decoded_frame_count = 0
         self._repeated_frame_count = 0
         self._consecutive_repeated_frames = 0
+        self._near_black_frame_count = 0
+        self._consecutive_near_black_frames = 0
+        self._near_black_started_monotonic: float | None = None
         self._last_content_fingerprint = b""
         self._last_unique_frame_monotonic: float | None = None
 
@@ -171,6 +176,8 @@ class _SharedStreamReader:
             state = "streaming"
             if self._last_error:
                 state = "retrying"
+            elif self._consecutive_near_black_frames:
+                state = "stale"
             elif frame_age is None:
                 state = "warming"
             elif frame_age > 2.0:
@@ -190,6 +197,8 @@ class _SharedStreamReader:
                 "unique_frames": self._sequence,
                 "repeated_frames": self._repeated_frame_count,
                 "consecutive_repeated_frames": self._consecutive_repeated_frames,
+                "near_black_frames": self._near_black_frame_count,
+                "consecutive_near_black_frames": self._consecutive_near_black_frames,
                 "stream_generation": self.stream_generation,
                 "open_count": self._open_count,
                 "open_attempt_count": self._open_attempt_count,
@@ -262,12 +271,31 @@ class _SharedStreamReader:
                     self._wait_after_failure()
                     continue
 
-                unique_frame = self._record_frame(
+                frame_disposition = self._record_frame(
+                    cv2,
                     frame,
                     read_finished_at,
                     (read_finished_at - read_started_at) * 1000.0,
                 )
-                if not unique_frame:
+                if frame_disposition == "near_black":
+                    if self._consecutive_near_black_frames == 1:
+                        self.agent._clear_camera_cache(int(self.camera.get("id") or 0))
+                        logger.warning(
+                            "camera %s emitted a near-black frame; suppressing invalid live output",
+                            self.camera.get("id"),
+                        )
+                    if self._near_black_timed_out(read_finished_at):
+                        self._set_error("stream remained near-black")
+                        logger.warning(
+                            "camera %s stream remained near-black; reopening capture",
+                            self.camera.get("id"),
+                        )
+                        cap.release()
+                        cap = None
+                        self._invalidate_stream("stream_near_black")
+                        self._wait_after_failure()
+                    continue
+                if frame_disposition == "repeated":
                     if self._pixels_frozen(read_finished_at):
                         self._set_error("stream pixels frozen")
                         logger.warning(
@@ -322,6 +350,8 @@ class _SharedStreamReader:
             self._decoded_arrivals.clear()
             self._read_samples.clear()
             self._consecutive_repeated_frames = 0
+            self._consecutive_near_black_frames = 0
+            self._near_black_started_monotonic = None
         self.stream_generation = self.agent.invalidate_stream_generation(
             self.camera,
             reader=self,
@@ -341,20 +371,33 @@ class _SharedStreamReader:
         with self._condition:
             self._read_failure_count += 1
 
-    def _record_frame(self, frame: Any, arrived_at: float, read_latency_ms: float) -> bool:
+    def _record_frame(self, cv2: Any, frame: Any, arrived_at: float, read_latency_ms: float) -> str:
         try:
             height, width = frame.shape[:2]
         except (AttributeError, ValueError):
             height, width = 0, 0
+        near_black = self.agent._frame_is_near_black(cv2, frame)
+        fingerprint = b"" if near_black else self.agent.frame_content_fingerprint(frame)
         with self._condition:
             self._decoded_frame_count += 1
             self._decoded_arrivals.append(float(arrived_at))
             self._read_samples.append((float(arrived_at), max(0.0, float(read_latency_ms))))
-            fingerprint = self.agent.frame_content_fingerprint(frame)
+            if near_black:
+                self._near_black_frame_count += 1
+                self._consecutive_near_black_frames += 1
+                if self._near_black_started_monotonic is None:
+                    self._near_black_started_monotonic = float(arrived_at)
+                    self._frame_arrivals.clear()
+                    self._last_frame_monotonic = None
+                    self._last_unique_frame_monotonic = None
+                    self._last_content_fingerprint = b""
+                return "near_black"
+            self._consecutive_near_black_frames = 0
+            self._near_black_started_monotonic = None
             if fingerprint and fingerprint == self._last_content_fingerprint:
                 self._repeated_frame_count += 1
                 self._consecutive_repeated_frames += 1
-                return False
+                return "repeated"
             self._last_content_fingerprint = fingerprint
             self._consecutive_repeated_frames = 0
             self._frame_arrivals.append(float(arrived_at))
@@ -365,7 +408,17 @@ class _SharedStreamReader:
             self._source_height = int(height)
             self._consecutive_failures = 0
             self._next_retry_monotonic = None
-            return True
+            return "unique"
+
+    def _near_black_timed_out(self, now: float) -> bool:
+        with self._condition:
+            if self._near_black_started_monotonic is None:
+                return False
+            return (
+                self._consecutive_near_black_frames >= STREAM_NEAR_BLACK_CONFIRM_FRAMES
+                and float(now) - self._near_black_started_monotonic
+                >= STREAM_NEAR_BLACK_RECONNECT_SECONDS
+            )
 
     def _pixels_frozen(self, now: float) -> bool:
         with self._condition:
@@ -960,11 +1013,8 @@ class CameraAgent:
             source_label=source_label,
         )
         last_sequence = 0
-        last_good_frame = None
-        black_frame_streak = 0
         frame_interval = 1.0 / bounded_stream_fps(fps)
         frame_deadline = time.monotonic()
-        black_confirm_frames = max(3, min(int(fps), 12))
         try:
             while True:
                 sequence, _error = reader.wait_for_update(last_sequence)
@@ -977,33 +1027,9 @@ class CameraAgent:
                 if capture is None:
                     continue
                 frame = capture["frame"]
-
-                if self._frame_is_near_black(cv2, frame):
-                    black_frame_streak += 1
-                    if black_frame_streak == 1:
-                        logger.warning("camera %s emitted a near-black frame; holding last valid preview frame", camera.get("id"))
-                    if last_good_frame is None:
-                        if black_frame_streak >= black_confirm_frames:
-                            logger.warning("camera %s remained near-black; reopening capture before publishing video", camera.get("id"))
-                            reader.request_reconnect()
-                            black_frame_streak = 0
-                        time.sleep(0.08)
-                        continue
-                    display_frame = last_good_frame
-                    if black_frame_streak >= black_confirm_frames:
-                        logger.warning("camera %s remained near-black; preserving preview and reopening capture", camera.get("id"))
-                        reader.request_reconnect()
-                        black_frame_streak = 0
-                else:
-                    if black_frame_streak:
-                        logger.info("camera %s recovered from %s near-black frame(s)", camera.get("id"), black_frame_streak)
-                    black_frame_streak = 0
-                    last_good_frame = frame
-                    display_frame = frame
-
                 output_frame = self._resize_for_stream(
                     cv2,
-                    display_frame,
+                    frame,
                     max_width=max_width,
                     max_height=max_height,
                 )

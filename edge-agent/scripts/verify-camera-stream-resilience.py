@@ -33,24 +33,47 @@ class FakeCapture:
         self.released = True
 
 
-def decode_part(part: bytes) -> np.ndarray:
-    import cv2  # type: ignore
-
-    start = part.index(b"\r\n\r\n") + 4
-    end = part.rindex(b"\r\n")
-    encoded = np.frombuffer(part[start:end], dtype=np.uint8)
-    frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
-    if frame is None:
-        raise SystemExit("failed to decode generated MJPEG frame")
-    return frame
-
-
 def main() -> None:
     delays = [stream_reconnect_delay(index) for index in range(1, 8)]
     if delays != [0.5, 1.0, 2.0, 4.0, 8.0, 8.0, 8.0]:
         raise SystemExit(f"stream reconnect backoff is not bounded: {delays}")
     normal = np.full((48, 64, 3), 96, dtype=np.uint8)
-    recovered = [np.full((48, 64, 3), 140 + index, dtype=np.uint8) for index in range(8)]
+    status_agent = CameraAgent(Path("/tmp/gohome-near-black-status-test"))
+    status_reader = camera_module._SharedStreamReader(
+        agent=status_agent,
+        camera={"id": 2, "stream_url": "rtsp://example.invalid/status"},
+        source="rtsp://example.invalid/status",
+        is_local_source=False,
+        source_label="status stream",
+        stream_generation=1,
+    )
+    cv2 = camera_module._load_cv2()
+    now = camera_module.time.monotonic()
+    for index, level in enumerate((96, 104)):
+        disposition = status_reader._record_frame(
+            cv2,
+            np.full((48, 64, 3), level, dtype=np.uint8),
+            now - 0.2 + index * 0.1,
+            1.0,
+        )
+        if disposition != "unique":
+            raise SystemExit(f"valid status probe frame was rejected: {disposition}")
+        status_reader._sequence += 1
+    if status_reader.status().get("effective_fps", 0) <= 0:
+        raise SystemExit("status probe did not establish a nonzero effective FPS")
+    disposition = status_reader._record_frame(cv2, np.zeros((48, 64, 3), dtype=np.uint8), now, 1.0)
+    near_black_status = status_reader.status()
+    if (
+        disposition != "near_black"
+        or near_black_status.get("state") != "stale"
+        or near_black_status.get("effective_fps") != 0.0
+        or near_black_status.get("near_black_frames") != 1
+    ):
+        raise SystemExit(f"first near-black frame did not invalidate live status: {near_black_status}")
+    recovered = [
+        np.full((48, 64, 3), 140 + index % 40, dtype=np.uint8)
+        for index in range(256)
+    ]
     black = [np.full((48, 64, 3), index % 3, dtype=np.uint8) for index in range(5)]
     captures = [
         FakeCapture([normal, None]),
@@ -63,34 +86,59 @@ def main() -> None:
     def open_capture(_cv2, _source, _is_local):
         opens["count"] += 1
         return captures.pop(0) if captures else FakeCapture([
-            np.full((48, 64, 3), 150 + index, dtype=np.uint8)
-            for index in range(8)
+            np.full((48, 64, 3), 150 + index % 40, dtype=np.uint8)
+            for index in range(512)
         ])
 
     agent._open_stream_capture = open_capture  # type: ignore[method-assign]
+    stored_means: list[float] = []
+    original_store = agent._store_latest_frame
+
+    def record_store(camera, frame, source_label, *, stream_generation=0):
+        stored_means.append(float(frame.mean()))
+        return original_store(
+            camera,
+            frame,
+            source_label,
+            stream_generation=stream_generation,
+        )
+
+    agent._store_latest_frame = record_store  # type: ignore[method-assign]
     original_sleep = camera_module.time.sleep
+    original_near_black_seconds = camera_module.STREAM_NEAR_BLACK_RECONNECT_SECONDS
     camera_module.time.sleep = lambda _seconds: None
+    camera_module.STREAM_NEAR_BLACK_RECONNECT_SECONDS = 0.0
     try:
-        stream = agent.mjpeg_frames(
+        stream = agent.raw_frames(
             {"id": 1, "stream_url": "rtsp://example.invalid/live"},
             fps=5,
-            jpeg_quality=90,
             max_width=64,
             max_height=48,
         )
-        frames = [decode_part(next(stream)) for _ in range(7)]
+        captures_out = [next(stream) for _ in range(7)]
         stream.close()
     finally:
         camera_module.time.sleep = original_sleep
+        camera_module.STREAM_NEAR_BLACK_RECONNECT_SECONDS = original_near_black_seconds
 
     if opens["count"] < 3:
         raise SystemExit("stream did not reopen capture after read failure and sustained black frames")
+    frames = [capture["frame"] for capture in captures_out]
     if float(frames[0].mean()) < 80:
         raise SystemExit("first valid frame was not emitted")
-    if any(float(frame.mean()) < 80 for frame in frames[1:6]):
-        raise SystemExit("black decoder frames must never replace the last valid preview frame")
+    if any(float(frame.mean()) < 120 for frame in frames[1:]):
+        raise SystemExit("near-black decoder frames entered the effective live stream")
     if float(frames[-1].mean()) < 120:
         raise SystemExit("stream did not recover to the next valid frame")
+    frame_ids = [str(capture.get("frame_id") or "") for capture in captures_out]
+    if len(set(frame_ids)) != len(frame_ids) or any(not frame_id for frame_id in frame_ids):
+        raise SystemExit(f"effective frames do not have unique source-owned identities: {frame_ids}")
+    if int(captures_out[1].get("stream_generation") or 0) <= int(captures_out[0].get("stream_generation") or 0):
+        raise SystemExit("near-black recovery did not advance the stream generation")
+    if any(mean < 80 for mean in stored_means):
+        raise SystemExit(f"near-black frames entered the shared effective-frame cache: {stored_means}")
+    if agent._frame_sequences.get("1") != len(stored_means):
+        raise SystemExit("effective frame identity advanced without a source-owned cache write")
 
     camera = {"id": 7, "name": "客厅摄像头"}
     rules = {"offline_enabled": True}
@@ -125,7 +173,10 @@ def main() -> None:
     print({
         "ok": True,
         "capture_opens": opens["count"],
-        "black_frames_suppressed": 5,
+        "near_black_frames_suppressed": 5,
+        "near_black_effective_fps": near_black_status["effective_fps"],
+        "old_pixels_republished": False,
+        "effective_frame_ids": frame_ids,
         "sustained_black_reconnected": True,
         "recovered": True,
         "transient_timeout_suppressed": True,
