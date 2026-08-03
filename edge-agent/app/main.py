@@ -1239,7 +1239,6 @@ live_relay_agent = LiveRelayAgent(
     token_resolver=read_local_device_token,
     remote_camera_id_resolver=remote_camera_id_for_local_camera,
     privacy_mode_resolver=config_sync_agent.video_privacy_mode,
-    privacy_mode_observer=lambda mode: config_sync_agent.observe_video_privacy_mode(mode, wake=True),
     privacy_renderer=privacy_frame_renderer,
 )
 

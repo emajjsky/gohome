@@ -61,8 +61,12 @@ class Settings:
         self.live_relay_fps = int(os.getenv("GOHOME_LIVE_RELAY_FPS", "30"))
         self.live_relay_width = int(os.getenv("GOHOME_LIVE_RELAY_WIDTH", "640"))
         self.live_relay_height = int(os.getenv("GOHOME_LIVE_RELAY_HEIGHT", "360"))
-        self.live_relay_quality = int(os.getenv("GOHOME_LIVE_RELAY_QUALITY", "55"))
-        self.live_relay_request_timeout_seconds = float(os.getenv("GOHOME_LIVE_RELAY_REQUEST_TIMEOUT_SECONDS", "2"))
+        self.media_publish_base_url = os.getenv("GOHOME_MEDIA_PUBLISH_BASE_URL", "").strip().rstrip("/")
+        self.media_publish_ffmpeg_path = os.getenv("GOHOME_MEDIA_PUBLISH_FFMPEG_PATH", "ffmpeg").strip() or "ffmpeg"
+        self.media_publish_bitrate_kbps = int(os.getenv("GOHOME_MEDIA_PUBLISH_BITRATE_KBPS", "1200"))
+        self.media_publish_write_timeout_seconds = float(
+            os.getenv("GOHOME_MEDIA_PUBLISH_WRITE_TIMEOUT_SECONDS", "0.75")
+        )
         self.history_retention_hours = int(os.getenv("GOHOME_HISTORY_RETENTION_HOURS", "6"))
         self.history_cleanup_interval_seconds = float(os.getenv("GOHOME_HISTORY_CLEANUP_INTERVAL_SECONDS", "3600"))
         self.history_cleanup_batch_size = int(os.getenv("GOHOME_HISTORY_CLEANUP_BATCH_SIZE", "5000"))
