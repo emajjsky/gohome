@@ -117,11 +117,17 @@ code {
 }
 
 .material-symbols-outlined {
+  width: 20px;
+  font-family: inherit;
   font-size: 20px;
   line-height: 1;
+  text-align: center;
   overflow: hidden;
   white-space: nowrap;
-  font-feature-settings: "liga";
+}
+
+.material-symbols-outlined::before {
+  content: attr(data-icon);
 }
 
 .eyebrow {

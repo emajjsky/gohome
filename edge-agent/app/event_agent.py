@@ -4,14 +4,8 @@ from typing import Any, Dict, Optional
 
 
 class EventAgent:
-    CLOUD_VERIFICATION_EVENT_TYPES = {
-        "fall_candidate",
-        "prolonged_floor_lying",
-    }
-
-    def __init__(self, storage: Any, notifier: Any, throttle_seconds: int) -> None:
+    def __init__(self, storage: Any, throttle_seconds: int) -> None:
         self.storage = storage
-        self.notifier = notifier
         self.throttle_seconds = throttle_seconds
 
     def emit(
@@ -63,23 +57,6 @@ class EventAgent:
         else:
             self.storage.enqueue_event_upload_jobs(event)
 
-        rules = self.storage.get_rules()
-        if (
-            rules.get("notification_enabled")
-            and event_type not in self.CLOUD_VERIFICATION_EVENT_TYPES
-            and self._should_notify(event_type, level)
-        ):
-            self.notifier.send(
-                title="回家告警",
-                body=summary,
-                extra={
-                    "event_id": event["id"],
-                    "event_type": event_type,
-                    "camera_id": camera_id,
-                    "room": (camera or {}).get("room", ""),
-                },
-            )
-
         return event
 
     def _throttle_seconds(self, event_type: str) -> int:
@@ -92,8 +69,3 @@ class EventAgent:
         if event_type in {"black_screen", "camera_offline"}:
             return max(self.throttle_seconds, 900)
         return self.throttle_seconds
-
-    def _should_notify(self, event_type: str, level: str) -> bool:
-        if level != "critical":
-            return False
-        return event_type in {"fall_candidate", "prolonged_floor_lying", "camera_offline"}

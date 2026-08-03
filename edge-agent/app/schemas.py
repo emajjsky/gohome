@@ -72,57 +72,11 @@ class RulesUpdate(BaseModel):
     fall_recover_frames: Optional[int] = Field(None, ge=1, le=120)
     activity_detection_enabled: Optional[bool] = None
     offline_enabled: Optional[bool] = None
-    notification_enabled: Optional[bool] = None
 
 
 class EventUpdate(BaseModel):
     acknowledged: Optional[bool] = None
     resolution: Optional[str] = Field(None, max_length=40)
-
-
-class NotificationTest(BaseModel):
-    title: str = "回家测试通知"
-    body: str = "edge-agent 通知链路已触发"
-    extra: Dict[str, Any] = Field(default_factory=dict)
-    event_id: Optional[int] = Field(default=None, ge=1)
-    camera_id: Optional[int] = Field(default=None, ge=1)
-    preferred_region: str = Field(default="", max_length=40)
-    include_public_links: bool = True
-
-
-class V1AppPushTokenUpsert(BaseModel):
-    family_id: int
-    app_install_id: str = Field(..., min_length=1, max_length=120)
-    platform: str = Field(default="ios", pattern="^(ios|android)$")
-    provider: str = Field(default="apns", pattern="^(apns|fcm)$")
-    push_token: str = Field(..., min_length=8, max_length=800)
-    device_name: str = Field(default="", max_length=120)
-    app_version: str = Field(default="", max_length=40)
-    environment: str = Field(default="production", pattern="^(production|sandbox)$")
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class V1AppPushTest(BaseModel):
-    title: str = "回家 App 测试通知"
-    body: str = "App 原生通知链路已触发"
-    family_id: Optional[int] = Field(default=None, ge=1)
-    event_id: Optional[int] = Field(default=None, ge=1)
-    camera_id: Optional[int] = Field(default=None, ge=1)
-    preferred_region: str = Field(default="", max_length=40)
-    extra: Dict[str, Any] = Field(default_factory=dict)
-
-
-class V1AppPushRelayToken(BaseModel):
-    app_install_id: str = Field(default="", max_length=120)
-    provider: str = Field(default="apns", pattern="^(apns|fcm)$")
-    platform: str = Field(default="ios", pattern="^(ios|android)$")
-    environment: str = Field(default="production", pattern="^(production|sandbox)$")
-    push_token: str = Field(..., min_length=8, max_length=800)
-
-
-class V1AppPushRelayRequest(BaseModel):
-    tokens: list[V1AppPushRelayToken] = Field(default_factory=list)
-    notification: Dict[str, Any] = Field(default_factory=dict)
 
 
 class UserRegister(BaseModel):

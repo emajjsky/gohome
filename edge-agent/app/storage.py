@@ -177,30 +177,6 @@ class Storage:
                     FOREIGN KEY(issued_by_code_id) REFERENCES device_binding_codes(id)
                 );
 
-                CREATE TABLE IF NOT EXISTS app_push_tokens (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    family_id INTEGER NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    app_install_id TEXT NOT NULL,
-                    platform TEXT NOT NULL DEFAULT 'ios',
-                    provider TEXT NOT NULL DEFAULT 'apns',
-                    push_token TEXT NOT NULL,
-                    token_hash TEXT NOT NULL UNIQUE,
-                    token_prefix TEXT NOT NULL,
-                    device_name TEXT NOT NULL DEFAULT '',
-                    app_version TEXT NOT NULL DEFAULT '',
-                    environment TEXT NOT NULL DEFAULT 'production',
-                    status TEXT NOT NULL DEFAULT 'active',
-                    last_registered_at TEXT NOT NULL,
-                    last_seen_at TEXT,
-                    metadata_json TEXT NOT NULL DEFAULT '{}',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(user_id, app_install_id),
-                    FOREIGN KEY(family_id) REFERENCES families(id),
-                    FOREIGN KEY(user_id) REFERENCES users(id)
-                );
-
                 CREATE TABLE IF NOT EXISTS snapshots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     camera_id INTEGER NOT NULL,
@@ -583,22 +559,6 @@ class Storage:
                     FOREIGN KEY(release_id) REFERENCES package_releases(id)
                 );
 
-                CREATE TABLE IF NOT EXISTS notification_deliveries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    family_id INTEGER NOT NULL,
-                    event_id INTEGER,
-                    channel TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    body TEXT NOT NULL,
-                    recipient TEXT NOT NULL DEFAULT '',
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    response_json TEXT NOT NULL DEFAULT '{}',
-                    created_at TEXT NOT NULL,
-                    delivered_at TEXT,
-                    FOREIGN KEY(family_id) REFERENCES families(id),
-                    FOREIGN KEY(event_id) REFERENCES events(id)
-                );
-
                 CREATE TABLE IF NOT EXISTS elder_profiles (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     family_id INTEGER NOT NULL,
@@ -685,11 +645,12 @@ class Storage:
                     activity_detection_enabled INTEGER NOT NULL DEFAULT 1,
                     no_person_seconds INTEGER NOT NULL,
                     offline_enabled INTEGER NOT NULL,
-                    notification_enabled INTEGER NOT NULL,
                     updated_at TEXT NOT NULL
                 );
                 """
             )
+            conn.execute("DROP TABLE IF EXISTS app_push_tokens")
+            conn.execute("DROP TABLE IF EXISTS notification_deliveries")
             conn.execute("DROP TABLE IF EXISTS video_service_nodes")
             self._ensure_column(conn, "snapshots", "retention_class", "TEXT NOT NULL DEFAULT 'routine'")
             self._ensure_column(conn, "snapshots", "retention_status", "TEXT NOT NULL DEFAULT 'active'")
@@ -766,10 +727,9 @@ class Storage:
                         activity_detection_enabled,
                         no_person_seconds,
                         offline_enabled,
-                        notification_enabled,
                         updated_at
                     )
-                    VALUES (1, 5, 0.015, 18, 4, 0.20, 300, 1, 1, 1, 1, 0.50, 2, 4, 2, 1, 300, 1, 1, ?)
+                    VALUES (1, 5, 0.015, 18, 4, 0.20, 300, 1, 1, 1, 1, 0.50, 2, 4, 2, 1, 300, 1, ?)
                     """,
                     (now_iso(),),
                 )
@@ -1161,10 +1121,6 @@ class Storage:
                 )
                 conn.execute(
                     f"UPDATE media_assets SET event_id = NULL WHERE event_id IN ({placeholders})",
-                    expired_event_ids,
-                )
-                conn.execute(
-                    f"UPDATE notification_deliveries SET event_id = NULL WHERE event_id IN ({placeholders})",
                     expired_event_ids,
                 )
                 deleted["event_ingests"] = conn.execute(
@@ -1656,6 +1612,7 @@ class Storage:
             "fire_motion_threshold",
             "fire_temporal_threshold",
             "fire_confirm_frames",
+            "notification_enabled",
         )
         columns = self._table_columns(conn, "rules")
         for column in obsolete_columns:
@@ -1948,7 +1905,6 @@ class Storage:
             "activity_detection_enabled",
             "no_person_seconds",
             "offline_enabled",
-            "notification_enabled",
         }
 
     def _merge_rules_patch(self, patch: Dict[str, Any], base: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -2011,13 +1967,6 @@ class Storage:
             return None
         data = dict(row)
         data["output"] = json.loads(data.pop("output_json", "{}") or "{}")
-        return data
-
-    def _notification_delivery_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
-        if row is None:
-            return None
-        data = dict(row)
-        data["response"] = json.loads(data.pop("response_json", "{}") or "{}")
         return data
 
     def _elder_profile_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
@@ -2437,16 +2386,6 @@ class Storage:
         data.pop("token_hash", None)
         return data
 
-    def _app_push_token_to_dict(self, row: sqlite3.Row | None, include_secret: bool = False) -> Optional[Dict[str, Any]]:
-        if row is None:
-            return None
-        data = dict(row)
-        data["metadata"] = json.loads(data.pop("metadata_json", "{}") or "{}")
-        if not include_secret:
-            data.pop("push_token", None)
-            data.pop("token_hash", None)
-        return data
-
     def _expire_device_binding_codes(self, conn: sqlite3.Connection) -> None:
         timestamp = now_iso()
         conn.execute(
@@ -2747,191 +2686,6 @@ class Storage:
                 (device_id.strip(),),
             ).fetchone()
         return self._device_token_to_dict(row) if row else None
-
-    def upsert_app_push_token(
-        self,
-        *,
-        family_id: int,
-        user_id: int,
-        app_install_id: str,
-        platform: str,
-        provider: str,
-        push_token: str,
-        device_name: str = "",
-        app_version: str = "",
-        environment: str = "production",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        timestamp = now_iso()
-        clean_install_id = str(app_install_id or "").strip()
-        clean_token = str(push_token or "").strip()
-        if not clean_install_id:
-            raise ValueError("app_install_id is required")
-        if not clean_token:
-            raise ValueError("push_token is required")
-        clean_platform = str(platform or "").strip().lower() or "ios"
-        clean_provider = str(provider or "").strip().lower() or "apns"
-        clean_environment = str(environment or "").strip().lower() or "production"
-        token_hash = hash_token(clean_token)
-        token_prefix = clean_token[:8]
-        with self.connect() as conn:
-            existing = conn.execute(
-                """
-                SELECT id
-                FROM app_push_tokens
-                WHERE user_id = ? AND app_install_id = ?
-                LIMIT 1
-                """,
-                (int(user_id), clean_install_id),
-            ).fetchone()
-            if existing is None:
-                existing = conn.execute(
-                    """
-                    SELECT id
-                    FROM app_push_tokens
-                    WHERE token_hash = ?
-                    LIMIT 1
-                    """,
-                    (token_hash,),
-                ).fetchone()
-            if existing is None:
-                cursor = conn.execute(
-                    """
-                    INSERT INTO app_push_tokens (
-                        family_id, user_id, app_install_id, platform, provider, push_token, token_hash, token_prefix,
-                        device_name, app_version, environment, status, last_registered_at, last_seen_at,
-                        metadata_json, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        int(family_id),
-                        int(user_id),
-                        clean_install_id,
-                        clean_platform,
-                        clean_provider,
-                        clean_token,
-                        token_hash,
-                        token_prefix,
-                        str(device_name or "").strip(),
-                        str(app_version or "").strip(),
-                        clean_environment,
-                        timestamp,
-                        timestamp,
-                        json.dumps(metadata or {}, ensure_ascii=False),
-                        timestamp,
-                        timestamp,
-                    ),
-                )
-                token_id = int(cursor.lastrowid)
-            else:
-                token_id = int(existing["id"])
-                conn.execute(
-                    """
-                    UPDATE app_push_tokens
-                    SET
-                        family_id = ?,
-                        user_id = ?,
-                        app_install_id = ?,
-                        platform = ?,
-                        provider = ?,
-                        push_token = ?,
-                        token_hash = ?,
-                        token_prefix = ?,
-                        device_name = ?,
-                        app_version = ?,
-                        environment = ?,
-                        status = 'active',
-                        last_registered_at = ?,
-                        last_seen_at = ?,
-                        metadata_json = ?,
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        int(family_id),
-                        int(user_id),
-                        clean_install_id,
-                        clean_platform,
-                        clean_provider,
-                        clean_token,
-                        token_hash,
-                        token_prefix,
-                        str(device_name or "").strip(),
-                        str(app_version or "").strip(),
-                        clean_environment,
-                        timestamp,
-                        timestamp,
-                        json.dumps(metadata or {}, ensure_ascii=False),
-                        timestamp,
-                        token_id,
-                    ),
-                )
-            row = conn.execute("SELECT * FROM app_push_tokens WHERE id = ?", (token_id,)).fetchone()
-        token_row = self._app_push_token_to_dict(row)
-        if token_row is None:
-            raise RuntimeError("App push token was not persisted")
-        return token_row
-
-    def list_user_app_push_tokens(self, user_id: int, family_id: Optional[int] = None) -> list[Dict[str, Any]]:
-        with self.connect() as conn:
-            if family_id is None:
-                rows = conn.execute(
-                    """
-                    SELECT *
-                    FROM app_push_tokens
-                    WHERE user_id = ?
-                    ORDER BY updated_at DESC, id DESC
-                    """,
-                    (int(user_id),),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT *
-                    FROM app_push_tokens
-                    WHERE user_id = ? AND family_id = ?
-                    ORDER BY updated_at DESC, id DESC
-                    """,
-                    (int(user_id), int(family_id)),
-                ).fetchall()
-        return [item for item in (self._app_push_token_to_dict(row) for row in rows) if item is not None]
-
-    def list_family_app_push_tokens(self, family_id: int, include_secret: bool = False) -> list[Dict[str, Any]]:
-        with self.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT *
-                FROM app_push_tokens
-                WHERE family_id = ? AND status = 'active'
-                ORDER BY updated_at DESC, id DESC
-                """,
-                (int(family_id),),
-            ).fetchall()
-        return [item for item in (self._app_push_token_to_dict(row, include_secret=include_secret) for row in rows) if item is not None]
-
-    def deactivate_app_push_token(self, *, user_id: int, app_install_id: str) -> Optional[Dict[str, Any]]:
-        timestamp = now_iso()
-        clean_install_id = str(app_install_id or "").strip()
-        with self.connect() as conn:
-            conn.execute(
-                """
-                UPDATE app_push_tokens
-                SET status = 'revoked', updated_at = ?
-                WHERE user_id = ? AND app_install_id = ?
-                """,
-                (timestamp, int(user_id), clean_install_id),
-            )
-            row = conn.execute(
-                """
-                SELECT *
-                FROM app_push_tokens
-                WHERE user_id = ? AND app_install_id = ?
-                LIMIT 1
-                """,
-                (int(user_id), clean_install_id),
-            ).fetchone()
-        return self._app_push_token_to_dict(row) if row else None
 
     def get_device_token_by_raw_token(self, raw_token: str) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
@@ -5921,63 +5675,6 @@ class Storage:
             },
         )
 
-    def create_notification_delivery(
-        self,
-        *,
-        family_id: int,
-        channel: str,
-        title: str,
-        body: str,
-        status: str,
-        response: Optional[Dict[str, Any]] = None,
-        event_id: Optional[int] = None,
-        recipient: str = "",
-        delivered_at: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        timestamp = now_iso()
-        with self.connect() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO notification_deliveries (
-                    family_id, event_id, channel, title, body, recipient,
-                    status, response_json, created_at, delivered_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    int(family_id),
-                    int(event_id) if event_id else None,
-                    str(channel or "").strip() or "unknown",
-                    str(title or "").strip(),
-                    str(body or "").strip(),
-                    str(recipient or "").strip(),
-                    str(status or "pending").strip() or "pending",
-                    json.dumps(response or {}, ensure_ascii=False),
-                    timestamp,
-                    delivered_at,
-                ),
-            )
-            delivery_id = int(cursor.lastrowid)
-            row = conn.execute("SELECT * FROM notification_deliveries WHERE id = ?", (delivery_id,)).fetchone()
-        delivery = self._notification_delivery_to_dict(row)
-        if delivery is None:
-            raise RuntimeError("Notification delivery was not persisted")
-        return delivery
-
-    def list_notification_deliveries(self, family_id: int, limit: int = 20) -> list[Dict[str, Any]]:
-        with self.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT *
-                FROM notification_deliveries
-                WHERE family_id = ?
-                ORDER BY created_at DESC, id DESC
-                LIMIT ?
-                """,
-                (int(family_id), max(1, min(int(limit), 100))),
-            ).fetchall()
-        return [self._notification_delivery_to_dict(row) for row in rows if row is not None]
-
     def clear_events(self, scope: str = "acknowledged") -> Dict[str, Any]:
         if scope not in {"acknowledged", "all"}:
             raise ValueError("Unsupported event clear scope")
@@ -6430,7 +6127,6 @@ class Storage:
             "fall_detection_enabled",
             "activity_detection_enabled",
             "offline_enabled",
-            "notification_enabled",
         ]:
             data[key] = bool(data[key])
         return data
@@ -6454,7 +6150,6 @@ class Storage:
             "activity_detection_enabled",
             "no_person_seconds",
             "offline_enabled",
-            "notification_enabled",
         }
         current = self.get_rules()
         next_values = {**current}
@@ -6484,7 +6179,6 @@ class Storage:
                     activity_detection_enabled = ?,
                     no_person_seconds = ?,
                     offline_enabled = ?,
-                    notification_enabled = ?,
                     updated_at = ?
                 WHERE id = 1
                 """,
@@ -6506,7 +6200,6 @@ class Storage:
                     1 if next_values["activity_detection_enabled"] else 0,
                     int(next_values["no_person_seconds"]),
                     1 if next_values["offline_enabled"] else 0,
-                    1 if next_values["notification_enabled"] else 0,
                     now_iso(),
                 ),
             )

@@ -4,7 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>管理登录 - 回家</title>
-  <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
   <link rel="stylesheet" href="/admin/styles.css?v=20260702-auth-2">
 </head>
 <body class="admin-login-page">
@@ -14,7 +13,7 @@
       <h1>管理模式</h1>
       <p>用于初始化、摄像头接入、算法预览和本地诊断。</p>
       <div class="admin-login-device">
-        <span class="material-symbols-outlined">router</span>
+        <span class="material-symbols-outlined" data-icon="⌂" aria-hidden="true"></span>
         <div>
           <strong id="loginDeviceName">读取盒子状态</strong>
           <small id="loginDeviceMeta">请稍等</small>
@@ -35,7 +34,7 @@
           <input id="adminPassword" name="password" type="password" autocomplete="current-password" placeholder="管理密码">
         </label>
         <button id="adminLoginButton" class="primary-button" type="submit">
-          <span class="material-symbols-outlined">login</span>
+          <span class="material-symbols-outlined" data-icon="→" aria-hidden="true"></span>
           登录
         </button>
       </form>
@@ -55,7 +54,7 @@
           <input id="adminConfirmPassword" name="confirm_password" type="password" autocomplete="new-password" minlength="10">
         </label>
         <button id="adminPasswordButton" class="primary-button" type="submit">
-          <span class="material-symbols-outlined">key</span>
+          <span class="material-symbols-outlined" data-icon="◇" aria-hidden="true"></span>
           保存新密码
         </button>
         <button id="adminLogoutButton" class="secondary-button" type="button">退出登录</button>

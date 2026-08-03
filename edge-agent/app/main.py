@@ -26,22 +26,17 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
 from .app_runtime_guard_service import AppRuntimeGuardService
-from .apns_relay_service import APNSRelayService
-from .app_push_service import AppPushService
 from .box_init_service import ADMIN_SESSION_COOKIE, AdminLoginThrottled, BoxInitService
 from .camera_agent import CameraAgent, CameraError, bounded_stream_fps
 from .camera_config_authority import camera_config_authority
 from .config_sync_agent import ConfigSyncAgent
 from .detect_agent import DetectAgent
 from .device_binding_state import DeviceBindingState
-from .edge_bootstrap_service import EdgeBootstrapService
 from .event_agent import EventAgent
 from .live_relay_agent import LiveRelayAgent
-from .notifier import Notifier
 from .package_artifact_service import PackageArtifactService, build_package_artifact_router
 from .package_service import PackageService
 from .pairing_window import PairingWindow
-from .public_pilot_service import PublicPilotService
 from .resource_monitor import SystemResourceMonitor
 from .schemas import (
     CalendarEventCreate,
@@ -58,15 +53,11 @@ from .schemas import (
     FamilyCreate,
     MessageGenerateRequest,
     MessageStatusUpdate,
-    NotificationTest,
     V1DeviceUpgradeRun,
     RulesUpdate,
     UserLogin,
     UserRegister,
     WifiConnectRequest,
-    V1AppPushTest,
-    V1AppPushRelayRequest,
-    V1AppPushTokenUpsert,
     V1PackageDownloadLinkCreate,
     V1PackageReleaseCreate,
     V1DeviceRolloutCreate,
@@ -645,60 +636,6 @@ def event_server_payload(event: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def notification_delivery_status(result: Dict[str, Any]) -> str:
-    if result.get("sent"):
-        return "sent"
-    if result.get("channel") == "off":
-        return "skipped"
-    return "failed"
-
-
-def notification_recipient() -> str:
-    channel = settings.notify_channel
-    if channel == "webhook":
-        return settings.generic_webhook_url
-    if channel == "feishu":
-        return settings.feishu_webhook
-    if channel == "bark":
-        return settings.bark_url
-    if channel == "telegram":
-        return settings.telegram_chat_id
-    return ""
-
-
-def dispatch_notification(
-    *,
-    family_id: int,
-    title: str,
-    body: str,
-    extra: Dict[str, Any] | None = None,
-    event_id: int | None = None,
-) -> Dict[str, Any]:
-    payload_extra = public_pilot_service.enrich_notification_extra(
-        family_id=family_id,
-        extra=extra or {},
-        event_id=event_id,
-        preferred_region=str((extra or {}).get("preferred_region") or ""),
-    )
-    result = notifier.send(title, body, payload_extra)
-    result["links"] = payload_extra.get("public_links") or {}
-    result["open_url"] = payload_extra.get("open_url") or ""
-    status = notification_delivery_status(result)
-    delivered_at = datetime.now(timezone.utc).isoformat() if status == "sent" else None
-    delivery = storage.create_notification_delivery(
-        family_id=family_id,
-        event_id=event_id,
-        channel=str(result.get("channel") or settings.notify_channel or "off"),
-        title=title,
-        body=body,
-        recipient=notification_recipient(),
-        status=status,
-        response=result,
-        delivered_at=delivered_at,
-    )
-    return delivery
-
-
 def current_model_version() -> str:
     default_version = str(settings.yolo_model or "") if settings.detector_backend == "yolo" else str(settings.detector_backend or "")
     return package_service.current_model_version(default_version=default_version)
@@ -1185,8 +1122,7 @@ detect_agent = DetectAgent(
     hailo_retry_seconds=settings.hailo_retry_seconds,
     context_detection_interval_seconds=settings.context_detection_interval_seconds,
 )
-notifier = Notifier(settings)
-event_agent = EventAgent(storage, notifier, settings.event_throttle_seconds)
+event_agent = EventAgent(storage, settings.event_throttle_seconds)
 resource_monitor = (
     SystemResourceMonitor(
         warm_temperature_c=settings.thermal_warm_temperature_c,
@@ -1318,15 +1254,6 @@ app_runtime_guard = AppRuntimeGuardService(
     settings=settings,
     current_manifest_loader=lambda: package_service.read_current_manifest("app"),
 )
-edge_bootstrap_service = EdgeBootstrapService(settings=settings)
-public_pilot_service = PublicPilotService(settings=settings)
-apns_relay_service = APNSRelayService(settings=settings)
-app_push_service = AppPushService(
-    storage=storage,
-    settings=settings,
-    public_pilot=public_pilot_service,
-    apns_relay=apns_relay_service,
-)
 package_service.runtime_guard = app_runtime_guard
 
 APP_VERSION = "0.1.0"
@@ -1423,7 +1350,6 @@ app.include_router(
 app.mount("/snapshots", StaticFiles(directory=str(settings.snapshot_dir)), name="snapshots")
 app.mount("/setup", StaticFiles(directory=str(settings.setup_dir), html=True), name="setup")
 app.mount("/admin", StaticFiles(directory=str(settings.admin_dir), html=True), name="admin")
-app.mount("/ui", StaticFiles(directory=str(settings.frontend_dir), html=True), name="ui")
 
 
 @app.get("/", include_in_schema=False)
@@ -1610,7 +1536,6 @@ def device() -> Dict[str, Any]:
         "data_dir": str(settings.data_dir),
         "db_path": str(settings.db_path),
         "snapshot_dir": str(settings.snapshot_dir),
-        "notify_channel": settings.notify_channel,
         "detector_backend": settings.detector_backend,
         "yolo_model": settings.yolo_model if settings.detector_backend == "yolo" else None,
         "yolo_imgsz": settings.yolo_imgsz if settings.detector_backend == "yolo" else None,
@@ -2488,49 +2413,6 @@ def v1_runtime_app_stop(user: Dict[str, Any] = Depends(current_user)) -> Dict[st
     return app_runtime_guard.stop_runtime(clear_should_run=True)
 
 
-@app.get("/api/v1/runtime/edge-service")
-def v1_runtime_edge_service_status(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    return edge_bootstrap_service.status()
-
-
-@app.get("/api/v1/public-pilot/status")
-def v1_public_pilot_status(
-    preferred_region: str = Query(default=""),
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    device_id = require_device_access(user)
-    family_id = resolve_accessible_family_id(user, device_id)
-    return public_pilot_service.status(family_id=family_id, preferred_region=preferred_region)
-
-
-@app.post("/api/v1/runtime/edge-service/install")
-def v1_runtime_edge_service_install(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    try:
-        return edge_bootstrap_service.install()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/api/v1/runtime/edge-service/reload")
-def v1_runtime_edge_service_reload(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    try:
-        return edge_bootstrap_service.reload()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/api/v1/runtime/edge-service/uninstall")
-def v1_runtime_edge_service_uninstall(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    try:
-        return edge_bootstrap_service.uninstall()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 @app.get("/api/v1/device-rollouts")
 def v1_list_device_rollouts(
     family_id: int,
@@ -2780,43 +2662,12 @@ def v1_ingest_device_event(
         payload=event_payload,
         occurred_at=payload.occurred_at,
     )
-    rules = storage.get_rules()
-    notification_delivery = None
-    app_push_delivery = None
-    if bool(rules.get("notification_enabled")):
-        notification_delivery = dispatch_notification(
-            family_id=int(device_session["family_id"]),
-            event_id=int(event["id"]),
-            title=f"回家提醒：{event['summary']}",
-            body=f"{event.get('room') or '家中'} · {event['summary']}",
-            extra={
-                "event_id": int(event["id"]),
-                "event_type": event.get("type"),
-                "level": event.get("level"),
-                "occurred_at": event.get("occurred_at"),
-            },
-        )
-        app_push_delivery = app_push_service.send_to_family(
-            family_id=int(device_session["family_id"]),
-            event_id=int(event["id"]),
-            camera_id=camera_id,
-            preferred_region=str(payload.payload.get("preferred_region") or ""),
-            title=f"回家提醒：{event['summary']}",
-            body=f"{event.get('room') or '家中'} · {event['summary']}",
-            extra={
-                "event_type": event.get("type"),
-                "level": event.get("level"),
-                "occurred_at": event.get("occurred_at"),
-            },
-        )
     storage.bind_event_ingest(device_id, payload.idempotency_key, int(event["id"]))
     return {
         "accepted": True,
         "deduplicated": False,
         "idempotency_key": payload.idempotency_key,
         "event": v1_event_summary(event),
-        "notification_delivery": notification_delivery,
-        "app_push_delivery": app_push_delivery,
     }
 
 
@@ -2857,109 +2708,6 @@ def v1_update_event(
 def v1_today_summary(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
     require_device_access(user)
     return storage.daily_summary()
-
-
-@app.get("/api/v1/notifications/deliveries")
-def v1_notification_deliveries(
-    limit: int = 20,
-    user: Dict[str, Any] = Depends(current_user),
-) -> list[Dict[str, Any]]:
-    device_id = require_device_access(user)
-    family_id = resolve_accessible_family_id(user, device_id)
-    return storage.list_notification_deliveries(family_id, limit=max(1, min(limit, 100)))
-
-
-@app.post("/api/v1/notifications/test")
-def v1_notification_test(message: NotificationTest, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    device_id = require_device_access(user)
-    family_id = resolve_accessible_family_id(user, device_id)
-    extra = model_dump(message).get("extra") or {}
-    if message.camera_id is not None:
-        extra["camera_id"] = int(message.camera_id)
-    if message.preferred_region:
-        extra["preferred_region"] = str(message.preferred_region)
-    if not bool(message.include_public_links):
-        extra["open_url"] = ""
-        extra["event_url"] = ""
-        extra["watch_url"] = ""
-        extra["events_url"] = ""
-        extra["app_shell_url"] = ""
-        extra["public_links"] = {}
-    delivery = dispatch_notification(
-        family_id=family_id,
-        title=message.title,
-        body=message.body,
-        extra=extra,
-        event_id=message.event_id,
-    )
-    return {"ok": True, "delivery": delivery}
-
-
-@app.get("/api/v1/app/push-tokens")
-def v1_app_push_tokens(
-    family_id: int | None = Query(default=None, ge=1),
-    user: Dict[str, Any] = Depends(current_user),
-) -> list[Dict[str, Any]]:
-    resolved_family_id = resolve_user_family_id(user, family_id)
-    return app_push_service.list_tokens(user_id=int(user["id"]), family_id=resolved_family_id)
-
-
-@app.post("/api/v1/app/push-tokens")
-def v1_upsert_app_push_token(payload: V1AppPushTokenUpsert, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    family_id = resolve_user_family_id(user, payload.family_id)
-    token = app_push_service.register_token(
-        family_id=family_id,
-        user_id=int(user["id"]),
-        app_install_id=payload.app_install_id,
-        platform=payload.platform,
-        provider=payload.provider,
-        push_token=payload.push_token,
-        device_name=payload.device_name,
-        app_version=payload.app_version,
-        environment=payload.environment,
-        metadata=payload.metadata,
-    )
-    return {"ok": True, "token": token, "provider": app_push_service.provider_status()}
-
-
-@app.delete("/api/v1/app/push-tokens/{app_install_id}")
-def v1_delete_app_push_token(app_install_id: str, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    deleted = app_push_service.revoke_token(user_id=int(user["id"]), app_install_id=app_install_id)
-    if deleted is None:
-        raise HTTPException(status_code=404, detail="App push token not found")
-    return {"ok": True, "token": deleted}
-
-
-@app.post("/api/v1/app/push-test")
-def v1_app_push_test(payload: V1AppPushTest, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    family_id = resolve_user_family_id(user, payload.family_id)
-    delivery = app_push_service.send_to_family(
-        family_id=family_id,
-        title=payload.title,
-        body=payload.body,
-        event_id=payload.event_id,
-        camera_id=payload.camera_id,
-        preferred_region=payload.preferred_region,
-        extra=payload.extra,
-    )
-    return {"ok": True, "delivery": delivery, "provider": app_push_service.provider_status()}
-
-
-@app.get("/api/v1/runtime/app-push-relay")
-def v1_app_push_relay_status(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    return apns_relay_service.status()
-
-
-@app.post("/api/internal/app-push/relay")
-def internal_app_push_relay(
-    payload: V1AppPushRelayRequest,
-    authorization: str | None = Header(default=None),
-) -> Dict[str, Any]:
-    if not apns_relay_service.verify_internal_secret(authorization or ""):
-        raise HTTPException(status_code=401, detail="Invalid app push relay secret")
-    result = apns_relay_service.deliver(model_dump(payload))
-    return {"ok": bool(result.get("sent")), "result": result}
 
 
 @app.get("/api/cameras")
@@ -3699,9 +3447,3 @@ def rules_runtime() -> Dict[str, Any]:
         **worker.runtime_status(),
         "live_relay_agent": live_relay_agent.status(),
     }
-
-
-@app.post("/api/notify/test")
-def notify_test(message: NotificationTest) -> Dict[str, Any]:
-    payload = model_dump(message)
-    return notifier.send(payload["title"], payload["body"], payload.get("extra") or {})

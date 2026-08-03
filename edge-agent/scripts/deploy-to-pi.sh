@@ -35,7 +35,6 @@ rsync -az \
   --exclude 'scripts/prepare-factory-network-test.sh' \
   --exclude 'scripts/prepare-vision-smoke-samples.py' \
   --exclude 'scripts/run-*-eval*.sh' \
-  --exclude 'scripts/send-test-notification.sh' \
   --include 'scripts/verify-vision-runtime.py' \
   --exclude 'scripts/verify-*.py' \
   "$AGENT_ROOT/" "$PI_SSH:$PI_ROOT/"
@@ -43,8 +42,9 @@ rsync -az \
 ssh "$PI_SSH" "cd '$PI_ROOT' && \
   sudo rm -rf backups && \
   rm -rf eval __pycache__ scripts/__pycache__ app/__pycache__ app/vision/__pycache__ && \
-  rm -f app/pose_relay_agent.py app/video_app.py app/video_distribution_service.py \
-    app/video_profiles.py app/video_service.py && \
+  rm -f app/apns_relay_service.py app/app_push_service.py app/edge_bootstrap_service.py \
+    app/notifier.py app/pose_relay_agent.py app/public_pilot_service.py app/video_app.py \
+    app/video_distribution_service.py app/video_profiles.py app/video_service.py && \
   find scripts -maxdepth 1 -type f \
     \( -name 'audit-vision-dataset-readiness.py' \
     -o -name 'configure-demo-mode.sh' \
@@ -54,8 +54,7 @@ ssh "$PI_SSH" "cd '$PI_ROOT' && \
     -o -name 'init-vision-eval-data.py' \
     -o -name 'prepare-factory-network-test.sh' \
     -o -name 'prepare-vision-smoke-samples.py' \
-    -o -name 'run-*-eval*.sh' \
-    -o -name 'send-test-notification.sh' \) -delete && \
+    -o -name 'run-*-eval*.sh' \) -delete && \
   find scripts -maxdepth 1 -type f -name 'verify-*.py' ! -name 'verify-vision-runtime.py' -delete && \
   find . -type f -name '*.pyc' -delete && \
   find . -maxdepth 2 -type f \( -name '*.log' -o -name '*.bak*' \) -delete"

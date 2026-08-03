@@ -309,6 +309,8 @@ Build 8 不满足本台账的骨架产品契约，不作为最终交付版本。
 **根因**：`EdgeBootstrapService` 只实现 macOS `launchd`，却和 Pi 生产设置一起装配；`PublicPilotService` 继续生成 `app-shell.html`、`watch.html` 等旧 WebView 链接；盒子还持有 APNs 私钥配置和直接发送实现，扩大攻击面并形成多条通知路径。
 **处理**：Pi 盒子只由版本化 `systemd` 单元管理；macOS 开发启动工具迁出生产包。删除旧 Web 试点链接生成和盒子直连 APNs，事件只通过持久上行提交生产云，由云端完成单次推送、回执和失效 Token 管理。
 **验收**：Pi 部署清单不含 LaunchAgent、旧 Web App 路由或 APNs 私钥；本地算法断网继续工作，恢复后同一事件只由云端通知一次。
+**本地验证**：已删除盒子端 LaunchAgent、旧 Web 试点、公网链接增强、通用通知器、APNs relay、App push 服务及测试通知脚本，共净删除约 1,700 行运行时代码。`/ui`、盒子通知/APNs/运行时安装路由和对应 Schema、环境变量、SQLite 表、规则字段均已移除；旧数据库启动时幂等删除 `notification_enabled`、`app_push_tokens` 和 `notification_deliveries`，保留其余算法规则值。新增生产运行时边界回归，确认 `systemd` 是盒子唯一运行时、云端仍独占 APNs。边缘完整回归 `54/54`；云端 `101` 项中 `100` 通过、`1` 项仅因未配置 PostgreSQL 集成地址跳过。
+**实机验收**：部署树莓派后确认旧模块、旧脚本、旧表和 APNs 环境均不存在，服务由同一个 `gohome-edge-agent.service` 启动且重启恢复；断网制造一条风险事件，恢复后只上传一次，生产云只生成一次消息和一次 APNs 投递。完成前状态为“本地根因已消除，待实机验收”。
 
 ## GH-041 至 GH-043 算法语义与质量证明
 

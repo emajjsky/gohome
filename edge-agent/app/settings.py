@@ -11,7 +11,6 @@ class Settings:
     def __init__(self) -> None:
         self.agent_root = Path(__file__).resolve().parents[1]
         self.project_root = self.agent_root.parent
-        self.frontend_dir = self.project_root
         self.admin_dir = self.agent_root / "admin"
         self.setup_dir = self.agent_root / "setup"
         self.env_files = [str(path) for path in LOADED_ENV_FILES]
@@ -25,13 +24,9 @@ class Settings:
         self.runtime_dir = self.data_dir / "runtime"
         self.app_runtime_dir = self.runtime_dir / "app"
         self.runtime_logs_dir = self.app_runtime_dir / "logs"
-        self.edge_bootstrap_dir = self.runtime_dir / "edge-bootstrap"
-        self.edge_bootstrap_logs_dir = self.edge_bootstrap_dir / "logs"
         self.db_path = Path(os.getenv("GOHOME_AGENT_DB", self.data_dir / "agent.db"))
-        self.edge_launch_agent_label = os.getenv("GOHOME_EDGE_LAUNCH_AGENT_LABEL", "com.gohome.edge-agent").strip() or "com.gohome.edge-agent"
         self.object_storage_provider = os.getenv("GOHOME_OBJECT_STORAGE_PROVIDER", "signed-localfs").strip() or "signed-localfs"
         self.object_storage_bucket = os.getenv("GOHOME_OBJECT_STORAGE_BUCKET", "public-media").strip() or "public-media"
-        self.public_base_url = os.getenv("GOHOME_PUBLIC_BASE_URL", "").strip()
         self.media_public_base_url = os.getenv("GOHOME_MEDIA_PUBLIC_BASE_URL", "").strip()
         self.app_server_base_url = os.getenv("GOHOME_APP_SERVER_BASE_URL", "").strip().rstrip("/")
         self.device_api_token = os.getenv("GOHOME_DEVICE_API_TOKEN", "").strip()
@@ -150,23 +145,6 @@ class Settings:
         self.context_detection_interval_seconds = float(os.getenv("GOHOME_CONTEXT_DETECTION_INTERVAL_SECONDS", "3"))
         self.enable_demo_camera = os.getenv("GOHOME_ENABLE_DEMO_CAMERA", "0") == "1"
 
-        self.notify_channel = os.getenv("GOHOME_NOTIFY_CHANNEL", "off").lower()
-        self.generic_webhook_url = os.getenv("GOHOME_GENERIC_WEBHOOK_URL", "")
-        self.feishu_webhook = os.getenv("GOHOME_FEISHU_WEBHOOK", "")
-        self.bark_url = os.getenv("GOHOME_BARK_URL", "")
-        self.telegram_bot_token = os.getenv("GOHOME_TELEGRAM_BOT_TOKEN", "")
-        self.telegram_chat_id = os.getenv("GOHOME_TELEGRAM_CHAT_ID", "")
-        self.app_push_provider = os.getenv("GOHOME_APP_PUSH_PROVIDER", "off").strip().lower() or "off"
-        self.app_push_relay_url = os.getenv("GOHOME_APP_PUSH_RELAY_URL", "").strip()
-        self.app_push_relay_secret = os.getenv("GOHOME_APP_PUSH_RELAY_SECRET", "").strip()
-        self.app_deep_link_scheme = os.getenv("GOHOME_APP_DEEP_LINK_SCHEME", "gohome").strip() or "gohome"
-        self.apns_auth_key_path = os.getenv("GOHOME_APNS_AUTH_KEY_PATH", "").strip()
-        self.apns_key_id = os.getenv("GOHOME_APNS_KEY_ID", "").strip()
-        self.apns_team_id = os.getenv("GOHOME_APNS_TEAM_ID", "").strip()
-        self.apns_topic = os.getenv("GOHOME_APNS_TOPIC", "").strip()
-        self.apns_default_environment = os.getenv("GOHOME_APNS_DEFAULT_ENVIRONMENT", "production").strip().lower() or "production"
-        self.apns_request_timeout_seconds = float(os.getenv("GOHOME_APNS_REQUEST_TIMEOUT_SECONDS", "8"))
-
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -178,8 +156,6 @@ class Settings:
         self.app_runtime_dir.mkdir(parents=True, exist_ok=True)
         self.runtime_logs_dir.mkdir(parents=True, exist_ok=True)
         self.package_signing_public_key_path.parent.mkdir(parents=True, exist_ok=True)
-        self.edge_bootstrap_dir.mkdir(parents=True, exist_ok=True)
-        self.edge_bootstrap_logs_dir.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

@@ -14,11 +14,6 @@ from app.event_agent import EventAgent
 from app.storage import Storage
 
 
-class SilentNotifier:
-    def send(self, **_kwargs) -> None:
-        return None
-
-
 def candidate(event_type: str, snapshot_id: int, score: float) -> dict:
     if event_type == "fall_candidate":
         summary = "客厅摄像头 检测到快速倒地过程。"
@@ -72,7 +67,7 @@ def main() -> None:
         if int(black_rows[0]["id"]) != promoted_ids[-1]:
             raise SystemExit(f"expected latest black-screen candidate {promoted_ids[-1]}, got {black_rows[0]['id']}")
 
-        event_agent = EventAgent(storage, notifier=SilentNotifier(), throttle_seconds=300)
+        event_agent = EventAgent(storage, throttle_seconds=300)
 
         first_fall_candidate = storage.create_event_candidate(
             camera_id=int(camera["id"]),

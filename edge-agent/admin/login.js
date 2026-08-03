@@ -16,7 +16,7 @@ function setBusy(button, busy, label) {
   button.disabled = busy;
   button.dataset.originalText ??= button.innerHTML;
   button.innerHTML = busy
-    ? '<span class="material-symbols-outlined">progress_activity</span>处理中'
+    ? '<span class="material-symbols-outlined" data-icon="…" aria-hidden="true"></span>处理中'
     : (label || button.dataset.originalText);
 }
 
@@ -42,7 +42,7 @@ function lockLoginButton(seconds) {
   window.clearInterval(loginLockTimer);
   button.disabled = true;
   const render = () => {
-    button.innerHTML = `<span class="material-symbols-outlined">schedule</span>${remaining} 秒后重试`;
+    button.innerHTML = `<span class="material-symbols-outlined" data-icon="◷" aria-hidden="true"></span>${remaining} 秒后重试`;
     remaining -= 1;
     if (remaining < 0) {
       window.clearInterval(loginLockTimer);

@@ -516,14 +516,15 @@ sudo bash scripts/reset-runtime-data.sh --factory
 
 #### G. 通知闭环
 
-1. 配置至少一个真实通知通道。
-2. 触发一次真实事件。
-3. 手机收到至少一条通知。
+1. 在生产云配置 APNs，不在盒子配置通知通道。
+2. 盒子触发一次真实事件并通过持久队列上行。
+3. 云端按事件幂等键生成一条消息和一次 APNs 投递，手机收到并回执。
 
 通过信号：
 
-- `scripts/send-test-notification.sh` 可跑通
-- 手机能看到通知送达
+- 盒子数据库和环境中没有 APNs 私钥、Push Token 或通知投递表
+- 云端同一事件只有一条消息和一条投递记录
+- 手机能看到通知并进入正确原生详情
 
 #### H. 自启与恢复
 
@@ -593,7 +594,7 @@ sed -n '1,120p' .env
 
 ```bash
 curl http://127.0.0.1:8711/health
-curl -I http://127.0.0.1:8711/ui/index.html
+curl -I http://127.0.0.1:8711/setup/network.html
 curl -I http://127.0.0.1:8711/admin/index.html
 ```
 
@@ -609,10 +610,7 @@ curl 'http://127.0.0.1:8711/api/events?limit=10'
 
 #### E. 通知测试
 
-```bash
-cd /home/pi/gohome/edge-agent
-bash scripts/send-test-notification.sh
-```
+盒子不执行测试通知。先确认事件进入本地上传队列，再在生产云使用受运维鉴权的通知测试或真实事件路径验收 APNs。
 
 #### F. 安装 systemd
 
@@ -3634,3 +3632,13 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 5. [x] 新增边缘媒体所有权、升级包流式上传、超限清理和 COS 流式接收回归；边缘 `53/53`、云端 `100/101` 通过，PostgreSQL 集成项因未配置地址跳过。
 6. [ ] 部署树莓派和生产云，验证断网重试、COS 故障、接近上限文件、事件幂等、唯一对象、鉴权读取和生命周期对账。
 7. [ ] 由 GH-034/GH-038 继续把升级发布与目标控制面迁至生产云，迁移完成前不得恢复 `/api/v1/media/*` 通用接口。
+
+## 15.43 盒子运行时与通知所有权收敛（2026-08-03）
+
+1. [x] 完整核对盒子入口、设置、Schema、事件代理、SQLite、配网页、管理端和部署脚本，确认 LaunchAgent、旧 Web 试点和直发通知仍进入生产运行时。
+2. [x] 删除 `EdgeBootstrapService`、`PublicPilotService`、通用通知器、App push、APNs relay 及全部盒子通知/运行时安装/旧公网试点路由；移除 `/ui` 静态挂载。
+3. [x] 盒子事件代理和设备事件接收只负责持久化、去重与上行，不读取通知开关、不直接发送任何用户通知。
+4. [x] 删除盒子 APNs/通知环境变量、DTO、规则字段、Push Token 与投递表；旧数据库启动迁移幂等删表删列，并验证保留规则值和事件清理可继续执行。
+5. [x] 配网与管理登录图标改为自身 CSS 的 `data-icon`，移除已删除 `/ui` 字体资源依赖；删除失效测试通知脚本并让部署清单清理旧模块。
+6. [x] 新增 `verify-production-runtime-boundary.py`，锁定盒子通知路由/模块/Web 入口为 0、systemd 为唯一生产运行时、APNs 仍由云端独占。边缘 `54/54`、云端 `100/101` 通过，PostgreSQL 集成项因未配置地址跳过。
+7. [ ] 部署到树莓派，确认旧文件、旧表和 APNs 环境变量均已消失；验证 systemd 重启、断网上行补传和生产云单事件单通知后关闭 GH-040。

@@ -14,11 +14,6 @@ from app.storage import Storage
 from app.event_agent import EventAgent
 
 
-class SilentNotifier:
-    def send(self, **_: object) -> None:
-        return None
-
-
 def main() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = Storage(Path(tmpdir) / "agent.db")
@@ -132,7 +127,7 @@ def main() -> None:
         if [job["id"] for job in deduped] != [job["id"] for job in jobs]:
             raise SystemExit("upload job idempotency check failed")
 
-        deferred_event = EventAgent(storage, SilentNotifier(), throttle_seconds=30).emit(
+        deferred_event = EventAgent(storage, throttle_seconds=30).emit(
             event_type="fall_candidate",
             summary="客厅摄像头 检测到快速倒地过程，已进入云端复核。",
             level="critical",

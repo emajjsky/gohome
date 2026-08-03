@@ -233,7 +233,7 @@ function setBusy(button, busy) {
   button.disabled = busy;
   button.dataset.originalText ??= button.innerHTML;
   button.innerHTML = busy
-    ? '<span class="material-symbols-outlined">progress_activity</span>处理中'
+    ? '<span class="material-symbols-outlined" data-icon="…" aria-hidden="true"></span>处理中'
     : button.dataset.originalText;
 }
 
@@ -585,10 +585,10 @@ function updateWifiActionState() {
   const current = state.setupNetwork?.ssid || "";
   const connectedSameWifi = Boolean(current && selected && current === selected);
   if (connectedSameWifi) {
-    button.innerHTML = '<span class="material-symbols-outlined">check_circle</span>已连接';
+    button.innerHTML = '<span class="material-symbols-outlined" data-icon="✓" aria-hidden="true"></span>已连接';
     button.classList.add("connected");
   } else {
-    button.innerHTML = '<span class="material-symbols-outlined">wifi</span>连接';
+    button.innerHTML = '<span class="material-symbols-outlined" data-icon="◎" aria-hidden="true"></span>连接';
     button.classList.remove("connected");
   }
 }
@@ -740,9 +740,9 @@ function updateCameraLimitState() {
     submit.disabled = managed || (count >= state.maxCameras && !editingExisting);
     submit.innerHTML = submit.disabled
       ? managed
-        ? '<span class="material-symbols-outlined">cloud_sync</span>请在 App 配置'
-        : '<span class="material-symbols-outlined">block</span>已达 3 路上限'
-      : '<span class="material-symbols-outlined">check_circle</span>保存启用';
+        ? '<span class="material-symbols-outlined" data-icon="↻" aria-hidden="true"></span>请在 App 配置'
+        : '<span class="material-symbols-outlined" data-icon="×" aria-hidden="true"></span>已达 3 路上限'
+      : '<span class="material-symbols-outlined" data-icon="✓" aria-hidden="true"></span>保存启用';
   }
 }
 
@@ -2463,7 +2463,6 @@ async function loadRules() {
     ["personDetectionEnabled", "person_detection_enabled"],
     ["fallDetectionEnabled", "fall_detection_enabled"],
     ["activityDetectionEnabled", "activity_detection_enabled"],
-    ["notificationEnabled", "notification_enabled"],
   ]) {
     if ($(id)) $(id).checked = Boolean(rules[key]);
   }
@@ -2498,7 +2497,6 @@ async function saveRules(button) {
         person_detection_enabled: $("personDetectionEnabled").checked,
         fall_detection_enabled: $("fallDetectionEnabled").checked,
         activity_detection_enabled: Boolean($("activityDetectionEnabled")?.checked),
-        notification_enabled: $("notificationEnabled").checked,
       }),
     });
     await loadRules();

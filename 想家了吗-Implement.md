@@ -12428,3 +12428,26 @@ P4 风险升频边界：
 - 签名供应链专项、媒体生命周期专项、边缘完整回归 `53/53` 全部通过。
 - 云端完整测试 `101` 项中 `100` 通过，唯一跳过项为未配置 PostgreSQL 集成地址；其余设备证据、COS、媒体生命周期、推送和原生 API 均通过。
 - 状态：代码根因已消除，等待树莓派与生产云断网/COS 故障/大文件/幂等/内存实机验收。
+
+## 175. 2026-08-03 生产运行时与通知职责收敛
+
+### 根因
+
+- 盒子入口同时装配只适用于 macOS `launchd` 的运行时安装服务、旧 Web 试点链接服务、通用 Webhook/Bark/飞书/Telegram 通知器和 APNs relay。
+- 本地 `EventAgent` 与云端设备事件接收都可能直发通知，盒子还持有 Push Token、通知投递表和 `notification_enabled`，与生产云 APNs 状态机形成双写和重复通知风险。
+- `/ui` 已不是正式产品入口，但配网页和管理页仍依赖其中的 Material Symbols 字体；仅删除挂载会造成图标文本或空白控件。
+
+### 实现
+
+- 删除 `edge_bootstrap_service.py`、`public_pilot_service.py`、`notifier.py`、`app_push_service.py`、`apns_relay_service.py` 和盒子测试通知脚本；删除对应导入、实例、DTO、路由、设置与环境变量。
+- 盒子事件链路只保留事件持久化、候选聚合、证据最终化和上传任务。设备事件接收只按幂等键落库并返回事件摘要，用户消息、APNs 排队、回执和 Token 失效统一由生产云完成。
+- SQLite 初始化幂等删除历史 `app_push_tokens`、`notification_deliveries` 和规则列 `notification_enabled`；事件生命周期清理不再访问已删除表。旧规则迁移保留全部非通知字段及更新时间。
+- 删除 `/ui` 挂载。配网、登录和动态按钮图标改为管理端自身 CSS 的 `data-icon`，不再依赖旧字体资源；Pi 部署脚本显式清理已退休模块，生产运行时只由现有 systemd 安装脚本拥有。
+
+### 验证
+
+- 新增 `verify-production-runtime-boundary.py`，通过 AST、设置结构、旧库迁移和跨端契约确认：盒子通知路由 0、通知模块 0、旧 Web 挂载 0、LaunchAgent 所有者 0，生产运行时为 systemd，通知所有者为云端。
+- 旧数据库专项验证确认删表删列后 `capture_interval_seconds` 与 `updated_at` 保持不变，旧通知补丁无法重新写入规则。
+- Python 编译、`console.js/login.js` Node 语法和差异检查通过；边缘完整回归 `54/54` 通过。
+- 云端完整测试 `101` 项中 `100` 通过，唯一跳过项为未配置 PostgreSQL 集成地址；APNs 接收、加密、重试、失效 Token、单次投递和设备回执测试均通过。
+- 状态：GH-040 本地根因已消除，等待树莓派保留数据部署、systemd 重启、断网补传和生产云单事件单通知实机验收。
