@@ -20,6 +20,27 @@ function setBusy(button, busy, label) {
     : (label || button.dataset.originalText);
 }
 
+function formatApiError(data, status) {
+  const detail = data?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (detail && !Array.isArray(detail) && typeof detail.message === "string") {
+    return detail.message;
+  }
+  if (Array.isArray(detail)) {
+    const validation = detail[0] || {};
+    const field = Array.isArray(validation.loc) ? validation.loc.at(-1) : "";
+    if (field === "new_password" && validation.type === "string_too_short") {
+      return `新密码至少需要 ${validation.ctx?.min_length || 10} 位。`;
+    }
+    if (field === "new_password" && validation.type === "string_too_long") {
+      return `新密码最多允许 ${validation.ctx?.max_length || 128} 位。`;
+    }
+    if (field === "old_password") return "请输入当前使用的一次性密码。";
+    if (typeof validation.msg === "string" && validation.msg.trim()) return validation.msg;
+  }
+  return `请求失败（HTTP ${status}）。`;
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     credentials: "same-origin",
@@ -27,9 +48,16 @@ async function api(path, options = {}) {
     ...options,
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch (_error) {
+      data = null;
+    }
+  }
   if (!response.ok) {
-    const error = new Error(data?.detail || `HTTP ${response.status}`);
+    const error = new Error(formatApiError(data, response.status));
     error.retryAfter = Number(response.headers.get("Retry-After") || 0);
     throw error;
   }
@@ -120,8 +148,24 @@ async function login(event) {
 
 async function changePassword(event) {
   event.preventDefault();
+  const oldPassword = $("adminOldPassword").value;
   const newPassword = $("adminNewPassword").value;
   const confirmPassword = $("adminConfirmPassword").value;
+  if (!oldPassword) {
+    setMessage("请输入当前使用的一次性密码。", "bad");
+    $("adminOldPassword").focus();
+    return;
+  }
+  if (newPassword.length < 10) {
+    setMessage("新密码至少需要 10 位。", "bad");
+    $("adminNewPassword").focus();
+    return;
+  }
+  if (newPassword.length > 128) {
+    setMessage("新密码最多允许 128 位。", "bad");
+    $("adminNewPassword").focus();
+    return;
+  }
   if (newPassword !== confirmPassword) {
     setMessage("两次输入的新密码不一致。", "bad");
     return;
@@ -132,7 +176,7 @@ async function changePassword(event) {
     await api("/api/admin/auth/change-password", {
       method: "POST",
       body: JSON.stringify({
-        old_password: $("adminOldPassword").value,
+        old_password: oldPassword,
         new_password: newPassword,
       }),
     });

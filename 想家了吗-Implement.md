@@ -12604,7 +12604,7 @@ P4 风险升频边界：
 
 ### 实现
 
-- 认证静态版本统一为 `20260803-auth-4`；登录 HTML 同时版本化 CSS 和 JS，所有受保护管理页面重定向到带该版本的登录地址。
+- 认证静态版本统一为 `20260803-auth-5`；登录 HTML 同时版本化 CSS 和 JS，所有受保护管理页面重定向到带该版本的登录地址。
 - HTTP 中间件对登录 HTML、脚本、样式和全部认证 API 设置 `no-store, no-cache, must-revalidate, max-age=0`、`Pragma: no-cache` 与过期时间 0。
 - 安全专项回归锁定：生产入口不含通用密码、两个认证静态资源使用同一版本、受保护页面跳转版本一致且认证响应声明 no-store。
 
@@ -12616,6 +12616,14 @@ P4 风险升频边界：
 ### 树莓派部署结果
 
 - 部署保留 `data/`、`.env` 和 Pi 运行环境，仅重启 `gohome-edge-agent.service` 一次；启动后 `active`、`NRestarts=0` 且 warning 日志为空。
-- 未认证管理页 GET 返回 `303`，`Location` 固定包含 `v=20260803-auth-4`；登录 HTML 和认证状态 API 均返回完整 no-store 响应头。
+- 未认证管理页 GET 返回 `303`，`Location` 固定包含当前认证静态版本；登录 HTML 和认证状态 API 均返回完整 no-store 响应头。
 - 部署后读取盒子现有一次性凭据完成真实登录，返回 `authenticated=true`、`must_change_password=true`，随后通过正式退出接口撤销测试会话。一次性凭据和强制改密状态保持不变，等待用户设置自己的密码。
 - 本地认证专项、静态入口、Node 语法、Python 编译及完整边缘回归 `58/58` 通过；源码目录测试字节码已清理。
+
+### 首次改密错误契约
+
+- 实机复现 8 位新密码请求：Pydantic 返回 HTTP 422，`detail` 为包含 `loc/type/msg/ctx` 的数组，后端长度门槛正确；旧脚本把数组传入 `Error`，浏览器只能显示 `[object Object]`。
+- `login.js` 现在在网络请求前校验旧密码存在、新密码 10-128 位和两次输入一致，并将焦点定位到具体字段。
+- API 错误格式化依次处理字符串、带 `message` 的对象、Pydantic 数组和非 JSON 响应；新密码长度错误输出明确中文，不再泄漏后端结构或显示对象占位文本。
+- 三个改密输入补齐 `required` 和 `maxlength=128`，与后端 Schema 保持同一边界；脚本版本升级确保浏览器不继续执行旧错误处理逻辑。
+- `auth-5` 已部署到树莓派并只重启服务一次；外部 GET 实测 303 跳转包含当前版本，登录页返回 no-store，盒子实际下发脚本包含 `formatApiError` 和 10 位长度提示。服务 `active`、`NRestarts=0`、warning 日志为空。

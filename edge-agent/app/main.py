@@ -86,7 +86,7 @@ logger = logging.getLogger(__name__)
 SETUP_NETWORK_PAGE = "/setup/network.html"
 SETUP_HOTSPOT_ORIGIN = "http://10.42.0.1"
 SETUP_HOTSPOT_NETWORK_PAGE = f"{SETUP_HOTSPOT_ORIGIN}{SETUP_NETWORK_PAGE}"
-ADMIN_AUTH_ASSET_REVISION = "20260803-auth-4"
+ADMIN_AUTH_ASSET_REVISION = "20260803-auth-5"
 ADMIN_AUTH_CACHE_CONTROL = "no-store, no-cache, must-revalidate, max-age=0"
 
 

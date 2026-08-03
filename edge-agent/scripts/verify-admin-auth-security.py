@@ -168,17 +168,20 @@ def main() -> None:
         verify_legacy_rotation(root)
 
         login_html = (ROOT / "admin" / "login.html").read_text(encoding="utf-8")
+        login_script = (ROOT / "admin" / "login.js").read_text(encoding="utf-8")
         main_source = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
         init_script = (ROOT / "scripts" / "init-box.sh").read_text(encoding="utf-8")
         if "admin / 123456" in login_html or "--password 123456" in init_script:
             raise SystemExit("universal development credential remains in a production entry")
-        asset_revision = "20260803-auth-4"
+        asset_revision = "20260803-auth-5"
         if login_html.count(asset_revision) != 2:
             raise SystemExit("login HTML does not version both authentication assets")
         if f'ADMIN_AUTH_ASSET_REVISION = "{asset_revision}"' not in main_source:
             raise SystemExit("protected-page redirects do not use the current login revision")
         if 'ADMIN_AUTH_CACHE_CONTROL = "no-store, no-cache, must-revalidate, max-age=0"' not in main_source:
             raise SystemExit("authentication responses do not declare a no-store cache policy")
+        if "formatApiError" not in login_script or "新密码至少需要 10 位。" not in login_script:
+            raise SystemExit("password validation errors are not rendered as actionable text")
 
         print({
             "ok": True,

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>管理登录 - 回家</title>
-  <link rel="stylesheet" href="/admin/styles.css?v=20260803-auth-4">
+  <link rel="stylesheet" href="/admin/styles.css?v=20260803-auth-5">
 </head>
 <body class="admin-login-page">
   <main class="admin-login-shell" aria-label="回家盒子管理登录">
@@ -45,13 +45,13 @@
           <p>首次登录后需要换成你自己的管理密码。</p>
         </div>
         <label>旧密码
-          <input id="adminOldPassword" name="old_password" type="password" autocomplete="current-password">
+          <input id="adminOldPassword" name="old_password" type="password" autocomplete="current-password" required maxlength="128">
         </label>
         <label>新密码
-          <input id="adminNewPassword" name="new_password" type="password" autocomplete="new-password" minlength="10">
+          <input id="adminNewPassword" name="new_password" type="password" autocomplete="new-password" required minlength="10" maxlength="128">
         </label>
         <label>确认新密码
-          <input id="adminConfirmPassword" name="confirm_password" type="password" autocomplete="new-password" minlength="10">
+          <input id="adminConfirmPassword" name="confirm_password" type="password" autocomplete="new-password" required minlength="10" maxlength="128">
         </label>
         <button id="adminPasswordButton" class="primary-button" type="submit">
           <span class="material-symbols-outlined" data-icon="◇" aria-hidden="true"></span>
@@ -63,6 +63,6 @@
       <p id="adminLoginMessage" class="admin-login-message" role="status" aria-live="polite"></p>
     </section>
   </main>
-  <script src="/admin/login.js?v=20260803-auth-4"></script>
+  <script src="/admin/login.js?v=20260803-auth-5"></script>
 </body>
 </html>
