@@ -12592,3 +12592,30 @@ P4 风险升频边界：
 - `verify-adaptive-edge-worker.py` 新增 Hailo 空场调度状态，确认 idle 预计算 Pose 被复用；原 CPU motion-only 不启用 RTMPose、人物 active、风险唤醒、源代身份和 KLT 锚点断言继续通过。
 - 自适应调度、完整视觉管线、Python 编译和差异检查通过。
 - 这只消除 GH-030 的人物激活缺口，不代表模型级调度完成。下一步需部署后实测双路 active 10-15 Hz、deadline miss 和 Hailo 利用率，再决定是否拆分全局 `DetectAgent` 锁与同步 Pose/Object 调用。
+
+## 182. 2026-08-03 管理凭据迁移与登录缓存收口
+
+### 现场根因
+
+- 盒子认证文件为 `generated_one_time`，`must_change_password=true`，一次性凭据文件权限为 `0600`；旧 `admin / 123456` 已按 GH-037 正常轮换，不是数据库或服务损坏。
+- 三次旧密码失败触发 1 秒限流，符合有界指数退避。真实一次性凭据调用登录接口返回 200，并要求首次改密。
+- 盒子磁盘上的登录页已经删除默认密码文案，但静态响应没有 `Cache-Control`，浏览器仍显示部署前 HTML，直接误导用户继续输入失效密码。
+- 未认证 `/api/admin/auth/status` 返回 `must_change_password=false` 是防止泄露凭据生命周期的既定边界；成功登录响应与受认证状态才返回真实值，不应改成公开暴露。
+
+### 实现
+
+- 认证静态版本统一为 `20260803-auth-4`；登录 HTML 同时版本化 CSS 和 JS，所有受保护管理页面重定向到带该版本的登录地址。
+- HTTP 中间件对登录 HTML、脚本、样式和全部认证 API 设置 `no-store, no-cache, must-revalidate, max-age=0`、`Pragma: no-cache` 与过期时间 0。
+- 安全专项回归锁定：生产入口不含通用密码、两个认证静态资源使用同一版本、受保护页面跳转版本一致且认证响应声明 no-store。
+
+### 验收边界
+
+- 部署后先验证真实响应头和版本化跳转，再用一次性凭据登录并设置用户密码；改密成功后一次性凭据文件必须删除，全部旧会话必须撤销。
+- 不恢复 `123456`，不公开展示一次性凭据，不删除限流记录绕过状态机。用户完成改密后以新密码重登并重启服务复验。
+
+### 树莓派部署结果
+
+- 部署保留 `data/`、`.env` 和 Pi 运行环境，仅重启 `gohome-edge-agent.service` 一次；启动后 `active`、`NRestarts=0` 且 warning 日志为空。
+- 未认证管理页 GET 返回 `303`，`Location` 固定包含 `v=20260803-auth-4`；登录 HTML 和认证状态 API 均返回完整 no-store 响应头。
+- 部署后读取盒子现有一次性凭据完成真实登录，返回 `authenticated=true`、`must_change_password=true`，随后通过正式退出接口撤销测试会话。一次性凭据和强制改密状态保持不变，等待用户设置自己的密码。
+- 本地认证专项、静态入口、Node 语法、Python 编译及完整边缘回归 `58/58` 通过；源码目录测试字节码已清理。

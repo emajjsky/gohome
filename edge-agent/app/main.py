@@ -86,6 +86,8 @@ logger = logging.getLogger(__name__)
 SETUP_NETWORK_PAGE = "/setup/network.html"
 SETUP_HOTSPOT_ORIGIN = "http://10.42.0.1"
 SETUP_HOTSPOT_NETWORK_PAGE = f"{SETUP_HOTSPOT_ORIGIN}{SETUP_NETWORK_PAGE}"
+ADMIN_AUTH_ASSET_REVISION = "20260803-auth-4"
+ADMIN_AUTH_CACHE_CONTROL = "no-store, no-cache, must-revalidate, max-age=0"
 
 
 def model_dump(model: Any) -> Dict[str, Any]:
@@ -1320,7 +1322,18 @@ def admin_login_redirect(request: Request) -> RedirectResponse:
     target = request.url.path
     if request.url.query:
         target = f"{target}?{request.url.query}"
-    return RedirectResponse(url=f"/admin/login.html?next={quote(target, safe='')}", status_code=303)
+    return RedirectResponse(
+        url=f"/admin/login.html?v={ADMIN_AUTH_ASSET_REVISION}&next={quote(target, safe='')}",
+        status_code=303,
+    )
+
+
+def admin_auth_response_requires_no_store(path: str) -> bool:
+    return path.startswith("/api/admin/auth/") or path in {
+        "/admin/login.html",
+        "/admin/login.js",
+        "/admin/styles.css",
+    }
 
 
 @app.middleware("http")
@@ -1338,7 +1351,12 @@ async def enforce_admin_session(request: Request, call_next: Any) -> Response:
             if requires_page_auth and request.method == "GET":
                 return admin_login_redirect(request)
             return JSONResponse({"detail": "首次登录后必须修改管理密码。"}, status_code=403)
-    return await call_next(request)
+    response = await call_next(request)
+    if admin_auth_response_requires_no_store(request.url.path):
+        response.headers["Cache-Control"] = ADMIN_AUTH_CACHE_CONTROL
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 
 app.include_router(
