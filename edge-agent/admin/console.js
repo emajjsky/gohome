@@ -1090,17 +1090,20 @@ function ensureLiveStreamLifecycle(cameraId, tracking, frameId) {
 function replaceLiveStreamElement() {
   const current = $("mjpegStream");
   if (!current) return null;
+  current.style.visibility = "hidden";
+  current.onload = null;
+  current.onerror = null;
+  current.removeAttribute("src");
   const stream = current.cloneNode(false);
-  stream.removeAttribute("src");
   stream.style.visibility = "hidden";
   current.replaceWith(stream);
   return stream;
 }
 
 function renderStream({ retry = false } = {}) {
+  const generation = ++state.streamGeneration;
   const stream = replaceLiveStreamElement();
   if (!stream) return;
-  const generation = ++state.streamGeneration;
   const empty = $("streamEmpty");
   const camera = selectedCamera();
   clearTimeout(state.streamReconnectTimer);

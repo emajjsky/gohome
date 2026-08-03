@@ -80,6 +80,9 @@ def main() -> None:
     required_stream_contracts = {
         "stream generation": "streamGeneration: 0",
         "fresh image element": "function replaceLiveStreamElement()",
+        "old load handler removal": "current.onload = null",
+        "old error handler removal": "current.onerror = null",
+        "old request cancellation": 'current.removeAttribute("src")',
         "old image removal": "current.replaceWith(stream)",
         "hidden before first frame": 'stream.style.visibility = "hidden"',
         "visible after first frame": 'stream.style.visibility = "visible"',
@@ -94,6 +97,10 @@ def main() -> None:
         raise SystemExit({"missing_admin_runtime_contracts": missing_contracts})
     if "streamMaskTimer" in console_source:
         raise SystemExit({"forbidden_admin_runtime_contract": "timer-based stream reveal"})
+    generation_index = console_source.index("const generation = ++state.streamGeneration")
+    replacement_index = console_source.index("const stream = replaceLiveStreamElement()", generation_index)
+    if generation_index >= replacement_index:
+        raise SystemExit({"forbidden_admin_runtime_contract": "old stream retired before generation advance"})
 
     print({
         "ok": True,
