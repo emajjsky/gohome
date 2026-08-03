@@ -573,6 +573,10 @@ class RuleEngine:
             and graph_candidate
             and not identity_gate_failed
             and (
+                str(graph_target.get("identity_match") or "") == "same_track"
+                or bool(transition.get("body_rotation_confirmed"))
+            )
+            and (
                 graph_review_ready
                 or graph_temporal_ready
                 or bool(transition.get("confirmed"))
@@ -643,12 +647,9 @@ class RuleEngine:
             duration = max(0.0, (now - track["started_at"]).total_seconds())
             track["duration_seconds"] = duration
             fast_path_confirmed = bool(
-                graph_review_ready
-                or (
-                    track.get("fast_transition_confirmed")
-                    and int(track.get("confirm_count") or 0) >= confirm_frames
-                    and duration >= FAST_FACTOR_GRAPH_CONFIRM_SECONDS
-                )
+                track.get("fast_transition_confirmed")
+                and int(track.get("confirm_count") or 0) >= confirm_frames
+                and duration >= FAST_FACTOR_GRAPH_CONFIRM_SECONDS
             )
             dynamic_path_confirmed = bool(
                 track.get("confirmation_path") == "dynamic_low_position"

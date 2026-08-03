@@ -1,6 +1,7 @@
 const pageName = document.body.dataset.page || "home";
 const defaultCameraChannel = "1";
 const defaultCameraStream = "2";
+const livePosePollIntervalMs = 200;
 
 const state = {
   device: null,
@@ -20,13 +21,16 @@ const state = {
   streamMaskTimer: null,
   streamReconnectTimer: null,
   streamReconnectAttempts: 0,
+  streamStartedAt: 0,
+  streamLastRecoveryAt: 0,
   liveAnalysisTimer: null,
   liveAnalysisBusy: false,
   liveAnalysisErrorShown: false,
   liveAnalysisGeneration: 0,
   lastAnalysisCapturedAt: 0,
   lastAnalysisFrameId: "",
-  serverAnnotated: false,
+  lastAnalysisSourceKey: "",
+  lastAnalysisFrameSequence: null,
   liveEvaluationUpdatedAt: 0,
   candidateRecords: [],
   observationLogs: [],
@@ -41,6 +45,7 @@ const state = {
   videoPrivacyMode: "original",
   videoPrivacyUpdatedAt: "",
   videoPrivacyLoaded: false,
+  privacyCalibrations: [],
   privacyTimer: null,
 };
 
@@ -118,19 +123,45 @@ function ensureVideoPrivacyControl() {
       <button type="button" data-privacy-mode="original">原画</button>
       <button type="button" data-privacy-mode="person_blur">模糊</button>
       <button type="button" data-privacy-mode="skeleton">骨架</button>
-    </div>`;
+    </div>
+    <div id="privacyCalibrationList" class="privacy-calibration-list"></div>`;
   const controls = sidebar.querySelector(".admin-sidebar-controls");
   controls?.insertAdjacentElement("afterend", panel);
   if (!controls) sidebar.querySelector(".admin-nav")?.insertAdjacentElement("afterend", panel);
 }
 
 function renderVideoPrivacyMode() {
+  const calibrationRequired = state.privacyCalibrations.some((item) => item.enabled && !item.ready);
   document.querySelectorAll("[data-privacy-mode]").forEach((button) => {
     const active = button.dataset.privacyMode === state.videoPrivacyMode;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.disabled = button.dataset.privacyMode === "skeleton" && calibrationRequired;
   });
   setText("videoPrivacySyncState", state.videoPrivacyLoaded ? "已同步" : "家庭同步");
+  const target = $("privacyCalibrationList");
+  if (!target) return;
+  target.innerHTML = state.privacyCalibrations
+    .filter((item) => item.enabled)
+    .map((item) => {
+      const status = item.ready
+        ? "已校准"
+        : item.status === "calibrating"
+          ? `${Number(item.calibration_observations || 0)}/${Number(item.calibration_required_frames || 8)}`
+          : item.status === "revalidating"
+            ? "复验中"
+            : "未校准";
+      return `
+        <div class="privacy-calibration-row">
+          <span><strong>${escapeHtml(item.room || item.name || "摄像头 " + item.camera_id)}</strong><small>${escapeHtml(status)}</small></span>
+          ${item.ready ? '<i class="status-dot ok" aria-hidden="true"></i>' : `<button type="button" data-calibrate-camera="${Number(item.camera_id)}">校准</button>`}
+        </div>`;
+    })
+    .join("");
+  target.querySelectorAll("[data-calibrate-camera]").forEach((button) => {
+    button.addEventListener("click", () => calibratePrivacyCamera(button.dataset.calibrateCamera, button)
+      .catch((error) => showToast(userSafeError(error.message))));
+  });
 }
 
 async function loadVideoPrivacyMode({ refreshStream = true } = {}) {
@@ -139,10 +170,22 @@ async function loadVideoPrivacyMode({ refreshStream = true } = {}) {
   const changed = nextMode !== state.videoPrivacyMode;
   state.videoPrivacyMode = nextMode;
   state.videoPrivacyUpdatedAt = String(payload?.updated_at || "");
+  state.privacyCalibrations = Array.isArray(payload?.calibrations) ? payload.calibrations : [];
   state.videoPrivacyLoaded = true;
   renderVideoPrivacyMode();
   if (changed && refreshStream && state.selectedCameraId) renderStream({ retry: true });
   return payload;
+}
+
+async function calibratePrivacyCamera(cameraId, button) {
+  setBusy(button, true);
+  try {
+    await api(`/api/admin/cameras/${Number(cameraId)}/privacy-calibration`, { method: "POST" });
+    await loadVideoPrivacyMode({ refreshStream: false });
+    showToast("空房校准已完成");
+  } finally {
+    setBusy(button, false);
+  }
 }
 
 async function updateVideoPrivacyMode(mode, button) {
@@ -156,6 +199,7 @@ async function updateVideoPrivacyMode(mode, button) {
     });
     state.videoPrivacyMode = normalizeVideoPrivacyMode(payload?.minimum_mode);
     state.videoPrivacyUpdatedAt = String(payload?.updated_at || "");
+    state.privacyCalibrations = Array.isArray(payload?.calibrations) ? payload.calibrations : state.privacyCalibrations;
     state.videoPrivacyLoaded = true;
     renderVideoPrivacyMode();
     renderStream({ retry: true });
@@ -201,7 +245,13 @@ async function api(path, options = {}) {
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    throw new Error(data?.detail || `HTTP ${response.status}`);
+    if (response.status === 401 && !window.location.pathname.endsWith("/admin/login.html")) {
+      const next = `${window.location.pathname}${window.location.search}`;
+      window.location.replace(`/admin/login.html?next=${encodeURIComponent(next)}`);
+    }
+    const error = new Error(data?.detail || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -917,6 +967,42 @@ async function deleteCamera(cameraId) {
   return api(`/api/cameras/${cameraId}`, { method: "DELETE" });
 }
 
+function frameSequenceForCamera(frameId, cameraId) {
+  const prefix = `${cameraId}-`;
+  const value = String(frameId || "");
+  if (!value.startsWith(prefix)) return null;
+  const sequence = value.slice(prefix.length);
+  return /^\d+$/.test(sequence) ? Number(sequence) : null;
+}
+
+function ensureLiveStreamLifecycle(cameraId, tracking, frameId) {
+  const stream = $("mjpegStream");
+  if (!stream || selectedCamera()?.id !== cameraId || !stream.getAttribute("src")) return;
+
+  const sourceKey = String(tracking?.source_key || "").trim();
+  const frameSequence = frameSequenceForCamera(frameId, cameraId);
+  const sourceChanged = Boolean(
+    sourceKey
+    && state.lastAnalysisSourceKey
+    && sourceKey !== state.lastAnalysisSourceKey
+  );
+  const sequenceRegressed = Number.isFinite(frameSequence)
+    && Number.isFinite(state.lastAnalysisFrameSequence)
+    && frameSequence < state.lastAnalysisFrameSequence;
+  const imageUnavailable = stream.complete
+    && stream.naturalWidth === 0
+    && Date.now() - state.streamStartedAt >= 2500;
+
+  if (sourceKey) state.lastAnalysisSourceKey = sourceKey;
+  if (Number.isFinite(frameSequence)) state.lastAnalysisFrameSequence = frameSequence;
+  if (!sourceChanged && !sequenceRegressed && !imageUnavailable) return;
+
+  const now = Date.now();
+  if (now - state.streamLastRecoveryAt < 800) return;
+  state.streamLastRecoveryAt = now;
+  renderStream({ retry: true });
+}
+
 function renderStream({ retry = false } = {}) {
   const stream = $("mjpegStream");
   if (!stream) return;
@@ -929,10 +1015,11 @@ function renderStream({ retry = false } = {}) {
     stream.style.display = "block";
     state.lastAnalysisCapturedAt = 0;
     state.lastAnalysisFrameId = "";
+    state.lastAnalysisSourceKey = "";
+    state.lastAnalysisFrameSequence = null;
   }
   if (!camera) {
     stopLiveAnalysisLoop();
-    state.serverAnnotated = false;
     stream.removeAttribute("src");
     if (empty) {
       empty.style.display = "grid";
@@ -966,13 +1053,13 @@ function renderStream({ retry = false } = {}) {
     setText("streamStatus", "实时视频已连接");
   };
   const streamProfile = pageName === "algorithms"
-    ? { fps: 15, width: 960, height: 540, quality: 70, drop: 0, label: "同步姿态视频" }
-    : { fps: 15, width: 1280, height: 720, quality: 64, drop: 1, label: "720p 低延迟视频" };
-  state.serverAnnotated = pageName === "algorithms" && state.videoPrivacyMode === "original";
-  const streamPath = state.serverAnnotated
+    ? { fps: 15, width: 960, height: 540, quality: 70, label: "同步姿态视频" }
+    : { fps: 15, width: 1280, height: 720, quality: 64, label: "720p 低延迟视频" };
+  const streamPath = pageName === "algorithms"
     ? `/api/cameras/${camera.id}/continual-pose/stream.mjpg`
     : `/api/cameras/${camera.id}/stream.mjpg`;
-  stream.src = `${streamPath}?fps=${streamProfile.fps}&width=${streamProfile.width}&height=${streamProfile.height}&quality=${streamProfile.quality}&drop=${streamProfile.drop}&privacy_mode=${encodeURIComponent(state.videoPrivacyMode)}&t=${Date.now()}`;
+  stream.src = `${streamPath}?fps=${streamProfile.fps}&width=${streamProfile.width}&height=${streamProfile.height}&quality=${streamProfile.quality}&privacy_mode=${encodeURIComponent(state.videoPrivacyMode)}&t=${Date.now()}`;
+  state.streamStartedAt = Date.now();
   state.streamMaskTimer = setTimeout(() => {
     if (stream.getAttribute("src") && empty) empty.style.display = "none";
   }, 900);
@@ -1003,26 +1090,6 @@ function snapshotDisplayPoses(snapshot) {
     return Array.isArray(continual.poses) ? continual.poses : [];
   }
   return snapshotPoses(snapshot);
-}
-
-function snapshotPoseEdges(snapshot) {
-  const edges = snapshot?.analysis?.pose_skeleton_edges;
-  return Array.isArray(edges) && edges.length
-    ? edges
-    : [
-      ["left_shoulder", "right_shoulder"],
-      ["left_shoulder", "left_elbow"],
-      ["left_elbow", "left_wrist"],
-      ["right_shoulder", "right_elbow"],
-      ["right_elbow", "right_wrist"],
-      ["left_shoulder", "left_hip"],
-      ["right_shoulder", "right_hip"],
-      ["left_hip", "right_hip"],
-      ["left_hip", "left_knee"],
-      ["left_knee", "left_ankle"],
-      ["right_hip", "right_knee"],
-      ["right_knee", "right_ankle"],
-    ];
 }
 
 function isPresenceCandidate(person) {
@@ -1128,21 +1195,6 @@ function unifiedSafetyState(snapshot) {
   };
 }
 
-function overlayPeopleForMode(snapshot, mode = state.previewAlgorithm || "quality") {
-  if (!["unified", "person", "fall", "meal", "stillness", "night"].includes(mode)) return [];
-  const people = snapshotPeople(snapshot);
-  if (mode === "unified") return people;
-  if (mode === "fall") {
-    return people.filter((person) => person.fall_candidate || String(person.source || "").startsWith("fall_") || String(person.method || "").includes("fall"));
-  }
-  if (mode === "person") return people;
-  return people.filter((person) => person.pose_validated || person.source === "pose_person" || !isPresenceCandidate(person));
-}
-
-function shouldRenderPoseForMode(mode = state.previewAlgorithm || "quality") {
-  return ["unified", "person", "fall", "meal", "stillness"].includes(mode);
-}
-
 const postureLabels = {
   standing: "站姿",
   sitting: "坐姿",
@@ -1208,141 +1260,6 @@ function unifiedSceneTargets(snapshot) {
     ...zones.map((zone) => ({ ...zone, stable: true })),
     ...transient.map((item) => ({ ...item, stable: false })),
   ];
-}
-
-function imageFitRect(snapshot) {
-  const stage = $("previewStage");
-  const image = $("snapshotImage") || $("mjpegStream");
-  if (!stage || !image) return null;
-  const stageWidth = stage.clientWidth;
-  const stageHeight = stage.clientHeight;
-  const imageWidth = Number(snapshot?.width || image.naturalWidth || snapshot?.analysis?.image_width || 0);
-  const imageHeight = Number(snapshot?.height || image.naturalHeight || snapshot?.analysis?.image_height || 0);
-  if (!stageWidth || !stageHeight || !imageWidth || !imageHeight) return null;
-  const scale = Math.min(stageWidth / imageWidth, stageHeight / imageHeight);
-  const width = imageWidth * scale;
-  const height = imageHeight * scale;
-  return { left: (stageWidth - width) / 2, top: (stageHeight - height) / 2, width, height, imageWidth, imageHeight };
-}
-
-function renderDetectionOverlay(snapshot) {
-  const overlay = $("detectionOverlay");
-  if (!overlay) return;
-  if (pageName === "algorithms" && state.serverAnnotated) {
-    overlay.innerHTML = "";
-    overlay.removeAttribute("style");
-    return;
-  }
-  const rect = imageFitRect(snapshot);
-  const mode = state.previewAlgorithm || "quality";
-  const people = overlayPeopleForMode(snapshot, mode);
-  const pets = mode === "unified" ? snapshotPets(snapshot) : [];
-  const poses = shouldRenderPoseForMode(mode) ? snapshotDisplayPoses(snapshot) : [];
-  const fallRuntime = latestFallRuntime();
-  const fallActive = ["suspect", "confirming", "confirmed"].includes(fallRuntime.stage);
-  const sceneTargets = mode === "unified"
-    ? unifiedSceneTargets(snapshot)
-    : mode === "fall"
-      ? (snapshot?.analysis?.scene_zones || []).filter((zone) => zone.stable && zone.zone_kind === "normal_lying_surface")
-      : [];
-  const sceneBoxes = sceneTargets.map((item) => ({
-    bbox: item.bbox,
-    label: item.stable
-      ? `${sceneLabel(item)} · 场景已学习`
-      : `${sceneLabel(item)}${item.confidence ? ` · ${Math.round(Number(item.confidence) * 100)}%` : ""}`,
-    kind: "scene",
-  }));
-  const personBoxes = people.length
-    ? people.map((person, index) => {
-        const [x1, y1, x2, y2] = person.bbox || [0, 0, 0, 0];
-        const confidence = person.confidence ? ` · ${Math.round(person.confidence * 100)}%` : "";
-        const candidateScore = !person.confidence && person.candidate_score ? ` · 候选分 ${Math.round(person.candidate_score * 100)}%` : "";
-        const presence = isPresenceCandidate(person);
-        const poseValidated = Boolean(person.pose_validated || person.source === "pose_person");
-        const tracked = ["cached", "tracked"].includes(person.pose_tracking_state);
-        const coasting = person.pose_tracking_state === "coasting";
-        const matchesFallTarget = fallActive && bboxIou(person.bbox, fallRuntime.target?.bbox) >= 0.18;
-        const kind = presence && !poseValidated ? "presence" : matchesFallTarget ? "fall" : "person";
-        const pose = matchingPose(person, poses);
-        const posture = pose ? ` · ${postureLabel(pose.posture)}` : "";
-        const trackId = person.track_id || pose?.track_id;
-        const identity = trackId ? `人物 ${String(trackId).split("-").pop()}` : `人物 ${index + 1}`;
-        const prefix = presence && !poseValidated ? "人体候选" : identity;
-        const label = `${prefix}${posture}${confidence}${candidateScore}`;
-        return { bbox: [x1, y1, x2, y2], label: matchesFallTarget ? `${label} · 跌倒过程复核` : label, kind: coasting ? "coasting" : tracked ? "tracked" : kind };
-      })
-    : [];
-  const petBoxes = pets.map((pet) => ({
-    bbox: pet.bbox,
-    label: `${pet.label_zh || (pet.type === "dog" ? "狗" : "猫")}${pet.confidence ? ` · ${Math.round(Number(pet.confidence) * 100)}%` : ""}${pet.scene_zone_label_zh ? ` · ${pet.scene_zone_label_zh}` : ""}`,
-    kind: "pet",
-  }));
-  const boxes = [...sceneBoxes, ...petBoxes, ...personBoxes];
-  if (!snapshot || !rect) {
-    overlay.innerHTML = "";
-    overlay.removeAttribute("style");
-    return;
-  }
-  overlay.style.left = `${rect.left}px`;
-  overlay.style.top = `${rect.top}px`;
-  overlay.style.width = `${rect.width}px`;
-  overlay.style.height = `${rect.height}px`;
-  const poseMarkup = renderPoseSkeleton(snapshot, rect);
-  const boxMarkup = boxes.map((box) => {
-    const [x1, y1, x2, y2] = box.bbox || [0, 0, 0, 0];
-    const left = clamp((Number(x1) / rect.imageWidth) * 100, 0, 100);
-    const top = clamp((Number(y1) / rect.imageHeight) * 100, 0, 100);
-    const right = clamp((Number(x2) / rect.imageWidth) * 100, 0, 100);
-    const bottom = clamp((Number(y2) / rect.imageHeight) * 100, 0, 100);
-    const width = clamp(right - left, 0, 100 - left);
-    const height = clamp(bottom - top, 0, 100 - top);
-    return `
-      <div class="detection-box ${escapeHtml(box.kind || "person")}" style="left:${left}%;top:${top}%;width:${width}%;height:${height}%">
-        <span>${escapeHtml(box.label)}</span>
-      </div>
-    `;
-  }).join("");
-  const analysis = snapshot?.analysis || {};
-  const safetyState = unifiedSafetyState(snapshot);
-  const alertMarkup = `<div class="perception-frame-alerts"><span class="${escapeHtml(safetyState.level === "critical" ? "critical" : safetyState.level === "watch" ? "watch" : "normal")}">${escapeHtml(safetyState.title)}</span></div>`;
-  overlay.innerHTML = `${poseMarkup}${boxMarkup}${alertMarkup}`;
-}
-
-function renderPoseSkeleton(snapshot, rect) {
-  const poses = snapshotDisplayPoses(snapshot);
-  if (!poses.length || !rect?.imageWidth || !rect?.imageHeight) return "";
-  const edges = snapshotPoseEdges(snapshot);
-  const lines = [];
-  const points = [];
-  const trackingClass = poses.every((pose) => pose.tracking_state === "coasting")
-    ? "coasting"
-    : poses.every((pose) => ["cached", "tracked"].includes(pose.tracking_state))
-      ? "tracked"
-      : "observed";
-  for (const [poseIndex, pose] of poses.entries()) {
-    const byName = {};
-    for (const point of pose.keypoints || []) {
-      if (point?.name && point.visible && Number(point.confidence || 0) >= 0.22) {
-        byName[point.name] = point;
-      }
-    }
-    for (const [fromName, toName] of edges) {
-      const from = byName[fromName];
-      const to = byName[toName];
-      if (!from || !to) continue;
-      lines.push(`<line class="pose-skeleton-line pose-${poseIndex % 3}" x1="${Number(from.x)}" y1="${Number(from.y)}" x2="${Number(to.x)}" y2="${Number(to.y)}"></line>`);
-    }
-    for (const point of Object.values(byName)) {
-      const core = ["nose", "left_shoulder", "right_shoulder", "left_hip", "right_hip"].includes(point.name) ? " core" : "";
-      points.push(`<circle class="pose-keypoint${core} pose-${poseIndex % 3}" cx="${Number(point.x)}" cy="${Number(point.y)}" r="${core ? 4.2 : 3.2}"></circle>`);
-    }
-  }
-  return `
-    <svg class="pose-skeleton ${trackingClass}" viewBox="0 0 ${rect.imageWidth} ${rect.imageHeight}" preserveAspectRatio="none" aria-hidden="true">
-      ${lines.join("")}
-      ${points.join("")}
-    </svg>
-  `;
 }
 
 function renderPerceptionTargetList(snapshot) {
@@ -1411,9 +1328,6 @@ function renderSnapshot(snapshot) {
   const analysis = snapshot?.analysis || {};
   const image = $("snapshotImage");
   if (image && snapshot.image_url) {
-    image.onload = () => {
-      renderDetectionOverlay(snapshot);
-    };
     image.src = String(snapshot.image_url).startsWith("data:")
       ? snapshot.image_url
       : `${snapshot.image_url}?t=${Date.now()}`;
@@ -1432,7 +1346,6 @@ function renderSnapshot(snapshot) {
   const visibleTags = algorithmVisibleTags(snapshot);
   setText("snapshotTags", visibleTags.length ? visibleTags.map(tagLabel).join("，") : algorithmNormalTagLabel("unified", snapshot));
   renderDetectionSummary(snapshot);
-  renderDetectionOverlay(snapshot);
   renderPerceptionTargetList(snapshot);
   renderAlgorithmHitStrip(snapshot);
   renderContinualPoseStatus(snapshot);
@@ -1597,13 +1510,66 @@ function renderRuntimeStatus(payload = state.runtimeStatus) {
   const resource = scheduler.resource || {};
   const streams = payload?.camera_streams || {};
   const poseRunning = payload?.continual_pose_running;
-  const fps = Number(selected.effective_fps);
+  const video = runtimeVideoMetrics(payload, state.selectedCameraId);
+  const fps = Number(video.outputFps);
+  const inferenceFps = Number(video.modelFps);
   const temp = Number(resource.temperature_c);
   setText("runtimeMode", runtimeModeLabel(selected.mode));
   setText("runtimeFps", Number.isFinite(fps) && fps > 0 ? fps.toFixed(1) : "-");
   setText("runtimeTemp", Number.isFinite(temp) ? `${temp.toFixed(0)}°` : "-");
   setText("runtimeStreams", streams.managed_stream_count === undefined ? "-" : `${streams.managed_stream_count} 路`);
-  setText("runtimePose", poseRunning ? "姿态跟踪" : "姿态待命");
+  setText(
+    "runtimePose",
+    poseRunning
+      ? `Hailo ${Number.isFinite(inferenceFps) && inferenceFps > 0 ? inferenceFps.toFixed(1) : "-"} Hz`
+      : "姿态待命",
+  );
+}
+
+function runtimeVideoMetrics(payload, cameraId) {
+  const streams = Array.isArray(payload?.camera_streams?.streams) ? payload.camera_streams.streams : [];
+  const stream = streams.find((item) => Number(item.camera_id) === Number(cameraId)) || {};
+  const trackers = Array.isArray(payload?.continual_pose?.cameras) ? payload.continual_pose.cameras : [];
+  const tracker = trackers.find((item) => Number(item.camera_id) === Number(cameraId)) || {};
+  const relay = payload?.live_relay_agent || {};
+  const renderer = relay?.privacy_renderer || {};
+  const privacy = renderer?.cameras?.[String(cameraId)] || {};
+  const relayCamera = relay?.cameras?.[String(cameraId)] || {};
+  const stageLatency = privacy?.stage_latency_ms || {};
+  const segmentation = renderer?.person_segmentation || {};
+  const synchronization = renderer?.synchronization_rejections?.[String(cameraId)] || {};
+  const segmentationAssist = renderer?.segmentation_assists?.[String(cameraId)] || {};
+  const mode = String(relay.privacy_mode || "original");
+  const sourceFps = Number(stream.source_fps);
+  const privacyFps = Number(privacy.output_fps);
+  const poseFps = Number(tracker.display_output_fps);
+  const modelFps = Number(tracker.model_anchor_fps);
+  const segmentationLatencyMs = Number(segmentation.last_latency_ms);
+  const renderLatencyP95Ms = Number(stageLatency?.total?.p95);
+  const jpegLatencyP95Ms = Number(stageLatency?.jpeg_encode?.p95);
+  const cloudAcceptedFps = Number(relayCamera.accepted_fps);
+  const sourceToCloudP95Ms = Number(relayCamera.source_to_cloud_ms_p95);
+  return {
+    mode,
+    sourceFps,
+    poseFps,
+    modelFps,
+    segmentationStatus: String(segmentation.status || ""),
+    segmentationLatencyMs,
+    renderLatencyP95Ms,
+    jpegLatencyP95Ms,
+    cloudAcceptedFps,
+    sourceToCloudP95Ms,
+    synchronizationIssue: Number(synchronization.last_age_ms) <= 2500
+      ? String(synchronization.last_reason || "")
+      : "",
+    segmentationAssisted: Number(segmentationAssist.last_age_ms) <= 2500,
+    outputFps: mode === "original"
+      ? sourceFps
+      : Number.isFinite(privacyFps) && privacyFps > 0
+        ? privacyFps
+        : poseFps,
+  };
 }
 
 function renderStreamHealth(payload = state.runtimeStatus) {
@@ -1617,7 +1583,15 @@ function renderStreamHealth(payload = state.runtimeStatus) {
     $("streamFpsBadge")?.classList.remove("is-live");
     return;
   }
-  const fps = Number(selected.source_fps);
+  const video = runtimeVideoMetrics(payload, state.selectedCameraId);
+  const fps = Number(video.outputFps);
+  const sourceFps = Number(video.sourceFps);
+  const modelFps = Number(video.modelFps);
+  const segmentationLatencyMs = Number(video.segmentationLatencyMs);
+  const renderLatencyP95Ms = Number(video.renderLatencyP95Ms);
+  const jpegLatencyP95Ms = Number(video.jpegLatencyP95Ms);
+  const cloudAcceptedFps = Number(video.cloudAcceptedFps);
+  const sourceToCloudP95Ms = Number(video.sourceToCloudP95Ms);
   const ageMs = Number(selected.latest_frame_age_ms);
   if (selected.state === "retrying") {
     setText("streamFrameTime", "源流重连中");
@@ -1631,9 +1605,40 @@ function renderStreamHealth(payload = state.runtimeStatus) {
     $("streamFpsBadge")?.classList.remove("is-live");
     return;
   }
-  const fpsLabel = Number.isFinite(fps) && fps > 0 ? `${fps.toFixed(1)} FPS` : "源流预热";
+  const modeLabel = video.mode === "skeleton" ? "骨架" : video.mode === "person_blur" ? "模糊" : "原画";
+  const fpsLabel = Number.isFinite(fps) && fps > 0 ? `${modeLabel} ${fps.toFixed(1)} FPS` : `${modeLabel}预热`;
+  const sourceLabel = Number.isFinite(sourceFps) && sourceFps > 0 && video.mode !== "original"
+    ? ` · 源流 ${sourceFps.toFixed(1)} FPS`
+    : "";
+  const modelLabel = Number.isFinite(modelFps) && modelFps > 0
+    ? ` · Hailo ${modelFps.toFixed(1)} Hz`
+    : "";
+  const segmentationLabel = video.mode === "original"
+    ? ""
+    : video.synchronizationIssue
+      ? " · 帧同步异常"
+      : video.segmentationAssisted
+        ? " · 轮廓补偿"
+      : video.segmentationStatus === "degraded"
+      ? " · 人体分割异常"
+      : Number.isFinite(segmentationLatencyMs) && segmentationLatencyMs > 0
+        ? ` · 分割 ${segmentationLatencyMs.toFixed(0)} ms`
+        : " · 分割预热";
   const ageLabel = Number.isFinite(ageMs) ? ` · 帧龄 ${Math.round(ageMs)} ms` : "";
-  setText("streamFrameTime", `${fpsLabel}${ageLabel}`);
+  const renderLabel = Number.isFinite(renderLatencyP95Ms) && renderLatencyP95Ms > 0
+    ? ` · 合成 P95 ${renderLatencyP95Ms.toFixed(0)} ms`
+    : "";
+  const jpegLabel = Number.isFinite(jpegLatencyP95Ms) && jpegLatencyP95Ms > 0
+    ? ` · JPEG P95 ${jpegLatencyP95Ms.toFixed(0)} ms`
+    : "";
+  const cloudLabel = Number.isFinite(cloudAcceptedFps) && cloudAcceptedFps > 0
+    ? ` · 云端 ${cloudAcceptedFps.toFixed(1)} FPS${Number.isFinite(sourceToCloudP95Ms) && sourceToCloudP95Ms > 0 ? ` / P95 ${sourceToCloudP95Ms.toFixed(0)} ms` : ""}`
+    : " · 云端预热";
+  const frameMetric = $("streamFrameTime");
+  setText("streamFrameTime", `${fpsLabel}${sourceLabel}${cloudLabel}${ageLabel}`);
+  if (frameMetric) {
+    frameMetric.title = `${fpsLabel}${sourceLabel}${modelLabel}${segmentationLabel}${renderLabel}${jpegLabel}${cloudLabel}${ageLabel}`;
+  }
   setText("streamFpsBadge", Number.isFinite(fps) && fps > 0 ? `${fps.toFixed(1)} FPS` : "-- FPS");
   $("streamFpsBadge")?.classList.toggle("is-live", Number.isFinite(fps) && fps > 0);
 }
@@ -1649,7 +1654,6 @@ function renderEmptySnapshot() {
   state.latestSnapshot = null;
   if ($("snapshotImage")) $("snapshotImage").removeAttribute("src");
   if ($("snapshotEmpty")) $("snapshotEmpty").style.display = "grid";
-  if ($("detectionOverlay")) $("detectionOverlay").innerHTML = "";
   for (const id of ["snapshotTime", "streamFrameTime", "snapshotBrightness", "snapshotContrast", "snapshotMotion", "snapshotPeople", "snapshotTags", "snapshotPoseCount", "snapshotSceneCount", "snapshotFireState", "snapshotQualityState"]) {
     setText(id, "-");
   }
@@ -1683,7 +1687,7 @@ async function loadSnapshot(cameraId) {
 }
 
 function liveAnalysisDelay() {
-  return 500;
+  return livePosePollIntervalMs;
 }
 
 function stopLiveAnalysisLoop() {
@@ -1726,6 +1730,7 @@ async function loadLiveAnalysis(generation = state.liveAnalysisGeneration) {
     return;
   }
   const cameraId = state.selectedCameraId;
+  let nextDelay = liveAnalysisDelay();
   state.liveAnalysisBusy = true;
   try {
     const statusResult = await api(`/api/cameras/${cameraId}/continual-pose/live?include_frame=false`);
@@ -1742,6 +1747,8 @@ async function loadLiveAnalysis(generation = state.liveAnalysisGeneration) {
       frame_id: result.frame_id || result.snapshot?.frame_id || result.tracking?.frame_id || "",
     };
     const frameId = String(snapshot.frame_id || "").trim();
+    const tracking = result.tracking || snapshot.analysis?.continual_pose || {};
+    ensureLiveStreamLifecycle(cameraId, tracking, frameId);
     const capturedAt = Date.parse(snapshot.captured_at || result.captured_at || "");
     const duplicateFrame = Boolean(frameId && frameId === state.lastAnalysisFrameId);
     const duplicateTimestamp = !frameId && Number.isFinite(capturedAt) && capturedAt <= state.lastAnalysisCapturedAt;
@@ -1775,6 +1782,7 @@ async function loadLiveAnalysis(generation = state.liveAnalysisGeneration) {
       loadEvaluation(cameraId).catch(renderEmptyEvaluation);
     }
   } catch (error) {
+    nextDelay = error?.status === 401 ? 3000 : 800;
     setText("continualPoseSource", "姿态暂不可用");
     if ($("continualPoseStatus")) $("continualPoseStatus").dataset.state = "expired";
     if (!state.liveAnalysisErrorShown) {
@@ -1783,7 +1791,7 @@ async function loadLiveAnalysis(generation = state.liveAnalysisGeneration) {
     }
   } finally {
     state.liveAnalysisBusy = false;
-    if (generation === state.liveAnalysisGeneration) scheduleLiveAnalysis(liveAnalysisDelay(), generation);
+    if (generation === state.liveAnalysisGeneration) scheduleLiveAnalysis(nextDelay, generation);
   }
 }
 
@@ -1809,7 +1817,6 @@ async function loadEvaluation(cameraId) {
   if (pageName === "algorithms" && state.latestSnapshot) {
     renderAlgorithmHitStrip(state.latestSnapshot);
     renderDetectionSummary(state.latestSnapshot);
-    renderDetectionOverlay(state.latestSnapshot);
     renderPerceptionTargetList(state.latestSnapshot);
   }
 }
@@ -2696,7 +2703,6 @@ function bindEvents() {
       }
     });
   }
-  window.addEventListener("resize", () => renderDetectionOverlay(state.latestSnapshot));
 }
 
 document.addEventListener("DOMContentLoaded", () => {

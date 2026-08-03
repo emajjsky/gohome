@@ -3,9 +3,7 @@ import Foundation
 actor MJPEGStreamClient: CameraStreamClient {
     private let apiClient: APIClient
     private var frameTask: Task<Void, Never>?
-    private var poseTask: Task<Void, Never>?
     private var frameContinuation: AsyncThrowingStream<Data, Error>.Continuation?
-    private var poseContinuation: AsyncThrowingStream<PosePacket, Error>.Continuation?
     private var generation = 0
 
     init(apiClient: APIClient) {
@@ -35,37 +33,17 @@ actor MJPEGStreamClient: CameraStreamClient {
         guard requestGeneration == generation else { throw CancellationError() }
 
         let effectiveMode = playback.privacyMode ?? privacyMode
-        let frameURL: URL
-        let poseURL: URL?
-        if effectiveMode == .skeleton {
-            guard playback.displayTransport == "safe-scene-pose-v1" else { throw APIError.invalidResponse }
-            frameURL = try streamURL(
-                absolute: playback.sceneStreamURL,
-                path: playback.sceneStreamPath,
-                fallbackPath: nil,
-                playback: playback,
-                profile: profile,
-                privacyMode: effectiveMode
-            )
-            poseURL = try streamURL(
-                absolute: playback.poseStreamURL,
-                path: playback.poseStreamPath,
-                fallbackPath: nil,
-                playback: playback,
-                profile: profile,
-                privacyMode: effectiveMode
-            )
-        } else {
-            frameURL = try streamURL(
-                absolute: playback.streamURL,
-                path: playback.streamPath,
-                fallbackPath: "/api/v1/video/cameras/\(cameraID)/stream.mjpg",
-                playback: playback,
-                profile: profile,
-                privacyMode: effectiveMode
-            )
-            poseURL = nil
+        guard playback.displayTransport == CameraDisplayTransport.edgeComposedMJPEG else {
+            throw APIError.invalidResponse
         }
+        let frameURL = try streamURL(
+            absolute: playback.streamURL,
+            path: playback.streamPath,
+            fallbackPath: "/api/v1/video/cameras/\(cameraID)/stream.mjpg",
+            playback: playback,
+            profile: profile,
+            privacyMode: effectiveMode
+        )
 
         let frames = AsyncThrowingStream<Data, Error>(bufferingPolicy: .bufferingNewest(1)) { continuation in
             self.frameContinuation = continuation
@@ -73,15 +51,7 @@ actor MJPEGStreamClient: CameraStreamClient {
                 await self?.consumeFrames(url: frameURL, generation: requestGeneration, continuation: continuation)
             }
         }
-        let poses = poseURL.map { url in
-            AsyncThrowingStream<PosePacket, Error>(bufferingPolicy: .bufferingNewest(2)) { continuation in
-                self.poseContinuation = continuation
-                self.poseTask = Task { [weak self] in
-                    await self?.consumePoses(url: url, generation: requestGeneration, continuation: continuation)
-                }
-            }
-        }
-        return CameraDisplayStreams(frames: frames, poses: poses)
+        return CameraDisplayStreams(frames: frames)
     }
 
     func stop() async {
@@ -91,13 +61,9 @@ actor MJPEGStreamClient: CameraStreamClient {
 
     private func stopCurrentStream() async {
         frameTask?.cancel()
-        poseTask?.cancel()
         frameTask = nil
-        poseTask = nil
         frameContinuation?.finish()
-        poseContinuation?.finish()
         frameContinuation = nil
-        poseContinuation = nil
     }
 
     private func streamURL(
@@ -137,7 +103,10 @@ actor MJPEGStreamClient: CameraStreamClient {
             request.timeoutInterval = 12
             request.setValue("multipart/x-mixed-replace,image/*,*/*", forHTTPHeaderField: "Accept")
 
-            let delegate = MJPEGFrameDelegate()
+            let delegate = MJPEGFrameDelegate(
+                expectedDisplayTransport: CameraDisplayTransport.edgeComposedMJPEG,
+                expectedCompositionOwner: "edge"
+            )
             let configuration = URLSessionConfiguration.ephemeral
             configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
             configuration.timeoutIntervalForRequest = 12
@@ -169,75 +138,22 @@ actor MJPEGStreamClient: CameraStreamClient {
         }
     }
 
-    private func consumePoses(
-        url: URL,
-        generation: Int,
-        continuation: AsyncThrowingStream<PosePacket, Error>.Continuation
-    ) async {
-        while !Task.isCancelled, generation == self.generation {
-            do {
-                try await consumePoseConnection(
-                    url: url,
-                    generation: generation,
-                    continuation: continuation
-                )
-                try Task.checkCancellation()
-                try await Task.sleep(nanoseconds: 500_000_000)
-            } catch is CancellationError {
-                continuation.finish()
-                return
-            } catch {
-                do {
-                    try await Task.sleep(nanoseconds: 500_000_000)
-                } catch {
-                    continuation.finish()
-                    return
-                }
-            }
-        }
-        continuation.finish()
-    }
-
-    private func consumePoseConnection(
-        url: URL,
-        generation: Int,
-        continuation: AsyncThrowingStream<PosePacket, Error>.Continuation
-    ) async throws {
-        var request = URLRequest(url: url)
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.timeoutInterval = 12
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-
-        let delegate = PosePacketDelegate()
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 12
-        configuration.timeoutIntervalForResource = 24 * 60 * 60
-        let delegateQueue = OperationQueue()
-        delegateQueue.maxConcurrentOperationCount = 1
-        let streamSession = URLSession(configuration: configuration, delegate: delegate, delegateQueue: delegateQueue)
-        let dataTask = streamSession.dataTask(with: request)
-        dataTask.resume()
-        defer {
-            dataTask.cancel()
-            streamSession.invalidateAndCancel()
-        }
-
-        for try await packet in delegate.packets {
-            try Task.checkCancellation()
-            guard generation == self.generation else { throw CancellationError() }
-            continuation.yield(packet)
-        }
-    }
 }
 
 final class MJPEGFrameDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var parser = MJPEGFrameParser()
     private var streamContinuation: AsyncThrowingStream<Data, Error>.Continuation?
+    private let expectedDisplayTransport: String?
+    private let expectedCompositionOwner: String?
     let frames: AsyncThrowingStream<Data, Error>
 
-    override init() {
+    init(
+        expectedDisplayTransport: String? = nil,
+        expectedCompositionOwner: String? = nil
+    ) {
+        self.expectedDisplayTransport = expectedDisplayTransport
+        self.expectedCompositionOwner = expectedCompositionOwner
         var continuation: AsyncThrowingStream<Data, Error>.Continuation?
         frames = AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) {
             continuation = $0
@@ -262,6 +178,18 @@ final class MJPEGFrameDelegate: NSObject, URLSessionDataDelegate, @unchecked Sen
             completionHandler(.cancel)
             return
         }
+        if let expectedDisplayTransport,
+           response.value(forHTTPHeaderField: "X-GoHome-Display-Transport") != expectedDisplayTransport {
+            finish(APIError.invalidResponse)
+            completionHandler(.cancel)
+            return
+        }
+        if let expectedCompositionOwner,
+           response.value(forHTTPHeaderField: "X-GoHome-Composition-Owner") != expectedCompositionOwner {
+            finish(APIError.invalidResponse)
+            completionHandler(.cancel)
+            return
+        }
         completionHandler(.allow)
     }
 
@@ -276,79 +204,6 @@ final class MJPEGFrameDelegate: NSObject, URLSessionDataDelegate, @unchecked Sen
         lock.unlock()
         for frame in parsedFrames {
             continuation?.yield(frame)
-        }
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error = error as? URLError, error.code == .cancelled {
-            finish(nil)
-        } else {
-            finish(error)
-        }
-    }
-
-    func receiveForTesting(_ data: Data) {
-        receive(data)
-    }
-
-    func finish(_ error: Error?) {
-        lock.lock()
-        let continuation = streamContinuation
-        streamContinuation = nil
-        lock.unlock()
-        if let error {
-            continuation?.finish(throwing: error)
-        } else {
-            continuation?.finish()
-        }
-    }
-}
-
-final class PosePacketDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    private let lock = NSLock()
-    private var parser = PoseSSEParser()
-    private var streamContinuation: AsyncThrowingStream<PosePacket, Error>.Continuation?
-    let packets: AsyncThrowingStream<PosePacket, Error>
-
-    override init() {
-        var continuation: AsyncThrowingStream<PosePacket, Error>.Continuation?
-        packets = AsyncThrowingStream(bufferingPolicy: .bufferingNewest(2)) {
-            continuation = $0
-        }
-        streamContinuation = continuation
-        super.init()
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        dataTask: URLSessionDataTask,
-        didReceive response: URLResponse,
-        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
-    ) {
-        guard let response = response as? HTTPURLResponse else {
-            finish(APIError.invalidResponse)
-            completionHandler(.cancel)
-            return
-        }
-        guard (200..<300).contains(response.statusCode) else {
-            finish(APIError.server(statusCode: response.statusCode, detail: "骨架流连接失败"))
-            completionHandler(.cancel)
-            return
-        }
-        completionHandler(.allow)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        receive(data)
-    }
-
-    private func receive(_ data: Data) {
-        lock.lock()
-        let parsedPackets = parser.append(data)
-        let continuation = streamContinuation
-        lock.unlock()
-        for packet in parsedPackets {
-            continuation?.yield(packet)
         }
     }
 

@@ -15,16 +15,19 @@ from app.vision.synchronized_pose_stream import SynchronizedPoseStream
 
 
 class Tracker:
-    def __init__(self, frame: np.ndarray) -> None:
-        self.frame = frame
+    def latest_frame(self, _camera_id: int) -> dict:
+        raise SystemExit("diagnostic stream used tracker-retained pixels instead of the current camera frame")
 
-    def latest_frame(self, camera_id: int) -> dict:
+    def metadata_for_frame(self, camera_id: int, *, frame_id: str, source_key: str) -> dict:
         assert camera_id == 24
+        assert frame_id == "24-101"
+        assert source_key == "camera-24:g3"
         return {
-            "frame": self.frame.copy(),
             "tracking": {
+                "camera_id": 24,
                 "state": "tracked",
                 "frame_id": "24-101",
+                "source_key": "camera-24:g3",
                 "captured_at": "2026-07-21T04:00:00.100000+00:00",
                 "formal_evidence_eligible": False,
                 "poses": [{
@@ -60,15 +63,24 @@ class Tracker:
 
 
 class CameraAgent:
+    def __init__(self, frame: np.ndarray) -> None:
+        self.frame = frame
+
     def latest_cached_frame(self, camera: dict, max_age_seconds: float) -> dict:
-        raise SystemExit("synchronized stream ignored an available exact tracker frame")
+        assert camera["id"] == 24
+        assert max_age_seconds == 0.75
+        return {
+            "frame": self.frame.copy(),
+            "frame_id": "24-101",
+            "source_key": "camera-24:g3",
+        }
 
 
 def main() -> None:
     frame = np.full((150, 180, 3), 34, dtype=np.uint8)
     source_copy = frame.copy()
-    tracking = Tracker(frame)
-    stream = SynchronizedPoseStream(CameraAgent(), tracking).mjpeg_frames(
+    tracking = Tracker()
+    stream = SynchronizedPoseStream(CameraAgent(frame), tracking).mjpeg_frames(
         {"id": 24},
         fps=8,
         jpeg_quality=85,
@@ -93,15 +105,25 @@ def main() -> None:
         raise SystemExit("pose skeleton was not rendered into the synchronized frame")
     if not np.array_equal(frame, source_copy):
         raise SystemExit("pose rendering mutated the tracker's retained evidence frame")
-    if tracking.latest_frame(24)["tracking"]["formal_evidence_eligible"]:
-        raise SystemExit("display rendering changed formal evidence eligibility")
 
+    stale_tracking = tracking.metadata_for_frame(24, frame_id="24-101", source_key="camera-24:g3")
+    stale_tracking["tracking"]["state"] = "coasting"
+    stale_tracking["tracking"]["display_only_stale"] = True
+    stale = SynchronizedPoseStream(CameraAgent(frame), tracking)._render_frame(
+        cv2,
+        frame,
+        stale_tracking["tracking"],
+        stale_tracking["analysis_context"],
+    )
+    if not np.array_equal(stale, frame):
+        raise SystemExit("stale coasting pose was rendered over the current diagnostic frame")
     print({
         "ok": True,
         "same_frame_id": True,
         "server_side_pose_overlay": True,
         "source_frame_immutable": True,
-        "formal_evidence_isolated": True,
+        "current_camera_pixels": True,
+        "stale_pose_suppressed": True,
     })
 
 

@@ -15,28 +15,24 @@ final class GuardViewModelTests: XCTestCase {
         XCTAssertEqual(meter.record(at: 20), 0)
     }
 
-    func testSkeletonRateLabelKeepsDecodedFPSAndAddsPoseRate() {
+    func testSkeletonRateLabelUsesDecodedVideoFPS() {
         let stage = CameraStageView(
             image: nil,
             state: .playing,
             displayFPS: 12.4,
-            poseUpdatesPerSecond: 8.2,
-            privacyMode: .skeleton,
-            poseTimeline: .empty
+            privacyMode: .skeleton
         )
 
         XCTAssertTrue(stage.shouldShowRate)
-        XCTAssertEqual(stage.rateText, "12.4 FPS · POSE 8.2 Hz")
+        XCTAssertEqual(stage.rateText, "12.4 FPS")
     }
 
-    func testSkeletonRateLabelFallsBackToDecodedFPSBeforePosePacketsArrive() {
+    func testSkeletonRateLabelUsesDecodedFPSImmediately() {
         let stage = CameraStageView(
             image: nil,
             state: .playing,
             displayFPS: 11.7,
-            poseUpdatesPerSecond: 0,
-            privacyMode: .skeleton,
-            poseTimeline: .empty
+            privacyMode: .skeleton
         )
 
         XCTAssertTrue(stage.shouldShowRate)
@@ -254,82 +250,6 @@ final class GuardViewModelTests: XCTestCase {
         model.stop()
     }
 
-    @MainActor
-    func testSkeletonPosePacketsUpdateDisplayTimelineWithoutReplacingVideoFrames() async throws {
-        let client = RecordingStreamClient()
-        let model = GuardViewModel(streamClient: client, initialPrivacyMode: .skeleton)
-
-        model.select(cameraID: "camera-a")
-        try await waitUntil { await client.hasStarted(cameraID: "camera-a") }
-        await client.yield(Data([0x42]), cameraID: "camera-a")
-        let packet = guardPosePacket(frameID: "pose-1", x: 120)
-        await client.yieldPose(packet, cameraID: "camera-a")
-        await client.yieldPose(guardPosePacket(frameID: "pose-2", x: 128), cameraID: "camera-a")
-        try await waitUntil {
-            await MainActor.run { model.poseTimeline.current?.packet.frameID == "pose-2" }
-        }
-
-        XCTAssertEqual(model.latestFrame, Data([0x42]))
-        XCTAssertEqual(model.poseTimeline.current?.packet.frameID, "pose-2")
-        XCTAssertGreaterThan(model.poseUpdatesPerSecond, 0)
-        model.stop()
-    }
-
-    @MainActor
-    func testSkeletonPoseRateDoesNotResetWhenPersonLeavesTheFrame() async throws {
-        let client = RecordingStreamClient()
-        let model = GuardViewModel(streamClient: client, initialPrivacyMode: .skeleton)
-
-        model.select(cameraID: "camera-a")
-        try await waitUntil { await client.hasStarted(cameraID: "camera-a") }
-        await client.yieldPose(guardPosePacket(frameID: "pose-1", x: 120), cameraID: "camera-a")
-        await client.yieldPose(guardEmptyPosePacket(frameID: "pose-2"), cameraID: "camera-a")
-        try await waitUntil {
-            await MainActor.run {
-                model.poseTimeline.current?.packet.frameID == "pose-2"
-                    && model.poseUpdatesPerSecond > 0
-            }
-        }
-
-        XCTAssertEqual(model.poseTimeline.current?.packet.state, "empty")
-        XCTAssertGreaterThan(model.poseUpdatesPerSecond, 0)
-        model.stop()
-    }
-}
-
-private func guardPosePacket(frameID: String, x: Double) -> PosePacket {
-    PosePacket(
-        schemaVersion: "eacp-pose-relay-v1",
-        cameraID: 2,
-        frameID: frameID,
-        capturedAt: "2026-07-28T08:00:00Z",
-        state: "observed",
-        imageWidth: 640,
-        imageHeight: 360,
-        poses: [PoseTrack(
-            trackID: "person-1",
-            confidence: 0.9,
-            bbox: [90, 20, 220, 350],
-            keypoints: [PoseKeypoint(name: "nose", x: x, y: 60, confidence: 0.9, visible: true)]
-        )],
-        displayOnly: true,
-        formalEvidenceEligible: false
-    )
-}
-
-private func guardEmptyPosePacket(frameID: String) -> PosePacket {
-    PosePacket(
-        schemaVersion: "eacp-pose-relay-v1",
-        cameraID: 2,
-        frameID: frameID,
-        capturedAt: "2026-07-28T08:00:00Z",
-        state: "empty",
-        imageWidth: 640,
-        imageHeight: 360,
-        poses: [],
-        displayOnly: true,
-        formalEvidenceEligible: false
-    )
 }
 
 private actor FailingStreamClient: CameraStreamClient {
@@ -350,7 +270,6 @@ private actor FailingStreamClient: CameraStreamClient {
 private actor RecordingStreamClient: CameraStreamClient {
     private(set) var events: [String] = []
     private var continuations: [String: AsyncThrowingStream<Data, Error>.Continuation] = [:]
-    private var poseContinuations: [String: AsyncThrowingStream<PosePacket, Error>.Continuation] = [:]
     private var privacyModes: [String: VideoPrivacyMode] = [:]
 
     var stopCount: Int { events.filter { $0 == "stop" }.count }
@@ -365,20 +284,13 @@ private actor RecordingStreamClient: CameraStreamClient {
         let frames = AsyncThrowingStream<Data, Error>(bufferingPolicy: .bufferingNewest(1)) { continuation in
             continuations[cameraID] = continuation
         }
-        let poses = privacyMode == .skeleton
-            ? AsyncThrowingStream<PosePacket, Error>(bufferingPolicy: .bufferingNewest(2)) { continuation in
-                poseContinuations[cameraID] = continuation
-            }
-            : nil
-        return CameraDisplayStreams(frames: frames, poses: poses)
+        return CameraDisplayStreams(frames: frames)
     }
 
     func stop() async {
         events.append("stop")
         continuations.values.forEach { $0.finish() }
         continuations.removeAll()
-        poseContinuations.values.forEach { $0.finish() }
-        poseContinuations.removeAll()
     }
 
     func hasStarted(cameraID: String) -> Bool {
@@ -395,10 +307,6 @@ private actor RecordingStreamClient: CameraStreamClient {
 
     func yield(_ data: Data, cameraID: String) {
         continuations[cameraID]?.yield(data)
-    }
-
-    func yieldPose(_ packet: PosePacket, cameraID: String) {
-        poseContinuations[cameraID]?.yield(packet)
     }
 
     func fail(cameraID: String) {

@@ -25,6 +25,10 @@ class _CameraSchedule:
     observed_count: int = 0
     deadline_miss_count: int = 0
     risk_signal_count: int = 0
+    refresh_requested: bool = False
+    refresh_request_count: int = 0
+    last_refresh_requested_at: float | None = None
+    last_refresh_reason: str = ""
     risk_signals: deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=64))
     starts: deque[float] = field(default_factory=lambda: deque(maxlen=24))
 
@@ -110,6 +114,25 @@ class AdaptiveInferenceScheduler:
             if should_wake and not state.in_flight:
                 state.next_due_at = min(state.next_due_at, current)
 
+    def request_refresh(
+        self,
+        camera_id: int,
+        *,
+        now: float,
+        reason: str,
+    ) -> None:
+        """Prioritize a fresh model anchor after display tracking loses geometry."""
+        with self._lock:
+            current = float(now)
+            state = self._states.setdefault(int(camera_id), _CameraSchedule(next_due_at=current))
+            state.refresh_requested = True
+            state.refresh_request_count += 1
+            state.last_refresh_requested_at = current
+            state.last_refresh_reason = str(reason or "tracking_refresh")
+            state.active_until = max(state.active_until, current + self.active_hold_seconds)
+            if not state.in_flight:
+                state.next_due_at = min(state.next_due_at, current)
+
     def next_due_camera(self, camera_ids: Iterable[int], *, now: float) -> int | None:
         allowed = {int(camera_id) for camera_id in camera_ids}
         with self._lock:
@@ -124,6 +147,7 @@ class AdaptiveInferenceScheduler:
                 return None
             due.sort(key=lambda item: (
                 not self._starved(item[1], now=float(now)),
+                not item[1].refresh_requested,
                 -self._mode_priority(self._mode_at(item[1], float(now))),
                 item[1].next_due_at,
                 item[1].last_started_at if item[1].last_started_at is not None else -1.0,
@@ -135,6 +159,7 @@ class AdaptiveInferenceScheduler:
         with self._lock:
             state = self._states.setdefault(int(camera_id), _CameraSchedule(next_due_at=float(now)))
             state.in_flight = True
+            state.refresh_requested = False
             state.last_started_at = float(now)
             state.starts.append(float(now))
 
@@ -163,7 +188,9 @@ class AdaptiveInferenceScheduler:
             interval = self._interval_for_mode(mode, accelerated=state.accelerated)
             started_at = state.last_started_at if state.last_started_at is not None else current
             expected_due_at = float(started_at) + interval
-            if current > expected_due_at:
+            if state.refresh_requested:
+                state.next_due_at = current
+            elif current > expected_due_at:
                 state.deadline_miss_count += 1
                 state.next_due_at = current
             else:
@@ -235,6 +262,10 @@ class AdaptiveInferenceScheduler:
                 "observed_count": state.observed_count,
                 "deadline_miss_count": state.deadline_miss_count,
                 "risk_signal_count": state.risk_signal_count,
+                "refresh_requested": state.refresh_requested,
+                "refresh_request_count": state.refresh_request_count,
+                "last_refresh_requested_at_monotonic": state.last_refresh_requested_at,
+                "last_refresh_reason": state.last_refresh_reason,
                 "last_risk_signal_at_monotonic": (
                     state.risk_signals[-1]["at_monotonic"] if state.risk_signals else None
                 ),

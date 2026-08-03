@@ -10,16 +10,18 @@ from urllib.request import Request as UrlRequest, urlopen
 from importlib.util import find_spec
 import ipaddress
 import json
+import logging
 import re
 import shutil
 import socket
 import subprocess
+import time
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
@@ -35,9 +37,8 @@ from .device_binding_state import DeviceBindingState
 from .edge_bootstrap_service import EdgeBootstrapService
 from .event_agent import EventAgent
 from .live_relay_agent import LiveRelayAgent
-from .pose_relay_agent import PoseRelayAgent
 from .notifier import Notifier
-from .object_storage_service import ObjectStorageService, build_object_storage_router
+from .package_artifact_service import PackageArtifactService, build_package_artifact_router
 from .package_service import PackageService
 from .pairing_window import PairingWindow
 from .public_pilot_service import PublicPilotService
@@ -58,7 +59,6 @@ from .schemas import (
     MessageGenerateRequest,
     MessageStatusUpdate,
     NotificationTest,
-    PlaybackSessionCreate,
     V1DeviceUpgradeRun,
     RulesUpdate,
     UserLogin,
@@ -67,10 +67,6 @@ from .schemas import (
     V1AppPushTest,
     V1AppPushRelayRequest,
     V1AppPushTokenUpsert,
-    V1MediaAssetCreate,
-    V1MediaPublicLinkCreate,
-    V1MediaUploadSessionComplete,
-    V1MediaUploadSessionCreate,
     V1PackageDownloadLinkCreate,
     V1PackageReleaseCreate,
     V1DeviceRolloutCreate,
@@ -84,22 +80,18 @@ from .schemas import (
 from .settings import settings
 from .storage import Storage
 from .upload_agent import UploadAgent
-from .video_distribution_service import VideoDistributionService
 from .video_privacy import normalize_privacy_mode, stricter_privacy_mode
 from .vision.privacy_stream import PrivacyFrameRenderer, PrivacyMjpegStream
-from .video_service import (
-    VideoService,
-    app_snapshot_url,
-    build_video_router,
-    normalize_snapshot_reference,
-    v1_video_snapshot_url,
-)
+from .vision.privacy_background import PrivacyBackgroundReconstructor, PrivacyCalibrationRequired
+from .vision.hailo_segmentation import HailoPersonSegmentationBackend
 from .adaptive_inference_scheduler import AdaptiveInferenceScheduler
 from .eacp_acceptance import EacpAcceptanceService
 from .worker import EdgeWorker
 from .vision.synchronized_pose_stream import SynchronizedPoseStream
+from .runtime_lifecycle import stop_components
 
 bearer_scheme = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
 SETUP_NETWORK_PAGE = "/setup/network.html"
 SETUP_HOTSPOT_ORIGIN = "http://10.42.0.1"
 SETUP_HOTSPOT_NETWORK_PAGE = f"{SETUP_HOTSPOT_ORIGIN}{SETUP_NETWORK_PAGE}"
@@ -109,6 +101,15 @@ def model_dump(model: Any) -> Dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump()
     return model.dict()
+
+
+def normalize_snapshot_reference(snapshot_path: str) -> str:
+    value = str(snapshot_path or "").strip()
+    for prefix in ("/api/app/media/snapshots/", "/api/v1/video/media/snapshots/", "/snapshots/"):
+        if value.startswith(prefix):
+            value = value[len(prefix):]
+            break
+    return value.lstrip("/")
 
 
 def vision_runtime_capabilities() -> Dict[str, bool]:
@@ -364,21 +365,6 @@ def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bear
     return user
 
 
-def current_user_for_media(
-    access_token: str | None = Query(default=None),
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-) -> Dict[str, Any]:
-    token = access_token
-    if credentials is not None and credentials.scheme.lower() == "bearer":
-        token = credentials.credentials
-    if not token:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    user = storage.get_user_by_session_token(token)
-    if user is None:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return user
-
-
 def current_device_id() -> str:
     return str(local_device_identity()["device_id"])
 
@@ -518,13 +504,6 @@ def require_family_access(user: Dict[str, Any], family_id: int) -> None:
         raise HTTPException(status_code=403, detail="You do not have access to this family")
 
 
-def snapshot_for_app(snapshot: Dict[str, Any]) -> Dict[str, Any]:
-    data = dict(snapshot)
-    if data.get("image_path"):
-        data["image_url"] = app_snapshot_url(data["image_path"])
-    return data
-
-
 def record_local_package_execution(device_id: str, family_id: int) -> None:
     state = storage.ensure_device_sync_state(device_id, family_id)
     status = dict(state.get("reported_status") or {})
@@ -545,23 +524,8 @@ def record_local_package_execution(device_id: str, family_id: int) -> None:
     )
 
 
-def event_for_app(event: Dict[str, Any]) -> Dict[str, Any]:
-    data = dict(event)
-    if data.get("snapshot_path"):
-        data["snapshot_url"] = app_snapshot_url(data["snapshot_path"])
-    return data
-
-
 def event_for_v1(event: Dict[str, Any]) -> Dict[str, Any]:
-    data = dict(event)
-    if data.get("snapshot_path"):
-        data["snapshot_url"] = v1_video_snapshot_url(data["snapshot_path"])
-    asset = storage.get_media_asset_by_snapshot(int(data["snapshot_id"])) if data.get("snapshot_id") else None
-    if asset is None:
-        asset = storage.get_media_asset_by_event(int(data["id"]))
-    if asset:
-        data["media_asset"] = video_service.media_asset_for_api(asset)
-    return data
+    return dict(event)
 
 
 def current_device_session(
@@ -649,7 +613,6 @@ def v1_event_summary(event: Dict[str, Any]) -> Dict[str, Any]:
         "occurred_at": data["occurred_at"],
         "acknowledged": data["acknowledged"],
         "snapshot_path": data.get("snapshot_path") or "",
-        "snapshot_url": data.get("snapshot_url"),
         "candidate_status": data.get("candidate_status"),
         "idempotency_key": payload.get("idempotency_key") or f"edge-event-{data['id']}",
         "evidence": payload.get("evidence") or {},
@@ -677,7 +640,6 @@ def event_server_payload(event: Dict[str, Any]) -> Dict[str, Any]:
             "edge_event_id": data["id"],
             "edge_device_id": identity["device_id"],
             "edge_device_name": identity["device_name"],
-            "snapshot_url": data.get("snapshot_url") or "",
             "media_asset": data.get("media_asset"),
         },
     }
@@ -1241,6 +1203,8 @@ worker = EdgeWorker(
     detect_agent,
     event_agent,
     snapshot_dir=settings.snapshot_dir,
+    object_storage_dir=settings.object_storage_dir,
+    runtime_dir=settings.runtime_dir,
     history_retention_hours=settings.history_retention_hours,
     history_cleanup_interval_seconds=settings.history_cleanup_interval_seconds,
     history_cleanup_batch_size=settings.history_cleanup_batch_size,
@@ -1266,12 +1230,7 @@ worker = EdgeWorker(
     ),
 )
 synchronized_pose_stream = SynchronizedPoseStream(camera_agent, worker.continual_pose_tracker)
-video_distribution_service = VideoDistributionService(
-    storage=storage,
-    settings=settings,
-    current_device_identity_resolver=local_device_identity,
-)
-object_storage_service = ObjectStorageService(storage=storage, settings=settings, distribution=video_distribution_service)
+package_artifact_service = PackageArtifactService(storage=storage, settings=settings)
 upload_agent = UploadAgent(
     storage=storage,
     settings=settings,
@@ -1309,6 +1268,8 @@ config_sync_agent = ConfigSyncAgent(
         "storage": {
             **storage.runtime_storage_status(
                 settings.snapshot_dir,
+                object_storage_dir=settings.object_storage_dir,
+                runtime_dir=settings.runtime_dir,
                 retention_hours=settings.history_retention_hours,
             ),
             "last_cleanup": worker.last_history_cleanup_result,
@@ -1316,7 +1277,21 @@ config_sync_agent = ConfigSyncAgent(
     },
     presence_status_resolver=worker.camera_presence_status,
 )
-privacy_frame_renderer = PrivacyFrameRenderer(worker.continual_pose_tracker)
+person_segmentation_backend = HailoPersonSegmentationBackend(
+    mode=settings.hailo_segmentation_mode,
+    model_path=settings.hailo_segmentation_model,
+    confidence=settings.hailo_segmentation_confidence,
+    anchor_interval_seconds=settings.hailo_segmentation_anchor_interval_seconds,
+    maximum_propagation_seconds=settings.hailo_segmentation_maximum_propagation_seconds,
+    flow_width=settings.hailo_segmentation_flow_width,
+)
+privacy_frame_renderer = PrivacyFrameRenderer(
+    worker.continual_pose_tracker,
+    background_reconstructor=PrivacyBackgroundReconstructor(
+        storage_dir=settings.data_dir / "privacy-calibrations",
+    ),
+    segmentation_backend=person_segmentation_backend,
+)
 privacy_mjpeg_stream = PrivacyMjpegStream(camera_agent, privacy_frame_renderer)
 live_relay_agent = LiveRelayAgent(
     storage=storage,
@@ -1329,21 +1304,22 @@ live_relay_agent = LiveRelayAgent(
     privacy_mode_observer=lambda mode: config_sync_agent.observe_video_privacy_mode(mode, wake=True),
     privacy_renderer=privacy_frame_renderer,
 )
-pose_relay_agent = PoseRelayAgent(
-    storage=storage,
-    settings=settings,
-    tracker=worker.continual_pose_tracker,
-    device_id_resolver=current_device_id,
-    token_resolver=read_local_device_token,
-    remote_camera_id_resolver=remote_camera_id_for_local_camera,
-)
-package_service = PackageService(storage=storage, settings=settings, object_storage=object_storage_service)
+
+
+def handle_camera_source_transition(transition: Dict[str, Any]) -> None:
+    live_relay_agent.handle_camera_source_transition(transition)
+    worker.handle_camera_source_transition(transition)
+    privacy_frame_renderer.reset_camera(int(transition.get("camera_id") or 0))
+
+
+camera_agent.add_source_change_listener(handle_camera_source_transition)
+package_service = PackageService(storage=storage, settings=settings, artifact_store=package_artifact_service)
 app_runtime_guard = AppRuntimeGuardService(
     settings=settings,
     current_manifest_loader=lambda: package_service.read_current_manifest("app"),
 )
 edge_bootstrap_service = EdgeBootstrapService(settings=settings)
-public_pilot_service = PublicPilotService(settings=settings, distribution=video_distribution_service)
+public_pilot_service = PublicPilotService(settings=settings)
 apns_relay_service = APNSRelayService(settings=settings)
 app_push_service = AppPushService(
     storage=storage,
@@ -1352,14 +1328,6 @@ app_push_service = AppPushService(
     apns_relay=apns_relay_service,
 )
 package_service.runtime_guard = app_runtime_guard
-video_service = VideoService(
-    storage=storage,
-    settings=settings,
-    camera_agent=camera_agent,
-    object_storage=object_storage_service,
-    distribution=video_distribution_service,
-    current_device_id_resolver=current_device_id,
-)
 
 APP_VERSION = "0.1.0"
 app = FastAPI(title="gohome edge-agent", version=APP_VERSION)
@@ -1447,19 +1415,8 @@ async def enforce_admin_session(request: Request, call_next: Any) -> Response:
 
 
 app.include_router(
-    build_video_router(
-        video_service,
-        current_user_dep=current_user,
-        bearer_scheme=bearer_scheme,
-        media_user_resolver=lambda access_token, credentials: current_user_for_media(
-            access_token=access_token,
-            credentials=credentials,
-        ),
-    )
-)
-app.include_router(
-    build_object_storage_router(
-        object_storage_service,
+    build_package_artifact_router(
+        package_artifact_service,
         current_user_dep=current_user,
     )
 )
@@ -1576,19 +1533,27 @@ def on_startup() -> None:
         worker.start()
     upload_agent.start()
     live_relay_agent.start()
-    pose_relay_agent.start()
     config_sync_agent.start()
     app_runtime_guard.start()
 
 
 @app.on_event("shutdown")
 def on_shutdown() -> None:
-    app_runtime_guard.stop()
-    config_sync_agent.stop()
-    pose_relay_agent.stop()
-    live_relay_agent.stop()
-    upload_agent.stop()
-    worker.stop()
+    result = stop_components(
+        [
+            ("app-runtime-guard", app_runtime_guard.stop),
+            ("config-sync", config_sync_agent.stop),
+            ("live-relay", live_relay_agent.stop),
+            ("privacy-renderer", privacy_frame_renderer.close),
+            ("upload", upload_agent.stop),
+            ("worker", worker.stop),
+        ],
+        timeout_seconds=7.0,
+    )
+    if result["unfinished"] or result["errors"]:
+        logger.error("Edge shutdown incomplete: %s", result)
+    else:
+        logger.info("Edge shutdown completed: %s", result)
 
 
 @app.get("/health")
@@ -1626,9 +1591,7 @@ def health() -> Dict[str, Any]:
         "continual_pose_error": str(worker_status.get("continual_pose_error") or ""),
         "config_sync_agent": config_sync_agent.status(),
         "live_relay_agent": live_relay_agent.status(),
-        "pose_relay_agent": pose_relay_agent.status(),
         "lan_url": f"http://{local_ip()}:{settings.port}",
-        "distribution": video_distribution_service.service_info(),
         "app_runtime": app_runtime_guard.status(),
     }
 
@@ -1664,7 +1627,6 @@ def device() -> Dict[str, Any]:
         "upload_agent": upload_agent.status(),
         "live_relay_agent": live_relay_agent.status(),
         "config_sync_agent": config_sync_agent.status(),
-        "video_distribution": video_distribution_service.service_info(),
         "app_runtime": app_runtime_guard.status(),
         "binding": binding,
         "pairing": pairing,
@@ -1733,6 +1695,7 @@ def admin_video_privacy() -> Dict[str, Any]:
         "ok": True,
         "minimum_mode": config_sync_agent.video_privacy_mode(),
         "camera_modes": dict(relay.get("camera_privacy_modes") or {}),
+        "calibrations": privacy_calibration_status(),
         "synced": not bool(config_sync_agent.last_video_privacy_error),
         "updated_at": config_sync_agent.last_video_privacy_sync_at or "",
         "sync_error": config_sync_agent.last_video_privacy_error,
@@ -1741,12 +1704,114 @@ def admin_video_privacy() -> Dict[str, Any]:
 
 @app.put("/api/admin/video-privacy")
 def update_admin_video_privacy(payload: VideoPrivacyUpdate) -> Dict[str, Any]:
+    if normalize_privacy_mode(payload.minimum_mode) == "skeleton":
+        calibration = privacy_calibration_status()
+        unavailable = [item for item in calibration if item.get("enabled") and not item.get("ready")]
+        if unavailable:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "calibration_required",
+                    "message": "请先完成所有启用摄像头的空房校准。",
+                    "cameras": unavailable,
+                },
+            )
     result = config_sync_agent.update_video_privacy(payload.minimum_mode)
     live_relay_agent.wake()
     return {
         **result,
         "camera_modes": dict(live_relay_agent.status().get("camera_privacy_modes") or {}),
+        "calibrations": privacy_calibration_status(),
     }
+
+
+def privacy_calibration_status() -> list[Dict[str, Any]]:
+    runtime = privacy_frame_renderer.background_reconstructor.status()
+    states = runtime.get("states") if isinstance(runtime.get("states"), list) else []
+    state_by_camera = {int(item.get("camera_id") or 0): dict(item) for item in states}
+    result: list[Dict[str, Any]] = []
+    for camera in storage.list_cameras(include_secret=True):
+        camera_id = int(camera["id"])
+        item = {
+            "camera_id": camera_id,
+            "name": str(camera.get("name") or f"摄像头 {camera_id}"),
+            "room": str(camera.get("room") or ""),
+            "enabled": bool(camera.get("enabled", True)),
+            "ready": False,
+            "status": "calibration_required",
+            **state_by_camera.get(camera_id, {}),
+        }
+        result.append(item)
+    return result
+
+
+def calibrate_privacy_background(camera_id: int) -> Dict[str, Any]:
+    camera = storage.get_camera(camera_id, include_secret=True)
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    if not bool(camera.get("enabled", True)):
+        raise HTTPException(status_code=409, detail="摄像头已停用，无法校准。")
+
+    deadline = time.monotonic() + 12.0
+    calibration_id = f"cal-{uuid4().hex}"
+    started = False
+    last_status: Dict[str, Any] = {}
+    try:
+        for capture in camera_agent.raw_frames(
+            camera,
+            fps=15,
+            max_width=640,
+            max_height=360,
+        ):
+            frame = capture.get("frame") if isinstance(capture, dict) else None
+            if frame is None:
+                if time.monotonic() >= deadline:
+                    break
+                continue
+            source_key = str(capture.get("source_key") or "")
+            frame_id = str(capture.get("frame_id") or "")
+            if not started:
+                height, width = frame.shape[:2]
+                privacy_frame_renderer.begin_calibration(
+                    camera_id,
+                    source_key=source_key,
+                    width=width,
+                    height=height,
+                    calibration_id=calibration_id,
+                )
+                started = True
+            last_status = privacy_frame_renderer.observe_calibration_frame(
+                camera_id,
+                frame,
+                source_key=source_key,
+                frame_id=frame_id,
+                captured_at=str(capture.get("captured_at") or ""),
+                captured_monotonic=capture.get("captured_monotonic"),
+            )
+            if last_status.get("ready"):
+                live_relay_agent.wake()
+                return {"ok": True, "calibration": last_status}
+            if time.monotonic() >= deadline:
+                break
+    except PrivacyCalibrationRequired as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.reason, "message": "校准暂时无法完成，请确认画面无人后重试。"},
+        ) from exc
+
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": str(last_status.get("last_error") or "calibration_timeout"),
+            "message": "未取得连续稳定的空房画面，请确认画面无人且摄像头固定后重试。",
+            "calibration": last_status,
+        },
+    )
+
+
+@app.post("/api/admin/cameras/{camera_id}/privacy-calibration")
+async def start_privacy_calibration(camera_id: int) -> Dict[str, Any]:
+    return await run_in_threadpool(calibrate_privacy_background, camera_id)
 
 
 @app.post("/api/admin/auth/change-password")
@@ -2695,10 +2760,8 @@ def v1_ingest_device_event(
     if camera_id is not None and storage.get_camera(int(camera_id)) is None:
         raise HTTPException(status_code=404, detail="Camera not found")
 
-    snapshot = None
     normalized_snapshot_path = normalize_snapshot_reference(payload.snapshot_path)
-    if normalized_snapshot_path:
-        snapshot = storage.get_snapshot_by_path(normalized_snapshot_path)
+    snapshot = storage.get_snapshot_by_path(normalized_snapshot_path) if normalized_snapshot_path else None
 
     event_payload = {
         **payload.payload,
@@ -2707,10 +2770,6 @@ def v1_ingest_device_event(
         "ingested_family_id": int(device_session["family_id"]),
         "idempotency_key": payload.idempotency_key,
     }
-    uploaded_asset = payload.payload.get("media_upload_result") if isinstance(payload.payload.get("media_upload_result"), dict) else {}
-    uploaded_asset_id = None
-    if isinstance(uploaded_asset.get("asset"), dict):
-        uploaded_asset_id = uploaded_asset["asset"].get("id")
     event = storage.create_event(
         event_type=payload.event_type,
         summary=payload.summary,
@@ -2721,19 +2780,6 @@ def v1_ingest_device_event(
         payload=event_payload,
         occurred_at=payload.occurred_at,
     )
-    media_asset = None
-    if uploaded_asset_id:
-        asset = storage.attach_media_asset_to_event(int(uploaded_asset_id), int(event["id"]))
-        if asset is not None:
-            media_asset = object_storage_service.media_asset_for_api(asset)
-    if media_asset is None and snapshot is not None:
-        media_asset = video_service.promote_snapshot_media_asset(
-            family_id=int(device_session["family_id"]),
-            device_id=device_id,
-            snapshot=snapshot,
-            event_id=int(event["id"]),
-            metadata={"event_id": int(event["id"]), "source": "device-event-ingest"},
-        )
     rules = storage.get_rules()
     notification_delivery = None
     app_push_delivery = None
@@ -2748,7 +2794,6 @@ def v1_ingest_device_event(
                 "event_type": event.get("type"),
                 "level": event.get("level"),
                 "occurred_at": event.get("occurred_at"),
-                "media_asset_url": media_asset.get("storage_url") if media_asset else None,
             },
         )
         app_push_delivery = app_push_service.send_to_family(
@@ -2762,7 +2807,6 @@ def v1_ingest_device_event(
                 "event_type": event.get("type"),
                 "level": event.get("level"),
                 "occurred_at": event.get("occurred_at"),
-                "media_asset_url": media_asset.get("storage_url") if media_asset else None,
             },
         )
     storage.bind_event_ingest(device_id, payload.idempotency_key, int(event["id"]))
@@ -2771,66 +2815,9 @@ def v1_ingest_device_event(
         "deduplicated": False,
         "idempotency_key": payload.idempotency_key,
         "event": v1_event_summary(event),
-        "media_asset": media_asset,
         "notification_delivery": notification_delivery,
         "app_push_delivery": app_push_delivery,
     }
-
-
-@app.post("/api/v1/device/media-assets/upload")
-async def v1_upload_device_media_asset(
-    request: Request,
-    file_name: str = Query(default="snapshot.jpg", min_length=1, max_length=200),
-    snapshot_path: str = Query(default="", max_length=300),
-    content_type: str = Query(default="image/jpeg", max_length=120),
-    edge_event_id: str = Query(default="", max_length=80),
-    device_session: Dict[str, Any] = Depends(current_v1_device_session),
-) -> Dict[str, Any]:
-    normalized_snapshot_path = normalize_snapshot_reference(snapshot_path)
-    if not normalized_snapshot_path:
-        raise HTTPException(status_code=400, detail="snapshot_path is required")
-    body = await request.body()
-    snapshot = storage.get_snapshot_by_path(normalized_snapshot_path)
-    asset = object_storage_service.store_device_media_bytes(
-        family_id=int(device_session["family_id"]),
-        device_id=str(device_session["device_id"]),
-        file_name=file_name,
-        content_type=content_type or request.headers.get("content-type", "image/jpeg"),
-        content_bytes=body,
-        source_snapshot_path=normalized_snapshot_path,
-        snapshot_id=int(snapshot["id"]) if snapshot else None,
-        metadata={
-            "edge_event_id": edge_event_id,
-            "uploaded_by_device_id": str(device_session["device_id"]),
-        },
-    )
-    return {"created": True, "asset": asset}
-
-
-@app.post("/api/v1/device/media-assets")
-def v1_create_device_media_asset(
-    payload: V1MediaAssetCreate,
-    device_session: Dict[str, Any] = Depends(current_v1_device_session),
-) -> Dict[str, Any]:
-    normalized_snapshot_path = normalize_snapshot_reference(payload.snapshot_path)
-    if not normalized_snapshot_path:
-        raise HTTPException(status_code=400, detail="snapshot_path is required")
-    snapshot = storage.get_snapshot_by_path(normalized_snapshot_path)
-    if snapshot is None:
-        raise HTTPException(status_code=404, detail="Snapshot not found")
-    if payload.event_id is not None:
-        event = storage.get_event(int(payload.event_id))
-        if event is None:
-            raise HTTPException(status_code=404, detail="Event not found")
-    asset = video_service.promote_snapshot_media_asset(
-        family_id=int(device_session["family_id"]),
-        device_id=str(device_session["device_id"]),
-        snapshot=snapshot,
-        event_id=payload.event_id,
-        content_type=payload.content_type,
-        metadata=payload.metadata,
-    )
-    return {"created": True, "asset": asset}
 
 
 @app.get("/api/v1/events")
@@ -3217,7 +3204,12 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
             "quality": {},
             "formal_evidence_eligible": False,
         }
-        display_poses = list(tracking.get("poses") or []) if tracking.get("state") in {"observed", "tracked", "coasting"} else []
+        display_poses = (
+            list(tracking.get("poses") or [])
+            if tracking.get("state") in {"observed", "tracked"}
+            and not bool(tracking.get("display_only_stale"))
+            else []
+        )
         display_people = [
             {
                 "bbox": pose.get("bbox") or [],
@@ -3243,6 +3235,7 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
             "pose_tracking_state": tracking.get("state"),
             "continual_pose": tracking,
         })
+        pose_display_available = bool(display_poses)
         captured_at = str(tracking.get("captured_at") or "")
         snapshot = {
             "id": None,
@@ -3257,20 +3250,15 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
         }
         return {
             "ok": True,
-            "available": tracking.get("state") in {"observed", "tracked", "coasting"},
-            "frame_available": tracking.get("state") in {"observed", "tracked", "coasting"},
+            "available": pose_display_available,
+            "frame_available": pose_display_available,
             "camera_id": camera_id,
             "tracking": tracking,
             "snapshot": snapshot,
         }
 
-    bundle = tracker.latest_frame(camera_id) if tracker is not None else None
-    if bundle is not None:
-        frame = bundle["frame"]
-        tracking = dict(bundle["tracking"])
-        analysis = dict(bundle.get("analysis_context") or {})
-        source = "eacp_same_frame"
-    else:
+    capture = camera_agent.latest_cached_frame(camera, max_age_seconds=1.5)
+    if capture is None:
         tracking = tracker.latest(camera_id) if tracker is not None else {
             "state": "empty",
             "reason": "tracker_disabled",
@@ -3282,20 +3270,34 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
             "quality": {},
             "formal_evidence_eligible": False,
         }
-        capture = camera_agent.latest_cached_frame(camera, max_age_seconds=1.5)
-        if capture is None:
-            return {
-                "ok": True,
-                "available": False,
-                "camera_id": camera_id,
-                "tracking": tracking,
-            }
-        frame = capture["frame"]
-        source = str(capture.get("source") or "camera_cache")
+        return {
+            "ok": True,
+            "available": False,
+            "camera_id": camera_id,
+            "tracking": tracking,
+        }
+
+    frame = capture["frame"]
+    source = str(capture.get("source") or "camera_cache")
+    frame_id = str(capture.get("frame_id") or "")
+    captured_at = str(capture.get("captured_at") or "")
+    source_key = str(capture.get("source_key") or "")
+    metadata = (
+        tracker.metadata_for_frame(camera_id, frame_id=frame_id, source_key=source_key)
+        if tracker is not None and frame_id
+        else None
+    )
+    if isinstance(metadata, dict):
+        tracking = dict(metadata.get("tracking") or {})
+        analysis = dict(metadata.get("analysis_context") or {})
+    else:
         tracking = {
-            **tracking,
-            "frame_id": str(capture.get("frame_id") or ""),
+            "camera_id": camera_id,
+            "state": "empty",
+            "reason": "pose_frame_unavailable",
+            "frame_id": frame_id,
             "captured_at": str(capture.get("captured_at") or ""),
+            "source_key": source_key,
             "poses": [],
             "pose_count": 0,
             "formal_evidence_eligible": False,
@@ -3303,7 +3305,12 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
         analysis = {}
 
     height, width = frame.shape[:2]
-    display_poses = list(tracking.get("poses") or []) if tracking.get("state") in {"observed", "tracked", "coasting"} else []
+    display_poses = (
+        list(tracking.get("poses") or [])
+        if tracking.get("state") in {"observed", "tracked"}
+        and not bool(tracking.get("display_only_stale"))
+        else []
+    )
     display_people = [
         {
             "bbox": pose.get("bbox") or [],
@@ -3326,8 +3333,6 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
         "pose_tracking_state": tracking.get("state"),
         "continual_pose": tracking,
     })
-    captured_at = str(tracking.get("captured_at") or "")
-    frame_id = str(tracking.get("frame_id") or "")
     snapshot = {
         "id": None,
         "camera_id": camera_id,
@@ -3376,7 +3381,6 @@ def camera_mjpeg_stream(
     width: int = 1280,
     height: int = 720,
     quality: int = 70,
-    drop: int = 1,
     privacy_mode: str = "original",
 ) -> StreamingResponse:
     camera = storage.get_camera(camera_id, include_secret=True)
@@ -3386,7 +3390,6 @@ def camera_mjpeg_stream(
     width = max(320, min(int(width), 1920))
     height = max(180, min(int(height), 1080))
     quality = max(35, min(int(quality), 95))
-    drop = max(0, min(int(drop), 12))
     resolved_privacy_mode = stricter_privacy_mode(
         config_sync_agent.video_privacy_mode(),
         normalize_privacy_mode(privacy_mode, config_sync_agent.video_privacy_mode()),
@@ -3399,7 +3402,6 @@ def camera_mjpeg_stream(
         jpeg_quality=quality,
         max_width=width,
         max_height=height,
-        drop_stale_frames=drop,
     )
     return StreamingResponse(
         frames,
@@ -3410,6 +3412,8 @@ def camera_mjpeg_stream(
             "Expires": "0",
             "X-Accel-Buffering": "no",
             "X-GoHome-Privacy-Mode": resolved_privacy_mode,
+            "X-GoHome-Display-Transport": "edge-composed-mjpeg-v1",
+            "X-GoHome-Composition-Owner": "edge",
         },
     )
 
@@ -3422,17 +3426,6 @@ def synchronized_camera_pose_stream(
     height: int = 540,
     quality: int = 72,
 ) -> StreamingResponse:
-    active_privacy_mode = config_sync_agent.video_privacy_mode()
-    if active_privacy_mode != "original":
-        return camera_mjpeg_stream(
-            camera_id=camera_id,
-            fps=fps,
-            width=width,
-            height=height,
-            quality=quality,
-            drop=0,
-            privacy_mode=active_privacy_mode,
-        )
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
@@ -3440,20 +3433,16 @@ def synchronized_camera_pose_stream(
     width = max(320, min(int(width), 1280))
     height = max(180, min(int(height), 720))
     quality = max(40, min(int(quality), 90))
-    def frames():
-        for chunk in synchronized_pose_stream.mjpeg_frames(
-            camera,
-            fps=fps,
-            jpeg_quality=quality,
-            max_width=width,
-            max_height=height,
-        ):
-            if config_sync_agent.video_privacy_mode() != "original":
-                return
-            yield chunk
+    source_frames = synchronized_pose_stream.mjpeg_frames(
+        camera,
+        fps=fps,
+        jpeg_quality=quality,
+        max_width=width,
+        max_height=height,
+    )
 
     return StreamingResponse(
-        frames(),
+        source_frames,
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -3461,6 +3450,9 @@ def synchronized_camera_pose_stream(
             "Expires": "0",
             "X-Accel-Buffering": "no",
             "X-GoHome-Pose-Stream": "synchronized",
+            "X-GoHome-Stream-Purpose": "algorithm-diagnostic",
+            "X-GoHome-Composition": "diagnostic-pose-overlay",
+            "X-GoHome-Pose-Owner": "edge",
         },
     )
 
@@ -3472,7 +3464,6 @@ def v1_device_camera_mjpeg_stream(
     width: int = 1280,
     height: int = 720,
     quality: int = 70,
-    drop: int = 1,
     privacy_mode: str = "original",
     _device_session: Dict[str, Any] = Depends(current_v1_device_stream_session),
 ) -> StreamingResponse:
@@ -3482,7 +3473,6 @@ def v1_device_camera_mjpeg_stream(
         width=width,
         height=height,
         quality=quality,
-        drop=drop,
         privacy_mode=privacy_mode,
     )
 
@@ -3682,128 +3672,6 @@ def clear_events(scope: str = "acknowledged") -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/app/device")
-def app_device(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    return device()
-
-
-@app.get("/api/app/cameras")
-def app_list_cameras(user: Dict[str, Any] = Depends(current_user)) -> list[Dict[str, Any]]:
-    require_device_access(user)
-    return storage.list_cameras()
-
-
-@app.get("/api/app/cameras/{camera_id}/snapshot/latest")
-def app_latest_camera_snapshot(
-    camera_id: int,
-    allow_missing: bool = False,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    require_device_access(user)
-    snapshot = latest_camera_snapshot(camera_id=camera_id, allow_missing=allow_missing)
-    if snapshot.get("available") is False:
-        return snapshot
-    return snapshot_for_app(snapshot)
-
-
-@app.get("/api/app/cameras/{camera_id}/evaluation/latest")
-def app_latest_camera_evaluation(camera_id: int, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    return latest_camera_evaluation(camera_id)
-
-
-@app.post("/api/app/playback-sessions")
-def create_app_playback_session(
-    payload: PlaybackSessionCreate,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    return video_service.create_playback_session(payload, user=user)
-
-
-@app.get("/api/app/cameras/{camera_id}/stream.mjpg")
-def app_camera_mjpeg_stream(
-    camera_id: int,
-    profile: str = "default",
-    fps: int | None = None,
-    width: int | None = None,
-    height: int | None = None,
-    quality: int | None = None,
-    drop: int | None = None,
-    playback_ticket: str | None = Query(default=None),
-    access_token: str | None = Query(default=None),
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-) -> StreamingResponse:
-    fallback_user = None if playback_ticket else current_user_for_media(
-        access_token=access_token,
-        credentials=credentials,
-    )
-    return video_service.stream_response(
-        camera_id=camera_id,
-        profile=profile,
-        fps=fps,
-        width=width,
-        height=height,
-        quality=quality,
-        drop=drop,
-        playback_ticket=playback_ticket,
-        fallback_user=fallback_user,
-    )
-
-
-@app.get("/api/app/events")
-def app_list_events(
-    limit: int = 50,
-    acknowledged: bool | None = None,
-    user: Dict[str, Any] = Depends(current_user),
-) -> list[Dict[str, Any]]:
-    require_device_access(user)
-    events = storage.list_events(limit=max(1, min(limit, 200)), acknowledged=acknowledged)
-    return [event_for_app(event) for event in events]
-
-
-@app.get("/api/app/events/{event_id}")
-def app_get_event(event_id: int, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    event = storage.get_event(event_id)
-    if event is None:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return event_for_app(event)
-
-
-@app.patch("/api/app/events/{event_id}")
-def app_update_event(event_id: int, patch: EventUpdate, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    event = storage.update_event(event_id, model_dump(patch))
-    if event is None:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return event_for_app(event)
-
-
-@app.get("/api/app/summary/today")
-def app_today_summary(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    return storage.daily_summary()
-
-
-@app.get("/api/app/media/snapshots/{snapshot_path:path}")
-def app_snapshot_media(
-    snapshot_path: str,
-    playback_ticket: str | None = Query(default=None),
-    access_token: str | None = Query(default=None),
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-) -> FileResponse:
-    fallback_user = None if playback_ticket else current_user_for_media(
-        access_token=access_token,
-        credentials=credentials,
-    )
-    return video_service.snapshot_response(
-        snapshot_path=snapshot_path,
-        playback_ticket=playback_ticket,
-        fallback_user=fallback_user,
-    )
-
-
 @app.get("/api/summary/today")
 def today_summary() -> Dict[str, Any]:
     return storage.daily_summary()
@@ -3827,7 +3695,10 @@ def update_rules(rules: RulesUpdate) -> Dict[str, Any]:
 
 @app.get("/api/rules/runtime")
 def rules_runtime() -> Dict[str, Any]:
-    return worker.runtime_status()
+    return {
+        **worker.runtime_status(),
+        "live_relay_agent": live_relay_agent.status(),
+    }
 
 
 @app.post("/api/notify/test")

@@ -42,7 +42,8 @@ final class OnboardingModelTests: XCTestCase {
         """#.utf8))
         let camera = try JSONDecoder().decode(CameraConfig.self, from: Data(#"""
         {
-          "id":9,"family_id":12,"device_id":"edge-1","name":"客厅主视","room":"客厅","status":"pending_edge_sync"
+          "id":9,"family_id":12,"device_id":"edge-1","name":"客厅主视","room":"客厅","status":"pending_edge_sync",
+          "connection":{"scheme":"rtsp","host":"192.168.1.7","port":554,"path":"/1/2","username_set":true}
         }
         """#.utf8))
 
@@ -50,6 +51,9 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(binding.familyID, "12")
         XCTAssertEqual(camera.id, "9")
         XCTAssertEqual(camera.familyID, "12")
+        XCTAssertEqual(camera.connection?.host, "192.168.1.7")
+        XCTAssertEqual(camera.connection?.path, "/1/2")
+        XCTAssertEqual(camera.connection?.usernameSet, true)
         XCTAssertTrue(camera.enabled)
         XCTAssertFalse(camera.passwordSet)
     }
@@ -71,11 +75,31 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(createObject["stream_url"] as? String, "rtsp://192.168.1.20:554/1/2")
         XCTAssertEqual(Set(createObject.keys), ["family_id", "device_id", "name", "room", "stream_url", "username", "password", "enabled"])
 
-        let updateObject = try jsonObject(CameraUpdateRequest(name: "卧室主视", room: "卧室", enabled: false))
-        XCTAssertEqual(Set(updateObject.keys), ["name", "room", "enabled"])
+        let updateObject = try jsonObject(CameraUpdateRequest(
+            name: "卧室主视",
+            room: "卧室",
+            streamURL: "rtsp://192.168.1.7:554/1/2",
+            username: nil,
+            password: nil,
+            enabled: false
+        ))
+        XCTAssertEqual(Set(updateObject.keys), ["name", "room", "stream_url", "enabled"])
         XCTAssertNil(updateObject["family_id"])
         XCTAssertNil(updateObject["device_id"])
-        XCTAssertNil(updateObject["stream_url"])
+        XCTAssertEqual(updateObject["stream_url"] as? String, "rtsp://192.168.1.7:554/1/2")
+    }
+
+    func testCameraStreamAddressBuildsValidatedRTSPURL() {
+        XCTAssertEqual(
+            CameraStreamAddress.makeURL(scheme: "rtsp", host: "192.168.1.7", port: "554", path: "1/2"),
+            "rtsp://192.168.1.7:554/1/2"
+        )
+        XCTAssertEqual(
+            CameraStreamAddress.makeURL(scheme: "rtsps", host: "camera.local", port: "322", path: "/live?channel=1"),
+            "rtsps://camera.local:322/live?channel=1"
+        )
+        XCTAssertNil(CameraStreamAddress.makeURL(scheme: "http", host: "192.168.1.7", port: "554", path: "/1/2"))
+        XCTAssertNil(CameraStreamAddress.makeURL(scheme: "rtsp", host: "", port: "554", path: "/1/2"))
     }
 
     func testBindingCodeAcceptsNumericIdentifiers() throws {

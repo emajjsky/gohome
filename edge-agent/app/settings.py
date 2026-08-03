@@ -32,12 +32,7 @@ class Settings:
         self.object_storage_provider = os.getenv("GOHOME_OBJECT_STORAGE_PROVIDER", "signed-localfs").strip() or "signed-localfs"
         self.object_storage_bucket = os.getenv("GOHOME_OBJECT_STORAGE_BUCKET", "public-media").strip() or "public-media"
         self.public_base_url = os.getenv("GOHOME_PUBLIC_BASE_URL", "").strip()
-        self.video_service_public_base_url = os.getenv("GOHOME_VIDEO_SERVICE_PUBLIC_BASE_URL", "").strip()
         self.media_public_base_url = os.getenv("GOHOME_MEDIA_PUBLIC_BASE_URL", "").strip()
-        self.video_service_node_id = os.getenv("GOHOME_VIDEO_SERVICE_NODE_ID", "").strip()
-        self.video_service_region = os.getenv("GOHOME_VIDEO_SERVICE_REGION", "local").strip() or "local"
-        self.video_service_role = os.getenv("GOHOME_VIDEO_SERVICE_ROLE", "origin").strip() or "origin"
-        self.video_distribution_name = os.getenv("GOHOME_VIDEO_DISTRIBUTION_NAME", "single-origin").strip() or "single-origin"
         self.app_server_base_url = os.getenv("GOHOME_APP_SERVER_BASE_URL", "").strip().rstrip("/")
         self.device_api_token = os.getenv("GOHOME_DEVICE_API_TOKEN", "").strip()
         self.require_issued_device_token = os.getenv("GOHOME_REQUIRE_ISSUED_DEVICE_TOKEN", "0") == "1"
@@ -45,6 +40,21 @@ class Settings:
         self.config_sync_enabled = os.getenv("GOHOME_CONFIG_SYNC_ENABLED", "1") == "1"
         self.config_sync_interval_seconds = float(os.getenv("GOHOME_CONFIG_SYNC_INTERVAL_SECONDS", "10"))
         self.video_privacy_sync_interval_seconds = float(os.getenv("GOHOME_VIDEO_PRIVACY_SYNC_INTERVAL_SECONDS", "1"))
+        self.hailo_segmentation_mode = os.getenv("GOHOME_HAILO_SEGMENTATION_MODE", "auto").strip().lower()
+        self.hailo_segmentation_model = os.getenv(
+            "GOHOME_HAILO_SEGMENTATION_MODEL",
+            "/usr/share/hailo-models/yolov11s_seg_h8.hef",
+        ).strip()
+        self.hailo_segmentation_confidence = float(os.getenv("GOHOME_HAILO_SEGMENTATION_CONFIDENCE", "0.30"))
+        self.hailo_segmentation_anchor_interval_seconds = float(
+            os.getenv("GOHOME_HAILO_SEGMENTATION_ANCHOR_INTERVAL_SECONDS", "0.18")
+        )
+        self.hailo_segmentation_maximum_propagation_seconds = float(
+            os.getenv("GOHOME_HAILO_SEGMENTATION_MAXIMUM_PROPAGATION_SECONDS", "0.35")
+        )
+        self.hailo_segmentation_flow_width = int(
+            os.getenv("GOHOME_HAILO_SEGMENTATION_FLOW_WIDTH", "320")
+        )
         self.config_sync_request_timeout_seconds = float(os.getenv("GOHOME_CONFIG_SYNC_REQUEST_TIMEOUT_SECONDS", os.getenv("GOHOME_UPLOAD_REQUEST_TIMEOUT_SECONDS", "12")))
         self.config_sync_test_capture_enabled = os.getenv("GOHOME_CONFIG_SYNC_TEST_CAPTURE_ENABLED", "0") == "1"
         self.upload_worker_enabled = os.getenv("GOHOME_UPLOAD_WORKER_ENABLED", "1") == "1"
@@ -57,12 +67,7 @@ class Settings:
         self.live_relay_width = int(os.getenv("GOHOME_LIVE_RELAY_WIDTH", "640"))
         self.live_relay_height = int(os.getenv("GOHOME_LIVE_RELAY_HEIGHT", "360"))
         self.live_relay_quality = int(os.getenv("GOHOME_LIVE_RELAY_QUALITY", "55"))
-        self.live_relay_drop_stale_frames = int(os.getenv("GOHOME_LIVE_RELAY_DROP_STALE_FRAMES", "1"))
-        self.live_relay_upload_workers = int(os.getenv("GOHOME_LIVE_RELAY_UPLOAD_WORKERS", "4"))
         self.live_relay_request_timeout_seconds = float(os.getenv("GOHOME_LIVE_RELAY_REQUEST_TIMEOUT_SECONDS", "2"))
-        self.pose_relay_enabled = os.getenv("GOHOME_POSE_RELAY_ENABLED", "1") == "1"
-        self.pose_relay_fps = float(os.getenv("GOHOME_POSE_RELAY_FPS", "30"))
-        self.pose_relay_request_timeout_seconds = float(os.getenv("GOHOME_POSE_RELAY_REQUEST_TIMEOUT_SECONDS", "2"))
         self.history_retention_hours = int(os.getenv("GOHOME_HISTORY_RETENTION_HOURS", "6"))
         self.history_cleanup_interval_seconds = float(os.getenv("GOHOME_HISTORY_CLEANUP_INTERVAL_SECONDS", "3600"))
         self.history_cleanup_batch_size = int(os.getenv("GOHOME_HISTORY_CLEANUP_BATCH_SIZE", "5000"))

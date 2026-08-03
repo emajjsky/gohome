@@ -30,7 +30,14 @@ def main() -> None:
             config_sync_request_timeout_seconds=2,
             config_sync_test_capture_enabled=False,
         )
-        camera_agent = SimpleNamespace(capture_frame=lambda *_args, **_kwargs: {"width": 640, "height": 360})
+        reconciled_camera_sets: list[list[dict]] = []
+        camera_agent = SimpleNamespace(
+            capture_frame=lambda *_args, **_kwargs: {"width": 640, "height": 360},
+            reconcile_managed_streams=lambda cameras: reconciled_camera_sets.append([
+                dict(camera) for camera in cameras
+            ]),
+            managed_camera_status=lambda _camera: None,
+        )
         monotonic_now = [100.0]
         agent = ConfigSyncAgent(
             storage=storage,
@@ -113,6 +120,8 @@ def main() -> None:
             raise SystemExit(f"unexpected created camera: {cameras[0]}")
         if reports[-1]["cameras"][0]["sync_status"] != "synced":
             raise SystemExit(f"sync report did not mark camera synced: {reports[-1]}")
+        if not reconciled_camera_sets or reconciled_camera_sets[-1][0]["stream_url"] != "demo:living_room":
+            raise SystemExit("config sync did not immediately reconcile the active camera runtime")
         if "presence" not in reports[-1]["cameras"][0]:
             raise SystemExit("sync report must include camera presence status")
         edge_event = storage.create_event(
@@ -173,6 +182,8 @@ def main() -> None:
         cameras = storage.list_cameras(include_secret=True)
         if updated["applied"] != 1 or len(cameras) != 1 or cameras[0]["room"] != "卧室":
             raise SystemExit(f"camera was not updated in place: result={updated} cameras={cameras}")
+        if len(reconciled_camera_sets) < 2 or reconciled_camera_sets[-1][0]["room"] != "卧室":
+            raise SystemExit("updated camera configuration was not reconciled in the same sync cycle")
         stale_delete = next((
             item for item in reports[-1]["cameras"]
             if item.get("local_camera_id") == stale_local["id"] and item.get("status") == "deleted"

@@ -86,6 +86,9 @@ test('native device and camera mutations are creator-only and stay bound to one 
     assert.equal(created.body.password_set, true);
     assert.equal(created.body.password, undefined);
     assert.equal(created.body.stream_url, undefined);
+    assert.deepEqual(created.body.connection, {
+      scheme: 'rtsp', host: '192.168.1.8', port: 554, path: '/1/2', username_set: true,
+    });
 
     for (const method of ['PATCH', 'DELETE']) {
       const denied = await request(baseURL, `/api/cameras/${created.body.id}`, {
@@ -110,6 +113,22 @@ test('native device and camera mutations are creator-only and stay bound to one 
     assert.equal(updated.response.status, 200);
     assert.equal(updated.body.name, '客厅全景');
     assert.equal(updated.body.enabled, false);
+
+    const connectionUpdated = await request(baseURL, `/api/cameras/${created.body.id}`, {
+      method: 'PATCH', headers: owner.headers,
+      body: JSON.stringify({ stream_url: 'rtsp://192.168.1.7:554/1/2' }),
+    });
+    assert.equal(connectionUpdated.response.status, 200);
+    assert.equal(connectionUpdated.body.connection.host, '192.168.1.7');
+    assert.equal(connectionUpdated.body.status, 'pending_edge_sync');
+    assert.equal(connectionUpdated.body.sync_status, 'pending_edge_sync');
+    assert.equal(app.store.db.cameras[String(created.body.id)].password, 'camera-secret');
+
+    const invalidConnection = await request(baseURL, `/api/cameras/${created.body.id}`, {
+      method: 'PATCH', headers: owner.headers, body: JSON.stringify({ stream_url: 'http://192.168.1.7/live' }),
+    });
+    assert.equal(invalidConnection.response.status, 400);
+    assert.equal(app.store.db.cameras[String(created.body.id)].stream_url, 'rtsp://192.168.1.7:554/1/2');
 
     const unbound = await request(baseURL, '/api/device-bindings/binding-device-test', {
       method: 'DELETE', headers: owner.headers,

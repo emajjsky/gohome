@@ -18,6 +18,9 @@ rsync -az \
   --exclude '*.pyc' \
   --exclude 'data/' \
   --exclude 'logs/' \
+  --exclude 'backups/' \
+  --exclude '*.log' \
+  --exclude '*.bak*' \
   --exclude '.env' \
   --exclude '.env.local' \
   --exclude '.env.local.*' \
@@ -33,69 +36,29 @@ rsync -az \
   --exclude 'scripts/prepare-vision-smoke-samples.py' \
   --exclude 'scripts/run-*-eval*.sh' \
   --exclude 'scripts/send-test-notification.sh' \
-  --exclude 'scripts/verify-adaptive-analysis-persistence.py' \
-  --exclude 'scripts/verify-adaptive-edge-worker.py' \
-  --exclude 'scripts/verify-adaptive-inference-scheduler.py' \
-  --exclude 'scripts/verify-alert-dedupe.py' \
-  --exclude 'scripts/verify-camera-stream-resilience.py' \
-  --exclude 'scripts/verify-camera-shared-stream.py' \
-  --exclude 'scripts/verify-config-sync-agent.py' \
-  --exclude 'scripts/verify-continuous-overlay-console.py' \
-  --exclude 'scripts/verify-continual-pose-live-api.py' \
-  --exclude 'scripts/verify-continual-pose-tracker.py' \
-  --exclude 'scripts/verify-continual-identity-bridge.py' \
-  --exclude 'scripts/verify-dataset-readiness-audit.py' \
-  --exclude 'scripts/verify-fall-rule-engine.py' \
-  --exclude 'scripts/verify-observation-logs.py' \
-  --exclude 'scripts/verify-pet-temporal.py' \
-  --exclude 'scripts/verify-pose-factor-graph.py' \
-  --exclude 'scripts/verify-resource-monitor.py' \
-  --exclude 'scripts/verify-upload-lock-retry.py' \
-  --exclude 'scripts/verify-posture-classifier.py' \
-  --exclude 'scripts/verify-posture-episodes.py' \
-  --exclude 'scripts/verify-presence-sessions.py' \
-  --exclude 'scripts/verify-prolonged-floor-rule.py' \
-  --exclude 'scripts/verify-runtime-retention.py' \
-  --exclude 'scripts/verify-synchronized-pose-stream.py' \
-  --exclude 'scripts/verify-temporal-observation-engine.py' \
-  --exclude 'scripts/verify-upload-agent.py' \
-  --exclude 'scripts/verify-upload-queue.py' \
-  --exclude 'scripts/verify-vision-pipeline.py' \
+  --include 'scripts/verify-vision-runtime.py' \
+  --exclude 'scripts/verify-*.py' \
   "$AGENT_ROOT/" "$PI_SSH:$PI_ROOT/"
 
-ssh "$PI_SSH" "cd '$PI_ROOT' && rm -rf eval && find scripts -maxdepth 1 -type f \\
-  \\( -name 'audit-vision-dataset-readiness.py' \\
-  -o -name 'configure-demo-mode.sh' \\
-  -o -name 'emit-public-fall-validation.py' \\
-  -o -name 'eval*.py' \\
-  -o -name 'import-*.py' \\
-  -o -name 'init-vision-eval-data.py' \\
-  -o -name 'prepare-factory-network-test.sh' \\
-  -o -name 'prepare-vision-smoke-samples.py' \\
-  -o -name 'run-*-eval*.sh' \\
-  -o -name 'send-test-notification.sh' \\
-  -o -name 'verify-adaptive-analysis-persistence.py' \\
-  -o -name 'verify-adaptive-edge-worker.py' \\
-  -o -name 'verify-adaptive-inference-scheduler.py' \\
-  -o -name 'verify-alert-dedupe.py' \\
-  -o -name 'verify-camera-stream-resilience.py' \\
-  -o -name 'verify-config-sync-agent.py' \\
-  -o -name 'verify-continual-pose-live-api.py' \\
-  -o -name 'verify-continual-pose-tracker.py' \\
-  -o -name 'verify-dataset-readiness-audit.py' \\
-  -o -name 'verify-fall-rule-engine.py' \\
-  -o -name 'verify-observation-logs.py' \\
-  -o -name 'verify-pet-temporal.py' \\
-  -o -name 'verify-pose-factor-graph.py' \\
-  -o -name 'verify-posture-classifier.py' \\
-  -o -name 'verify-posture-episodes.py' \\
-  -o -name 'verify-presence-sessions.py' \\
-  -o -name 'verify-prolonged-floor-rule.py' \\
-  -o -name 'verify-runtime-retention.py' \\
-  -o -name 'verify-temporal-observation-engine.py' \\
-  -o -name 'verify-upload-agent.py' \\
-  -o -name 'verify-upload-queue.py' \\
-  -o -name 'verify-vision-pipeline.py' \\) -delete"
+ssh "$PI_SSH" "cd '$PI_ROOT' && \
+  sudo rm -rf backups && \
+  rm -rf eval __pycache__ scripts/__pycache__ app/__pycache__ app/vision/__pycache__ && \
+  rm -f app/pose_relay_agent.py app/video_app.py app/video_distribution_service.py \
+    app/video_profiles.py app/video_service.py && \
+  find scripts -maxdepth 1 -type f \
+    \( -name 'audit-vision-dataset-readiness.py' \
+    -o -name 'configure-demo-mode.sh' \
+    -o -name 'emit-public-fall-validation.py' \
+    -o -name 'eval*.py' \
+    -o -name 'import-*.py' \
+    -o -name 'init-vision-eval-data.py' \
+    -o -name 'prepare-factory-network-test.sh' \
+    -o -name 'prepare-vision-smoke-samples.py' \
+    -o -name 'run-*-eval*.sh' \
+    -o -name 'send-test-notification.sh' \) -delete && \
+  find scripts -maxdepth 1 -type f -name 'verify-*.py' ! -name 'verify-vision-runtime.py' -delete && \
+  find . -type f -name '*.pyc' -delete && \
+  find . -maxdepth 2 -type f \( -name '*.log' -o -name '*.bak*' \) -delete"
 
 ssh "$PI_SSH" "cd '$PI_ROOT' && .venv-pi/bin/python -m pip install --requirement requirements-security.txt"
 ssh "$PI_SSH" "cd '$PI_ROOT' && .venv-pi/bin/python scripts/verify-vision-runtime.py --require-yolo --require-pose --require-hailo"

@@ -1396,6 +1396,7 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
     let syncStatus: String?
     let connectionOwner: String?
     let hasStreamConfig: Bool?
+    let connection: CameraConnectionSummary?
     let passwordSet: Bool
     let enabled: Bool
 
@@ -1407,6 +1408,7 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
         case syncStatus = "sync_status"
         case connectionOwner = "connection_owner"
         case hasStreamConfig = "has_stream_config"
+        case connection
         case passwordSet = "password_set"
         case enabled
     }
@@ -1421,6 +1423,7 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
         syncStatus: String? = nil,
         connectionOwner: String? = nil,
         hasStreamConfig: Bool? = nil,
+        connection: CameraConnectionSummary? = nil,
         passwordSet: Bool = false,
         enabled: Bool = true
     ) {
@@ -1433,6 +1436,7 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
         self.syncStatus = syncStatus
         self.connectionOwner = connectionOwner
         self.hasStreamConfig = hasStreamConfig
+        self.connection = connection
         self.passwordSet = passwordSet
         self.enabled = enabled
     }
@@ -1449,8 +1453,22 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
         syncStatus = try values.decodeIfPresent(String.self, forKey: .syncStatus)
         connectionOwner = try values.decodeIfPresent(String.self, forKey: .connectionOwner)
         hasStreamConfig = try values.decodeIfPresent(Bool.self, forKey: .hasStreamConfig)
+        connection = try values.decodeIfPresent(CameraConnectionSummary.self, forKey: .connection)
         passwordSet = try values.decodeIfPresent(Bool.self, forKey: .passwordSet) ?? false
         enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+    }
+}
+
+struct CameraConnectionSummary: Codable, Equatable, Sendable {
+    let scheme: String
+    let host: String
+    let port: Int
+    let path: String
+    let usernameSet: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case scheme, host, port, path
+        case usernameSet = "username_set"
     }
 }
 

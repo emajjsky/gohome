@@ -97,40 +97,92 @@ def main() -> None:
 
     real_graph = PoseFactorGraphEngine(prolonged_lying_seconds=180)
     real_engine = RuleEngine()
-    real_upright = make_upright_analysis()
-    real_upright["image_height"] = 540
-    for item in [*real_upright["people"], *real_upright["poses"]]:
-        item["bbox"] = [416.9, 60.4, 478.7, 268.3]
-        item["track_id"] = "c24-p758"
-        item["confidence"] = 0.768
-    real_upright["poses"][0]["posture"] = "standing"
-    real_upright["poses"][0]["posture_confidence"] = 0.768
-    real_graph.update(24, real_upright, monotonic_at=0.0)
-    real_engine.evaluate_snapshot({"id": 24, "name": "冰箱上"}, {"id": 1200}, real_upright, rules)
+    real_start = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    original_clock = rule_engine_module.utc_now
+    try:
+        current_time = [real_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        real_upright = make_upright_analysis()
+        real_upright["image_height"] = 540
+        for item in [*real_upright["people"], *real_upright["poses"]]:
+            item["bbox"] = [416.9, 60.4, 478.7, 268.3]
+            item["track_id"] = "c24-p758"
+            item["confidence"] = 0.768
+        real_upright["poses"][0]["posture"] = "standing"
+        real_upright["poses"][0]["posture_confidence"] = 0.768
+        real_graph.update(24, real_upright, monotonic_at=0.0)
+        real_engine.evaluate_snapshot({"id": 24, "name": "冰箱上"}, {"id": 1200}, real_upright, rules)
 
-    real_lying = make_pose_fall_analysis(normal_lying_zone=False)
-    real_lying["image_height"] = 540
-    real_lying["motion_score"] = 0.0114
-    for item in [*real_lying["people"], *real_lying["poses"]]:
-        item["bbox"] = [398.0, 279.0, 527.5, 360.0]
-        item["track_id"] = "c24-p758"
-        item["confidence"] = 0.6552
-        item["posture"] = "lying"
-        item["normal_lying_zone"] = False
-    real_lying["poses"][0]["posture_confidence"] = 0.6552
-    real_graph.update(24, real_lying, monotonic_at=1.2)
-    real_review = real_engine.evaluate_snapshot(
-        {"id": 24, "name": "冰箱上"},
-        {"id": 1201},
-        real_lying,
-        rules,
-    )
+        real_lying = make_pose_fall_analysis(normal_lying_zone=False)
+        real_lying["image_height"] = 540
+        real_lying["motion_score"] = 0.0114
+        for item in [*real_lying["people"], *real_lying["poses"]]:
+            item["bbox"] = [398.0, 279.0, 527.5, 360.0]
+            item["track_id"] = "c24-p758"
+            item["confidence"] = 0.6552
+            item["posture"] = "lying"
+            item["normal_lying_zone"] = False
+        real_lying["poses"][0]["posture_confidence"] = 0.6552
+        current_time[0] = real_start + timedelta(seconds=1.2)
+        real_graph.update(24, real_lying, monotonic_at=1.2)
+        real_first = real_engine.evaluate_snapshot(
+            {"id": 24, "name": "冰箱上"},
+            {"id": 1201},
+            real_lying,
+            rules,
+        )
+        current_time[0] = real_start + timedelta(seconds=2.0)
+        real_graph.update(24, real_lying, monotonic_at=2.0)
+        real_review = real_engine.evaluate_snapshot(
+            {"id": 24, "name": "冰箱上"},
+            {"id": 1202},
+            real_lying,
+            rules,
+        )
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if real_first.candidates:
+        raise SystemExit("single factor-graph frame must not create a formal fall event")
     if len(real_review.candidates) != 1:
-        raise SystemExit(f"real rapid descent must create one cloud-review event immediately: {real_review.state}")
+        raise SystemExit(f"confirmed rapid descent must create one cloud-review event: {real_review.state}")
     if real_review.state.get("fall_confirmation_path") != "edge_cloud_review":
         raise SystemExit(f"real rapid descent did not use the auditable cloud-review path: {real_review.state}")
     if "云端复核" not in real_review.candidates[0].summary:
         raise SystemExit(f"product copy must not claim final confirmation before cloud review: {real_review.candidates[0]}")
+
+    couch_reacquisition_engine = RuleEngine()
+    couch_upright = make_upright_analysis()
+    couch_upright["motion_score"] = 0.0048
+    couch_reacquisition_engine.evaluate_snapshot(camera, {"id": 1210}, couch_upright, rules)
+    couch_reacquisition = make_pose_fall_analysis(normal_lying_zone=True, fast_graph=True)
+    couch_reacquisition["fall_candidate"] = False
+    couch_reacquisition["fall_score"] = 0.0
+    couch_reacquisition["pose_fall_candidate"] = False
+    couch_reacquisition["pose_fall_score"] = 0.0
+    couch_reacquisition["motion_score"] = 0.0012
+    couch_reacquisition["poses"][0]["fall_score"] = 0.0
+    couch_reacquisition["poses"][0]["action_hints"] = ["lying"]
+    for item in [*couch_reacquisition["people"], *couch_reacquisition["poses"]]:
+        item["bbox"] = [8.5, 232.0, 228.9, 284.8]
+        item["track_id"] = "person-reacquired"
+    graph_target = couch_reacquisition["pose_factor_graph"]["fast_fall_track"]
+    graph_target.update({
+        "bbox": [8.5, 232.0, 228.9, 284.8],
+        "track_id": "person-reacquired",
+        "identity_match": "single_person_spatial_reacquisition",
+        "review_ready": True,
+        "quality_gate": True,
+        "required_factors_confirmed": True,
+        "normal_lying_zone": True,
+    })
+    couch_review = couch_reacquisition_engine.evaluate_snapshot(
+        camera,
+        {"id": 1211},
+        couch_reacquisition,
+        rules,
+    )
+    if couch_review.candidates or not couch_review.state.get("fall_scene_suppressed"):
+        raise SystemExit("single-frame spatial reacquisition on a couch must remain scene-suppressed")
 
     clear_eval = engine.evaluate_snapshot(camera, {"id": 1003}, make_analysis(fall_candidate=False, fall_score=0.0), rules)
     if clear_eval.state["fall_stage"] != "confirmed":

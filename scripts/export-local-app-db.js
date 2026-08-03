@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const CLOUD_SEED_SCHEMA_VERSION = "011_family_invitations";
+const CLOUD_SEED_SCHEMA_VERSION = "013_media_lifecycle";
 
 function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -418,18 +418,13 @@ function buildCloudSeedBundle(db, options = {}) {
     }));
 
     const sourceEvents = toArray(db.events);
-    const validationEvents = sourceEvents.filter((event) => Boolean(event.payload?.validation?.test_event));
-    const validationEventIds = new Set(validationEvents.map((event) => textId(event.id)).filter(Boolean));
-    const validationAssetIds = new Set(validationEvents.map((event) => textId(event.media_asset_id)).filter(Boolean));
-
+    const validationEventIds = new Set(
+        sourceEvents
+            .filter((event) => Boolean(event.payload?.validation?.test_event))
+            .map((event) => textId(event.id))
+            .filter(Boolean),
+    );
     const mediaAssets = toArray(db.assets)
-        .filter((asset) => {
-            const purpose = String(asset.purpose || "").toLowerCase();
-            return !purpose.startsWith("validation")
-                && !purpose.startsWith("test")
-                && purpose !== "live_preview"
-                && !validationAssetIds.has(textId(asset.id));
-        })
         .map((asset) => ({
         id: textId(asset.id),
         family_id: nullableTextId(asset.family_id || fallbackFamilyId),
@@ -443,6 +438,14 @@ function buildCloudSeedBundle(db, options = {}) {
         storage_key: String(asset.storage_key || asset.relative_path || ""),
         edge_event_id: String(asset.edge_event_id || ""),
         size_bytes: numberOrNull(asset.size || asset.size_bytes) || 0,
+        retention_class: String(asset.retention_class || ""),
+        retention_status: String(asset.retention_status || "active"),
+        retention_reason: String(asset.retention_reason || ""),
+        retain_until: iso(asset.retain_until),
+        deletion_attempts: numberOrNull(asset.deletion_attempts) || 0,
+        deletion_error: String(asset.deletion_error || ""),
+        next_deletion_at: iso(asset.next_deletion_at),
+        deleted_at: iso(asset.deleted_at),
         metadata: {
             ...(asset.metadata && typeof asset.metadata === "object" && !Array.isArray(asset.metadata)
                 ? asset.metadata
@@ -479,7 +482,7 @@ function buildCloudSeedBundle(db, options = {}) {
         && intent.expires_at
     ));
 
-    const events = sourceEvents.filter((event) => !validationEventIds.has(textId(event.id))).map((event) => ({
+    const events = sourceEvents.map((event) => ({
         id: textId(event.id),
         family_id: nullableTextId(event.family_id || fallbackFamilyId),
         device_id: nullableTextId(event.device_id || event.payload?.edge_upload?.edge_device_id || fallbackDeviceId),

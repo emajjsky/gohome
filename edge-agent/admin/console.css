@@ -59,6 +59,13 @@ body.admin-web-page .admin-privacy-head strong { font-size: 11px; font-weight: 7
 body.admin-web-page .admin-privacy-head span { color: var(--console-muted); font-size: 9px; }
 body.admin-web-page .admin-privacy-panel .segmented-control { width: 100%; min-height: 32px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 body.admin-web-page .admin-privacy-panel .segmented-control button { min-height: 32px; padding: 0 5px; font-size: 10px; }
+body.admin-web-page .privacy-calibration-list { display: grid; border-top: 1px solid var(--console-line); }
+body.admin-web-page .privacy-calibration-row { min-width: 0; min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--console-line); }
+body.admin-web-page .privacy-calibration-row > span { min-width: 0; display: flex; align-items: baseline; gap: 5px; }
+body.admin-web-page .privacy-calibration-row strong { overflow: hidden; color: var(--console-ink); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+body.admin-web-page .privacy-calibration-row small { flex: 0 0 auto; color: var(--console-muted); font-size: 8px; }
+body.admin-web-page .privacy-calibration-row button { min-height: 24px; border: 0; padding: 0 3px; background: transparent; color: var(--console-ink); font-size: 9px; }
+body.admin-web-page .privacy-calibration-row .status-dot { flex: 0 0 auto; }
 body.admin-web-page .admin-sidebar-note, body.admin-web-page .admin-sidebar-status { margin: 0; border: 0; border-top: 1px solid var(--console-line); border-radius: 0; padding: 12px 5px; background: transparent; box-shadow: none; }
 body.admin-web-page .admin-sidebar-note span, body.admin-web-page .admin-sidebar-note strong { display: block; }
 body.admin-web-page .admin-sidebar-note span { color: var(--console-muted); font-size: 10px; }
@@ -183,7 +190,6 @@ body.admin-web-page .cinema-topline strong { color: var(--console-ink); font-siz
 body.admin-web-page .cinema-topline .status-pill { min-height: 21px; background: #eef0eb; color: var(--console-ok); padding: 3px 7px; }
 body.admin-web-page .algorithm-live-stage { position: relative; width: 100%; height: auto !important; aspect-ratio: 16 / 9 !important; overflow: hidden; border: 1px solid #3b3e3a !important; border-radius: 3px !important; background: #050606; }
 body.admin-web-page .algorithm-live-stage > img { width: 100%; height: 100%; display: block; object-fit: contain !important; }
-body.admin-web-page .detection-overlay { position: absolute; inset: 0; pointer-events: none; }
 body.admin-web-page .stream-empty { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; color: #777b75; background: #0c0d0d; }
 body.admin-web-page .algorithm-hit-strip { display: grid !important; grid-template-columns: 1.25fr 1fr 1fr !important; gap: 0 !important; border-top: 1px solid var(--console-line); margin-top: 0; background: #f7f7f5; }
 body.admin-web-page .algorithm-hit-strip .algorithm-hit-card { min-height: 62px; display: flex; flex-direction: column; justify-content: center; border: 0 !important; border-right: 1px solid var(--console-line) !important; border-radius: 0 !important; padding: 9px 12px; background: transparent !important; color: var(--console-ink) !important; box-shadow: none !important; }

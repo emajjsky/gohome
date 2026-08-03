@@ -18,17 +18,18 @@ struct CameraConfigurationForm: View {
     @State private var name: String
     @State private var roomSelection: String
     @State private var customRoom: String
+    @State private var scheme: String
     @State private var host = ""
     @State private var port = "554"
     @State private var streamPath = "/1/2"
-    @State private var username = "admin"
-    @State private var password = ""
+    @State private var username: String
+    @State private var password: String
     @State private var enabled: Bool
     @State private var candidates: [DiscoveredCamera] = []
     @State private var selectedCandidateID: String?
     @State private var isSearching = false
     @State private var isSaving = false
-    @State private var showManualEntry = false
+    @State private var showManualEntry: Bool
     @State private var errorMessage: String?
     @State private var attemptedAutomaticSearch = false
 
@@ -48,7 +49,14 @@ struct CameraConfigurationForm: View {
         _name = State(initialValue: existingName.isEmpty ? "客厅摄像头" : existingName)
         _roomSelection = State(initialValue: commonRooms.contains(initialRoom) ? initialRoom : "其他")
         _customRoom = State(initialValue: commonRooms.contains(initialRoom) ? "" : initialRoom)
+        _scheme = State(initialValue: existing?.connection?.scheme ?? "rtsp")
+        _host = State(initialValue: existing?.connection?.host ?? "")
+        _port = State(initialValue: String(existing?.connection?.port ?? 554))
+        _streamPath = State(initialValue: existing?.connection?.path ?? "/1/2")
+        _username = State(initialValue: existing == nil ? "admin" : "")
+        _password = State(initialValue: "")
         _enabled = State(initialValue: existing?.enabled ?? true)
+        _showManualEntry = State(initialValue: existing != nil)
     }
 
     var body: some View {
@@ -79,7 +87,7 @@ struct CameraConfigurationForm: View {
                 }
             }
 
-            if existing == nil { connectionSection }
+            connectionSection
 
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.circle")
@@ -117,7 +125,7 @@ struct CameraConfigurationForm: View {
     private var connectionSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                GoHomeSectionHeader(title: "选择摄像头", detail: candidates.isEmpty ? nil : "\(candidates.count) 台")
+                GoHomeSectionHeader(title: existing == nil ? "选择摄像头" : "连接设置", detail: candidates.isEmpty ? nil : "\(candidates.count) 台")
                 Spacer()
                 Button(action: searchCameras) {
                     Image(systemName: "arrow.clockwise")
@@ -165,7 +173,7 @@ struct CameraConfigurationForm: View {
                 .overlay(alignment: .top) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
             }
 
-            DisclosureGroup("手动添加", isExpanded: $showManualEntry) {
+            DisclosureGroup(existing == nil ? "手动添加" : "网络地址", isExpanded: $showManualEntry) {
                 VStack(spacing: 0) {
                     formField("设备地址", text: $host, placeholder: "192.168.1.20", keyboard: .numbersAndPunctuation)
                     formField("端口", text: $port, placeholder: "554", keyboard: .numberPad)
@@ -177,9 +185,9 @@ struct CameraConfigurationForm: View {
             .tint(GoHomeTheme.ink)
 
             ProfileSection(title: "摄像头账号") {
-                formField("用户名", text: $username, placeholder: "admin")
+                formField("用户名", text: $username, placeholder: existing == nil ? "admin" : "留空则保留")
                     .textInputAutocapitalization(.never)
-                SecureField("密码", text: $password)
+                SecureField(existing == nil ? "密码" : "新密码（留空则保留）", text: $password)
                     .textContentType(.password)
                     .padding(.horizontal, 2)
                     .frame(minHeight: 52)
@@ -195,10 +203,7 @@ struct CameraConfigurationForm: View {
 
     private var canSave: Bool {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !room.isEmpty else { return false }
-        if existing != nil { return true }
-        guard let portNumber = Int(port), (1...65_535).contains(portNumber) else { return false }
-        return !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !streamPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return CameraStreamAddress.makeURL(scheme: scheme, host: host, port: port, path: streamPath) != nil
     }
 
     private func formField(
@@ -235,7 +240,7 @@ struct CameraConfigurationForm: View {
             defer { isSearching = false }
             do {
                 candidates = try await discovery.discoverCameras(box: box)
-                if let first = candidates.first { select(first) }
+                if existing == nil, host.isEmpty, let first = candidates.first { select(first) }
                 if candidates.isEmpty {
                     errorMessage = "没有发现可连接的摄像头，可检查供电和网络后重试。"
                     showManualEntry = true
@@ -259,11 +264,10 @@ struct CameraConfigurationForm: View {
         guard canSave, !isSaving else { return }
         let activeBox = discovery.boxes.first(where: { $0.deviceID == binding.deviceID })
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let path = streamPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
-        let streamURL = existing == nil
-            ? "rtsp://\(host.trimmingCharacters(in: .whitespacesAndNewlines)):\(port)\(normalizedPath)"
-            : ""
+        guard let streamURL = CameraStreamAddress.makeURL(scheme: scheme, host: host, port: port, path: streamPath) else {
+            errorMessage = "摄像头网络地址不正确。"
+            return
+        }
         isSaving = true
         errorMessage = nil
         Task {

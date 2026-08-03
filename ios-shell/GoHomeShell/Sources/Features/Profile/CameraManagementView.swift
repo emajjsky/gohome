@@ -44,7 +44,15 @@ struct CameraManagementView: View {
     private func save(_ values: CameraConnectionValues) async -> Bool {
         let success: Bool
         if let camera {
-            success = await model.updateCamera(camera, name: values.name, room: values.room, enabled: values.enabled)
+            success = await model.updateCamera(
+                camera,
+                name: values.name,
+                room: values.room,
+                streamURL: values.streamURL,
+                username: values.username,
+                password: values.password,
+                enabled: values.enabled
+            )
         } else {
             success = await model.createCamera(
                 binding: binding,

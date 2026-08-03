@@ -122,9 +122,7 @@ struct GuardView: View {
                 image: model.latestImage,
                 state: model.streamState,
                 displayFPS: model.displayFPS,
-                poseUpdatesPerSecond: model.poseUpdatesPerSecond,
-                privacyMode: model.selectedPrivacyMode,
-                poseTimeline: model.poseTimeline
+                privacyMode: model.selectedPrivacyMode
             )
             CameraThumbnailStrip(cameras: cameras, selectedID: model.selectedCameraID) { cameraID in
                 model.select(cameraID: cameraID)

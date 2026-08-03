@@ -143,6 +143,7 @@ def main() -> None:
             raise AssertionError(f"unexpected upload path: {path}")
 
         agent._request_json = fake_request  # type: ignore[method-assign]
+        agent._request_file_json = fake_request  # type: ignore[method-assign]
         result = agent.process_once(max_jobs=3)
         summary = storage.upload_queue_summary()
         completed = storage.list_upload_jobs(status="completed", limit=10)
@@ -190,6 +191,10 @@ def main() -> None:
             raise SystemExit(f"media upload did not map local camera id: {media_paths}")
         if not any("evidence_frame_role=before" in path for path in media_paths):
             raise SystemExit(f"keyframe role missing from upload path: {media_paths}")
+        if not all("idempotency_key=" in path for path in media_paths):
+            raise SystemExit(f"media upload idempotency key missing: {media_paths}")
+        if any("body" in call for call in calls[:2]) or not all(isinstance(call.get("source"), Path) for call in calls[:2]):
+            raise SystemExit(f"media upload must stream snapshot files: {calls[:2]}")
         event_body = calls[2].get("json_body") or {}
         if event_body.get("camera_id") != 101:
             raise SystemExit(f"event upload did not use remote camera id: {event_body}")

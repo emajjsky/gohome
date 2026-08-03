@@ -594,18 +594,24 @@ class PoseFactorGraphEngine:
             and all(required_factors.values())
         )
         immediate_review_evidence = bool(
-            motion_score >= fall_transition_motion_score
-            or recent_descent_ok
-            or (
-                upright_age is not None
-                and upright_age <= FAST_FALL_IMMEDIATE_REVIEW_WINDOW_SECONDS
-                and vertical_drop >= fall_min_vertical_drop * 1.5
+            (
+                motion_score >= fall_transition_motion_score
+                or recent_descent_ok
+                or (
+                    upright_age is not None
+                    and upright_age <= FAST_FALL_IMMEDIATE_REVIEW_WINDOW_SECONDS
+                    and vertical_drop >= fall_min_vertical_drop * 1.5
+                )
+                or (
+                    identity_match == "single_person_spatial_reacquisition"
+                    and upright_age is not None
+                    and upright_age <= SPATIAL_REACQUISITION_SECONDS
+                    and vertical_drop >= fall_min_vertical_drop * 1.5
+                )
             )
-            or (
-                identity_match == "single_person_spatial_reacquisition"
-                and upright_age is not None
-                and upright_age <= SPATIAL_REACQUISITION_SECONDS
-                and vertical_drop >= fall_min_vertical_drop * 1.5
+            and (
+                not normal_lying_zone
+                or identity_match == "same_track"
             )
         )
         prolonged_candidate = bool(

@@ -407,7 +407,15 @@ final class ProfileViewModel: ObservableObject {
         }
     }
 
-    func updateCamera(_ camera: CameraConfig, name: String, room: String, enabled: Bool) async -> Bool {
+    func updateCamera(
+        _ camera: CameraConfig,
+        name: String,
+        room: String,
+        streamURL: String,
+        username: String,
+        password: String,
+        enabled: Bool
+    ) async -> Bool {
         guard canManageDevices, deviceActionID == nil, let repository else { return false }
         deviceActionID = "camera-\(camera.id)"
         deviceProgress = .saving("正在保存摄像头设置")
@@ -416,7 +424,14 @@ final class ProfileViewModel: ObservableObject {
         do {
             let updated = try await repository.updateCamera(
                 id: camera.id,
-                request: CameraUpdateRequest(name: name, room: room, enabled: enabled)
+                request: CameraUpdateRequest(
+                    name: name,
+                    room: room,
+                    streamURL: streamURL,
+                    username: username.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                    password: password.nilIfEmpty,
+                    enabled: enabled
+                )
             )
             replaceCamera(updated)
             await persist()
@@ -564,4 +579,8 @@ final class ProfileViewModel: ObservableObject {
         loadTask?.cancel()
         deviceReconciliationTask?.cancel()
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

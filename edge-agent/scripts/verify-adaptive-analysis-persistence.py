@@ -30,13 +30,19 @@ class Frame:
 class CameraAgent:
     def __init__(self) -> None:
         self.saved = 0
+        self.sequence = 0
 
     def capture_frame(self, camera: dict) -> dict:
+        self.sequence += 1
         return {
             "frame": Frame(),
             "width": 640,
             "height": 360,
+            "frame_id": f"{int(camera['id'])}-{self.sequence}",
+            "camera_id": int(camera["id"]),
+            "source_key": "test-source:g1",
             "captured_at": datetime.now(timezone.utc).isoformat(),
+            "captured_monotonic": float(self.sequence),
         }
 
     def snapshot_relative_path(self, camera_id: int) -> str:

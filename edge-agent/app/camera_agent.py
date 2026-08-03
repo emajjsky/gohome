@@ -4,7 +4,7 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Condition, Event, Lock, Thread
-from typing import Any, Dict, Generator, Tuple
+from typing import Any, Callable, Dict, Generator, Tuple
 from urllib.parse import quote, urlsplit, urlunsplit
 import base64
 import hashlib
@@ -21,6 +21,9 @@ NETWORK_CAPTURE_MAX_READS = 45
 DEMO_STREAM_PREFIXES = ("demo:", "sample:", "mock:")
 logger = logging.getLogger(__name__)
 MAX_PREVIEW_FPS = 30
+STREAM_RECONNECT_BASE_SECONDS = 0.5
+STREAM_RECONNECT_MAX_SECONDS = 8.0
+STREAM_FROZEN_RECONNECT_SECONDS = 3.0
 
 
 class CameraError(RuntimeError):
@@ -48,6 +51,14 @@ def bounded_stream_fps(value: Any, *, default: int = 15) -> int:
     return max(1, min(requested, MAX_PREVIEW_FPS))
 
 
+def stream_reconnect_delay(consecutive_failures: int) -> float:
+    exponent = max(0, min(int(consecutive_failures) - 1, 8))
+    return min(
+        STREAM_RECONNECT_MAX_SECONDS,
+        STREAM_RECONNECT_BASE_SECONDS * (2 ** exponent),
+    )
+
+
 def _load_cv2():
     try:
         import cv2  # type: ignore
@@ -65,12 +76,14 @@ class _SharedStreamReader:
         source: Any,
         is_local_source: bool,
         source_label: str,
+        stream_generation: int,
     ) -> None:
         self.agent = agent
         self.camera = dict(camera)
         self.source = source
         self.is_local_source = is_local_source
         self.source_label = source_label
+        self.stream_generation = max(1, int(stream_generation))
         self.subscribers = 0
         self._condition = Condition()
         self._stop = Event()
@@ -80,19 +93,31 @@ class _SharedStreamReader:
             name=f"gohome-camera-reader-{camera.get('id') or 'source'}",
             daemon=True,
         )
-        self._frame: Any = None
         self._sequence = 0
         self._last_error = ""
         self._last_error_at = ""
         self._last_frame_at = ""
         self._last_frame_monotonic: float | None = None
         self._frame_arrivals: deque[float] = deque(maxlen=600)
+        self._decoded_arrivals: deque[float] = deque(maxlen=600)
         self._read_samples: deque[tuple[float, float]] = deque(maxlen=600)
         self._open_count = 0
+        self._open_attempt_count = 0
+        self._consecutive_failures = 0
+        self._next_retry_monotonic: float | None = None
         self._read_failure_count = 0
         self._source_width = 0
         self._source_height = 0
         self._advertised_fps = 0.0
+        self._decoded_frame_count = 0
+        self._repeated_frame_count = 0
+        self._consecutive_repeated_frames = 0
+        self._last_content_fingerprint = b""
+        self._last_unique_frame_monotonic: float | None = None
+
+    @property
+    def is_stopped(self) -> bool:
+        return self._stop.is_set()
 
     def start(self) -> None:
         self._thread.start()
@@ -107,20 +132,21 @@ class _SharedStreamReader:
     def request_reconnect(self) -> None:
         self._reconnect.set()
 
-    def wait_for_frame(self, after_sequence: int, timeout: float = 3.5) -> Tuple[Any | None, int, str]:
+    def wait_for_update(self, after_sequence: int, timeout: float = 3.5) -> tuple[int, str]:
         with self._condition:
             self._condition.wait_for(
                 lambda: self._sequence > after_sequence or self._stop.is_set(),
                 timeout=max(0.1, float(timeout)),
             )
-            if self._sequence <= after_sequence or self._frame is None:
-                return None, after_sequence, self._last_error
-            return self._frame.copy(), self._sequence, self._last_error
+            if self._sequence <= after_sequence:
+                return after_sequence, self._last_error
+            return self._sequence, self._last_error
 
     def status(self) -> Dict[str, Any]:
         now = time.monotonic()
         with self._condition:
             arrivals = [value for value in self._frame_arrivals if value >= now - 10.0]
+            decoded_arrivals = [value for value in self._decoded_arrivals if value >= now - 10.0]
             reads = [value for value in self._read_samples if value[0] >= now - 10.0]
             gaps_ms = [
                 (current - previous) * 1000.0
@@ -137,6 +163,11 @@ class _SharedStreamReader:
                 if len(arrivals) >= 2
                 else 0.0
             )
+            decoded_fps = (
+                (len(decoded_arrivals) - 1) / max(0.001, decoded_arrivals[-1] - decoded_arrivals[0])
+                if len(decoded_arrivals) >= 2
+                else 0.0
+            )
             state = "streaming"
             if self._last_error:
                 state = "retrying"
@@ -147,15 +178,27 @@ class _SharedStreamReader:
             return {
                 "state": state,
                 "source_fps": round(source_fps, 2),
+                "effective_fps": round(source_fps, 2),
+                "decoded_fps": round(decoded_fps, 2),
                 "advertised_fps": round(self._advertised_fps, 2),
                 "latest_frame_age_ms": round(frame_age * 1000.0, 1) if frame_age is not None else None,
                 "frame_gap_ms_p95": round(self._percentile(gaps_ms, 0.95), 1),
                 "frame_gap_ms_max": round(max(gaps_ms), 1) if gaps_ms else 0.0,
                 "read_latency_ms_p95": round(self._percentile(read_ms, 0.95), 1),
                 "read_latency_ms_max": round(max(read_ms), 1) if read_ms else 0.0,
-                "decoded_frames": self._sequence,
+                "decoded_frames": self._decoded_frame_count,
+                "unique_frames": self._sequence,
+                "repeated_frames": self._repeated_frame_count,
+                "consecutive_repeated_frames": self._consecutive_repeated_frames,
+                "stream_generation": self.stream_generation,
                 "open_count": self._open_count,
+                "open_attempt_count": self._open_attempt_count,
                 "reconnect_count": max(0, self._open_count - 1),
+                "consecutive_failures": self._consecutive_failures,
+                "next_retry_in_seconds": round(
+                    max(0.0, self._next_retry_monotonic - now),
+                    2,
+                ) if self._next_retry_monotonic is not None else 0.0,
                 "read_failure_count": self._read_failure_count,
                 "source_width": self._source_width,
                 "source_height": self._source_height,
@@ -179,15 +222,19 @@ class _SharedStreamReader:
         try:
             while not self._stop.is_set():
                 if cap is None or not cap.isOpened() or self._reconnect.is_set():
+                    requested_reconnect = self._reconnect.is_set()
                     self._reconnect.clear()
                     if cap is not None:
                         cap.release()
+                        if requested_reconnect:
+                            self._invalidate_stream("stream_reconnect_requested")
+                    self._record_open_attempt()
                     cap = self.agent._open_stream_capture(cv2, self.source, self.is_local_source)
                     if not cap.isOpened():
                         cap.release()
                         cap = None
                         self._set_error("stream open failed")
-                        self._stop.wait(0.35)
+                        self._wait_after_failure()
                         continue
                     self._record_open(cv2, cap)
                     if reconnect_count:
@@ -211,13 +258,34 @@ class _SharedStreamReader:
                     )
                     cap.release()
                     cap = None
-                    self._stop.wait(0.18)
+                    self._invalidate_stream("stream_read_failed")
+                    self._wait_after_failure()
                     continue
 
-                self._record_frame(frame, read_finished_at, (read_finished_at - read_started_at) * 1000.0)
-                self.agent._store_latest_frame(self.camera, frame, self.source_label)
+                unique_frame = self._record_frame(
+                    frame,
+                    read_finished_at,
+                    (read_finished_at - read_started_at) * 1000.0,
+                )
+                if not unique_frame:
+                    if self._pixels_frozen(read_finished_at):
+                        self._set_error("stream pixels frozen")
+                        logger.warning(
+                            "camera %s stream pixels remained unchanged; reopening capture",
+                            self.camera.get("id"),
+                        )
+                        cap.release()
+                        cap = None
+                        self._invalidate_stream("stream_pixels_frozen")
+                        self._wait_after_failure()
+                    continue
+                self.agent._store_latest_frame(
+                    self.camera,
+                    frame,
+                    self.source_label,
+                    stream_generation=self.stream_generation,
+                )
                 with self._condition:
-                    self._frame = frame.copy()
                     self._sequence += 1
                     self._last_error = ""
                     self._condition.notify_all()
@@ -241,22 +309,72 @@ class _SharedStreamReader:
             if 0.0 < advertised_fps < 240.0:
                 self._advertised_fps = advertised_fps
 
+    def _record_open_attempt(self) -> None:
+        with self._condition:
+            self._open_attempt_count += 1
+
+    def _invalidate_stream(self, reason: str) -> None:
+        with self._condition:
+            self._last_content_fingerprint = b""
+            self._last_unique_frame_monotonic = None
+            self._last_frame_monotonic = None
+            self._frame_arrivals.clear()
+            self._decoded_arrivals.clear()
+            self._read_samples.clear()
+            self._consecutive_repeated_frames = 0
+        self.stream_generation = self.agent.invalidate_stream_generation(
+            self.camera,
+            reader=self,
+            reason=reason,
+        )
+
+    def _wait_after_failure(self) -> None:
+        with self._condition:
+            self._consecutive_failures += 1
+            delay = stream_reconnect_delay(self._consecutive_failures)
+            self._next_retry_monotonic = time.monotonic() + delay
+        self._stop.wait(delay)
+        with self._condition:
+            self._next_retry_monotonic = None
+
     def _record_read_failure(self) -> None:
         with self._condition:
             self._read_failure_count += 1
 
-    def _record_frame(self, frame: Any, arrived_at: float, read_latency_ms: float) -> None:
+    def _record_frame(self, frame: Any, arrived_at: float, read_latency_ms: float) -> bool:
         try:
             height, width = frame.shape[:2]
         except (AttributeError, ValueError):
             height, width = 0, 0
         with self._condition:
-            self._frame_arrivals.append(float(arrived_at))
+            self._decoded_frame_count += 1
+            self._decoded_arrivals.append(float(arrived_at))
             self._read_samples.append((float(arrived_at), max(0.0, float(read_latency_ms))))
+            fingerprint = self.agent.frame_content_fingerprint(frame)
+            if fingerprint and fingerprint == self._last_content_fingerprint:
+                self._repeated_frame_count += 1
+                self._consecutive_repeated_frames += 1
+                return False
+            self._last_content_fingerprint = fingerprint
+            self._consecutive_repeated_frames = 0
+            self._frame_arrivals.append(float(arrived_at))
             self._last_frame_monotonic = float(arrived_at)
+            self._last_unique_frame_monotonic = float(arrived_at)
             self._last_frame_at = datetime.now(timezone.utc).isoformat()
             self._source_width = int(width)
             self._source_height = int(height)
+            self._consecutive_failures = 0
+            self._next_retry_monotonic = None
+            return True
+
+    def _pixels_frozen(self, now: float) -> bool:
+        with self._condition:
+            if self._last_unique_frame_monotonic is None:
+                return False
+            return (
+                self._consecutive_repeated_frames > 0
+                and float(now) - self._last_unique_frame_monotonic >= STREAM_FROZEN_RECONNECT_SECONDS
+            )
 
 
 class CameraAgent:
@@ -264,70 +382,179 @@ class CameraAgent:
         self.snapshot_dir = snapshot_dir
         self._capture_lock = Lock()
         self._frame_cache_lock = Lock()
+        self._frame_cache_condition = Condition(self._frame_cache_lock)
         self._frame_cache: Dict[str, Dict[str, Any]] = {}
         self._frame_sequences: Dict[str, int] = {}
         self._shared_stream_lock = Lock()
+        self._reconcile_lock = Lock()
         self._shared_streams: Dict[str, _SharedStreamReader] = {}
-        self._managed_streams: Dict[str, tuple[Dict[str, Any], _SharedStreamReader]] = {}
+        self._managed_streams: Dict[int, tuple[Dict[str, Any], _SharedStreamReader]] = {}
+        self._stream_generations: Dict[int, int] = {}
+        self._source_change_listeners: list[Callable[[Dict[str, Any]], Any]] = []
+
+    def add_source_change_listener(self, listener: Callable[[Dict[str, Any]], Any]) -> None:
+        if not callable(listener):
+            raise TypeError("camera source change listener must be callable")
+        with self._shared_stream_lock:
+            if listener not in self._source_change_listeners:
+                self._source_change_listeners.append(listener)
 
     def reconcile_managed_streams(self, cameras: list[Dict[str, Any]]) -> None:
         """Keep one reader per enabled real camera regardless of preview subscribers."""
-        desired: dict[str, Dict[str, Any]] = {}
+        desired: dict[int, Dict[str, Any]] = {}
         for camera in cameras:
             if not camera.get("enabled", True):
                 continue
             source, _backend, source_label = self.resolve_capture_source(camera)
             if self._is_demo_source(source):
                 continue
-            desired[self._frame_cache_key(camera)] = {
+            camera_id = int(camera.get("id") or 0)
+            if camera_id <= 0:
+                continue
+            desired[camera_id] = {
                 **camera,
                 "_managed_source": source,
                 "_managed_local": isinstance(source, int),
                 "_managed_source_label": source_label,
             }
 
-        with self._shared_stream_lock:
-            existing = dict(self._managed_streams)
-        for key, (camera, reader) in existing.items():
-            if key in desired:
-                continue
-            self._release_shared_stream(camera, reader)
+        transitions: list[Dict[str, Any]] = []
+        with self._reconcile_lock:
             with self._shared_stream_lock:
-                self._managed_streams.pop(key, None)
-
-        for key, camera in desired.items():
-            with self._shared_stream_lock:
-                if key in self._managed_streams:
+                existing = dict(self._managed_streams)
+            for camera_id, (previous, reader) in existing.items():
+                current = desired.get(camera_id)
+                if current is not None and self._camera_signature(previous) == self._camera_signature(current):
                     continue
-            reader = self._acquire_shared_stream(
-                camera,
-                source=camera["_managed_source"],
-                is_local_source=bool(camera["_managed_local"]),
-                source_label=str(camera["_managed_source_label"]),
-            )
-            release_duplicate = False
-            with self._shared_stream_lock:
-                if key not in self._managed_streams:
-                    self._managed_streams[key] = (camera, reader)
-                else:
-                    release_duplicate = True
-            if release_duplicate:
-                self._release_shared_stream(camera, reader)
+                with self._shared_stream_lock:
+                    self._managed_streams.pop(camera_id, None)
+                self._retire_shared_stream(reader)
+                self._clear_camera_cache(camera_id)
+                transitions.append({
+                    "camera_id": camera_id,
+                    "reason": "source_changed" if current is not None else "camera_removed_or_disabled",
+                    "previous": self._public_camera_identity(previous),
+                    "current": self._public_camera_identity(current),
+                })
+
+            for transition in transitions:
+                self._notify_source_change(transition)
+
+            for camera_id, camera in desired.items():
+                with self._shared_stream_lock:
+                    if camera_id in self._managed_streams:
+                        continue
+                reader = self._acquire_shared_stream(
+                    camera,
+                    source=camera["_managed_source"],
+                    is_local_source=bool(camera["_managed_local"]),
+                    source_label=str(camera["_managed_source_label"]),
+                )
+                release_duplicate = False
+                with self._shared_stream_lock:
+                    if camera_id not in self._managed_streams:
+                        self._managed_streams[camera_id] = (camera, reader)
+                    else:
+                        release_duplicate = True
+                if release_duplicate:
+                    self._release_shared_stream(camera, reader)
 
     def managed_stream_status(self) -> Dict[str, Any]:
         with self._shared_stream_lock:
             managed = list(self._managed_streams.items())
         streams = []
-        for _key, (camera, reader) in managed:
+        for _camera_id, (camera, reader) in managed:
             streams.append(
                 {
                     "camera_id": camera.get("id"),
+                    "configured_source_key": self.frame_source_key(camera),
                     "subscribers": reader.subscribers,
                     "running": reader._thread.is_alive(),
                     **reader.status(),
                 }
             )
         return {"managed_stream_count": len(streams), "streams": streams}
+
+    def managed_camera_status(self, camera: Dict[str, Any]) -> Dict[str, Any] | None:
+        reader = self._managed_reader(camera)
+        if reader is None:
+            return None
+        return {
+            "camera_id": int(camera.get("id") or 0),
+            "configured_source_key": self.frame_source_key(camera),
+            **reader.status(),
+        }
+
+    def frame_content_fingerprint(self, frame: Any) -> bytes:
+        try:
+            sample = frame[::16, ::16]
+            return hashlib.blake2s(sample.tobytes(), digest_size=12).digest()
+        except (AttributeError, TypeError, ValueError):
+            return b""
+
+    def _camera_signature(self, camera: Dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            int(camera.get("id") or 0),
+            self.frame_source_key(camera),
+            bool(camera.get("enabled", True)),
+        )
+
+    def _public_camera_identity(self, camera: Dict[str, Any] | None) -> Dict[str, Any] | None:
+        if camera is None:
+            return None
+        return {
+            "camera_id": int(camera.get("id") or 0),
+            "stream_url": str(camera.get("stream_url") or ""),
+            "enabled": bool(camera.get("enabled", True)),
+            "source_key": self.frame_source_key(camera),
+        }
+
+    def _clear_camera_cache(self, camera_id: int) -> None:
+        with self._frame_cache_condition:
+            for key, cached in list(self._frame_cache.items()):
+                if int(cached.get("camera_id") or 0) == int(camera_id):
+                    self._frame_cache.pop(key, None)
+            self._frame_cache_condition.notify_all()
+
+    def _notify_source_change(self, transition: Dict[str, Any]) -> None:
+        with self._shared_stream_lock:
+            listeners = list(self._source_change_listeners)
+        for listener in listeners:
+            try:
+                listener(dict(transition))
+            except Exception:
+                logger.exception(
+                    "camera %s source transition listener failed",
+                    transition.get("camera_id"),
+                )
+
+    def invalidate_stream_generation(
+        self,
+        camera: Dict[str, Any],
+        *,
+        reader: _SharedStreamReader,
+        reason: str,
+    ) -> int:
+        camera_id = int(camera.get("id") or 0)
+        if camera_id <= 0:
+            return int(reader.stream_generation)
+        with self._shared_stream_lock:
+            current_generation = max(
+                int(reader.stream_generation),
+                int(self._stream_generations.get(camera_id, 0)),
+            )
+            generation = current_generation + 1
+            self._stream_generations[camera_id] = generation
+        self._clear_camera_cache(camera_id)
+        identity = self._public_camera_identity(camera)
+        self._notify_source_change({
+            "camera_id": camera_id,
+            "reason": str(reason or "stream_discontinuity"),
+            "previous": identity,
+            "current": identity,
+            "stream_generation": generation,
+        })
+        return generation
 
     def resolve_capture_source(self, camera: Dict[str, Any]) -> Tuple[Any, int | None, str]:
         stream_url = str(camera["stream_url"]).strip()
@@ -375,10 +602,24 @@ class CameraAgent:
                 return cached
             managed_reader = self._managed_reader(camera)
             if managed_reader is not None:
-                managed_reader.wait_for_frame(0, timeout=2.0)
+                managed_status = managed_reader.status()
+                if (
+                    str(managed_status.get("state") or "") == "retrying"
+                    and int(managed_status.get("decoded_frames") or 0) == 0
+                ):
+                    raise CameraError(
+                        f"Cannot open {managed_reader.source_label}: "
+                        f"{managed_status.get('last_error') or 'stream unavailable'}"
+                    )
+                managed_reader.wait_for_update(0, timeout=2.0)
                 cached = self.latest_cached_frame(camera, max_age_seconds=max_cache_age_seconds)
                 if cached is not None:
                     return cached
+                managed_status = managed_reader.status()
+                raise CameraError(
+                    f"Cannot read {managed_reader.source_label}: "
+                    f"{managed_status.get('last_error') or managed_status.get('state') or 'stream unavailable'}"
+                )
         with self._capture_lock:
             capture = self._capture_frame_unlocked(camera)
         frame_identity = self._store_latest_frame(camera, capture["frame"], capture["source"])
@@ -405,15 +646,50 @@ class CameraAgent:
                 "source": f"{cached['source']} cached",
                 "frame_id": cached["frame_id"],
                 "captured_at": cached["captured_at"],
+                "captured_monotonic": cached["captured_monotonic"],
                 "camera_id": cached["camera_id"],
                 "source_key": cached["source_key"],
+                "configured_source_key": cached["configured_source_key"],
+                "stream_generation": cached["stream_generation"],
             }
+
+    def wait_for_frame_update(
+        self,
+        cameras: list[Dict[str, Any]],
+        after_frame_ids: Dict[int, str],
+        *,
+        timeout: float = 0.25,
+    ) -> bool:
+        watched = [
+            (self._frame_cache_key(camera), int(camera.get("id") or 0))
+            for camera in cameras
+            if camera.get("id")
+        ]
+        if not watched:
+            return False
+
+        def has_update() -> bool:
+            for key, camera_id in watched:
+                cached = self._frame_cache.get(key)
+                if cached and str(cached.get("frame_id") or "") != str(after_frame_ids.get(camera_id) or ""):
+                    return True
+            return False
+
+        with self._frame_cache_condition:
+            return bool(
+                self._frame_cache_condition.wait_for(
+                    has_update,
+                    timeout=max(0.01, float(timeout)),
+                )
+            )
 
     def _store_latest_frame(
         self,
         camera: Dict[str, Any],
         frame: Any,
         source_label: str,
+        *,
+        stream_generation: int = 0,
     ) -> Dict[str, Any] | None:
         try:
             height, width = frame.shape[:2]
@@ -421,28 +697,38 @@ class CameraAgent:
             return None
         key = self._frame_cache_key(camera)
         camera_id = int(camera.get("id") or 0)
-        source_key = self.frame_source_key(camera)
+        configured_source_key = self.frame_source_key(camera)
+        source_key = f"{configured_source_key}:g{max(0, int(stream_generation))}"
         captured_at = datetime.now(timezone.utc).isoformat()
-        with self._frame_cache_lock:
-            sequence = self._frame_sequences.get(key, 0) + 1
-            self._frame_sequences[key] = sequence
+        captured_monotonic = time.monotonic()
+        with self._frame_cache_condition:
+            sequence_key = str(camera_id or key)
+            sequence = self._frame_sequences.get(sequence_key, 0) + 1
+            self._frame_sequences[sequence_key] = sequence
             frame_id = f"{camera_id or 'source'}-{sequence}"
             self._frame_cache[key] = {
                 "frame": frame.copy(),
                 "width": width,
                 "height": height,
                 "source": source_label,
-                "monotonic": time.monotonic(),
+                "monotonic": captured_monotonic,
                 "frame_id": frame_id,
                 "captured_at": captured_at,
+                "captured_monotonic": captured_monotonic,
                 "camera_id": camera_id,
                 "source_key": source_key,
+                "configured_source_key": configured_source_key,
+                "stream_generation": max(0, int(stream_generation)),
             }
+            self._frame_cache_condition.notify_all()
         return {
             "frame_id": frame_id,
             "captured_at": captured_at,
+            "captured_monotonic": captured_monotonic,
             "camera_id": camera_id,
             "source_key": source_key,
+            "configured_source_key": configured_source_key,
+            "stream_generation": max(0, int(stream_generation)),
         }
 
     def frame_data_url(self, frame: Any, jpeg_quality: int = 62, max_width: int = 768) -> str:
@@ -462,20 +748,36 @@ class CameraAgent:
 
     def _frame_cache_key(self, camera: Dict[str, Any]) -> str:
         camera_id = camera.get("id")
-        stream_url = str(camera.get("stream_url", "")).strip()
-        return f"{camera_id or 'source'}::{stream_url}"
+        return f"{camera_id or 'source'}::{self.frame_source_key(camera)}"
 
     def frame_source_key(self, camera: Dict[str, Any]) -> str:
         camera_id = int(camera.get("id") or 0)
         stream_url = str(camera.get("stream_url") or "").strip()
-        identity = f"{camera_id}\0{stream_url}".encode("utf-8", errors="strict")
+        username = str(camera.get("username") or "")
+        password = str(camera.get("password") or "")
+        identity = f"{camera_id}\0{stream_url}\0{username}\0{password}".encode("utf-8", errors="strict")
         return hashlib.sha256(identity).hexdigest()[:24]
 
-    def _managed_reader(self, camera: Dict[str, Any]) -> _SharedStreamReader | None:
+    def active_frame_source_key(self, camera: Dict[str, Any]) -> str:
         key = self._frame_cache_key(camera)
+        with self._frame_cache_lock:
+            cached = self._frame_cache.get(key)
+            if cached and cached.get("source_key"):
+                return str(cached["source_key"])
+        return f"{self.frame_source_key(camera)}:g0"
+
+    def frame_source_matches(self, camera: Dict[str, Any], source_key: Any) -> bool:
+        configured = self.frame_source_key(camera)
+        candidate = str(source_key or "")
+        return candidate == configured or candidate.startswith(f"{configured}:g")
+
+    def _managed_reader(self, camera: Dict[str, Any]) -> _SharedStreamReader | None:
+        camera_id = int(camera.get("id") or 0)
         with self._shared_stream_lock:
-            managed = self._managed_streams.get(key)
-            return managed[1] if managed is not None else None
+            managed = self._managed_streams.get(camera_id)
+            if managed is None or self._camera_signature(managed[0]) != self._camera_signature(camera):
+                return None
+            return managed[1]
 
     def _is_demo_source(self, source: Any) -> bool:
         return isinstance(source, str) and source.strip().lower().startswith(DEMO_STREAM_PREFIXES)
@@ -608,16 +910,41 @@ class CameraAgent:
         jpeg_quality: int = 70,
         max_width: int = 1280,
         max_height: int = 720,
-        drop_stale_frames: int = 4,
     ) -> Generator[bytes, None, None]:
+        cv2 = _load_cv2()
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(35, min(int(jpeg_quality), 95))]
+        for capture in self.raw_frames(
+            camera,
+            fps=fps,
+            max_width=max_width,
+            max_height=max_height,
+        ):
+            ok, encoded = cv2.imencode(".jpg", capture["frame"], encode_params)
+            if not ok:
+                continue
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Cache-Control: no-store\r\n\r\n"
+                + encoded.tobytes()
+                + b"\r\n"
+            )
+
+    def raw_frames(
+        self,
+        camera: Dict[str, Any],
+        *,
+        fps: int = 15,
+        max_width: int = 1280,
+        max_height: int = 720,
+    ) -> Generator[Dict[str, Any], None, None]:
         cv2 = _load_cv2()
         source, _backend, source_label = self.resolve_capture_source(camera)
         if self._is_demo_source(source):
-            yield from self._demo_mjpeg_frames(
+            yield from self._demo_raw_frames(
                 cv2,
                 camera,
                 fps=fps,
-                jpeg_quality=jpeg_quality,
                 max_width=max_width,
                 max_height=max_height,
             )
@@ -635,14 +962,19 @@ class CameraAgent:
         black_frame_streak = 0
         frame_interval = 1.0 / bounded_stream_fps(fps)
         frame_deadline = time.monotonic()
-        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(35, min(int(jpeg_quality), 95))]
         black_confirm_frames = max(3, min(int(fps), 12))
         try:
             while True:
-                frame, sequence, _error = reader.wait_for_frame(last_sequence)
-                if frame is None:
+                sequence, _error = reader.wait_for_update(last_sequence)
+                if sequence <= last_sequence:
+                    if reader.is_stopped:
+                        return
                     continue
                 last_sequence = sequence
+                capture = self.latest_cached_frame(camera, max_age_seconds=0.75)
+                if capture is None:
+                    continue
+                frame = capture["frame"]
 
                 if self._frame_is_near_black(cv2, frame):
                     black_frame_streak += 1
@@ -664,20 +996,21 @@ class CameraAgent:
                     if black_frame_streak:
                         logger.info("camera %s recovered from %s near-black frame(s)", camera.get("id"), black_frame_streak)
                     black_frame_streak = 0
-                    last_good_frame = frame.copy()
+                    last_good_frame = frame
                     display_frame = frame
 
-                output_frame = self._resize_for_stream(cv2, display_frame, max_width=max_width, max_height=max_height)
-                ok, encoded = cv2.imencode(".jpg", output_frame, encode_params)
-                if not ok:
-                    continue
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n"
-                    b"Cache-Control: no-store\r\n\r\n"
-                    + encoded.tobytes()
-                    + b"\r\n"
+                output_frame = self._resize_for_stream(
+                    cv2,
+                    display_frame,
+                    max_width=max_width,
+                    max_height=max_height,
                 )
+                yield {
+                    **capture,
+                    "frame": output_frame,
+                    "width": int(output_frame.shape[1]),
+                    "height": int(output_frame.shape[0]),
+                }
                 delay, frame_deadline = next_stream_frame_delay(
                     previous_deadline=frame_deadline,
                     now=time.monotonic(),
@@ -700,12 +1033,16 @@ class CameraAgent:
         with self._shared_stream_lock:
             reader = self._shared_streams.get(key)
             if reader is None:
+                camera_id = int(camera.get("id") or 0)
+                generation = self._stream_generations.get(camera_id, 0) + 1
+                self._stream_generations[camera_id] = generation
                 reader = _SharedStreamReader(
                     agent=self,
                     camera=camera,
                     source=source,
                     is_local_source=is_local_source,
                     source_label=source_label,
+                    stream_generation=generation,
                 )
                 self._shared_streams[key] = reader
                 reader.subscribers = 1
@@ -727,6 +1064,14 @@ class CameraAgent:
                 should_stop = True
         if should_stop:
             reader.stop()
+
+    def _retire_shared_stream(self, reader: _SharedStreamReader) -> None:
+        with self._shared_stream_lock:
+            for key, current in list(self._shared_streams.items()):
+                if current is reader:
+                    self._shared_streams.pop(key, None)
+            reader.subscribers = 0
+        reader.stop()
 
     def _open_stream_capture(self, cv2: Any, source: Any, is_local_source: bool) -> Any:
         if is_local_source:
@@ -768,20 +1113,6 @@ class CameraAgent:
         except (AttributeError, TypeError, ValueError):
             return True
 
-    def _latest_stream_frame(self, cap: Any, drop_stale_frames: int) -> Tuple[bool, Any]:
-        if drop_stale_frames <= 0:
-            return cap.read()
-
-        grabbed = False
-        for _ in range(drop_stale_frames):
-            grabbed = bool(cap.grab())
-            if not grabbed:
-                break
-
-        if grabbed:
-            return cap.retrieve()
-        return cap.read()
-
     def _resize_for_stream(self, cv2: Any, frame: Any, max_width: int, max_height: int) -> Any:
         height, width = frame.shape[:2]
         target_width = max(0, int(max_width or 0))
@@ -799,31 +1130,28 @@ class CameraAgent:
         resized_height = max(1, int(height * scale))
         return cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
 
-    def _demo_mjpeg_frames(
+    def _demo_raw_frames(
         self,
         cv2: Any,
         camera: Dict[str, Any],
         fps: int,
-        jpeg_quality: int,
         max_width: int,
         max_height: int,
-    ) -> Generator[bytes, None, None]:
+    ) -> Generator[Dict[str, Any], None, None]:
         delay = 1.0 / bounded_stream_fps(fps)
-        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(35, min(int(jpeg_quality), 95))]
         frame_index = 0
         while True:
             frame = self._demo_frame(cv2, camera, frame_index=frame_index)
-            self._store_latest_frame(camera, frame, "demo stream")
-            frame = self._resize_for_stream(cv2, frame, max_width=max_width, max_height=max_height)
-            ok, encoded = cv2.imencode(".jpg", frame, encode_params)
-            if ok:
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n"
-                    b"Cache-Control: no-store\r\n\r\n"
-                    + encoded.tobytes()
-                    + b"\r\n"
-                )
+            identity = self._store_latest_frame(camera, frame, "demo stream") or {}
+            output = self._resize_for_stream(cv2, frame, max_width=max_width, max_height=max_height)
+            yield {
+                "frame": output,
+                "width": int(output.shape[1]),
+                "height": int(output.shape[0]),
+                "elapsed_ms": 0,
+                "source": "demo stream",
+                **identity,
+            }
             frame_index += 1
             time.sleep(delay)
 

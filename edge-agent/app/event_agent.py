@@ -4,6 +4,11 @@ from typing import Any, Dict, Optional
 
 
 class EventAgent:
+    CLOUD_VERIFICATION_EVENT_TYPES = {
+        "fall_candidate",
+        "prolonged_floor_lying",
+    }
+
     def __init__(self, storage: Any, notifier: Any, throttle_seconds: int) -> None:
         self.storage = storage
         self.notifier = notifier
@@ -59,7 +64,11 @@ class EventAgent:
             self.storage.enqueue_event_upload_jobs(event)
 
         rules = self.storage.get_rules()
-        if rules.get("notification_enabled") and self._should_notify(event_type, level):
+        if (
+            rules.get("notification_enabled")
+            and event_type not in self.CLOUD_VERIFICATION_EVENT_TYPES
+            and self._should_notify(event_type, level)
+        ):
             self.notifier.send(
                 title="回家告警",
                 body=summary,

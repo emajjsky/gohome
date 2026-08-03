@@ -1,5 +1,9 @@
 import Foundation
 
+enum CameraDisplayTransport {
+    static let edgeComposedMJPEG = "edge-composed-mjpeg-v1"
+}
+
 protocol CameraStreamClient: Sendable {
     func streams(
         cameraID: String,
@@ -11,7 +15,6 @@ protocol CameraStreamClient: Sendable {
 
 struct CameraDisplayStreams: Sendable {
     let frames: AsyncThrowingStream<Data, Error>
-    let poses: AsyncThrowingStream<PosePacket, Error>?
 }
 
 struct CameraPlaybackSession: Decodable, Sendable {
@@ -21,10 +24,6 @@ struct CameraPlaybackSession: Decodable, Sendable {
     let streamPath: String?
     let privacyMode: VideoPrivacyMode?
     let minimumPrivacyMode: VideoPrivacyMode?
-    let poseStreamURL: String?
-    let poseStreamPath: String?
-    let sceneStreamURL: String?
-    let sceneStreamPath: String?
     let displayTransport: String?
 
     enum CodingKeys: String, CodingKey {
@@ -34,10 +33,6 @@ struct CameraPlaybackSession: Decodable, Sendable {
         case streamPath = "stream_path"
         case privacyMode = "privacy_mode"
         case minimumPrivacyMode = "minimum_privacy_mode"
-        case poseStreamURL = "pose_stream_url"
-        case poseStreamPath = "pose_stream_path"
-        case sceneStreamURL = "scene_stream_url"
-        case sceneStreamPath = "scene_stream_path"
         case displayTransport = "display_transport"
     }
 }

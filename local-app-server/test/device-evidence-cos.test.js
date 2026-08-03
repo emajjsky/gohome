@@ -5,6 +5,12 @@ const path = require('node:path');
 const test = require('node:test');
 const { createLocalAppServer } = require('../server');
 
+async function readStream(stream) {
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
 function listen(server) {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -23,8 +29,10 @@ test('device event evidence is stored in COS and served through an authorized as
   const objects = new Map();
   const cosStorage = {
     enabled: true,
-    async putObject({ key, body, contentType }) {
-      objects.set(key, { body: Buffer.from(body), contentType });
+    async putObject({ key, body, contentType, contentLength }) {
+      const content = await readStream(body);
+      assert.equal(content.length, contentLength);
+      objects.set(key, { body: content, contentType });
     },
     signedGetUrl({ key }) {
       return `https://cos.test/read?key=${encodeURIComponent(key)}`;
@@ -66,7 +74,7 @@ test('device event evidence is stored in COS and served through an authorized as
     const jpeg = Buffer.from([0xff, 0xd8, 0x12, 0x34, 0xff, 0xd9]);
     const uploaded = await request(
       baseURL,
-      '/api/v1/device/media-assets/upload?file_name=fall.jpg&snapshot_path=camera-1/fall.jpg&content_type=image%2Fjpeg&edge_event_id=42',
+      '/api/v1/device/media-assets/upload?file_name=fall.jpg&snapshot_path=camera-1/fall.jpg&content_type=image%2Fjpeg&edge_event_id=42&idempotency_key=evidence-job-42',
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${deviceToken}`, 'Content-Type': 'image/jpeg' },
@@ -78,6 +86,20 @@ test('device event evidence is stored in COS and served through an authorized as
     assert.match(uploaded.body.asset.storage_key, new RegExp(`^edge-evidence/${familyID}/`));
     assert.deepEqual(objects.get(uploaded.body.asset.storage_key).body, jpeg);
     assert.equal(fs.existsSync(path.join(dataDir, 'media', uploaded.body.asset.storage_key)), false);
+
+    const duplicate = await request(
+      baseURL,
+      '/api/v1/device/media-assets/upload?file_name=fall.jpg&snapshot_path=camera-1/fall.jpg&content_type=image%2Fjpeg&edge_event_id=42&idempotency_key=evidence-job-42',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${deviceToken}`, 'Content-Type': 'image/jpeg' },
+        body: jpeg,
+      },
+    );
+    assert.equal(duplicate.response.status, 200);
+    assert.equal(duplicate.body.duplicate, true);
+    assert.equal(duplicate.body.asset.id, uploaded.body.asset.id);
+    assert.equal(objects.size, 1);
 
     const served = await fetch(`${baseURL}${uploaded.body.asset.url}`, {
       headers: appHeaders,

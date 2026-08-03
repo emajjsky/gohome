@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
 
@@ -77,7 +78,8 @@ def main() -> None:
             rule_evaluation_id=None,
             event_candidate_id=None,
         )
-        with storage.connect() as conn:
+        with sqlite3.connect(storage.db_path) as conn:
+            conn.execute("PRAGMA foreign_keys = OFF")
             conn.execute("DELETE FROM cameras WHERE id = ?", (orphan_id,))
         reconciliation = storage.reconcile_camera_runtime_state()
         if reconciliation["orphan_presence_sessions_closed"] != 1 or reconciliation["orphan_observation_logs_closed"] != 1:

@@ -165,6 +165,14 @@ test('media asset metadata survives PostgreSQL serialization and hydration', () 
       storage_key: 'memory-media/family-1/video.mp4',
       purpose: 'family_memory',
       size: 2_000_000,
+      retention_class: 'family_memory',
+      retention_status: 'failed',
+      retention_reason: 'temporary_storage_failure',
+      retain_until: '2026-08-24T02:00:00.000Z',
+      deletion_attempts: 3,
+      deletion_error: 'COS timeout',
+      next_deletion_at: '2026-07-24T03:00:00.000Z',
+      deleted_at: null,
       metadata: {
         duration_seconds: 42.5,
         pixel_width: 1280,
@@ -182,12 +190,28 @@ test('media asset metadata survives PostgreSQL serialization and hydration', () 
   assert.equal(persisted.metadata.pixel_width, 1280);
   assert.equal(persisted.metadata.uploaded_by, 'user-1');
   assert.equal(persisted.metadata.evidence_frame_role, 'current');
+  assert.equal(persisted.retention_class, 'family_memory');
+  assert.equal(persisted.retention_status, 'failed');
+  assert.equal(persisted.retention_reason, 'temporary_storage_failure');
+  assert.equal(persisted.retain_until, '2026-08-24T02:00:00.000Z');
+  assert.equal(persisted.deletion_attempts, 3);
+  assert.equal(persisted.deletion_error, 'COS timeout');
+  assert.equal(persisted.next_deletion_at, '2026-07-24T03:00:00.000Z');
+  assert.equal(persisted.deleted_at, null);
 
   const db = createDbFromCloudRows(bundle.tables, { created_at: timestamp });
   assert.equal(db.assets[0].metadata.duration_seconds, 42.5);
   assert.equal(db.assets[0].metadata.pixel_height, 720);
   assert.equal(db.assets[0].purpose, 'family_memory');
   assert.equal(db.assets[0].evidence_frame_role, 'current');
+  assert.equal(db.assets[0].retention_class, 'family_memory');
+  assert.equal(db.assets[0].retention_status, 'failed');
+  assert.equal(db.assets[0].retention_reason, 'temporary_storage_failure');
+  assert.equal(db.assets[0].retain_until, '2026-08-24T02:00:00.000Z');
+  assert.equal(db.assets[0].deletion_attempts, 3);
+  assert.equal(db.assets[0].deletion_error, 'COS timeout');
+  assert.equal(db.assets[0].next_deletion_at, '2026-07-24T03:00:00.000Z');
+  assert.equal(db.assets[0].deleted_at, null);
 });
 
 test('media upload intents survive PostgreSQL serialization and hydration without credentials', () => {

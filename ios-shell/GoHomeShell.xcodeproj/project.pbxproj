@@ -34,7 +34,6 @@
 		51FBE67F5F279B4917217D2E /* AppSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBD54AB746D00CA01186A345 /* AppSmokeTests.swift */; };
 		52BDFD1047914540E6EED552 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 745FA5F9F7623CBCEAB2CECA /* PrivacyInfo.xcprivacy */; };
 		534644623660DEA287B580EA /* LocationResolutionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF9313BF5A1F7F97EF5C4E54 /* LocationResolutionTests.swift */; };
-		53A1290388D0FDE6B3984357 /* PoseOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEDA06240825492AB2B4FD91 /* PoseOverlayView.swift */; };
 		5D928E7C69CD6E019C8A0887 /* MemoryViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B58D029742116912B1429B4 /* MemoryViewModelTests.swift */; };
 		5FF590BFEDBB2BCCA3398400 /* AppRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3334DDE3CC653FD1541523C /* AppRepository.swift */; };
 		66DBFC376E46F1B98BEAC2FB /* CareMessageCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBBA32F7917F6F0495B49EF /* CareMessageCard.swift */; };
@@ -69,7 +68,6 @@
 		9FE26DB79EA01C7FA539E446 /* GuardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35694CA4A00D80224CA52260 /* GuardViewModel.swift */; };
 		A34E4C0838AEEEBCB72281DD /* SessionContextStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 153AA19D1DAA360F7C305E40 /* SessionContextStoreTests.swift */; };
 		A386FB222C58E8B2E5DF0F79 /* ProfileSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD5F7C723D896735C87F84E6 /* ProfileSetupView.swift */; };
-		A501D7F086DA965D2B38346B /* PoseStreamModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0200D17726D0B5D6AA86DDB2 /* PoseStreamModels.swift */; };
 		A69E15317D58391D625EF7EB /* AppSurfaceAuditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97FAD81D9CB3895DD306A81D /* AppSurfaceAuditTests.swift */; };
 		A6F807D1364DE51308B5214F /* GoHomeTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178685C6494C490560EA8C1F /* GoHomeTheme.swift */; };
 		AA01C071F85F043A7248CF7D /* GuardViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11948718D182C31312EF0F0 /* GuardViewModelTests.swift */; };
@@ -134,7 +132,6 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		0200D17726D0B5D6AA86DDB2 /* PoseStreamModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoseStreamModels.swift; sourceTree = "<group>"; };
 		034F8DF1B2469B3F726E21D5 /* EventActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventActionTests.swift; sourceTree = "<group>"; };
 		07F18362615012A08B508843 /* EditorialFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorialFeed.swift; sourceTree = "<group>"; };
 		0D01161BF9C1C4B53931480F /* CitySelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CitySelectionView.swift; sourceTree = "<group>"; };
@@ -229,7 +226,6 @@
 		DB14E97EA80F980629836AB4 /* ArticleDetailRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArticleDetailRoute.swift; sourceTree = "<group>"; };
 		DC983BB541A2B1A1322861BA /* MJPEGStreamClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MJPEGStreamClient.swift; sourceTree = "<group>"; };
 		DCBC9A488B26D294184EF5C7 /* EventDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventDetailView.swift; sourceTree = "<group>"; };
-		DEDA06240825492AB2B4FD91 /* PoseOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoseOverlayView.swift; sourceTree = "<group>"; };
 		E0FD43806D9F2114438EA8D5 /* PrivacyDataViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyDataViewModel.swift; sourceTree = "<group>"; };
 		E1A73F7D469FE583CB8FC59A /* MemoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryView.swift; sourceTree = "<group>"; };
 		E3C5B56549E211F6B746E441 /* GoHomeShellTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GoHomeShellTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -500,7 +496,6 @@
 			children = (
 				748FA19F9C6A88D3512B1119 /* CameraStreamClient.swift */,
 				DC983BB541A2B1A1322861BA /* MJPEGStreamClient.swift */,
-				0200D17726D0B5D6AA86DDB2 /* PoseStreamModels.swift */,
 			);
 			path = Streaming;
 			sourceTree = "<group>";
@@ -533,7 +528,6 @@
 				F39487C3C9C1738C8D3B6951 /* CameraThumbnailStrip.swift */,
 				15569BD4FFB560A9B817E516 /* GuardView.swift */,
 				35694CA4A00D80224CA52260 /* GuardViewModel.swift */,
-				DEDA06240825492AB2B4FD91 /* PoseOverlayView.swift */,
 				79B96D514BE47AD7DD320EE8 /* VideoPrivacy.swift */,
 			);
 			path = Guard;
@@ -776,8 +770,6 @@
 				6707311DE7DC983040D8636B /* MemoryViewModel.swift in Sources */,
 				E51DA65A8EAF55CC4345C2C0 /* OnboardingCoordinatorView.swift in Sources */,
 				D4863B6BBFE635B6E725250D /* OnboardingService.swift in Sources */,
-				53A1290388D0FDE6B3984357 /* PoseOverlayView.swift in Sources */,
-				A501D7F086DA965D2B38346B /* PoseStreamModels.swift in Sources */,
 				4C8B25ECE483853D68E4E25D /* PrivacyDataViewModel.swift in Sources */,
 				38FB3254E094D7CF65EBA079 /* ProductRecommendationsView.swift in Sources */,
 				E0C56BACC90133AC7ACB4016 /* ProfileModels.swift in Sources */,
@@ -880,7 +872,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = X4M4T6Z4CJ;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -998,7 +990,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = X4M4T6Z4CJ;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

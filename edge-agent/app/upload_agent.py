@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Event, Thread
 from typing import Any, Callable, Dict
+from http.client import HTTPConnection, HTTPSConnection
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 import json
 import secrets
@@ -293,11 +294,11 @@ class UploadAgent:
             raise ValueError("snapshot_path escapes snapshot directory") from exc
         if not source.is_file():
             raise FileNotFoundError(f"snapshot file not found: {snapshot_path}")
-        content = source.read_bytes()
         params = {
             "file_name": source.name,
             "snapshot_path": snapshot_path,
             "content_type": str(payload.get("content_type") or "image/jpeg"),
+            "idempotency_key": str(job.get("idempotency_key") or f"media:{int(job['id'])}"),
         }
         camera_id, local_camera_id = self._camera_ids(job, payload)
         if camera_id:
@@ -312,10 +313,10 @@ class UploadAgent:
             params["purpose"] = str(payload["purpose"])
         if payload.get("evidence_frame_role"):
             params["evidence_frame_role"] = str(payload["evidence_frame_role"])
-        response = self._request_json(
+        response = self._request_file_json(
             "POST",
             f"/api/v1/device/media-assets/upload?{urlencode(params)}",
-            body=content,
+            source=source,
             content_type=str(payload.get("content_type") or "image/jpeg"),
         )
         return {
@@ -496,6 +497,56 @@ class UploadAgent:
             ) from exc
         except URLError as exc:
             raise RuntimeError(f"{method} {url} failed: {exc.reason}") from exc
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"{method} {url} returned non-json response") from exc
+
+    def _request_file_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        source: Path,
+        content_type: str,
+    ) -> Dict[str, Any]:
+        normalized_path = path if path.startswith("/") else f"/{path}"
+        url = f"{self._base_url()}{normalized_path}"
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise RuntimeError(f"Invalid upload URL: {url}")
+        connection_type = HTTPSConnection if parsed.scheme == "https" else HTTPConnection
+        timeout = max(2.0, float(getattr(self.settings, "upload_request_timeout_seconds", 12)))
+        connection = connection_type(parsed.hostname, parsed.port, timeout=timeout)
+        target = parsed.path or "/"
+        if parsed.query:
+            target = f"{target}?{parsed.query}"
+        try:
+            with source.open("rb") as handle:
+                connection.request(
+                    method.upper(),
+                    target,
+                    body=handle,
+                    headers={
+                        "Authorization": f"Bearer {self._device_token()}",
+                        "Content-Type": content_type,
+                        "Content-Length": str(source.stat().st_size),
+                        "Accept": "application/json",
+                    },
+                )
+                response = connection.getresponse()
+                raw = response.read().decode("utf-8", errors="replace")
+        except OSError as exc:
+            raise RuntimeError(f"{method} {url} failed: {exc}") from exc
+        finally:
+            connection.close()
+        if response.status < 200 or response.status >= 300:
+            raise UploadRequestError(
+                f"{method} {url} failed: HTTP {response.status} {raw}",
+                status_code=int(response.status),
+            )
         if not raw:
             return {}
         try:

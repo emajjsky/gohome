@@ -74,8 +74,21 @@ class ContinualTracker:
         self.observed = []
         self.frames = []
         self.reset = []
+        self.next_state = "tracked"
 
-    def observe(self, camera_id, frame, *, frame_id, captured_at, poses, context=None, source_key=""):
+    def observe(
+        self,
+        camera_id,
+        frame,
+        *,
+        frame_id,
+        captured_at,
+        captured_monotonic=None,
+        poses,
+        context=None,
+        source_key="",
+        person_present=False,
+    ):
         self.observed.append({
             "camera_id": camera_id,
             "frame": frame,
@@ -84,18 +97,31 @@ class ContinualTracker:
             "poses": poses,
             "context": context or {},
             "source_key": source_key,
+            "person_present": person_present,
         })
         return {"state": "observed", "pose_count": len(poses)}
 
-    def update_frame(self, camera_id, frame, *, frame_id, captured_at, source_key=""):
+    def update_frame(
+        self,
+        camera_id,
+        frame,
+        *,
+        frame_id,
+        captured_at,
+        captured_monotonic=None,
+        source_key="",
+    ):
         self.frames.append({
             "camera_id": camera_id,
             "frame_id": frame_id,
             "captured_at": captured_at,
             "source_key": source_key,
         })
+        state = self.next_state
+        self.next_state = "tracked"
         return {
-            "state": "tracked",
+            "state": state,
+            "reason": "forward_backward_error" if state == "coasting" else "",
             "pose_count": 1,
             "formal_evidence_eligible": False,
             "risk_hint": {
@@ -130,7 +156,15 @@ class CameraAgent:
             "frame": "latest-frame",
             "frame_id": f"{camera['id']}-latest",
             "captured_at": "2026-07-17T00:00:00.3+00:00",
+            "captured_monotonic": 100.3,
+            "source_key": f"camera-{camera['id']}:g1",
         }
+
+    def frame_source_matches(self, camera, source_key):
+        return str(source_key or "").startswith(f"camera-{camera['id']}:g")
+
+    def active_frame_source_key(self, camera):
+        return f"camera-{camera['id']}:g1"
 
 
 def main() -> None:
@@ -237,15 +271,25 @@ def main() -> None:
     worker._publish_continual_pose_anchor(
         24,
         frame="observed-frame",
-        capture={"frame_id": "24-100", "captured_at": "2026-07-17T00:00:00+00:00"},
+        capture={
+            "frame_id": "24-100",
+            "captured_at": "2026-07-17T00:00:00+00:00",
+            "source_key": "camera-24:g1",
+        },
         analysis=observed_analysis,
     )
     if len(continual_tracker.observed) != 1 or continual_tracker.observed[0]["camera_id"] != 24:
         raise SystemExit("fresh worker pose did not become a continual tracking anchor")
+    if not continual_tracker.observed[0]["person_present"]:
+        raise SystemExit("worker did not preserve model-confirmed person presence")
     worker._publish_continual_pose_anchor(
         24,
         frame="model-confirmed-empty-frame",
-        capture={"frame_id": "24-empty", "captured_at": "2026-07-17T00:00:00.05+00:00"},
+        capture={
+            "frame_id": "24-empty",
+            "captured_at": "2026-07-17T00:00:00.05+00:00",
+            "source_key": "camera-24:g1",
+        },
         analysis={"pose_model_status": "not_visible", "poses": [], "people": []},
     )
     if len(continual_tracker.observed) != 2 or continual_tracker.observed[-1]["poses"]:
@@ -253,7 +297,11 @@ def main() -> None:
     worker._publish_continual_pose_anchor(
         24,
         frame="hailo-idle-empty-frame",
-        capture={"frame_id": "24-idle-empty", "captured_at": "2026-07-17T00:00:00.06+00:00"},
+        capture={
+            "frame_id": "24-idle-empty",
+            "captured_at": "2026-07-17T00:00:00.06+00:00",
+            "source_key": "camera-24:g1",
+        },
         analysis={
             "pose_model_status": "disabled",
             "inference_backend": "hailo",
@@ -268,7 +316,11 @@ def main() -> None:
     worker._publish_continual_pose_anchor(
         24,
         frame="cached-frame",
-        capture={"frame_id": "24-101", "captured_at": "2026-07-17T00:00:00.1+00:00"},
+        capture={
+            "frame_id": "24-101",
+            "captured_at": "2026-07-17T00:00:00.1+00:00",
+            "source_key": "camera-24:g1",
+        },
         analysis={"pose_model_status": "cached", "poses": observed_analysis["poses"]},
     )
     if len(continual_tracker.observed) != 3:
@@ -277,13 +329,17 @@ def main() -> None:
     tracked_payload = worker.observe_stream_frame(
         {"id": 25},
         "stream-frame",
-        {"frame_id": "25-200", "captured_at": "2026-07-17T00:00:00.2+00:00"},
+        {
+            "frame_id": "25-200",
+            "captured_at": "2026-07-17T00:00:00.2+00:00",
+            "source_key": "camera-25:g1",
+        },
     )
     if continual_tracker.frames != [{
         "camera_id": 25,
         "frame_id": "25-200",
         "captured_at": "2026-07-17T00:00:00.2+00:00",
-        "source_key": "",
+        "source_key": "camera-25:g1",
     }]:
         raise SystemExit("shared stream frame was not sent to the continual tracker")
     if not isinstance(tracked_payload, dict) or not tracked_payload.get("risk_hint", {}).get("detected"):
@@ -291,12 +347,43 @@ def main() -> None:
     if scheduler.camera_state(25, now=clock.value).get("mode") != "risk":
         raise SystemExit("display-only rapid downward hint did not wake formal risk inference")
 
+    continual_tracker.next_state = "coasting"
+    worker.observe_stream_frame(
+        {"id": 24},
+        "tracking-lost-frame",
+        {
+            "frame_id": "24-201",
+            "captured_at": "2026-07-17T00:00:00.21+00:00",
+            "source_key": "camera-24:g1",
+        },
+    )
+    refresh_state = scheduler.camera_state(24, now=clock.value)
+    if (
+        not refresh_state.get("refresh_requested")
+        or refresh_state.get("last_refresh_reason") != "forward_backward_error"
+    ):
+        raise SystemExit(f"tracking loss did not prioritize a fresh Hailo anchor: {refresh_state}")
+
     worker._runtime_cameras = {24: {"id": 24, "enabled": True}}
     worker._run_continual_tracking_iteration()
     if continual_tracker.frames[-1]["frame_id"] != "24-latest":
         raise SystemExit("independent continual tracking loop did not consume the latest cached frame")
-    if abs(worker._continual_tracking_interval_seconds() - 0.067) > 0.001:
+    if continual_tracker.frames[-1]["source_key"] != "camera-24:g1":
+        raise SystemExit("continual tracking lost the active camera source generation")
+    if worker._capture_identity_matches(
+        {"id": 24},
+        {"frame_id": "24-old", "source_key": "camera-24:g0"},
+    ):
+        raise SystemExit("an old stream generation was accepted after camera reconnect")
+    if abs(worker._continual_tracking_interval_seconds() - 0.05) > 0.001:
         raise SystemExit("continual tracking loop did not use the accelerated tracker interval")
+    cadence_started = clock.value
+    clock.value += 0.02
+    if abs(worker._continual_tracking_wait_seconds(cadence_started) - 0.03) > 0.001:
+        raise SystemExit("continual tracking cadence did not subtract processing time")
+    clock.value += 0.06
+    if worker._continual_tracking_wait_seconds(cadence_started) != 0.0:
+        raise SystemExit("continual tracking cadence slept after exceeding its frame deadline")
 
     worker._reset_camera_runtime_memory(24)
     if continual_tracker.reset != [24]:

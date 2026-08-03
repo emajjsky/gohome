@@ -22,11 +22,13 @@ def main() -> None:
         raise SystemExit("algorithm console must have one continuous video base")
     if 'id="analysisFrame"' in html:
         raise SystemExit("algorithm console still swaps the video base for analysis JPEGs")
+    if 'id="detectionOverlay"' in html:
+        raise SystemExit("algorithm console still contains a client composition surface")
 
     live_loop = function_source(console, "async function loadLiveAnalysis", "async function captureSelected")
     delay = function_source(console, "function liveAnalysisDelay", "function stopLiveAnalysisLoop")
-    if "return 500" not in delay:
-        raise SystemExit("algorithm console metadata polling must use a controlled 500ms cadence")
+    if "const livePosePollIntervalMs = 200" not in console or "return livePosePollIntervalMs" not in delay:
+        raise SystemExit("algorithm console metadata polling is not bounded to a low-overhead cadence")
     if "include_frame=false" not in live_loop:
         raise SystemExit("algorithm console does not poll lightweight overlay metadata")
     if "include_frame=true" in live_loop:
@@ -44,13 +46,40 @@ def main() -> None:
     if '$("analysisFrame")' in render_stream:
         raise SystemExit("stream lifecycle still depends on the removed analysis image")
     if "/continual-pose/stream.mjpg" not in render_stream:
-        raise SystemExit("algorithm console is not using the synchronized server-side pose stream")
+        raise SystemExit("algorithm console is not using the privacy-aware continual pose stream")
+    if "poseCompositionOwner" in render_stream or "client" in render_stream:
+        raise SystemExit("management console still assigns a client pose composition owner")
 
-    render_overlay = function_source(console, "function renderDetectionOverlay", "function renderPoseSkeleton")
-    if "serverAnnotated" not in render_overlay:
-        raise SystemExit("algorithm console can still draw a second asynchronous pose overlay")
+    stream_lifecycle = function_source(console, "function frameSequenceForCamera", "function renderStream")
+    lifecycle_tokens = [
+        "tracking?.source_key",
+        "frameSequence < state.lastAnalysisFrameSequence",
+        "stream.naturalWidth === 0",
+        "renderStream({ retry: true })",
+    ]
+    if any(token not in stream_lifecycle for token in lifecycle_tokens):
+        raise SystemExit("algorithm console cannot recover a stale MJPEG connection after source restart")
+    if "ensureLiveStreamLifecycle(cameraId, tracking, frameId)" not in live_loop:
+        raise SystemExit("live metadata does not supervise the MJPEG stream lifecycle")
 
-    safety_state = function_source(console, "function unifiedSafetyState", "function overlayPeopleForMode")
+    runtime_metrics = function_source(console, "function runtimeVideoMetrics", "function renderStreamHealth")
+    for token in ("stage_latency_ms", "accepted_fps", "source_to_cloud_ms_p95"):
+        if token not in runtime_metrics:
+            raise SystemExit(f"management console is missing measured video metric: {token}")
+
+    forbidden_client_composition = (
+        "poseCompositionOwner",
+        "function renderPoseSkeleton",
+        'class="pose-skeleton',
+        'class="pose-keypoint',
+        "renderDetectionOverlay",
+    )
+    if any(token in console for token in forbidden_client_composition):
+        raise SystemExit("management console still contains client-side frame composition")
+    if any(token in console_css for token in ("pose-skeleton", "pose-keypoint", "--console-pose")):
+        raise SystemExit("management console still ships client-side skeleton styles")
+
+    safety_state = function_source(console, "function unifiedSafetyState", "const postureLabels")
     priority_tokens = [
         "if (analysis.black_screen)",
         'if (fallRuntime.stage === "confirmed")',
@@ -60,7 +89,6 @@ def main() -> None:
     priority_positions = [safety_state.index(token) for token in priority_tokens]
     if priority_positions != sorted(priority_positions):
         raise SystemExit("primary safety status priority is not deterministic")
-
     expected_css_asset = re.search(r'/admin/console\.css\?v=([^"\']+)', (ROOT / "admin" / "index.html").read_text(encoding="utf-8"))
     expected_js_asset = re.search(r'/admin/console\.js\?v=([^"\']+)', (ROOT / "admin" / "index.html").read_text(encoding="utf-8"))
     if not expected_css_asset or not expected_js_asset or expected_css_asset.group(1) != expected_js_asset.group(1):
@@ -84,7 +112,7 @@ def main() -> None:
     if "pageName" in privacy_poll or "loadVideoPrivacyMode" not in privacy_poll:
         raise SystemExit("privacy state is not synchronized on every management page")
 
-    display_poses = function_source(console, "function snapshotDisplayPoses", "function snapshotPoseEdges")
+    display_poses = function_source(console, "function snapshotDisplayPoses", "function isPresenceCandidate")
     if '"coasting"' not in display_poses:
         raise SystemExit("algorithm console hides bounded coasting overlays")
     status = function_source(console, "function renderContinualPoseStatus", "function renderDetectionSummary")
@@ -94,9 +122,11 @@ def main() -> None:
     print({
         "ok": True,
         "continuous_video_base": True,
-        "synchronized_server_overlay": True,
+        "single_pose_composition_owner": True,
+        "server_composed_skeleton": True,
         "analysis_jpeg_swap_removed": True,
         "stable_stream_status": True,
+        "stream_restart_recovery": True,
         "bounded_coasting_visible": True,
         "deterministic_safety_priority": True,
         "shared_console_design_system": True,

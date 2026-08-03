@@ -297,6 +297,12 @@ class ConfigSyncAgent:
                     if str(mapped_local_id) == str(local_id):
                         camera_map.pop(remote_id, None)
 
+        runtime_cameras = self.storage.list_cameras(include_secret=True)
+        reconcile = getattr(self.camera_agent, "reconcile_managed_streams", None)
+        if callable(reconcile):
+            reconcile(runtime_cameras)
+        self._refresh_camera_runtime_reports(reports, runtime_cameras)
+
         state["camera_map"] = camera_map
         state["config_version"] = str(config.get("config_version") or "")
         state["last_applied_at"] = self._utc_iso()
@@ -326,6 +332,53 @@ class ConfigSyncAgent:
             "maintenance": maintenance_result,
             "event_state_commands": event_state_result,
         }
+
+    def _refresh_camera_runtime_reports(
+        self,
+        reports: list[Dict[str, Any]],
+        cameras: list[Dict[str, Any]],
+    ) -> None:
+        status_for_camera = getattr(self.camera_agent, "managed_camera_status", None)
+        if not callable(status_for_camera):
+            return
+        cameras_by_id = {
+            int(camera["id"]): camera
+            for camera in cameras
+            if camera.get("id")
+        }
+        for report in reports:
+            local_camera_id = report.get("local_camera_id")
+            try:
+                camera_id = int(local_camera_id)
+            except (TypeError, ValueError):
+                continue
+            camera = cameras_by_id.get(camera_id)
+            if camera is None or not bool(camera.get("enabled", True)):
+                continue
+            runtime = status_for_camera(camera)
+            if not isinstance(runtime, dict):
+                continue
+            state = str(runtime.get("state") or "warming")
+            unique_frames = int(runtime.get("unique_frames") or 0)
+            frame_age_ms = runtime.get("latest_frame_age_ms")
+            fresh = (
+                state == "streaming"
+                and unique_frames > 0
+                and frame_age_ms is not None
+                and float(frame_age_ms) <= 2000.0
+            )
+            if fresh:
+                status = "online"
+                last_error = ""
+            else:
+                status = "configuring" if unique_frames == 0 else "reconnecting"
+                last_error = str(runtime.get("last_error") or "")
+            self.storage.update_camera_status(camera_id, status, last_error)
+            report.update({
+                "status": status,
+                "last_error": last_error,
+                "runtime_stream": runtime,
+            })
 
     def _apply_event_state_commands(
         self,

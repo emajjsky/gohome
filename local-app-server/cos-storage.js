@@ -24,6 +24,9 @@ function createDisabledStorage() {
             throw new Error("COS storage is not configured");
         },
         async deleteObject() {},
+        async listObjects() {
+            throw new Error("COS storage is not configured");
+        },
     };
 }
 
@@ -70,19 +73,48 @@ function createCosStorage(options = {}) {
         async headObject({ key }) {
             return client.headObject({ Bucket: bucket, Region: region, Key: key });
         },
-        async putObject({ key, body, contentType }) {
+        async putObject({ key, body, contentType, contentLength }) {
             if (!key) throw new Error("COS object key is required");
-            return client.putObject({
+            const request = {
                 Bucket: bucket,
                 Region: region,
                 Key: key,
                 Body: body,
                 ContentType: contentType || "application/octet-stream",
-            });
+            };
+            if (Number.isFinite(Number(contentLength)) && Number(contentLength) >= 0) {
+                request.ContentLength = Number(contentLength);
+            }
+            return client.putObject(request);
         },
         async deleteObject({ key }) {
             if (!key) return;
             await client.deleteObject({ Bucket: bucket, Region: region, Key: key });
+        },
+        async listObjects({ prefix = "" } = {}) {
+            const objects = [];
+            let marker = "";
+            do {
+                const response = await client.getBucket({
+                    Bucket: bucket,
+                    Region: region,
+                    Prefix: String(prefix || ""),
+                    Marker: marker,
+                    MaxKeys: 1000,
+                });
+                for (const item of response?.Contents || []) {
+                    objects.push({
+                        key: String(item.Key || ""),
+                        size: Number(item.Size || 0),
+                        last_modified: String(item.LastModified || ""),
+                        etag: String(item.ETag || ""),
+                    });
+                }
+                const truncated = response?.IsTruncated === true || String(response?.IsTruncated || "").toLowerCase() === "true";
+                marker = truncated ? String(response?.NextMarker || "") : "";
+                if (truncated && !marker) throw new Error("COS listing was truncated without a continuation marker");
+            } while (marker);
+            return objects;
         },
     };
 }

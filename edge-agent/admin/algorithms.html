@@ -6,7 +6,7 @@
   <title>视觉算法 - 回家</title>
   <link rel="stylesheet" href="/ui/assets/styles/material-symbols.css">
   <link rel="stylesheet" href="/admin/styles.css?v=20260721-minimal-1">
-  <link rel="stylesheet" href="/admin/console.css?v=20260730-live-fps-1">
+  <link rel="stylesheet" href="/admin/console.css?v=20260802-edge-compose-1">
 </head>
 <body data-page="algorithms" class="admin-web-page">
   <a class="skip-link" href="#main">跳到内容</a>
@@ -84,7 +84,7 @@
             </div>
             <div class="cinema-runtime-strip" aria-label="运行状态">
               <span><b id="runtimeMode">-</b><em>模式</em></span>
-              <span><b id="runtimeFps">-</b><em>帧率</em></span>
+              <span><b id="runtimeFps">-</b><em>输出</em></span>
               <span><b id="runtimeTemp">-</b><em>温度</em></span>
               <span><b id="runtimeStreams">-</b><em>路数</em></span>
             </div>
@@ -109,7 +109,6 @@
                 </div>
                 <div id="previewStage" class="preview-stage algorithm-live-stage">
                   <img id="mjpegStream" alt="实时摄像头视频">
-                  <div id="detectionOverlay" class="detection-overlay" aria-hidden="true"></div>
                   <div id="streamEmpty" class="empty-preview stream-empty">
                     <span class="material-symbols-outlined" data-icon="□">videocam_off</span>
                     <p>请选择摄像头</p>
@@ -189,6 +188,6 @@
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/admin/console.js?v=20260730-live-fps-1"></script>
+  <script src="/admin/console.js?v=20260802-edge-compose-1"></script>
 </body>
 </html>

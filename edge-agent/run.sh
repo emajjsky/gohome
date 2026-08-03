@@ -53,4 +53,5 @@ PYTHON_BIN="$(select_python_bin)" || {
 
 exec "$PYTHON_BIN" -m uvicorn app.main:app \
   --host "${GOHOME_AGENT_HOST:-0.0.0.0}" \
-  --port "${GOHOME_AGENT_PORT:-8711}"
+  --port "${GOHOME_AGENT_PORT:-8711}" \
+  --timeout-graceful-shutdown "${GOHOME_AGENT_GRACEFUL_SHUTDOWN_SECONDS:-6}"

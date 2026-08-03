@@ -1,30 +1,43 @@
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from threading import RLock
 from typing import Any, Callable, Dict, Generator
+import time
 
 import numpy as np
 
 from ..camera_agent import _load_cv2
 from ..video_privacy import normalize_privacy_mode, stricter_privacy_mode
-from .privacy_background import PrivacyBackgroundReconstructor
+from .privacy_background import PrivacyBackgroundReconstructor, PrivacyCalibrationRequired
 from .synchronized_pose_stream import DEFAULT_SKELETON_EDGES
+
+
+SKELETON_LINE_BGR = (219, 209, 33)
+SKELETON_JOINT_BGR = (255, 255, 255)
 
 
 class PrivacyFrameRenderer:
     """Render privacy-safe relay frames without changing safety inference inputs."""
 
-    version = "privacy-frame-renderer-v9"
+    version = "privacy-frame-renderer-v20"
+    maximum_pose_wait_seconds = 0.055
 
     def __init__(
         self,
         tracker: Any,
         background_reconstructor: PrivacyBackgroundReconstructor | None = None,
+        segmentation_backend: Any | None = None,
     ) -> None:
         self.tracker = tracker
         self.background_reconstructor = background_reconstructor or PrivacyBackgroundReconstructor()
+        self.segmentation_backend = segmentation_backend
         self._render_cache: OrderedDict[tuple[Any, ...], bytes] = OrderedDict()
+        self._sync_rejections: Dict[int, Dict[str, Any]] = {}
+        self._segmentation_assists: Dict[int, Dict[str, Any]] = {}
+        self._output_samples: Dict[int, deque[float]] = {}
+        self._output_state: Dict[int, Dict[str, Any]] = {}
+        self._stage_latency_samples: Dict[int, Dict[str, deque[float]]] = {}
         self._cache_lock = RLock()
 
     def render_jpeg(
@@ -38,6 +51,7 @@ class PrivacyFrameRenderer:
     ) -> bytes:
         resolved_mode = normalize_privacy_mode(mode)
         if resolved_mode == "original":
+            self._record_output(int(camera_id), resolved_mode, "")
             return jpeg
 
         cv2 = _load_cv2()
@@ -45,14 +59,140 @@ class PrivacyFrameRenderer:
         frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
         if frame is None or frame.size == 0:
             raise RuntimeError("privacy frame decode failed")
+        return self.render_frame(
+            int(camera_id),
+            frame,
+            resolved_mode,
+            quality=quality,
+            source_key=source_key,
+        )
+
+    def render_frame(
+        self,
+        camera_id: int,
+        frame: Any,
+        mode: str,
+        *,
+        quality: int = 55,
+        source_key: str = "",
+        frame_id: str = "",
+        captured_at: str = "",
+        captured_monotonic: float | None = None,
+    ) -> bytes:
+        started_at = time.perf_counter()
+        try:
+            return self._render_frame(
+                camera_id,
+                frame,
+                mode,
+                quality=quality,
+                source_key=source_key,
+                frame_id=frame_id,
+                captured_at=captured_at,
+                captured_monotonic=captured_monotonic,
+            )
+        finally:
+            self._record_stage_latency(
+                int(camera_id),
+                "total",
+                (time.perf_counter() - started_at) * 1000.0,
+            )
+
+    def _render_frame(
+        self,
+        camera_id: int,
+        frame: Any,
+        mode: str,
+        *,
+        quality: int = 55,
+        source_key: str = "",
+        frame_id: str = "",
+        captured_at: str = "",
+        captured_monotonic: float | None = None,
+    ) -> bytes:
+        resolved_mode = normalize_privacy_mode(mode)
+        cv2 = _load_cv2()
+        if frame is None or not getattr(frame, "size", 0):
+            raise RuntimeError("privacy source frame is unavailable")
+        if resolved_mode == "original":
+            self._record_output(
+                int(camera_id),
+                resolved_mode,
+                str(frame_id or ""),
+                captured_monotonic=captured_monotonic,
+            )
+            return self._encode_jpeg(cv2, frame, quality, camera_id=int(camera_id))
+
+        if frame_id:
+            metadata_started_at = time.perf_counter()
+            metadata = self._metadata_for_current_frame(
+                int(camera_id),
+                frame_id=str(frame_id),
+                source_key=str(source_key or ""),
+                captured_at=str(captured_at or ""),
+                captured_monotonic=captured_monotonic,
+                frame=frame,
+            )
+            self._record_stage_latency(
+                int(camera_id),
+                "pose_sync_wait",
+                (time.perf_counter() - metadata_started_at) * 1000.0,
+            )
+            cache_key = (
+                int(camera_id),
+                str(source_key or ""),
+                resolved_mode,
+                str(frame_id),
+                int(frame.shape[1]),
+                int(frame.shape[0]),
+                int(quality),
+            )
+            cached = self._cached_render(cache_key)
+            if cached is not None:
+                self._record_output(
+                    int(camera_id),
+                    resolved_mode,
+                    str(frame_id),
+                    captured_monotonic=captured_monotonic,
+                )
+                return cached
+            if resolved_mode == "person_blur":
+                output = self._render_person_blur_for_camera(
+                    cv2,
+                    int(camera_id),
+                    frame,
+                    metadata,
+                    source_key=source_key,
+                )
+            else:
+                output = self._render_skeleton(
+                    cv2,
+                    int(camera_id),
+                    frame,
+                    metadata,
+                    source_key=source_key,
+                )
+            rendered = self._encode_jpeg(cv2, output, quality, camera_id=int(camera_id))
+            self._store_cached_render(cache_key, rendered)
+            self._record_output(
+                int(camera_id),
+                resolved_mode,
+                str(frame_id),
+                captured_monotonic=captured_monotonic,
+            )
+            return rendered
 
         synchronized = self._synchronized_bundle(int(camera_id), source_key=source_key)
         if synchronized is not None:
             source = synchronized.get("frame")
             tracking = dict(synchronized.get("tracking") or {})
             if source is None or not str(tracking.get("frame_id") or ""):
-                output = self._safe_fallback_scene(cv2, int(camera_id), frame, source_key=source_key)
-                return self._encode_jpeg(cv2, output, quality)
+                if resolved_mode == "skeleton":
+                    raise PrivacyCalibrationRequired(int(camera_id), "synchronized_frame_required")
+                output = self._strong_blur(cv2, frame)
+                rendered = self._encode_jpeg(cv2, output, quality, camera_id=int(camera_id))
+                self._record_output(int(camera_id), resolved_mode, "")
+                return rendered
             cache_key = (
                 int(camera_id),
                 str(source_key or ""),
@@ -64,6 +204,12 @@ class PrivacyFrameRenderer:
             )
             cached = self._cached_render(cache_key)
             if cached is not None:
+                self._record_output(
+                    int(camera_id),
+                    resolved_mode,
+                    str(tracking.get("frame_id") or ""),
+                    captured_monotonic=tracking.get("captured_monotonic"),
+                )
                 return cached
             source_height, source_width = source.shape[:2]
             output_frame = cv2.resize(
@@ -77,18 +223,14 @@ class PrivacyFrameRenderer:
                 "image_width": int(source_width),
                 "image_height": int(source_height),
             }
-            privacy_boxes = self._privacy_boxes(metadata, output_frame.shape[1], output_frame.shape[0])
-            if not privacy_boxes:
-                self.background_reconstructor.reconstruct(
+            if resolved_mode == "person_blur":
+                output = self._render_person_blur_for_camera(
                     cv2,
                     int(camera_id),
                     output_frame,
-                    np.zeros(output_frame.shape[:2], dtype=np.uint8),
-                    clear_token=str(tracking.get("frame_id") or ""),
+                    metadata,
                     source_key=source_key,
                 )
-            if resolved_mode == "person_blur":
-                output = self._render_person_blur(cv2, output_frame, metadata)
             else:
                 output = self._render_skeleton(
                     cv2,
@@ -97,17 +239,33 @@ class PrivacyFrameRenderer:
                     metadata,
                     source_key=source_key,
                 )
-            rendered = self._encode_jpeg(cv2, output, quality)
+            rendered = self._encode_jpeg(cv2, output, quality, camera_id=int(camera_id))
             self._store_cached_render(cache_key, rendered)
+            self._record_output(
+                int(camera_id),
+                resolved_mode,
+                str(tracking.get("frame_id") or ""),
+                captured_monotonic=tracking.get("captured_monotonic"),
+            )
             return rendered
 
         if self._supports_synchronized_frames():
-            output = self._safe_fallback_scene(cv2, int(camera_id), frame, source_key=source_key)
-            return self._encode_jpeg(cv2, output, quality)
+            if resolved_mode == "skeleton":
+                raise PrivacyCalibrationRequired(int(camera_id), "synchronized_frame_required")
+            output = self._strong_blur(cv2, frame)
+            rendered = self._encode_jpeg(cv2, output, quality, camera_id=int(camera_id))
+            self._record_output(int(camera_id), resolved_mode, "")
+            return rendered
 
         metadata = self._tracking_metadata(int(camera_id))
         if resolved_mode == "person_blur":
-            output = self._render_person_blur(cv2, frame, metadata)
+            output = self._render_person_blur_for_camera(
+                cv2,
+                int(camera_id),
+                frame,
+                metadata,
+                source_key=source_key,
+            )
         else:
             output = self._render_skeleton(
                 cv2,
@@ -116,7 +274,9 @@ class PrivacyFrameRenderer:
                 metadata,
                 source_key=source_key,
             )
-        return self._encode_jpeg(cv2, output, quality)
+        rendered = self._encode_jpeg(cv2, output, quality, camera_id=int(camera_id))
+        self._record_output(int(camera_id), resolved_mode, "")
+        return rendered
 
     def _supports_synchronized_frames(self) -> bool:
         return self.tracker is not None and callable(getattr(self.tracker, "latest_synchronized_frame", None))
@@ -127,89 +287,247 @@ class PrivacyFrameRenderer:
         try:
             bundle = self.tracker.latest_synchronized_frame(camera_id)
             if not isinstance(bundle, dict):
+                self._record_sync_rejection(camera_id, "bundle_unavailable")
                 return None
             tracking = bundle.get("tracking") if isinstance(bundle.get("tracking"), dict) else {}
             if int(tracking.get("camera_id") or 0) != int(camera_id):
+                self._record_sync_rejection(camera_id, "camera_mismatch")
                 return None
             frame_id = str(tracking.get("frame_id") or "")
             if not frame_id.startswith(f"{int(camera_id)}-"):
+                self._record_sync_rejection(camera_id, "frame_identity_mismatch")
                 return None
             tracked_source_key = str(tracking.get("source_key") or bundle.get("source_key") or "")
             if source_key and tracked_source_key != str(source_key):
+                self._record_sync_rejection(camera_id, "source_generation_mismatch")
                 return None
             return dict(bundle)
-        except Exception:
+        except Exception as exc:
+            self._record_sync_rejection(camera_id, "tracker_error", detail=str(exc))
             return None
+
+    def _record_sync_rejection(self, camera_id: int, reason: str, *, detail: str = "") -> None:
+        with self._cache_lock:
+            metrics = self._sync_rejections.setdefault(int(camera_id), {
+                "total": 0,
+                "reasons": {},
+                "last_reason": "",
+                "last_detail": "",
+                "last_at_monotonic": 0.0,
+            })
+            metrics["total"] = int(metrics["total"]) + 1
+            reasons = metrics["reasons"]
+            reasons[str(reason)] = int(reasons.get(str(reason), 0)) + 1
+            metrics["last_reason"] = str(reason)
+            metrics["last_detail"] = str(detail or "")[:240]
+            metrics["last_at_monotonic"] = time.monotonic()
+
+    def _record_segmentation_assist(self, camera_id: int, reason: str) -> None:
+        with self._cache_lock:
+            metrics = self._segmentation_assists.setdefault(int(camera_id), {
+                "total": 0,
+                "last_reason": "",
+                "last_at_monotonic": 0.0,
+            })
+            metrics["total"] = int(metrics["total"]) + 1
+            metrics["last_reason"] = str(reason)
+            metrics["last_at_monotonic"] = time.monotonic()
 
     def reset_camera(self, camera_id: int) -> None:
         camera_id = int(camera_id)
         self.background_reconstructor.reset_camera(camera_id)
+        reset_segmentation = getattr(self.segmentation_backend, "reset_camera", None)
+        if callable(reset_segmentation):
+            reset_segmentation(camera_id)
         with self._cache_lock:
             for key in [item for item in self._render_cache if int(item[0]) == camera_id]:
                 self._render_cache.pop(key, None)
+            self._sync_rejections.pop(camera_id, None)
+            self._segmentation_assists.pop(camera_id, None)
+            self._output_samples.pop(camera_id, None)
+            self._output_state.pop(camera_id, None)
+            self._stage_latency_samples.pop(camera_id, None)
 
-    def status(self) -> Dict[str, Any]:
-        with self._cache_lock:
-            render_cache_count = len(self._render_cache)
-        return {
-            "schema_version": self.version,
-            "render_cache_count": render_cache_count,
-            "background": self.background_reconstructor.status(),
-        }
-
-    def _encode_jpeg(self, cv2: Any, output: Any, quality: int) -> bytes:
-        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(40, min(int(quality), 85))]
-        ok, rendered = cv2.imencode(".jpg", output, encode_params)
-        if not ok:
-            raise RuntimeError("privacy frame encode failed")
-        return rendered.tobytes()
-
-    def safe_scene_jpeg(
+    def begin_calibration(
         self,
         camera_id: int,
-        jpeg: bytes,
         *,
-        quality: int = 55,
-        source_key: str = "",
-    ) -> bytes:
-        """Return the current scene with only detected people replaced."""
+        source_key: str,
+        width: int,
+        height: int,
+        calibration_id: str,
+    ) -> Dict[str, Any]:
+        return self.background_reconstructor.begin_calibration(
+            int(camera_id),
+            source_key=str(source_key or ""),
+            width=int(width),
+            height=int(height),
+            calibration_id=str(calibration_id),
+        )
+
+    def observe_calibration_frame(
+        self,
+        camera_id: int,
+        frame: Any,
+        *,
+        source_key: str,
+        frame_id: str,
+        captured_at: str = "",
+        captured_monotonic: float | None = None,
+    ) -> Dict[str, Any]:
         cv2 = _load_cv2()
-        encoded = np.frombuffer(jpeg, dtype=np.uint8)
-        frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
-        if frame is None or frame.size == 0:
-            raise RuntimeError("safe scene frame decode failed")
-        synchronized = self._synchronized_bundle(int(camera_id), source_key=source_key)
-        if synchronized is not None:
-            source = synchronized.get("frame")
-            tracking = dict(synchronized.get("tracking") or {})
-            if source is not None:
-                source_height, source_width = source.shape[:2]
-                frame = cv2.resize(
-                    source,
-                    (int(frame.shape[1]), int(frame.shape[0])),
-                    interpolation=cv2.INTER_AREA if source_width > frame.shape[1] else cv2.INTER_LINEAR,
-                )
-                metadata = {
-                    "tracking": tracking,
-                    "analysis_context": dict(synchronized.get("analysis_context") or {}),
-                    "image_width": int(source_width),
-                    "image_height": int(source_height),
-                }
-            else:
-                metadata = self._tracking_metadata(int(camera_id))
-        elif self._supports_synchronized_frames():
-            scene = self._safe_fallback_scene(cv2, int(camera_id), frame, source_key=source_key)
-            return self._encode_jpeg(cv2, scene, quality)
-        else:
-            metadata = self._tracking_metadata(int(camera_id))
-        scene = self._person_free_scene(
+        metadata = self._metadata_for_current_frame(
+            int(camera_id),
+            frame_id=str(frame_id),
+            source_key=str(source_key or ""),
+            captured_at=str(captured_at or ""),
+            captured_monotonic=captured_monotonic,
+            frame=frame,
+        )
+        mask = self._segmentation_mask(
             cv2,
             int(camera_id),
             frame,
             metadata,
             source_key=source_key,
         )
-        return self._encode_jpeg(cv2, scene, quality)
+        if mask is None:
+            raise PrivacyCalibrationRequired(int(camera_id), "segmentation_unavailable")
+        return self.background_reconstructor.observe_calibration(
+            cv2,
+            int(camera_id),
+            frame,
+            mask,
+            frame_token=str(frame_id),
+            source_key=str(source_key or ""),
+            person_evidence=self._has_person_evidence(metadata),
+        )
+
+    def status(self) -> Dict[str, Any]:
+        now = time.monotonic()
+        with self._cache_lock:
+            render_cache_count = len(self._render_cache)
+            sync_rejections = {
+                str(camera_id): {
+                    **metrics,
+                    "reasons": dict(metrics.get("reasons") or {}),
+                    "last_age_ms": round(
+                        max(0.0, now - float(metrics.get("last_at_monotonic") or 0.0)) * 1000.0,
+                        1,
+                    ) if metrics.get("last_at_monotonic") else None,
+                }
+                for camera_id, metrics in sorted(self._sync_rejections.items())
+            }
+            segmentation_assists = {
+                str(camera_id): {
+                    **metrics,
+                    "last_age_ms": round(
+                        max(0.0, now - float(metrics.get("last_at_monotonic") or 0.0)) * 1000.0,
+                        1,
+                    ) if metrics.get("last_at_monotonic") else None,
+                }
+                for camera_id, metrics in sorted(self._segmentation_assists.items())
+            }
+            cameras = {
+                str(camera_id): {
+                    **dict(self._output_state.get(camera_id) or {}),
+                    "output_fps": self._sample_rate(samples, now),
+                    "output_frame_age_ms": round(max(0.0, now - samples[-1]) * 1000.0, 1) if samples else None,
+                    "stage_latency_ms": {
+                        stage: self._latency_summary(values)
+                        for stage, values in sorted(
+                            (self._stage_latency_samples.get(camera_id) or {}).items()
+                        )
+                    },
+                }
+                for camera_id, samples in sorted(self._output_samples.items())
+            }
+        return {
+            "schema_version": self.version,
+            "render_cache_count": render_cache_count,
+            "synchronization_rejections": sync_rejections,
+            "segmentation_assists": segmentation_assists,
+            "cameras": cameras,
+            "background": self.background_reconstructor.status(),
+            "person_segmentation": (
+                self.segmentation_backend.status()
+                if callable(getattr(self.segmentation_backend, "status", None))
+                else {"schema_version": "disabled", "status": "unavailable"}
+            ),
+        }
+
+    def close(self) -> None:
+        close_segmentation = getattr(self.segmentation_backend, "close", None)
+        if callable(close_segmentation):
+            close_segmentation()
+
+    def _record_output(
+        self,
+        camera_id: int,
+        mode: str,
+        frame_id: str,
+        *,
+        captured_monotonic: Any = None,
+    ) -> None:
+        now = time.monotonic()
+        try:
+            sample_at = float(captured_monotonic)
+        except (TypeError, ValueError):
+            sample_at = now
+        if not np.isfinite(sample_at) or sample_at <= 0.0 or abs(now - sample_at) > 3600.0:
+            sample_at = now
+        camera_id = int(camera_id)
+        frame_id = str(frame_id or "")
+        with self._cache_lock:
+            previous = self._output_state.get(camera_id) or {}
+            self._output_state[camera_id] = {
+                "mode": str(mode or ""),
+                "last_frame_id": frame_id or str(previous.get("last_frame_id") or ""),
+            }
+            if not frame_id or frame_id == str(previous.get("last_frame_id") or ""):
+                return
+            samples = self._output_samples.setdefault(camera_id, deque(maxlen=300))
+            samples.append(sample_at)
+            while samples and samples[0] < now - 10.0:
+                samples.popleft()
+
+    def _sample_rate(self, samples: deque[float], now: float) -> float:
+        recent = [value for value in samples if value >= now - 10.0]
+        if len(recent) < 2:
+            return 0.0
+        return round((len(recent) - 1) / max(0.001, recent[-1] - recent[0]), 2)
+
+    def _record_stage_latency(self, camera_id: int, stage: str, elapsed_ms: float) -> None:
+        with self._cache_lock:
+            stages = self._stage_latency_samples.setdefault(int(camera_id), {})
+            samples = stages.setdefault(str(stage), deque(maxlen=300))
+            samples.append(max(0.0, float(elapsed_ms)))
+
+    @staticmethod
+    def _latency_summary(samples: deque[float]) -> Dict[str, float | int | None]:
+        if not samples:
+            return {"samples": 0, "median": None, "p95": None, "max": None, "last": None}
+        values = np.asarray(samples, dtype=np.float64)
+        return {
+            "samples": len(samples),
+            "median": round(float(np.percentile(values, 50)), 2),
+            "p95": round(float(np.percentile(values, 95)), 2),
+            "max": round(float(np.max(values)), 2),
+            "last": round(float(values[-1]), 2),
+        }
+
+    def _encode_jpeg(self, cv2: Any, output: Any, quality: int, *, camera_id: int) -> bytes:
+        started_at = time.perf_counter()
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), max(40, min(int(quality), 85))]
+        ok, rendered = cv2.imencode(".jpg", output, encode_params)
+        self._record_stage_latency(
+            int(camera_id),
+            "jpeg_encode",
+            (time.perf_counter() - started_at) * 1000.0,
+        )
+        if not ok:
+            raise RuntimeError("privacy frame encode failed")
+        return rendered.tobytes()
 
     def _person_free_scene(
         self,
@@ -220,19 +538,36 @@ class PrivacyFrameRenderer:
         *,
         source_key: str = "",
     ) -> Any:
-        height, width = frame.shape[:2]
-        boxes = self._privacy_boxes(metadata, width, height)
-        mask = np.zeros((height, width), dtype=np.uint8)
-        for x1, y1, x2, y2 in boxes:
-            cv2.rectangle(mask, (x1, y1), (x2 - 1, y2 - 1), 255, -1)
         tracking = dict(metadata.get("tracking") or {})
+        render_identity = dict(metadata.get("render_identity") or {})
+        segmentation_started_at = time.perf_counter()
+        mask = self._segmentation_mask(
+            cv2,
+            camera_id,
+            frame,
+            metadata,
+            source_key=source_key,
+        )
+        self._record_stage_latency(
+            int(camera_id),
+            "segmentation",
+            (time.perf_counter() - segmentation_started_at) * 1000.0,
+        )
+        if mask is None:
+            raise PrivacyCalibrationRequired(camera_id, "segmentation_unavailable")
+        reconstruction_started_at = time.perf_counter()
         scene = self.background_reconstructor.reconstruct(
             cv2,
             camera_id,
             frame,
             mask,
-            clear_token=str(tracking.get("frame_id") or ""),
+            clear_token=str(render_identity.get("frame_id") or tracking.get("frame_id") or ""),
             source_key=source_key,
+        )
+        self._record_stage_latency(
+            int(camera_id),
+            "background_reconstruction",
+            (time.perf_counter() - reconstruction_started_at) * 1000.0,
         )
         return scene
 
@@ -250,21 +585,6 @@ class PrivacyFrameRenderer:
             while len(self._render_cache) > 32:
                 self._render_cache.popitem(last=False)
 
-    def _safe_fallback_scene(
-        self,
-        cv2: Any,
-        camera_id: int,
-        frame: Any,
-        *,
-        source_key: str = "",
-    ) -> Any:
-        return self.background_reconstructor.safe_scene(
-            cv2,
-            int(camera_id),
-            frame,
-            source_key=source_key,
-        )
-
     def _tracking_metadata(self, camera_id: int) -> Dict[str, Any]:
         if self.tracker is None:
             return {"tracking": {"state": "empty", "poses": []}}
@@ -277,12 +597,89 @@ class PrivacyFrameRenderer:
         except Exception:
             return {"tracking": {"state": "empty", "poses": []}}
 
-    def _render_person_blur(self, cv2: Any, frame: Any, metadata: Dict[str, Any]) -> Any:
-        output = frame.copy()
-        boxes = self._privacy_boxes(metadata, output.shape[1], output.shape[0])
-        for x1, y1, x2, y2 in boxes:
-            self._obscure_region(cv2, output, x1, y1, x2, y2)
-        return output
+    def _metadata_for_current_frame(
+        self,
+        camera_id: int,
+        *,
+        frame_id: str,
+        source_key: str,
+        captured_at: str,
+        captured_monotonic: float | None,
+        frame: Any,
+    ) -> Dict[str, Any]:
+        deadline = time.monotonic() + self.maximum_pose_wait_seconds
+        metadata: Dict[str, Any] = {}
+        tracking: Dict[str, Any] = {}
+        stale_reason = "pose_frame_unavailable"
+        metadata_for_frame = getattr(self.tracker, "metadata_for_frame", None)
+        while True:
+            if callable(metadata_for_frame):
+                exact = metadata_for_frame(
+                    int(camera_id),
+                    frame_id=str(frame_id),
+                    source_key=str(source_key or ""),
+                )
+                if isinstance(exact, dict):
+                    metadata = dict(exact)
+                    tracking = dict(metadata.get("tracking") or {})
+                    stale_reason = ""
+                    break
+            metadata = self._tracking_metadata(int(camera_id))
+            tracking = dict(metadata.get("tracking") or {})
+            tracked_source = str(tracking.get("source_key") or metadata.get("source_key") or "")
+            tracked_frame_id = str(tracking.get("frame_id") or "")
+            if tracked_source and source_key and tracked_source != source_key:
+                stale_reason = "pose_source_mismatch"
+                break
+            if tracked_frame_id == str(frame_id):
+                stale_reason = ""
+                break
+            try:
+                current_time = float(captured_monotonic)
+                tracked_time = float(tracking.get("captured_monotonic"))
+            except (TypeError, ValueError):
+                current_time = 0.0
+                tracked_time = 0.0
+            if current_time > 0.0 and tracked_time > current_time + 0.0005:
+                stale_reason = "pose_frame_superseded"
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                break
+            time.sleep(min(0.003, remaining))
+        if stale_reason:
+            self._record_sync_rejection(int(camera_id), stale_reason)
+            metadata = {
+                "tracking": {
+                    "camera_id": int(camera_id),
+                    "state": "empty",
+                    "reason": stale_reason,
+                    "poses": [],
+                    "source_key": str(source_key or ""),
+                },
+                "analysis_context": {},
+                "image_width": int(frame.shape[1]),
+                "image_height": int(frame.shape[0]),
+            }
+        metadata["render_identity"] = {
+            "camera_id": int(camera_id),
+            "frame_id": str(frame_id),
+            "source_key": str(source_key or ""),
+            "stream_generation": self._stream_generation(source_key),
+            "captured_at": str(captured_at or ""),
+            "captured_monotonic": captured_monotonic,
+        }
+        return metadata
+
+    @staticmethod
+    def _stream_generation(source_key: str) -> int:
+        marker = str(source_key or "").rsplit(":g", 1)
+        if len(marker) != 2:
+            return 0
+        try:
+            return max(0, int(marker[1]))
+        except ValueError:
+            return 0
 
     def _render_skeleton(
         self,
@@ -296,19 +693,16 @@ class PrivacyFrameRenderer:
         tracking = dict(metadata.get("tracking") or {})
         state = str(tracking.get("state") or "empty")
         height, width = frame.shape[:2]
-        mask = np.zeros((height, width), dtype=np.uint8)
-        privacy_boxes = self._privacy_boxes(metadata, width, height)
-        for box in privacy_boxes:
-            cv2.rectangle(mask, (box[0], box[1]), (box[2] - 1, box[3] - 1), 255, -1)
-        canvas = self.background_reconstructor.reconstruct(
+        canvas = self._person_free_scene(
             cv2,
             camera_id,
             frame,
-            mask,
-            clear_token=str(tracking.get("frame_id") or ""),
+            metadata,
             source_key=source_key,
         )
-        if state not in {"observed", "tracked", "coasting"}:
+        drawing_started_at = time.perf_counter()
+        if state not in {"observed", "tracked"} or bool(tracking.get("display_only_stale")):
+            self._record_stage_latency(int(camera_id), "skeleton_draw", 0.0)
             return canvas
 
         source_width = max(1, int(metadata.get("image_width") or width))
@@ -319,14 +713,11 @@ class PrivacyFrameRenderer:
         edges = context.get("pose_skeleton_edges")
         if not isinstance(edges, list) or not edges:
             edges = DEFAULT_SKELETON_EDGES
-        line_color = (42, 179, 236)
-        joint_color = (248, 248, 245)
+        line_color = SKELETON_LINE_BGR
+        joint_color = SKELETON_JOINT_BGR
 
         for pose in tracking.get("poses") or []:
             if not isinstance(pose, dict):
-                continue
-            box = self._target_box(pose, scale_x, scale_y, width, height)
-            if box is None:
                 continue
             points = {
                 str(point.get("name")): point
@@ -352,87 +743,246 @@ class PrivacyFrameRenderer:
                 cv2.circle(canvas, center, 5, (8, 8, 8), -1, cv2.LINE_AA)
                 cv2.circle(canvas, center, 3, joint_color, -1, cv2.LINE_AA)
             self._draw_head(cv2, canvas, points, scale_x, scale_y, width, height, line_color)
+        self._record_stage_latency(
+            int(camera_id),
+            "skeleton_draw",
+            (time.perf_counter() - drawing_started_at) * 1000.0,
+        )
         return canvas
 
-    def _privacy_boxes(self, metadata: Dict[str, Any], width: int, height: int) -> list[tuple[int, int, int, int]]:
+    def _render_person_blur_for_camera(
+        self,
+        cv2: Any,
+        camera_id: int,
+        frame: Any,
+        metadata: Dict[str, Any],
+        *,
+        source_key: str = "",
+    ) -> Any:
+        segmentation_started_at = time.perf_counter()
+        mask = self._segmentation_mask(
+            cv2,
+            camera_id,
+            frame,
+            metadata,
+            source_key=source_key,
+        )
+        self._record_stage_latency(
+            int(camera_id),
+            "segmentation",
+            (time.perf_counter() - segmentation_started_at) * 1000.0,
+        )
+        started_at = time.perf_counter()
+        if mask is None:
+            output = self._strong_blur(cv2, frame)
+            self._record_stage_latency(
+                int(camera_id),
+                "person_blur_composition",
+                (time.perf_counter() - started_at) * 1000.0,
+            )
+            return output
+        if not bool(cv2.countNonZero(mask)):
+            output = frame.copy()
+            self._record_stage_latency(
+                int(camera_id),
+                "person_blur_composition",
+                (time.perf_counter() - started_at) * 1000.0,
+            )
+            return output
+        blurred = self._strong_blur(cv2, frame)
+        feather = cv2.GaussianBlur(mask, (9, 9), 0).astype(np.float32) / 255.0
+        alpha = feather[..., None]
+        output = np.clip(
+            blurred.astype(np.float32) * alpha + frame.astype(np.float32) * (1.0 - alpha),
+            0,
+            255,
+        ).astype(np.uint8)
+        self._record_stage_latency(
+            int(camera_id),
+            "person_blur_composition",
+            (time.perf_counter() - started_at) * 1000.0,
+        )
+        return output
+
+    def _segmentation_mask(
+        self,
+        cv2: Any,
+        camera_id: int,
+        frame: Any,
+        metadata: Dict[str, Any],
+        *,
+        source_key: str = "",
+    ) -> Any | None:
+        backend = self.segmentation_backend
+        segment = getattr(backend, "segment", None)
+        if not callable(segment):
+            return None
         tracking = dict(metadata.get("tracking") or {})
-        tracking_active = str(tracking.get("state") or "") in {"observed", "tracked", "coasting"}
+        render_identity = dict(metadata.get("render_identity") or {})
+        frame_id = str(render_identity.get("frame_id") or tracking.get("frame_id") or "")
+        if not frame_id:
+            return None
+        resolved_source_key = str(
+            render_identity.get("source_key")
+            or source_key
+            or tracking.get("source_key")
+            or ""
+        )
+        try:
+            result = dict(segment(
+                int(camera_id),
+                frame,
+                frame_id=frame_id,
+                source_key=resolved_source_key,
+                captured_monotonic=render_identity.get("captured_monotonic"),
+                person_evidence=self._has_person_evidence(metadata),
+            ) or {})
+        except Exception as exc:
+            self._record_sync_rejection(camera_id, "segmentation_error", detail=str(exc))
+            return None
+        if (
+            int(result.get("camera_id") or camera_id) != int(camera_id)
+            or str(result.get("frame_id") or frame_id) != frame_id
+            or str(result.get("source_key") or "")
+            != resolved_source_key
+        ):
+            self._record_sync_rejection(camera_id, "segmentation_identity_mismatch")
+            return None
+        mask = np.asarray(result.get("mask"), dtype=np.uint8)
+        if mask.shape != frame.shape[:2]:
+            self._record_sync_rejection(
+                camera_id,
+                "segmentation_shape_mismatch",
+                detail=f"mask={mask.shape} frame={frame.shape[:2]}",
+            )
+            return None
+        mask_pixels = int(cv2.countNonZero(mask))
+        if self._has_person_evidence(metadata):
+            assisted = self._pose_privacy_mask(cv2, frame, metadata)
+            if bool(cv2.countNonZero(assisted)):
+                combined = cv2.bitwise_or(mask, assisted)
+                added_pixels = int(cv2.countNonZero(combined)) - mask_pixels
+                if added_pixels > 0:
+                    self._record_segmentation_assist(
+                        camera_id,
+                        "pose_geometry" if mask_pixels == 0 else "pose_geometry_union",
+                    )
+                return combined
+            if mask_pixels == 0:
+                self._record_sync_rejection(camera_id, "segmentation_person_missed")
+                return None
+        return mask
+
+    def _pose_privacy_mask(
+        self,
+        cv2: Any,
+        frame: Any,
+        metadata: Dict[str, Any],
+    ) -> Any:
+        height, width = frame.shape[:2]
+        mask = np.zeros((height, width), dtype=np.uint8)
+        tracking = dict(metadata.get("tracking") or {})
+        if (
+            str(tracking.get("state") or "") not in {"observed", "tracked"}
+            or bool(tracking.get("display_only_stale"))
+        ):
+            return mask
         source_width = max(1, int(metadata.get("image_width") or width))
         source_height = max(1, int(metadata.get("image_height") or height))
         scale_x = width / source_width
         scale_y = height / source_height
-        boxes: list[tuple[int, int, int, int]] = []
         context = dict(metadata.get("analysis_context") or {})
-        targets = [
-            *((tracking.get("poses") or []) if tracking_active else []),
-            *(context.get("people") or []),
-        ]
-        for target in targets:
-            box = self._target_box(target, scale_x, scale_y, width, height)
-            if box is None:
+        edges = context.get("pose_skeleton_edges")
+        if not isinstance(edges, list) or not edges:
+            edges = DEFAULT_SKELETON_EDGES
+
+        for pose in tracking.get("poses") or []:
+            if not isinstance(pose, dict):
                 continue
-            for index, current in enumerate(boxes):
-                if self._box_overlap_ratio(box, current) >= 0.55:
-                    boxes[index] = (
-                        min(box[0], current[0]),
-                        min(box[1], current[1]),
-                        max(box[2], current[2]),
-                        max(box[3], current[3]),
-                    )
-                    break
+            points = {
+                str(point.get("name")): point
+                for point in (pose.get("keypoints") or [])
+                if isinstance(point, dict)
+                and point.get("name")
+                and point.get("visible")
+                and float(point.get("confidence") or 0.0) >= 0.22
+            }
+            if len(points) < 5:
+                continue
+            bbox = pose.get("bbox")
+            if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                body_scale = max(
+                    (float(bbox[2]) - float(bbox[0])) * scale_x,
+                    (float(bbox[3]) - float(bbox[1])) * scale_y,
+                )
             else:
-                boxes.append(box)
-        return boxes
+                coordinates = [self._point(point, scale_x, scale_y, width, height) for point in points.values()]
+                body_scale = max(
+                    max(point[0] for point in coordinates) - min(point[0] for point in coordinates),
+                    max(point[1] for point in coordinates) - min(point[1] for point in coordinates),
+                )
+            thickness = max(10, min(42, int(round(max(1.0, body_scale) * 0.12))))
+            for edge in edges:
+                if not isinstance(edge, (list, tuple)) or len(edge) < 2:
+                    continue
+                start = points.get(str(edge[0]))
+                end = points.get(str(edge[1]))
+                if start is None or end is None:
+                    continue
+                cv2.line(
+                    mask,
+                    self._point(start, scale_x, scale_y, width, height),
+                    self._point(end, scale_x, scale_y, width, height),
+                    255,
+                    thickness,
+                    cv2.LINE_AA,
+                )
+            torso_names = ("left_shoulder", "right_shoulder", "right_hip", "left_hip")
+            if all(name in points for name in torso_names):
+                torso = np.asarray([
+                    self._point(points[name], scale_x, scale_y, width, height)
+                    for name in torso_names
+                ], dtype=np.int32)
+                cv2.fillConvexPoly(mask, torso, 255, cv2.LINE_AA)
+            joint_radius = max(5, thickness // 2)
+            for point in points.values():
+                cv2.circle(
+                    mask,
+                    self._point(point, scale_x, scale_y, width, height),
+                    joint_radius,
+                    255,
+                    -1,
+                    cv2.LINE_AA,
+                )
+            nose = points.get("nose")
+            if nose is not None:
+                cv2.circle(
+                    mask,
+                    self._point(nose, scale_x, scale_y, width, height),
+                    max(joint_radius * 2, int(round(max(1.0, body_scale) * 0.08))),
+                    255,
+                    -1,
+                    cv2.LINE_AA,
+                )
+        if not bool(cv2.countNonZero(mask)):
+            return mask
+        return cv2.dilate(
+            mask,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)),
+            iterations=1,
+        )
 
-    def _target_box(
-        self,
-        target: Any,
-        scale_x: float,
-        scale_y: float,
-        width: int,
-        height: int,
-    ) -> tuple[int, int, int, int] | None:
-        bbox = target.get("bbox") if isinstance(target, dict) else None
-        if not isinstance(bbox, list) or len(bbox) < 4:
-            return None
-        try:
-            raw_x1, raw_y1, raw_x2, raw_y2 = [float(value) for value in bbox[:4]]
-        except (TypeError, ValueError):
-            return None
-        if raw_x2 <= raw_x1 or raw_y2 <= raw_y1:
-            return None
-        margin_x = max(12.0, (raw_x2 - raw_x1) * 0.18)
-        margin_y = max(12.0, (raw_y2 - raw_y1) * 0.16)
-        x1 = max(0, min(width - 1, int((raw_x1 - margin_x) * scale_x)))
-        y1 = max(0, min(height - 1, int((raw_y1 - margin_y) * scale_y)))
-        x2 = max(x1 + 1, min(width, int((raw_x2 + margin_x) * scale_x)))
-        y2 = max(y1 + 1, min(height, int((raw_y2 + margin_y) * scale_y)))
-        return (x1, y1, x2, y2)
-
-    def _box_overlap_ratio(
-        self,
-        first: tuple[int, int, int, int],
-        second: tuple[int, int, int, int],
-    ) -> float:
-        intersection_width = max(0, min(first[2], second[2]) - max(first[0], second[0]))
-        intersection_height = max(0, min(first[3], second[3]) - max(first[1], second[1]))
-        intersection = intersection_width * intersection_height
-        first_area = max(1, (first[2] - first[0]) * (first[3] - first[1]))
-        second_area = max(1, (second[2] - second[0]) * (second[3] - second[1]))
-        return intersection / min(first_area, second_area)
-
-    def _obscure_region(
-        self,
-        cv2: Any,
-        frame: Any,
-        x1: int,
-        y1: int,
-        x2: int,
-        y2: int,
-    ) -> None:
-        region = frame[y1:y2, x1:x2]
-        if region.size:
-            frame[y1:y2, x1:x2] = self._strong_blur(cv2, region)
+    @staticmethod
+    def _has_person_evidence(metadata: Dict[str, Any]) -> bool:
+        tracking = dict(metadata.get("tracking") or {})
+        if (
+            str(tracking.get("state") or "") in {"observed", "tracked"}
+            and not bool(tracking.get("display_only_stale"))
+        ):
+            if tracking.get("poses"):
+                return True
+        context = dict(metadata.get("analysis_context") or {})
+        return bool(context.get("people"))
 
     def _strong_blur(self, cv2: Any, frame: Any) -> Any:
         height, width = frame.shape[:2]
@@ -499,50 +1049,65 @@ class PrivacyMjpegStream:
         jpeg_quality: int,
         max_width: int,
         max_height: int,
-        drop_stale_frames: int,
     ) -> Generator[bytes, None, None]:
         requested_mode = normalize_privacy_mode(privacy_mode)
-        source_key = str(self.camera_agent.frame_source_key(camera) or "")
-        for chunk in self.camera_agent.mjpeg_frames(
+        for capture in self._source_frames(
             camera,
             fps=fps,
             jpeg_quality=jpeg_quality,
             max_width=max_width,
             max_height=max_height,
-            drop_stale_frames=drop_stale_frames,
         ):
-            jpeg = self._extract_jpeg(chunk)
-            if not jpeg:
-                continue
+            frame = capture["frame"]
+            source_key = str(capture.get("source_key") or "")
             mode = stricter_privacy_mode(
                 privacy_mode_resolver() if privacy_mode_resolver is not None else requested_mode,
                 requested_mode,
             )
             try:
-                rendered = self.renderer.render_jpeg(
+                rendered = self.renderer.render_frame(
                     int(camera["id"]),
-                    jpeg,
+                    frame,
                     mode,
                     quality=jpeg_quality,
                     source_key=source_key,
+                    frame_id=str(capture.get("frame_id") or ""),
+                    captured_at=str(capture.get("captured_at") or ""),
+                    captured_monotonic=capture.get("captured_monotonic"),
                 )
             except Exception:
-                if mode == "original":
-                    rendered = jpeg
-                else:
-                    continue
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n"
-                b"Cache-Control: no-store\r\n"
-                + f"X-GoHome-Privacy-Mode: {mode}\r\n\r\n".encode("ascii")
-                + rendered
-                + b"\r\n"
-            )
+                continue
+            yield self._multipart_frame(rendered, privacy_mode=mode, composition="server")
 
-    def _extract_jpeg(self, chunk: bytes) -> bytes:
-        marker = b"\r\n\r\n"
-        if marker not in chunk:
-            return chunk
-        body = chunk.split(marker, 1)[1]
-        return body[:-2] if body.endswith(b"\r\n") else body
+    def _source_frames(
+        self,
+        camera: Dict[str, Any],
+        *,
+        fps: int,
+        jpeg_quality: int,
+        max_width: int,
+        max_height: int,
+    ) -> Generator[Dict[str, Any], None, None]:
+        for capture in self.camera_agent.raw_frames(
+            camera,
+            fps=fps,
+            max_width=max_width,
+            max_height=max_height,
+        ):
+            frame = capture.get("frame") if isinstance(capture, dict) else None
+            if frame is None:
+                continue
+            yield {
+                **capture,
+                "frame": frame,
+                "source_key": str(capture.get("source_key") or ""),
+            }
+
+    def _multipart_frame(self, jpeg: bytes, *, privacy_mode: str, composition: str) -> bytes:
+        headers = (
+            "Content-Type: image/jpeg\r\n"
+            "Cache-Control: no-store\r\n"
+            f"X-GoHome-Privacy-Mode: {privacy_mode}\r\n"
+            f"X-GoHome-Composition: {composition}\r\n\r\n"
+        ).encode("ascii")
+        return b"--frame\r\n" + headers + jpeg + b"\r\n"

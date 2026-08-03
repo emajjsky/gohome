@@ -8,7 +8,7 @@ import os
 
 from fastapi import HTTPException
 
-from .object_storage_service import ObjectStorageService
+from .package_artifact_service import PackageArtifactService
 from .package_trust import (
     PackageTrustError,
     PackageTrustStore,
@@ -32,12 +32,12 @@ class PackageService:
         *,
         storage: Storage,
         settings: Any,
-        object_storage: ObjectStorageService,
+        artifact_store: PackageArtifactService,
         runtime_guard: Any | None = None,
     ) -> None:
         self.storage = storage
         self.settings = settings
-        self.object_storage = object_storage
+        self.artifact_store = artifact_store
         self.runtime_guard = runtime_guard
         self.trust_store = PackageTrustStore(settings)
 
@@ -136,7 +136,7 @@ class PackageService:
         signed_manifest = self.signed_manifest_from_payload(payload, file_name=file_name)
         try:
             normalized = self.trust_store.verify_signature(signed_manifest)
-            self.trust_store.verify_artifact(self.object_storage.asset_file_path(asset), normalized)
+            self.trust_store.verify_artifact(self.artifact_store.asset_file_path(asset), normalized)
         except PackageTrustError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
@@ -162,7 +162,7 @@ class PackageService:
         data = dict(release)
         asset = self.storage.get_media_asset(int(release["asset_id"]))
         if asset:
-            data["asset"] = self.object_storage.media_asset_for_api(asset)
+            data["asset"] = self.artifact_store.artifact_for_api(asset)
         return data
 
     def list_releases(
@@ -196,7 +196,7 @@ class PackageService:
         expires_in_seconds: int,
     ) -> Dict[str, Any]:
         release = self.get_release_for_user(release_id, user)
-        link = self.object_storage.create_public_link(
+        link = self.artifact_store.create_public_link(
             int(release["asset_id"]),
             user=user,
             expires_in_seconds=expires_in_seconds,
@@ -287,7 +287,7 @@ class PackageService:
             lock_descriptor = self.acquire_upgrade_lock(package_type)
             signed_manifest = dict((release.get("metadata") or {}).get("signed_manifest") or {})
             candidate = self.trust_store.install(
-                self.object_storage.asset_file_path(asset),
+                self.artifact_store.asset_file_path(asset),
                 signed_manifest,
                 family_id=family_id,
                 device_id=device_id,

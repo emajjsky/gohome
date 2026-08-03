@@ -9,7 +9,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.camera_agent import bounded_stream_fps, next_stream_frame_delay
-from app.video_profiles import STREAM_DISTRIBUTION_PROFILES
 
 
 def main() -> None:
@@ -35,24 +34,9 @@ def main() -> None:
     if abs(next_deadline - 100.40) > 0.0001:
         raise SystemExit(f"late stream did not reset its deadline: {next_deadline}")
 
-    expected_fps = {
-        "default": 15,
-        "detail": 24,
-        "monitor": 30,
-        "mobile": 24,
-    }
-    for profile_id, profile in STREAM_DISTRIBUTION_PROFILES.items():
-        if int(profile["fps"]) != expected_fps[profile_id]:
-            raise SystemExit(
-                f"{profile_id} profile target mismatch: {profile['fps']} != {expected_fps[profile_id]}"
-            )
-        if int(profile["drop"]) != 1:
-            raise SystemExit(f"{profile_id} profile still drains multiple source frames")
-
     print({
         "ok": True,
-        "target_fps": expected_fps,
-        "profiles": sorted(STREAM_DISTRIBUTION_PROFILES),
+        "maximum_stream_fps": 30,
         "decoder_time_deducted": True,
         "late_deadline_reset": True,
     })

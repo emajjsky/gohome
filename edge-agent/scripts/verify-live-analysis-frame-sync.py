@@ -27,6 +27,8 @@ def main() -> None:
         raise SystemExit("cached frame has no stable frame_id")
     if not first.get("captured_at"):
         raise SystemExit("cached frame has no capture timestamp")
+    if not isinstance(first.get("captured_monotonic"), float):
+        raise SystemExit("cached frame has no monotonic source timestamp")
     datetime.fromisoformat(str(first["captured_at"]).replace("Z", "+00:00"))
 
     second_read = agent.latest_cached_frame(camera, max_age_seconds=1)
@@ -46,7 +48,7 @@ def main() -> None:
         "source": "direct capture",
     }
     direct = agent.capture_frame(camera, prefer_cache=False)
-    if not direct.get("frame_id") or not direct.get("captured_at"):
+    if not direct.get("frame_id") or not direct.get("captured_at") or not direct.get("captured_monotonic"):
         raise SystemExit("direct camera capture lost its generated frame identity")
 
     image_url = agent.frame_data_url(first["frame"], jpeg_quality=60, max_width=64)
@@ -79,8 +81,18 @@ def main() -> None:
         raise SystemExit("continual pose same-frame endpoint is missing")
     if '@app.get("/api/cameras/{camera_id}/continual-pose/stream.mjpg")' not in main_source:
         raise SystemExit("synchronized continual pose video endpoint is missing")
-    if "tracker.latest_frame(camera_id)" not in main_source or 'source = "eacp_same_frame"' not in main_source:
-        raise SystemExit("continual pose endpoint is not using the exact tracked frame")
+    if "privacy_mjpeg_stream.mjpeg_frames" not in main_source:
+        raise SystemExit("privacy mode does not use the server-composed frame transport")
+    if '"X-GoHome-Composition-Owner": "edge"' not in main_source:
+        raise SystemExit("user stream does not declare edge as its single composition owner")
+    if '"X-GoHome-Stream-Purpose": "algorithm-diagnostic"' not in main_source:
+        raise SystemExit("diagnostic pose stream is not explicitly isolated from the user stream")
+    if "synchronized_pose_stream.mjpeg_frames" not in main_source:
+        raise SystemExit("algorithm page is not using the dedicated exact-frame diagnostic stream")
+    if "camera_agent.latest_cached_frame(camera, max_age_seconds=1.5)" not in main_source:
+        raise SystemExit("diagnostic snapshot is not based on the current camera frame")
+    if "tracker.metadata_for_frame(camera_id, frame_id=frame_id, source_key=source_key)" not in main_source:
+        raise SystemExit("diagnostic snapshot does not require exact-frame pose metadata")
     if "def latest_frame(self, camera_id: int)" not in tracker_source:
         raise SystemExit("continual pose tracker does not expose exact frame bundles")
     if "def latest_metadata(self, camera_id: int)" not in tracker_source:
@@ -94,7 +106,9 @@ def main() -> None:
         "continuous_video_overlay": True,
         "stale_response_guard": True,
         "continual_pose_same_frame_api": True,
-        "management_page_uses_background_eacp": True,
+        "management_page_uses_server_composition": True,
+        "single_user_stream_composition_owner": "edge",
+        "diagnostic_stream_isolated": True,
     })
 
 

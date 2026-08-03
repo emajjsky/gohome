@@ -9,9 +9,7 @@ final class MJPEGStreamClientTests: XCTestCase {
             "expires_at":"2026-07-22T12:00:00Z",
             "stream_url":"https://video.example.com/api/v1/video/cameras/2/stream.mjpg",
             "stream_path":"/api/v1/video/cameras/2/stream.mjpg",
-            "pose_stream_path":"/api/v1/video/cameras/2/pose-stream",
-            "scene_stream_path":"/api/v1/video/cameras/2/scene.mjpg",
-            "display_transport":"safe-scene-pose-v1",
+            "display_transport":"edge-composed-mjpeg-v1",
             "privacy_mode":"person_blur",
             "minimum_privacy_mode":"person_blur"
         }
@@ -24,9 +22,7 @@ final class MJPEGStreamClientTests: XCTestCase {
         XCTAssertEqual(session.streamPath, "/api/v1/video/cameras/2/stream.mjpg")
         XCTAssertEqual(session.privacyMode, .personBlur)
         XCTAssertEqual(session.minimumPrivacyMode, .personBlur)
-        XCTAssertEqual(session.poseStreamPath, "/api/v1/video/cameras/2/pose-stream")
-        XCTAssertEqual(session.sceneStreamPath, "/api/v1/video/cameras/2/scene.mjpg")
-        XCTAssertEqual(session.displayTransport, "safe-scene-pose-v1")
+        XCTAssertEqual(session.displayTransport, CameraDisplayTransport.edgeComposedMJPEG)
     }
 
     func testPlaybackSessionAcceptsCloudProxyResponseWithoutNodeFields() throws {
@@ -36,6 +32,66 @@ final class MJPEGStreamClientTests: XCTestCase {
 
         XCTAssertNil(session.streamURL)
         XCTAssertNil(session.streamPath)
+    }
+
+    func testPlaybackSessionDecodesEdgeComposedSkeletonTransport() throws {
+        let payload = Data(#"{"ticket":"play-2","display_transport":"edge-composed-mjpeg-v1","privacy_mode":"skeleton","minimum_privacy_mode":"skeleton"}"#.utf8)
+
+        let session = try JSONDecoder().decode(CameraPlaybackSession.self, from: payload)
+
+        XCTAssertEqual(session.privacyMode, .skeleton)
+        XCTAssertEqual(session.displayTransport, CameraDisplayTransport.edgeComposedMJPEG)
+    }
+
+    func testFrameDelegateAcceptsExactEdgeCompositionContract() {
+        let delegate = MJPEGFrameDelegate(
+            expectedDisplayTransport: CameraDisplayTransport.edgeComposedMJPEG,
+            expectedCompositionOwner: "edge"
+        )
+        let url = URL(string: "https://example.com/stream.mjpg")!
+        let response = HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: [
+                "X-GoHome-Display-Transport": CameraDisplayTransport.edgeComposedMJPEG,
+                "X-GoHome-Composition-Owner": "edge",
+            ]
+        )!
+        let task = URLSession.shared.dataTask(with: url)
+        var disposition: URLSession.ResponseDisposition?
+
+        delegate.urlSession(URLSession.shared, dataTask: task, didReceive: response) {
+            disposition = $0
+        }
+
+        XCTAssertEqual(disposition, .allow)
+        delegate.finish(nil)
+    }
+
+    func testFrameDelegateRejectsMismatchedCompositionContract() {
+        let delegate = MJPEGFrameDelegate(
+            expectedDisplayTransport: CameraDisplayTransport.edgeComposedMJPEG,
+            expectedCompositionOwner: "edge"
+        )
+        let url = URL(string: "https://example.com/stream.mjpg")!
+        let response = HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: [
+                "X-GoHome-Display-Transport": "obsolete-overlay-v1",
+                "X-GoHome-Composition-Owner": "client",
+            ]
+        )!
+        let task = URLSession.shared.dataTask(with: url)
+        var disposition: URLSession.ResponseDisposition?
+
+        delegate.urlSession(URLSession.shared, dataTask: task, didReceive: response) {
+            disposition = $0
+        }
+
+        XCTAssertEqual(disposition, .cancel)
     }
 
     func testParserReassemblesFragmentedJPEGAndDropsHeaders() {
@@ -135,89 +191,6 @@ final class MJPEGStreamClientTests: XCTestCase {
         }
     }
 
-    func testPoseDelegateReassemblesFragmentedEventsAndKeepsNewestPackets() async throws {
-        let delegate = PosePacketDelegate()
-        let first = #"{"schema_version":"eacp-pose-relay-v1","camera_id":2,"frame_id":"f1","captured_at":"2026-07-28T08:00:00Z","state":"observed","image_width":640,"image_height":360,"poses":[],"display_only":true,"formal_evidence_eligible":false}"#
-        let second = #"{"schema_version":"eacp-pose-relay-v1","camera_id":2,"frame_id":"f2","captured_at":"2026-07-28T08:00:01Z","state":"observed","image_width":640,"image_height":360,"poses":[],"display_only":true,"formal_evidence_eligible":false}"#
-        let third = #"{"schema_version":"eacp-pose-relay-v1","camera_id":2,"frame_id":"f3","captured_at":"2026-07-28T08:00:02Z","state":"observed","image_width":640,"image_height":360,"poses":[],"display_only":true,"formal_evidence_eligible":false}"#
-        let payload = Data("data: \(first)\n\ndata: \(second)\n\ndata: \(third)\n\n".utf8)
-
-        delegate.receiveForTesting(Data(payload.prefix(37)))
-        delegate.receiveForTesting(Data(payload.dropFirst(37)))
-        delegate.finish(nil)
-
-        var packets: [PosePacket] = []
-        for try await packet in delegate.packets {
-            packets.append(packet)
-        }
-        XCTAssertEqual(packets.map(\.frameID), ["f2", "f3"])
-    }
-
-    func testPoseParserReassemblesFragmentedSSEAndRejectsEvidencePackets() {
-        let safe = #"{"schema_version":"eacp-pose-relay-v1","camera_id":2,"frame_id":"f1","captured_at":"2026-07-28T08:00:00Z","state":"observed","image_width":640,"image_height":360,"poses":[],"display_only":true,"formal_evidence_eligible":false}"#
-        let unsafe = #"{"schema_version":"eacp-pose-relay-v1","camera_id":2,"frame_id":"f2","captured_at":"2026-07-28T08:00:01Z","state":"observed","image_width":640,"image_height":360,"poses":[],"display_only":true,"formal_evidence_eligible":true}"#
-        let payload = Data("event: pose\ndata: \(safe)\n\nevent: pose\ndata: \(unsafe)\n\n".utf8)
-        var parser = PoseSSEParser()
-
-        let first = parser.append(Data(payload.prefix(31)))
-        let second = parser.append(Data(payload.dropFirst(31)))
-
-        XCTAssertTrue(first.isEmpty)
-        XCTAssertEqual(second.map(\.frameID), ["f1"])
-    }
-
-    func testPoseTimelineInterpolatesMatchingTracks() {
-        let previous = posePacket(frameID: "f1", x: 100)
-        let current = posePacket(frameID: "f2", x: 200)
-        let start = Date(timeIntervalSince1970: 100)
-        let timeline = PoseTimeline(
-            previous: TimedPosePacket(packet: previous, receivedAt: start),
-            current: TimedPosePacket(packet: current, receivedAt: start.addingTimeInterval(0.1))
-        )
-
-        let rendered = timeline.interpolated(at: start.addingTimeInterval(0.117), delay: 0.067)
-
-        XCTAssertEqual(rendered?.poses.first?.keypoints.first?.x ?? 0, 150, accuracy: 0.001)
-    }
-
-    func testPoseTimelineUsesCaptureClockWhenNetworkArrivalJitters() {
-        let previous = posePacket(frameID: "f1", capturedAt: "2026-07-28T08:00:00.000Z", x: 100)
-        let current = posePacket(frameID: "f2", capturedAt: "2026-07-28T08:00:00.100Z", x: 200)
-        let sourceCurrent = ISO8601DateFormatter().date(from: "2026-07-28T08:00:00Z")!.addingTimeInterval(0.1)
-        let receivedCurrent = sourceCurrent.addingTimeInterval(0.24)
-        let timeline = PoseTimeline(
-            previous: TimedPosePacket(packet: previous, receivedAt: receivedCurrent.addingTimeInterval(-0.02)),
-            current: TimedPosePacket(packet: current, receivedAt: receivedCurrent)
-        )
-
-        let rendered = timeline.interpolated(at: receivedCurrent.addingTimeInterval(0.017), delay: 0.067)
-
-        XCTAssertEqual(rendered?.poses.first?.keypoints.first?.x ?? 0, 150, accuracy: 0.001)
-    }
-}
-
-private func posePacket(
-    frameID: String,
-    capturedAt: String = "2026-07-28T08:00:00Z",
-    x: Double
-) -> PosePacket {
-    PosePacket(
-        schemaVersion: "eacp-pose-relay-v1",
-        cameraID: 2,
-        frameID: frameID,
-        capturedAt: capturedAt,
-        state: "observed",
-        imageWidth: 640,
-        imageHeight: 360,
-        poses: [PoseTrack(
-            trackID: "person-1",
-            confidence: 0.9,
-            bbox: [90, 20, 220, 350],
-            keypoints: [PoseKeypoint(name: "nose", x: x, y: 60, confidence: 0.9, visible: true)]
-        )],
-        displayOnly: true,
-        formalEvidenceEligible: false
-    )
 }
 
 private enum TestStreamError: Error, Equatable {

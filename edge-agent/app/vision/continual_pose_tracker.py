@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict, deque
 from copy import deepcopy
 import math
 from threading import RLock
@@ -10,7 +11,7 @@ from typing import Any, Callable, Dict
 class ContinualPoseTracker:
     """Propagate fresh pose anchors briefly without creating safety evidence."""
 
-    version = "eacp-continual-pose-v1"
+    version = "eacp-continual-pose-v3"
     display_context_keys = {
         "detector_backend",
         "model_status",
@@ -64,13 +65,15 @@ class ContinualPoseTracker:
         *,
         max_age_seconds: float = 0.6,
         max_display_age_seconds: float = 1.2,
-        minimum_interval_seconds: float = 0.067,
+        minimum_interval_seconds: float = 0.02,
         tracking_scale: float = 0.5,
         min_tracked_points: int = 6,
-        min_tracked_ratio: float = 0.55,
-        max_forward_backward_error: float = 1.8,
+        min_tracked_ratio: float = 0.45,
+        max_forward_backward_error: float = 3.0,
         min_geometry_scale: float = 0.65,
         max_geometry_scale: float = 1.45,
+        min_pose_points: int = 3,
+        feature_count: int = 48,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.max_age_seconds = max(0.1, float(max_age_seconds))
@@ -82,12 +85,19 @@ class ContinualPoseTracker:
         self.max_forward_backward_error = max(0.2, float(max_forward_backward_error))
         self.min_geometry_scale = max(0.1, float(min_geometry_scale))
         self.max_geometry_scale = max(self.min_geometry_scale, float(max_geometry_scale))
+        self.min_pose_points = max(2, int(min_pose_points))
+        self.feature_count = max(16, int(feature_count))
         self._clock = monotonic_clock or time.monotonic
         self._states: dict[int, Dict[str, Any]] = {}
         self._latest: dict[int, Dict[str, Any]] = {}
         self._latest_frames: dict[int, Any] = {}
         self._latest_contexts: dict[int, Dict[str, Any]] = {}
+        self._metadata_history: dict[int, OrderedDict[str, Dict[str, Any]]] = {}
         self._metrics: dict[int, Dict[str, Any]] = {}
+        self._model_updates: dict[int, deque[float]] = {}
+        self._display_updates: dict[int, deque[float]] = {}
+        self._last_display_samples: dict[int, tuple[float, str]] = {}
+        self._camera_locks: dict[int, RLock] = {}
         self._lock = RLock()
 
     def observe(
@@ -97,41 +107,74 @@ class ContinualPoseTracker:
         *,
         frame_id: str,
         captured_at: str,
+        captured_monotonic: float | None = None,
         poses: list[Dict[str, Any]],
         context: Dict[str, Any] | None = None,
         source_key: str = "",
+        person_present: bool = False,
     ) -> Dict[str, Any]:
         cv2, np = self._vision_modules()
         camera_id = int(camera_id)
         now = float(self._clock())
+        sample_at = self._source_sample_time(captured_monotonic, now)
         gray = self._gray(cv2, frame)
         tracked_poses = []
         for pose in poses:
-            prepared = self._prepare_pose(np, pose)
+            prepared = self._prepare_pose(cv2, np, gray, pose)
             if prepared is not None:
                 tracked_poses.append(prepared)
-        with self._lock:
+        with self._camera_lock(camera_id):
+            self._record_rate_sample(self._model_updates, camera_id, now)
+            publish_display = self._display_frame_is_newer_locked(camera_id, sample_at, frame_id)
             if not tracked_poses:
+                if not publish_display:
+                    metric = self._metric(camera_id)
+                    metric["late_model_result_drop_count"] += 1
+                    metric["last_reason"] = "late_model_result"
+                    payload = self._empty_payload(
+                        camera_id,
+                        "untracked" if bool(person_present or poses) else "empty",
+                        "late_model_result",
+                        frame_id,
+                        captured_at,
+                        captured_monotonic=sample_at,
+                        source_key=source_key,
+                        display_published=False,
+                    )
+                    return deepcopy(payload)
                 self._states.pop(camera_id, None)
+                confirmed_person = bool(person_present or poses)
                 payload = self._empty_payload(
                     camera_id,
-                    "empty",
-                    "no_observed_pose",
+                    "untracked" if confirmed_person else "empty",
+                    "person_without_trackable_pose" if confirmed_person else "no_observed_pose",
                     frame_id,
                     captured_at,
+                    captured_monotonic=sample_at,
                     source_key=source_key,
                 )
                 self._latest[camera_id] = payload
                 self._latest_frames[camera_id] = frame.copy()
                 self._latest_contexts[camera_id] = self._display_context(context or {})
+                self._record_display_sample(camera_id, sample_at, frame_id)
+                metric = self._metric(camera_id)
+                metric["untracked_count" if confirmed_person else "empty_count"] += 1
+                metric["last_state"] = payload["state"]
+                metric["last_frame_id"] = str(frame_id or "")
+                metric["last_reason"] = payload["reason"]
                 return deepcopy(payload)
             self._states[camera_id] = {
                 "observed_monotonic": now,
                 "last_updated_monotonic": now,
                 "previous_gray": gray,
                 "frame_id": str(frame_id or ""),
-                "display_frame_id": str(frame_id or ""),
+                "display_frame_id": str(
+                    frame_id
+                    if publish_display
+                    else (self._latest.get(camera_id) or {}).get("frame_id") or ""
+                ),
                 "captured_at": str(captured_at or ""),
+                "captured_monotonic": sample_at,
                 "image_width": int(frame.shape[1]),
                 "image_height": int(frame.shape[0]),
                 "poses": tracked_poses,
@@ -143,22 +186,31 @@ class ContinualPoseTracker:
                 state="observed",
                 frame_id=frame_id,
                 captured_at=captured_at,
+                captured_monotonic=sample_at,
                 age_seconds=0.0,
                 poses=[self._public_observed_pose(item["pose"]) for item in tracked_poses],
                 quality={
-                    "tracked_point_count": sum(len(item["point_indices"]) for item in tracked_poses),
+                    "tracked_point_count": sum(len(item["points"]) for item in tracked_poses),
                     "forward_backward_error": 0.0,
                     "geometry_scale": 1.0,
                 },
                 source_key=source_key,
+                display_published=publish_display,
             )
+            if not publish_display:
+                metric = self._metric(camera_id)
+                metric["late_anchor_count"] += 1
+                metric["last_reason"] = "late_model_anchor"
+                return deepcopy(payload)
             self._latest[camera_id] = payload
             self._latest_frames[camera_id] = frame.copy()
             self._latest_contexts[camera_id] = self._display_context(context or {})
+            self._record_display_sample(camera_id, sample_at, frame_id)
             metric = self._metric(camera_id)
             metric["observed_count"] += 1
             metric["last_state"] = "observed"
             metric["last_frame_id"] = str(frame_id or "")
+            metric["last_reason"] = ""
             return deepcopy(payload)
 
     def update_frame(
@@ -168,13 +220,29 @@ class ContinualPoseTracker:
         *,
         frame_id: str,
         captured_at: str,
+        captured_monotonic: float | None = None,
         source_key: str = "",
     ) -> Dict[str, Any]:
         cv2, np = self._vision_modules()
         camera_id = int(camera_id)
         now = float(self._clock())
+        sample_at = self._source_sample_time(captured_monotonic, now)
         gray = self._gray(cv2, frame)
-        with self._lock:
+        with self._camera_lock(camera_id):
+            if not self._display_frame_is_newer_locked(camera_id, sample_at, frame_id):
+                metric = self._metric(camera_id)
+                metric["late_frame_drop_count"] += 1
+                metric["last_reason"] = "late_stream_frame"
+                return deepcopy(self._latest.get(camera_id) or self._empty_payload(
+                    camera_id,
+                    "empty",
+                    "late_stream_frame",
+                    frame_id,
+                    captured_at,
+                    captured_monotonic=sample_at,
+                    source_key=source_key,
+                    display_published=False,
+                ))
             state = self._states.get(camera_id)
             if state is None:
                 payload = self._empty_payload(
@@ -183,9 +251,16 @@ class ContinualPoseTracker:
                     "no_anchor",
                     frame_id,
                     captured_at,
+                    captured_monotonic=sample_at,
                     source_key=source_key,
                 )
                 self._latest[camera_id] = payload
+                self._latest_frames[camera_id] = frame.copy()
+                self._record_display_sample(camera_id, sample_at, frame_id)
+                metric = self._metric(camera_id)
+                metric["last_state"] = "empty"
+                metric["last_frame_id"] = str(frame_id or "")
+                metric["last_reason"] = "no_anchor"
                 return deepcopy(payload)
             active_source_key = str(state.get("source_key") or "")
             if source_key and active_source_key and str(source_key) != active_source_key:
@@ -198,6 +273,7 @@ class ContinualPoseTracker:
                     "source_changed",
                     frame_id,
                     captured_at,
+                    captured_monotonic=sample_at,
                     source_key=source_key,
                 )
                 self._latest[camera_id] = payload
@@ -208,7 +284,14 @@ class ContinualPoseTracker:
                 ))
             anchor_age = max(0.0, now - float(state["observed_monotonic"]))
             if anchor_age > self.max_display_age_seconds:
-                return self._expire_locked(camera_id, "anchor_expired", frame_id, captured_at, anchor_age)
+                return self._expire_locked(
+                    camera_id,
+                    "anchor_expired",
+                    frame_id,
+                    captured_at,
+                    anchor_age,
+                    captured_monotonic=sample_at,
+                )
             if now - float(state.get("last_updated_monotonic") or 0.0) < self.minimum_interval_seconds:
                 return deepcopy(self._latest.get(camera_id) or self._empty_payload(
                     camera_id, "empty", "tracking_throttled", frame_id, captured_at
@@ -219,6 +302,7 @@ class ContinualPoseTracker:
             tracked_points = 0
             errors = []
             scales = []
+            inlier_ratios = []
             rejection_reasons = []
             risk_tracks = []
             track_age = max(0.0, now - float(state.get("last_updated_monotonic") or 0.0))
@@ -241,6 +325,7 @@ class ContinualPoseTracker:
                 tracked_points += int(result["tracked_point_count"])
                 errors.append(float(result["forward_backward_error"]))
                 scales.append(float(result["geometry_scale"]))
+                inlier_ratios.append(float(result.get("affine_inlier_ratio") or 0.0))
                 if result.get("rapid_downward_motion"):
                     risk_tracks.append({
                         "track_id": str(result["pose"].get("track_id") or ""),
@@ -259,6 +344,7 @@ class ContinualPoseTracker:
                     captured_at,
                     anchor_age,
                     track_age,
+                    sample_at,
                 )
 
             state["previous_gray"] = gray
@@ -266,6 +352,7 @@ class ContinualPoseTracker:
             state["frame_id"] = str(frame_id or "")
             state["display_frame_id"] = str(frame_id or "")
             state["captured_at"] = str(captured_at or "")
+            state["captured_monotonic"] = sample_at
             state["image_width"] = int(frame.shape[1])
             state["image_height"] = int(frame.shape[0])
             state["poses"] = next_poses
@@ -275,12 +362,14 @@ class ContinualPoseTracker:
                 state="tracked",
                 frame_id=frame_id,
                 captured_at=captured_at,
+                captured_monotonic=sample_at,
                 age_seconds=anchor_age,
                 poses=public_poses,
                 quality={
                     "tracked_point_count": tracked_points,
                     "forward_backward_error": round(max(errors, default=0.0), 4),
                     "geometry_scale": round(sum(scales) / max(1, len(scales)), 4),
+                    "affine_inlier_ratio": round(sum(inlier_ratios) / max(1, len(inlier_ratios)), 4),
                 },
                 risk_hint={
                     "detected": bool(risk_tracks),
@@ -293,10 +382,12 @@ class ContinualPoseTracker:
             )
             self._latest[camera_id] = payload
             self._latest_frames[camera_id] = frame.copy()
+            self._record_display_sample(camera_id, sample_at, frame_id)
             metric = self._metric(camera_id)
             metric["tracked_count"] += 1
             metric["last_state"] = "tracked"
             metric["last_frame_id"] = str(frame_id or "")
+            metric["last_reason"] = ""
             metric["last_quality"] = dict(payload["quality"])
             if risk_tracks:
                 metric["risk_hint_count"] += 1
@@ -306,7 +397,7 @@ class ContinualPoseTracker:
 
     def latest(self, camera_id: int) -> Dict[str, Any]:
         camera_id = int(camera_id)
-        with self._lock:
+        with self._camera_lock(camera_id):
             payload = self._latest.get(camera_id)
             return deepcopy(payload) if payload is not None else self._empty_payload(
                 camera_id, "empty", "no_anchor", "", ""
@@ -317,7 +408,7 @@ class ContinualPoseTracker:
         camera_id = int(camera_id)
         if not self.has_anchor(camera_id):
             return None
-        with self._lock:
+        with self._camera_lock(camera_id):
             payload = self._latest.get(camera_id)
             frame = self._latest_frames.get(camera_id)
             state = self._states.get(camera_id)
@@ -340,7 +431,7 @@ class ContinualPoseTracker:
         """Return one privacy-safe frame whose pixels and model/tracking data match."""
         camera_id = int(camera_id)
         self.has_anchor(camera_id)
-        with self._lock:
+        with self._camera_lock(camera_id):
             payload = self._latest.get(camera_id)
             frame = self._latest_frames.get(camera_id)
             if payload is None or frame is None:
@@ -351,7 +442,11 @@ class ContinualPoseTracker:
                 if active is None or str(payload.get("frame_id") or "") != str(active.get("display_frame_id") or ""):
                     return None
                 context = active.get("context") or {}
-            elif state == "empty" and str(payload.get("reason") or "") == "no_observed_pose":
+            elif state in {"empty", "untracked"} and str(payload.get("reason") or "") in {
+                "no_observed_pose",
+                "person_without_trackable_pose",
+                "no_anchor",
+            }:
                 context = self._latest_contexts.get(camera_id) or {}
             else:
                 return None
@@ -366,23 +461,46 @@ class ContinualPoseTracker:
         """Return display metadata without copying or encoding frame pixels."""
         camera_id = int(camera_id)
         self.has_anchor(camera_id)
-        with self._lock:
+        with self._camera_lock(camera_id):
             state = self._states.get(camera_id) or {}
             payload = self._latest.get(camera_id)
+            frame = self._latest_frames.get(camera_id)
             tracking = deepcopy(payload) if payload is not None else self._empty_payload(
                 camera_id, "empty", "no_anchor", "", ""
             )
+            context = state.get("context") or self._latest_contexts.get(camera_id) or {}
+            frame_height, frame_width = frame.shape[:2] if frame is not None else (0, 0)
             return {
                 "tracking": tracking,
-                "analysis_context": deepcopy(state.get("context") or {}),
-                "image_width": int(state.get("image_width") or 0),
-                "image_height": int(state.get("image_height") or 0),
+                "analysis_context": deepcopy(context),
+                "image_width": int(state.get("image_width") or frame_width),
+                "image_height": int(state.get("image_height") or frame_height),
                 "source_key": str(tracking.get("source_key") or state.get("source_key") or ""),
             }
 
+    def metadata_for_frame(
+        self,
+        camera_id: int,
+        *,
+        frame_id: str,
+        source_key: str = "",
+    ) -> Dict[str, Any] | None:
+        camera_id = int(camera_id)
+        frame_id = str(frame_id or "")
+        if not frame_id:
+            return None
+        with self._camera_lock(camera_id):
+            item = (self._metadata_history.get(camera_id) or {}).get(frame_id)
+            if item is None:
+                return None
+            recorded_source = str(item.get("source_key") or "")
+            if source_key and recorded_source != str(source_key):
+                return None
+            return deepcopy(item)
+
     def has_anchor(self, camera_id: int) -> bool:
         camera_id = int(camera_id)
-        with self._lock:
+        with self._camera_lock(camera_id):
             state = self._states.get(camera_id)
             if state is None:
                 return False
@@ -405,34 +523,49 @@ class ContinualPoseTracker:
                 if camera_ids is not None
                 else set(self._metrics) | set(self._latest)
             )
-            return {
-                "schema_version": self.version,
-                "max_age_seconds": self.max_age_seconds,
-                "max_display_age_seconds": self.max_display_age_seconds,
-                "minimum_interval_seconds": self.minimum_interval_seconds,
-                "tracking_scale": self.tracking_scale,
-                "cameras": [
-                    {
-                        "camera_id": camera_id,
-                        **deepcopy(self._metric(camera_id)),
-                        "state": str((self._latest.get(camera_id) or {}).get("state") or "empty"),
-                        "age_seconds": (self._latest.get(camera_id) or {}).get("age_seconds"),
-                        "pose_count": int((self._latest.get(camera_id) or {}).get("pose_count") or 0),
-                    }
-                    for camera_id in ids
-                ],
-            }
+        now = float(self._clock())
+        cameras = []
+        for camera_id in ids:
+            with self._camera_lock(camera_id):
+                latest = self._latest.get(camera_id) or {}
+                cameras.append({
+                    "camera_id": camera_id,
+                    **deepcopy(self._metric(camera_id)),
+                    "state": str(latest.get("state") or "empty"),
+                    "age_seconds": latest.get("age_seconds"),
+                    "pose_count": int(latest.get("pose_count") or 0),
+                    "model_anchor_fps": self._rate(self._model_updates.get(camera_id), now),
+                    "display_output_fps": self._rate(self._display_updates.get(camera_id), now),
+                    "display_frame_age_ms": self._frame_age_ms(self._display_updates.get(camera_id), now),
+                })
+        return {
+            "schema_version": self.version,
+            "max_age_seconds": self.max_age_seconds,
+            "max_display_age_seconds": self.max_display_age_seconds,
+            "minimum_interval_seconds": self.minimum_interval_seconds,
+            "tracking_scale": self.tracking_scale,
+            "cameras": cameras,
+        }
 
     def reset_camera(self, camera_id: int) -> None:
         camera_id = int(camera_id)
-        with self._lock:
+        with self._camera_lock(camera_id):
             self._states.pop(camera_id, None)
             self._latest.pop(camera_id, None)
             self._latest_frames.pop(camera_id, None)
             self._latest_contexts.pop(camera_id, None)
+            self._metadata_history.pop(camera_id, None)
             self._metrics.pop(camera_id, None)
+            self._model_updates.pop(camera_id, None)
+            self._display_updates.pop(camera_id, None)
+            self._last_display_samples.pop(camera_id, None)
 
-    def _prepare_pose(self, np: Any, pose: Dict[str, Any]) -> Dict[str, Any] | None:
+    def _camera_lock(self, camera_id: int) -> RLock:
+        camera_id = int(camera_id)
+        with self._lock:
+            return self._camera_locks.setdefault(camera_id, RLock())
+
+    def _prepare_pose(self, cv2: Any, np: Any, gray: Any, pose: Dict[str, Any]) -> Dict[str, Any] | None:
         keypoints = list(pose.get("keypoints") or [])
         indices = [
             index
@@ -442,18 +575,62 @@ class ContinualPoseTracker:
             and self._finite(point.get("x"))
             and self._finite(point.get("y"))
         ]
-        if len(indices) < self.min_tracked_points:
+        if len(indices) < self.min_pose_points:
             return None
-        points = np.asarray(
-            [[float(keypoints[index]["x"]), float(keypoints[index]["y"])] for index in indices],
-            dtype=np.float32,
-        ).reshape(-1, 1, 2) * self.tracking_scale
+        points = self._person_features(cv2, np, gray, pose)
+        if points is None or len(points) < self.min_tracked_points:
+            return None
         return {
             "pose": deepcopy(pose),
             "points": points,
-            "point_indices": indices,
             "anchor_center_y": self._bbox_center_y(pose.get("bbox")),
         }
+
+    def _person_features(self, cv2: Any, np: Any, gray: Any, pose: Dict[str, Any]) -> Any | None:
+        bbox = pose.get("bbox")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            return None
+        try:
+            x1, y1, x2, y2 = [float(value) * self.tracking_scale for value in bbox]
+        except (TypeError, ValueError):
+            return None
+        height, width = gray.shape[:2]
+        x1 = max(0, min(width - 1, int(math.floor(x1))))
+        y1 = max(0, min(height - 1, int(math.floor(y1))))
+        x2 = max(x1 + 1, min(width, int(math.ceil(x2))))
+        y2 = max(y1 + 1, min(height, int(math.ceil(y2))))
+        if x2 - x1 < 8 or y2 - y1 < 12:
+            return None
+        mask = np.zeros(gray.shape, dtype=np.uint8)
+        mask[y1:y2, x1:x2] = 255
+        pose_points = [
+            [
+                float(point["x"]) * self.tracking_scale,
+                float(point["y"]) * self.tracking_scale,
+            ]
+            for point in pose.get("keypoints") or []
+            if isinstance(point, dict)
+            and point.get("visible")
+            and self._finite(point.get("x"))
+            and self._finite(point.get("y"))
+        ]
+        if len(pose_points) >= 3:
+            silhouette = np.zeros_like(mask)
+            hull = cv2.convexHull(np.asarray(pose_points, dtype=np.float32).reshape(-1, 1, 2))
+            cv2.fillConvexPoly(silhouette, np.rint(hull).astype(np.int32), 255)
+            margin = max(3, int(round(min(x2 - x1, y2 - y1) * 0.12)))
+            kernel = np.ones((margin * 2 + 1, margin * 2 + 1), dtype=np.uint8)
+            silhouette = cv2.dilate(silhouette, kernel, iterations=1)
+            mask = cv2.bitwise_and(mask, silhouette)
+        return cv2.goodFeaturesToTrack(
+            gray,
+            maxCorners=self.feature_count,
+            qualityLevel=0.008,
+            minDistance=4,
+            mask=mask,
+            blockSize=7,
+            useHarrisDetector=False,
+        )
 
     def _track_pose(
         self,
@@ -503,40 +680,59 @@ class ContinualPoseTracker:
 
         old_valid = previous_points.reshape(-1, 2)[valid]
         new_valid = next_points.reshape(-1, 2)[valid]
-        scale = self._geometry_scale(np, old_valid, new_valid)
+        transform, inliers = cv2.estimateAffinePartial2D(
+            old_valid,
+            new_valid,
+            method=cv2.RANSAC,
+            ransacReprojThreshold=2.5,
+            maxIters=200,
+            confidence=0.99,
+            refineIters=10,
+        )
+        if transform is None:
+            return {"ok": False, "reason": "affine_estimation_failed"}
+        inlier_mask = (
+            inliers.reshape(-1).astype(bool)
+            if inliers is not None and len(inliers) == len(old_valid)
+            else np.ones(len(old_valid), dtype=bool)
+        )
+        inlier_count = int(inlier_mask.sum())
+        if inlier_count < self.min_tracked_points:
+            return {"ok": False, "reason": "insufficient_affine_inliers"}
+        scale = float(math.hypot(float(transform[0, 0]), float(transform[0, 1])))
         if scale < self.min_geometry_scale or scale > self.max_geometry_scale:
             return {"ok": False, "reason": "geometry_drift"}
 
         pose = deepcopy(item["pose"])
         keypoints = list(pose.get("keypoints") or [])
-        point_indices = list(item["point_indices"])
-        valid_indices = []
-        valid_points = []
         decay = max(0.0, math.exp(-age_seconds / self.max_age_seconds))
-        for point_offset, keypoint_index in enumerate(point_indices):
-            point = dict(keypoints[keypoint_index])
-            if bool(valid[point_offset]):
-                tracked_x, tracked_y = next_points.reshape(-1, 2)[point_offset]
-                x = tracked_x / self.tracking_scale
-                y = tracked_y / self.tracking_scale
-                point.update({
-                    "x": round(float(x), 2),
-                    "y": round(float(y), 2),
-                    "confidence": round(float(point.get("confidence") or 0.0) * decay, 4),
-                    "visible": True,
-                })
-                valid_indices.append(keypoint_index)
-                valid_points.append([float(tracked_x), float(tracked_y)])
-            else:
+        for index, value in enumerate(keypoints):
+            point = dict(value)
+            if not self._finite(point.get("x")) or not self._finite(point.get("y")):
                 point.update({"visible": False, "confidence": 0.0})
-            keypoints[keypoint_index] = point
+                keypoints[index] = point
+                continue
+            transformed = self._transform_point(
+                np,
+                transform,
+                float(point["x"]),
+                float(point["y"]),
+            )
+            point.update({
+                "x": round(transformed[0], 2),
+                "y": round(transformed[1], 2),
+                "confidence": round(float(point.get("confidence") or 0.0) * decay, 4),
+                "visible": bool(point.get("visible")),
+            })
+            keypoints[index] = point
 
-        displacement = np.median(new_valid - old_valid, axis=0) / self.tracking_scale
-        pose["bbox"] = self._shift_bbox(pose.get("bbox"), displacement, frame)
-        frame_height = max(1.0, float(frame.shape[0]))
-        downward_displacement_ratio = max(0.0, float(displacement[1]) / frame_height)
-        downward_velocity_ratio = downward_displacement_ratio / max(0.02, float(age_seconds))
+        previous_center_y = self._bbox_center_y(pose.get("bbox"))
+        pose["bbox"] = self._transform_bbox(np, transform, pose.get("bbox"), frame)
         current_center_y = self._bbox_center_y(pose.get("bbox"))
+        displacement_y = current_center_y - previous_center_y
+        frame_height = max(1.0, float(frame.shape[0]))
+        downward_displacement_ratio = max(0.0, displacement_y / frame_height)
+        downward_velocity_ratio = downward_displacement_ratio / max(0.02, float(age_seconds))
         anchor_center_y = float(item.get("anchor_center_y") or current_center_y)
         cumulative_downward_ratio = max(0.0, (current_center_y - anchor_center_y) / frame_height)
         rapid_downward_motion = bool(
@@ -566,18 +762,24 @@ class ContinualPoseTracker:
             "formal_evidence_eligible": False,
         }
         pose["action_hints"] = [hint for hint in pose.get("action_hints") or [] if hint != "fall_candidate"]
+        refreshed_points = self._person_features(cv2, np, gray, pose)
+        next_tracking_points = (
+            refreshed_points
+            if refreshed_points is not None and len(refreshed_points) >= self.min_tracked_points
+            else new_valid[inlier_mask].astype(np.float32).reshape(-1, 1, 2)
+        )
         return {
             "ok": True,
             "pose": pose,
             "state": {
                 "pose": pose,
-                "points": np.asarray(valid_points, dtype=np.float32).reshape(-1, 1, 2),
-                "point_indices": valid_indices,
+                "points": next_tracking_points,
                 "anchor_center_y": anchor_center_y,
             },
-            "tracked_point_count": valid_count,
+            "tracked_point_count": inlier_count,
             "forward_backward_error": float(fb_error[valid].max()),
             "geometry_scale": float(scale),
+            "affine_inlier_ratio": inlier_count / max(1, valid_count),
             "downward_displacement_ratio": downward_displacement_ratio,
             "downward_velocity_ratio_per_second": downward_velocity_ratio,
             "cumulative_downward_ratio": cumulative_downward_ratio,
@@ -592,28 +794,36 @@ class ContinualPoseTracker:
         except (TypeError, ValueError):
             return 0.0
 
-    def _geometry_scale(self, np: Any, old_points: Any, new_points: Any) -> float:
-        old_center = np.median(old_points, axis=0)
-        new_center = np.median(new_points, axis=0)
-        old_radius = np.linalg.norm(old_points - old_center, axis=1)
-        new_radius = np.linalg.norm(new_points - new_center, axis=1)
-        valid = old_radius > 1.0
-        if not bool(valid.any()):
-            return 1.0
-        return float(np.median(new_radius[valid] / old_radius[valid]))
-
-    def _shift_bbox(self, bbox: Any, displacement: Any, frame: Any) -> list[float]:
+    def _transform_bbox(self, np: Any, transform: Any, bbox: Any, frame: Any) -> list[float]:
         height, width = frame.shape[:2]
         if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
             return []
-        dx, dy = [float(value) for value in displacement]
         x1, y1, x2, y2 = [float(value) for value in bbox]
-        return [
-            round(max(0.0, min(float(width - 1), x1 + dx)), 1),
-            round(max(0.0, min(float(height - 1), y1 + dy)), 1),
-            round(max(1.0, min(float(width), x2 + dx)), 1),
-            round(max(1.0, min(float(height), y2 + dy)), 1),
+        corners = [
+            self._transform_point(np, transform, x1, y1),
+            self._transform_point(np, transform, x2, y1),
+            self._transform_point(np, transform, x1, y2),
+            self._transform_point(np, transform, x2, y2),
         ]
+        xs = [point[0] for point in corners]
+        ys = [point[1] for point in corners]
+        return [
+            round(max(0.0, min(float(width - 1), min(xs))), 1),
+            round(max(0.0, min(float(height - 1), min(ys))), 1),
+            round(max(1.0, min(float(width), max(xs))), 1),
+            round(max(1.0, min(float(height), max(ys))), 1),
+        ]
+
+    def _transform_point(
+        self,
+        np: Any,
+        transform: Any,
+        x: float,
+        y: float,
+    ) -> tuple[float, float]:
+        scaled = np.asarray([x * self.tracking_scale, y * self.tracking_scale, 1.0], dtype=np.float64)
+        output = transform @ scaled
+        return (float(output[0] / self.tracking_scale), float(output[1] / self.tracking_scale))
 
     def _public_observed_pose(self, pose: Dict[str, Any]) -> Dict[str, Any]:
         item = deepcopy(pose)
@@ -643,6 +853,7 @@ class ContinualPoseTracker:
         captured_at: str,
         anchor_age_seconds: float,
         coast_age_seconds: float,
+        captured_monotonic: float,
     ) -> Dict[str, Any]:
         state = self._states.get(camera_id)
         if state is None or anchor_age_seconds > self.max_display_age_seconds:
@@ -652,6 +863,7 @@ class ContinualPoseTracker:
                 frame_id,
                 captured_at,
                 anchor_age_seconds,
+                captured_monotonic=captured_monotonic,
             )
         poses = [self._public_coasting_pose(item["pose"], coast_age_seconds) for item in state["poses"]]
         previous_quality = dict((self._latest.get(camera_id) or {}).get("quality") or {})
@@ -663,6 +875,7 @@ class ContinualPoseTracker:
             reason=reason,
             frame_id=frame_id,
             captured_at=captured_at,
+            captured_monotonic=captured_monotonic,
             age_seconds=anchor_age_seconds,
             poses=poses,
             quality=previous_quality,
@@ -670,8 +883,10 @@ class ContinualPoseTracker:
             source_key=str(state.get("source_key") or ""),
         )
         state["display_frame_id"] = str(frame_id or "")
+        state["captured_monotonic"] = captured_monotonic
         self._latest[camera_id] = payload
         self._latest_frames[camera_id] = frame.copy()
+        self._record_display_sample(camera_id, captured_monotonic, frame_id)
         metric = self._metric(camera_id)
         metric["coasting_count"] += 1
         metric["last_state"] = "coasting"
@@ -687,6 +902,8 @@ class ContinualPoseTracker:
         frame_id: str,
         captured_at: str,
         age_seconds: float,
+        *,
+        captured_monotonic: float | None = None,
     ) -> Dict[str, Any]:
         state = self._states.pop(camera_id, None) or {}
         self._latest_frames.pop(camera_id, None)
@@ -697,6 +914,7 @@ class ContinualPoseTracker:
             reason,
             frame_id,
             captured_at,
+            captured_monotonic=captured_monotonic,
             source_key=str(state.get("source_key") or ""),
         )
         payload["age_seconds"] = round(float(age_seconds), 4)
@@ -714,6 +932,11 @@ class ContinualPoseTracker:
             "tracked_count": 0,
             "coasting_count": 0,
             "expired_count": 0,
+            "empty_count": 0,
+            "untracked_count": 0,
+            "late_anchor_count": 0,
+            "late_model_result_drop_count": 0,
+            "late_frame_drop_count": 0,
             "risk_hint_count": 0,
             "last_risk_hint_at_monotonic": None,
             "last_risk_hint": self._empty_risk_hint(),
@@ -723,6 +946,83 @@ class ContinualPoseTracker:
             "last_quality": {},
         })
 
+    def _record_rate_sample(
+        self,
+        store: dict[int, deque[float]],
+        camera_id: int,
+        now: float,
+    ) -> None:
+        samples = store.setdefault(int(camera_id), deque(maxlen=300))
+        samples.append(float(now))
+        cutoff = float(now) - 10.0
+        while samples and samples[0] < cutoff:
+            samples.popleft()
+
+    def _display_frame_is_newer_locked(self, camera_id: int, sample_at: float, frame_id: str) -> bool:
+        camera_id = int(camera_id)
+        frame_id = str(frame_id or "")
+        if not frame_id:
+            return False
+        previous = self._last_display_samples.get(camera_id)
+        if previous is None:
+            return True
+        previous_at, previous_frame_id = previous
+        if frame_id == previous_frame_id:
+            return False
+        return float(sample_at) > float(previous_at) + 1e-6
+
+    def _record_display_sample(self, camera_id: int, now: float, frame_id: str) -> None:
+        camera_id = int(camera_id)
+        frame_id = str(frame_id or "")
+        if not self._display_frame_is_newer_locked(camera_id, now, frame_id):
+            return
+        self._last_display_samples[camera_id] = (float(now), frame_id)
+        self._record_rate_sample(self._display_updates, camera_id, now)
+        self._store_metadata_history_locked(camera_id, frame_id)
+
+    def _store_metadata_history_locked(self, camera_id: int, frame_id: str) -> None:
+        payload = self._latest.get(int(camera_id))
+        frame = self._latest_frames.get(int(camera_id))
+        if payload is None or frame is None:
+            return
+        state = self._states.get(int(camera_id)) or {}
+        context = state.get("context") or self._latest_contexts.get(int(camera_id)) or {}
+        frame_height, frame_width = frame.shape[:2]
+        item = {
+            "tracking": deepcopy(payload),
+            "analysis_context": deepcopy(context),
+            "image_width": int(state.get("image_width") or frame_width),
+            "image_height": int(state.get("image_height") or frame_height),
+            "source_key": str(payload.get("source_key") or state.get("source_key") or ""),
+        }
+        history = self._metadata_history.setdefault(int(camera_id), OrderedDict())
+        history[str(frame_id)] = item
+        history.move_to_end(str(frame_id))
+        while len(history) > 64:
+            history.popitem(last=False)
+
+    def _source_sample_time(self, captured_monotonic: Any, now: float) -> float:
+        try:
+            sample_at = float(captured_monotonic)
+        except (TypeError, ValueError):
+            return float(now)
+        if not math.isfinite(sample_at) or sample_at <= 0.0 or abs(float(now) - sample_at) > 3600.0:
+            return float(now)
+        return sample_at
+
+    def _rate(self, samples: deque[float] | None, now: float) -> float:
+        if not samples:
+            return 0.0
+        recent = [value for value in samples if value >= now - 10.0]
+        if len(recent) < 2:
+            return 0.0
+        return round((len(recent) - 1) / max(0.001, recent[-1] - recent[0]), 2)
+
+    def _frame_age_ms(self, samples: deque[float] | None, now: float) -> float | None:
+        if not samples:
+            return None
+        return round(max(0.0, now - samples[-1]) * 1000.0, 1)
+
     def _payload(
         self,
         camera_id: int,
@@ -730,6 +1030,7 @@ class ContinualPoseTracker:
         state: str,
         frame_id: str,
         captured_at: str,
+        captured_monotonic: float | None,
         age_seconds: float,
         poses: list[Dict[str, Any]],
         quality: Dict[str, Any],
@@ -737,6 +1038,7 @@ class ContinualPoseTracker:
         display_only_stale: bool = False,
         reason: str = "",
         source_key: str = "",
+        display_published: bool = True,
     ) -> Dict[str, Any]:
         return {
             "schema_version": self.version,
@@ -745,6 +1047,7 @@ class ContinualPoseTracker:
             "reason": str(reason or ""),
             "frame_id": str(frame_id or ""),
             "captured_at": str(captured_at or ""),
+            "captured_monotonic": captured_monotonic,
             "source_key": str(source_key or ""),
             "age_seconds": round(float(age_seconds), 4),
             "pose_count": len(poses),
@@ -753,6 +1056,7 @@ class ContinualPoseTracker:
             "risk_hint": deepcopy(risk_hint) if isinstance(risk_hint, dict) else self._empty_risk_hint(),
             "formal_evidence_eligible": state == "observed",
             "display_only_stale": bool(display_only_stale),
+            "display_published": bool(display_published),
         }
 
     def _empty_payload(
@@ -763,7 +1067,9 @@ class ContinualPoseTracker:
         frame_id: str,
         captured_at: str,
         *,
+        captured_monotonic: float | None = None,
         source_key: str = "",
+        display_published: bool = True,
     ) -> Dict[str, Any]:
         return {
             "schema_version": self.version,
@@ -772,6 +1078,7 @@ class ContinualPoseTracker:
             "reason": str(reason or ""),
             "frame_id": str(frame_id or ""),
             "captured_at": str(captured_at or ""),
+            "captured_monotonic": captured_monotonic,
             "source_key": str(source_key or ""),
             "age_seconds": None,
             "pose_count": 0,
@@ -779,6 +1086,7 @@ class ContinualPoseTracker:
             "quality": {},
             "risk_hint": self._empty_risk_hint(),
             "formal_evidence_eligible": False,
+            "display_published": bool(display_published),
         }
 
     def _empty_risk_hint(self) -> Dict[str, Any]:

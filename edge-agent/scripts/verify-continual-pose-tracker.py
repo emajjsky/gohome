@@ -19,11 +19,102 @@ def main() -> None:
     tracker = ContinualPoseTracker(
         max_age_seconds=0.6,
         max_display_age_seconds=0.6,
+        minimum_interval_seconds=0.05,
         tracking_scale=0.5,
         min_tracked_points=6,
         monotonic_clock=lambda: clock["now"],
     )
     frame, pose = synthetic_anchor()
+    clock["now"] = 99.9
+    empty = tracker.update_frame(
+        25,
+        frame,
+        frame_id="25-1",
+        captured_at="2026-07-17T01:59:59+00:00",
+    )
+    if empty["state"] != "empty" or empty["reason"] != "no_anchor":
+        raise SystemExit("person-free source frames did not enter the synchronized display stream")
+    synchronized_empty = tracker.latest_synchronized_frame(25)
+    if synchronized_empty is None or synchronized_empty["tracking"]["frame_id"] != "25-1":
+        raise SystemExit("person-free synchronized display dropped the current source frame")
+    clock["now"] = 99.91
+    tracker.update_frame(
+        25,
+        frame,
+        frame_id="25-1",
+        captured_at="2026-07-17T01:59:59+00:00",
+    )
+    if len(tracker._display_updates.get(25) or ()) != 1:
+        raise SystemExit("display FPS counted the same frame more than once")
+
+    rate_clock = {"now": 600.2}
+    rate_tracker = ContinualPoseTracker(monotonic_clock=lambda: rate_clock["now"])
+    rate_tracker.update_frame(
+        28,
+        frame,
+        frame_id="28-1",
+        captured_at="2026-07-17T02:00:00+00:00",
+        captured_monotonic=600.0,
+    )
+    rate_clock["now"] = 600.21
+    rate_tracker.update_frame(
+        28,
+        frame,
+        frame_id="28-2",
+        captured_at="2026-07-17T02:00:00.100000+00:00",
+        captured_monotonic=600.1,
+    )
+    source_timed_rate = rate_tracker.status([28])["cameras"][0]["display_output_fps"]
+    if abs(float(source_timed_rate) - 10.0) > 0.01:
+        raise SystemExit(
+            "display FPS used compressed processing time instead of source-frame time: "
+            f"{source_timed_rate}"
+        )
+    rate_clock["now"] = 600.22
+    late_frame = rate_tracker.update_frame(
+        28,
+        frame,
+        frame_id="28-late",
+        captured_at="2026-07-17T02:00:00.050000+00:00",
+        captured_monotonic=600.05,
+    )
+    rate_runtime = rate_tracker.status([28])["cameras"][0]
+    if late_frame.get("frame_id") != "28-2" or rate_runtime.get("late_frame_drop_count") != 1:
+        raise SystemExit(f"late source frame replaced the current display frame: {late_frame}, {rate_runtime}")
+
+    ordering_clock = {"now": 700.2}
+    ordering_tracker = ContinualPoseTracker(monotonic_clock=lambda: ordering_clock["now"])
+    ordering_tracker.update_frame(
+        29,
+        frame,
+        frame_id="29-300",
+        captured_at="2026-07-17T02:00:00.200000+00:00",
+        captured_monotonic=700.2,
+    )
+    ordering_clock["now"] = 700.25
+    late_anchor = ordering_tracker.observe(
+        29,
+        frame,
+        frame_id="29-299",
+        captured_at="2026-07-17T02:00:00.100000+00:00",
+        captured_monotonic=700.1,
+        poses=[pose],
+    )
+    if late_anchor.get("display_published") or ordering_tracker.latest(29).get("frame_id") != "29-300":
+        raise SystemExit("late model anchor moved the displayed video backward")
+    if not ordering_tracker.has_anchor(29):
+        raise SystemExit("late model result was not retained as a tracking anchor")
+    ordering_clock["now"] = 700.31
+    ordered_track = ordering_tracker.update_frame(
+        29,
+        translate(frame, dx=5, dy=3),
+        frame_id="29-301",
+        captured_at="2026-07-17T02:00:00.300000+00:00",
+        captured_monotonic=700.3,
+    )
+    if ordered_track.get("frame_id") != "29-301" or not ordered_track.get("display_published"):
+        raise SystemExit(f"late anchor did not resume on the next current source frame: {ordered_track}")
+    clock["now"] = 100.0
     observed = tracker.observe(
         24,
         frame,
@@ -64,17 +155,17 @@ def main() -> None:
         raise SystemExit("continual pose metadata exposed historical evidence bundles")
 
     shifted = translate(frame, dx=5, dy=3)
-    clock["now"] = 100.05
+    clock["now"] = 100.03
     throttled = tracker.update_frame(
         24,
         shifted,
         frame_id="24-100-fast",
-        captured_at="2026-07-17T02:00:00.050000+00:00",
+        captured_at="2026-07-17T02:00:00.030000+00:00",
     )
     if throttled["state"] != "observed" or throttled["frame_id"] != "24-100":
-        raise SystemExit("KLT ignored its 6-8 FPS processing limit")
+        raise SystemExit("KLT ignored its bounded processing interval")
 
-    clock["now"] = 100.11
+    clock["now"] = 100.08
     tracked = tracker.update_frame(
         24,
         shifted,
@@ -93,6 +184,15 @@ def main() -> None:
         raise SystemExit("tracked pose did not retain its exact color frame")
     if not np.array_equal(tracked_frame["frame"], shifted):
         raise SystemExit("tracked pose frame pixels do not match its frame_id")
+    retained_anchor_metadata = tracker.metadata_for_frame(24, frame_id="24-100")
+    if (
+        retained_anchor_metadata is None
+        or retained_anchor_metadata.get("tracking", {}).get("frame_id") != "24-100"
+        or "frame" in retained_anchor_metadata
+    ):
+        raise SystemExit("bounded metadata history did not retain the exact earlier pose frame")
+    if tracker.metadata_for_frame(24, frame_id="24-100", source_key="wrong-source") is not None:
+        raise SystemExit("pose metadata history crossed source identity")
     visible = [point for point in tracked_pose.get("keypoints") or [] if point.get("visible")]
     dx = np.median([point["x"] - source["x"] for point, source in zip(visible, pose["keypoints"])])
     dy = np.median([point["y"] - source["y"] for point, source in zip(visible, pose["keypoints"])])
@@ -208,6 +308,29 @@ def main() -> None:
     if synchronized_empty["tracking"].get("reason") != "no_observed_pose":
         raise SystemExit("privacy empty frame lost its model-confirmed reason")
 
+    person_without_pose = tracker.observe(
+        27,
+        empty_frame,
+        frame_id="27-person-1",
+        captured_at="2026-07-17T02:00:00.900000+00:00",
+        poses=[],
+        context={"pose_model_status": "not_visible", "people": [{"bbox": [80, 30, 180, 220]}]},
+        person_present=True,
+        source_key="camera-27:g1",
+    )
+    if person_without_pose.get("state") != "untracked":
+        raise SystemExit(f"person without a complete pose was incorrectly marked empty: {person_without_pose}")
+    synchronized_untracked = tracker.latest_synchronized_frame(27)
+    if (
+        synchronized_untracked is None
+        or synchronized_untracked["tracking"].get("reason") != "person_without_trackable_pose"
+        or not synchronized_untracked["analysis_context"].get("people")
+    ):
+        raise SystemExit("untracked person lost its privacy boxes or synchronized frame")
+    untracked_metadata = tracker.latest_metadata(27)
+    if untracked_metadata.get("image_width") != 320 or not untracked_metadata.get("analysis_context", {}).get("people"):
+        raise SystemExit("untracked person metadata is incomplete for privacy rendering")
+
     clock["now"] = 101.0
     tracker.observe(
         24,
@@ -260,14 +383,19 @@ def main() -> None:
     tracker.reset_camera(25)
     if tracker.latest(25)["state"] != "empty":
         raise SystemExit("camera reset did not clear continual pose state")
+    if tracker.metadata_for_frame(25, frame_id="25-100") is not None:
+        raise SystemExit("camera reset retained pose metadata history")
 
     worker_source = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
     for contract in ("ContinualPoseTracker()", "_run_continual_tracking", "latest_cached_frame"):
         if contract not in worker_source:
             raise SystemExit(f"production continual pose loop is missing: {contract}")
     deploy_source = (ROOT / "scripts" / "deploy-to-pi.sh").read_text(encoding="utf-8")
-    if "scripts/verify-continual-pose-tracker.py" not in deploy_source:
-        raise SystemExit("continual pose QA script would be deployed into the production box")
+    if (
+        "--include 'scripts/verify-vision-runtime.py'" not in deploy_source
+        or "--exclude 'scripts/verify-*.py'" not in deploy_source
+    ):
+        raise SystemExit("production deployment does not enforce the single runtime-check whitelist")
 
     print({
         "ok": True,

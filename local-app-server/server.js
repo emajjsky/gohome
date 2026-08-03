@@ -8,12 +8,14 @@ const https = require("https");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { pipeline } = require("stream/promises");
 const { URL } = require("url");
 const {
     buildActivityOverview,
     dateKeysEndingAt: activityDateKeysEndingAt,
     groupIntervalsByDate,
 } = require("./native-api/activity-reporting");
+const { RollingStreamMetrics, percentile } = require("./stream-metrics");
 
 function parseEnvValue(raw) {
     let value = String(raw || "").trim();
@@ -639,6 +641,12 @@ function createLocalAppServer(options = {}) {
     const opsToken = String(options.opsToken || DEFAULT_OPS_TOKEN);
     const { createCosStorage } = require("./cos-storage");
     const cosStorage = options.cosStorage || createCosStorage();
+    const { MediaLifecycleManager } = require("./media-lifecycle");
+    const mediaLifecycleManager = options.mediaLifecycleManager || new MediaLifecycleManager({
+        store,
+        cosStorage,
+        mediaDir,
+    });
     const { createApnsProvider } = require("./apns-provider");
     const apnsProvider = options.apnsProvider || createApnsProvider();
     const mediaUploadSecret = String(options.mediaUploadSecret || process.env.GOHOME_MEDIA_UPLOAD_SECRET || "").trim()
@@ -718,13 +726,9 @@ function createLocalAppServer(options = {}) {
     const careCardGenerationJobs = new Map();
     const liveFrameCache = new Map();
     const liveFrameSequence = new Map();
-    const livePoseCache = new Map();
-    const liveSceneCache = new Map();
-    const liveSceneSequence = new Map();
     const activityInsightNextEvaluationAt = new Map();
-    const liveStreamMetrics = new Map();
-    const liveSceneStreamMetrics = new Map();
-    const activeStreamClients = { video: 0, pose: 0, scene: 0 };
+    const liveStreamMetrics = new RollingStreamMetrics();
+    const activeStreamClients = { video: 0 };
     const eventLoopDelaySamples = [];
     let expectedEventLoopTick = Date.now() + 100;
     const eventLoopDelayTimer = setInterval(() => {
@@ -742,86 +746,17 @@ function createLocalAppServer(options = {}) {
     let memoryUploadCleanupRunning = false;
     let apnsDispatchRunning = false;
     const LIVE_FRAME_TTL_MS = 10000;
-    const LIVE_POSE_TTL_MS = 1500;
-    const LIVE_SCENE_TTL_MS = 30000;
-
-    function percentile(values, ratio) {
-        if (!values.length) return 0;
-        const sorted = [...values].sort((first, second) => first - second);
-        const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * ratio)));
-        return sorted[index];
-    }
-
-    function pruneStreamMetric(metric, now = Date.now()) {
-        const cutoff = now - 60000;
-        while (metric.accepted_at_ms.length && metric.accepted_at_ms[0] < cutoff) metric.accepted_at_ms.shift();
-        while (metric.transport_latency.length && metric.transport_latency[0].at < cutoff) metric.transport_latency.shift();
-    }
-
-    function cameraStreamMetric(store, cameraId) {
-        const key = String(cameraId);
-        if (!store.has(key)) {
-            store.set(key, {
-                accepted_at_ms: [],
-                transport_latency: [],
-                stale_rejections: 0,
-                last_received_at: "",
-            });
-        }
-        return store.get(key);
-    }
-
-    function recordStreamMetric(store, cameraId, { accepted, capturedAt, receivedAtMs }) {
-        const metric = cameraStreamMetric(store, cameraId);
-        pruneStreamMetric(metric, receivedAtMs);
-        if (!accepted) {
-            metric.stale_rejections += 1;
-            return;
-        }
-        metric.accepted_at_ms.push(receivedAtMs);
-        metric.last_received_at = new Date(receivedAtMs).toISOString();
-        const capturedAtMs = Date.parse(capturedAt || "");
-        if (Number.isFinite(capturedAtMs)) {
-            metric.transport_latency.push({ at: receivedAtMs, value: Math.max(0, receivedAtMs - capturedAtMs) });
-        }
-    }
-
-    function streamCameraMetricsSnapshot(store, now) {
-        const cameras = {};
-        for (const [cameraId, metric] of store.entries()) {
-            pruneStreamMetric(metric, now);
-            const recent = metric.accepted_at_ms.filter((timestamp) => timestamp >= now - 10000);
-            const gaps = recent.slice(1).map((timestamp, index) => timestamp - recent[index]);
-            const latencies = metric.transport_latency
-                .filter((sample) => sample.at >= now - 10000)
-                .map((sample) => sample.value);
-            cameras[cameraId] = {
-                accepted_fps_10s: Number((recent.length / 10).toFixed(2)),
-                frame_gap_ms_p95: Number(percentile(gaps, 0.95).toFixed(2)),
-                frame_gap_ms_max: Number((gaps.length ? Math.max(...gaps) : 0).toFixed(2)),
-                transport_latency_ms_p95: Number(percentile(latencies, 0.95).toFixed(2)),
-                transport_latency_ms_max: Number((latencies.length ? Math.max(...latencies) : 0).toFixed(2)),
-                stale_rejections: metric.stale_rejections,
-                last_received_at: metric.last_received_at,
-            };
-        }
-        return cameras;
-    }
+    const LIVE_DISPLAY_TRANSPORT = "edge-composed-mjpeg-v1";
 
     function recordLiveFrameMetric(cameraId, sample) {
-        recordStreamMetric(liveStreamMetrics, cameraId, sample);
-    }
-
-    function recordLiveSceneMetric(cameraId, sample) {
-        recordStreamMetric(liveSceneStreamMetrics, cameraId, sample);
+        liveStreamMetrics.record(cameraId, sample);
     }
 
     function streamMetricsSnapshot() {
         const now = Date.now();
         const loopDelays = eventLoopDelaySamples.map((sample) => sample.delay_ms);
         return {
-            cameras: streamCameraMetricsSnapshot(liveStreamMetrics, now),
-            scene_cameras: streamCameraMetricsSnapshot(liveSceneStreamMetrics, now),
+            cameras: liveStreamMetrics.snapshot(now),
             active_clients: { ...activeStreamClients },
             event_loop_delay_ms_p95: Number(percentile(loopDelays, 0.95).toFixed(2)),
             event_loop_delay_ms_max: Number((loopDelays.length ? Math.max(...loopDelays) : 0).toFixed(2)),
@@ -1998,7 +1933,26 @@ function createLocalAppServer(options = {}) {
             connection_owner: "edge_agent",
             password_set: Boolean(camera.password),
             has_stream_config: Boolean(camera.stream_url),
+            connection: cameraConnectionSummary(camera),
         };
+    }
+
+    function cameraConnectionSummary(camera) {
+        const streamUrl = String(camera?.stream_url || "").trim();
+        if (!streamUrl) return null;
+        try {
+            const parsed = new URL(streamUrl);
+            if (!["rtsp:", "rtsps:"].includes(parsed.protocol) || !parsed.hostname) return null;
+            return {
+                scheme: parsed.protocol.slice(0, -1),
+                host: parsed.hostname,
+                port: Number(parsed.port || (parsed.protocol === "rtsps:" ? 322 : 554)),
+                path: `${parsed.pathname || "/"}${parsed.search || ""}`,
+                username_set: Boolean(camera.username),
+            };
+        } catch {
+            return null;
+        }
     }
 
     function isAppConfiguredCamera(camera = {}) {
@@ -6911,6 +6865,8 @@ function createLocalAppServer(options = {}) {
             "Connection": "close",
             "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
             "X-GoHome-Stream-State": "waiting_for_frame",
+            "X-GoHome-Display-Transport": LIVE_DISPLAY_TRANSPORT,
+            "X-GoHome-Composition-Owner": "edge",
         });
         if (typeof res.flushHeaders === "function") res.flushHeaders();
     }
@@ -6930,6 +6886,8 @@ function createLocalAppServer(options = {}) {
             "Content-Length": String(stat.size),
             "Content-Type": asset.content_type || "image/jpeg",
             "X-GoHome-Stream-State": "latest_snapshot",
+            "X-GoHome-Display-Transport": LIVE_DISPLAY_TRANSPORT,
+            "X-GoHome-Composition-Owner": "edge",
         };
         if (asset.id) headers["X-GoHome-Asset-Id"] = String(asset.id);
         res.writeHead(200, headers);
@@ -6945,315 +6903,6 @@ function createLocalAppServer(options = {}) {
         const item = liveFrameCache.get(liveFrameCacheKey(cameraId, privacyMode));
         if (!item?.frame || Date.now() - Number(item.received_at_ms || 0) > LIVE_FRAME_TTL_MS) return null;
         return item;
-    }
-
-    function relayCameraId(req, url) {
-        const issuedToken = issuedDeviceTokenFromRequest(req);
-        const rawCameraId = url.searchParams.get("camera_id");
-        const localCameraId = url.searchParams.get("local_camera_id") || rawCameraId;
-        const mappedCamera = resolveAppCameraForDeviceCameraId(rawCameraId, {
-            local_camera_id: localCameraId,
-            edge_camera_id: localCameraId,
-        }, issuedToken?.device_id || "");
-        const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
-        if (!cameraId) return null;
-        if (issuedToken?.device_id && mappedCamera?.device_id
-            && String(mappedCamera.device_id) !== String(issuedToken.device_id)) return null;
-        return {
-            cameraId,
-            localCameraId: normalizeNumber(localCameraId, null),
-            deviceId: issuedToken?.device_id || mappedCamera?.device_id || "",
-        };
-    }
-
-    function finitePoseNumber(value) {
-        const number = Number(value);
-        return Number.isFinite(number) ? number : null;
-    }
-
-    function validatePosePacket(payload, cameraId) {
-        if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-        const states = new Set(["observed", "tracked", "coasting", "empty", "expired"]);
-        const state = String(payload.state || payload.source || "empty");
-        if (!states.has(state)) return null;
-        if (payload.display_only !== true || payload.formal_evidence_eligible !== false) return null;
-        const imageWidth = Math.max(0, Math.min(8192, Math.trunc(finitePoseNumber(payload.image_width) || 0)));
-        const imageHeight = Math.max(0, Math.min(8192, Math.trunc(finitePoseNumber(payload.image_height) || 0)));
-        const poses = [];
-        for (const sourcePose of (Array.isArray(payload.poses) ? payload.poses.slice(0, 4) : [])) {
-            if (!sourcePose || typeof sourcePose !== "object") return null;
-            const keypoints = [];
-            for (const sourcePoint of (Array.isArray(sourcePose.keypoints) ? sourcePose.keypoints.slice(0, 24) : [])) {
-                const x = finitePoseNumber(sourcePoint?.x);
-                const y = finitePoseNumber(sourcePoint?.y);
-                const confidence = finitePoseNumber(sourcePoint?.confidence);
-                const name = String(sourcePoint?.name || "").slice(0, 40);
-                if (!name || x === null || y === null || confidence === null) return null;
-                keypoints.push({
-                    name,
-                    x: Math.max(-256, Math.min((imageWidth || 8192) + 256, x)),
-                    y: Math.max(-256, Math.min((imageHeight || 8192) + 256, y)),
-                    confidence: Math.max(0, Math.min(1, confidence)),
-                    visible: sourcePoint.visible === true,
-                });
-            }
-            if (!keypoints.length) return null;
-            const bbox = Array.isArray(sourcePose.bbox) && sourcePose.bbox.length === 4
-                ? sourcePose.bbox.map(finitePoseNumber)
-                : [];
-            if (bbox.some((value) => value === null)) return null;
-            poses.push({
-                track_id: String(sourcePose.track_id || "").slice(0, 96),
-                confidence: Math.max(0, Math.min(1, finitePoseNumber(sourcePose.confidence) || 0)),
-                bbox,
-                keypoints,
-            });
-        }
-        return {
-            schema_version: "eacp-pose-relay-v1",
-            camera_id: Number(cameraId),
-            frame_id: String(payload.frame_id || "").slice(0, 160),
-            captured_at: String(payload.captured_at || "").slice(0, 64),
-            state,
-            source: state,
-            image_width: imageWidth,
-            image_height: imageHeight,
-            poses: ["observed", "tracked", "coasting"].includes(state) ? poses : [],
-            display_only: true,
-            formal_evidence_eligible: false,
-        };
-    }
-
-    async function handleDeviceLivePoseUpload(req, res, url) {
-        if (!requireDevice(req, res)) return;
-        const relayCamera = relayCameraId(req, url);
-        if (!relayCamera) {
-            writeError(res, 400, "camera_id is invalid for this device");
-            return;
-        }
-        const content = await readBody(req, 96 * 1024);
-        let payload;
-        try {
-            payload = JSON.parse(content.toString("utf8"));
-        } catch (_error) {
-            writeError(res, 400, "pose payload must be valid JSON");
-            return;
-        }
-        const packet = validatePosePacket(payload, relayCamera.cameraId);
-        if (!packet) {
-            writeError(res, 400, "pose payload is invalid");
-            return;
-        }
-        const receivedAt = nowIso();
-        livePoseCache.set(String(relayCamera.cameraId), {
-            ...packet,
-            local_camera_id: relayCamera.localCameraId,
-            device_id: relayCamera.deviceId,
-            received_at: receivedAt,
-            received_at_ms: Date.now(),
-        });
-        write(res, 200, {
-            ok: true,
-            camera_id: relayCamera.cameraId,
-            frame_id: packet.frame_id,
-            received_at: receivedAt,
-        });
-    }
-
-    async function handleDeviceLiveSceneUpload(req, res, url) {
-        if (!requireDevice(req, res)) return;
-        const relayCamera = relayCameraId(req, url);
-        if (!relayCamera) {
-            writeError(res, 400, "camera_id is invalid for this device");
-            return;
-        }
-        const contentType = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
-        if (contentType !== "image/jpeg") {
-            writeError(res, 415, "safe scene must be image/jpeg");
-            return;
-        }
-        const content = await readBody(req, 2 * 1024 * 1024);
-        if (content.length < 4 || content[0] !== 0xff || content[1] !== 0xd8
-            || content[content.length - 2] !== 0xff || content[content.length - 1] !== 0xd9) {
-            writeError(res, 400, "safe scene must be a complete JPEG");
-            return;
-        }
-        const cameraKey = String(relayCamera.cameraId);
-        const streamEpochMs = Math.max(0, Math.trunc(normalizeNumber(url.searchParams.get("stream_epoch_ms"), 0)));
-        const sourceSequence = Math.max(0, Math.trunc(normalizeNumber(url.searchParams.get("sequence"), 0)));
-        const current = liveSceneCache.get(cameraKey);
-        const orderedUpload = streamEpochMs > 0 && sourceSequence > 0;
-        const staleUpload = orderedUpload && current?.stream_epoch_ms > 0 && (
-            streamEpochMs < current.stream_epoch_ms
-            || (streamEpochMs === current.stream_epoch_ms && sourceSequence <= current.source_sequence)
-        );
-        const receivedAt = nowIso();
-        if (staleUpload) {
-            recordLiveSceneMetric(relayCamera.cameraId, {
-                accepted: false,
-                capturedAt: url.searchParams.get("captured_at"),
-                receivedAtMs: Date.now(),
-            });
-            write(res, 200, {
-                ok: true,
-                accepted: false,
-                stale_ignored: true,
-                camera_id: relayCamera.cameraId,
-                scene_frame_id: current.frame_id,
-                received_at: receivedAt,
-                stream_epoch_ms: current.stream_epoch_ms,
-                source_sequence: current.source_sequence,
-            });
-            return;
-        }
-        const sequence = Number(liveSceneSequence.get(cameraKey) || 0) + 1;
-        liveSceneSequence.set(cameraKey, sequence);
-        const frameId = `${relayCamera.cameraId}-${Date.now()}-${sequence}`;
-        liveSceneCache.set(cameraKey, {
-            frame_id: frameId,
-            frame: content,
-            camera_id: relayCamera.cameraId,
-            local_camera_id: relayCamera.localCameraId,
-            device_id: relayCamera.deviceId,
-            content_type: "image/jpeg",
-            captured_at: url.searchParams.get("captured_at") || receivedAt,
-            received_at: receivedAt,
-            received_at_ms: Date.now(),
-            privacy_mode: "skeleton",
-            stream_epoch_ms: streamEpochMs,
-            source_sequence: sourceSequence,
-        });
-        recordLiveSceneMetric(relayCamera.cameraId, {
-            accepted: true,
-            capturedAt: url.searchParams.get("captured_at") || receivedAt,
-            receivedAtMs: Date.now(),
-        });
-        write(res, 200, {
-            ok: true,
-            accepted: true,
-            stale_ignored: false,
-            camera_id: relayCamera.cameraId,
-            scene_frame_id: frameId,
-            received_at: receivedAt,
-            stream_epoch_ms: streamEpochMs,
-            source_sequence: sourceSequence,
-        });
-    }
-
-    function latestLiveScene(cameraId) {
-        const scene = liveSceneCache.get(String(cameraId));
-        if (!scene?.frame || Date.now() - Number(scene.received_at_ms || 0) > LIVE_SCENE_TTL_MS) return null;
-        return scene;
-    }
-
-    function writeSafeSceneMjpegStream(req, res, cameraId) {
-        const boundary = `gohome-scene-${crypto.randomBytes(4).toString("hex")}`;
-        const profile = new URL(req.url, "http://local").searchParams.get("profile") || "mobile";
-        const relayFps = streamProfileConfig(profile).fps;
-        const relayIntervalMs = Math.ceil(1000 / Math.max(1, relayFps));
-        let closed = false;
-        activeStreamClients.scene += 1;
-        if (typeof req.setTimeout === "function") req.setTimeout(0);
-        if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
-        res.writeHead(200, {
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-store, no-transform",
-            "Connection": "keep-alive",
-            "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
-            "X-Accel-Buffering": "no",
-            "X-GoHome-Stream-State": "safe_scene_relay",
-            "X-GoHome-Privacy-Mode": "skeleton",
-        });
-        if (typeof res.flushHeaders === "function") res.flushHeaders();
-        const writer = createLatestFrameMjpegWriter(res, {
-            boundary,
-            getLatestFrame: () => {
-                const scene = latestLiveScene(cameraId);
-                if (!scene) return null;
-                return {
-                    key: `scene:${scene.frame_id}`,
-                    frame: scene.frame,
-                    contentType: "image/jpeg",
-                    capturedAt: scene.captured_at || scene.received_at,
-                    source: "safe_scene",
-                    assetId: "",
-                    privacyMode: "skeleton",
-                };
-            },
-        });
-        writer.writeLatest({ force: true });
-        const timer = setInterval(writer.writeLatest, relayIntervalMs);
-        function closeStream() {
-            if (closed) return;
-            closed = true;
-            activeStreamClients.scene = Math.max(0, activeStreamClients.scene - 1);
-            clearInterval(timer);
-            writer.close();
-        }
-        req.on("close", closeStream);
-        res.on("close", closeStream);
-    }
-
-    function writePoseSseStream(req, res, cameraId) {
-        let closed = false;
-        let lastPacketKey = "";
-        let staleEmitted = false;
-        activeStreamClients.pose += 1;
-        if (typeof req.setTimeout === "function") req.setTimeout(0);
-        if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
-        res.writeHead(200, {
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-store, no-transform",
-            "Connection": "keep-alive",
-            "Content-Type": "text/event-stream; charset=utf-8",
-            "X-Accel-Buffering": "no",
-        });
-        if (typeof res.flushHeaders === "function") res.flushHeaders();
-        const emit = (packet) => res.write(`event: pose\ndata: ${JSON.stringify(packet)}\n\n`);
-        const tick = () => {
-            if (closed || res.destroyed || res.writableEnded) return;
-            const cached = livePoseCache.get(String(cameraId));
-            const fresh = cached && Date.now() - Number(cached.received_at_ms || 0) <= LIVE_POSE_TTL_MS;
-            if (fresh) {
-                const packetKey = `${cached.state}:${cached.frame_id}:${cached.received_at_ms}`;
-                if (packetKey !== lastPacketKey) {
-                    lastPacketKey = packetKey;
-                    staleEmitted = false;
-                    const { received_at_ms: _receivedAtMs, ...packet } = cached;
-                    emit(packet);
-                }
-            } else if (!staleEmitted) {
-                staleEmitted = true;
-                lastPacketKey = "";
-                emit({
-                    schema_version: "eacp-pose-relay-v1",
-                    camera_id: Number(cameraId),
-                    frame_id: "",
-                    captured_at: nowIso(),
-                    state: "expired",
-                    source: "expired",
-                    image_width: cached?.image_width || 0,
-                    image_height: cached?.image_height || 0,
-                    poses: [],
-                    display_only: true,
-                    formal_evidence_eligible: false,
-                });
-            }
-        };
-        tick();
-        const packetTimer = setInterval(tick, 50);
-        const heartbeatTimer = setInterval(() => {
-            if (!closed && !res.destroyed && !res.writableEnded) res.write(": keepalive\n\n");
-        }, 15000);
-        function closeStream() {
-            if (closed) return;
-            closed = true;
-            activeStreamClients.pose = Math.max(0, activeStreamClients.pose - 1);
-            clearInterval(packetTimer);
-            clearInterval(heartbeatTimer);
-        }
-        req.on("close", closeStream);
-        res.on("close", closeStream);
     }
 
     function latestRelayFrame(cameraId, privacyMode = "original") {
@@ -7321,6 +6970,8 @@ function createLocalAppServer(options = {}) {
             "X-Accel-Buffering": "no",
             "X-GoHome-Stream-State": "cloud_relay",
             "X-GoHome-Privacy-Mode": resolvedPrivacyMode,
+            "X-GoHome-Display-Transport": LIVE_DISPLAY_TRANSPORT,
+            "X-GoHome-Composition-Owner": "edge",
         });
         if (typeof res.flushHeaders === "function") res.flushHeaders();
 
@@ -7547,8 +7198,10 @@ function createLocalAppServer(options = {}) {
                 "X-GoHome-Device-Token": target.token,
             }, {
                 "X-GoHome-Device-Base": target.base,
-                "X-GoHome-Local-Camera-Id": String(localCameraId),
-                "X-GoHome-Proxy-Mode": "device-token",
+                    "X-GoHome-Local-Camera-Id": String(localCameraId),
+                    "X-GoHome-Proxy-Mode": "device-token",
+                    "X-GoHome-Display-Transport": LIVE_DISPLAY_TRANSPORT,
+                    "X-GoHome-Composition-Owner": "edge",
             });
             if (deviceProxied || res.headersSent) return deviceProxied;
         }
@@ -7561,6 +7214,8 @@ function createLocalAppServer(options = {}) {
                 "X-GoHome-Device-Base": target.base,
                 "X-GoHome-Local-Camera-Id": String(localCameraId),
                 "X-GoHome-Proxy-Mode": "admin-cookie",
+                "X-GoHome-Display-Transport": LIVE_DISPLAY_TRANSPORT,
+                "X-GoHome-Composition-Owner": "edge",
             });
             if (adminProxied || res.headersSent) return adminProxied;
         }
@@ -7589,11 +7244,42 @@ function createLocalAppServer(options = {}) {
     async function handleDeviceMediaUpload(req, res, url) {
         if (!requireDevice(req, res)) return;
         const issuedToken = issuedDeviceTokenFromRequest(req);
-        const content = await readBody(req);
+        const deviceId = String(issuedToken?.device_id || "");
+        const idempotencyKey = String(url.searchParams.get("idempotency_key") || "").trim();
+        if (idempotencyKey.length < 8 || idempotencyKey.length > 160) {
+            writeError(res, 400, "device evidence idempotency key required");
+            return;
+        }
+        const contentLength = Number(req.headers["content-length"] || 0);
+        const maximumBytes = Math.max(
+            1024 * 1024,
+            normalizeNumber(options.deviceEvidenceMaxBytes ?? process.env.GOHOME_DEVICE_EVIDENCE_MAX_BYTES, 16 * 1024 * 1024),
+        );
+        if (!Number.isSafeInteger(contentLength) || contentLength <= 0) {
+            writeError(res, 411, "device evidence content length required");
+            return;
+        }
+        if (contentLength > maximumBytes) {
+            writeError(res, 413, "device evidence exceeds size limit");
+            return;
+        }
+        const existingAsset = store.db.assets.find((asset) => (
+            String(asset.device_id || "") === deviceId
+            && String(asset.metadata?.device_upload_idempotency_key || "") === idempotencyKey
+            && String(asset.retention_status || "active") !== "deleted"
+        ));
+        if (existingAsset) {
+            for await (const _chunk of req) {
+                // Drain the authenticated retry without buffering it.
+            }
+            write(res, 200, { ok: true, asset: existingAsset, duplicate: true });
+            return;
+        }
         const assetId = store.nextId("asset");
-        const fileName = path.basename(url.searchParams.get("file_name") || `asset-${assetId}.jpg`).replace(/[^\w.\-]+/g, "_");
+        const fileName = path.basename(url.searchParams.get("file_name") || "evidence.jpg").replace(/[^\w.\-]+/g, "_");
         const dateDir = new Date().toISOString().slice(0, 10);
-        const relativePath = `${dateDir}/${assetId}-${fileName}`;
+        const objectIdentity = sha256(`${deviceId}:${idempotencyKey}`).slice(0, 32);
+        const relativePath = `${dateDir}/${objectIdentity}-${fileName}`;
         const snapshotPath = String(url.searchParams.get("snapshot_path") || relativePath).replace(/^\/+/, "");
         const rawCameraId = url.searchParams.get("camera_id");
         const localCameraId = url.searchParams.get("local_camera_id") || rawCameraId;
@@ -7607,16 +7293,24 @@ function createLocalAppServer(options = {}) {
         const storageKey = `edge-evidence/${familyId || "unbound"}/${relativePath}`;
         const useCos = Boolean(cosStorage.enabled);
         if (useCos) {
-            await cosStorage.putObject({ key: storageKey, body: content, contentType });
+            await cosStorage.putObject({ key: storageKey, body: req, contentType, contentLength });
         } else {
             const target = path.join(mediaDir, relativePath);
             ensureDir(path.dirname(target));
-            await fs.promises.writeFile(target, content);
+            const temporary = `${target}.${crypto.randomBytes(6).toString("hex")}.upload`;
+            try {
+                await pipeline(req, fs.createWriteStream(temporary, { flags: "wx", mode: 0o600 }));
+                const stat = await fs.promises.stat(temporary);
+                if (stat.size !== contentLength) throw new Error("device evidence size mismatch");
+                await fs.promises.rename(temporary, target);
+            } finally {
+                await fs.promises.rm(temporary, { force: true }).catch(() => {});
+            }
         }
         const asset = {
             id: assetId,
             family_id: familyId,
-            device_id: issuedToken?.device_id || mappedCamera?.device_id || "",
+            device_id: deviceId || mappedCamera?.device_id || "",
             camera_id: cameraId,
             file_name: fileName,
             content_type: contentType,
@@ -7629,7 +7323,10 @@ function createLocalAppServer(options = {}) {
             evidence_frame_role: url.searchParams.get("evidence_frame_role") || "",
             local_camera_id: normalizeNumber(localCameraId, null),
             captured_at: url.searchParams.get("captured_at") || nowIso(),
-            size: content.length,
+            size: contentLength,
+            metadata: {
+                device_upload_idempotency_key: idempotencyKey,
+            },
             created_at: nowIso(),
             updated_at: nowIso(),
             url: `/api/v1/video/assets/${encodeURIComponent(assetId)}`,
@@ -8826,6 +8523,10 @@ function createLocalAppServer(options = {}) {
     function serveMedia(req, res, snapshotPath) {
         if (!requireApp(req, res)) return;
         const asset = latestAssetForSnapshot(decodeURIComponent(snapshotPath || ""));
+        if (asset && String(asset.retention_status || "active") === "deleted") {
+            writeError(res, 404, "media asset not found");
+            return;
+        }
         const filePath = assetAbsolutePath(asset);
         if (!asset || !filePath || !fs.existsSync(filePath)) {
             writeError(res, 404, "media asset not found");
@@ -8842,7 +8543,7 @@ function createLocalAppServer(options = {}) {
     function serveAsset(req, res, assetId, url) {
         if (!requireApp(req, res)) return;
         const asset = store.db.assets.find((item) => String(item.id) === String(assetId));
-        if (!asset) {
+        if (!asset || String(asset.retention_status || "active") === "deleted") {
             writeError(res, 404, "media asset not found");
             return;
         }
@@ -9834,6 +9535,20 @@ function createLocalAppServer(options = {}) {
                     writeError(res, 400, "摄像头不能通过编辑迁移家庭或盒子，请删除后重新添加。");
                     return;
                 }
+                if ("stream_url" in patch) {
+                    const streamUrl = String(patch.stream_url || "").trim();
+                    try {
+                        const parsed = new URL(streamUrl);
+                        if (!["rtsp:", "rtsps:"].includes(parsed.protocol) || !parsed.hostname) throw new Error("invalid stream URL");
+                        patch.stream_url = streamUrl;
+                    } catch {
+                        writeError(res, 400, "摄像头地址必须是有效的 RTSP 地址。");
+                        return;
+                    }
+                }
+                const connectionChanged = ["stream_url", "username", "password"].some((key) => (
+                    key in patch && String(patch[key] ?? "") !== String(existing[key] ?? "")
+                ));
                 const camera = normalizeCameraPayload({
                     ...existing,
                     ...patch,
@@ -9841,6 +9556,11 @@ function createLocalAppServer(options = {}) {
                     family_id: existing.family_id,
                     device_id: existing.device_id,
                 }, existing);
+                if (connectionChanged) {
+                    camera.status = camera.stream_url ? "pending_edge_sync" : "pending_edge_setup";
+                    camera.sync_status = "pending_edge_sync";
+                    camera.last_error = "";
+                }
                 store.db.cameras[cameraId] = camera;
                 await store.save();
                 write(res, 200, publicCamera(camera));
@@ -9943,42 +9663,9 @@ function createLocalAppServer(options = {}) {
                 if (privacyMode) {
                     response.privacy_mode = privacyMode;
                     response.minimum_privacy_mode = privacyMode;
-                    if (privacyMode === "skeleton") {
-                        const cameraId = encodeURIComponent(String(ticketPayload.camera_id));
-                        response.pose_stream_path = `/api/v1/video/cameras/${cameraId}/pose-stream`;
-                        response.scene_stream_path = `/api/v1/video/cameras/${cameraId}/scene.mjpg`;
-                        response.display_transport = "safe-scene-pose-v1";
-                    } else {
-                        response.display_transport = "mjpeg-v1";
-                    }
+                    response.display_transport = LIVE_DISPLAY_TRANSPORT;
                 }
                 write(res, 200, response);
-                return;
-            }
-
-            const poseStreamMatch = pathname.match(/^\/api\/v1\/video\/cameras\/([^/]+)\/pose-stream$/);
-            if (req.method === "GET" && poseStreamMatch) {
-                const cameraId = decodeURIComponent(poseStreamMatch[1]);
-                if (!requireApp(req, res)) return;
-                if (!requireCameraAccess(req, res, cameraId)) return;
-                if (streamPrivacyMode(req, cameraId) !== "skeleton") {
-                    writeError(res, 403, "pose stream requires skeleton privacy mode");
-                    return;
-                }
-                writePoseSseStream(req, res, cameraId);
-                return;
-            }
-
-            const sceneStreamMatch = pathname.match(/^\/api\/v1\/video\/cameras\/([^/]+)\/scene\.mjpg$/);
-            if (req.method === "GET" && sceneStreamMatch) {
-                const cameraId = decodeURIComponent(sceneStreamMatch[1]);
-                if (!requireApp(req, res)) return;
-                if (!requireCameraAccess(req, res, cameraId)) return;
-                if (streamPrivacyMode(req, cameraId) !== "skeleton") {
-                    writeError(res, 403, "safe scene stream requires skeleton privacy mode");
-                    return;
-                }
-                writeSafeSceneMjpegStream(req, res, cameraId);
                 return;
             }
 
@@ -10065,16 +9752,6 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "POST" && pathname === "/api/v1/device/live-frames/upload") {
                 await handleDeviceLiveFrameUpload(req, res, url);
-                return;
-            }
-
-            if (req.method === "POST" && pathname === "/api/v1/device/live-poses/upload") {
-                await handleDeviceLivePoseUpload(req, res, url);
-                return;
-            }
-
-            if (req.method === "POST" && pathname === "/api/v1/device/live-scenes/upload") {
-                await handleDeviceLiveSceneUpload(req, res, url);
                 return;
             }
 
@@ -10432,6 +10109,11 @@ function createLocalAppServer(options = {}) {
                 write(res, 200, {
                     ok: true,
                     enabled: normalizeBool(process.env.GOHOME_SCHEDULER_ENABLED),
+                    media_lifecycle: {
+                        ...mediaLifecycleManager.status(),
+                        enabled: mediaLifecycleEnabled,
+                        delete_enabled: mediaLifecycleDeleteEnabled,
+                    },
                     latest_runs: store.db.scheduler_runs
                         .slice()
                         .sort((a, b) => String(b.started_at || b.created_at || "").localeCompare(String(a.started_at || a.created_at || "")))
@@ -10458,6 +10140,26 @@ function createLocalAppServer(options = {}) {
                     run: result.run,
                     result: result.result,
                 });
+                return;
+            }
+
+            if (req.method === "POST" && pathname === "/api/v1/internal/media-lifecycle/run") {
+                if (!requireOps(req, res)) return;
+                const payload = await parseJsonBody(req).catch(() => ({}));
+                const dryRun = "dry_run" in payload
+                    ? normalizeBool(payload.dry_run)
+                    : !mediaLifecycleDeleteEnabled;
+                if (!dryRun && !mediaLifecycleDeleteEnabled) {
+                    writeError(res, 409, "media lifecycle deletion is not enabled");
+                    return;
+                }
+                const result = await mediaLifecycleManager.run({
+                    reconcileOrphans: "reconcile_orphans" in payload
+                        ? normalizeBool(payload.reconcile_orphans)
+                        : true,
+                    dryRun,
+                });
+                write(res, 200, result);
                 return;
             }
 
@@ -10927,31 +10629,44 @@ function createLocalAppServer(options = {}) {
     const server = http.createServer(route);
     let schedulerTimer = null;
     let visionVerificationTimer = null;
-    let mediaUploadCleanupTimer = null;
-    let initialMediaUploadCleanupTimer = null;
+    let mediaLifecycleTimer = null;
+    let initialMediaLifecycleTimer = null;
     let apnsDispatchTimer = null;
     let initialApnsDispatchTimer = null;
     let activityCleanupTimer = null;
     let initialActivityCleanupTimer = null;
-    const mediaUploadCleanupEnabled = options.mediaUploadCleanupEnabled ?? !["0", "false", "no"].includes(
-        String(process.env.GOHOME_MEDIA_UPLOAD_CLEANUP_ENABLED || "1").trim().toLowerCase(),
+    const mediaLifecycleEnabled = options.mediaLifecycleEnabled ?? options.mediaUploadCleanupEnabled ?? !["0", "false", "no"].includes(
+        String(process.env.GOHOME_MEDIA_LIFECYCLE_ENABLED || process.env.GOHOME_MEDIA_UPLOAD_CLEANUP_ENABLED || "1").trim().toLowerCase(),
     );
-    if (cosStorage.enabled && mediaUploadCleanupEnabled) {
+    const mediaLifecycleDeleteEnabled = options.mediaLifecycleDeleteEnabled ?? normalizeBool(
+        process.env.GOHOME_MEDIA_LIFECYCLE_DELETE_ENABLED,
+    );
+    if (mediaLifecycleEnabled) {
         const intervalMs = Math.max(
             60000,
-            normalizeNumber(process.env.GOHOME_MEDIA_UPLOAD_CLEANUP_INTERVAL_MS, 5 * 60 * 1000),
+            normalizeNumber(
+                process.env.GOHOME_MEDIA_LIFECYCLE_INTERVAL_MS || process.env.GOHOME_MEDIA_UPLOAD_CLEANUP_INTERVAL_MS,
+                5 * 60 * 1000,
+            ),
         );
-        const runCleanup = () => {
-            cleanupExpiredMemoryUploads()
-                .catch((error) => console.error(`media upload cleanup failed: ${error.message || error}`));
+        const runCleanup = async () => {
+            try {
+                await cleanupExpiredMemoryUploads();
+                await mediaLifecycleManager.run({
+                    reconcileOrphans: true,
+                    dryRun: !mediaLifecycleDeleteEnabled,
+                });
+            } catch (error) {
+                console.error(`media lifecycle cleanup failed: ${error.message || error}`);
+            }
         };
-        mediaUploadCleanupTimer = setInterval(runCleanup, intervalMs);
-        mediaUploadCleanupTimer.unref?.();
-        initialMediaUploadCleanupTimer = setTimeout(runCleanup, 1000);
-        initialMediaUploadCleanupTimer.unref?.();
+        mediaLifecycleTimer = setInterval(runCleanup, intervalMs);
+        mediaLifecycleTimer.unref?.();
+        initialMediaLifecycleTimer = setTimeout(runCleanup, 1000);
+        initialMediaLifecycleTimer.unref?.();
         server.on("close", () => {
-            clearInterval(mediaUploadCleanupTimer);
-            clearTimeout(initialMediaUploadCleanupTimer);
+            clearInterval(mediaLifecycleTimer);
+            clearTimeout(initialMediaLifecycleTimer);
         });
     }
     if (appPushProviderConfigured()) {
@@ -11028,6 +10743,8 @@ function createLocalAppServer(options = {}) {
         deviceToken,
         nativeRepository,
         cleanupExpiredMemoryUploads,
+        mediaLifecycleManager,
+        runMediaLifecycle: (options = {}) => mediaLifecycleManager.run(options),
         cleanupExpiredActivityIntervals: () => nativeRepository.cleanupExpiredActivityIntervals(),
         dispatchQueuedPushDeliveries,
         queueNotificationDelivery,

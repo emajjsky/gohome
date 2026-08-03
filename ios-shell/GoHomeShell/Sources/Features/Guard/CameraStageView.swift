@@ -5,9 +5,7 @@ struct CameraStageView: View {
     let image: UIImage?
     let state: GuardStreamState
     let displayFPS: Double
-    let poseUpdatesPerSecond: Double
     let privacyMode: VideoPrivacyMode
-    let poseTimeline: PoseTimeline
 
     var body: some View {
         ZStack {
@@ -25,9 +23,6 @@ struct CameraStageView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.82))
                 }
-            }
-            if privacyMode == .skeleton {
-                PoseOverlayView(timeline: poseTimeline)
             }
         }
         .frame(maxWidth: .infinity)
@@ -82,14 +77,11 @@ struct CameraStageView: View {
     }
 
     var shouldShowRate: Bool {
-        state == .playing && (displayFPS > 0 || poseUpdatesPerSecond > 0)
+        state == .playing && displayFPS > 0
     }
 
     var rateText: String {
-        guard privacyMode == .skeleton, poseUpdatesPerSecond > 0 else {
-            return String(format: "%.1f FPS", displayFPS)
-        }
-        return String(format: "%.1f FPS · POSE %.1f Hz", displayFPS, poseUpdatesPerSecond)
+        String(format: "%.1f FPS", displayFPS)
     }
 
     private var iconName: String {

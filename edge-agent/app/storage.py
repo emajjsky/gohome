@@ -45,6 +45,7 @@ class Storage:
         conn = sqlite3.connect(self.db_path, timeout=120)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout = 120000")
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
             with conn:
                 yield conn
@@ -71,6 +72,7 @@ class Storage:
                     last_pet_seen_at TEXT,
                     last_pet_count INTEGER NOT NULL DEFAULT 0,
                     pet_types_json TEXT NOT NULL DEFAULT '[]',
+                    deleted_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -197,29 +199,6 @@ class Storage:
                     UNIQUE(user_id, app_install_id),
                     FOREIGN KEY(family_id) REFERENCES families(id),
                     FOREIGN KEY(user_id) REFERENCES users(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS video_service_nodes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    family_id INTEGER NOT NULL,
-                    node_id TEXT NOT NULL,
-                    device_id TEXT NOT NULL DEFAULT '',
-                    node_name TEXT NOT NULL DEFAULT '',
-                    role TEXT NOT NULL DEFAULT 'origin',
-                    region TEXT NOT NULL DEFAULT 'local',
-                    service_url TEXT NOT NULL DEFAULT '',
-                    media_url TEXT NOT NULL DEFAULT '',
-                    public_base_url TEXT NOT NULL DEFAULT '',
-                    health_status TEXT NOT NULL DEFAULT 'active',
-                    priority INTEGER NOT NULL DEFAULT 100,
-                    capabilities_json TEXT NOT NULL DEFAULT '{}',
-                    metadata_json TEXT NOT NULL DEFAULT '{}',
-                    last_seen_at TEXT,
-                    expires_at TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(family_id, node_id),
-                    FOREIGN KEY(family_id) REFERENCES families(id)
                 );
 
                 CREATE TABLE IF NOT EXISTS snapshots (
@@ -357,6 +336,32 @@ class Storage:
                     FOREIGN KEY(event_id) REFERENCES events(id),
                     FOREIGN KEY(snapshot_id) REFERENCES snapshots(id),
                     FOREIGN KEY(camera_id) REFERENCES cameras(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS media_lifecycle_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target_type TEXT NOT NULL,
+                    target_id INTEGER NOT NULL,
+                    snapshot_id INTEGER,
+                    asset_id INTEGER,
+                    provider TEXT NOT NULL DEFAULT 'localfs',
+                    bucket TEXT NOT NULL DEFAULT 'local',
+                    storage_path TEXT NOT NULL DEFAULT '',
+                    object_key TEXT NOT NULL DEFAULT '',
+                    reason TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    next_attempt_at TEXT,
+                    claim_token TEXT NOT NULL DEFAULT '',
+                    claimed_at TEXT,
+                    lease_expires_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    UNIQUE(target_type, target_id),
+                    FOREIGN KEY(snapshot_id) REFERENCES snapshots(id) ON DELETE SET NULL,
+                    FOREIGN KEY(asset_id) REFERENCES media_assets(id) ON DELETE SET NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS observation_logs (
@@ -501,9 +506,15 @@ class Storage:
                     byte_size INTEGER NOT NULL DEFAULT 0,
                     checksum_sha256 TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL DEFAULT 'uploaded',
+                    retention_class TEXT NOT NULL DEFAULT 'event_evidence',
+                    retention_status TEXT NOT NULL DEFAULT 'active',
+                    deletion_attempts INTEGER NOT NULL DEFAULT 0,
+                    deletion_error TEXT NOT NULL DEFAULT '',
                     metadata_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     uploaded_at TEXT,
+                    updated_at TEXT,
+                    deleted_at TEXT,
                     FOREIGN KEY(family_id) REFERENCES families(id),
                     FOREIGN KEY(event_id) REFERENCES events(id),
                     FOREIGN KEY(snapshot_id) REFERENCES snapshots(id)
@@ -679,6 +690,24 @@ class Storage:
                 );
                 """
             )
+            conn.execute("DROP TABLE IF EXISTS video_service_nodes")
+            self._ensure_column(conn, "snapshots", "retention_class", "TEXT NOT NULL DEFAULT 'routine'")
+            self._ensure_column(conn, "snapshots", "retention_status", "TEXT NOT NULL DEFAULT 'active'")
+            self._ensure_column(conn, "media_assets", "retention_class", "TEXT NOT NULL DEFAULT 'event_evidence'")
+            self._ensure_column(conn, "media_assets", "retention_status", "TEXT NOT NULL DEFAULT 'active'")
+            self._ensure_column(conn, "media_assets", "deletion_attempts", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "media_assets", "deletion_error", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "media_assets", "updated_at", "TEXT")
+            self._ensure_column(conn, "media_assets", "deleted_at", "TEXT")
+            conn.execute("UPDATE media_assets SET updated_at = COALESCE(updated_at, uploaded_at, created_at)")
+            conn.execute(
+                """
+                UPDATE media_assets
+                SET retention_class = 'package_artifact'
+                WHERE id IN (SELECT asset_id FROM package_releases)
+                """
+            )
+            self._migrate_media_lifecycle_foreign_keys(conn)
             self._ensure_column(conn, "snapshots", "person_count", "INTEGER")
             self._ensure_column(conn, "snapshots", "width", "INTEGER")
             self._ensure_column(conn, "snapshots", "height", "INTEGER")
@@ -686,6 +715,7 @@ class Storage:
             self._ensure_column(conn, "cameras", "last_pet_seen_at", "TEXT")
             self._ensure_column(conn, "cameras", "last_pet_count", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "cameras", "pet_types_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(conn, "cameras", "deleted_at", "TEXT")
             self._ensure_column(conn, "events", "detection_result_id", "INTEGER")
             self._ensure_column(conn, "events", "rule_evaluation_id", "INTEGER")
             self._ensure_column(conn, "events", "candidate_id", "INTEGER")
@@ -698,6 +728,7 @@ class Storage:
             self._ensure_column(conn, "upload_jobs", "lease_expires_at", "TEXT")
             if requires_upload_lease_migration:
                 self._migrate_legacy_upload_claims(conn)
+            self._restore_archived_camera_references(conn)
             self._migrate_event_cloud_sync_status(conn)
             self._ensure_column(conn, "rules", "person_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column(conn, "rules", "fall_detection_enabled", "INTEGER NOT NULL DEFAULT 1")
@@ -761,6 +792,12 @@ class Storage:
                     ON rule_evaluations(detection_result_id);
                 CREATE INDEX IF NOT EXISTS idx_rule_evaluations_snapshot_id ON rule_evaluations(snapshot_id);
                 CREATE INDEX IF NOT EXISTS idx_detection_results_snapshot_id ON detection_results(snapshot_id);
+                CREATE INDEX IF NOT EXISTS idx_media_lifecycle_jobs_status
+                    ON media_lifecycle_jobs(status, next_attempt_at, id);
+                CREATE INDEX IF NOT EXISTS idx_snapshots_retention
+                    ON snapshots(retention_status, captured_at, id);
+                CREATE INDEX IF NOT EXISTS idx_media_assets_retention
+                    ON media_assets(retention_status, created_at, id);
                 CREATE INDEX IF NOT EXISTS idx_presence_sessions_camera_status
                     ON presence_sessions(camera_id, status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_posture_episodes_camera_status
@@ -772,16 +809,270 @@ class Storage:
                 """
             )
 
+    def _lifecycle_retry_at(self, attempt_count: int) -> str:
+        delay = min(3600, max(30, 30 * (2 ** max(0, min(int(attempt_count), 7) - 1))))
+        return (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
+
+    def _enqueue_media_lifecycle_job(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        target_type: str,
+        target_id: int,
+        snapshot_id: int | None = None,
+        asset_id: int | None = None,
+        provider: str = "localfs",
+        bucket: str = "local",
+        storage_path: str = "",
+        object_key: str = "",
+        reason: str = "retention",
+    ) -> bool:
+        timestamp = now_iso()
+        cursor = conn.execute(
+            """
+            INSERT INTO media_lifecycle_jobs (
+                target_type, target_id, snapshot_id, asset_id, provider, bucket,
+                storage_path, object_key, reason, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            ON CONFLICT(target_type, target_id) DO NOTHING
+            """,
+            (
+                str(target_type), int(target_id),
+                int(snapshot_id) if snapshot_id else None,
+                int(asset_id) if asset_id else None,
+                str(provider or "localfs"), str(bucket or "local"),
+                str(storage_path or "").strip().lstrip("/"),
+                str(object_key or "").strip().lstrip("/"),
+                str(reason or "retention"), timestamp, timestamp,
+            ),
+        )
+        return bool(cursor.rowcount)
+
+    def process_media_lifecycle_jobs(
+        self,
+        *,
+        snapshot_dir: Path,
+        object_storage_dir: Path | None = None,
+        limit: int = 32,
+    ) -> Dict[str, Any]:
+        """Delete managed bytes first, then commit their database cleanup.
+
+        SQLite's write transaction stays open while local bytes are removed.
+        That prevents a concurrent event/upload transaction from acquiring a
+        snapshot reference after the safety check and before row deletion.
+        Remote providers are intentionally left retryable until a provider
+        adapter is supplied; silently deleting their database rows would leak
+        cloud objects.
+        """
+        snapshot_root = Path(snapshot_dir).resolve()
+        object_root = Path(object_storage_dir or snapshot_root.parent / "object_storage").resolve()
+        processed = completed = failed = blocked = 0
+        completed_by_type: Dict[str, int] = {}
+        errors: list[Dict[str, Any]] = []
+        for _ in range(max(1, min(int(limit), 100))):
+            job = None
+            try:
+                with self.connect() as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    timestamp = now_iso()
+                    row = conn.execute(
+                        """
+                        SELECT * FROM media_lifecycle_jobs
+                        WHERE (
+                            status IN ('pending', 'failed')
+                            AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                        ) OR (
+                            status = 'deleting'
+                            AND lease_expires_at IS NOT NULL
+                            AND lease_expires_at <= ?
+                        )
+                        ORDER BY created_at ASC, id ASC
+                        LIMIT 1
+                        """,
+                        (timestamp, timestamp),
+                    ).fetchone()
+                    if row is None:
+                        conn.rollback()
+                        break
+                    job = dict(row)
+                    attempt = int(job.get("attempt_count") or 0) + 1
+                    lease = (datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat()
+                    conn.execute(
+                        """
+                        UPDATE media_lifecycle_jobs
+                        SET status = 'deleting', attempt_count = ?, claim_token = ?,
+                            claimed_at = ?, lease_expires_at = ?, last_error = '', updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (attempt, f"lifecycle:{secrets.token_urlsafe(12)}", timestamp, lease, timestamp, int(job["id"])),
+                    )
+                    provider = str(job.get("provider") or "localfs").lower()
+                    if provider not in {"localfs", "local", "signed-localfs"}:
+                        error = f"provider_not_supported_on_edge:{provider}"
+                        conn.execute(
+                            """
+                            UPDATE media_lifecycle_jobs
+                            SET status = 'failed', last_error = ?, next_attempt_at = ?, updated_at = ?
+                            WHERE id = ?
+                            """,
+                            (error, self._lifecycle_retry_at(attempt), timestamp, int(job["id"])),
+                        )
+                        if str(job.get("target_type") or "") == "asset":
+                            conn.execute(
+                                """
+                                UPDATE media_assets
+                                SET deletion_attempts = ?, deletion_error = ?, updated_at = ?
+                                WHERE id = ?
+                                """,
+                                (attempt, error, timestamp, int(job["target_id"])),
+                            )
+                        conn.commit()
+                        processed += 1
+                        failed += 1
+                        errors.append({"job_id": int(job["id"]), "error": error})
+                        continue
+
+                    target_type = str(job.get("target_type") or "")
+                    if target_type == "snapshot":
+                        root = snapshot_root
+                        relative = str(job.get("storage_path") or "").lstrip("/")
+                        candidate = (root / relative).resolve()
+                    else:
+                        root = object_root
+                        relative = str(job.get("object_key") or "").lstrip("/")
+                        candidate = (root / relative).resolve()
+                    try:
+                        candidate.relative_to(root)
+                    except ValueError:
+                        raise ValueError("managed media path escapes storage root")
+
+                    target_id = int(job["target_id"])
+                    if target_type == "snapshot":
+                        refs = conn.execute(
+                            """
+                            SELECT 1 FROM events WHERE snapshot_id = ?
+                            UNION ALL SELECT 1 FROM detection_results WHERE snapshot_id = ?
+                            UNION ALL SELECT 1 FROM rule_evaluations WHERE snapshot_id = ?
+                            UNION ALL SELECT 1 FROM observation_logs WHERE last_snapshot_id = ?
+                            UNION ALL SELECT 1 FROM presence_sessions
+                                WHERE representative_snapshot_id = ? AND status = 'open'
+                            UNION ALL SELECT 1 FROM posture_episodes
+                                WHERE representative_snapshot_id = ? AND status = 'open'
+                            UNION ALL SELECT 1 FROM upload_jobs
+                                WHERE snapshot_id = ? AND status != 'completed'
+                            UNION ALL SELECT 1 FROM media_assets
+                                WHERE snapshot_id = ? AND retention_status != 'deleted'
+                            LIMIT 1
+                            """,
+                            (target_id,) * 8,
+                        ).fetchone()
+                        if refs is not None:
+                            conn.execute(
+                                "UPDATE snapshots SET retention_status = 'active' WHERE id = ?",
+                                (target_id,),
+                            )
+                            conn.execute(
+                                """
+                                UPDATE media_lifecycle_jobs
+                                SET status = 'cancelled', last_error = 'snapshot_became_protected',
+                                    next_attempt_at = NULL, claim_token = '', lease_expires_at = NULL,
+                                    completed_at = ?, updated_at = ?
+                                WHERE id = ?
+                                """,
+                                (timestamp, timestamp, int(job["id"])),
+                            )
+                            conn.commit()
+                            processed += 1
+                            blocked += 1
+                            continue
+
+                    if candidate.exists():
+                        if not candidate.is_file():
+                            raise ValueError("managed media path is not a file")
+                        candidate.unlink()
+
+                    if target_type == "snapshot":
+                        conn.execute("DELETE FROM snapshots WHERE id = ? AND retention_status = 'deleting'", (target_id,))
+                    elif target_type == "asset":
+                        conn.execute(
+                            """
+                            UPDATE media_assets
+                            SET status = 'deleted', retention_status = 'deleted', deleted_at = ?,
+                                deletion_attempts = ?, deletion_error = '', updated_at = ?
+                            WHERE id = ? AND retention_status = 'deleting'
+                            """,
+                            (timestamp, attempt, timestamp, target_id),
+                        )
+                    elif target_type == "upload_session":
+                        conn.execute("DELETE FROM media_upload_sessions WHERE id = ?", (target_id,))
+                    else:
+                        raise ValueError(f"unsupported_lifecycle_target:{target_type}")
+
+                    conn.execute(
+                        """
+                        UPDATE media_lifecycle_jobs
+                        SET status = 'completed', last_error = '', next_attempt_at = NULL,
+                            claim_token = '', lease_expires_at = NULL, completed_at = ?, updated_at = ?,
+                            snapshot_id = CASE WHEN target_type = 'snapshot' THEN NULL ELSE snapshot_id END
+                        WHERE id = ?
+                        """,
+                        (timestamp, timestamp, int(job["id"])),
+                    )
+                    conn.commit()
+                    completed += 1
+                    processed += 1
+                    completed_by_type[target_type] = completed_by_type.get(target_type, 0) + 1
+            except Exception as exc:
+                failed += 1
+                processed += 1
+                error = str(exc)[:1000]
+                if job is not None:
+                    try:
+                        with self.connect() as conn:
+                            timestamp = now_iso()
+                            conn.execute(
+                                """
+                                UPDATE media_lifecycle_jobs
+                                SET status = 'failed', last_error = ?, next_attempt_at = ?,
+                                    claim_token = '', lease_expires_at = NULL, updated_at = ?
+                                WHERE id = ?
+                                """,
+                                (error, self._lifecycle_retry_at(int(job.get("attempt_count") or 1)), timestamp, int(job["id"])),
+                            )
+                            if str(job.get("target_type") or "") == "asset":
+                                conn.execute(
+                                    """
+                                    UPDATE media_assets
+                                    SET deletion_attempts = deletion_attempts + 1,
+                                        deletion_error = ?, updated_at = ?
+                                    WHERE id = ?
+                                    """,
+                                    (error, timestamp, int(job["target_id"])),
+                                )
+                    except Exception as persist_error:
+                        error = f"{error}; lifecycle_state_persist_failed:{persist_error}"
+                errors.append({"job_id": int(job["id"]) if job else None, "error": error})
+        return {
+            "processed": processed,
+            "completed": completed,
+            "failed": failed,
+            "blocked": blocked,
+            "completed_by_type": completed_by_type,
+            "errors": errors,
+        }
+
     def prune_runtime_history(
         self,
         *,
         snapshot_dir: Path,
+        object_storage_dir: Path | None = None,
         retention_hours: int = 24,
         completed_upload_retention_days: int = 7,
         event_evidence_retention_hours: int = 24,
         local_event_retention_days: int = 30,
         batch_size: int = 5000,
         discard_live_preview_uploads: bool = True,
+        force_oldest: bool = False,
     ) -> Dict[str, Any]:
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, int(retention_hours)))).isoformat()
         event_evidence_cutoff = (
@@ -794,12 +1085,9 @@ class Storage:
             datetime.now(timezone.utc) - timedelta(days=max(1, int(completed_upload_retention_days)))
         ).isoformat()
         limit = max(100, min(int(batch_size), 20000))
-        removed_paths: list[str] = []
         deleted: Dict[str, int] = {}
 
         with self.connect() as conn:
-            conn.execute("PRAGMA foreign_keys = OFF")
-
             # Once the complete event and all of its evidence are accepted by
             # the cloud, local heavyweight inference rows become a cache. Keep
             # a short replay window, then detach them so normal age pruning can
@@ -869,6 +1157,14 @@ class Storage:
                 placeholders = ",".join("?" for _ in expired_event_ids)
                 conn.execute(
                     f"UPDATE event_candidates SET promoted_event_id = NULL WHERE promoted_event_id IN ({placeholders})",
+                    expired_event_ids,
+                )
+                conn.execute(
+                    f"UPDATE media_assets SET event_id = NULL WHERE event_id IN ({placeholders})",
+                    expired_event_ids,
+                )
+                conn.execute(
+                    f"UPDATE notification_deliveries SET event_id = NULL WHERE event_id IN ({placeholders})",
                     expired_event_ids,
                 )
                 deleted["event_ingests"] = conn.execute(
@@ -1037,11 +1333,80 @@ class Storage:
                 (cutoff, limit),
             ).rowcount
 
+            expired_session_rows = conn.execute(
+                """
+                SELECT id, provider, bucket, object_key
+                FROM media_upload_sessions
+                WHERE status != 'completed' AND expires_at < ?
+                ORDER BY expires_at, id
+                LIMIT ?
+                """,
+                (now_iso(), limit),
+            ).fetchall()
+            deleted["media_upload_sessions_planned"] = 0
+            for row in expired_session_rows:
+                if self._enqueue_media_lifecycle_job(
+                    conn,
+                    target_type="upload_session",
+                    target_id=int(row["id"]),
+                    provider=str(row["provider"] or "signed-localfs"),
+                    bucket=str(row["bucket"] or "local"),
+                    object_key=str(row["object_key"] or ""),
+                    reason="expired_upload_session",
+                ):
+                    deleted["media_upload_sessions_planned"] += 1
+
+            asset_age_cutoff = now_iso() if force_oldest else upload_cutoff
+            asset_rows = conn.execute(
+                """
+                SELECT ma.id, ma.provider, ma.bucket, ma.object_key
+                FROM media_assets ma
+                LEFT JOIN events e ON e.id = ma.event_id
+                WHERE ma.retention_status = 'active'
+                  AND ma.retention_class IN ('routine_cache', 'event_evidence', 'verification_evidence')
+                  AND COALESCE(ma.uploaded_at, ma.created_at) < ?
+                  AND LOWER(COALESCE(ma.metadata_json, '{}')) NOT LIKE '%family_memory%'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM package_releases pr WHERE pr.asset_id = ma.id
+                  )
+                  AND (
+                      ma.event_id IS NULL
+                      OR (
+                          e.cloud_sync_status = 'completed'
+                          AND e.cloud_synced_at IS NOT NULL
+                          AND e.cloud_synced_at < ?
+                      )
+                  )
+                ORDER BY COALESCE(ma.uploaded_at, ma.created_at), ma.id
+                LIMIT ?
+                """,
+                (asset_age_cutoff, event_evidence_cutoff, limit),
+            ).fetchall()
+            deleted["media_assets_planned"] = 0
+            for row in asset_rows:
+                asset_id = int(row["id"])
+                if self._enqueue_media_lifecycle_job(
+                    conn,
+                    target_type="asset",
+                    target_id=asset_id,
+                    asset_id=asset_id,
+                    provider=str(row["provider"] or "localfs"),
+                    bucket=str(row["bucket"] or "local"),
+                    object_key=str(row["object_key"] or ""),
+                    reason="expired_media_asset",
+                ):
+                    conn.execute(
+                        "UPDATE media_assets SET retention_status = 'deleting' WHERE id = ?",
+                        (asset_id,),
+                    )
+                    deleted["media_assets_planned"] += 1
+
             snapshot_rows = conn.execute(
                 """
                 SELECT s.id, s.image_path
                 FROM snapshots s
-                WHERE s.captured_at < ?
+                WHERE s.retention_status = 'active'
+                  AND (s.captured_at < ? OR ? = 1)
                   AND s.id NOT IN (SELECT snapshot_id FROM events WHERE snapshot_id IS NOT NULL)
                   AND s.id NOT IN (
                       SELECT snapshot_id FROM detection_results WHERE snapshot_id IS NOT NULL
@@ -1065,7 +1430,8 @@ class Storage:
                       WHERE snapshot_id IS NOT NULL AND status != 'completed'
                   )
                   AND s.id NOT IN (
-                      SELECT snapshot_id FROM media_assets WHERE snapshot_id IS NOT NULL
+                      SELECT snapshot_id FROM media_assets
+                      WHERE snapshot_id IS NOT NULL AND retention_status != 'deleted'
                   )
                   AND s.id NOT IN (
                       SELECT MAX(latest.id) FROM snapshots latest GROUP BY latest.camera_id
@@ -1073,10 +1439,9 @@ class Storage:
                 ORDER BY s.id
                 LIMIT ?
                 """,
-                (cutoff, limit),
+                (cutoff, 1 if force_oldest else 0, limit),
             ).fetchall()
             snapshot_ids = [int(row["id"]) for row in snapshot_rows]
-            removed_paths = [str(row["image_path"] or "") for row in snapshot_rows]
             if snapshot_ids:
                 placeholders = ",".join("?" for _ in snapshot_ids)
                 # Closed runtime summaries and completed jobs remain useful
@@ -1108,40 +1473,88 @@ class Storage:
                     """,
                     snapshot_ids,
                 )
-                deleted["snapshots"] = conn.execute(
-                    f"DELETE FROM snapshots WHERE id IN ({placeholders})",
-                    snapshot_ids,
-                ).rowcount
+                planned = 0
+                for row in snapshot_rows:
+                    snapshot_id = int(row["id"])
+                    if self._enqueue_media_lifecycle_job(
+                        conn,
+                        target_type="snapshot",
+                        target_id=snapshot_id,
+                        snapshot_id=snapshot_id,
+                        storage_path=str(row["image_path"] or ""),
+                        reason="critical_watermark" if force_oldest else "retention_expired",
+                    ):
+                        planned += 1
+                if planned:
+                    conn.execute(
+                        f"UPDATE snapshots SET retention_status = 'deleting' WHERE id IN ({placeholders})",
+                        snapshot_ids,
+                    )
+                deleted["snapshots_planned"] = planned
             else:
-                deleted["snapshots"] = 0
+                deleted["snapshots_planned"] = 0
 
-        snapshot_root = snapshot_dir.resolve()
-        deleted_files = 0
-        skipped_files = 0
-        for relative_path in removed_paths:
-            if not relative_path:
-                continue
-            candidate = (snapshot_root / relative_path).resolve()
-            if snapshot_root not in candidate.parents:
-                skipped_files += 1
-                continue
-            try:
-                candidate.unlink(missing_ok=True)
-                deleted_files += 1
-            except OSError:
-                skipped_files += 1
+        lifecycle = self.process_media_lifecycle_jobs(
+            snapshot_dir=snapshot_dir,
+            object_storage_dir=object_storage_dir,
+            limit=min(limit, 100),
+        )
+        deleted["snapshots"] = int(lifecycle.get("completed_by_type", {}).get("snapshot", 0))
+        deleted["media_assets"] = int(lifecycle.get("completed_by_type", {}).get("asset", 0))
+        deleted["media_upload_sessions"] = int(
+            lifecycle.get("completed_by_type", {}).get("upload_session", 0)
+        )
+        pending_lifecycle = 0
+        due_lifecycle = 0
+        with self.connect() as conn:
+            pending_lifecycle = int(conn.execute(
+                "SELECT COUNT(*) FROM media_lifecycle_jobs WHERE status NOT IN ('completed', 'cancelled')"
+            ).fetchone()[0])
+            timestamp = now_iso()
+            due_lifecycle = int(conn.execute(
+                """
+                SELECT COUNT(*) FROM media_lifecycle_jobs
+                WHERE status = 'pending'
+                   OR (status = 'failed' AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
+                   OR (status = 'deleting' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
+                """,
+                (timestamp, timestamp),
+            ).fetchone()[0])
 
         return {
             "cutoff": cutoff,
             "event_evidence_cutoff": event_evidence_cutoff,
             "event_cutoff": event_cutoff,
             "deleted": deleted,
-            "deleted_snapshot_files": deleted_files,
-            "skipped_snapshot_files": skipped_files,
-            "has_more": any(count >= limit for count in deleted.values()),
+            "deleted_snapshot_files": deleted["snapshots"],
+            "skipped_snapshot_files": int(lifecycle.get("failed", 0)) + int(lifecycle.get("blocked", 0)),
+            "media_lifecycle": lifecycle,
+            "pending_media_lifecycle_jobs": pending_lifecycle,
+            "due_media_lifecycle_jobs": due_lifecycle,
+            "has_more": due_lifecycle > 0 or any(count >= limit for count in deleted.values()),
         }
 
-    def runtime_storage_status(self, snapshot_dir: Path, *, retention_hours: int = 24) -> Dict[str, Any]:
+    @staticmethod
+    def _directory_bytes(root: Path) -> int:
+        total = 0
+        if not root.exists():
+            return total
+        for candidate in root.rglob("*"):
+            try:
+                if candidate.is_file():
+                    total += candidate.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    def runtime_storage_status(
+        self,
+        snapshot_dir: Path,
+        *,
+        object_storage_dir: Path | None = None,
+        runtime_dir: Path | None = None,
+        retention_hours: int = 24,
+    ) -> Dict[str, Any]:
         disk = shutil.disk_usage(self.db_path.parent)
         used_percent = (float(disk.used) / float(disk.total) * 100.0) if disk.total else 0.0
         database_bytes = self.db_path.stat().st_size if self.db_path.exists() else 0
@@ -1150,14 +1563,12 @@ class Storage:
         database_sidecar_bytes = sum(
             path.stat().st_size for path in (wal_path, shm_path) if path.exists()
         )
-        snapshot_bytes = 0
-        if snapshot_dir.exists():
-            for candidate in snapshot_dir.rglob("*"):
-                try:
-                    if candidate.is_file():
-                        snapshot_bytes += candidate.stat().st_size
-                except OSError:
-                    continue
+        snapshot_root = Path(snapshot_dir)
+        object_root = Path(object_storage_dir or snapshot_root.parent / "object_storage")
+        runtime_root = Path(runtime_dir or snapshot_root.parent / "runtime")
+        snapshot_bytes = self._directory_bytes(snapshot_root)
+        object_storage_bytes = self._directory_bytes(object_root)
+        runtime_bytes = self._directory_bytes(runtime_root)
         freelist_bytes = 0
         try:
             with self.connect() as conn:
@@ -1171,14 +1582,64 @@ class Storage:
             "database_sidecar_bytes": database_sidecar_bytes,
             "database_reusable_bytes": freelist_bytes,
             "snapshot_bytes": snapshot_bytes,
-            "runtime_allocated_bytes": database_bytes + database_sidecar_bytes + snapshot_bytes,
-            "runtime_live_bytes": max(0, database_bytes - freelist_bytes) + database_sidecar_bytes + snapshot_bytes,
+            "object_storage_bytes": object_storage_bytes,
+            "runtime_files_bytes": runtime_bytes,
+            "runtime_allocated_bytes": (
+                database_bytes + database_sidecar_bytes + snapshot_bytes
+                + object_storage_bytes + runtime_bytes
+            ),
+            "runtime_live_bytes": (
+                max(0, database_bytes - freelist_bytes) + database_sidecar_bytes
+                + snapshot_bytes + object_storage_bytes + runtime_bytes
+            ),
             "disk_total_bytes": disk.total,
             "disk_used_bytes": disk.used,
             "disk_free_bytes": disk.free,
             "disk_used_percent": round(used_percent, 2),
             "retention_hours": max(1, int(retention_hours)),
-            "snapshot_dir": str(snapshot_dir),
+            "snapshot_dir": str(snapshot_root),
+            "object_storage_dir": str(object_root),
+            "runtime_dir": str(runtime_root),
+        }
+
+    def compact_runtime_database(
+        self,
+        *,
+        snapshot_dir: Path,
+        object_storage_dir: Path | None = None,
+        runtime_dir: Path | None = None,
+        minimum_reusable_bytes: int = 64 * 1024 * 1024,
+    ) -> Dict[str, Any]:
+        before = self.runtime_storage_status(
+            snapshot_dir,
+            object_storage_dir=object_storage_dir,
+            runtime_dir=runtime_dir,
+        )
+        reusable = int(before.get("database_reusable_bytes") or 0)
+        database_bytes = int(before.get("database_bytes") or 0)
+        if reusable < max(4 * 1024 * 1024, int(minimum_reusable_bytes)):
+            return {"compacted": False, "reason": "reusable_pages_below_threshold", "before": before}
+        required_free = database_bytes + 128 * 1024 * 1024
+        if int(before.get("disk_free_bytes") or 0) < required_free:
+            return {"compacted": False, "reason": "insufficient_temporary_space", "before": before}
+
+        conn = sqlite3.connect(self.db_path, timeout=120)
+        try:
+            conn.execute("PRAGMA busy_timeout = 120000")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
+        after = self.runtime_storage_status(
+            snapshot_dir,
+            object_storage_dir=object_storage_dir,
+            runtime_dir=runtime_dir,
+        )
+        return {
+            "compacted": True,
+            "reclaimed_bytes": max(0, database_bytes - int(after.get("database_bytes") or 0)),
+            "before": before,
+            "after": after,
         }
 
     def _table_columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
@@ -1201,6 +1662,90 @@ class Storage:
             if column in columns:
                 conn.execute(f"ALTER TABLE rules DROP COLUMN {column}")
                 columns.remove(column)
+
+    def _migrate_media_lifecycle_foreign_keys(self, conn: sqlite3.Connection) -> None:
+        foreign_keys = {
+            str(row["from"]): str(row["on_delete"]).upper()
+            for row in conn.execute("PRAGMA foreign_key_list(media_lifecycle_jobs)").fetchall()
+        }
+        if foreign_keys.get("snapshot_id") == "SET NULL" and foreign_keys.get("asset_id") == "SET NULL":
+            return
+
+        conn.execute("DROP TABLE IF EXISTS media_lifecycle_jobs_v2")
+        conn.execute(
+            """
+            CREATE TABLE media_lifecycle_jobs_v2 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_type TEXT NOT NULL,
+                target_id INTEGER NOT NULL,
+                snapshot_id INTEGER,
+                asset_id INTEGER,
+                provider TEXT NOT NULL DEFAULT 'localfs',
+                bucket TEXT NOT NULL DEFAULT 'local',
+                storage_path TEXT NOT NULL DEFAULT '',
+                object_key TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '',
+                next_attempt_at TEXT,
+                claim_token TEXT NOT NULL DEFAULT '',
+                claimed_at TEXT,
+                lease_expires_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                UNIQUE(target_type, target_id),
+                FOREIGN KEY(snapshot_id) REFERENCES snapshots(id) ON DELETE SET NULL,
+                FOREIGN KEY(asset_id) REFERENCES media_assets(id) ON DELETE SET NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO media_lifecycle_jobs_v2 (
+                id, target_type, target_id, snapshot_id, asset_id, provider, bucket,
+                storage_path, object_key, reason, status, attempt_count, last_error,
+                next_attempt_at, claim_token, claimed_at, lease_expires_at,
+                created_at, updated_at, completed_at
+            )
+            SELECT
+                id,
+                target_type,
+                target_id,
+                CASE
+                    WHEN snapshot_id IS NULL OR EXISTS (
+                        SELECT 1 FROM snapshots WHERE snapshots.id = media_lifecycle_jobs.snapshot_id
+                    ) THEN snapshot_id
+                    ELSE NULL
+                END,
+                CASE
+                    WHEN asset_id IS NULL OR EXISTS (
+                        SELECT 1 FROM media_assets WHERE media_assets.id = media_lifecycle_jobs.asset_id
+                    ) THEN asset_id
+                    ELSE NULL
+                END,
+                provider,
+                bucket,
+                storage_path,
+                object_key,
+                reason,
+                status,
+                attempt_count,
+                last_error,
+                next_attempt_at,
+                claim_token,
+                claimed_at,
+                lease_expires_at,
+                created_at,
+                updated_at,
+                completed_at
+            FROM media_lifecycle_jobs
+            ORDER BY id
+            """
+        )
+        conn.execute("DROP TABLE media_lifecycle_jobs")
+        conn.execute("ALTER TABLE media_lifecycle_jobs_v2 RENAME TO media_lifecycle_jobs")
 
     def _migrate_event_cloud_sync_status(self, conn: sqlite3.Connection) -> None:
         # This classification is intentionally one-shot. Re-running it at every
@@ -1248,6 +1793,61 @@ class Storage:
                 END
             """
         )
+
+    def _restore_archived_camera_references(self, conn: sqlite3.Connection) -> None:
+        referenced_rows = conn.execute(
+            """
+            SELECT camera_id FROM snapshots WHERE camera_id IS NOT NULL
+            UNION SELECT camera_id FROM detection_results WHERE camera_id IS NOT NULL
+            UNION SELECT camera_id FROM rule_evaluations WHERE camera_id IS NOT NULL
+            UNION SELECT camera_id FROM event_candidates WHERE camera_id IS NOT NULL
+            UNION SELECT camera_id FROM events WHERE camera_id IS NOT NULL
+            UNION SELECT camera_id FROM upload_jobs WHERE camera_id IS NOT NULL
+            UNION SELECT camera_id FROM observation_logs WHERE camera_id IS NOT NULL
+            UNION SELECT camera_id FROM presence_sessions WHERE camera_id IS NOT NULL
+            UNION SELECT camera_id FROM posture_episodes WHERE camera_id IS NOT NULL
+            UNION SELECT camera_id FROM activity_export_cursors WHERE camera_id IS NOT NULL
+            """
+        ).fetchall()
+        existing_ids = {
+            int(row["id"])
+            for row in conn.execute("SELECT id FROM cameras").fetchall()
+        }
+        timestamp = now_iso()
+        for row in referenced_rows:
+            camera_id = int(row["camera_id"])
+            if camera_id in existing_ids:
+                continue
+            event = conn.execute(
+                """
+                SELECT room, MIN(occurred_at) AS first_seen_at, MAX(occurred_at) AS last_seen_at
+                FROM events
+                WHERE camera_id = ?
+                """,
+                (camera_id,),
+            ).fetchone()
+            created_at = str(event["first_seen_at"] or timestamp) if event else timestamp
+            updated_at = str(event["last_seen_at"] or created_at) if event else created_at
+            room = str(event["room"] or "") if event else ""
+            conn.execute(
+                """
+                INSERT INTO cameras (
+                    id, name, room, stream_url, username, password, enabled, status,
+                    last_seen_at, last_error, last_pet_seen_at, last_pet_count,
+                    pet_types_json, deleted_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, NULL, NULL, 0, 'deleted', NULL, '', NULL, 0, '[]', ?, ?, ?)
+                """,
+                (
+                    camera_id,
+                    f"历史摄像头 #{camera_id}",
+                    room,
+                    f"archived:{camera_id}",
+                    timestamp,
+                    created_at,
+                    updated_at,
+                ),
+            )
+            existing_ids.add(camera_id)
 
     def _migrate_legacy_upload_claims(self, conn: sqlite3.Connection) -> None:
         # Older workers could leave a row in uploading forever after a process
@@ -1450,14 +2050,6 @@ class Storage:
         data["source"] = json.loads(data.pop("source_json", "[]") or "[]")
         data["source_event_ids"] = json.loads(data.pop("source_event_ids_json", "[]") or "[]")
         data["source_media_ids"] = json.loads(data.pop("source_media_ids_json", "[]") or "[]")
-        return data
-
-    def _video_service_node_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
-        if row is None:
-            return None
-        data = dict(row)
-        data["capabilities"] = json.loads(data.pop("capabilities_json", "{}") or "{}")
-        data["metadata"] = json.loads(data.pop("metadata_json", "{}") or "{}")
         return data
 
     def _user_to_dict(self, row: sqlite3.Row, include_secret: bool = False) -> Dict[str, Any]:
@@ -2445,141 +3037,6 @@ class Storage:
     def list_user_family_ids(self, user_id: int) -> list[int]:
         return [int(family["id"]) for family in self.list_user_families(user_id)]
 
-    def upsert_video_service_node(
-        self,
-        *,
-        family_id: int,
-        node_id: str,
-        device_id: str = "",
-        node_name: str = "",
-        role: str = "origin",
-        region: str = "local",
-        service_url: str = "",
-        media_url: str = "",
-        public_base_url: str = "",
-        health_status: str = "active",
-        priority: int = 100,
-        capabilities: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        expires_at: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        timestamp = now_iso()
-        clean_node_id = node_id.strip()
-        if not clean_node_id:
-            raise ValueError("node_id is required")
-        with self.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT id
-                FROM video_service_nodes
-                WHERE family_id = ? AND node_id = ?
-                LIMIT 1
-                """,
-                (family_id, clean_node_id),
-            ).fetchone()
-            if row is None:
-                cursor = conn.execute(
-                    """
-                    INSERT INTO video_service_nodes (
-                        family_id, node_id, device_id, node_name, role, region,
-                        service_url, media_url, public_base_url, health_status, priority,
-                        capabilities_json, metadata_json, last_seen_at, expires_at, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        family_id,
-                        clean_node_id,
-                        device_id.strip(),
-                        node_name.strip(),
-                        role.strip() or "origin",
-                        region.strip() or "local",
-                        service_url.strip(),
-                        media_url.strip(),
-                        public_base_url.strip(),
-                        health_status.strip() or "active",
-                        int(priority),
-                        json.dumps(capabilities or {}, ensure_ascii=False),
-                        json.dumps(metadata or {}, ensure_ascii=False),
-                        timestamp,
-                        expires_at,
-                        timestamp,
-                        timestamp,
-                    ),
-                )
-                node_row_id = int(cursor.lastrowid)
-            else:
-                node_row_id = int(row["id"])
-                conn.execute(
-                    """
-                    UPDATE video_service_nodes
-                    SET
-                        device_id = ?,
-                        node_name = ?,
-                        role = ?,
-                        region = ?,
-                        service_url = ?,
-                        media_url = ?,
-                        public_base_url = ?,
-                        health_status = ?,
-                        priority = ?,
-                        capabilities_json = ?,
-                        metadata_json = ?,
-                        last_seen_at = ?,
-                        expires_at = ?,
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        device_id.strip(),
-                        node_name.strip(),
-                        role.strip() or "origin",
-                        region.strip() or "local",
-                        service_url.strip(),
-                        media_url.strip(),
-                        public_base_url.strip(),
-                        health_status.strip() or "active",
-                        int(priority),
-                        json.dumps(capabilities or {}, ensure_ascii=False),
-                        json.dumps(metadata or {}, ensure_ascii=False),
-                        timestamp,
-                        expires_at,
-                        timestamp,
-                        node_row_id,
-                    ),
-                )
-            node = conn.execute("SELECT * FROM video_service_nodes WHERE id = ?", (node_row_id,)).fetchone()
-        if node is None:
-            raise RuntimeError("Video service node was not persisted")
-        return self._video_service_node_to_dict(node)
-
-    def get_video_service_node(self, family_id: int, node_id: str) -> Optional[Dict[str, Any]]:
-        with self.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT *
-                FROM video_service_nodes
-                WHERE family_id = ? AND node_id = ?
-                LIMIT 1
-                """,
-                (family_id, node_id.strip()),
-            ).fetchone()
-        return self._video_service_node_to_dict(row)
-
-    def list_video_service_nodes(self, family_id: int, include_inactive: bool = False) -> list[Dict[str, Any]]:
-        query = """
-            SELECT *
-            FROM video_service_nodes
-            WHERE family_id = ?
-        """
-        params: list[Any] = [family_id]
-        if not include_inactive:
-            query += " AND health_status != 'offline'"
-        query += " ORDER BY priority DESC, updated_at DESC, id DESC"
-        with self.connect() as conn:
-            rows = conn.execute(query, params).fetchall()
-        return [self._video_service_node_to_dict(row) for row in rows]
-
     def user_has_device_access(self, user_id: int, device_id: str) -> bool:
         user_family_ids = set(self.list_user_family_ids(user_id))
         if not user_family_ids:
@@ -2591,12 +3048,17 @@ class Storage:
 
     def list_cameras(self, include_secret: bool = False) -> list[Dict[str, Any]]:
         with self.connect() as conn:
-            rows = conn.execute("SELECT * FROM cameras ORDER BY id DESC").fetchall()
+            rows = conn.execute(
+                "SELECT * FROM cameras WHERE deleted_at IS NULL ORDER BY id DESC"
+            ).fetchall()
         return [self._camera_to_dict(row, include_secret=include_secret) for row in rows]
 
     def get_camera(self, camera_id: int, include_secret: bool = False) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
-            row = conn.execute("SELECT * FROM cameras WHERE id = ?", (camera_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM cameras WHERE id = ? AND deleted_at IS NULL",
+                (camera_id,),
+            ).fetchone()
         return self._camera_to_dict(row, include_secret=include_secret) if row else None
 
     def create_camera(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -2650,7 +3112,7 @@ class Storage:
                     password = ?,
                     enabled = ?,
                     updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND deleted_at IS NULL
                 """,
                 (
                     next_values["name"],
@@ -2669,8 +3131,18 @@ class Storage:
 
     def delete_camera(self, camera_id: int) -> bool:
         self.close_camera_runtime_state(camera_id, reason="camera_deleted")
+        timestamp = now_iso()
         with self.connect() as conn:
-            cursor = conn.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
+            cursor = conn.execute(
+                """
+                UPDATE cameras
+                SET stream_url = ?, username = NULL, password = NULL, enabled = 0,
+                    status = 'deleted', last_error = '', last_pet_seen_at = NULL,
+                    last_pet_count = 0, pet_types_json = '[]', deleted_at = ?, updated_at = ?
+                WHERE id = ? AND deleted_at IS NULL
+                """,
+                (f"archived:{int(camera_id)}", timestamp, timestamp, int(camera_id)),
+            )
         return cursor.rowcount > 0
 
     def update_camera_status(self, camera_id: int, status: str, last_error: str = "") -> None:
@@ -2681,7 +3153,7 @@ class Storage:
                     """
                     UPDATE cameras
                     SET status = ?, last_seen_at = ?, last_error = NULL, updated_at = ?
-                    WHERE id = ?
+                    WHERE id = ? AND deleted_at IS NULL
                     """,
                     (status, timestamp, timestamp, camera_id),
                 )
@@ -2690,7 +3162,7 @@ class Storage:
                     """
                     UPDATE cameras
                     SET status = ?, last_error = ?, updated_at = ?
-                    WHERE id = ?
+                    WHERE id = ? AND deleted_at IS NULL
                     """,
                     (status, last_error, timestamp, camera_id),
                 )
@@ -3766,7 +4238,7 @@ class Storage:
                     """
                     UPDATE cameras
                     SET last_pet_seen_at = ?, last_pet_count = ?, pet_types_json = ?, updated_at = ?
-                    WHERE id = ?
+                    WHERE id = ? AND deleted_at IS NULL
                     """,
                     (captured_at, pet_count, json.dumps(pet_types, ensure_ascii=False), captured_at, int(camera_id)),
                 )
@@ -3923,6 +4395,7 @@ class Storage:
         bucket: str = "local",
         event_id: Optional[int] = None,
         status: str = "uploaded",
+        retention_class: str = "event_evidence",
         metadata: Optional[Dict[str, Any]] = None,
         uploaded_at: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -3945,9 +4418,10 @@ class Storage:
                 INSERT INTO media_assets (
                     family_id, device_id, event_id, snapshot_id, source_snapshot_path,
                     provider, bucket, object_key, content_type, byte_size,
-                    checksum_sha256, status, metadata_json, created_at, uploaded_at
+                    checksum_sha256, status, retention_class, retention_status,
+                    metadata_json, created_at, uploaded_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
                 """,
                 (
                     int(family_id),
@@ -3962,9 +4436,11 @@ class Storage:
                     max(0, int(byte_size or 0)),
                     str(checksum_sha256 or "").strip(),
                     str(status or "uploaded").strip() or "uploaded",
+                    str(retention_class or "event_evidence").strip() or "event_evidence",
                     json.dumps(metadata or {}, ensure_ascii=False),
                     timestamp,
                     uploaded_at or timestamp,
+                    timestamp,
                 ),
             )
             asset_id = int(cursor.lastrowid)
@@ -6052,9 +6528,11 @@ class Storage:
                 """,
                 (f"{today}%",),
             ).fetchone()
-            cameras_count = conn.execute("SELECT COUNT(*) AS count FROM cameras").fetchone()["count"]
+            cameras_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM cameras WHERE deleted_at IS NULL"
+            ).fetchone()["count"]
             online_count = conn.execute(
-                "SELECT COUNT(*) AS count FROM cameras WHERE status = 'online'"
+                "SELECT COUNT(*) AS count FROM cameras WHERE deleted_at IS NULL AND status = 'online'"
             ).fetchone()["count"]
 
         if latest_event:

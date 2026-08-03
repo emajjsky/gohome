@@ -212,17 +212,6 @@ class DeviceHeartbeatIn(BaseModel):
     extra: Dict[str, Any] = Field(default_factory=dict)
 
 
-class PlaybackSessionCreate(BaseModel):
-    resource_type: str = Field(..., pattern="^(stream|snapshot|asset)$")
-    family_id: Optional[int] = Field(default=None, ge=1)
-    camera_id: Optional[int] = Field(default=None, ge=1)
-    snapshot_path: str = Field(default="", max_length=300)
-    asset_id: Optional[int] = Field(default=None, ge=1)
-    preferred_region: str = Field(default="", max_length=40)
-    require_public: bool = False
-    expires_in_seconds: int = Field(default=120, ge=30, le=600)
-
-
 class V1DeviceEventIngest(BaseModel):
     idempotency_key: str = Field(..., min_length=8, max_length=120)
     event_type: str = Field(..., min_length=1, max_length=60)
@@ -235,49 +224,22 @@ class V1DeviceEventIngest(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 
-class V1MediaAssetCreate(BaseModel):
-    snapshot_path: str = Field(default="", max_length=300)
-    event_id: Optional[int] = Field(default=None, ge=1)
-    content_type: str = Field(default="image/jpeg", max_length=80)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class V1MediaUploadSessionCreate(BaseModel):
+class V1PackageArtifactUploadCreate(BaseModel):
     family_id: int
     file_name: str = Field(..., min_length=1, max_length=200)
     content_type: str = Field(default="application/octet-stream", max_length=120)
-    byte_size: int = Field(default=0, ge=0, le=52428800)
+    byte_size: int = Field(..., ge=1, le=52428800)
     device_id: str = Field(default="", max_length=120)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-class V1MediaUploadSessionComplete(BaseModel):
+class V1PackageArtifactUploadComplete(BaseModel):
     content_type: str = Field(default="", max_length=120)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-class V1MediaPublicLinkCreate(BaseModel):
+class V1PackageArtifactPublicLinkCreate(BaseModel):
     expires_in_seconds: int = Field(default=900, ge=60, le=86400)
-    family_id: Optional[int] = Field(default=None, ge=1)
-    preferred_region: str = Field(default="", max_length=40)
-    require_public: bool = True
-
-
-class V1VideoServiceNodeUpsert(BaseModel):
-    family_id: int
-    node_id: str = Field(default="", min_length=1, max_length=120)
-    device_id: str = Field(default="", max_length=120)
-    node_name: str = Field(default="", max_length=120)
-    role: str = Field(default="origin", pattern="^(origin|relay|edge)$")
-    region: str = Field(default="local", max_length=40)
-    service_url: str = Field(default="", max_length=300)
-    media_url: str = Field(default="", max_length=300)
-    public_base_url: str = Field(default="", max_length=300)
-    health_status: str = Field(default="active", pattern="^(active|degraded|offline)$")
-    priority: int = Field(default=100, ge=0, le=100000)
-    heartbeat_expires_in_seconds: int = Field(default=300, ge=30, le=86400)
-    capabilities: Dict[str, Any] = Field(default_factory=dict)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class V1PackageReleaseCreate(BaseModel):

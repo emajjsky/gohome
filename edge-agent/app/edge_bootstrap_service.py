@@ -11,6 +11,20 @@ import subprocess
 import sys
 
 
+OBSOLETE_ENV_KEYS = {
+    "GOHOME_LIVE_RELAY_DROP_STALE_FRAMES",
+    "GOHOME_LIVE_RELAY_UPLOAD_WORKERS",
+    "GOHOME_POSE_RELAY_ENABLED",
+    "GOHOME_POSE_RELAY_FPS",
+    "GOHOME_POSE_RELAY_REQUEST_TIMEOUT_SECONDS",
+    "GOHOME_VIDEO_DISTRIBUTION_NAME",
+    "GOHOME_VIDEO_SERVICE_NODE_ID",
+    "GOHOME_VIDEO_SERVICE_PUBLIC_BASE_URL",
+    "GOHOME_VIDEO_SERVICE_REGION",
+    "GOHOME_VIDEO_SERVICE_ROLE",
+}
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -70,12 +84,7 @@ class EdgeBootstrapService:
             "GOHOME_OBJECT_STORAGE_PROVIDER": str(self.settings.object_storage_provider),
             "GOHOME_OBJECT_STORAGE_BUCKET": str(self.settings.object_storage_bucket),
             "GOHOME_PUBLIC_BASE_URL": str(self.settings.public_base_url),
-            "GOHOME_VIDEO_SERVICE_PUBLIC_BASE_URL": str(self.settings.video_service_public_base_url),
             "GOHOME_MEDIA_PUBLIC_BASE_URL": str(self.settings.media_public_base_url),
-            "GOHOME_VIDEO_SERVICE_NODE_ID": str(self.settings.video_service_node_id),
-            "GOHOME_VIDEO_SERVICE_REGION": str(self.settings.video_service_region),
-            "GOHOME_VIDEO_SERVICE_ROLE": str(self.settings.video_service_role),
-            "GOHOME_VIDEO_DISTRIBUTION_NAME": str(self.settings.video_distribution_name),
             "GOHOME_GENERIC_WEBHOOK_URL": str(self.settings.generic_webhook_url),
             "GOHOME_FEISHU_WEBHOOK": str(self.settings.feishu_webhook),
             "GOHOME_BARK_URL": str(self.settings.bark_url),
@@ -122,7 +131,11 @@ class EdgeBootstrapService:
             data = {}
         merged = {**self.default_config(), **data}
         merged["command"] = [str(item) for item in merged.get("command") or self.default_command()]
-        merged["env"] = {str(key): str(value) for key, value in dict(merged.get("env") or {}).items()}
+        merged["env"] = {
+            str(key): str(value)
+            for key, value in dict(merged.get("env") or {}).items()
+            if str(key) not in OBSOLETE_ENV_KEYS
+        }
         return merged
 
     def write_config(self, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:

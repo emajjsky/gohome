@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.camera_agent import CameraAgent
+from app.camera_agent import CameraAgent, stream_reconnect_delay
 from app.rule_engine import RuleEngine
 import app.camera_agent as camera_module
 import app.rule_engine as rule_engine_module
@@ -46,20 +46,26 @@ def decode_part(part: bytes) -> np.ndarray:
 
 
 def main() -> None:
+    delays = [stream_reconnect_delay(index) for index in range(1, 8)]
+    if delays != [0.5, 1.0, 2.0, 4.0, 8.0, 8.0, 8.0]:
+        raise SystemExit(f"stream reconnect backoff is not bounded: {delays}")
     normal = np.full((48, 64, 3), 96, dtype=np.uint8)
-    recovered = np.full((48, 64, 3), 144, dtype=np.uint8)
-    black = np.zeros((48, 64, 3), dtype=np.uint8)
+    recovered = [np.full((48, 64, 3), 140 + index, dtype=np.uint8) for index in range(8)]
+    black = [np.full((48, 64, 3), index % 3, dtype=np.uint8) for index in range(5)]
     captures = [
         FakeCapture([normal, None]),
-        FakeCapture([black, black, black, black, black]),
-        FakeCapture([recovered, recovered]),
+        FakeCapture(black),
+        FakeCapture(recovered),
     ]
     opens = {"count": 0}
     agent = CameraAgent(Path("/tmp/gohome-stream-test"))
 
     def open_capture(_cv2, _source, _is_local):
         opens["count"] += 1
-        return captures.pop(0) if captures else FakeCapture([recovered, recovered])
+        return captures.pop(0) if captures else FakeCapture([
+            np.full((48, 64, 3), 150 + index, dtype=np.uint8)
+            for index in range(8)
+        ])
 
     agent._open_stream_capture = open_capture  # type: ignore[method-assign]
     original_sleep = camera_module.time.sleep
@@ -71,7 +77,6 @@ def main() -> None:
             jpeg_quality=90,
             max_width=64,
             max_height=48,
-            drop_stale_frames=0,
         )
         frames = [decode_part(next(stream)) for _ in range(7)]
         stream.close()
@@ -125,6 +130,7 @@ def main() -> None:
         "recovered": True,
         "transient_timeout_suppressed": True,
         "sustained_outage_confirmed_once": True,
+        "reconnect_delays": delays,
     })
 
 

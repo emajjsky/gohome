@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from threading import Event, RLock, Thread
+from threading import Event, RLock, Thread, current_thread
 from typing import Any, Callable, Dict
 import time
 from datetime import datetime, timezone
@@ -28,6 +28,8 @@ class EdgeWorker:
         event_agent: Any,
         *,
         snapshot_dir: Path | None = None,
+        object_storage_dir: Path | None = None,
+        runtime_dir: Path | None = None,
         history_retention_hours: int = 24,
         history_cleanup_interval_seconds: float = 3600,
         history_cleanup_batch_size: int = 5000,
@@ -54,6 +56,8 @@ class EdgeWorker:
         self.detect_agent = detect_agent
         self.event_agent = event_agent
         self.snapshot_dir = snapshot_dir
+        self.object_storage_dir = object_storage_dir
+        self.runtime_dir = runtime_dir
         self.history_retention_hours = max(1, int(history_retention_hours))
         self.history_cleanup_interval_seconds = max(60.0, float(history_cleanup_interval_seconds))
         self.history_cleanup_batch_size = max(100, int(history_cleanup_batch_size))
@@ -101,6 +105,9 @@ class EdgeWorker:
         self._wake = Event()
         self._thread: Thread | None = None
         self._tracking_thread: Thread | None = None
+        self._tracking_camera_threads: Dict[int, Thread] = {}
+        self._tracking_camera_stops: Dict[int, Event] = {}
+        self._tracking_threads_lock = RLock()
         self.previous_frames: Dict[int, Any] = {}
         self.rule_engine = RuleEngine()
         self.latest_evaluations: Dict[int, Dict[str, Any]] = {}
@@ -110,7 +117,7 @@ class EdgeWorker:
         self._known_camera_ids: set[int] = set()
         self._disabled_camera_ids: set[int] = set()
         self._runtime_cameras: Dict[int, Dict[str, Any]] = {}
-        self._last_tracked_frame_ids: Dict[int, str] = {}
+        self._last_continual_frame_ids: Dict[int, str] = {}
         self.runtime_reconciliation: Dict[str, Any] = {}
         self._runtime_reconciled = False
         self._runtime_config_refreshed_at = 0.0
@@ -144,6 +151,7 @@ class EdgeWorker:
     def stop(self) -> None:
         self._stop.set()
         self._wake.set()
+        self._stop_continual_tracking_threads()
         if self._thread:
             self._thread.join(timeout=5)
         if self._tracking_thread:
@@ -232,6 +240,7 @@ class EdgeWorker:
             "inference_scheduler": self.inference_scheduler.status(now=self._monotonic_clock()),
             "continual_pose_tracker": getattr(self.continual_pose_tracker, "version", "disabled"),
             "continual_pose_running": self._tracking_thread is not None and self._tracking_thread.is_alive(),
+            "continual_pose_camera_threads": self._continual_tracking_thread_status(),
             "continual_pose": continual_status,
             "continual_pose_error": self.last_continual_pose_error,
             "continual_identity_bridge": {
@@ -307,6 +316,19 @@ class EdgeWorker:
         self.inference_scheduler.wake_all(now=self._monotonic_clock())
         self._wake.set()
 
+    def handle_camera_source_transition(self, transition: Dict[str, Any]) -> None:
+        camera_id = int(transition.get("camera_id") or 0)
+        if camera_id <= 0:
+            return
+        self.storage.close_camera_runtime_state(
+            camera_id,
+            reason=str(transition.get("reason") or "camera_source_transition"),
+        )
+        self._reset_camera_runtime_memory(camera_id)
+        self._runtime_config_refreshed_at = 0.0
+        self.inference_scheduler.wake_all(now=self._monotonic_clock())
+        self._wake.set()
+
     def _reset_camera_runtime_memory(
         self,
         camera_id: int,
@@ -335,7 +357,7 @@ class EdgeWorker:
         self.pending_activity_posture.pop(camera_id, None)
         self.pending_activity_absence.pop(camera_id, None)
         self.last_persistence_reason.pop(camera_id, None)
-        self._last_tracked_frame_ids.pop(camera_id, None)
+        self._last_continual_frame_ids.pop(camera_id, None)
         self.observation_coverage_tracker.reset_camera(camera_id)
 
     def apply_event_state_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
@@ -372,16 +394,115 @@ class EdgeWorker:
         return dict(self.last_event_state_command)
 
     def _run_continual_tracking(self) -> None:
-        while not self._stop.is_set():
-            self._run_continual_tracking_iteration()
-            self._stop.wait(self._continual_tracking_interval_seconds())
+        try:
+            while not self._stop.is_set():
+                self._sync_continual_tracking_threads()
+                self._stop.wait(0.25)
+        finally:
+            self._stop_continual_tracking_threads()
+
+    def _sync_continual_tracking_threads(self) -> None:
+        active_ids = {
+            int(camera_id)
+            for camera_id, camera in self._runtime_cameras.items()
+            if camera.get("enabled", True)
+        }
+        stale_threads: list[Thread] = []
+        with self._tracking_threads_lock:
+            for camera_id in list(self._tracking_camera_threads):
+                thread = self._tracking_camera_threads.get(camera_id)
+                if camera_id in active_ids and thread is not None and thread.is_alive():
+                    continue
+                stop_event = self._tracking_camera_stops.pop(camera_id, None)
+                if stop_event is not None:
+                    stop_event.set()
+                if thread is not None:
+                    stale_threads.append(thread)
+                self._tracking_camera_threads.pop(camera_id, None)
+
+            for camera_id in sorted(active_ids):
+                thread = self._tracking_camera_threads.get(camera_id)
+                if thread is not None and thread.is_alive():
+                    continue
+                stop_event = Event()
+                thread = Thread(
+                    target=self._run_continual_tracking_camera,
+                    args=(camera_id, stop_event),
+                    name=f"gohome-edge-pose-tracker-{camera_id}",
+                    daemon=True,
+                )
+                self._tracking_camera_stops[camera_id] = stop_event
+                self._tracking_camera_threads[camera_id] = thread
+                thread.start()
+        for thread in stale_threads:
+            thread.join(timeout=1.0)
+
+    def _stop_continual_tracking_threads(self) -> None:
+        with self._tracking_threads_lock:
+            threads = list(self._tracking_camera_threads.values())
+            for stop_event in self._tracking_camera_stops.values():
+                stop_event.set()
+            self._tracking_camera_threads.clear()
+            self._tracking_camera_stops.clear()
+        deadline = time.monotonic() + 2.0
+        for thread in threads:
+            if thread is not current_thread():
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
+    def _continual_tracking_thread_status(self) -> Dict[str, Any]:
+        with self._tracking_threads_lock:
+            return {
+                "active_camera_ids": sorted(
+                    camera_id
+                    for camera_id, thread in self._tracking_camera_threads.items()
+                    if thread.is_alive()
+                ),
+                "thread_count": sum(
+                    1 for thread in self._tracking_camera_threads.values() if thread.is_alive()
+                ),
+            }
+
+    def _run_continual_tracking_camera(self, camera_id: int, stop_event: Event) -> None:
+        while not self._stop.is_set() and not stop_event.is_set():
+            camera = self._runtime_cameras.get(int(camera_id))
+            if camera is None or not camera.get("enabled", True):
+                stop_event.wait(0.25)
+                continue
+            capture = self.camera_agent.latest_cached_frame(camera, max_age_seconds=0.5)
+            if capture:
+                self._process_continual_capture(camera, capture)
+            waiter = getattr(self.camera_agent, "wait_for_frame_update", None)
+            if callable(waiter):
+                waiter(
+                    [camera],
+                    {int(camera_id): self._last_continual_frame_ids.get(int(camera_id), "")},
+                    timeout=0.25,
+                )
+            else:
+                stop_event.wait(self._continual_tracking_interval_seconds())
 
     def _continual_tracking_interval_seconds(self) -> float:
-        interval = getattr(self.continual_pose_tracker, "minimum_interval_seconds", 0.067)
+        interval = getattr(self.continual_pose_tracker, "minimum_interval_seconds", 0.05)
         try:
             return max(0.05, min(0.25, float(interval)))
         except (TypeError, ValueError):
-            return 0.067
+            return 0.05
+
+    def _continual_tracking_wait_seconds(self, started_at: float) -> float:
+        elapsed = max(0.0, self._monotonic_clock() - float(started_at))
+        return max(0.0, self._continual_tracking_interval_seconds() - elapsed)
+
+    def _wait_for_continual_frame_update(self, started_at: float) -> None:
+        waiter = getattr(self.camera_agent, "wait_for_frame_update", None)
+        cameras = list(self._runtime_cameras.values())
+        if callable(waiter) and cameras:
+            waiter(
+                cameras,
+                dict(self._last_continual_frame_ids),
+                timeout=0.25,
+            )
+            return
+        self._stop.wait(self._continual_tracking_wait_seconds(started_at))
 
     def _run_continual_tracking_iteration(self) -> None:
         if self.camera_agent is None or self.continual_pose_tracker is None:
@@ -390,28 +511,29 @@ class EdgeWorker:
         for camera in cameras:
             if not camera.get("enabled", True) or not camera.get("id"):
                 continue
-            camera_id = int(camera["id"])
             capture = self.camera_agent.latest_cached_frame(camera, max_age_seconds=0.5)
             if not capture:
                 continue
-            if not self._capture_identity_matches(camera, capture):
-                self.last_continual_pose_error = f"camera {camera_id}: frame source identity mismatch"
-                continue
-            frame_id = str(capture.get("frame_id") or "")
-            if self.motion_gate is not None:
-                gate = self.motion_gate.update(camera_id, capture["frame"], frame_id=frame_id)
-                if gate.get("detected"):
-                    self.inference_scheduler.signal_activity(
-                        camera_id,
-                        now=self._monotonic_clock(),
-                    )
-                    self._wake.set()
-            if not self.continual_pose_tracker.has_anchor(camera_id):
-                continue
-            if not frame_id or frame_id == self._last_tracked_frame_ids.get(camera_id):
-                continue
-            self._last_tracked_frame_ids[camera_id] = frame_id
-            self.observe_stream_frame(camera, capture["frame"], capture)
+            self._process_continual_capture(camera, capture)
+
+    def _process_continual_capture(self, camera: Dict[str, Any], capture: Dict[str, Any]) -> None:
+        camera_id = int(camera["id"])
+        if not self._capture_identity_matches(camera, capture):
+            self.last_continual_pose_error = f"camera {camera_id}: frame source identity mismatch"
+            return
+        frame_id = str(capture.get("frame_id") or "")
+        if not frame_id or frame_id == self._last_continual_frame_ids.get(camera_id):
+            return
+        self._last_continual_frame_ids[camera_id] = frame_id
+        if self.motion_gate is not None:
+            gate = self.motion_gate.update(camera_id, capture["frame"], frame_id=frame_id)
+            if gate.get("detected"):
+                self.inference_scheduler.signal_activity(
+                    camera_id,
+                    now=self._monotonic_clock(),
+                )
+                self._wake.set()
+        self.observe_stream_frame(camera, capture["frame"], capture)
 
     def _prune_history_if_due(self) -> None:
         if self.snapshot_dir is None:
@@ -423,6 +545,8 @@ class EdgeWorker:
         try:
             storage_status = self.storage.runtime_storage_status(
                 self.snapshot_dir,
+                object_storage_dir=self.object_storage_dir,
+                runtime_dir=self.runtime_dir,
                 retention_hours=self.history_retention_hours,
             )
             used_percent = float(storage_status.get("disk_used_percent") or 0.0)
@@ -447,21 +571,47 @@ class EdgeWorker:
             for _ in range(max_batches):
                 batch = self.storage.prune_runtime_history(
                     snapshot_dir=self.snapshot_dir,
+                    object_storage_dir=self.object_storage_dir,
                     retention_hours=effective_retention_hours,
                     completed_upload_retention_days=self.completed_upload_retention_days,
                     event_evidence_retention_hours=self.event_evidence_retention_hours,
                     local_event_retention_days=self.local_event_retention_days,
                     batch_size=self.history_cleanup_batch_size,
                     discard_live_preview_uploads=True,
+                    force_oldest=pressure == "critical",
                 )
                 cleanup_batches.append(batch)
                 if not batch.get("has_more"):
                     break
+                if pressure == "critical":
+                    current_status = self.storage.runtime_storage_status(
+                        self.snapshot_dir,
+                        object_storage_dir=self.object_storage_dir,
+                        runtime_dir=self.runtime_dir,
+                        retention_hours=self.history_retention_hours,
+                    )
+                    below_disk_watermark = float(current_status.get("disk_used_percent") or 0.0) < self.local_storage_high_watermark_percent
+                    below_runtime_budget = int(current_status.get("runtime_allocated_bytes") or 0) < int(self.local_runtime_budget_bytes * 0.8)
+                    if below_disk_watermark and below_runtime_budget:
+                        break
             deleted: Dict[str, int] = {}
             for batch in cleanup_batches:
                 for key, count in (batch.get("deleted") or {}).items():
                     deleted[str(key)] = deleted.get(str(key), 0) + int(count or 0)
             last_batch = cleanup_batches[-1] if cleanup_batches else {}
+            compaction = {"compacted": False, "reason": "storage_pressure_normal"}
+            if pressure in {"high", "critical"} and any(deleted.values()):
+                compaction = self.storage.compact_runtime_database(
+                    snapshot_dir=self.snapshot_dir,
+                    object_storage_dir=self.object_storage_dir,
+                    runtime_dir=self.runtime_dir,
+                )
+            final_storage_status = self.storage.runtime_storage_status(
+                self.snapshot_dir,
+                object_storage_dir=self.object_storage_dir,
+                runtime_dir=self.runtime_dir,
+                retention_hours=self.history_retention_hours,
+            )
             self.last_history_cleanup_result = {
                 **last_batch,
                 "deleted": deleted,
@@ -475,7 +625,9 @@ class EdgeWorker:
                 "storage_pressure": pressure,
                 "effective_retention_hours": effective_retention_hours,
                 "runtime_budget_bytes": self.local_runtime_budget_bytes,
-                "storage": storage_status,
+                "database_compaction": compaction,
+                "storage_before": storage_status,
+                "storage": final_storage_status,
             }
             self.last_history_cleanup_result["completed_at"] = datetime.now(timezone.utc).isoformat()
             self.last_history_cleanup_result["error"] = ""
@@ -672,8 +824,19 @@ class EdgeWorker:
                 frame,
                 frame_id=str(metadata.get("frame_id") or ""),
                 captured_at=str(metadata.get("captured_at") or ""),
+                captured_monotonic=metadata.get("captured_monotonic"),
                 source_key=str(metadata.get("source_key") or ""),
             )
+            tracking_state = str(payload.get("state") or "") if isinstance(payload, dict) else ""
+            if isinstance(payload, dict) and (
+                tracking_state == "coasting" or bool(payload.get("display_only_stale"))
+            ):
+                self.inference_scheduler.request_refresh(
+                    int(camera["id"]),
+                    now=self._monotonic_clock(),
+                    reason=str(payload.get("reason") or "pose_tracking_stale"),
+                )
+                self._wake.set()
             risk_hint = payload.get("risk_hint") if isinstance(payload, dict) else None
             if isinstance(risk_hint, dict) and risk_hint.get("detected"):
                 self.inference_scheduler.signal_activity(
@@ -726,9 +889,15 @@ class EdgeWorker:
                 frame,
                 frame_id=str(capture.get("frame_id") or ""),
                 captured_at=str(capture.get("captured_at") or ""),
+                captured_monotonic=capture.get("captured_monotonic"),
                 poses=poses,
                 context=analysis,
                 source_key=str(capture.get("source_key") or ""),
+                person_present=bool(
+                    int(analysis.get("person_count") or 0) > 0
+                    or list(analysis.get("people") or [])
+                    or poses
+                ),
             )
             analysis["continual_pose_anchor"] = payload
             self.last_continual_pose_error = ""
@@ -745,11 +914,22 @@ class EdgeWorker:
         captured_camera_id = metadata.get("camera_id")
         if captured_camera_id not in (None, "") and int(captured_camera_id) != camera_id:
             return False
-        source_key_resolver = getattr(self.camera_agent, "frame_source_key", None)
-        if callable(source_key_resolver):
-            expected_source_key = str(source_key_resolver(camera) or "")
-            actual_source_key = str(metadata.get("source_key") or "")
-            if not expected_source_key or actual_source_key != expected_source_key:
+        source_matcher = getattr(self.camera_agent, "frame_source_matches", None)
+        if callable(source_matcher):
+            if not source_matcher(camera, metadata.get("source_key")):
+                return False
+        else:
+            source_key_resolver = getattr(self.camera_agent, "frame_source_key", None)
+            if callable(source_key_resolver):
+                expected_source_key = str(source_key_resolver(camera) or "")
+                actual_source_key = str(metadata.get("source_key") or "")
+                if not expected_source_key or actual_source_key != expected_source_key:
+                    return False
+        actual_source_key = str(metadata.get("source_key") or "")
+        active_source_resolver = getattr(self.camera_agent, "active_frame_source_key", None)
+        if actual_source_key and callable(active_source_resolver):
+            active_source_key = str(active_source_resolver(camera) or "")
+            if active_source_key and actual_source_key != active_source_key:
                 return False
         return True
 

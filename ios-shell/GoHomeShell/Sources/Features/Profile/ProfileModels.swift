@@ -329,7 +329,36 @@ struct CameraCreateRequest: Encodable, Equatable, Sendable {
 struct CameraUpdateRequest: Encodable, Equatable, Sendable {
     let name: String
     let room: String
+    let streamURL: String
+    let username: String?
+    let password: String?
     let enabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case name, room, username, password, enabled
+        case streamURL = "stream_url"
+    }
+}
+
+enum CameraStreamAddress {
+    static func makeURL(scheme: String, host: String, port: String, path: String) -> String? {
+        let cleanScheme = scheme.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ["rtsp", "rtsps"].contains(cleanScheme), !cleanHost.isEmpty,
+              let portNumber = Int(port), (1...65_535).contains(portNumber)
+        else { return nil }
+
+        let cleanPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPath = cleanPath.hasPrefix("/") ? cleanPath : "/\(cleanPath)"
+        guard let relative = URLComponents(string: "rtsp://camera\(normalizedPath)") else { return nil }
+        var components = URLComponents()
+        components.scheme = cleanScheme
+        components.host = cleanHost
+        components.port = portNumber
+        components.percentEncodedPath = relative.percentEncodedPath
+        components.percentEncodedQuery = relative.percentEncodedQuery
+        return components.string
+    }
 }
 
 struct ProfileData: Codable, Equatable, Sendable {

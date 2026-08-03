@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Event, Lock
 from urllib.parse import parse_qs, urlsplit
 import json
+import numpy as np
 import sys
 import time
 
@@ -14,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.live_relay_agent import LiveRelayAgent
+from app.vision.privacy_background import PrivacyCalibrationRequired
 
 
 class SettingsStub:
@@ -22,8 +24,6 @@ class SettingsStub:
     live_relay_width = 640
     live_relay_height = 360
     live_relay_quality = 55
-    live_relay_drop_stale_frames = 1
-    live_relay_upload_workers = 4
     live_relay_request_timeout_seconds = 2
     app_server_base_url = "https://example.invalid"
     device_api_token = "device-token"
@@ -34,9 +34,15 @@ class CameraAgentStub:
     def __init__(self, stop_event: Event) -> None:
         self.stop_event = stop_event
 
-    def mjpeg_frames(self, _camera, **_options):
+    def raw_frames(self, camera, **_options):
         for index in range(20):
-            yield f"frame-{index}".encode("ascii")
+            yield {
+                "frame": np.full((36, 64, 3), index, dtype=np.uint8),
+                "frame_id": f"{camera['id']}-{index + 1}",
+                "source_key": f"camera-{camera['id']}-source",
+                "captured_at": "2026-07-29T16:00:00+00:00",
+                "captured_monotonic": time.monotonic(),
+            }
             time.sleep(0.001)
         self.stop_event.set()
 
@@ -45,14 +51,32 @@ class CameraAgentStub:
 
 
 class PrivacyRendererStub:
-    def __init__(self) -> None:
-        self.scene_calls = 0
+    def __init__(self, blocked_frames: int = 0) -> None:
+        self.render_calls = 0
+        self.blocked_frames = max(0, int(blocked_frames))
 
-    def safe_scene_jpeg(self, _camera_id, _frame, *, quality, source_key):
+    def render_frame(
+        self,
+        _camera_id,
+        _frame,
+        mode,
+        *,
+        quality,
+        source_key,
+        frame_id,
+        captured_at,
+        captured_monotonic=None,
+    ):
+        del captured_monotonic
         assert quality == SettingsStub.live_relay_quality
         assert source_key == f"camera-{_camera_id}-source"
-        self.scene_calls += 1
-        return b"safe-scene"
+        assert frame_id.startswith(f"{_camera_id}-")
+        assert captured_at == "2026-07-29T16:00:00+00:00"
+        assert mode == "skeleton"
+        self.render_calls += 1
+        if self.render_calls <= self.blocked_frames:
+            raise PrivacyCalibrationRequired(_camera_id, "stream_revalidation_required")
+        return b"server-composed-skeleton"
 
 
 def main() -> int:
@@ -71,8 +95,9 @@ def main() -> int:
     max_active = 0
     submitted = []
 
-    def delayed_upload(_camera_id, _frame, **metadata):
+    def delayed_upload(_camera_id, frame, **metadata):
         nonlocal active, max_active
+        del frame
         with lock:
             active += 1
             max_active = max(max_active, active)
@@ -87,15 +112,15 @@ def main() -> int:
     relay._post_frame = original_post_frame
 
     stats = relay.status()["cameras"]["2"]
-    assert max_active == SettingsStub.live_relay_upload_workers
-    assert stats["submitted"] == SettingsStub.live_relay_upload_workers
-    assert stats["completed"] == SettingsStub.live_relay_upload_workers
-    assert stats["dropped_busy"] == 20 - SettingsStub.live_relay_upload_workers
+    assert max_active == 1
+    assert stats["submitted"] == 20
+    assert stats["completed"] == len(submitted)
+    assert stats["replaced_pending"] == 20 - len(submitted)
     assert stats["failed"] == 0
     assert len({epoch for epoch, _sequence in submitted}) == 1
-    assert sorted(sequence for _epoch, sequence in submitted) == list(
-        range(1, SettingsStub.live_relay_upload_workers + 1)
-    )
+    sequences = [sequence for _epoch, sequence in submitted]
+    assert sequences == sorted(sequences)
+    assert sequences[-1] == 20
 
     captured_url = ""
 
@@ -109,6 +134,7 @@ def main() -> int:
         2,
         b"frame",
         captured_at="2026-07-29T16:00:00+00:00",
+        captured_monotonic=time.monotonic() - 0.025,
         stream_epoch_ms=123456,
         sequence=7,
     )
@@ -119,9 +145,10 @@ def main() -> int:
     measured = relay.status()["cameras"]["2"]
     assert measured["accepted_fps"] > 0
     assert measured["upload_latency_ms_max"] >= measured["upload_latency_ms_p95"]
+    assert measured["source_to_cloud_ms_p95"] >= 25
 
     skeleton_stop = Event()
-    skeleton_renderer = PrivacyRendererStub()
+    skeleton_renderer = PrivacyRendererStub(blocked_frames=3)
     skeleton_relay = LiveRelayAgent(
         storage=None,
         settings=SettingsStub(),
@@ -133,46 +160,35 @@ def main() -> int:
         privacy_renderer=skeleton_renderer,
     )
     uploaded_frames = []
-    uploaded_scenes = []
-    skeleton_relay._post_frame = lambda *args, **kwargs: uploaded_frames.append((args, kwargs))
-    scene_lock = Lock()
-    scene_active = 0
-    scene_max_active = 0
-
-    def delayed_scene_upload(camera_id, frame, **metadata):
-        nonlocal scene_active, scene_max_active
-        with scene_lock:
-            scene_active += 1
-            scene_max_active = max(scene_max_active, scene_active)
-            uploaded_scenes.append((camera_id, frame, metadata))
+    def delayed_skeleton_upload(*args, **kwargs):
+        uploaded_frames.append((args, kwargs))
         time.sleep(0.04)
-        with scene_lock:
-            scene_active -= 1
 
-    skeleton_relay._post_safe_scene = delayed_scene_upload
+    skeleton_relay._post_frame = delayed_skeleton_upload
     skeleton_relay._run_camera({"id": 2}, skeleton_stop)
-    assert uploaded_frames == []
-    assert len(uploaded_scenes) == SettingsStub.live_relay_upload_workers
-    assert scene_max_active == SettingsStub.live_relay_upload_workers
-    assert skeleton_renderer.scene_calls == SettingsStub.live_relay_upload_workers
-    assert [item[2]["sequence"] for item in uploaded_scenes] == list(
-        range(1, SettingsStub.live_relay_upload_workers + 1)
-    )
-    scene_stats = skeleton_relay.status()["scene_cameras"]["2"]
-    assert scene_stats["submitted"] == SettingsStub.live_relay_upload_workers
-    assert scene_stats["completed"] == SettingsStub.live_relay_upload_workers
-    assert scene_stats["dropped_busy"] == 20 - SettingsStub.live_relay_upload_workers
-    assert scene_stats["failed"] == 0
+    assert skeleton_renderer.render_calls == 20
+    skeleton_sequences = [item[1]["sequence"] for item in uploaded_frames]
+    assert skeleton_sequences == sorted(skeleton_sequences)
+    assert skeleton_sequences[-1] == 17
+    skeleton_stats = skeleton_relay.status()["cameras"]["2"]
+    assert skeleton_stats["submitted"] == 17
+    assert skeleton_stats["completed"] == len(uploaded_frames)
+    assert skeleton_stats["replaced_pending"] == 17 - len(uploaded_frames)
+    assert skeleton_stats["privacy_blocked"] == 3
+    assert skeleton_stats["failed"] == 0
     assert skeleton_relay._camera_privacy_modes[2] == "skeleton"
+    assert skeleton_relay.status()["camera_privacy_states"]["2"]["status"] == "ready"
 
     print({
         "ok": True,
-        "upload_workers": max_active,
+        "maximum_concurrent_uploads": max_active,
         "submitted": stats["submitted"],
-        "dropped_busy": stats["dropped_busy"],
-        "ordered_upload": True,
-        "skeleton_live_frame_uploads": 0,
-        "skeleton_scene_uploads": len(uploaded_scenes),
+        "replaced_pending": stats["replaced_pending"],
+        "latest_frame_uploaded": sequences[-1] == 20,
+        "monotonic_upload": True,
+        "skeleton_live_frame_uploads": len(uploaded_frames),
+        "calibration_does_not_restart_capture": skeleton_renderer.render_calls == 20,
+        "single_server_composition": True,
     })
     return 0
 

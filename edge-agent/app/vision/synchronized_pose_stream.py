@@ -24,9 +24,10 @@ DEFAULT_SKELETON_EDGES = (
 
 
 class SynchronizedPoseStream:
-    """Encode the exact frame retained alongside each continual-pose result."""
+    """Overlay exact-frame pose metadata on the current camera diagnostic frame."""
 
-    version = "eacp-synchronized-pose-stream-v1"
+    version = "eacp-synchronized-pose-stream-v2"
+    metadata_wait_seconds = 0.06
 
     def __init__(self, camera_agent: Any, tracker: Any) -> None:
         self.camera_agent = camera_agent
@@ -52,24 +53,27 @@ class SynchronizedPoseStream:
         ]
 
         while True:
-            bundle = self.tracker.latest_frame(camera_id) if self.tracker is not None else None
-            tracking: Dict[str, Any] = {}
-            context: Dict[str, Any] = {}
-            if bundle is not None:
-                frame = bundle.get("frame")
-                tracking = dict(bundle.get("tracking") or {})
-                context = dict(bundle.get("analysis_context") or {})
-                frame_id = str(tracking.get("frame_id") or "")
-            else:
-                capture = self.camera_agent.latest_cached_frame(camera, max_age_seconds=0.75)
-                if capture is None:
-                    time.sleep(min(0.05, interval))
-                    continue
-                frame = capture.get("frame")
-                frame_id = str(capture.get("frame_id") or "")
+            capture = self.camera_agent.latest_cached_frame(camera, max_age_seconds=0.75)
+            if capture is None:
+                time.sleep(min(0.05, interval))
+                continue
+            frame = capture.get("frame")
+            frame_id = str(capture.get("frame_id") or "")
+            source_key = str(capture.get("source_key") or "")
+            metadata = self._metadata_for_frame(
+                camera_id,
+                frame_id=frame_id,
+                source_key=source_key,
+            )
+            tracking = dict(metadata.get("tracking") or {})
+            context = dict(metadata.get("analysis_context") or {})
+            if not tracking:
                 tracking = {
+                    "camera_id": camera_id,
                     "state": "empty",
+                    "reason": "pose_frame_unavailable",
                     "frame_id": frame_id,
+                    "source_key": source_key,
                     "poses": [],
                     "formal_evidence_eligible": False,
                 }
@@ -106,6 +110,30 @@ class SynchronizedPoseStream:
             if delay > 0:
                 time.sleep(delay)
 
+    def _metadata_for_frame(
+        self,
+        camera_id: int,
+        *,
+        frame_id: str,
+        source_key: str,
+    ) -> Dict[str, Any]:
+        resolver = getattr(self.tracker, "metadata_for_frame", None)
+        if not callable(resolver) or not frame_id:
+            return {}
+        deadline = time.monotonic() + self.metadata_wait_seconds
+        while True:
+            metadata = resolver(
+                int(camera_id),
+                frame_id=str(frame_id),
+                source_key=str(source_key or ""),
+            )
+            if isinstance(metadata, dict):
+                return metadata
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                return {}
+            time.sleep(min(0.003, remaining))
+
     def _render_frame(
         self,
         cv2: Any,
@@ -115,7 +143,7 @@ class SynchronizedPoseStream:
     ) -> Any:
         frame = source.copy()
         state = str(tracking.get("state") or "empty")
-        if state not in {"observed", "tracked", "coasting"}:
+        if state not in {"observed", "tracked"} or bool(tracking.get("display_only_stale")):
             return frame
         poses = tracking.get("poses") if isinstance(tracking.get("poses"), list) else []
         if not poses:
@@ -168,9 +196,6 @@ class SynchronizedPoseStream:
                 cv2.circle(layer, center, 4, (24, 24, 24), -1, cv2.LINE_AA)
                 cv2.circle(layer, center, 2, joint_color, -1, cv2.LINE_AA)
 
-        if state == "coasting":
-            cv2.addWeighted(layer, 0.46, frame, 0.54, 0.0, frame)
-            return frame
         return layer
 
     def _draw_corner_box(

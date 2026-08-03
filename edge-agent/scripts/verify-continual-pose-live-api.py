@@ -81,6 +81,20 @@ class Tracker:
             "image_height": 72,
         }
 
+    def metadata_for_frame(self, camera_id: int, *, frame_id: str, source_key: str) -> dict:
+        if camera_id != 24 or frame_id != "24-102" or source_key != "camera-24:g2":
+            return None
+        tracking = self.latest(camera_id)
+        tracking["frame_id"] = frame_id
+        tracking["source_key"] = source_key
+        return {
+            "tracking": tracking,
+            "analysis_context": {
+                "detector_backend": "yolo",
+                "pose_model_status": "ready",
+            },
+        }
+
     def has_anchor(self, camera_id: int) -> bool:
         return self.state in {"tracked", "coasting"}
 
@@ -100,6 +114,7 @@ class CameraAgent:
             "frame_id": "24-102",
             "captured_at": "2026-07-17T06:00:00.800000+00:00",
             "source": "camera cache",
+            "source_key": "camera-24:g2",
         }
 
     def frame_data_url(self, frame: np.ndarray, *, jpeg_quality: int, max_width: int) -> str:
@@ -118,8 +133,8 @@ def main() -> None:
     tracked = edge_main.continual_pose_live_snapshot(24)
     snapshot = tracked.get("snapshot") or {}
     analysis = snapshot.get("analysis") or {}
-    if tracked.get("source") != "eacp_same_frame" or snapshot.get("frame_id") != "24-101":
-        raise SystemExit("live API did not preserve the tracked frame identity")
+    if tracked.get("source") != "camera cache" or snapshot.get("frame_id") != "24-102":
+        raise SystemExit("live API did not use the current camera frame identity")
     if analysis.get("pose_tracking_state") != "tracked" or analysis.get("pose_count") != 1:
         raise SystemExit("live API omitted tracked pose display data")
     if not analysis.get("people", [{}])[0].get("display_only"):
@@ -131,16 +146,15 @@ def main() -> None:
     tracker.state = "coasting"
     coasting = edge_main.continual_pose_live_snapshot(24, include_frame=False)
     coasting_analysis = (coasting.get("snapshot") or {}).get("analysis") or {}
-    coasting_person = (coasting_analysis.get("people") or [{}])[0]
-    coasting_pose = (coasting_analysis.get("poses") or [{}])[0]
     if (
         coasting.get("tracking", {}).get("state") != "coasting"
-        or coasting_analysis.get("pose_count") != 1
-        or not coasting_person.get("display_only")
-        or coasting_pose.get("fall_evidence_eligible")
-        or coasting_pose.get("person_evidence_eligible")
+        or coasting.get("available")
+        or coasting.get("frame_available")
+        or coasting_analysis.get("pose_count") != 0
+        or coasting_analysis.get("people")
+        or coasting_analysis.get("poses")
     ):
-        raise SystemExit("management API did not isolate bounded coasting display data")
+        raise SystemExit("management API exposed stale coasting display data")
     tracker.state = "tracked"
 
     status_only = edge_main.continual_pose_live_snapshot(24, include_frame=False)
@@ -164,9 +178,9 @@ def main() -> None:
 
     print({
         "ok": True,
-        "same_frame": True,
+        "current_camera_frame": True,
         "tracked_display_only": True,
-        "coasting_display_only": True,
+        "coasting_pose_hidden": True,
         "formal_evidence_isolated": True,
         "status_only_overlay_metadata": True,
         "expired_pose_hidden": True,

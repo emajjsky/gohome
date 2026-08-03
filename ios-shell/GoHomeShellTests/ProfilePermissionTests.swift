@@ -90,7 +90,15 @@ final class ProfilePermissionTests: XCTestCase {
             username: "admin",
             password: "secret"
         )
-        let updated = await model.updateCamera(camera, name: "改名", room: "卧室", enabled: false)
+        let updated = await model.updateCamera(
+            camera,
+            name: "改名",
+            room: "卧室",
+            streamURL: "rtsp://192.168.1.7:554/1/2",
+            username: "",
+            password: "",
+            enabled: false
+        )
         let deleted = await model.deleteCamera(camera)
         let unbound = await model.unbindDevice(binding)
         let actions = await recorder.actions
@@ -138,7 +146,15 @@ final class ProfilePermissionTests: XCTestCase {
         XCTAssertEqual(model.state.value?.cameras, [created])
         XCTAssertEqual(model.deviceConfigurationRevision, 1)
 
-        let didUpdate = await model.updateCamera(created, name: updated.name, room: updated.room, enabled: updated.enabled)
+        let didUpdate = await model.updateCamera(
+            created,
+            name: updated.name,
+            room: updated.room,
+            streamURL: "rtsp://192.168.1.7:554/1/2",
+            username: "",
+            password: "",
+            enabled: updated.enabled
+        )
         XCTAssertTrue(didUpdate)
         XCTAssertEqual(model.state.value?.cameras, [updated])
         XCTAssertEqual(model.deviceConfigurationRevision, 2)

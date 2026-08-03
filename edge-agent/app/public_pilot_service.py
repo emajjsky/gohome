@@ -3,34 +3,28 @@ from __future__ import annotations
 from typing import Any, Dict
 from urllib.parse import urlencode
 
-from .video_distribution_service import VideoDistributionService
-
 
 class PublicPilotService:
-    def __init__(self, *, settings: Any, distribution: VideoDistributionService) -> None:
+    def __init__(self, *, settings: Any) -> None:
         self.settings = settings
-        self.distribution = distribution
+
+    @staticmethod
+    def normalize_base_url(value: str | None) -> str:
+        return str(value or "").strip().rstrip("/")
+
+    @staticmethod
+    def is_public_url(value: str | None) -> bool:
+        base = PublicPilotService.normalize_base_url(value).lower()
+        return base.startswith("https://")
 
     def public_web_base_url(self, *, family_id: int | None = None, preferred_region: str = "") -> str:
-        explicit = self.distribution.normalize_base_url(self.settings.public_base_url)
-        if self.distribution.is_public_url(explicit):
-            return explicit
-        service_info = self.distribution.scheduled_service_info(
-            family_id=family_id,
-            preferred_region=preferred_region,
-            require_public=True,
-            media=False,
+        return (
+            self.normalize_base_url(self.settings.public_base_url)
+            or self.normalize_base_url(self.settings.app_server_base_url)
         )
-        selected_service_url = self.distribution.normalize_base_url(service_info.get("service", {}).get("service_url"))
-        if self.distribution.is_public_url(selected_service_url):
-            return selected_service_url
-        fallback_video = self.distribution.normalize_base_url(self.distribution.video_base_url())
-        if self.distribution.is_public_url(fallback_video):
-            return fallback_video
-        return explicit
 
     def public_web_ready(self, *, family_id: int | None = None, preferred_region: str = "") -> bool:
-        return self.distribution.is_public_url(
+        return self.is_public_url(
             self.public_web_base_url(family_id=family_id, preferred_region=preferred_region)
         )
 
@@ -135,36 +129,12 @@ class PublicPilotService:
 
     def status(self, *, family_id: int | None = None, preferred_region: str = "") -> Dict[str, Any]:
         notification = self.notification_channel_status()
-        video = self.distribution.scheduled_service_info(
-            family_id=family_id,
-            preferred_region=preferred_region,
-            require_public=True,
-            media=False,
-        )
-        media = self.distribution.scheduled_service_info(
-            family_id=family_id,
-            preferred_region=preferred_region,
-            require_public=True,
-            media=True,
-        )
         public_web_ready = self.public_web_ready(family_id=family_id, preferred_region=preferred_region)
-        video_ready = bool(video.get("service", {}).get("is_public_service_url"))
-        media_ready = bool(media.get("service", {}).get("is_public_media_url"))
         checks = [
             {
                 "key": "public_web",
                 "ok": public_web_ready,
                 "message": "public web base url is ready" if public_web_ready else "no public web base url or public service url available",
-            },
-            {
-                "key": "public_video",
-                "ok": video_ready,
-                "message": "public video node is ready" if video_ready else "no public video service selected",
-            },
-            {
-                "key": "public_media",
-                "ok": media_ready,
-                "message": "public media node is ready" if media_ready else "no public media service selected",
             },
             {
                 "key": "notification_channel",
@@ -179,8 +149,6 @@ class PublicPilotService:
             "public_web_base_url": self.public_web_base_url(family_id=family_id, preferred_region=preferred_region),
             "public_web_ready": public_web_ready,
             "pages": self.public_links(family_id=family_id, preferred_region=preferred_region),
-            "video_distribution": video,
-            "media_distribution": media,
             "notification": notification,
             "checks": checks,
         }
