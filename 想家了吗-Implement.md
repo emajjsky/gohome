@@ -12544,3 +12544,11 @@ P4 风险升频边界：
 - `verify-video-privacy.py` 覆盖局部电视变化、整体灯光变化、真实场景平移、基线文件保留、重启恢复、并发校准拒绝、失败候选取消、磁盘 replace 失败无临时垃圾、成功新基线替换及 SHA-256 变化。
 - 新增 `verify-privacy-calibration-api.py`，锁定成功唤醒中继、超时取消、磁盘失败 503 和 active 请求不被第二次请求破坏。
 - `verify-live-relay-upload-pipeline.py` 增加四类隐私阻断状态映射；纯骨架与中继专项通过。完成完整边缘回归后进入双摄树莓派和 TestFlight 实机验收。
+
+## 179. 2026-08-03 重复像素与冻结源契约复核
+
+- 审计确认共享读取器已维护 decoded arrivals、unique arrivals、内容指纹、最后唯一帧时间和连续重复计数；中央缓存和 `frame_id` 只在唯一帧时推进。
+- 冻结超过 `STREAM_FROZEN_RECONNECT_SECONDS=3` 后，读取器释放当前 capture，调用 `invalidate_stream_generation()` 清空该路缓存并发布 source transition；正式装配会依次重置 LiveRelay、Worker/Continual Pose、分割、背景运行态和渲染缓存。
+- `source_fps/effective_fps` 只取 unique arrivals，`decoded_fps` 独立展示解码调用；冻结重连会清空两个窗口，避免旧样本继续伪造实时状态。
+- 内容指纹从每 16 像素采样提升为绑定宽高的每 8 像素 BLAKE2s，仍保持低成本，同时覆盖小范围人物或局部画面推进。
+- `verify-camera-shared-stream.py` 验证冻结源重复解码、unique=1、effective=0、缓存清空、流代提升、旧 Pose listener 清除，并验证 5x5 局部变化不会被指纹漏掉。状态进入 GH-023 实机验收。

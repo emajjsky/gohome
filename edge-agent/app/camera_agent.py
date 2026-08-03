@@ -487,8 +487,10 @@ class CameraAgent:
 
     def frame_content_fingerprint(self, frame: Any) -> bytes:
         try:
-            sample = frame[::16, ::16]
-            return hashlib.blake2s(sample.tobytes(), digest_size=12).digest()
+            height, width = frame.shape[:2]
+            sample = frame[::8, ::8]
+            identity = int(width).to_bytes(4, "little") + int(height).to_bytes(4, "little")
+            return hashlib.blake2s(identity + sample.tobytes(), digest_size=12).digest()
         except (AttributeError, TypeError, ValueError):
             return b""
 

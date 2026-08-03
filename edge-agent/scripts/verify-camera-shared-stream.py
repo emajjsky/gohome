@@ -226,6 +226,11 @@ def main() -> None:
         raise SystemExit("removed camera retained a managed stream reader")
 
     frozen_agent = CameraAgent(Path("/tmp/gohome-frozen-stream-test"))
+    fingerprint_base = np.zeros((48, 64, 3), dtype=np.uint8)
+    fingerprint_local_change = fingerprint_base.copy()
+    fingerprint_local_change[7:12, 7:12] = 255
+    if frozen_agent.frame_content_fingerprint(fingerprint_base) == frozen_agent.frame_content_fingerprint(fingerprint_local_change):
+        raise SystemExit("content fingerprint missed a localized frame change between the old 16-pixel samples")
     frozen_agent._open_stream_capture = lambda *_args: FrozenCapture()  # type: ignore[method-assign]
     frozen_camera = {"id": 10, "stream_url": "rtsp://example.invalid/frozen"}
     frozen_transitions: list[dict[str, Any]] = []
@@ -276,6 +281,7 @@ def main() -> None:
         "old_reader_retired": True,
         "stale_cache_rejected": True,
         "repeated_pixels_counted_as_live": False,
+        "localized_frame_change_detected": True,
         "frozen_stream_invalidated_stale_pose": True,
     })
 
