@@ -114,8 +114,9 @@
 ## GH-005 iOS 与生产云端协议不一致
 
 **现象**：骨架模式提示“服务器返回无法识别的响应”。
-**根因**：iOS 只接受 `server-composed-mjpeg-v1`，生产端实际响应尚未完成鉴权抓取与版本确认。
-**处理**：建立版本化视频会话协议和兼容矩阵；发布前由生产环境契约测试锁定响应头、内容类型和组合版本。
+**根因**：手机当前安装的 TestFlight `1.0.0 (8)` 归档于 2026-08-01；其骨架分支要求已经废止的 `safe-scene-pose-v1` 分拆协议，由 App 分别取得安全场景和 Pose 后二次绘制。2026-08-03 的 `2678233` 已将正式链路收敛为盒子唯一合成的 `edge-composed-mjpeg-v1`，生产云会话和实际 MJPEG 响应均正确声明 `composition-owner=edge`。Build 8 在骨架分支主动拒绝新协议并抛出 `APIError.invalidResponse`；原画和模糊没有进入旧分拆分支，因此仍可播放。
+**处理**：不恢复旧 Pose/scene 路由，不放宽协议校验，不增加兼容兜底。正式 iOS 已删除 Pose SSE、scene MJPEG 和客户端骨架绘制，只消费盒子生成的一条成品 MJPEG，并同时校验会话 `display_transport=edge-composed-mjpeg-v1` 与响应头 `X-GoHome-Composition-Owner=edge`。版本提升至 `1.0.0 (9)`，从唯一正式工程 `ios-shell/GoHomeShell.xcodeproj` 重新归档上传。
+**发布前验证**：Build 9 单元测试 `128/128`、UI 测试 `25/25` 全部通过，`xcodebuild` 返回 `TEST SUCCEEDED`；版本源 `project.yml` 与生成工程均为 Build 9。纯骨架双摄连续监控 `1804.6` 秒、`360` 次采样，读取错误、模式不一致、服务故障、重连和上传失败均为 `0`；摄像头 31/32 的云端帧龄 P95 分别为 `217.5 / 180.3 ms`。TestFlight Build 9 真机骨架验收仍是关闭门槛。
 **验收**：TestFlight 从前台、后台恢复、换摄像头和换隐私模式均不会触发协议错误。
 
 ## GH-006 多条骨架展示路径

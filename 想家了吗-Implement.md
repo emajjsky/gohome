@@ -12780,3 +12780,26 @@ P4 风险升频边界：
 
 - 当前证明的是摄像头 31 自动复验、摄像头 32 单路纯骨架视觉和人物在场阻断契约，不是双路 TestFlight 交付完成。
 - 待摄像头 31 再次无人并自动恢复后，还需同时检查算法诊断页黄色当前帧骨架、管理首页和 TestFlight 蓝色成品骨架、生产云同帧身份；随后执行服务单次重启、真人遮挡/离开/宠物移动和 30 分钟双摄稳定性验收。
+
+## 189. 2026-08-03 TestFlight Build 8 骨架协议故障与 Build 9
+
+### 已确认根因
+
+- 用户手机当前版本为 TestFlight `1.0.0 (8)`；对应归档创建于 2026-08-01 22:35，早于 2026-08-03 08:52 的 `2678233 refactor: consolidate edge runtime and media ownership`。
+- Build 8 对应源码在 `skeleton` 分支强制要求 `safe-scene-pose-v1`，分别读取 scene MJPEG 和 Pose SSE，并由 App 叠加骨架；协议不匹配时直接抛出 `APIError.invalidResponse`。
+- `2678233` 已删除正式 Pose SSE、scene MJPEG 和客户端 `PoseOverlayView`，将唯一正式协议改为 `edge-composed-mjpeg-v1`：盒子完成背景替换和蓝色骨架合成，云端只中继，App 只显示同一成品帧。
+- 生产云返回的新版协议与当前主线一致。Build 8 只在骨架模式进入废弃分拆分支，因此原画和人物模糊正常、骨架提示“服务器返回无法识别的响应”是确定性的版本契约冲突，不是当前盒子再次黑屏。
+
+### 发布处理
+
+- 不恢复废弃 Pose/scene 路由，不把新版云端伪装成旧协议，也不取消响应头校验。否则会重新引入客户端二次绘制、双骨架和跨帧身份风险。
+- 正式 `MJPEGStreamClient` 只建立一个 MJPEG 请求，同时校验会话 `display_transport=edge-composed-mjpeg-v1`、响应头 `X-GoHome-Display-Transport=edge-composed-mjpeg-v1` 和 `X-GoHome-Composition-Owner=edge`。
+- `ios-shell/project.yml` 是版本源，`GoHomeShell.xcodeproj` 由 XcodeGen 生成；两处已同步从 Build 8 提升到 Build 9，Bundle ID 保持 `com.gohome.family`、版本保持 `1.0.0`。
+- 全量自动测试已通过：单元测试 `128/128`、UI 测试 `25/25`、失败数为 0，结果包为 `Test-GoHomeShell-2026.08.03_22-53-56-+0800.xcresult`，`xcodebuild` 返回 `TEST SUCCEEDED`。
+
+### 未完成边界
+
+- 纯骨架双摄连续监控已运行 `1804.6` 秒并取得 `360` 次样本，读取错误、模式不一致和服务故障均为 0。摄像头 31 的 ready 比例为 `96.67%`，源/端/云 FPS P50 为 `15.00 / 14.88 / 12.10`、P05 为 `14.68 / 11.77 / 8.00`，云端帧龄 P95 为 `217.5 ms`；摄像头 32 的 ready 比例为 `99.44%`，P50 为 `13.98 / 13.36 / 10.95`、P05 为 `12.72 / 12.16 / 7.80`，云端帧龄 P95 为 `180.3 ms`。两路重连和上传失败最大值均为 0。
+- 监控结束后实机 `/health` 显示两路均为 `ready / skeleton`，服务 `active`、`NRestarts=0`，Hailo Pose、Object 和人物分割失败均为 0。ready 比例中的短暂非 ready 样本属于人物在场触发的安全复验阻断，最终自动恢复；未发生模式回退或服务故障。
+- Build 9 上传并由 Apple 处理后，必须从 TestFlight 安装，不使用 Xcode 直装替代交付验收。
+- GH-005 只有在 Build 9 真机逐路打开骨架、切换摄像头、前后台恢复均不再出现协议错误后才能关闭；同一轮还需核对无人物像素、无残影、无双骨架和无串流。
