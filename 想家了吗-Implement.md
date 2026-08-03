@@ -12803,3 +12803,10 @@ P4 风险升频边界：
 - 监控结束后实机 `/health` 显示两路均为 `ready / skeleton`，服务 `active`、`NRestarts=0`，Hailo Pose、Object 和人物分割失败均为 0。ready 比例中的短暂非 ready 样本属于人物在场触发的安全复验阻断，最终自动恢复；未发生模式回退或服务故障。
 - Build 9 上传并由 Apple 处理后，必须从 TestFlight 安装，不使用 Xcode 直装替代交付验收。
 - GH-005 只有在 Build 9 真机逐路打开骨架、切换摄像头、前后台恢复均不再出现协议错误后才能关闭；同一轮还需核对无人物像素、无残影、无双骨架和无串流。
+
+### Build 9 归档与上传
+
+- 唯一正式工程归档成功，路径为 `ios-shell/build/GoHomeShell-1.0.0-9.xcarchive`；归档元数据为 Bundle ID `com.gohome.family`、版本 `1.0.0`、Build `9`、架构 `arm64`、Team `X4M4T6Z4CJ`。
+- 归档 App 的严格签名校验通过；发布二进制包含 `edge-composed-mjpeg-v1` 和 `X-GoHome-Composition-Owner`，不包含 `safe-scene-pose-v1` 或 `server-composed-mjpeg-v1`。
+- 使用正式 `ExportOptions.plist` 的 `app-store-connect / upload` 流程执行分发。Xcode 返回 `Upload succeeded` 与 `EXPORT SUCCEEDED`，归档分发记录无错误、无警告，上传 Build Number 为 `9`。
+- App Store Connect Delivery UUID 为 `d067a363-40e2-4723-93e6-e32282de6bba`；2026-08-03 23:21 Apple 接收状态为 `PROCESSING`。处理完成并安装 TestFlight Build 9 前，GH-005 保持“待实机验收”。

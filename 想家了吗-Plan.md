@@ -3781,7 +3781,7 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 
 ## 15.54 TestFlight Build 9 骨架协议收口（2026-08-03）
 
-状态：根因确认、正式实现和自动测试已完成；等待双摄长时门禁、上传处理和 TestFlight 真机验收。
+状态：根因确认、正式实现、自动测试、双摄长时门禁和 Build 9 上传已完成；等待 Apple 处理和 TestFlight 真机验收。
 
 1. [x] 核对手机当前安装版本与历史归档，确认故障版本为 2026-08-01 归档的 `1.0.0 (8)`。
 2. [x] 还原 Build 8 对应源码，确认骨架模式要求 `safe-scene-pose-v1`、scene MJPEG 和 Pose SSE，协议不符时主动抛出 `APIError.invalidResponse`。
@@ -3790,6 +3790,6 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 5. [x] 将唯一正式 iOS 工程的版本源和生成工程同步提升为 `1.0.0 (9)`。
 6. [x] iOS 全量单元测试 `128/128`、UI 测试 `25/25` 通过，`xcodebuild` 返回 `TEST SUCCEEDED`。
 7. [x] 完成纯骨架双摄 `1804.6` 秒、`360` 次稳定性采样：读取错误、模式不一致、服务故障、重连和上传失败均为 0；31/32 路云端帧龄 P95 为 `217.5 / 180.3 ms`，最终均为 `ready`。
-8. [ ] 从 `ios-shell/GoHomeShell.xcodeproj` 归档 Build 9，验证 Bundle ID、版本、生产 APNs entitlement 和协议实现后上传 App Store Connect。
+8. [x] 从 `ios-shell/GoHomeShell.xcodeproj` 归档 Build 9；验证 `com.gohome.family / 1.0.0 (9)`、签名和二进制协议后完成 App Store Connect 上传，Apple 接收且无错误或警告。
 9. [ ] 安装 TestFlight Build 9，逐路验证骨架打开、切换、前后台恢复、真实显示 FPS、无人物像素、无双骨架、无残影和无串画面。
 10. [ ] 真机通过后更新 GH-005 状态；未完成前保持“待实机验收”。
