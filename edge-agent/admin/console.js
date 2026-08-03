@@ -18,11 +18,11 @@ const state = {
   cameraFormPrefilled: false,
   wifiConnecting: false,
   refreshTimer: null,
-  streamMaskTimer: null,
   streamReconnectTimer: null,
   streamReconnectAttempts: 0,
   streamStartedAt: 0,
   streamLastRecoveryAt: 0,
+  streamGeneration: 0,
   liveAnalysisTimer: null,
   liveAnalysisBusy: false,
   liveAnalysisErrorShown: false,
@@ -46,6 +46,7 @@ const state = {
   videoPrivacyUpdatedAt: "",
   videoPrivacyLoaded: false,
   privacyCalibrations: [],
+  privacyCalibrationPendingCameraIds: new Set(),
   privacyTimer: null,
 };
 
@@ -95,10 +96,14 @@ function escapeHtml(value) {
 function showToast(message) {
   const toast = $("toast");
   if (!toast) return;
-  toast.textContent = message;
+  const text = String(message || "");
+  toast.textContent = text;
   toast.classList.add("show");
   clearTimeout(state.toastTimer);
-  state.toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
+  state.toastTimer = setTimeout(() => {
+    toast.classList.remove("show");
+    if (toast.textContent === text) toast.textContent = "";
+  }, 2600);
 }
 
 function normalizeVideoPrivacyMode(value) {
@@ -191,7 +196,11 @@ function renderVideoPrivacyMode() {
   target.innerHTML = state.privacyCalibrations
     .filter((item) => item.enabled)
     .map((item) => {
-      const status = item.ready
+      const cameraId = Number(item.camera_id);
+      const pending = state.privacyCalibrationPendingCameraIds.has(cameraId);
+      const status = pending
+        ? "校准中"
+        : item.ready
         ? "已校准"
         : item.status === "calibrating"
           ? `${Number(item.calibration_observations || 0)}/${Number(item.calibration_required_frames || 8)}`
@@ -204,12 +213,14 @@ function renderVideoPrivacyMode() {
       return `
         <div class="privacy-calibration-row">
           <span><strong>${escapeHtml(item.name || item.room || "摄像头 " + item.camera_id)}</strong><small>${escapeHtml(status)}</small></span>
-          ${item.ready ? '<i class="status-dot ok" aria-hidden="true"></i>' : `<button type="button" data-calibrate-camera="${Number(item.camera_id)}">${actionLabel}</button>`}
+          ${item.ready
+            ? '<i class="status-dot ok" aria-hidden="true"></i>'
+            : `<button type="button" data-calibrate-camera="${cameraId}" ${pending ? "disabled" : ""}>${pending ? "处理中" : actionLabel}</button>`}
         </div>`;
     })
     .join("");
   target.querySelectorAll("[data-calibrate-camera]").forEach((button) => {
-    button.addEventListener("click", () => calibratePrivacyCamera(button.dataset.calibrateCamera, button)
+    button.addEventListener("click", () => calibratePrivacyCamera(button.dataset.calibrateCamera)
       .catch((error) => showToast(userSafeError(error.message))));
   });
 }
@@ -229,17 +240,22 @@ async function loadVideoPrivacyMode({ refreshStream = true } = {}) {
   return payload;
 }
 
-async function calibratePrivacyCamera(cameraId, button) {
-  setBusy(button, true);
+async function calibratePrivacyCamera(cameraId) {
+  const normalizedCameraId = Number(cameraId);
+  if (!Number.isFinite(normalizedCameraId)) throw new Error("摄像头标识无效");
+  if (state.privacyCalibrationPendingCameraIds.has(normalizedCameraId)) return;
+  state.privacyCalibrationPendingCameraIds.add(normalizedCameraId);
+  renderVideoPrivacyMode();
   try {
-    await api(`/api/admin/cameras/${Number(cameraId)}/privacy-calibration`, { method: "POST" });
+    await api(`/api/admin/cameras/${normalizedCameraId}/privacy-calibration`, { method: "POST" });
     await loadVideoPrivacyMode({ refreshStream: false });
-    if (pageName === "home" && Number(state.selectedCameraId) === Number(cameraId)) {
+    if (pageName === "home" && Number(state.selectedCameraId) === normalizedCameraId) {
       renderStream({ retry: true });
     }
     showToast("空房校准已完成");
   } finally {
-    setBusy(button, false);
+    state.privacyCalibrationPendingCameraIds.delete(normalizedCameraId);
+    renderVideoPrivacyMode();
   }
 }
 
@@ -1071,12 +1087,22 @@ function ensureLiveStreamLifecycle(cameraId, tracking, frameId) {
   renderStream({ retry: true });
 }
 
+function replaceLiveStreamElement() {
+  const current = $("mjpegStream");
+  if (!current) return null;
+  const stream = current.cloneNode(false);
+  stream.removeAttribute("src");
+  stream.style.visibility = "hidden";
+  current.replaceWith(stream);
+  return stream;
+}
+
 function renderStream({ retry = false } = {}) {
-  const stream = $("mjpegStream");
+  const stream = replaceLiveStreamElement();
   if (!stream) return;
+  const generation = ++state.streamGeneration;
   const empty = $("streamEmpty");
   const camera = selectedCamera();
-  clearTimeout(state.streamMaskTimer);
   clearTimeout(state.streamReconnectTimer);
   if (!retry) state.streamReconnectAttempts = 0;
   if (pageName === "algorithms" && !retry) {
@@ -1117,7 +1143,8 @@ function renderStream({ retry = false } = {}) {
     empty.querySelector("p").textContent = "视频流加载中";
   }
   stream.onerror = () => {
-    clearTimeout(state.streamMaskTimer);
+    if (generation !== state.streamGeneration || Number(selectedCamera()?.id) !== Number(camera.id)) return;
+    stream.style.visibility = "hidden";
     if (empty) {
       empty.style.display = "grid";
       empty.querySelector("p").textContent = "视频流暂不可用";
@@ -1131,7 +1158,9 @@ function renderStream({ retry = false } = {}) {
     }, delay);
   };
   stream.onload = () => {
+    if (generation !== state.streamGeneration || Number(selectedCamera()?.id) !== Number(camera.id)) return;
     state.streamReconnectAttempts = 0;
+    stream.style.visibility = "visible";
     if (empty) empty.style.display = "none";
     setText("streamStatus", "实时视频已连接");
   };
@@ -1143,9 +1172,6 @@ function renderStream({ retry = false } = {}) {
     : `/api/cameras/${camera.id}/stream.mjpg`;
   stream.src = `${streamPath}?fps=${streamProfile.fps}&width=${streamProfile.width}&height=${streamProfile.height}&quality=${streamProfile.quality}&privacy_mode=${encodeURIComponent(state.videoPrivacyMode)}&t=${Date.now()}`;
   state.streamStartedAt = Date.now();
-  state.streamMaskTimer = setTimeout(() => {
-    if (stream.getAttribute("src") && empty) empty.style.display = "none";
-  }, 900);
   setText("streamStatus", streamProfile.label);
   setText("streamCamera", `${cameraDisplayName(camera)} · ${camera.room || "未设置"}`);
 }

@@ -76,12 +76,32 @@ def main() -> None:
         if missing:
             raise SystemExit({"page": page_name, "missing_dependencies": missing})
 
+    console_source = (ADMIN / "console.js").read_text(encoding="utf-8")
+    required_stream_contracts = {
+        "stream generation": "streamGeneration: 0",
+        "fresh image element": "function replaceLiveStreamElement()",
+        "old image removal": "current.replaceWith(stream)",
+        "hidden before first frame": 'stream.style.visibility = "hidden"',
+        "visible after first frame": 'stream.style.visibility = "visible"',
+        "stale session rejection": "generation !== state.streamGeneration",
+        "calibration request ownership": "privacyCalibrationPendingCameraIds: new Set()",
+    }
+    missing_contracts = [
+        label for label, source in required_stream_contracts.items()
+        if source not in console_source
+    ]
+    if missing_contracts:
+        raise SystemExit({"missing_admin_runtime_contracts": missing_contracts})
+    if "streamMaskTimer" in console_source:
+        raise SystemExit({"forbidden_admin_runtime_contract": "timer-based stream reveal"})
+
     print({
         "ok": True,
         "pages": sorted(EXPECTED_HTML),
         "scripts": sorted(EXPECTED_JS),
         "assets": sorted(EXPECTED_ASSETS),
         "dependencies": dependencies,
+        "runtime_contracts": sorted(required_stream_contracts),
     })
 
 
