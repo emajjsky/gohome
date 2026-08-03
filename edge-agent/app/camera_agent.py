@@ -1013,6 +1013,7 @@ class CameraAgent:
             source_label=source_label,
         )
         last_sequence = 0
+        last_frame_id = ""
         frame_interval = 1.0 / bounded_stream_fps(fps)
         frame_deadline = time.monotonic()
         try:
@@ -1026,6 +1027,10 @@ class CameraAgent:
                 capture = self.latest_cached_frame(camera, max_age_seconds=0.75)
                 if capture is None:
                     continue
+                frame_id = str(capture.get("frame_id") or "")
+                if not frame_id or frame_id == last_frame_id:
+                    continue
+                last_frame_id = frame_id
                 frame = capture["frame"]
                 output_frame = self._resize_for_stream(
                     cv2,

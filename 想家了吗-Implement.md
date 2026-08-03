@@ -12842,3 +12842,4 @@ P4 风险升频边界：
 - `PrivacyFrameRenderer` 新增未经传输编码的 `render_image()` BGR 成品接口；`render_frame()` 变为 LAN MJPEG 使用的薄 JPEG 包装。
 - 渲染缓存改为缓存与 JPEG 质量无关的合成图像，同一成品可以直接交给 H.264 编码器；新增 `composition_total`，JPEG 编码继续单独计入 `jpeg_encode`。
 - 专项回归同时验证 BGR 类型、尺寸、隐私人物移除像素和调用 `render_image()` 时 JPEG 编码样本不增加。该重构只建立正确边界，不代表 GH-010/GH-011/GH-033 已完成。
+- 完整边缘回归首次运行暴露共享读取器通知与中央缓存之间的真实竞态：缓存可能提前一帧更新，随后通知序号推进时消费者再次读取同一 `frame_id`。正式消费者改为以中央缓存 `frame_id` 作为唯一发布身份，通知序号只负责唤醒；确定性 cache-ahead 用例固定验证重复通知不会重复发布像素或虚增有效 FPS。

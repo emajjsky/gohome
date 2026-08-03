@@ -33,6 +33,20 @@ class FakeCapture:
         self.released = True
 
 
+class AheadOfNotificationReader:
+    """Expose the cache-ahead race without depending on thread scheduling."""
+
+    is_stopped = False
+
+    def __init__(self) -> None:
+        self.sequence = 0
+
+    def wait_for_update(self, _after_sequence: int, timeout: float = 3.5):
+        del timeout
+        self.sequence += 1
+        return self.sequence, ""
+
+
 def main() -> None:
     delays = [stream_reconnect_delay(index) for index in range(1, 8)]
     if delays != [0.5, 1.0, 2.0, 4.0, 8.0, 8.0, 8.0]:
@@ -140,6 +154,29 @@ def main() -> None:
     if agent._frame_sequences.get("1") != len(stored_means):
         raise SystemExit("effective frame identity advanced without a source-owned cache write")
 
+    race_agent = CameraAgent(Path("/tmp/gohome-stream-cache-ahead-test"))
+    race_reader = AheadOfNotificationReader()
+    cached_frames = [
+        {"frame": normal, "frame_id": "9-1"},
+        {"frame": normal, "frame_id": "9-1"},
+        {"frame": np.full_like(normal, 112), "frame_id": "9-2"},
+    ]
+    race_agent._acquire_shared_stream = lambda *args, **kwargs: race_reader  # type: ignore[method-assign]
+    race_agent._release_shared_stream = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    race_agent.latest_cached_frame = (  # type: ignore[method-assign]
+        lambda *args, **kwargs: cached_frames.pop(0)
+    )
+    race_stream = race_agent.raw_frames(
+        {"id": 9, "stream_url": "rtsp://example.invalid/cache-ahead"},
+        fps=30,
+        max_width=64,
+        max_height=48,
+    )
+    race_frame_ids = [str(next(race_stream)["frame_id"]) for _ in range(2)]
+    race_stream.close()
+    if race_frame_ids != ["9-1", "9-2"]:
+        raise SystemExit(f"cache-ahead notification emitted a duplicate frame: {race_frame_ids}")
+
     camera = {"id": 7, "name": "客厅摄像头"}
     rules = {"offline_enabled": True}
     engine = RuleEngine()
@@ -177,6 +214,7 @@ def main() -> None:
         "near_black_effective_fps": near_black_status["effective_fps"],
         "old_pixels_republished": False,
         "effective_frame_ids": frame_ids,
+        "cache_ahead_duplicate_suppressed": True,
         "sustained_black_reconnected": True,
         "recovered": True,
         "transient_timeout_suppressed": True,
