@@ -40,7 +40,7 @@ class PrivacyFrameRenderer:
             min(float(revalidation_interval_seconds), 5.0),
         )
         self._clock = monotonic_clock or time.monotonic
-        self._render_cache: OrderedDict[tuple[Any, ...], bytes] = OrderedDict()
+        self._render_cache: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
         self._sync_rejections: Dict[int, Dict[str, Any]] = {}
         self._segmentation_assists: Dict[int, Dict[str, Any]] = {}
         self._output_samples: Dict[int, deque[float]] = {}
@@ -90,15 +90,20 @@ class PrivacyFrameRenderer:
     ) -> bytes:
         started_at = time.perf_counter()
         try:
-            return self._render_frame(
+            output = self.render_image(
                 camera_id,
                 frame,
                 mode,
-                quality=quality,
                 source_key=source_key,
                 frame_id=frame_id,
                 captured_at=captured_at,
                 captured_monotonic=captured_monotonic,
+            )
+            return self._encode_jpeg(
+                _load_cv2(),
+                output,
+                quality,
+                camera_id=int(camera_id),
             )
         finally:
             self._record_stage_latency(
@@ -107,18 +112,47 @@ class PrivacyFrameRenderer:
                 (time.perf_counter() - started_at) * 1000.0,
             )
 
-    def _render_frame(
+    def render_image(
         self,
         camera_id: int,
         frame: Any,
         mode: str,
         *,
-        quality: int = 55,
         source_key: str = "",
         frame_id: str = "",
         captured_at: str = "",
         captured_monotonic: float | None = None,
-    ) -> bytes:
+    ) -> Any:
+        """Return the edge-composed BGR frame without transport encoding."""
+        started_at = time.perf_counter()
+        try:
+            return self._render_image(
+                camera_id,
+                frame,
+                mode,
+                source_key=source_key,
+                frame_id=frame_id,
+                captured_at=captured_at,
+                captured_monotonic=captured_monotonic,
+            )
+        finally:
+            self._record_stage_latency(
+                int(camera_id),
+                "composition_total",
+                (time.perf_counter() - started_at) * 1000.0,
+            )
+
+    def _render_image(
+        self,
+        camera_id: int,
+        frame: Any,
+        mode: str,
+        *,
+        source_key: str = "",
+        frame_id: str = "",
+        captured_at: str = "",
+        captured_monotonic: float | None = None,
+    ) -> Any:
         resolved_mode = normalize_privacy_mode(mode)
         cv2 = _load_cv2()
         if frame is None or not getattr(frame, "size", 0):
@@ -139,7 +173,7 @@ class PrivacyFrameRenderer:
                 str(frame_id or ""),
                 captured_monotonic=captured_monotonic,
             )
-            return self._encode_jpeg(cv2, frame, quality, camera_id=int(camera_id))
+            return frame
 
         if resolved_mode == "skeleton":
             height, width = frame.shape[:2]
@@ -172,7 +206,6 @@ class PrivacyFrameRenderer:
                 str(frame_id),
                 int(frame.shape[1]),
                 int(frame.shape[0]),
-                int(quality),
             )
             cached = self._cached_render(cache_key)
             if cached is not None:
@@ -199,15 +232,14 @@ class PrivacyFrameRenderer:
                     metadata,
                     source_key=source_key,
                 )
-            rendered = self._encode_jpeg(cv2, output, quality, camera_id=int(camera_id))
-            self._store_cached_render(cache_key, rendered)
+            self._store_cached_render(cache_key, output)
             self._record_output(
                 int(camera_id),
                 resolved_mode,
                 str(frame_id),
                 captured_monotonic=captured_monotonic,
             )
-            return rendered
+            return output
 
         synchronized = self._synchronized_bundle(int(camera_id), source_key=source_key)
         if synchronized is not None:
@@ -217,9 +249,8 @@ class PrivacyFrameRenderer:
                 if resolved_mode == "skeleton":
                     raise PrivacyCalibrationRequired(int(camera_id), "synchronized_frame_required")
                 output = self._strong_blur(cv2, frame)
-                rendered = self._encode_jpeg(cv2, output, quality, camera_id=int(camera_id))
                 self._record_output(int(camera_id), resolved_mode, "")
-                return rendered
+                return output
             cache_key = (
                 int(camera_id),
                 str(source_key or ""),
@@ -227,7 +258,6 @@ class PrivacyFrameRenderer:
                 str(tracking.get("frame_id")),
                 int(frame.shape[1]),
                 int(frame.shape[0]),
-                int(quality),
             )
             cached = self._cached_render(cache_key)
             if cached is not None:
@@ -266,23 +296,21 @@ class PrivacyFrameRenderer:
                     metadata,
                     source_key=source_key,
                 )
-            rendered = self._encode_jpeg(cv2, output, quality, camera_id=int(camera_id))
-            self._store_cached_render(cache_key, rendered)
+            self._store_cached_render(cache_key, output)
             self._record_output(
                 int(camera_id),
                 resolved_mode,
                 str(tracking.get("frame_id") or ""),
                 captured_monotonic=tracking.get("captured_monotonic"),
             )
-            return rendered
+            return output
 
         if self._supports_synchronized_frames():
             if resolved_mode == "skeleton":
                 raise PrivacyCalibrationRequired(int(camera_id), "synchronized_frame_required")
             output = self._strong_blur(cv2, frame)
-            rendered = self._encode_jpeg(cv2, output, quality, camera_id=int(camera_id))
             self._record_output(int(camera_id), resolved_mode, "")
-            return rendered
+            return output
 
         metadata = self._tracking_metadata(int(camera_id))
         if resolved_mode == "person_blur":
@@ -301,9 +329,8 @@ class PrivacyFrameRenderer:
                 metadata,
                 source_key=source_key,
             )
-        rendered = self._encode_jpeg(cv2, output, quality, camera_id=int(camera_id))
         self._record_output(int(camera_id), resolved_mode, "")
-        return rendered
+        return output
 
     def _supports_synchronized_frames(self) -> bool:
         return self.tracker is not None and callable(getattr(self.tracker, "latest_synchronized_frame", None))
@@ -772,14 +799,14 @@ class PrivacyFrameRenderer:
         )
         return scene
 
-    def _cached_render(self, key: tuple[Any, ...]) -> bytes | None:
+    def _cached_render(self, key: tuple[Any, ...]) -> Any | None:
         with self._cache_lock:
             value = self._render_cache.get(key)
             if value is not None:
                 self._render_cache.move_to_end(key)
             return value
 
-    def _store_cached_render(self, key: tuple[Any, ...], value: bytes) -> None:
+    def _store_cached_render(self, key: tuple[Any, ...], value: Any) -> None:
         with self._cache_lock:
             self._render_cache[key] = value
             self._render_cache.move_to_end(key)

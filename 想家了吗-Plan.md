@@ -3793,3 +3793,18 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 8. [x] 从 `ios-shell/GoHomeShell.xcodeproj` 归档 Build 9；验证 `com.gohome.family / 1.0.0 (9)`、签名和二进制协议后完成 App Store Connect 上传，Apple 接收且无错误或警告。
 9. [x] 安装 TestFlight Build 9 并进入生产骨架流；画面可见、约 `7-13 FPS`，不再出现“服务器返回无法识别的响应”，云端只存在正式 video 客户端而无 Pose/scene 客户端。
 10. [x] 关闭 GH-005 协议故障；双路无人物像素、无双骨架、无残影、无串画面继续属于 GH-008，FPS 与持久传输继续属于 GH-010、GH-011、GH-033。
+
+## 阶段 28：持久编码实时视频链路
+
+状态：进行中。Build 9 已证明唯一盒子成品流协议正确，但逐帧 JPEG 公网链路仍造成真实丢帧，不能作为最终产品交付。
+
+1. [x] 根据双摄、生产云和 TestFlight 同时段指标定位瓶颈：源流和端侧合成基本达到 `12-15 FPS`，云端/手机下降到 `7-13 FPS`，待发送帧覆盖约 `19%-20%`，最大间隔约 `1.1-1.5s`。
+2. [x] 验证 Pi 5 当前系统没有可用 V4L2 H.264 编码设备；验证 `libx264 ultrafast/zerolatency` 对 `640x360@15 FPS` 达到约 `36.1x` 实时，双路软件编码可行。
+3. [x] 定稿唯一正式链路：共享 RTSP 采集 -> 盒子一次隐私合成 -> 每路常驻 FFmpeg/libx264 -> RTSP/TCP 发布 -> MediaMTX -> WHEP/WebRTC -> iOS 原生渲染。
+4. [ ] `PrivacyFrameRenderer` 输出未经传输编码的 BGR 成品帧；JPEG 只由局域网管理诊断消费者按需编码，缓存不再绑定 JPEG 质量。
+5. [ ] 实现每路一个有界 H.264 发布进程，绑定摄像头源代次、隐私模式和关停生命周期；进程异常时重建当前流，不排队补发旧帧。
+6. [ ] 云端部署固定版本 MediaMTX，完成 TLS、RTSP/TCP 发布、WHEP、ICE/TURN、外部鉴权、路径隔离、指标和 systemd/nginx 配置。
+7. [ ] Node 播放会话签发短时媒体权限；鉴权必须绑定家庭、盒子、摄像头、动作、路径、隐私模式和有效期，云端不得解码或二次合成。
+8. [ ] iOS 使用成熟 WebRTC 库和原生视频渲染器消费 WHEP；FPS 只统计实际渲染的新视频帧，前后台、换路和换模式必须释放旧会话。
+9. [ ] 删除正式 `_LatestFrameUploader`、逐帧上传 API、云端 JPEG 缓存/MJPEG 产品路由和 iOS `MJPEGStreamClient`。盒子 LAN 管理 MJPEG 不得被公网 App 自动回退使用。
+10. [ ] 双摄执行 30 分钟原画/模糊/骨架、前后台、蜂窝网络、断网重连和模式切换验收；记录源、合成、编码、发布、云接收、WebRTC 接收/渲染 FPS，端到端延迟、丢包、CPU、温度、内存和重连次数。

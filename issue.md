@@ -148,6 +148,8 @@
 ## GH-010 至 GH-012 视频性能与旧链路
 
 **处理**：测量 RTSP 实际码流；评估 GStreamer 硬件解码与 Hailo 管线；减少 BGR/JPEG 往返；最终使用持久 H.264/H.265/WebRTC，MJPEG 仅保留明确降级用途；移除重叠视频服务和失效参数。
+**正式架构定稿（2026-08-03）**：盒子继续作为唯一隐私合成方，每路摄像头只有一个采集所有者和一个成品帧发布者。`PrivacyFrameRenderer` 直接输出 BGR 成品帧，常驻 FFmpeg 进程使用 `libx264 + ultrafast + zerolatency + yuv420p + 无 B 帧 + 约 1 秒关键帧` 编码，并通过 RTSP/TCP 持久发布到云端 MediaMTX。云端不解码、不重新合成、不缓存 JPEG，只做鉴权、媒体转发和可观测性；iOS 通过 WHEP/WebRTC 接收 H.264 并使用原生 WebRTC 视频渲染。正式 App 不允许自动回退 MJPEG，MJPEG 只保留在盒子局域网管理诊断接口，不能成为第二条公网产品链路。
+**设备结论**：当前 Pi 5 系统虽列出 `h264_v4l2m2m`，真实编码探测返回无可用设备，不能把不存在的硬件编码能力写进方案。运行中使用 `libx264` 对 `640x360@15 FPS`、450 帧基准达到约 `36.1x` 实时、CPU 时间约 `1.4s`、峰值内存约 `63 MB`、码率约 `1.26 Mbps`；双路软件 H.264 编码具备明确余量。Hailo 只负责 Pose、分割和目标模型，不承担视频编码。
 **验收**：所有 FPS 都标明源流、端侧合成、云端接收和客户端解码口径；不得以重复帧或 UI 刷新伪造 FPS。
 
 GH-012 的本地结构已收口：边缘端删除独立 `video_app.py`、视频节点调度、旧视频档位、播放票据和全部 `/api/app/*`、`/api/v1/video/*` 路由；管理端仅保留 `/api/cameras/*`，生产云端只通过带设备凭证的 `/api/v1/device/cameras/*` 获取同一盒子成品帧。事件证据提升和受鉴权媒体读取统一归属 `ObjectStorageService`，不再依赖视频服务。正式 App 的 `/api/app/*` 与 `/api/v1/video/*` 始终归生产云端，不由盒子实现。部署脚本会删除树莓派残留模块，SQLite 初始化会清除无消费者的 `video_service_nodes` 表，Bootstrap 会迁移历史废弃环境变量。尚需树莓派部署、生产云端和 TestFlight 实机确认后关闭。
@@ -275,7 +277,9 @@ Build 8 不满足本台账的骨架产品契约，不作为最终交付版本。
 ### GH-033 逐帧 JPEG 正式链路
 
 **根因**：当前正式路径仍经过 OpenCV BGR、CPU 合成、JPEG 编码、逐帧 HTTP 上传和 MJPEG 播放，带宽、延迟、背压和设备能耗无法达到最终产品标准。
-**处理**：在现有帧身份和状态契约稳定后，迁移为单解码所有者、GStreamer/硬件解码、单次隐私合成、持久 H.264/H.265/WebRTC；MJPEG 仅作为明确降级方案。
+**实测证据**：Build 9 验收时两路源流约 `15.1 / 13.3 FPS`、端侧成品约 `14.8 / 12.7 FPS`，但云端仅约 `9.8 / 8.6 FPS`，逐帧上传覆盖约 `19%-20%` 的待发送新帧，最大上传/接收间隔约 `1.1-1.5s`。没有 RTSP 重连、上传失败或 Hailo 推理失败，瓶颈明确位于 JPEG 编码、逐帧 HTTP 请求/JSON 响应、云端 JPEG 缓存/MJPEG 分发和 iOS `UIImage` 解码链。
+**处理**：迁移为单解码所有者、单次隐私合成、常驻 FFmpeg/libx264、RTSP/TCP 上行、MediaMTX 转发和 WHEP/WebRTC 下行。MediaMTX 固定版本并启用外部 HTTP/JWT 鉴权、路径级发布/读取权限、WebRTC 指标和 TURN；Node 只签发短时媒体权限并校验家庭、盒子、摄像头、模式和有效期。迁移完成后删除 `_LatestFrameUploader`、`/api/v1/device/live-frames/upload`、云端 JPEG 帧缓存/MJPEG 产品路由和 iOS `MJPEGStreamClient`；盒子 LAN 管理诊断 MJPEG 独立标识且不被正式 App 使用。
+**阶段进展**：隐私渲染器已开始拆分“像素合成”和“传输编码”职责，新增未经 JPEG 的 BGR 成品帧接口与独立合成耗时指标；三种隐私像素契约保持不变。该项只有在持久链路部署、旧正式路径删除和 TestFlight 长时验收全部完成后才能关闭。
 **验收**：双路 30 分钟端到端帧龄不增长，网络切换自动恢复，客户端解码 FPS 和画质达到验收基线。
 
 ## GH-034 至 GH-036 架构与真实产品边界

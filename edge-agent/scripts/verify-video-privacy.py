@@ -317,6 +317,33 @@ def main() -> int:
         assert mean_delta(skeleton, blurred, PERSON_SLICE) > 8.0
         assert render_ms < 80.0
 
+        image_frame_id = "1-composed-image"
+        image_monotonic = time.monotonic()
+        tracker.payload = metadata(
+            camera_id=1,
+            person=True,
+            frame_id=image_frame_id,
+            source_key=source_a_g1,
+        )
+        tracker.payload["tracking"]["captured_monotonic"] = image_monotonic
+        stages_before = renderer.status()["cameras"]["1"]["stage_latency_ms"]
+        jpeg_samples_before = int(stages_before["jpeg_encode"]["samples"])
+        composed = renderer.render_image(
+            1,
+            occupied_a,
+            "skeleton",
+            source_key=source_a_g1,
+            frame_id=image_frame_id,
+            captured_monotonic=image_monotonic,
+        )
+        assert isinstance(composed, np.ndarray)
+        assert composed.shape == occupied_a.shape
+        assert composed.dtype == np.uint8
+        assert mean_delta(composed, occupied_a, PERSON_SLICE) > 24.0
+        stages_after = renderer.status()["cameras"]["1"]["stage_latency_ms"]
+        assert stages_after["jpeg_encode"]["samples"] == jpeg_samples_before
+        assert stages_after["composition_total"]["samples"] >= 1
+
         stale_monotonic = time.monotonic()
         tracker.payload = metadata(
             camera_id=1,

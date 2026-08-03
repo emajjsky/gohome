@@ -12817,3 +12817,28 @@ P4 风险升频边界：
 - 同时段生产云 `active_clients.video=1`、`pose=0`、`scene=0`，证明手机只消费盒子成品视频，没有重新建立旧 scene/Pose 分拆链路。两路云端接收约 `9.8 / 8.6 FPS`，盒子源流约 `15.1 / 13.3 FPS`、端侧成品约 `14.8 / 12.7 FPS`，重连、上传失败和 Hailo 推理失败均为 0。
 - 手机低至 7 FPS 与云端上游波动一致，不是客户端二次骨架绘制。当前逐帧 JPEG/HTTP 单在途传输会覆盖约 `19%-20%` 的 pending 新帧，传输间隔最大值约 `1.1-1.5 s`；该性能缺口继续由 GH-010、GH-011、GH-033 的持久 H.264/H.265/WebRTC 链路处理。
 - GH-005 只针对版本协议不一致，现已完成根因消除、自动测试、生产发布和 TestFlight 实机验证，状态关闭。纯骨架视觉质量和双摄动作验收仍归 GH-008，不能随 GH-005 一并关闭。
+
+## 2026-08-03 持久视频架构定稿与合成边界重构
+
+### 实测根因
+
+- Build 9 真机时两路源流约 `15.1 / 13.3 FPS`，端侧隐私成品约 `14.8 / 12.7 FPS`，生产云仅约 `9.8 / 8.6 FPS`，手机显示约 `7-13 FPS`。
+- 同期没有 RTSP 重连、上传失败或 Hailo 推理失败；逐帧 HTTP 上传覆盖约 `19%-20%` 的 pending 新帧，最长上传/接收间隔约 `1.1-1.5s`。
+- 正式瓶颈是 BGR 成品逐帧 JPEG 编码、每帧 HTTP POST/JSON 往返、云端 JPEG 缓存/MJPEG 分发和 iOS `UIImage` 解码，不是 Hailo 推理吞吐。
+- Pi 5 当前内核虽暴露 `h264_v4l2m2m` 编码器名称，实际编码探测无可用设备；方案不能依赖不存在的硬编。运行中 `libx264 ultrafast + zerolatency + baseline` 对 `640x360@15 FPS` 的 450 帧基准达到约 `36.1x` 实时、CPU 时间约 `1.4s`、峰值内存约 `63 MB`、码率约 `1.26 Mbps`，足以承担双路。
+
+### 唯一正式架构
+
+1. `CameraAgent` 继续作为每路唯一 RTSP 解码所有者，算法与直播消费同一个最新帧源，不另开摄像头连接。
+2. `PrivacyFrameRenderer` 继续作为唯一隐私像素合成方，并直接输出 BGR 成品帧。原画、人物模糊、纯骨架契约及 `camera_id + source_key + frame_id` 同帧身份不变。
+3. 每路一个常驻 FFmpeg 进程从标准输入读取 BGR，使用 `libx264 / ultrafast / zerolatency / yuv420p / bframes=0 / 约 1 秒 GOP`，经 RTSP/TCP 持久发布到固定版本 MediaMTX。
+4. MediaMTX 只转发编码媒体，使用外部 HTTP 或 JWT 做路径级 publish/read 鉴权，通过 WHEP/WebRTC 向 iOS 下发 H.264；公网部署必须同时配置 TLS、ICE 和 TURN。
+5. Node 只创建短时播放会话、签发媒体权限并公开真实媒体指标，不接收 JPEG、不解码、不合成、不维护第二份直播像素。
+6. iOS 使用成熟 WebRTC 框架和原生视频渲染器，不实现自定义编解码器。FPS 统计基于实际渲染新帧，切路、切模式和前后台转换必须关闭旧 PeerConnection。
+7. 正式 App 不做 MJPEG 自动降级。迁移完成后删除逐帧上传器、上传 API、云端 JPEG 缓存/MJPEG 产品路由和 `MJPEGStreamClient`；MJPEG 仅保留盒子局域网管理诊断用途。
+
+### 当前代码进展
+
+- `PrivacyFrameRenderer` 新增未经传输编码的 `render_image()` BGR 成品接口；`render_frame()` 变为 LAN MJPEG 使用的薄 JPEG 包装。
+- 渲染缓存改为缓存与 JPEG 质量无关的合成图像，同一成品可以直接交给 H.264 编码器；新增 `composition_total`，JPEG 编码继续单独计入 `jpeg_encode`。
+- 专项回归同时验证 BGR 类型、尺寸、隐私人物移除像素和调用 `render_image()` 时 JPEG 编码样本不增加。该重构只建立正确边界，不代表 GH-010/GH-011/GH-033 已完成。
