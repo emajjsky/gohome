@@ -12655,3 +12655,30 @@ P4 风险升频边界：
 - 代码已部署到 Pi 并单次重启。服务为 `active`、`NRestarts=0`，最近 warning 日志为空；盒子实际四个管理页均加载 `20260803-privacy-contract-1` 静态资源。
 - 两路托管源流均持续约 15 FPS、无重连，Hailo Pose 和人物分割状态为 `ready` 且推理失败为 0。当前两路基线都为 `calibration_required`，纯骨架 LiveRelay 正确阻断且提交 FPS 为 0，没有回退原画或建立空流。
 - 剩余现场动作必须在两路画面无人时执行：逐路完成空房校准，核对持久 `.npz` 与 SHA-256、首页/App 蓝色纯骨架和云端接收 FPS；随后单次重启确认基线复验恢复。
+
+## 184. 2026-08-03 未校准纯骨架计算短路
+
+### 现场剖析
+
+- 两路源流均约 15 FPS，Hailo Pose 中位约 32 ms、失败为 0，但模型锚点约 `2.25 / 3.20 Hz`；Pi 温度从约 `72.2°C` 上升到约 `73.8°C`，服务进程约 270% CPU。
+- 两路背景状态均为 `calibration_required`，LiveRelay 提交与完成均为 0；与此同时 Hailo 人物分割成功次数、分割锚点和光流传播仍持续增加。调用顺序为同步元数据、分割、背景重建，直到重建阶段才发现没有基线。
+- 该路径没有产生任何用户价值，却竞争 Hailo 调度、CPU 和内存带宽，并触发 72°C 以上的资源保护冷却，是 Pose 锚点下降的重要负载来源。
+
+### 根因实现
+
+- `PrivacyBackgroundReconstructor.require_baseline()` 按 `camera_id + configured_source_key + width + height` 获取唯一状态并激活当前流代。
+- 校准正在进行时返回 `calibration_in_progress`；没有已提交背景时返回 `calibration_required`。持久背景存在但 `generation_validated=false` 时允许继续，使原有三帧流代复验和场景一致性判断仍可运行。
+- `PrivacyFrameRenderer` 在纯骨架分支进入当前帧 Pose 元数据等待之前调用门禁，因此缺失基线时不会调用人物分割、背景重建或 JPEG 编码。原画和人物模糊路径不变，校准仍通过独立事务采集分割掩码。
+
+### 自动验证
+
+- 合成分割后端增加调用计数；未校准纯骨架请求前后计数严格不变，证明不是“调用后忽略结果”。
+- 持久基线重启复验、流代变化、局部场景变化、摄像头移动、事务重校准、人物模糊和已校准纯骨架继续通过。
+- 隐私、校准 API、单在途直播上传与 Python 编译专项通过，完整边缘回归 `58/58` 通过。下一步部署 Pi 并以分割计数差分、温度、CPU 和 Pose 锚点频率验收。
+
+### Pi 差分验收
+
+- 部署保留设备数据和环境，只重启 `gohome-edge-agent.service` 一次；启动后 `active`、`NRestarts=0`，最近 warning 日志为空。
+- 两路仍为 `calibration_required` 时，人物分割 `successful_inferences=0`、`anchor_inferences=0`、`propagated_frames=0`，LiveRelay `submitted=0`、`completed=0`，证明无效计算在分割前被真正短路。
+- 温度从部署前约 `72-74°C` 回落到 `65°C`；服务进程 CPU 从约 270% 回落到约 90%。内存充足且无 swap 使用。
+- 有人画面的摄像头进入 Hailo active 调度后，Pose 模型锚点约 `14 Hz`、展示约 `13 FPS`；无人摄像头按 idle 策略约 `2 Hz`、展示约 `15 FPS`。该结果证明 Hailo 不是只能输出几 FPS，先前低频主要由无效分割、CPU 热保护和资源竞争造成。

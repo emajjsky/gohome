@@ -123,6 +123,15 @@ class PrivacyFrameRenderer:
             )
             return self._encode_jpeg(cv2, frame, quality, camera_id=int(camera_id))
 
+        if resolved_mode == "skeleton":
+            height, width = frame.shape[:2]
+            self.background_reconstructor.require_baseline(
+                int(camera_id),
+                source_key=str(source_key or ""),
+                width=int(width),
+                height=int(height),
+            )
+
         if frame_id:
             metadata_started_at = time.perf_counter()
             metadata = self._metadata_for_current_frame(

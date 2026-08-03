@@ -312,6 +312,25 @@ class PrivacyBackgroundReconstructor:
             self._activate_generation(state, generation)
             return bool(state.calibrated and state.generation_validated and state.background is not None)
 
+    def require_baseline(
+        self,
+        camera_id: int,
+        *,
+        source_key: str,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        """Reject missing baselines before segmentation while allowing stream revalidation."""
+        key, generation = self._state_key(camera_id, source_key, width, height)
+        with self._lock:
+            state = self._state(key, self._clock())
+            self._activate_generation(state, generation)
+            if state.calibration_active:
+                raise PrivacyCalibrationRequired(camera_id, "calibration_in_progress")
+            if not state.calibrated or state.background is None:
+                raise PrivacyCalibrationRequired(camera_id, "calibration_required")
+            return self._state_status(key, state)
+
     def reset_camera(self, camera_id: int) -> None:
         camera_id = int(camera_id)
         with self._lock:

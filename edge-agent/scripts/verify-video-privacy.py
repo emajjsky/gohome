@@ -69,6 +69,7 @@ class MutableTracker:
 class SyntheticSegmentation:
     def __init__(self, backgrounds: dict[str, np.ndarray]) -> None:
         self.backgrounds = {key: value.copy() for key, value in backgrounds.items()}
+        self.call_count = 0
 
     def segment(
         self,
@@ -81,6 +82,7 @@ class SyntheticSegmentation:
         person_evidence=False,
     ):
         del captured_monotonic
+        self.call_count += 1
         configured_source = str(source_key).split(":g", 1)[0]
         background = self.backgrounds.get(configured_source)
         if not person_evidence or background is None or background.shape != frame.shape:
@@ -260,6 +262,7 @@ def main() -> int:
         assert mean_delta(blurred, occupied_a, PERSON_SLICE) > 18.0
         assert mean_delta(blurred, occupied_a, OUTSIDE_SLICE) < 8.0
 
+        segmentation_calls_before_block = renderer.segmentation_backend.call_count
         assert_calibration_required(lambda: render(
             renderer,
             tracker,
@@ -270,6 +273,7 @@ def main() -> int:
             person=True,
             mode="skeleton",
         ))
+        assert renderer.segmentation_backend.call_count == segmentation_calls_before_block
 
         calibration = calibrate(
             renderer,
@@ -707,6 +711,7 @@ def main() -> int:
         "skeleton_base": "calibrated_empty_room",
         "person_blur_is_separate": True,
         "explicit_calibration": True,
+        "missing_baseline_skips_segmentation": True,
         "persistent_calibration": True,
         "transactional_recalibration": True,
         "concurrent_calibration_rejected": True,
