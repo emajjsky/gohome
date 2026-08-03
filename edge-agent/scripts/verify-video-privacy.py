@@ -67,6 +67,17 @@ class MutableTracker:
         return self.payload
 
 
+class ManualClock:
+    def __init__(self, value: float = 100.0) -> None:
+        self.value = float(value)
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += float(seconds)
+
+
 class SyntheticSegmentation:
     def __init__(self, backgrounds: dict[str, np.ndarray]) -> None:
         self.backgrounds = {key: value.copy() for key, value in backgrounds.items()}
@@ -225,6 +236,7 @@ def main() -> int:
     source_a_g1 = "camera-a:g1"
     source_a_g2 = "camera-a:g2"
     source_b_g1 = "camera-b:g1"
+    revalidation_clock = ManualClock()
 
     with TemporaryDirectory() as temporary_dir:
         tracker = MutableTracker(metadata(
@@ -237,6 +249,8 @@ def main() -> int:
             tracker,
             PrivacyBackgroundReconstructor(storage_dir=temporary_dir),
             SyntheticSegmentation({"camera-a": clean_a, "camera-b": clean_b}),
+            revalidation_interval_seconds=1.0,
+            monotonic_clock=revalidation_clock,
         )
 
         original = render(
@@ -368,6 +382,7 @@ def main() -> int:
                 person=False,
                 mode="skeleton",
             ), "stream_revalidation_required")
+            revalidation_clock.advance(1.0)
         revalidated = render(
             renderer,
             tracker,
@@ -419,6 +434,8 @@ def main() -> int:
             tracker,
             PrivacyBackgroundReconstructor(storage_dir=temporary_dir),
             SyntheticSegmentation({"camera-a": clean_a}),
+            revalidation_interval_seconds=1.0,
+            monotonic_clock=revalidation_clock,
         )
         discovered = persisted.discover_calibrations(1, source_key=source_a_g1)
         assert len(discovered) == 1
@@ -443,7 +460,49 @@ def main() -> int:
         assert person_blocked["revalidation_observations"] == 0
         assert person_blocked["last_error"] == "person_present"
 
+        calls_after_person_anchor = persisted.segmentation_backend.call_count
+        for sequence in range(12):
+            render(
+                persisted,
+                tracker,
+                occupied_a,
+                camera_id=1,
+                source_key=source_a_g1,
+                frame_id=f"1-person-cadence-{sequence}",
+                person=True,
+                mode="original",
+            )
+        assert persisted.segmentation_backend.call_count == calls_after_person_anchor
+        revalidation_clock.advance(0.99)
+        render(
+            persisted,
+            tracker,
+            occupied_a,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-person-before-cadence",
+            person=True,
+            mode="original",
+        )
+        assert persisted.segmentation_backend.call_count == calls_after_person_anchor
+        revalidation_clock.advance(0.01)
+        render(
+            persisted,
+            tracker,
+            occupied_a,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-person-next-anchor",
+            person=True,
+            mode="original",
+        )
+        assert persisted.segmentation_backend.call_count == calls_after_person_anchor + 1
+        scheduler = persisted.status()["revalidation_scheduler"]
+        assert scheduler["interval_seconds"] == 1.0
+        assert scheduler["active_streams"] == 1
+
         for sequence in range(persisted.background_reconstructor.revalidation_frames):
+            revalidation_clock.advance(1.0)
             original_during_revalidation = render(
                 persisted,
                 tracker,
@@ -535,6 +594,8 @@ def main() -> int:
             tracker,
             PrivacyBackgroundReconstructor(storage_dir=temporary_dir),
             SyntheticSegmentation({"camera-a": clean_a}),
+            revalidation_interval_seconds=1.0,
+            monotonic_clock=revalidation_clock,
         )
         for sequence in range(restarted_after_move.background_reconstructor.revalidation_frames - 1):
             assert_calibration_required(lambda sequence=sequence: render(
@@ -547,6 +608,7 @@ def main() -> int:
                 person=False,
                 mode="skeleton",
             ), "stream_revalidation_required")
+            revalidation_clock.advance(1.0)
         render(
             restarted_after_move,
             tracker,
@@ -739,6 +801,7 @@ def main() -> int:
         "persisted_baseline_discovery": True,
         "mode_independent_revalidation": True,
         "person_present_revalidation_blocked": True,
+        "revalidation_anchor_cadence_bounded": True,
         "revalidation_preserves_baseline_file": True,
         "transactional_recalibration": True,
         "concurrent_calibration_rejected": True,

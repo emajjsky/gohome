@@ -20,7 +20,7 @@ SKELETON_JOINT_BGR = (255, 255, 255)
 class PrivacyFrameRenderer:
     """Render privacy-safe relay frames without changing safety inference inputs."""
 
-    version = "privacy-frame-renderer-v20"
+    version = "privacy-frame-renderer-v21"
     maximum_pose_wait_seconds = 0.055
 
     def __init__(
@@ -28,16 +28,25 @@ class PrivacyFrameRenderer:
         tracker: Any,
         background_reconstructor: PrivacyBackgroundReconstructor | None = None,
         segmentation_backend: Any | None = None,
+        *,
+        revalidation_interval_seconds: float = 1.0,
+        monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.tracker = tracker
         self.background_reconstructor = background_reconstructor or PrivacyBackgroundReconstructor()
         self.segmentation_backend = segmentation_backend
+        self.revalidation_interval_seconds = max(
+            0.25,
+            min(float(revalidation_interval_seconds), 5.0),
+        )
+        self._clock = monotonic_clock or time.monotonic
         self._render_cache: OrderedDict[tuple[Any, ...], bytes] = OrderedDict()
         self._sync_rejections: Dict[int, Dict[str, Any]] = {}
         self._segmentation_assists: Dict[int, Dict[str, Any]] = {}
         self._output_samples: Dict[int, deque[float]] = {}
         self._output_state: Dict[int, Dict[str, Any]] = {}
         self._stage_latency_samples: Dict[int, Dict[str, deque[float]]] = {}
+        self._revalidation_schedule: Dict[tuple[int, str, int, int], Dict[str, Any]] = {}
         self._cache_lock = RLock()
 
     def render_jpeg(
@@ -365,6 +374,8 @@ class PrivacyFrameRenderer:
             self._output_samples.pop(camera_id, None)
             self._output_state.pop(camera_id, None)
             self._stage_latency_samples.pop(camera_id, None)
+            for key in [item for item in self._revalidation_schedule if int(item[0]) == camera_id]:
+                self._revalidation_schedule.pop(key, None)
 
     def begin_calibration(
         self,
@@ -474,6 +485,20 @@ class PrivacyFrameRenderer:
             or calibration.get("ready")
             or calibration.get("calibration_active")
         ):
+            self._clear_revalidation_schedule(
+                int(camera_id),
+                str(source_key or ""),
+                int(width),
+                int(height),
+            )
+            return
+        if not self._claim_revalidation_attempt(
+            int(camera_id),
+            str(source_key or ""),
+            int(width),
+            int(height),
+            str(frame_id),
+        ):
             return
         metadata = self._metadata_for_current_frame(
             int(camera_id),
@@ -492,7 +517,7 @@ class PrivacyFrameRenderer:
             force_anchor=True,
         )
         render_identity = dict(metadata.get("render_identity") or {})
-        self.background_reconstructor.observe_revalidation(
+        result = self.background_reconstructor.observe_revalidation(
             int(camera_id),
             frame,
             frame_token=str(frame_id),
@@ -506,9 +531,58 @@ class PrivacyFrameRenderer:
                 and render_identity.get("pose_synchronized")
             ),
         )
+        if result.get("ready"):
+            self._clear_revalidation_schedule(
+                int(camera_id),
+                str(source_key or ""),
+                int(width),
+                int(height),
+            )
+
+    def _claim_revalidation_attempt(
+        self,
+        camera_id: int,
+        source_key: str,
+        width: int,
+        height: int,
+        frame_id: str,
+    ) -> bool:
+        key = (int(camera_id), str(source_key or ""), int(width), int(height))
+        now = self._clock()
+        with self._cache_lock:
+            state = self._revalidation_schedule.get(key)
+            if state is not None:
+                if str(state.get("last_frame_id") or "") == str(frame_id):
+                    return False
+                if now < float(state.get("next_attempt_at") or 0.0):
+                    return False
+            for stale_key in [
+                item
+                for item in self._revalidation_schedule
+                if int(item[0]) == int(camera_id) and item != key
+            ]:
+                self._revalidation_schedule.pop(stale_key, None)
+            self._revalidation_schedule[key] = {
+                "last_frame_id": str(frame_id),
+                "last_attempt_at": now,
+                "next_attempt_at": now + self.revalidation_interval_seconds,
+            }
+            return True
+
+    def _clear_revalidation_schedule(
+        self,
+        camera_id: int,
+        source_key: str,
+        width: int,
+        height: int,
+    ) -> None:
+        key = (int(camera_id), str(source_key or ""), int(width), int(height))
+        with self._cache_lock:
+            self._revalidation_schedule.pop(key, None)
 
     def status(self) -> Dict[str, Any]:
         now = time.monotonic()
+        scheduler_now = self._clock()
         with self._cache_lock:
             render_cache_count = len(self._render_cache)
             sync_rejections = {
@@ -546,11 +620,34 @@ class PrivacyFrameRenderer:
                 }
                 for camera_id, samples in sorted(self._output_samples.items())
             }
+            revalidation_streams = {
+                f"{camera_id}:{source_key}:{width}x{height}": {
+                    "camera_id": int(camera_id),
+                    "source_key": str(source_key),
+                    "width": int(width),
+                    "height": int(height),
+                    "last_frame_id": str(state.get("last_frame_id") or ""),
+                    "next_attempt_in_ms": round(
+                        max(
+                            0.0,
+                            float(state.get("next_attempt_at") or 0.0) - scheduler_now,
+                        ) * 1000.0,
+                        1,
+                    ),
+                }
+                for (camera_id, source_key, width, height), state
+                in sorted(self._revalidation_schedule.items())
+            }
         return {
             "schema_version": self.version,
             "render_cache_count": render_cache_count,
             "synchronization_rejections": sync_rejections,
             "segmentation_assists": segmentation_assists,
+            "revalidation_scheduler": {
+                "interval_seconds": self.revalidation_interval_seconds,
+                "active_streams": len(revalidation_streams),
+                "streams": revalidation_streams,
+            },
             "cameras": cameras,
             "background": self.background_reconstructor.status(),
             "person_segmentation": (
