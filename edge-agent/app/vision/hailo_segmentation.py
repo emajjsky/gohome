@@ -409,6 +409,7 @@ class HailoPersonSegmentationBackend:
         source_key: str,
         captured_monotonic: float | None = None,
         person_evidence: bool = False,
+        force_anchor: bool = False,
     ) -> Dict[str, Any]:
         key = (int(camera_id), str(source_key or ""), str(frame_id or ""))
         if not key[2]:
@@ -436,7 +437,7 @@ class HailoPersonSegmentationBackend:
                     return self._copy_result(cached, cache_hit=True)
                 now = time.monotonic()
                 state = self._temporal_states.get(int(camera_id))
-            temporal = self._temporal_result(
+            temporal = None if force_anchor else self._temporal_result(
                 int(camera_id),
                 frame,
                 key=key,
@@ -524,6 +525,26 @@ class HailoPersonSegmentationBackend:
                 logger.warning("Hailo person segmentation degraded: %s", exc)
                 self._close_runtime()
                 raise
+
+    def segment_anchor(
+        self,
+        camera_id: int,
+        frame: Any,
+        *,
+        frame_id: str,
+        source_key: str,
+        captured_monotonic: float | None = None,
+        person_evidence: bool = False,
+    ) -> Dict[str, Any]:
+        return self.segment(
+            camera_id,
+            frame,
+            frame_id=frame_id,
+            source_key=source_key,
+            captured_monotonic=captured_monotonic,
+            person_evidence=person_evidence,
+            force_anchor=True,
+        )
 
     def reset_camera(self, camera_id: int) -> None:
         camera_id = int(camera_id)

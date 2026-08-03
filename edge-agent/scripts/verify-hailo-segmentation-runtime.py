@@ -27,6 +27,7 @@ class RuntimeStub:
 
     def infer(self, _model_input):
         with self.lock:
+            self.counters["inferences"] += 1
             self.counters["active"] += 1
             self.counters["maximum_active"] = max(
                 self.counters["maximum_active"],
@@ -60,6 +61,7 @@ def main() -> int:
         "closed": 0,
         "active": 0,
         "maximum_active": 0,
+        "inferences": 0,
     }
     lock = Lock()
 
@@ -74,7 +76,7 @@ def main() -> int:
         backend = HailoPersonSegmentationBackend(
             model_path=str(model_path),
             runtime_factory=runtime_factory,
-            anchor_interval_seconds=0.08,
+            anchor_interval_seconds=0.5,
         )
         backend.decoder = DecoderStub()
         frame = np.full((180, 320, 3), 96, dtype=np.uint8)
@@ -97,6 +99,25 @@ def main() -> int:
         assert backend.status()["runtime_count"] == 1
         assert backend.status()["runtime_ownership"] == "shared_per_hef"
 
+        propagated = backend.segment(
+            1,
+            frame,
+            frame_id="1-frame-2",
+            source_key="camera-1:g1",
+            captured_monotonic=time.monotonic(),
+        )
+        inferences_before_anchor = counters["inferences"]
+        anchored = backend.segment_anchor(
+            1,
+            frame,
+            frame_id="1-frame-3",
+            source_key="camera-1:g1",
+            captured_monotonic=time.monotonic(),
+        )
+        assert propagated["temporal_mode"] == "propagated"
+        assert anchored["temporal_mode"] == "anchor"
+        assert counters["inferences"] == inferences_before_anchor + 1
+
         backend.reset_camera(1)
         assert backend.status()["runtime_count"] == 1
         assert counters["closed"] == 0
@@ -110,6 +131,7 @@ def main() -> int:
         "runtime_count_for_two_cameras": counters["created"],
         "maximum_concurrent_device_inferences": counters["maximum_active"],
         "camera_reset_preserves_shared_runtime": True,
+        "forced_anchor_bypasses_propagation": True,
     })
     return 0
 

@@ -115,6 +115,7 @@ class PrivacyFrameRenderer:
         if frame is None or not getattr(frame, "size", 0):
             raise RuntimeError("privacy source frame is unavailable")
         self._observe_pending_revalidation(
+            cv2,
             int(camera_id),
             frame,
             source_key=str(source_key or ""),
@@ -450,6 +451,7 @@ class PrivacyFrameRenderer:
 
     def _observe_pending_revalidation(
         self,
+        cv2: Any,
         camera_id: int,
         frame: Any,
         *,
@@ -481,14 +483,28 @@ class PrivacyFrameRenderer:
             captured_monotonic=captured_monotonic,
             frame=frame,
         )
+        mask = self._segmentation_mask(
+            cv2,
+            int(camera_id),
+            frame,
+            metadata,
+            source_key=source_key,
+            force_anchor=True,
+        )
         render_identity = dict(metadata.get("render_identity") or {})
         self.background_reconstructor.observe_revalidation(
             int(camera_id),
             frame,
             frame_token=str(frame_id),
             source_key=str(source_key or ""),
-            person_evidence=self._has_person_evidence(metadata),
-            evidence_synchronized=bool(render_identity.get("pose_synchronized")),
+            person_evidence=(
+                self._has_person_evidence(metadata)
+                or bool(mask is not None and cv2.countNonZero(mask))
+            ),
+            evidence_synchronized=bool(
+                mask is not None
+                and render_identity.get("pose_synchronized")
+            ),
         )
 
     def status(self) -> Dict[str, Any]:
@@ -901,9 +917,14 @@ class PrivacyFrameRenderer:
         metadata: Dict[str, Any],
         *,
         source_key: str = "",
+        force_anchor: bool = False,
     ) -> Any | None:
         backend = self.segmentation_backend
-        segment = getattr(backend, "segment", None)
+        segment = (
+            getattr(backend, "segment_anchor", None)
+            if force_anchor
+            else None
+        ) or getattr(backend, "segment", None)
         if not callable(segment):
             return None
         tracking = dict(metadata.get("tracking") or {})
