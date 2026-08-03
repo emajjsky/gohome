@@ -29,6 +29,9 @@ def frame(
         "posture": posture,
         "posture_confidence": confidence,
         "posture_factors": {"body_aspect": (bbox[2] - bbox[0]) / (bbox[3] - bbox[1])},
+        "display_evidence_eligible": True,
+        "person_evidence_eligible": True,
+        "fall_evidence_eligible": True,
         "normal_lying_zone": normal_zone,
         "scene_zone_id": "couch-1" if normal_zone else None,
         "scene_zone_label": "沙发" if normal_zone else None,
@@ -44,6 +47,13 @@ def frame(
 
 
 def main() -> None:
+    display_only_engine = PoseFactorGraphEngine()
+    display_only = frame("lying", [220, 220, 540, 350])
+    display_only["poses"][0]["fall_evidence_eligible"] = False
+    display_only_result = display_only_engine.update(1, display_only, monotonic_at=0.0)
+    if display_only_result["tracks"]:
+        raise SystemExit("display-only pose entered the formal pose factor graph")
+
     engine = PoseFactorGraphEngine(prolonged_lying_seconds=180)
     engine.update(1, frame("standing", [250, 20, 340, 320]), monotonic_at=0.0)
     fall = frame("lying", [220, 220, 540, 350])
@@ -473,6 +483,7 @@ def main() -> None:
         "false_seated_recovery_suppressed": True,
         "transitional_postures_preserve_floor_episode": True,
         "bystander_recovery_suppressed": True,
+        "display_only_pose_suppressed": True,
     }, ensure_ascii=False, indent=2))
 
 

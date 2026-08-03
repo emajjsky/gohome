@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from threading import RLock
 from typing import Any, Dict
 
@@ -68,6 +69,8 @@ class RtmposeAnalyzer:
         min_keypoint_confidence: float = 0.30,
         max_poses: int = 1,
         fall_threshold: float = 0.78,
+        display_min_pose_confidence: float = 0.20,
+        display_min_visible_keypoints: int = 4,
         fall_min_pose_confidence: float = 0.36,
         fall_min_visible_keypoints: int = 8,
         fall_min_core_keypoints: int = 2,
@@ -80,6 +83,8 @@ class RtmposeAnalyzer:
         self.min_keypoint_confidence = float(min_keypoint_confidence)
         self.max_poses = max(1, int(max_poses))
         self.fall_threshold = float(fall_threshold)
+        self.display_min_pose_confidence = float(display_min_pose_confidence)
+        self.display_min_visible_keypoints = max(4, int(display_min_visible_keypoints))
         self.fall_min_pose_confidence = float(fall_min_pose_confidence)
         self.fall_min_visible_keypoints = max(1, int(fall_min_visible_keypoints))
         self.fall_min_core_keypoints = max(1, int(fall_min_core_keypoints))
@@ -221,27 +226,41 @@ class RtmposeAnalyzer:
         poses: list[Dict[str, Any]] = []
         rejected_poses: list[Dict[str, Any]] = []
         for pose in raw_poses:
-            quality = self._fall_evidence_quality(pose, config)
+            display_quality = self._display_evidence_quality(pose, config)
+            fall_quality = self._fall_evidence_quality(pose, config)
             pose["raw_fall_score"] = pose.get("fall_score")
-            pose["fall_evidence_eligible"] = quality["eligible"]
-            pose["person_evidence_eligible"] = quality["eligible"]
-            pose["fall_quality"] = quality
-            if not quality["eligible"]:
+            pose["display_evidence_eligible"] = display_quality["eligible"]
+            pose["person_evidence_eligible"] = display_quality["eligible"]
+            pose["fall_evidence_eligible"] = fall_quality["eligible"]
+            pose["display_quality"] = display_quality
+            pose["fall_quality"] = fall_quality
+            if not display_quality["eligible"]:
+                rejected_poses.append({
+                    **pose,
+                    "fall_score": 0.0,
+                    "fall_evidence_eligible": False,
+                    "person_evidence_eligible": False,
+                    "action_hints": [
+                        hint for hint in pose.get("action_hints", []) if hint != "fall_candidate"
+                    ],
+                    "rejection_stage": "display_quality",
+                    "rejection_reasons": list(display_quality.get("reasons") or []),
+                })
+                continue
+            if not fall_quality["eligible"]:
                 if float(pose.get("fall_score") or 0.0) >= threshold:
                     rejected_fall_candidates += 1
                 pose["action_hints"] = [
                     hint for hint in pose.get("action_hints", []) if hint != "fall_candidate"
                 ]
-                rejected_poses.append({
-                    **pose,
-                    "fall_score": 0.0,
-                    "rejection_stage": "pose_quality",
-                    "rejection_reasons": list(quality.get("reasons") or []),
-                })
-                continue
+                pose["fall_score"] = 0.0
             poses.append(pose)
 
         pose_count = len(poses)
+        fall_evidence_pose_count = len([
+            pose for pose in poses if pose.get("fall_evidence_eligible")
+        ])
+        fall_ineligible_display_pose_count = pose_count - fall_evidence_pose_count
         tags: list[str] = []
         action_hints = self._merge_hints([hint for pose in poses for hint in pose.get("action_hints", [])])
         if pose_count:
@@ -292,6 +311,9 @@ class RtmposeAnalyzer:
             tags=tags,
             data={
                 "pose_count": pose_count,
+                "display_pose_count": pose_count,
+                "fall_evidence_pose_count": fall_evidence_pose_count,
+                "fall_ineligible_display_pose_count": fall_ineligible_display_pose_count,
                 "raw_pose_count": len(raw_poses),
                 "poses": poses,
                 "rejected_poses": rejected_poses,
@@ -312,6 +334,9 @@ class RtmposeAnalyzer:
         )
         return {
             "pose_count": pose_count,
+            "display_pose_count": pose_count,
+            "fall_evidence_pose_count": fall_evidence_pose_count,
+            "fall_ineligible_display_pose_count": fall_ineligible_display_pose_count,
             "raw_pose_count": len(raw_poses),
             "poses": poses,
             "rejected_poses": rejected_poses,
@@ -459,7 +484,6 @@ class RtmposeAnalyzer:
         source_person_scores: list[float] | None = None,
         pose_source: str = "rtmpose",
     ) -> list[Dict[str, Any]]:
-        import math
         import numpy as np  # type: ignore
 
         points_array = np.asarray(keypoints)
@@ -561,6 +585,49 @@ class RtmposeAnalyzer:
                 "pose_confidence": min_confidence,
                 "visible_keypoints": min_visible,
                 "core_keypoints": min_core,
+            },
+        }
+
+    def _display_evidence_quality(self, pose: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+        keypoints = pose.get("keypoints") if isinstance(pose.get("keypoints"), list) else []
+        visible = [point for point in keypoints if point.get("visible")]
+        confidence = float(pose.get("confidence") or 0.0)
+        min_confidence = float(
+            config.get("pose_display_min_confidence", self.display_min_pose_confidence)
+        )
+        min_visible = max(
+            4,
+            int(config.get("pose_display_min_visible_keypoints", self.display_min_visible_keypoints)),
+        )
+        bbox = pose.get("bbox")
+        valid_bbox = False
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            try:
+                x1, y1, x2, y2 = [float(value) for value in bbox]
+                valid_bbox = bool(
+                    math.isfinite(x1 + y1 + x2 + y2)
+                    and x2 - x1 >= 8.0
+                    and y2 - y1 >= 8.0
+                )
+            except (TypeError, ValueError):
+                valid_bbox = False
+        reasons: list[str] = []
+        if confidence < min_confidence:
+            reasons.append("low_display_confidence")
+        if len(visible) < min_visible:
+            reasons.append("insufficient_display_keypoints")
+        if not valid_bbox:
+            reasons.append("invalid_display_geometry")
+        return {
+            "eligible": not reasons,
+            "reasons": reasons,
+            "pose_confidence": round(confidence, 4),
+            "visible_keypoints": len(visible),
+            "valid_bbox": valid_bbox,
+            "thresholds": {
+                "pose_confidence": min_confidence,
+                "visible_keypoints": min_visible,
+                "minimum_bbox_dimension": 8.0,
             },
         }
 
@@ -684,6 +751,9 @@ class RtmposeAnalyzer:
             tags=[],
             data={
                 "pose_count": 0,
+                "display_pose_count": 0,
+                "fall_evidence_pose_count": 0,
+                "fall_ineligible_display_pose_count": 0,
                 "poses": [],
                 "pose_skeleton_edges": SKELETON_EDGES,
                 "pose_action_hints": [],
@@ -701,6 +771,9 @@ class RtmposeAnalyzer:
         )
         return {
             "pose_count": 0,
+            "display_pose_count": 0,
+            "fall_evidence_pose_count": 0,
+            "fall_ineligible_display_pose_count": 0,
             "poses": [],
             "pose_skeleton_edges": SKELETON_EDGES,
             "pose_action_hints": [],

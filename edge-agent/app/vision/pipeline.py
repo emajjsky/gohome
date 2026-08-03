@@ -313,6 +313,9 @@ class VisionPipeline:
             "scene_map_status": scene.get("scene_map_status") or "empty",
             "screen_content_suppressed": screen_content_suppressed,
             "pose_count": pose.get("pose_count"),
+            "display_pose_count": pose.get("display_pose_count", pose.get("pose_count")),
+            "fall_evidence_pose_count": pose.get("fall_evidence_pose_count", 0),
+            "fall_ineligible_display_pose_count": pose.get("fall_ineligible_display_pose_count", 0),
             "poses": pose.get("poses") or [],
             "rejected_pose_count": len(pose.get("rejected_poses") or []),
             "rejected_poses": pose.get("rejected_poses") or [],
@@ -572,6 +575,9 @@ class VisionPipeline:
         cached_pose["pose_track_age_seconds"] = round(age, 3)
         cached_pose["pose_model_status"] = "cached"
         cached_pose["pose_model_message"] = f"短暂沿用上一组可信骨架，跟踪 {age:.1f} 秒。"
+        cached_pose["display_pose_count"] = len(cached_poses)
+        cached_pose["fall_evidence_pose_count"] = 0
+        cached_pose["fall_ineligible_display_pose_count"] = len(cached_poses)
         cached_pose["pose_fall_score"] = 0.0
         cached_pose["pose_fall_candidate"] = False
         cached_pose["pose_action_hints"] = [hint for hint in cached_pose.get("pose_action_hints", []) if hint != "fall_candidate"]
@@ -586,6 +592,9 @@ class VisionPipeline:
                 **result.data,
                 "poses": cached_poses,
                 "pose_count": len(cached_poses),
+                "display_pose_count": len(cached_poses),
+                "fall_evidence_pose_count": 0,
+                "fall_ineligible_display_pose_count": len(cached_poses),
                 "pose_fall_score": 0.0,
                 "pose_fall_candidate": False,
                 "pose_model_status": "cached",
@@ -603,6 +612,7 @@ class VisionPipeline:
         }
         if state == "cached":
             tracked["fall_score"] = 0.0
+            tracked["fall_evidence_eligible"] = False
             tracked["action_hints"] = [hint for hint in tracked.get("action_hints", []) if hint != "fall_candidate"]
         return tracked
 
@@ -891,12 +901,16 @@ class VisionPipeline:
         config: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         threshold = float((config or {}).get("pose_fall_threshold") or 0.90)
-        fall_score = max([float(item.get("fall_score") or 0.0) for item in poses], default=0.0)
+        fall_eligible_poses = [item for item in poses if item.get("fall_evidence_eligible")]
+        fall_score = max(
+            [float(item.get("fall_score") or 0.0) for item in fall_eligible_poses],
+            default=0.0,
+        )
         fall_candidate = any(
             float(item.get("fall_score") or 0.0) >= threshold
             and "fall_candidate" in (item.get("action_hints") or [])
             and not item.get("normal_lying_zone")
-            for item in poses
+            for item in fall_eligible_poses
         )
         tags = [
             tag
@@ -913,6 +927,9 @@ class VisionPipeline:
             **pose,
             "poses": poses,
             "pose_count": len(poses),
+            "display_pose_count": len(poses),
+            "fall_evidence_pose_count": len(fall_eligible_poses),
+            "fall_ineligible_display_pose_count": len(poses) - len(fall_eligible_poses),
             "pose_fall_score": fall_score,
             "pose_fall_candidate": fall_candidate,
             "pose_action_hints": self._dedupe_tags([
@@ -935,6 +952,9 @@ class VisionPipeline:
                 **result.data,
                 "poses": poses,
                 "pose_count": len(poses),
+                "display_pose_count": len(poses),
+                "fall_evidence_pose_count": len(fall_eligible_poses),
+                "fall_ineligible_display_pose_count": len(poses) - len(fall_eligible_poses),
                 "rejected_poses": updated.get("rejected_poses") or [],
                 "pose_fall_score": fall_score,
                 "pose_fall_candidate": fall_candidate,

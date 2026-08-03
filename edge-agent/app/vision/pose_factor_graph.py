@@ -695,22 +695,23 @@ class PoseFactorGraphEngine:
         people = analysis.get("people") if isinstance(analysis.get("people"), list) else []
         targets: dict[str, Dict[str, Any]] = {}
         for pose in poses:
-            if pose.get("track_id") and self._valid_bbox(pose.get("bbox")):
+            if (
+                pose.get("fall_evidence_eligible") is True
+                and pose.get("track_id")
+                and self._valid_bbox(pose.get("bbox"))
+            ):
                 targets[str(pose["track_id"])] = dict(pose)
         for person in people:
             track_id = str(person.get("track_id") or "")
-            if not track_id or not self._valid_bbox(person.get("bbox")):
+            if track_id not in targets or not self._valid_bbox(person.get("bbox")):
                 continue
-            if track_id in targets:
-                pose = targets[track_id]
-                targets[track_id] = {
-                    **person, **pose,
-                    "normal_lying_zone": bool(pose.get("normal_lying_zone") or person.get("normal_lying_zone")),
-                    "scene_zone_id": pose.get("scene_zone_id") or person.get("scene_zone_id"),
-                    "scene_zone_label": pose.get("scene_zone_label") or person.get("scene_zone_label"),
-                }
-            else:
-                targets[track_id] = dict(person)
+            pose = targets[track_id]
+            targets[track_id] = {
+                **person, **pose,
+                "normal_lying_zone": bool(pose.get("normal_lying_zone") or person.get("normal_lying_zone")),
+                "scene_zone_id": pose.get("scene_zone_id") or person.get("scene_zone_id"),
+                "scene_zone_label": pose.get("scene_zone_label") or person.get("scene_zone_label"),
+            }
         return [
             {
                 **item,

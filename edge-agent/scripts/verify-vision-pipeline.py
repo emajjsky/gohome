@@ -102,6 +102,8 @@ def main() -> None:
         "pose_fall_valid_quality_eligible": pose_fall_quality["valid_quality_eligible"],
         "pose_low_quality_visible_count": pose_candidate_partition["visible_count"],
         "pose_low_quality_rejected_count": pose_candidate_partition["rejected_count"],
+        "pose_low_quality_fall_eligible_count": pose_candidate_partition["fall_eligible_count"],
+        "pose_low_quality_fall_score": pose_candidate_partition["fall_score"],
         "pose_furniture_hallucination_count": pose_human_consistency["furniture_count"],
         "pose_furniture_rejected_count": pose_human_consistency["furniture_rejected"],
         "pose_real_lying_retained_count": pose_human_consistency["real_lying_retained"],
@@ -251,8 +253,10 @@ def main() -> None:
         raise SystemExit("low-confidence sofa-like skeleton must not become fall evidence")
     if not checks["pose_fall_valid_quality_eligible"]:
         raise SystemExit("valid pose must remain eligible as fall evidence")
-    if checks["pose_low_quality_visible_count"] != 0 or checks["pose_low_quality_rejected_count"] != 1:
-        raise SystemExit("low-quality sofa-like skeleton must remain diagnostic-only")
+    if checks["pose_low_quality_visible_count"] != 1 or checks["pose_low_quality_rejected_count"] != 0:
+        raise SystemExit("display-quality skeleton must remain visible even when fall quality is insufficient")
+    if checks["pose_low_quality_fall_eligible_count"] != 0 or checks["pose_low_quality_fall_score"] != 0.0:
+        raise SystemExit("display-only skeleton must not contribute formal fall evidence")
     if checks["pose_furniture_hallucination_count"] != 0 or checks["pose_furniture_rejected_count"] != 1:
         raise SystemExit("wide unmatched skeleton on stable furniture must be rejected")
     if checks["pose_unmatched_low_confidence_rejected_count"] != 1:
@@ -888,6 +892,8 @@ def verify_pose_candidate_partition() -> dict:
     return {
         "visible_count": int(result.get("pose_count") or 0),
         "rejected_count": len(result.get("rejected_poses") or []),
+        "fall_eligible_count": int(result.get("fall_evidence_pose_count") or 0),
+        "fall_score": float(result.get("pose_fall_score") or 0.0),
     }
 
 
