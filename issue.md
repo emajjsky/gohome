@@ -31,7 +31,7 @@
 | GH-002 | P0 | 盒子骨架渲染直接调用人物模糊，违反产品契约 | 待实机验收 |
 | GH-003 | P0 | 背景校准、持久化与场景变化状态机不完整 | 待实机验收 |
 | GH-004 | P0 | Pose、人物掩码、视频帧缺少不可分割的同帧完成契约 | 待实机验收 |
-| GH-005 | P0 | iOS 骨架流出现“服务器返回无法识别的响应” | 待实机验收 |
+| GH-005 | P0 | iOS 骨架流出现“服务器返回无法识别的响应” | 已关闭 |
 | GH-006 | P0 | 云端同时保留 Pose SSE、safe-scene 和合成 MJPEG 三条骨架路径 | 待实机验收 |
 | GH-007 | P0 | 多路并发 JPEG 上传产生乱序、忙丢帧和大量云端 stale reject | 待实机验收 |
 | GH-008 | P0 | 双摄真人骨架模式尚未通过无残影、无泄漏、无串流验收 | 待处理 |
@@ -116,7 +116,8 @@
 **现象**：骨架模式提示“服务器返回无法识别的响应”。
 **根因**：手机当前安装的 TestFlight `1.0.0 (8)` 归档于 2026-08-01；其骨架分支要求已经废止的 `safe-scene-pose-v1` 分拆协议，由 App 分别取得安全场景和 Pose 后二次绘制。2026-08-03 的 `2678233` 已将正式链路收敛为盒子唯一合成的 `edge-composed-mjpeg-v1`，生产云会话和实际 MJPEG 响应均正确声明 `composition-owner=edge`。Build 8 在骨架分支主动拒绝新协议并抛出 `APIError.invalidResponse`；原画和模糊没有进入旧分拆分支，因此仍可播放。
 **处理**：不恢复旧 Pose/scene 路由，不放宽协议校验，不增加兼容兜底。正式 iOS 已删除 Pose SSE、scene MJPEG 和客户端骨架绘制，只消费盒子生成的一条成品 MJPEG，并同时校验会话 `display_transport=edge-composed-mjpeg-v1` 与响应头 `X-GoHome-Composition-Owner=edge`。版本提升至 `1.0.0 (9)`，从唯一正式工程 `ios-shell/GoHomeShell.xcodeproj` 重新归档上传。
-**发布前验证**：Build 9 单元测试 `128/128`、UI 测试 `25/25` 全部通过，`xcodebuild` 返回 `TEST SUCCEEDED`；版本源 `project.yml` 与生成工程均为 Build 9。纯骨架双摄连续监控 `1804.6` 秒、`360` 次采样，读取错误、模式不一致、服务故障、重连和上传失败均为 `0`；摄像头 31/32 的云端帧龄 P95 分别为 `217.5 / 180.3 ms`。Build 9 已于 2026-08-03 23:21 上传 App Store Connect，Delivery UUID 为 `d067a363-40e2-4723-93e6-e32282de6bba`，Apple 返回 `PROCESSING` 且无错误或警告。TestFlight Build 9 真机骨架验收仍是关闭门槛。
+**发布前验证**：Build 9 单元测试 `128/128`、UI 测试 `25/25` 全部通过，`xcodebuild` 返回 `TEST SUCCEEDED`；版本源 `project.yml` 与生成工程均为 Build 9。纯骨架双摄连续监控 `1804.6` 秒、`360` 次采样，读取错误、模式不一致、服务故障、重连和上传失败均为 `0`；摄像头 31/32 的云端帧龄 P95 分别为 `217.5 / 180.3 ms`。Build 9 已于 2026-08-03 23:21 上传 App Store Connect，Delivery UUID 为 `d067a363-40e2-4723-93e6-e32282de6bba`，上传无错误或警告。
+**TestFlight 验收**：用户已从 TestFlight 安装 Build 9，并在真实账户、生产云和双摄盒子环境进入骨架模式；画面可见、显示约 `7-13 FPS`，不再出现“服务器返回无法识别的响应”。同时段生产云存在 `1` 个正式视频客户端、Pose/scene 客户端均为 `0`，证明 App 使用唯一成品流而非旧分拆协议。GH-005 协议故障关闭；FPS 波动和持久视频传输继续由 GH-010、GH-011、GH-033 处理，不能用协议通过替代性能达标。
 **验收**：TestFlight 从前台、后台恢复、换摄像头和换隐私模式均不会触发协议错误。
 
 ## GH-006 多条骨架展示路径

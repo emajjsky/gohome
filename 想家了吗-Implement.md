@@ -12809,4 +12809,11 @@ P4 风险升频边界：
 - 唯一正式工程归档成功，路径为 `ios-shell/build/GoHomeShell-1.0.0-9.xcarchive`；归档元数据为 Bundle ID `com.gohome.family`、版本 `1.0.0`、Build `9`、架构 `arm64`、Team `X4M4T6Z4CJ`。
 - 归档 App 的严格签名校验通过；发布二进制包含 `edge-composed-mjpeg-v1` 和 `X-GoHome-Composition-Owner`，不包含 `safe-scene-pose-v1` 或 `server-composed-mjpeg-v1`。
 - 使用正式 `ExportOptions.plist` 的 `app-store-connect / upload` 流程执行分发。Xcode 返回 `Upload succeeded` 与 `EXPORT SUCCEEDED`，归档分发记录无错误、无警告，上传 Build Number 为 `9`。
-- App Store Connect Delivery UUID 为 `d067a363-40e2-4723-93e6-e32282de6bba`；2026-08-03 23:21 Apple 接收状态为 `PROCESSING`。处理完成并安装 TestFlight Build 9 前，GH-005 保持“待实机验收”。
+- App Store Connect Delivery UUID 为 `d067a363-40e2-4723-93e6-e32282de6bba`；2026-08-03 23:21 Apple 接收状态为 `PROCESSING`。该上传时点 GH-005 仍保持“待实机验收”，后续状态以以下 TestFlight 验收记录为准。
+
+### TestFlight Build 9 生产验收
+
+- 用户已从 TestFlight 安装 Build 9，并在真实账户、生产云和双摄盒子环境打开骨架模式。画面正常建立，显示约 `7-13 FPS`，旧版“服务器返回无法识别的响应”没有再次出现。
+- 同时段生产云 `active_clients.video=1`、`pose=0`、`scene=0`，证明手机只消费盒子成品视频，没有重新建立旧 scene/Pose 分拆链路。两路云端接收约 `9.8 / 8.6 FPS`，盒子源流约 `15.1 / 13.3 FPS`、端侧成品约 `14.8 / 12.7 FPS`，重连、上传失败和 Hailo 推理失败均为 0。
+- 手机低至 7 FPS 与云端上游波动一致，不是客户端二次骨架绘制。当前逐帧 JPEG/HTTP 单在途传输会覆盖约 `19%-20%` 的 pending 新帧，传输间隔最大值约 `1.1-1.5 s`；该性能缺口继续由 GH-010、GH-011、GH-033 的持久 H.264/H.265/WebRTC 链路处理。
+- GH-005 只针对版本协议不一致，现已完成根因消除、自动测试、生产发布和 TestFlight 实机验证，状态关闭。纯骨架视觉质量和双摄动作验收仍归 GH-008，不能随 GH-005 一并关闭。
