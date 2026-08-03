@@ -1406,7 +1406,8 @@ class EdgeWorker:
         now = self._monotonic_clock()
         schedule = self.inference_scheduler.camera_state(camera_id, now=now)
         mode = str(schedule.get("mode") or self.inference_scheduler.mode(camera_id, now=now))
-        enabled = bool(schedule.get("pose_required"))
+        hailo_probe = bool(schedule.get("accelerated"))
+        enabled = bool(schedule.get("pose_required") or hailo_probe)
         last_risk_at = schedule.get("last_risk_signal_at_monotonic")
         rapid_descent_age = (
             max(0.0, now - float(last_risk_at))
@@ -1416,7 +1417,13 @@ class EdgeWorker:
         )
         return {
             "pose_detection_enabled": enabled,
-            "pose_runtime_reason": f"eacp_{mode}_pose" if enabled else f"eacp_{mode}_person_probe",
+            "pose_runtime_reason": (
+                f"eacp_{mode}_pose"
+                if schedule.get("pose_required")
+                else f"eacp_{mode}_hailo_pose_probe"
+                if hailo_probe
+                else f"eacp_{mode}_person_probe"
+            ),
             "worker_pose_interval_frames": 1 if enabled else 0,
             "pose_allow_internal_detector_fallback": False,
             "person_detection_cache_seconds": 0.45 if mode == "risk" else 0.6 if mode == "active" else 0.0,

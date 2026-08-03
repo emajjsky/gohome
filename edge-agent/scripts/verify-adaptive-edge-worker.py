@@ -221,6 +221,24 @@ def main() -> None:
     if motion_only_config["pose_detection_enabled"]:
         raise SystemExit("motion-only wakeup must run YOLO without enabling RTMPose")
 
+    scheduler.reset_camera(25)
+    scheduler.reconcile([24, 25], now=100.5)
+    scheduler.mark_started(25, now=100.5)
+    clock.value = 100.55
+    scheduler.observe(
+        25,
+        {"inference_backend": "hailo", "person_count": 0, "motion_detected": False},
+        now=clock.value,
+    )
+    hailo_idle_probe_config = worker._pose_runtime_config(25, worker.storage.rules)
+    if (
+        not hailo_idle_probe_config["pose_detection_enabled"]
+        or hailo_idle_probe_config["pose_runtime_reason"] != "eacp_idle_hailo_pose_probe"
+    ):
+        raise SystemExit(
+            f"an already-running Hailo pose result was discarded during idle probing: {hailo_idle_probe_config}"
+        )
+
     clock.value = 101.0
     scheduler.mark_started(24, now=clock.value)
     clock.value = 101.1
@@ -415,6 +433,7 @@ def main() -> None:
         "processed": processed,
         "maximum_idle_wait": idle_wait,
         "fixed_five_second_sleep_removed": True,
+        "hailo_idle_pose_result_reused": True,
         "active_pose_enabled": True,
     })
 

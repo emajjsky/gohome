@@ -12572,3 +12572,23 @@ P4 风险升频边界：
 - `verify-camera-stream-resilience.py` 改为直接审计 raw frame 身份和每次 `_store_latest_frame()` 写入：连续 5 张近黑帧零缓存写入、零预览输出、零旧像素重发，恢复帧流代高于异常前。
 - 有效缓存写入数与全局有效帧序号严格一致；预览按目标 FPS 抽样时允许跳过中间帧，但不得重复或伪造身份。
 - 共享双订阅、冻结帧换代、摄像头打开超时、节拍、实时分析同帧、同步骨架和身份桥接专项通过。GH-029 进入树莓派与 TestFlight 实机验收。
+
+## 181. 2026-08-03 Hailo idle Pose 结果复用
+
+### 现场结论
+
+- 树莓派运行版本 `290a7bc` 的 Pose runtime 中位 22.86 ms、P95 35.24 ms、最大 62.25 ms；整管线中位 28.76 ms、P95 71.62 ms、最大 130.74 ms，累计 Hailo Pose 失败为 0。
+- 15 秒空房差分为 Pose 60 次、Object 24 次、分割 140 次，即总计 4.0 / 1.6 / 9.33 Hz；两路 Pose 各 2 Hz，KLT 显示约 11-13 FPS。Pi CPU 约 106%、温度 65°C，没有热降频证据。
+- `VisionPipeline` 在每个 idle 周期已调用 `HailoPoseBackend.analyze()`，但 Worker 将 `pose_detection_enabled` 只绑定 `person_until`。`RtmposeAnalyzer.analyze_precomputed()` 因此丢弃已经产生的 keypoints，人物激活只剩更低频 Object HEF；Object 漏检会使 Pose 长期停在 idle。
+
+### 实现
+
+- `_pose_runtime_config()` 在调度器确认 `accelerated=true` 后，把已有 Hailo Pose 结果作为 idle pose probe；人物已确认时仍使用正式 active/risk 原因，CPU 和首次未知后端保持 person probe。
+- 该变更不创建线程、不新增 Hailo 调用、不创建第二 runtime，也不改变 Object/Seg 周期；仅让已支付的当前帧 Pose 预处理结果进入既有显示质量、人物一致性、时序和风险链路。
+- 推理运行元数据明确区分 `eacp_idle_hailo_pose_probe`，便于实机统计从 idle 到 active 的激活时间。
+
+### 验证与边界
+
+- `verify-adaptive-edge-worker.py` 新增 Hailo 空场调度状态，确认 idle 预计算 Pose 被复用；原 CPU motion-only 不启用 RTMPose、人物 active、风险唤醒、源代身份和 KLT 锚点断言继续通过。
+- 自适应调度、完整视觉管线、Python 编译和差异检查通过。
+- 这只消除 GH-030 的人物激活缺口，不代表模型级调度完成。下一步需部署后实测双路 active 10-15 Hz、deadline miss 和 Hailo 利用率，再决定是否拆分全局 `DetectAgent` 锁与同步 Pose/Object 调用。
