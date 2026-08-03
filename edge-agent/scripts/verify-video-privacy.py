@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from hashlib import sha256
 import sys
 import time
 from unittest.mock import patch
@@ -412,13 +413,38 @@ def main() -> int:
             mode="skeleton",
         ))
 
+        persisted_path = next(Path(temporary_dir).glob("camera-1-*.npz"))
+        persisted_file_sha256 = sha256(persisted_path.read_bytes()).hexdigest()
         persisted = PrivacyFrameRenderer(
             tracker,
             PrivacyBackgroundReconstructor(storage_dir=temporary_dir),
             SyntheticSegmentation({"camera-a": clean_a}),
         )
-        for sequence in range(persisted.background_reconstructor.revalidation_frames - 1):
-            assert_calibration_required(lambda sequence=sequence: render(
+        discovered = persisted.discover_calibrations(1, source_key=source_a_g1)
+        assert len(discovered) == 1
+        assert discovered[0]["calibrated"] is True
+        assert discovered[0]["baseline_retained"] is True
+        assert discovered[0]["ready"] is False
+        assert discovered[0]["status"] == "revalidating"
+
+        occupied_original = render(
+            persisted,
+            tracker,
+            occupied_a,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-persisted-person-present",
+            person=True,
+            mode="original",
+        )
+        assert mean_delta(occupied_original, occupied_a) < 8.0
+        person_blocked = persisted.background_reconstructor.status()["states"][0]
+        assert person_blocked["ready"] is False
+        assert person_blocked["revalidation_observations"] == 0
+        assert person_blocked["last_error"] == "person_present"
+
+        for sequence in range(persisted.background_reconstructor.revalidation_frames):
+            original_during_revalidation = render(
                 persisted,
                 tracker,
                 clean_a,
@@ -426,18 +452,15 @@ def main() -> int:
                 source_key=source_a_g1,
                 frame_id=f"1-persisted-revalidate-{sequence}",
                 person=False,
-                mode="skeleton",
-            ), "stream_revalidation_required")
-        render(
-            persisted,
-            tracker,
-            clean_a,
-            camera_id=1,
-            source_key=source_a_g1,
-            frame_id="1-persisted-revalidate-complete",
-            person=False,
-            mode="skeleton",
-        )
+                mode="original",
+            )
+            assert mean_delta(original_during_revalidation, clean_a) < 8.0
+            current_status = persisted.background_reconstructor.status()["states"][0]
+            assert current_status["revalidation_observations"] == sequence + 1
+            assert current_status["ready"] is (
+                sequence + 1 == persisted.background_reconstructor.revalidation_frames
+            )
+        assert sha256(persisted_path.read_bytes()).hexdigest() == persisted_file_sha256
         persisted_skeleton = render(
             persisted,
             tracker,
@@ -713,6 +736,10 @@ def main() -> int:
         "explicit_calibration": True,
         "missing_baseline_skips_segmentation": True,
         "persistent_calibration": True,
+        "persisted_baseline_discovery": True,
+        "mode_independent_revalidation": True,
+        "person_present_revalidation_blocked": True,
+        "revalidation_preserves_baseline_file": True,
         "transactional_recalibration": True,
         "concurrent_calibration_rejected": True,
         "persistence_failure_preserves_baseline": True,

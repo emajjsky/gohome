@@ -29,6 +29,7 @@ class _BackgroundState:
     active_generation: str = ""
     generation_validated: bool = False
     revalidation_observations: int = 0
+    last_revalidation_token: str = ""
     scene_status: str = "calibration_required"
     scene_match_observations: int = 0
     scene_mismatch_observations: int = 0
@@ -225,7 +226,6 @@ class PrivacyBackgroundReconstructor:
         clear_token: str = "",
         source_key: str = "",
     ) -> Any:
-        del clear_token
         height, width = frame.shape[:2]
         key, generation = self._state_key(camera_id, source_key, width, height)
         mask = self._binary_mask(cv2, person_mask, width, height)
@@ -240,12 +240,23 @@ class PrivacyBackgroundReconstructor:
             baseline_revision = state.baseline_revision
             generation_validated = state.generation_validated
             scene_status = state.scene_status
+            revalidation_token_seen = bool(
+                clear_token
+                and str(clear_token) == state.last_revalidation_token
+            )
 
         if background is None:
             raise PrivacyCalibrationRequired(camera_id)
 
         if not generation_validated:
             if bool(cv2.countNonZero(mask)):
+                raise PrivacyCalibrationRequired(
+                    camera_id,
+                    "scene_revalidation_required"
+                    if scene_status == "scene_review_required"
+                    else "stream_revalidation_required",
+                )
+            if revalidation_token_seen:
                 raise PrivacyCalibrationRequired(
                     camera_id,
                     "scene_revalidation_required"
@@ -311,6 +322,106 @@ class PrivacyBackgroundReconstructor:
             state = self._state(key, self._clock())
             self._activate_generation(state, generation)
             return bool(state.calibrated and state.generation_validated and state.background is not None)
+
+    def inspect(
+        self,
+        camera_id: int,
+        *,
+        source_key: str,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        key, generation = self._state_key(camera_id, source_key, width, height)
+        with self._lock:
+            state = self._state(key, self._clock())
+            self._activate_generation(state, generation)
+            return self._state_status(key, state)
+
+    def discover_persisted(
+        self,
+        camera_id: int,
+        *,
+        source_key: str,
+    ) -> list[dict[str, Any]]:
+        if self.storage_dir is None:
+            return []
+        discovery_key, generation = self._state_key(camera_id, source_key, 1, 1)
+        configured_source = discovery_key[1]
+        digest = sha256(configured_source.encode("utf-8")).hexdigest()[:16]
+        filename_pattern = re.compile(
+            rf"camera-{int(camera_id)}-{re.escape(digest)}-(\d+)x(\d+)\.npz"
+        )
+        dimensions: list[tuple[int, int]] = []
+        for path in self.storage_dir.glob(f"camera-{int(camera_id)}-{digest}-*x*.npz"):
+            match = filename_pattern.fullmatch(path.name)
+            if match is None:
+                continue
+            width = int(match.group(1))
+            height = int(match.group(2))
+            if width > 0 and height > 0:
+                dimensions.append((width, height))
+
+        discovered: list[dict[str, Any]] = []
+        now = self._clock()
+        with self._lock:
+            for width, height in sorted(set(dimensions)):
+                key = (int(camera_id), configured_source, width, height)
+                state = self._state(key, now)
+                self._activate_generation(state, generation)
+                if state.calibrated and state.background is not None:
+                    discovered.append(self._state_status(key, state))
+        return discovered
+
+    def observe_revalidation(
+        self,
+        camera_id: int,
+        frame: Any,
+        *,
+        frame_token: str,
+        source_key: str,
+        person_evidence: bool,
+        evidence_synchronized: bool,
+    ) -> dict[str, Any]:
+        height, width = frame.shape[:2]
+        key, generation = self._state_key(camera_id, source_key, width, height)
+        token = str(frame_token or "")
+        with self._lock:
+            state = self._state(key, self._clock())
+            self._activate_generation(state, generation)
+            if token and token == state.last_revalidation_token:
+                return self._state_status(key, state)
+            state.last_revalidation_token = token
+            if (
+                not state.calibrated
+                or state.background is None
+                or state.calibration_active
+                or state.generation_validated
+            ):
+                return self._state_status(key, state)
+            if not evidence_synchronized:
+                state.revalidation_observations = 0
+                state.scene_status = "revalidation_required"
+                state.last_error = "person_evidence_unavailable"
+                return self._state_status(key, state)
+            if person_evidence:
+                state.revalidation_observations = 0
+                state.scene_status = "revalidation_required"
+                state.last_error = "person_present"
+                return self._state_status(key, state)
+            background = state.background.copy()
+            baseline_revision = state.baseline_revision
+
+        self._revalidate_generation(
+            key,
+            baseline_revision,
+            background,
+            frame,
+        )
+        with self._lock:
+            state = self._states.get(key)
+            if state is None:
+                raise PrivacyCalibrationRequired(camera_id, "background_state_changed")
+            return self._state_status(key, state)
 
     def require_baseline(
         self,
@@ -401,6 +512,7 @@ class PrivacyBackgroundReconstructor:
         state.active_generation = generation
         state.generation_validated = False
         state.revalidation_observations = 0
+        state.last_revalidation_token = ""
         state.scene_status = "revalidation_required" if state.background is not None else "calibration_required"
         state.recent_person_mask = None
         state.recent_person_at = 0.0

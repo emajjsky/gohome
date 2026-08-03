@@ -1669,11 +1669,34 @@ def update_admin_video_privacy(payload: VideoPrivacyUpdate) -> Dict[str, Any]:
 
 
 def privacy_calibration_status() -> list[Dict[str, Any]]:
+    cameras = storage.list_cameras(include_secret=True)
+    discovered_by_camera: Dict[int, list[Dict[str, Any]]] = {}
+    for camera in cameras:
+        camera_id = int(camera["id"])
+        discovered_by_camera[camera_id] = privacy_frame_renderer.discover_calibrations(
+            camera_id,
+            source_key=camera_agent.active_frame_source_key(camera),
+        )
     runtime = privacy_frame_renderer.background_reconstructor.status()
     states = runtime.get("states") if isinstance(runtime.get("states"), list) else []
-    state_by_camera = {int(item.get("camera_id") or 0): dict(item) for item in states}
+    state_by_camera: Dict[int, Dict[str, Any]] = {}
+    for camera in cameras:
+        camera_id = int(camera["id"])
+        candidates = discovered_by_camera.get(camera_id) or [
+            dict(item) for item in states
+            if int(item.get("camera_id") or 0) == camera_id
+        ]
+        if candidates:
+            state_by_camera[camera_id] = max(
+                candidates,
+                key=lambda item: (
+                    bool(item.get("ready")),
+                    bool(item.get("calibrated")),
+                    int(item.get("width") or 0) * int(item.get("height") or 0),
+                ),
+            )
     result: list[Dict[str, Any]] = []
-    for camera in storage.list_cameras(include_secret=True):
+    for camera in cameras:
         camera_id = int(camera["id"])
         item = {
             "camera_id": camera_id,
@@ -1696,6 +1719,13 @@ def require_privacy_stream_ready(camera_id: int, privacy_mode: str) -> None:
         None,
     )
     if calibration and calibration.get("ready"):
+        return
+    if (
+        calibration
+        and calibration.get("calibrated")
+        and calibration.get("baseline_retained")
+        and calibration.get("status") == "revalidating"
+    ):
         return
     reason = str((calibration or {}).get("status") or "calibration_required")
     raise HTTPException(

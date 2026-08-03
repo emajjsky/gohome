@@ -157,6 +157,16 @@ def main() -> None:
         else:
             raise AssertionError("uncalibrated skeleton stream must fail before MJPEG starts")
         edge_main.privacy_calibration_status = lambda: [
+            {
+                "camera_id": 7,
+                "status": "revalidating",
+                "ready": False,
+                "calibrated": True,
+                "baseline_retained": True,
+            },
+        ]
+        edge_main.require_privacy_stream_ready(7, "skeleton")
+        edge_main.privacy_calibration_status = lambda: [
             {"camera_id": 7, "status": "ready", "ready": True},
         ]
         edge_main.require_privacy_stream_ready(7, "skeleton")
@@ -174,6 +184,7 @@ def main() -> None:
         "persistence_failure_cancels": True,
         "concurrent_calibration_preserved": True,
         "uncalibrated_stream_rejected": True,
+        "revalidating_stream_allowed": True,
         "calibrated_stream_allowed": True,
     })
 

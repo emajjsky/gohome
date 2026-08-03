@@ -114,6 +114,14 @@ class PrivacyFrameRenderer:
         cv2 = _load_cv2()
         if frame is None or not getattr(frame, "size", 0):
             raise RuntimeError("privacy source frame is unavailable")
+        self._observe_pending_revalidation(
+            int(camera_id),
+            frame,
+            source_key=str(source_key or ""),
+            frame_id=str(frame_id or ""),
+            captured_at=str(captured_at or ""),
+            captured_monotonic=captured_monotonic,
+        )
         if resolved_mode == "original":
             self._record_output(
                 int(camera_id),
@@ -374,6 +382,17 @@ class PrivacyFrameRenderer:
             calibration_id=str(calibration_id),
         )
 
+    def discover_calibrations(
+        self,
+        camera_id: int,
+        *,
+        source_key: str,
+    ) -> list[Dict[str, Any]]:
+        return self.background_reconstructor.discover_persisted(
+            int(camera_id),
+            source_key=str(source_key or ""),
+        )
+
     def cancel_calibration(
         self,
         camera_id: int,
@@ -427,6 +446,49 @@ class PrivacyFrameRenderer:
             frame_token=str(frame_id),
             source_key=str(source_key or ""),
             person_evidence=self._has_person_evidence(metadata),
+        )
+
+    def _observe_pending_revalidation(
+        self,
+        camera_id: int,
+        frame: Any,
+        *,
+        source_key: str,
+        frame_id: str,
+        captured_at: str,
+        captured_monotonic: float | None,
+    ) -> None:
+        if not frame_id:
+            return
+        height, width = frame.shape[:2]
+        calibration = self.background_reconstructor.inspect(
+            int(camera_id),
+            source_key=str(source_key or ""),
+            width=int(width),
+            height=int(height),
+        )
+        if (
+            not calibration.get("calibrated")
+            or calibration.get("ready")
+            or calibration.get("calibration_active")
+        ):
+            return
+        metadata = self._metadata_for_current_frame(
+            int(camera_id),
+            frame_id=str(frame_id),
+            source_key=str(source_key or ""),
+            captured_at=str(captured_at or ""),
+            captured_monotonic=captured_monotonic,
+            frame=frame,
+        )
+        render_identity = dict(metadata.get("render_identity") or {})
+        self.background_reconstructor.observe_revalidation(
+            int(camera_id),
+            frame,
+            frame_token=str(frame_id),
+            source_key=str(source_key or ""),
+            person_evidence=self._has_person_evidence(metadata),
+            evidence_synchronized=bool(render_identity.get("pose_synchronized")),
         )
 
     def status(self) -> Dict[str, Any]:
@@ -694,6 +756,7 @@ class PrivacyFrameRenderer:
             "stream_generation": self._stream_generation(source_key),
             "captured_at": str(captured_at or ""),
             "captured_monotonic": captured_monotonic,
+            "pose_synchronized": not bool(stale_reason),
         }
         return metadata
 
