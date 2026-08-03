@@ -28,7 +28,6 @@ rsync -az \
   --exclude 'eval/' \
   --exclude 'scripts/audit-vision-dataset-readiness.py' \
   --exclude 'scripts/configure-demo-mode.sh' \
-  --exclude 'scripts/emit-public-fall-validation.py' \
   --exclude 'scripts/eval*.py' \
   --exclude 'scripts/import-*.py' \
   --exclude 'scripts/init-vision-eval-data.py' \
@@ -48,7 +47,6 @@ ssh "$PI_SSH" "cd '$PI_ROOT' && \
   find scripts -maxdepth 1 -type f \
     \( -name 'audit-vision-dataset-readiness.py' \
     -o -name 'configure-demo-mode.sh' \
-    -o -name 'emit-public-fall-validation.py' \
     -o -name 'eval*.py' \
     -o -name 'import-*.py' \
     -o -name 'init-vision-eval-data.py' \

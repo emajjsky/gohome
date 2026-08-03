@@ -45,7 +45,10 @@ def main() -> None:
         assert report["coverage"]["fall"]["negative_sequences"] == 1
         assert report["coverage"]["pose"]["sequence_labels"]["standing"] == 1
         assert report["gates"]["fall_rule_regression"]["ready"] is False
-        assert report["gates"]["trainable_temporal_model"]["ready"] is False
+        assert report["gates"]["temporal_model_experiment"]["ready"] is False
+        assert report["gates"]["product_quality_claim"]["ready"] is False
+        assert "fire" not in report["coverage"]
+        assert report["schema_version"] == "gohome-vision-dataset-readiness-v2"
         assert report["missing_files"] == []
     print(json.dumps({"ok": True, "script": str(SCRIPT)}, ensure_ascii=False))
 

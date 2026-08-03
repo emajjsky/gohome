@@ -1,6 +1,6 @@
 {
-  "schema_version": "gohome-vision-dataset-catalog-v1",
-  "updated_at": "2026-07-04",
+  "schema_version": "gohome-vision-dataset-catalog-v2",
+  "updated_at": "2026-08-03",
   "purpose": "Catalog of external datasets for validating GoHome edge vision algorithms before tuning models and thresholds.",
   "datasets": [
     {
@@ -24,28 +24,6 @@
       "size_note": "Very large; sample validation images by class labels only.",
       "fit_for_gohome": "Good source of broad negative cases and indoor objects for false-positive testing.",
       "caveats": ["Some image-level labels are machine generated; verify label quality before training."]
-    },
-    {
-      "id": "dfire",
-      "name": "D-Fire",
-      "url": "https://github.com/gaia-solutions-on-demand/DFireDataset",
-      "tasks": ["fire_detection", "smoke_detection", "fire_negative"],
-      "priority": "p0",
-      "access": "download_links",
-      "size_note": "More than 21k images; YOLO-format labels.",
-      "fit_for_gohome": "Best first public source for fire/smoke object detection model evaluation.",
-      "caveats": ["Image dataset; still needs surveillance video validation for temporal logic."]
-    },
-    {
-      "id": "unidatapro-fire-smoke-video",
-      "name": "Smoke and Fire Detection Videos Dataset",
-      "url": "https://huggingface.co/datasets/UniDataPro/fire-and-smoke-dataset",
-      "tasks": ["fire_video", "smoke_video", "temporal_fire_validation"],
-      "priority": "p0",
-      "access": "provider_download",
-      "size_note": "85 annotated videos.",
-      "fit_for_gohome": "Useful to validate temporal fire/smoke rules, not just single-frame color heuristics.",
-      "caveats": ["Check provider terms before commercial use."]
     },
     {
       "id": "ur-fall",

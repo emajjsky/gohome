@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict
 from uuid import uuid4
 
 
-SAFETY_EVENT_TYPES = {"fall_candidate", "prolonged_floor_lying", "fire_candidate"}
+SAFETY_EVENT_TYPES = {"fall_candidate", "prolonged_floor_lying"}
 NEGATIVE_SCENARIOS = {"walking", "fast_sit", "squat", "sofa_lying"}
 SUPPORTED_SCENARIOS = {*NEGATIVE_SCENARIOS, "simulated_fall", "custom"}
 
