@@ -108,9 +108,32 @@ def main() -> None:
         raise SystemExit("management console has no shared privacy control")
     if console.count('class="segmented-control privacy-mode-control"') != 1:
         raise SystemExit("privacy controls must be generated from one shared definition")
+    privacy_control = function_source(console, "function ensureVideoPrivacyControl", "function renderVideoPrivacyMode")
+    for token in (
+        'pageName === "algorithms"',
+        "算法诊断画面",
+        "原画 + 黄色骨架",
+        '["home", "cameras"].includes(pageName)',
+        "App / 首页画面",
+        "纯骨架",
+    ):
+        if token not in privacy_control:
+            raise SystemExit(f"management privacy/diagnostic ownership is missing: {token}")
+    diagnostic_start = privacy_control.index('pageName === "algorithms"')
+    user_control_start = privacy_control.index('["home", "cameras"].includes(pageName)')
+    if diagnostic_start >= user_control_start:
+        raise SystemExit("algorithm diagnostics are not isolated from user privacy controls")
     privacy_poll = function_source(console, "state.privacyTimer = setInterval", "setInterval(renderPairingCountdown")
     if "pageName" in privacy_poll or "loadVideoPrivacyMode" not in privacy_poll:
         raise SystemExit("privacy state is not synchronized on every management page")
+    for token in (
+        'pageName === "home" && state.videoPrivacyMode === "skeleton"',
+        'stream.removeAttribute("src")',
+        "纯骨架画面等待空房校准",
+        "算法诊断 · 原画 + 黄色骨架",
+    ):
+        if token not in render_stream:
+            raise SystemExit(f"stream mode contract is missing: {token}")
 
     display_poses = function_source(console, "function snapshotDisplayPoses", "function isPresenceCandidate")
     if '"coasting"' not in display_poses:
@@ -131,6 +154,8 @@ def main() -> None:
         "deterministic_safety_priority": True,
         "shared_console_design_system": True,
         "shared_privacy_control": True,
+        "diagnostic_privacy_separation": True,
+        "uncalibrated_skeleton_blocked": True,
     })
 
 

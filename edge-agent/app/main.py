@@ -1688,6 +1688,31 @@ def privacy_calibration_status() -> list[Dict[str, Any]]:
     return result
 
 
+def require_privacy_stream_ready(camera_id: int, privacy_mode: str) -> None:
+    if privacy_mode != "skeleton":
+        return
+    calibration = next(
+        (item for item in privacy_calibration_status() if int(item.get("camera_id") or 0) == int(camera_id)),
+        None,
+    )
+    if calibration and calibration.get("ready"):
+        return
+    reason = str((calibration or {}).get("status") or "calibration_required")
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": reason,
+            "message": (
+                "场景发生变化，请重新完成空房校准。"
+                if reason == "scene_review_required"
+                else "纯骨架画面需要先完成空房校准。"
+            ),
+            "camera_id": int(camera_id),
+            "calibration": calibration or {},
+        },
+    )
+
+
 def calibrate_privacy_background(camera_id: int) -> Dict[str, Any]:
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
@@ -3205,6 +3230,7 @@ def camera_mjpeg_stream(
         config_sync_agent.video_privacy_mode(),
         normalize_privacy_mode(privacy_mode, config_sync_agent.video_privacy_mode()),
     )
+    require_privacy_stream_ready(camera_id, resolved_privacy_mode)
     frames = privacy_mjpeg_stream.mjpeg_frames(
         camera,
         privacy_mode=privacy_mode,

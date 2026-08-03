@@ -109,6 +109,7 @@ def main() -> None:
     original_camera_agent = edge_main.camera_agent
     original_renderer = edge_main.privacy_frame_renderer
     original_relay = edge_main.live_relay_agent
+    original_calibration_status = edge_main.privacy_calibration_status
     relay = RelayStub()
     try:
         edge_main.storage = StorageStub()
@@ -141,11 +142,30 @@ def main() -> None:
             code="calibration_in_progress",
             cancel_reason=None,
         )
+
+        edge_main.privacy_calibration_status = lambda: [
+            {"camera_id": 7, "status": "calibration_required", "ready": False},
+        ]
+        edge_main.require_privacy_stream_ready(7, "original")
+        edge_main.require_privacy_stream_ready(7, "person_blur")
+        try:
+            edge_main.require_privacy_stream_ready(7, "skeleton")
+        except edge_main.HTTPException as exc:
+            assert exc.status_code == 409
+            assert exc.detail["code"] == "calibration_required"
+            assert exc.detail["camera_id"] == 7
+        else:
+            raise AssertionError("uncalibrated skeleton stream must fail before MJPEG starts")
+        edge_main.privacy_calibration_status = lambda: [
+            {"camera_id": 7, "status": "ready", "ready": True},
+        ]
+        edge_main.require_privacy_stream_ready(7, "skeleton")
     finally:
         edge_main.storage = original_storage
         edge_main.camera_agent = original_camera_agent
         edge_main.privacy_frame_renderer = original_renderer
         edge_main.live_relay_agent = original_relay
+        edge_main.privacy_calibration_status = original_calibration_status
 
     print({
         "ok": True,
@@ -153,6 +173,8 @@ def main() -> None:
         "timeout_cancels": True,
         "persistence_failure_cancels": True,
         "concurrent_calibration_preserved": True,
+        "uncalibrated_stream_rejected": True,
+        "calibrated_stream_allowed": True,
     })
 
 

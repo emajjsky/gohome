@@ -107,24 +107,58 @@ function normalizeVideoPrivacyMode(value) {
     : "original";
 }
 
+function videoPrivacyModeLabel(mode = state.videoPrivacyMode) {
+  return {
+    original: "原画",
+    person_blur: "人物模糊",
+    skeleton: "纯骨架",
+  }[normalizeVideoPrivacyMode(mode)];
+}
+
+function selectedPrivacyCalibration() {
+  return state.privacyCalibrations.find(
+    (item) => Number(item.camera_id) === Number(state.selectedCameraId),
+  ) || null;
+}
+
 function ensureVideoPrivacyControl() {
   if (document.querySelector(".admin-privacy-panel")) return;
   const sidebar = document.querySelector(".admin-sidebar");
   if (!sidebar) return;
   const panel = document.createElement("section");
   panel.className = "admin-privacy-panel";
-  panel.setAttribute("aria-label", "家庭画面隐私");
-  panel.innerHTML = `
-    <div class="admin-privacy-head">
-      <strong>画面隐私</strong>
-      <span id="videoPrivacySyncState">家庭同步</span>
-    </div>
-    <div class="segmented-control privacy-mode-control" aria-label="隐私画面模式">
-      <button type="button" data-privacy-mode="original">原画</button>
-      <button type="button" data-privacy-mode="person_blur">模糊</button>
-      <button type="button" data-privacy-mode="skeleton">骨架</button>
-    </div>
-    <div id="privacyCalibrationList" class="privacy-calibration-list"></div>`;
+  if (pageName === "algorithms") {
+    panel.setAttribute("aria-label", "算法诊断画面");
+    panel.innerHTML = `
+      <div class="admin-privacy-head">
+        <strong>算法诊断画面</strong>
+        <span>实时</span>
+      </div>
+      <div class="privacy-calibration-list">
+        <div class="privacy-calibration-row">
+          <span><strong>原画 + 黄色骨架</strong><small>当前帧模型诊断</small></span>
+          <i class="status-dot ok" aria-hidden="true"></i>
+        </div>
+        <div class="privacy-calibration-row">
+          <span><strong id="diagnosticUserMode">用户画面：读取中</strong><small id="diagnosticUserModeState">家庭同步</small></span>
+        </div>
+      </div>`;
+  } else if (["home", "cameras"].includes(pageName)) {
+    panel.setAttribute("aria-label", "App 和首页画面隐私");
+    panel.innerHTML = `
+      <div class="admin-privacy-head">
+        <strong>App / 首页画面</strong>
+        <span id="videoPrivacySyncState">家庭同步</span>
+      </div>
+      <div class="segmented-control privacy-mode-control" aria-label="用户隐私画面模式">
+        <button type="button" data-privacy-mode="original">原画</button>
+        <button type="button" data-privacy-mode="person_blur">模糊</button>
+        <button type="button" data-privacy-mode="skeleton">纯骨架</button>
+      </div>
+      <div id="privacyCalibrationList" class="privacy-calibration-list"></div>`;
+  } else {
+    return;
+  }
   const controls = sidebar.querySelector(".admin-sidebar-controls");
   controls?.insertAdjacentElement("afterend", panel);
   if (!controls) sidebar.querySelector(".admin-nav")?.insertAdjacentElement("afterend", panel);
@@ -132,13 +166,26 @@ function ensureVideoPrivacyControl() {
 
 function renderVideoPrivacyMode() {
   const calibrationRequired = state.privacyCalibrations.some((item) => item.enabled && !item.ready);
+  if (pageName === "algorithms") {
+    setText("diagnosticUserMode", `用户画面：${videoPrivacyModeLabel()}`);
+    setText(
+      "diagnosticUserModeState",
+      state.videoPrivacyMode === "skeleton" && calibrationRequired ? "纯骨架待空房校准" : "家庭已同步",
+    );
+    return;
+  }
   document.querySelectorAll("[data-privacy-mode]").forEach((button) => {
     const active = button.dataset.privacyMode === state.videoPrivacyMode;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", active ? "true" : "false");
     button.disabled = button.dataset.privacyMode === "skeleton" && calibrationRequired;
   });
-  setText("videoPrivacySyncState", state.videoPrivacyLoaded ? "已同步" : "家庭同步");
+  setText(
+    "videoPrivacySyncState",
+    state.videoPrivacyMode === "skeleton" && calibrationRequired
+      ? "待校准"
+      : state.videoPrivacyLoaded ? "已同步" : "家庭同步",
+  );
   const target = $("privacyCalibrationList");
   if (!target) return;
   target.innerHTML = state.privacyCalibrations
@@ -156,7 +203,7 @@ function renderVideoPrivacyMode() {
       const actionLabel = item.calibrated ? "重校准" : "校准";
       return `
         <div class="privacy-calibration-row">
-          <span><strong>${escapeHtml(item.room || item.name || "摄像头 " + item.camera_id)}</strong><small>${escapeHtml(status)}</small></span>
+          <span><strong>${escapeHtml(item.name || item.room || "摄像头 " + item.camera_id)}</strong><small>${escapeHtml(status)}</small></span>
           ${item.ready ? '<i class="status-dot ok" aria-hidden="true"></i>' : `<button type="button" data-calibrate-camera="${Number(item.camera_id)}">${actionLabel}</button>`}
         </div>`;
     })
@@ -176,7 +223,9 @@ async function loadVideoPrivacyMode({ refreshStream = true } = {}) {
   state.privacyCalibrations = Array.isArray(payload?.calibrations) ? payload.calibrations : [];
   state.videoPrivacyLoaded = true;
   renderVideoPrivacyMode();
-  if (changed && refreshStream && state.selectedCameraId) renderStream({ retry: true });
+  if (changed && refreshStream && state.selectedCameraId && pageName === "home") {
+    renderStream({ retry: true });
+  }
   return payload;
 }
 
@@ -185,6 +234,9 @@ async function calibratePrivacyCamera(cameraId, button) {
   try {
     await api(`/api/admin/cameras/${Number(cameraId)}/privacy-calibration`, { method: "POST" });
     await loadVideoPrivacyMode({ refreshStream: false });
+    if (pageName === "home" && Number(state.selectedCameraId) === Number(cameraId)) {
+      renderStream({ retry: true });
+    }
     showToast("空房校准已完成");
   } finally {
     setBusy(button, false);
@@ -246,13 +298,26 @@ async function api(path, options = {}) {
     ...options,
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch (_error) {
+      data = null;
+    }
+  }
   if (!response.ok) {
     if (response.status === 401 && !window.location.pathname.endsWith("/admin/login.html")) {
       const next = `${window.location.pathname}${window.location.search}`;
       window.location.replace(`/admin/login.html?next=${encodeURIComponent(next)}`);
     }
-    const error = new Error(data?.detail || `HTTP ${response.status}`);
+    const detail = data?.detail;
+    const message = typeof detail === "string"
+      ? detail
+      : detail && typeof detail.message === "string"
+        ? detail.message
+        : `请求失败（HTTP ${response.status}）。`;
+    const error = new Error(message);
     error.status = response.status;
     throw error;
   }
@@ -1032,6 +1097,21 @@ function renderStream({ retry = false } = {}) {
     setText("streamCamera", "无摄像头");
     return;
   }
+  const calibration = selectedPrivacyCalibration();
+  if (pageName === "home" && state.videoPrivacyMode === "skeleton" && !calibration?.ready) {
+    stopLiveAnalysisLoop();
+    stream.removeAttribute("src");
+    if (empty) {
+      empty.style.display = "grid";
+      empty.querySelector("p").textContent = calibration?.status === "scene_review_required"
+        ? "场景变化，请重新空房校准"
+        : "纯骨架画面等待空房校准";
+    }
+    setText("streamStatus", "纯骨架画面未就绪");
+    setText("streamCamera", `${cameraDisplayName(camera)} · ${camera.room || "未设置"}`);
+    setText("streamFpsBadge", "-- FPS");
+    return;
+  }
   if (empty) {
     empty.style.display = "grid";
     empty.querySelector("p").textContent = "视频流加载中";
@@ -1056,7 +1136,7 @@ function renderStream({ retry = false } = {}) {
     setText("streamStatus", "实时视频已连接");
   };
   const streamProfile = pageName === "algorithms"
-    ? { fps: 15, width: 960, height: 540, quality: 70, label: "同步姿态视频" }
+    ? { fps: 15, width: 960, height: 540, quality: 70, label: "算法诊断 · 原画 + 黄色骨架" }
     : { fps: 15, width: 1280, height: 720, quality: 64, label: "720p 低延迟视频" };
   const streamPath = pageName === "algorithms"
     ? `/api/cameras/${camera.id}/continual-pose/stream.mjpg`
