@@ -82,6 +82,17 @@ class Settings:
         self.disable_worker = os.getenv("GOHOME_AGENT_DISABLE_WORKER", "0") == "1"
         self.app_runtime_watchdog_interval_seconds = float(os.getenv("GOHOME_APP_RUNTIME_WATCHDOG_INTERVAL_SECONDS", "2"))
         self.app_runtime_startup_grace_seconds = float(os.getenv("GOHOME_APP_RUNTIME_STARTUP_GRACE_SECONDS", "2"))
+        package_signing_public_key_path = os.getenv("GOHOME_PACKAGE_SIGNING_PUBLIC_KEY_PATH", "").strip()
+        self.package_signing_public_key_path = (
+            Path(package_signing_public_key_path)
+            if package_signing_public_key_path
+            else self.data_dir / "trust" / "package-signing-ed25519.pem"
+        )
+        self.package_max_archive_members = int(os.getenv("GOHOME_PACKAGE_MAX_ARCHIVE_MEMBERS", "4096"))
+        self.package_max_artifact_bytes = int(os.getenv("GOHOME_PACKAGE_MAX_ARTIFACT_BYTES", str(50 * 1024 * 1024)))
+        self.package_max_expanded_bytes = int(
+            os.getenv("GOHOME_PACKAGE_MAX_EXPANDED_BYTES", str(1024 * 1024 * 1024))
+        )
         self.thermal_monitor_enabled = os.getenv("GOHOME_THERMAL_MONITOR_ENABLED", "1") == "1"
         self.thermal_warm_temperature_c = float(os.getenv("GOHOME_THERMAL_WARM_TEMPERATURE_C", "72"))
         self.thermal_hot_temperature_c = float(os.getenv("GOHOME_THERMAL_HOT_TEMPERATURE_C", "76"))
@@ -161,6 +172,7 @@ class Settings:
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         self.app_runtime_dir.mkdir(parents=True, exist_ok=True)
         self.runtime_logs_dir.mkdir(parents=True, exist_ok=True)
+        self.package_signing_public_key_path.parent.mkdir(parents=True, exist_ok=True)
         self.edge_bootstrap_dir.mkdir(parents=True, exist_ok=True)
         self.edge_bootstrap_logs_dir.mkdir(parents=True, exist_ok=True)
 

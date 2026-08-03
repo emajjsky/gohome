@@ -21,6 +21,7 @@ rsync -az \
   --exclude '.env' \
   --exclude '.env.local' \
   --exclude '.env.local.*' \
+  --exclude 'tools/' \
   --exclude 'eval/' \
   --exclude 'scripts/audit-vision-dataset-readiness.py' \
   --exclude 'scripts/configure-demo-mode.sh' \
@@ -96,5 +97,6 @@ ssh "$PI_SSH" "cd '$PI_ROOT' && rm -rf eval && find scripts -maxdepth 1 -type f 
   -o -name 'verify-upload-queue.py' \\
   -o -name 'verify-vision-pipeline.py' \\) -delete"
 
+ssh "$PI_SSH" "cd '$PI_ROOT' && .venv-pi/bin/python -m pip install --requirement requirements-security.txt"
 ssh "$PI_SSH" "cd '$PI_ROOT' && .venv-pi/bin/python scripts/verify-vision-runtime.py --require-yolo --require-pose --require-hailo"
 echo "deployed without replacing Pi runtime or device data: $PI_SSH:$PI_ROOT"

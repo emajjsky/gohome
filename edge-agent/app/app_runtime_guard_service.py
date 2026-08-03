@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Event, Lock, Thread
+from threading import Event, RLock, Thread
 from typing import Any, Callable, Dict
-import json
 import os
 import signal
 import subprocess
 import sys
 import time
+
+from .package_trust import PackageTrustStore, atomic_write_json, read_json_object
 
 
 def now_iso() -> str:
@@ -25,7 +26,8 @@ class AppRuntimeGuardService:
     ) -> None:
         self.settings = settings
         self.current_manifest_loader = current_manifest_loader
-        self._state_lock = Lock()
+        self.trust_store = PackageTrustStore(settings)
+        self._state_lock = RLock()
         self._stop_event = Event()
         self._thread: Thread | None = None
 
@@ -38,18 +40,13 @@ class AppRuntimeGuardService:
         return self.settings.runtime_logs_dir / "app-runtime.log"
 
     def load_state(self) -> Dict[str, Any]:
-        if not self.state_path.exists():
-            return {}
-        try:
-            return json.loads(self.state_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return {}
+        return read_json_object(self.state_path)
 
     def write_state(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        merged = {**self.load_state(), **payload, "updated_at": now_iso()}
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
-        return merged
+        with self._state_lock:
+            merged = {**self.load_state(), **payload, "updated_at": now_iso()}
+            atomic_write_json(self.state_path, merged)
+            return merged
 
     def is_running_pid(self, pid: int | None) -> bool:
         if not pid:
@@ -66,16 +63,16 @@ class AppRuntimeGuardService:
         except OSError:
             return False
 
+    def validate_manifest(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
+        verified = self.trust_store.validate_installed_manifest(manifest)
+        signed = dict(verified.get("signed_manifest") or {})
+        if signed.get("package_type") != "app":
+            raise RuntimeError("Runtime guard accepts only signed app packages")
+        return verified
+
     def runnable_entry(self, manifest: Dict[str, Any]) -> Path:
-        installed_path = str(manifest.get("installed_path") or "").strip()
-        if not installed_path:
-            raise RuntimeError("App manifest missing installed_path")
-        entry = Path(installed_path)
-        if not entry.exists():
-            raise RuntimeError(f"App entry does not exist: {entry}")
-        if entry.is_dir():
-            raise RuntimeError("App installed_path must resolve to a concrete entry file")
-        return entry.resolve()
+        verified = self.validate_manifest(manifest)
+        return Path(str(verified["installed_path"])).resolve()
 
     def is_runnable_manifest(self, manifest: Dict[str, Any]) -> bool:
         try:
@@ -86,14 +83,14 @@ class AppRuntimeGuardService:
 
     def build_command(self, manifest: Dict[str, Any]) -> list[str]:
         entry = self.runnable_entry(manifest)
-        suffix = entry.suffix.lower()
-        if suffix == ".py":
+        entry_type = str(manifest.get("signed_manifest", {}).get("entry_type") or "")
+        if entry_type == "python":
             return [sys.executable, str(entry)]
-        if suffix == ".sh":
+        if entry_type == "shell":
             return ["/bin/bash", str(entry)]
-        if os.access(entry, os.X_OK):
+        if entry_type == "executable" and os.access(entry, os.X_OK):
             return [str(entry)]
-        raise RuntimeError(f"Unsupported app entrypoint: {entry.name}")
+        raise RuntimeError(f"Signed app entry is not runnable: {entry.name}")
 
     def stop_runtime(self, *, clear_should_run: bool) -> Dict[str, Any]:
         with self._state_lock:
@@ -124,25 +121,29 @@ class AppRuntimeGuardService:
     def _spawn_manifest(self, manifest: Dict[str, Any], *, restart_count: int) -> Dict[str, Any]:
         command = self.build_command(manifest)
         entry = self.runnable_entry(manifest)
+        signed_manifest = dict(manifest.get("signed_manifest") or {})
         self.stdout_log_path.parent.mkdir(parents=True, exist_ok=True)
         log_handle = self.stdout_log_path.open("ab")
         env = os.environ.copy()
-        env["GOHOME_RUNTIME_VERSION"] = str(manifest.get("version") or "")
-        process = subprocess.Popen(
-            command,
-            cwd=str(entry.parent),
-            stdout=log_handle,
-            stderr=log_handle,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-            env=env,
-        )
+        env["GOHOME_RUNTIME_VERSION"] = str(signed_manifest.get("version") or "")
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=str(entry.parent),
+                stdout=log_handle,
+                stderr=log_handle,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                env=env,
+            )
+        finally:
+            log_handle.close()
         state = self.write_state(
             {
                 "pid": int(process.pid),
                 "running": True,
                 "should_run": True,
-                "version": str(manifest.get("version") or ""),
+                "version": str(signed_manifest.get("version") or ""),
                 "installed_path": str(manifest.get("installed_path") or ""),
                 "started_at": now_iso(),
                 "restart_count": int(restart_count),
@@ -168,17 +169,49 @@ class AppRuntimeGuardService:
             return {"ok": False, "state": failed, "error": failed["last_error"]}
         return {"ok": True, "state": state}
 
-    def apply_release(self, manifest: Dict[str, Any], *, previous_manifest: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def apply_release(
+        self,
+        manifest: Dict[str, Any],
+        *,
+        previous_manifest: Dict[str, Any] | None = None,
+        activate: Callable[[], None] | None = None,
+    ) -> Dict[str, Any]:
         previous = dict(previous_manifest or {})
+        self.validate_manifest(manifest)
+        if previous:
+            self.validate_manifest(previous)
         previous_state = self.load_state()
         previous_should_run = bool(previous_state.get("should_run"))
         self.stop_runtime(clear_should_run=False)
         result = self._spawn_manifest(manifest, restart_count=0)
         if result["ok"]:
+            try:
+                if activate is not None:
+                    activate()
+            except Exception as exc:
+                self.stop_runtime(clear_should_run=False)
+                rollback_ok = False
+                rollback_error = ""
+                if previous:
+                    rollback = self._spawn_manifest(
+                        previous,
+                        restart_count=int(previous_state.get("restart_count") or 0),
+                    )
+                    rollback_ok = bool(rollback["ok"])
+                    rollback_error = "" if rollback_ok else str(rollback.get("error") or "")
+                if not previous_should_run:
+                    self.stop_runtime(clear_should_run=True)
+                return {
+                    "ok": False,
+                    "rolled_back": rollback_ok,
+                    "error": f"release activation failed: {exc}",
+                    "rollback_error": rollback_error,
+                    "active_version": str(previous.get("signed_manifest", {}).get("version") or ""),
+                }
             return {
                 "ok": True,
                 "rolled_back": False,
-                "version": str(manifest.get("version") or ""),
+                "version": str(manifest.get("signed_manifest", {}).get("version") or ""),
                 "state": result["state"],
             }
         rollback_ok = False
@@ -196,7 +229,7 @@ class AppRuntimeGuardService:
             "rolled_back": rollback_ok,
             "error": result.get("error") or "apply release failed",
             "rollback_error": rollback_error,
-            "active_version": str(previous.get("version") or ""),
+            "active_version": str(previous.get("signed_manifest", {}).get("version") or ""),
         }
 
     def restart_current(self) -> Dict[str, Any]:

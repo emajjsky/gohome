@@ -283,10 +283,18 @@ class V1VideoServiceNodeUpsert(BaseModel):
 class V1PackageReleaseCreate(BaseModel):
     family_id: int
     asset_id: int = Field(..., ge=1)
+    manifest_version: int = Field(default=1, ge=1, le=1)
     package_type: str = Field(..., pattern="^(app|model)$")
-    version: str = Field(..., min_length=1, max_length=80)
-    install_strategy: str = Field(default="", pattern="^(|file|archive)$")
-    entry_path: str = Field(default="", max_length=300)
+    version: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+    device_scope: str = Field(default="family", pattern="^(family|device)$")
+    device_id: str = Field(default="", max_length=120)
+    byte_size: int = Field(..., ge=1, le=52428800)
+    sha256: str = Field(..., pattern=r"^[0-9a-fA-F]{64}$")
+    signature_key_id: str = Field(..., pattern=r"^[0-9a-fA-F]{16}$")
+    signature: str = Field(..., min_length=80, max_length=128)
+    install_strategy: str = Field(..., pattern="^(file|archive)$")
+    entry_type: str = Field(..., pattern="^(python|shell|executable|data)$")
+    entry_path: str = Field(..., min_length=1, max_length=300)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
