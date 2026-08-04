@@ -9635,10 +9635,11 @@ function createLocalAppServer(options = {}) {
             if (req.method === "POST" && pathname === "/api/v1/internal/media-lifecycle/run") {
                 if (!requireOps(req, res)) return;
                 const payload = await parseJsonBody(req).catch(() => ({}));
+                const classificationOnly = normalizeBool(payload.classification_only);
                 const dryRun = "dry_run" in payload
                     ? normalizeBool(payload.dry_run)
-                    : !mediaLifecycleDeleteEnabled;
-                if (!dryRun && !mediaLifecycleDeleteEnabled) {
+                    : (!mediaLifecycleDeleteEnabled && !classificationOnly);
+                if (!dryRun && !classificationOnly && !mediaLifecycleDeleteEnabled) {
                     writeError(res, 409, "media lifecycle deletion is not enabled");
                     return;
                 }
@@ -9647,6 +9648,7 @@ function createLocalAppServer(options = {}) {
                         ? normalizeBool(payload.reconcile_orphans)
                         : true,
                     dryRun,
+                    classificationOnly,
                 });
                 write(res, 200, result);
                 return;
@@ -10143,7 +10145,8 @@ function createLocalAppServer(options = {}) {
                 await cleanupExpiredMemoryUploads();
                 await mediaLifecycleManager.run({
                     reconcileOrphans: true,
-                    dryRun: !mediaLifecycleDeleteEnabled,
+                    dryRun: false,
+                    classificationOnly: !mediaLifecycleDeleteEnabled,
                 });
             } catch (error) {
                 console.error(`media lifecycle cleanup failed: ${error.message || error}`);

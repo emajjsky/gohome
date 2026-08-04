@@ -112,6 +112,52 @@ test('scheduler run persistence ignores overlap placeholders without an id', asy
   assert.deepEqual(store.persistedTables.scheduler_runs, persisted.scheduler_runs);
 });
 
+test('media lifecycle reads fresh PostgreSQL references and persists retention rows in one batch', async () => {
+  const inventoryQueries = [];
+  const pool = recordingPool();
+  pool.query = async (text) => {
+    inventoryQueries.push(String(text));
+    if (/from media_assets/i.test(text)) return { rows: [{ id: 'asset-1', size_bytes: 42, metadata: { purpose: 'family_memory' } }] };
+    if (/from events/i.test(text)) return { rows: [{ id: 'event-1', media_asset_id: 'asset-1' }] };
+    if (/from family_memory_media/i.test(text)) return { rows: [{ memory_id: 'memory-1', asset_id: 'asset-1' }] };
+    if (/from care_cards/i.test(text)) return { rows: [{ id: 'card-1', image_url: 'care-cards/card.webp' }] };
+    if (/from users/i.test(text)) return { rows: [{ id: 'user-1', metadata: { avatar_asset_id: 'asset-1' } }] };
+    if (/from media_upload_intents/i.test(text)) return { rows: [] };
+    throw new Error(`unexpected inventory query: ${text}`);
+  };
+  const persisted = emptyTables();
+  persisted.media_assets = [{ id: 'asset-1', retention_status: 'active' }];
+  const db = { assets: [{ id: 'asset-1', size: 42 }] };
+  const store = new PostgresStore({ pool, db, persistedTables: persisted });
+
+  const inventory = await store.mediaLifecycleInventory();
+  assert.equal(inventory.assets[0].purpose, 'family_memory');
+  assert.equal(inventory.assets[0].size, 42);
+  assert.equal(inventory.family_memory_media[0].asset_id, 'asset-1');
+  assert.equal(inventoryQueries.length, 6);
+
+  await store.saveMediaLifecycleAssets([{
+    id: 'asset-1',
+    retention_class: 'family_memory',
+    retention_status: 'active',
+    retention_reason: 'user_managed',
+    retain_until: null,
+    deletion_attempts: 0,
+    deletion_error: '',
+    next_deletion_at: null,
+    deleted_at: null,
+    size: 42,
+    updated_at: '2026-08-04T08:00:00.000Z',
+  }]);
+
+  const update = pool.queries.find((query) => /update media_assets as target/i.test(query.text));
+  assert.ok(update);
+  assert.equal(pool.queries.filter((query) => /update media_assets as target/i.test(query.text)).length, 1);
+  assert.equal(pool.queries.some((query) => /^insert into/i.test(query.text.trim())), false);
+  assert.equal(JSON.parse(update.values[0])[0].retention_class, 'family_memory');
+  assert.equal(store.db.assets[0].retention_reason, 'user_managed');
+});
+
 test('postgres date values retain their Shanghai calendar day after hydration', () => {
   const rows = emptyTables();
   rows.care_cards = [{

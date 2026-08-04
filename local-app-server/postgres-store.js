@@ -686,6 +686,44 @@ function rowFingerprint(row) {
     return JSON.stringify(comparable(row));
 }
 
+function mediaLifecycleAsset(row) {
+    return {
+        ...row,
+        purpose: metadataValue(row, "purpose", ""),
+        size: Number(row.size_bytes || 0),
+        created_at: iso(row.created_at),
+        updated_at: iso(row.updated_at, iso(row.created_at)),
+        retain_until: iso(row.retain_until),
+        next_deletion_at: iso(row.next_deletion_at),
+        deleted_at: iso(row.deleted_at),
+    };
+}
+
+function mediaLifecycleEvent(row) {
+    return {
+        ...row,
+        occurred_at: iso(row.occurred_at),
+        created_at: iso(row.created_at, iso(row.occurred_at)),
+        updated_at: iso(row.updated_at, iso(row.created_at, iso(row.occurred_at))),
+    };
+}
+
+function mediaLifecyclePersistenceRow(asset) {
+    return {
+        id: textId(asset.id),
+        retention_class: String(asset.retention_class || ""),
+        retention_status: String(asset.retention_status || "active"),
+        retention_reason: String(asset.retention_reason || ""),
+        retain_until: iso(asset.retain_until),
+        deletion_attempts: Math.max(0, Number(asset.deletion_attempts || 0)),
+        deletion_error: String(asset.deletion_error || ""),
+        next_deletion_at: iso(asset.next_deletion_at),
+        deleted_at: iso(asset.deleted_at),
+        size_bytes: Math.max(0, Number(asset.size ?? asset.size_bytes ?? 0)),
+        updated_at: iso(asset.updated_at, new Date().toISOString()),
+    };
+}
+
 function rowsByPrimaryKey(table, rows) {
     const primaryKey = PRIMARY_KEYS[table];
     if (!primaryKey) throw new Error(`unsupported postgres table: ${table}`);
@@ -797,6 +835,87 @@ class PostgresStore {
             .catch((error) => {
                 this.last_save_error = error.message || String(error);
                 throw error;
+            });
+        return this.pendingSave;
+    }
+
+    async mediaLifecycleInventory() {
+        const [assets, events, memoryMedia, careCards, users, uploadIntents] = await Promise.all([
+            this.pool.query("select * from media_assets"),
+            this.pool.query("select * from events"),
+            this.pool.query("select memory_id, asset_id from family_memory_media"),
+            this.pool.query("select id, image_url from care_cards"),
+            this.pool.query("select id, metadata from users"),
+            this.pool.query("select * from media_upload_intents"),
+        ]);
+        return {
+            assets: assets.rows.map(mediaLifecycleAsset),
+            events: events.rows.map(mediaLifecycleEvent),
+            family_memory_media: memoryMedia.rows,
+            care_cards: careCards.rows,
+            users: users.rows,
+            media_upload_intents: uploadIntents.rows,
+        };
+    }
+
+    saveMediaLifecycleAssets(assets) {
+        const updates = (assets || []).map(mediaLifecyclePersistenceRow).filter((asset) => asset.id);
+        if (!updates.length) return this.pendingSave;
+        this.pendingSave = this.pendingSave
+            .catch(() => undefined)
+            .then(async () => {
+                const client = await this.pool.connect();
+                try {
+                    await client.query("begin");
+                    await client.query("select pg_advisory_xact_lock(hashtext('gohome-media-lifecycle'))");
+                    await client.query(
+                        `with updates as (
+                            select * from jsonb_to_recordset($1::jsonb) as row(
+                                id text,
+                                retention_class text,
+                                retention_status text,
+                                retention_reason text,
+                                retain_until timestamptz,
+                                deletion_attempts integer,
+                                deletion_error text,
+                                next_deletion_at timestamptz,
+                                deleted_at timestamptz,
+                                size_bytes bigint,
+                                updated_at timestamptz
+                            )
+                        )
+                        update media_assets as target set
+                            retention_class = updates.retention_class,
+                            retention_status = updates.retention_status,
+                            retention_reason = updates.retention_reason,
+                            retain_until = updates.retain_until,
+                            deletion_attempts = updates.deletion_attempts,
+                            deletion_error = updates.deletion_error,
+                            next_deletion_at = updates.next_deletion_at,
+                            deleted_at = updates.deleted_at,
+                            size_bytes = updates.size_bytes,
+                            updated_at = updates.updated_at
+                        from updates where target.id = updates.id`,
+                        [JSON.stringify(updates)],
+                    );
+                    await client.query("commit");
+                    const persisted = rowsByPrimaryKey("media_assets", this.persistedTables.media_assets || []);
+                    for (const update of updates) {
+                        persisted.set(update.id, { ...(persisted.get(update.id) || {}), ...update });
+                        const current = (this.db.assets || []).find((asset) => textId(asset.id) === update.id);
+                        if (current) {
+                            Object.assign(current, update, { size: update.size_bytes });
+                        }
+                    }
+                    this.persistedTables.media_assets = [...persisted.values()];
+                    this.last_save_error = "";
+                } catch (error) {
+                    await client.query("rollback");
+                    this.last_save_error = error.message || String(error);
+                    throw error;
+                } finally {
+                    client.release();
+                }
             });
         return this.pendingSave;
     }

@@ -130,8 +130,8 @@ function classifyAsset(asset, references, policies, nowMs) {
     const linkedMemory = references.memoryAssetIds.has(id);
     const linkedCareCard = references.careCardAssetIds.has(id);
     const linkedAvatar = references.avatarAssetIds.has(id);
-    let retentionClass = String(asset.retention_class || "").trim();
-    if (linkedMemory || purpose === "family_memory") retentionClass = "family_memory";
+    let retentionClass = "";
+    if (linkedMemory) retentionClass = "family_memory";
     else if (purpose.includes("validation") || purpose.includes("verification")) retentionClass = "verification_evidence";
     else if (linkedEvents.some((event) => String(event.level || "") === "critical")) retentionClass = "critical_event_evidence";
     else if (linkedEvents.length || purpose.includes("event_evidence")) retentionClass = "event_evidence";
@@ -231,6 +231,21 @@ class MediaLifecycleManager {
         await Promise.resolve(this.store.save());
     }
 
+    async inventory() {
+        if (typeof this.store.mediaLifecycleInventory === "function") {
+            return this.store.mediaLifecycleInventory();
+        }
+        return this.store.db;
+    }
+
+    async saveAssets(assets) {
+        if (typeof this.store.saveMediaLifecycleAssets === "function") {
+            await this.store.saveMediaLifecycleAssets(assets);
+            return;
+        }
+        await this.save();
+    }
+
     async deleteAssetObject(asset) {
         const provider = String(asset.storage_provider || "local").toLowerCase();
         if (provider === "cos") {
@@ -297,12 +312,11 @@ class MediaLifecycleManager {
         return { scanned: files.length, planned, deleted, failed };
     }
 
-    async run({ reconcileOrphans = true, dryRun = false } = {}) {
+    async run({ reconcileOrphans = true, dryRun = false, classificationOnly = false } = {}) {
         if (this.running) return { ok: false, running: true, reason: "already_running" };
         this.running = true;
         const nowMs = Number(this.clock());
         const policies = retentionPolicies(this.env);
-        const references = buildAssetReferences(this.store.db);
         const result = {
             ok: true,
             running: false,
@@ -314,12 +328,16 @@ class MediaLifecycleManager {
             protected: 0,
             deferred: 0,
             dry_run: Boolean(dryRun),
+            classification_only: Boolean(classificationOnly),
             cos_orphans: { scanned: 0, planned: 0, deleted: 0, failed: 0 },
             local_orphans: { scanned: 0, planned: 0, deleted: 0, failed: 0 },
             started_at: new Date(nowMs).toISOString(),
         };
         try {
-            for (const asset of this.store.db.assets || []) {
+            const db = await this.inventory();
+            const references = buildAssetReferences(db);
+            const classificationChanges = new Map();
+            for (const asset of db.assets || []) {
                 result.scanned += 1;
                 if (String(asset.retention_status || "active") === "deleted") continue;
                 const classification = classifyAsset(asset, references, policies, nowMs);
@@ -333,6 +351,7 @@ class MediaLifecycleManager {
                     asset.retain_until = classification.retain_until;
                     asset.retention_reason = classification.reason;
                     asset.retention_status = String(asset.retention_status || "active");
+                    if (changed) classificationChanges.set(String(asset.id), asset);
                 }
                 if (classification.retention_protected) {
                     if (!dryRun && asset.retention_status !== "active") {
@@ -340,6 +359,7 @@ class MediaLifecycleManager {
                         asset.deletion_error = "";
                         asset.next_deletion_at = null;
                         result.classified += 1;
+                        classificationChanges.set(String(asset.id), asset);
                     }
                     result.protected += 1;
                     continue;
@@ -351,13 +371,14 @@ class MediaLifecycleManager {
                     continue;
                 }
                 result.planned_deletions += 1;
-                if (dryRun) continue;
+                if (dryRun || classificationOnly) continue;
                 const attempts = Number(asset.deletion_attempts || 0) + 1;
                 asset.retention_status = "deleting";
                 asset.deletion_attempts = attempts;
                 asset.deletion_error = "";
                 asset.updated_at = new Date(nowMs).toISOString();
-                await this.save();
+                await this.saveAssets([asset]);
+                classificationChanges.delete(String(asset.id));
                 try {
                     await this.deleteAssetObject(asset);
                     asset.retention_status = "deleted";
@@ -374,12 +395,14 @@ class MediaLifecycleManager {
                     asset.updated_at = new Date(nowMs).toISOString();
                     result.failed += 1;
                 }
-                await this.save();
+                await this.saveAssets([asset]);
             }
 
-            if (!dryRun && result.classified) await this.save();
+            if (!dryRun && classificationChanges.size) {
+                await this.saveAssets([...classificationChanges.values()]);
+            }
             if (reconcileOrphans) {
-                const activeAssets = (this.store.db.assets || [])
+                const activeAssets = (db.assets || [])
                     .filter((asset) => String(asset.retention_status || "active") !== "deleted");
                 const cosTrackedKeys = new Set(
                     activeAssets
@@ -393,7 +416,7 @@ class MediaLifecycleManager {
                         .map((asset) => String(asset.relative_path || asset.storage_key || ""))
                         .filter(Boolean),
                 );
-                for (const intent of this.store.db.media_upload_intents || []) {
+                for (const intent of db.media_upload_intents || []) {
                     if (intent.object_key) cosTrackedKeys.add(String(intent.object_key));
                 }
                 const graceMs = positiveDays(this.env.GOHOME_COS_ORPHAN_GRACE_DAYS, 2) * DAY_MS;
@@ -401,13 +424,13 @@ class MediaLifecycleManager {
                     trackedKeys: cosTrackedKeys,
                     nowMs,
                     graceMs,
-                    dryRun,
+                    dryRun: dryRun || classificationOnly,
                 });
                 result.local_orphans = await this.reconcileLocalOrphans({
                     trackedKeys: localTrackedKeys,
                     nowMs,
                     graceMs,
-                    dryRun,
+                    dryRun: dryRun || classificationOnly,
                 });
             }
             result.finished_at = new Date(Number(this.clock())).toISOString();

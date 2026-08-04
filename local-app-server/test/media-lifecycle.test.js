@@ -205,6 +205,7 @@ test("media lifecycle dry run reports due assets and orphans without changing st
     const result = await manager.run({ dryRun: true });
 
     assert.equal(result.dry_run, true);
+    assert.equal(result.classification_only, false);
     assert.equal(result.planned_deletions, 1);
     assert.equal(result.deleted, 0);
     assert.equal(result.cos_orphans.planned, 1);
@@ -216,6 +217,50 @@ test("media lifecycle dry run reports due assets and orphans without changing st
     assert.equal(saves, 0);
     assert.deepEqual(deletedKeys, []);
     assert.equal(fs.existsSync(localPath), true);
+    fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("classification-only mode persists retention state without deleting assets or orphans", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-media-classification-only-"));
+    const mediaDir = path.join(root, "media");
+    const localPath = path.join(mediaDir, "expired.jpg");
+    const orphanPath = path.join(mediaDir, "orphan.jpg");
+    fs.mkdirSync(mediaDir, { recursive: true });
+    fs.writeFileSync(localPath, "expired");
+    fs.writeFileSync(orphanPath, "orphan");
+    const nowMs = Date.parse("2026-08-02T08:00:00.000Z");
+    const oldTime = new Date(nowMs - 10 * DAY_MS);
+    fs.utimesSync(localPath, oldTime, oldTime);
+    fs.utimesSync(orphanPath, oldTime, oldTime);
+    const expiredAsset = asset("expired", "expired.jpg", iso(nowMs, 10), {
+        storage_provider: "local",
+        relative_path: "expired.jpg",
+        purpose: "transient_upload",
+    });
+    let saves = 0;
+    const manager = new MediaLifecycleManager({
+        mediaDir,
+        clock: () => nowMs,
+        store: {
+            db: { assets: [expiredAsset], events: [], family_memory_media: [], media_upload_intents: [] },
+            async save() { saves += 1; },
+        },
+        cosStorage: { enabled: false },
+    });
+
+    const result = await manager.run({ classificationOnly: true });
+
+    assert.equal(result.dry_run, false);
+    assert.equal(result.classification_only, true);
+    assert.equal(result.planned_deletions, 1);
+    assert.equal(result.deleted, 0);
+    assert.equal(result.local_orphans.planned, 1);
+    assert.equal(result.local_orphans.deleted, 0);
+    assert.equal(expiredAsset.retention_class, "transient_upload");
+    assert.equal(expiredAsset.retention_status, "active");
+    assert.equal(saves, 1);
+    assert.equal(fs.existsSync(localPath), true);
+    assert.equal(fs.existsSync(orphanPath), true);
     fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -239,16 +284,26 @@ test("media lifecycle protects assets still referenced by product views", async 
         relative_path: "care-cards/2026-07-01/unused.webp",
         purpose: "care_card_image",
     });
-    for (const item of [cardAsset, avatarAsset, unusedAsset]) {
+    const linkedMemoryAsset = asset("linked-memory", "memory-media/linked.jpg", iso(nowMs, 32), {
+        storage_provider: "local",
+        relative_path: "memory-media/linked.jpg",
+        purpose: "family_memory",
+    });
+    const abandonedMemoryAsset = asset("abandoned-memory", "memory-media/abandoned.jpg", iso(nowMs, 32), {
+        storage_provider: "local",
+        relative_path: "memory-media/abandoned.jpg",
+        purpose: "family_memory",
+    });
+    for (const item of [cardAsset, avatarAsset, unusedAsset, linkedMemoryAsset, abandonedMemoryAsset]) {
         const filePath = path.join(mediaDir, item.relative_path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
         fs.writeFileSync(filePath, item.id);
     }
     const store = {
         db: {
-            assets: [cardAsset, avatarAsset, unusedAsset],
+            assets: [cardAsset, avatarAsset, unusedAsset, linkedMemoryAsset, abandonedMemoryAsset],
             events: [],
-            family_memory_media: [],
+            family_memory_media: [{ memory_id: "memory", asset_id: "linked-memory" }],
             media_upload_intents: [],
             care_cards: [{ id: "card", image_url: "/media/care-cards/2026-07-01/card.webp?token=short" }],
             users: [{ id: "user", metadata: { avatar_asset_id: "avatar-image" } }],
@@ -269,8 +324,12 @@ test("media lifecycle protects assets still referenced by product views", async 
     assert.equal(avatarAsset.retention_status, "active");
     assert.equal(avatarAsset.retention_reason, "active_avatar");
     assert.equal(unusedAsset.retention_status, "deleted");
-    assert.equal(result.protected, 2);
-    assert.equal(result.deleted, 1);
+    assert.equal(linkedMemoryAsset.retention_status, "active");
+    assert.equal(linkedMemoryAsset.retention_class, "family_memory");
+    assert.equal(abandonedMemoryAsset.retention_status, "deleted");
+    assert.equal(abandonedMemoryAsset.retention_class, "transient_upload");
+    assert.equal(result.protected, 3);
+    assert.equal(result.deleted, 2);
     assert.equal(fs.existsSync(path.join(mediaDir, cardAsset.relative_path)), true);
     assert.equal(fs.existsSync(path.join(mediaDir, avatarAsset.relative_path)), true);
     assert.equal(fs.existsSync(path.join(mediaDir, unusedAsset.relative_path)), false);
@@ -353,7 +412,7 @@ test("media lifecycle operations endpoint requires ops authorization and forward
         });
         assert.equal(accepted.status, 200);
         assert.deepEqual(await accepted.json(), { ok: true, running: false, deleted: 0 });
-        assert.deepEqual(calls, [{ reconcileOrphans: false, dryRun: false }]);
+        assert.deepEqual(calls, [{ reconcileOrphans: false, dryRun: false, classificationOnly: false }]);
 
         const dryRun = await fetch(`${baseUrl}/api/v1/internal/media-lifecycle/run`, {
             method: "POST",
@@ -364,7 +423,7 @@ test("media lifecycle operations endpoint requires ops authorization and forward
             body: JSON.stringify({ dry_run: true }),
         });
         assert.equal(dryRun.status, 200);
-        assert.deepEqual(calls[1], { reconcileOrphans: true, dryRun: true });
+        assert.deepEqual(calls[1], { reconcileOrphans: true, dryRun: true, classificationOnly: false });
     } finally {
         await new Promise((resolve) => app.server.close(resolve));
         fs.rmSync(dataDir, { recursive: true, force: true });
@@ -398,7 +457,7 @@ test("media lifecycle deletion stays locked until production enables it explicit
             body: "{}",
         });
         assert.equal(inventory.status, 200);
-        assert.deepEqual(calls, [{ reconcileOrphans: true, dryRun: true }]);
+        assert.deepEqual(calls, [{ reconcileOrphans: true, dryRun: true, classificationOnly: false }]);
 
         const deletion = await fetch(`${baseUrl}/api/v1/internal/media-lifecycle/run`, {
             method: "POST",
@@ -407,6 +466,14 @@ test("media lifecycle deletion stays locked until production enables it explicit
         });
         assert.equal(deletion.status, 409);
         assert.equal(calls.length, 1);
+
+        const classification = await fetch(`${baseUrl}/api/v1/internal/media-lifecycle/run`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ classification_only: true }),
+        });
+        assert.equal(classification.status, 200);
+        assert.deepEqual(calls[1], { reconcileOrphans: true, dryRun: false, classificationOnly: true });
     } finally {
         await new Promise((resolve) => app.server.close(resolve));
         fs.rmSync(dataDir, { recursive: true, force: true });

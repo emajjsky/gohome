@@ -72,3 +72,25 @@ Keep all five actions in the same prefix-scoped statement:
 
 Do not add a bare-bucket `GetBucket` statement, grant `cos:*`, enable public
 bucket access, or authorize unrelated prefixes.
+
+## Media lifecycle rollout
+
+Keep `GOHOME_MEDIA_LIFECYCLE_DELETE_ENABLED=0` until the production inventory
+has been reviewed. Retention classification and physical deletion are separate
+operations. The classification phase reads current PostgreSQL references and
+persists only retention metadata; expired assets and storage orphans remain
+untouched:
+
+```sh
+curl -X POST \
+  -H "Authorization: Bearer $GOHOME_OPS_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"classification_only":true}' \
+  http://127.0.0.1:8788/api/v1/internal/media-lifecycle/run
+```
+
+Follow it with an explicit dry-run and review asset, COS orphan, and local
+orphan counts. Do not enable deletion until current care-card images, published
+family memories, avatars, unresolved critical evidence, and upload intents are
+confirmed protected. Physical deletion must remain bounded and independently
+auditable.
