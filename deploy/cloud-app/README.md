@@ -26,11 +26,14 @@ sudo install-release.sh ARCHIVE EXPECTED_SHA256 RELEASE_ID gohome-app.service
 ```
 
 The installer verifies archive paths and checksum, runs `npm ci --omit=dev`,
-resolves every deployment input before entering the release directory, installs
-the systemd unit before switching traffic, atomically switches
-`/opt/gohome/current`, restarts the service, and checks `/health`. Any failure
-after the switch restores and restarts the previous target. At most three
-managed releases are retained.
+and applies checksum-protected PostgreSQL migrations as the `gohome` service
+account before switching traffic. Migrations must remain backward compatible
+with the previous application release because database changes are not rolled
+back with application files. The installer resolves every deployment input
+before entering the release directory, installs the systemd unit before the
+atomic `/opt/gohome/current` switch, restarts the service, and checks `/health`.
+Any failure after the switch restores and restarts the previous target. At most
+three managed releases are retained.
 
 The first migration can roll back to the existing `/opt/gohome/app` tree. Remove
 that legacy mutable tree only after the WebRTC TestFlight and box cutover pass.

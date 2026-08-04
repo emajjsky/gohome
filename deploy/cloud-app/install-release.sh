@@ -70,7 +70,13 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 tar -xzf "${archive}" --strip-components=1 -C "${staging_dir}" --no-same-owner --no-same-permissions
-for file in package.json package-lock.json local-app-server/server.js scripts/export-local-app-db.js; do
+for file in \
+    package.json \
+    package-lock.json \
+    local-app-server/server.js \
+    scripts/apply-postgres-migrations.js \
+    scripts/export-local-app-db.js
+do
     [ -f "${staging_dir}/${file}" ] || { echo "release is missing ${file}" >&2; exit 1; }
 done
 if find "${staging_dir}" -type f \( -name '._*' -o -name '*.backup-*' \) -print -quit | grep -q .; then
@@ -88,6 +94,14 @@ chmod 0750 "${staging_dir}"
 runuser -u gohome -- env npm_config_cache="${staging_dir}/.npm-cache" \
     npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 rm -rf -- "${staging_dir}/.npm-cache"
+runuser -u gohome -- sh -c '
+    set -a
+    . /etc/gohome/gohome.env
+    set +a
+    exec /usr/bin/node "$1" --migrations-dir "$2"
+' sh \
+    "${staging_dir}/scripts/apply-postgres-migrations.js" \
+    "${staging_dir}/local-app-server/migrations"
 chown -R root:gohome "${staging_dir}"
 find "${staging_dir}" -type d -exec chmod 0750 {} +
 find "${staging_dir}" -type f -exec chmod 0640 {} +
