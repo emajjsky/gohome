@@ -107,3 +107,38 @@ GOHOME_MEDIA_LIFECYCLE_MAX_ORPHAN_BYTES_PER_RUN=67108864
 
 Review `selected_deletions`, `selected_deletion_bytes`, `limited_deletions`,
 and the corresponding COS/local orphan fields before changing these limits.
+
+Asset and orphan deletion state is committed before physical bytes are
+removed. `media_orphan_cleanup` stores only the provider, relative object key,
+size, observation times, status, attempt count, sanitized error, retry time and
+completion timestamps. It must never contain COS credentials, signed URLs or
+absolute host paths. Failed deletions retry with deterministic exponential
+backoff from one minute up to six hours. Objects that disappear or become
+tracked before retry are marked `resolved`.
+
+Every lifecycle invocation also writes a bounded `scheduler_runs` row with
+`job_type=media_lifecycle`. This is the durable run history used after process
+restart; `last_run` is not sourced only from process memory. A dry-run or
+`classification_only` invocation records its count summary but does not change
+orphan retry rows and never removes storage bytes.
+
+After deploying a new migration, verify the durable structures before enabling
+deletion:
+
+```sql
+select version, applied_at
+from schema_migrations
+order by applied_at desc
+limit 3;
+
+select status, storage_provider, count(*)
+from media_orphan_cleanup
+group by status, storage_provider
+order by storage_provider, status;
+
+select status, started_at, result
+from scheduler_runs
+where job_type = 'media_lifecycle'
+order by started_at desc
+limit 5;
+```

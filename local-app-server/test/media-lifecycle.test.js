@@ -214,7 +214,8 @@ test("media lifecycle dry run reports due assets and orphans without changing st
     assert.equal(result.local_orphans.deleted, 0);
     assert.equal(expiredAsset.retention_class, undefined);
     assert.equal(expiredAsset.retention_status, undefined);
-    assert.equal(saves, 0);
+    assert.equal(saves, 1);
+    assert.equal(manager.status().last_run.dry_run, true);
     assert.deepEqual(deletedKeys, []);
     assert.equal(fs.existsSync(localPath), true);
     fs.rmSync(root, { recursive: true, force: true });
@@ -258,7 +259,7 @@ test("classification-only mode persists retention state without deleting assets 
     assert.equal(result.local_orphans.deleted, 0);
     assert.equal(expiredAsset.retention_class, "transient_upload");
     assert.equal(expiredAsset.retention_status, "active");
-    assert.equal(saves, 1);
+    assert.equal(saves, 2);
     assert.equal(fs.existsSync(localPath), true);
     assert.equal(fs.existsSync(orphanPath), true);
     fs.rmSync(root, { recursive: true, force: true });
@@ -325,6 +326,203 @@ test("media lifecycle bounds physical deletion and processes the oldest data fir
     assert.equal(fs.existsSync(orphanPaths[0]), false);
     assert.equal(fs.existsSync(orphanPaths[1]), true);
     assert.equal(fs.existsSync(orphanPaths[2]), true);
+    fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("COS orphan failures persist retry state and wait for deterministic backoff", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-media-cos-retry-"));
+    const mediaDir = path.join(root, "media");
+    fs.mkdirSync(mediaDir, { recursive: true });
+    const now = { value: Date.parse("2026-08-04T08:00:00.000Z") };
+    const lastModified = iso(now.value, 4);
+    let deleteCalls = 0;
+    const store = {
+        db: {
+            assets: [],
+            events: [],
+            family_memory_media: [],
+            media_upload_intents: [],
+            media_orphans: [],
+            scheduler_runs: [],
+        },
+        async save() {},
+    };
+    const manager = new MediaLifecycleManager({
+        store,
+        mediaDir,
+        clock: () => now.value,
+        logger: { warn() {} },
+        cosStorage: {
+            enabled: true,
+            async listObjects({ prefix }) {
+                return prefix === "event-evidence/"
+                    ? [{ key: "event-evidence/retry.jpg", size: 40, last_modified: lastModified }]
+                    : [];
+            },
+            async deleteObject() {
+                deleteCalls += 1;
+                if (deleteCalls === 1) {
+                    const error = new Error("temporary service failure");
+                    error.code = "ServiceUnavailable";
+                    throw error;
+                }
+            },
+        },
+    });
+
+    const first = await manager.run();
+    const failed = store.db.media_orphans[0];
+    assert.equal(first.cos_orphans.failed, 1);
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.deletion_attempts, 1);
+    assert.equal(failed.next_deletion_at, new Date(now.value + 60_000).toISOString());
+
+    now.value += 30_000;
+    const deferred = await manager.run();
+    assert.equal(deferred.cos_orphans.deferred, 1);
+    assert.equal(deferred.cos_orphans.selected, 0);
+    assert.equal(deleteCalls, 1);
+
+    now.value += 31_000;
+    const retried = await manager.run();
+    assert.equal(retried.cos_orphans.deleted, 1);
+    assert.equal(store.db.media_orphans[0].status, "deleted");
+    assert.equal(store.db.media_orphans[0].deletion_attempts, 2);
+    assert.equal(deleteCalls, 2);
+    fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("local orphan failures retain only relative identity and sanitized errors", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-media-local-retry-"));
+    const mediaDir = path.join(root, "media");
+    const orphanPath = path.join(mediaDir, "event-evidence", "local.jpg");
+    fs.mkdirSync(path.dirname(orphanPath), { recursive: true });
+    fs.writeFileSync(orphanPath, "orphan");
+    const now = { value: Date.parse("2026-08-04T08:00:00.000Z") };
+    const oldTime = new Date(now.value - 4 * DAY_MS);
+    fs.utimesSync(orphanPath, oldTime, oldTime);
+    let deleteCalls = 0;
+    const manager = new MediaLifecycleManager({
+        mediaDir,
+        clock: () => now.value,
+        logger: { warn() {} },
+        store: {
+            db: {
+                assets: [],
+                events: [],
+                family_memory_media: [],
+                media_upload_intents: [],
+                media_orphans: [],
+                scheduler_runs: [],
+            },
+            async save() {},
+        },
+        cosStorage: { enabled: false },
+        async deleteLocalFile(filePath) {
+            deleteCalls += 1;
+            if (deleteCalls === 1) {
+                const error = new Error("permission denied at /Users/private/media/local.jpg");
+                error.code = "EACCES";
+                throw error;
+            }
+            await fs.promises.unlink(filePath);
+        },
+    });
+
+    const result = await manager.run();
+    const state = manager.store.db.media_orphans[0];
+    assert.equal(result.local_orphans.failed, 1);
+    assert.equal(state.storage_provider, "local");
+    assert.equal(state.storage_key, "event-evidence/local.jpg");
+    assert.equal(state.storage_key.includes(root), false);
+    assert.equal(state.deletion_error.includes("/Users"), false);
+    assert.equal(fs.existsSync(orphanPath), true);
+
+    now.value += 59_000;
+    const deferred = await manager.run();
+    assert.equal(deferred.local_orphans.deferred, 1);
+    assert.equal(deleteCalls, 1);
+
+    now.value += 1_000;
+    const retried = await manager.run();
+    assert.equal(retried.local_orphans.deleted, 1);
+    assert.equal(manager.store.db.media_orphans[0].status, "deleted");
+    assert.equal(deleteCalls, 2);
+    assert.equal(fs.existsSync(orphanPath), false);
+    fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("orphan state resolves when the physical object disappears before retry", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-media-orphan-resolved-"));
+    const mediaDir = path.join(root, "media");
+    fs.mkdirSync(mediaDir, { recursive: true });
+    const now = { value: Date.parse("2026-08-04T08:00:00.000Z") };
+    const store = {
+        db: {
+            assets: [],
+            events: [],
+            family_memory_media: [],
+            media_upload_intents: [],
+            media_orphans: [],
+            scheduler_runs: [],
+        },
+        async save() {},
+    };
+    let visible = true;
+    const manager = new MediaLifecycleManager({
+        store,
+        mediaDir,
+        clock: () => now.value,
+        logger: { warn() {} },
+        cosStorage: {
+            enabled: true,
+            async listObjects({ prefix }) {
+                return visible && prefix === "event-evidence/"
+                    ? [{ key: "event-evidence/missing.jpg", size: 10, last_modified: iso(now.value, 4) }]
+                    : [];
+            },
+            async deleteObject() {
+                const error = new Error("temporary failure");
+                error.code = "ServiceUnavailable";
+                throw error;
+            },
+        },
+    });
+
+    await manager.run();
+    visible = false;
+    now.value += 30_000;
+    const result = await manager.run();
+    assert.equal(result.cos_orphans.resolved, 1);
+    assert.equal(store.db.media_orphans[0].status, "resolved");
+    assert.equal(store.db.media_orphans[0].next_deletion_at, null);
+    fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("media lifecycle run summaries survive manager restart without changing dry-run orphan state", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-media-run-audit-"));
+    const mediaDir = path.join(root, "media");
+    fs.mkdirSync(mediaDir, { recursive: true });
+    const nowMs = Date.parse("2026-08-04T08:00:00.000Z");
+    const store = {
+        db: {
+            assets: [],
+            events: [],
+            family_memory_media: [],
+            media_upload_intents: [],
+            media_orphans: [],
+            scheduler_runs: [],
+        },
+        async save() {},
+    };
+    const firstManager = new MediaLifecycleManager({ store, mediaDir, clock: () => nowMs, cosStorage: { enabled: false } });
+    const result = await firstManager.run({ dryRun: true });
+    const secondManager = new MediaLifecycleManager({ store, mediaDir, clock: () => nowMs, cosStorage: { enabled: false } });
+
+    assert.equal(store.db.scheduler_runs.length, 1);
+    assert.equal(store.db.scheduler_runs[0].job_type, "media_lifecycle");
+    assert.deepEqual(store.db.media_orphans, []);
+    assert.deepEqual(secondManager.status().last_run, result);
     fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -544,7 +742,7 @@ test("media lifecycle deletion stays locked until production enables it explicit
     }
 });
 
-test("media lifecycle PostgreSQL migration exposes queryable retention state", () => {
+test("media lifecycle PostgreSQL migrations expose asset retention and orphan retry state", () => {
     const migration = fs.readFileSync(
         path.join(__dirname, "..", "migrations", "013_media_lifecycle.sql"),
         "utf8",
@@ -558,5 +756,22 @@ test("media lifecycle PostgreSQL migration exposes queryable retention state", (
         "deleted_at",
     ]) {
         assert.match(migration, new RegExp(`\\b${column}\\b`));
+    }
+    const orphanMigration = fs.readFileSync(
+        path.join(__dirname, "..", "migrations", "014_media_orphan_cleanup.sql"),
+        "utf8",
+    );
+    for (const column of [
+        "storage_provider",
+        "storage_key",
+        "first_seen_at",
+        "last_seen_at",
+        "deletion_attempts",
+        "deletion_error",
+        "next_deletion_at",
+        "deleted_at",
+        "resolved_at",
+    ]) {
+        assert.match(orphanMigration, new RegExp(`\\b${column}\\b`));
     }
 });

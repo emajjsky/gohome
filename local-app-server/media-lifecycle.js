@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
@@ -187,6 +188,37 @@ function retryAt(nowMs, attemptCount) {
     return new Date(nowMs + delaySeconds * 1000).toISOString();
 }
 
+function safeError(error) {
+    const code = String(error?.code || error?.name || "ERROR").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64) || "ERROR";
+    const message = String(error?.message || "deletion failed")
+        .replace(/https?:\/\/\S+/gi, "[url]")
+        .replace(/\b(password|passwd|secret|secret_key|secretid|secret_id|token|authorization)=\S+/gi, "$1=[redacted]")
+        .replace(/(?:\/[A-Za-z0-9._~:@%+,-]+){2,}/g, "[path]")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 900);
+    return `${code}: ${message || "deletion failed"}`.slice(0, 1000);
+}
+
+function normalizedOrphanKey(provider, value) {
+    const key = String(value || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
+    if (!key || key.split("/").includes("..")) {
+        throw new Error(`invalid ${provider} orphan storage key`);
+    }
+    return key;
+}
+
+function orphanIdentity(provider, key) {
+    return `${provider}\u0000${key}`;
+}
+
+function latestLifecycleResult(store) {
+    return [...(store?.db?.scheduler_runs || [])]
+        .filter((run) => String(run.job_type || "") === "media_lifecycle")
+        .sort((first, second) => timestamp(second.updated_at || second.finished_at || second.started_at)
+            - timestamp(first.updated_at || first.finished_at || first.started_at))[0]?.result || null;
+}
+
 function localAssetPath(mediaDir, asset) {
     const key = String(asset.relative_path || asset.storage_key || "").replace(/^[/\\]+/, "");
     if (!key) return null;
@@ -252,21 +284,32 @@ function reconciliationResult(scanned = 0) {
         selected_bytes: 0,
         limited: 0,
         oversized: 0,
+        deferred: 0,
+        resolved: 0,
         deleted: 0,
         failed: 0,
     };
 }
 
 class MediaLifecycleManager {
-    constructor({ store, cosStorage, mediaDir, clock = () => Date.now(), env = process.env, logger = console }) {
+    constructor({
+        store,
+        cosStorage,
+        mediaDir,
+        clock = () => Date.now(),
+        env = process.env,
+        logger = console,
+        deleteLocalFile = (filePath) => fs.promises.unlink(filePath),
+    }) {
         this.store = store;
         this.cosStorage = cosStorage;
         this.mediaDir = path.resolve(mediaDir);
         this.clock = clock;
         this.env = env;
         this.logger = logger;
+        this.deleteLocalFile = deleteLocalFile;
         this.running = false;
-        this.lastRun = null;
+        this.lastRun = latestLifecycleResult(store);
     }
 
     status() {
@@ -297,6 +340,49 @@ class MediaLifecycleManager {
         await this.save();
     }
 
+    async saveOrphans(orphans) {
+        if (!orphans.length) return;
+        if (typeof this.store.saveMediaLifecycleOrphans === "function") {
+            await this.store.saveMediaLifecycleOrphans(orphans);
+            return;
+        }
+        const rows = Array.isArray(this.store.db.media_orphans) ? this.store.db.media_orphans : [];
+        const index = new Map(rows.map((item) => [orphanIdentity(item.storage_provider, item.storage_key), item]));
+        for (const orphan of orphans) index.set(orphanIdentity(orphan.storage_provider, orphan.storage_key), orphan);
+        this.store.db.media_orphans = [...index.values()];
+        await this.save();
+    }
+
+    async saveRun(result, error = null) {
+        const now = new Date(Number(this.clock())).toISOString();
+        const run = {
+            id: crypto.randomUUID(),
+            family_id: null,
+            job_type: "media_lifecycle",
+            status: result.ok ? "succeeded" : "failed",
+            scope: {
+                dry_run: Boolean(result.dry_run),
+                classification_only: Boolean(result.classification_only),
+            },
+            result,
+            error_message: error ? safeError(error) : "",
+            started_at: result.started_at,
+            finished_at: result.finished_at || now,
+            created_at: result.started_at,
+            updated_at: now,
+        };
+        this.store.db.scheduler_runs = Array.isArray(this.store.db.scheduler_runs) ? this.store.db.scheduler_runs : [];
+        this.store.db.scheduler_runs.push(run);
+        this.store.db.scheduler_runs = this.store.db.scheduler_runs
+            .sort((first, second) => timestamp(first.updated_at || first.started_at) - timestamp(second.updated_at || second.started_at))
+            .slice(-500);
+        if (typeof this.store.saveSchedulerRun === "function") {
+            await this.store.saveSchedulerRun(run, { retention: 500 });
+            return;
+        }
+        await this.save();
+    }
+
     async deleteAssetObject(asset) {
         const provider = String(asset.storage_provider || "local").toLowerCase();
         if (provider === "cos") {
@@ -314,93 +400,207 @@ class MediaLifecycleManager {
         });
     }
 
-    async reconcileCosOrphans({ trackedKeys, nowMs, graceMs, limits, dryRun = false }) {
-        if (!this.cosStorage?.enabled || typeof this.cosStorage.listObjects !== "function") {
-            return reconciliationResult();
-        }
-        let scanned = 0;
-        const candidates = [];
-        for (const prefix of MANAGED_COS_PREFIXES) {
-            const objects = await this.cosStorage.listObjects({ prefix });
-            for (const object of objects) {
-                scanned += 1;
-                const key = String(object.key || "");
-                const modifiedAt = timestamp(object.last_modified);
-                if (!key || trackedKeys.has(key) || !modifiedAt || nowMs - modifiedAt < graceMs) continue;
-                candidates.push({ ...object, key, modifiedAt, size: Math.max(0, Number(object.size || 0)) });
+    async reconcileOrphans({ provider, inventory, trackedKeys, existing, nowMs, graceMs, limits, dryRun, remove }) {
+        const observed = inventory.map((item) => ({
+            ...item,
+            key: normalizedOrphanKey(provider, item.key),
+            size: Math.max(0, Number(item.size || 0)),
+            modifiedAt: Math.trunc(Number(item.modifiedAt || 0)),
+        }));
+        const candidates = observed
+            .filter((item) => !trackedKeys.has(item.key) && item.modifiedAt && nowMs - item.modifiedAt >= graceMs)
+            .sort((first, second) => first.modifiedAt - second.modifiedAt || first.key.localeCompare(second.key));
+        const candidateKeys = new Set(candidates.map((item) => item.key));
+        const states = new Map(
+            (existing || [])
+                .filter((item) => String(item.storage_provider || "") === provider)
+                .map((item) => [String(item.storage_key || ""), { ...item }]),
+        );
+        const changes = new Map();
+        let resolved = 0;
+
+        if (!dryRun) {
+            for (const state of states.values()) {
+                if (candidateKeys.has(state.storage_key) || ["deleted", "resolved"].includes(String(state.status || ""))) continue;
+                state.status = "resolved";
+                state.resolved_at = new Date(nowMs).toISOString();
+                state.next_deletion_at = null;
+                state.deletion_error = "";
+                state.updated_at = new Date(nowMs).toISOString();
+                changes.set(orphanIdentity(provider, state.storage_key), state);
+                resolved += 1;
             }
         }
-        candidates.sort((first, second) => first.modifiedAt - second.modifiedAt || first.key.localeCompare(second.key));
-        const selection = boundedSelection(candidates, {
+
+        const due = [];
+        let deferred = 0;
+        for (const item of candidates) {
+            const previous = states.get(item.key);
+            const sourceModifiedAt = new Date(item.modifiedAt).toISOString();
+            const replaced = previous && timestamp(previous.source_modified_at) !== item.modifiedAt;
+            const reset = !previous || replaced || ["deleted", "resolved"].includes(String(previous.status || ""));
+            const state = reset ? {
+                storage_provider: provider,
+                storage_key: item.key,
+                size_bytes: item.size,
+                source_modified_at: sourceModifiedAt,
+                first_seen_at: new Date(nowMs).toISOString(),
+                last_seen_at: new Date(nowMs).toISOString(),
+                status: "pending",
+                deletion_attempts: 0,
+                deletion_error: "",
+                next_deletion_at: null,
+                deleted_at: null,
+                resolved_at: null,
+                created_at: new Date(nowMs).toISOString(),
+                updated_at: new Date(nowMs).toISOString(),
+            } : {
+                ...previous,
+                size_bytes: item.size,
+                source_modified_at: sourceModifiedAt,
+                last_seen_at: new Date(nowMs).toISOString(),
+                resolved_at: null,
+                updated_at: new Date(nowMs).toISOString(),
+            };
+            if (String(state.status || "") === "deleting") {
+                state.status = "failed";
+                state.deletion_error = "INTERRUPTED: previous deletion did not finish";
+                state.next_deletion_at = null;
+            }
+            if (!dryRun) changes.set(orphanIdentity(provider, item.key), state);
+            const nextRetryMs = timestamp(state.next_deletion_at);
+            if (nextRetryMs && nextRetryMs > nowMs) {
+                deferred += 1;
+                continue;
+            }
+            due.push({ item, state });
+        }
+
+        const selection = boundedSelection(due, {
             maxCount: limits.orphan_count,
             maxBytes: limits.orphan_bytes,
-            sizeOf: (object) => object.size,
+            sizeOf: ({ item }) => item.size,
         });
+        if (dryRun) {
+            return {
+                scanned: observed.length,
+                planned: candidates.length,
+                planned_bytes: candidates.reduce((total, item) => total + item.size, 0),
+                selected: selection.selected.length,
+                selected_bytes: selection.selectedBytes,
+                limited: due.length - selection.selected.length,
+                oversized: selection.oversized,
+                deferred,
+                resolved: 0,
+                deleted: 0,
+                failed: 0,
+            };
+        }
+
+        await this.saveOrphans([...changes.values()]);
+        const deleting = selection.selected.map(({ state }) => {
+            state.status = "deleting";
+            state.deletion_attempts = Number(state.deletion_attempts || 0) + 1;
+            state.deletion_error = "";
+            state.next_deletion_at = null;
+            state.updated_at = new Date(nowMs).toISOString();
+            return state;
+        });
+        await this.saveOrphans(deleting);
+
         let deleted = 0;
         let failed = 0;
-        if (!dryRun) {
-            for (const object of selection.selected) {
-                try {
-                    await this.cosStorage.deleteObject({ key: object.key });
-                    deleted += 1;
-                } catch (error) {
-                    failed += 1;
-                    this.logger.warn?.(`COS orphan cleanup failed for ${object.key}: ${error.code || error.message}`);
-                }
+        const completed = [];
+        for (const { item, state } of selection.selected) {
+            try {
+                await remove(item);
+                state.status = "deleted";
+                state.deleted_at = new Date(nowMs).toISOString();
+                state.deletion_error = "";
+                state.next_deletion_at = null;
+                deleted += 1;
+            } catch (error) {
+                state.status = "failed";
+                state.deletion_error = safeError(error);
+                state.next_deletion_at = retryAt(nowMs, state.deletion_attempts);
+                failed += 1;
+                this.logger.warn?.(`${provider} orphan cleanup failed for ${item.key}: ${state.deletion_error}`);
             }
+            state.updated_at = new Date(nowMs).toISOString();
+            completed.push(state);
         }
+        await this.saveOrphans(completed);
         return {
-            scanned,
+            scanned: observed.length,
             planned: candidates.length,
-            planned_bytes: candidates.reduce((total, object) => total + object.size, 0),
+            planned_bytes: candidates.reduce((total, item) => total + item.size, 0),
             selected: selection.selected.length,
             selected_bytes: selection.selectedBytes,
-            limited: candidates.length - selection.selected.length,
+            limited: due.length - selection.selected.length,
             oversized: selection.oversized,
+            deferred,
+            resolved,
             deleted,
             failed,
         };
     }
 
-    async reconcileLocalOrphans({ trackedKeys, nowMs, graceMs, limits, dryRun = false }) {
-        const files = await listLocalFiles(this.mediaDir);
-        const candidates = files
-            .filter((file) => !trackedKeys.has(file.key) && nowMs - file.last_modified_ms >= graceMs)
-            .sort((first, second) => first.last_modified_ms - second.last_modified_ms || first.key.localeCompare(second.key));
-        const selection = boundedSelection(candidates, {
-            maxCount: limits.orphan_count,
-            maxBytes: limits.orphan_bytes,
-            sizeOf: (file) => file.size,
-        });
-        let deleted = 0;
-        let failed = 0;
-        if (!dryRun) {
-            for (const file of selection.selected) {
-                try {
-                    await fs.promises.unlink(file.path);
-                    deleted += 1;
-                } catch (error) {
-                    failed += 1;
-                    this.logger.warn?.(`Local media orphan cleanup failed for ${file.key}: ${error.message}`);
-                }
+    async reconcileCosOrphans({ trackedKeys, existing, nowMs, graceMs, limits, dryRun = false }) {
+        if (!this.cosStorage?.enabled || typeof this.cosStorage.listObjects !== "function") {
+            return reconciliationResult();
+        }
+        const inventory = [];
+        for (const prefix of MANAGED_COS_PREFIXES) {
+            const objects = await this.cosStorage.listObjects({ prefix });
+            for (const object of objects) {
+                inventory.push({
+                    key: object.key,
+                    size: object.size,
+                    modifiedAt: timestamp(object.last_modified),
+                });
             }
         }
-        return {
-            scanned: files.length,
-            planned: candidates.length,
-            planned_bytes: candidates.reduce((total, file) => total + file.size, 0),
-            selected: selection.selected.length,
-            selected_bytes: selection.selectedBytes,
-            limited: candidates.length - selection.selected.length,
-            oversized: selection.oversized,
-            deleted,
-            failed,
-        };
+        return this.reconcileOrphans({
+            provider: "cos",
+            inventory,
+            trackedKeys,
+            existing,
+            nowMs,
+            graceMs,
+            limits,
+            dryRun,
+            remove: (object) => this.cosStorage.deleteObject({ key: object.key }),
+        });
+    }
+
+    async reconcileLocalOrphans({ trackedKeys, existing, nowMs, graceMs, limits, dryRun = false }) {
+        const files = await listLocalFiles(this.mediaDir);
+        return this.reconcileOrphans({
+            provider: "local",
+            inventory: files.map((file) => ({
+                key: file.key,
+                size: file.size,
+                modifiedAt: file.last_modified_ms,
+                path: file.path,
+            })),
+            trackedKeys,
+            existing,
+            nowMs,
+            graceMs,
+            limits,
+            dryRun,
+            remove: async (file) => {
+                await this.deleteLocalFile(file.path).catch((error) => {
+                    if (error.code !== "ENOENT") throw error;
+                });
+            },
+        });
     }
 
     async run({ reconcileOrphans = true, dryRun = false, classificationOnly = false } = {}) {
         if (this.running) return { ok: false, running: true, reason: "already_running" };
         this.running = true;
+        let persistingRun = false;
         const nowMs = Number(this.clock());
         const policies = retentionPolicies(this.env);
         const limits = lifecycleLimits(this.env);
@@ -510,7 +710,7 @@ class MediaLifecycleManager {
                         result.deleted += 1;
                     } catch (error) {
                         asset.retention_status = "failed";
-                        asset.deletion_error = String(error.message || error).slice(0, 1000);
+                        asset.deletion_error = safeError(error);
                         asset.next_deletion_at = retryAt(nowMs, attempts);
                         asset.updated_at = new Date(nowMs).toISOString();
                         result.failed += 1;
@@ -539,6 +739,7 @@ class MediaLifecycleManager {
                 const graceMs = positiveDays(this.env.GOHOME_COS_ORPHAN_GRACE_DAYS, 2) * DAY_MS;
                 result.cos_orphans = await this.reconcileCosOrphans({
                     trackedKeys: cosTrackedKeys,
+                    existing: db.media_orphans || [],
                     nowMs,
                     graceMs,
                     limits,
@@ -546,6 +747,7 @@ class MediaLifecycleManager {
                 });
                 result.local_orphans = await this.reconcileLocalOrphans({
                     trackedKeys: localTrackedKeys,
+                    existing: db.media_orphans || [],
                     nowMs,
                     graceMs,
                     limits,
@@ -557,7 +759,20 @@ class MediaLifecycleManager {
                 && result.cos_orphans.failed === 0
                 && result.local_orphans.failed === 0;
             this.lastRun = result;
+            persistingRun = true;
+            await this.saveRun(result);
+            persistingRun = false;
             return result;
+        } catch (error) {
+            result.ok = false;
+            result.finished_at = result.finished_at || new Date(Number(this.clock())).toISOString();
+            this.lastRun = result;
+            if (!persistingRun) {
+                persistingRun = true;
+                await this.saveRun(result, error);
+                persistingRun = false;
+            }
+            throw error;
         } finally {
             this.running = false;
         }

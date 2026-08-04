@@ -123,6 +123,7 @@ test('media lifecycle reads fresh PostgreSQL references and persists retention r
     if (/from care_cards/i.test(text)) return { rows: [{ id: 'card-1', image_url: 'care-cards/card.webp' }] };
     if (/from users/i.test(text)) return { rows: [{ id: 'user-1', metadata: { avatar_asset_id: 'asset-1' } }] };
     if (/from media_upload_intents/i.test(text)) return { rows: [] };
+    if (/from media_orphan_cleanup/i.test(text)) return { rows: [] };
     throw new Error(`unexpected inventory query: ${text}`);
   };
   const persisted = emptyTables();
@@ -134,7 +135,7 @@ test('media lifecycle reads fresh PostgreSQL references and persists retention r
   assert.equal(inventory.assets[0].purpose, 'family_memory');
   assert.equal(inventory.assets[0].size, 42);
   assert.equal(inventory.family_memory_media[0].asset_id, 'asset-1');
-  assert.equal(inventoryQueries.length, 6);
+  assert.equal(inventoryQueries.length, 7);
 
   await store.saveMediaLifecycleAssets([{
     id: 'asset-1',
@@ -156,6 +157,27 @@ test('media lifecycle reads fresh PostgreSQL references and persists retention r
   assert.equal(pool.queries.some((query) => /^insert into/i.test(query.text.trim())), false);
   assert.equal(JSON.parse(update.values[0])[0].retention_class, 'family_memory');
   assert.equal(store.db.assets[0].retention_reason, 'user_managed');
+
+  await store.saveMediaLifecycleOrphans([{
+    storage_provider: 'cos',
+    storage_key: 'event-evidence/orphan.jpg',
+    size_bytes: 64,
+    source_modified_at: '2026-08-01T00:00:00.000Z',
+    first_seen_at: '2026-08-04T08:00:00.000Z',
+    last_seen_at: '2026-08-04T08:00:00.000Z',
+    status: 'failed',
+    deletion_attempts: 1,
+    deletion_error: 'ServiceUnavailable: retry',
+    next_deletion_at: '2026-08-04T08:01:00.000Z',
+    created_at: '2026-08-04T08:00:00.000Z',
+    updated_at: '2026-08-04T08:00:00.000Z',
+  }]);
+
+  const orphanUpsert = pool.queries.find((query) => /insert into media_orphan_cleanup/i.test(query.text));
+  assert.ok(orphanUpsert);
+  assert.match(orphanUpsert.text, /on conflict \(storage_provider, storage_key\)/i);
+  assert.equal(JSON.parse(orphanUpsert.values[0])[0].storage_key, 'event-evidence/orphan.jpg');
+  assert.equal(store.db.media_orphans[0].status, 'failed');
 });
 
 test('postgres date values retain their Shanghai calendar day after hydration', () => {

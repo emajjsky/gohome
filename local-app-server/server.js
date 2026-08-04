@@ -387,6 +387,7 @@ function createDefaultDb() {
         cameras: {},
         assets: [],
         media_upload_intents: [],
+        media_orphans: [],
         events: [],
         heartbeats: [],
         rules: defaultRules(timestamp),
@@ -519,6 +520,7 @@ function normalizeDb(db) {
     db.cameras = db.cameras && typeof db.cameras === "object" ? db.cameras : {};
     db.assets = Array.isArray(db.assets) ? db.assets : [];
     db.media_upload_intents = Array.isArray(db.media_upload_intents) ? db.media_upload_intents : [];
+    db.media_orphans = Array.isArray(db.media_orphans) ? db.media_orphans : [];
     db.events = Array.isArray(db.events) ? db.events : [];
     db.heartbeats = Array.isArray(db.heartbeats) ? db.heartbeats : [];
     db.rules = normalizeRules(db.rules || defaults.rules, defaults.rules);

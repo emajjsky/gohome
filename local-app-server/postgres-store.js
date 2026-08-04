@@ -724,6 +724,44 @@ function mediaLifecyclePersistenceRow(asset) {
     };
 }
 
+function mediaLifecycleOrphan(row) {
+    return {
+        storage_provider: String(row.storage_provider || ""),
+        storage_key: String(row.storage_key || ""),
+        size_bytes: Math.max(0, Number(row.size_bytes || 0)),
+        source_modified_at: iso(row.source_modified_at),
+        first_seen_at: iso(row.first_seen_at),
+        last_seen_at: iso(row.last_seen_at),
+        status: String(row.status || "pending"),
+        deletion_attempts: Math.max(0, Number(row.deletion_attempts || 0)),
+        deletion_error: String(row.deletion_error || ""),
+        next_deletion_at: iso(row.next_deletion_at),
+        deleted_at: iso(row.deleted_at),
+        resolved_at: iso(row.resolved_at),
+        created_at: iso(row.created_at),
+        updated_at: iso(row.updated_at, iso(row.created_at)),
+    };
+}
+
+function mediaLifecycleOrphanPersistenceRow(orphan) {
+    return {
+        storage_provider: String(orphan.storage_provider || ""),
+        storage_key: String(orphan.storage_key || ""),
+        size_bytes: Math.max(0, Number(orphan.size_bytes || 0)),
+        source_modified_at: iso(orphan.source_modified_at),
+        first_seen_at: iso(orphan.first_seen_at),
+        last_seen_at: iso(orphan.last_seen_at),
+        status: String(orphan.status || "pending"),
+        deletion_attempts: Math.max(0, Number(orphan.deletion_attempts || 0)),
+        deletion_error: String(orphan.deletion_error || "").slice(0, 1000),
+        next_deletion_at: iso(orphan.next_deletion_at),
+        deleted_at: iso(orphan.deleted_at),
+        resolved_at: iso(orphan.resolved_at),
+        created_at: iso(orphan.created_at, new Date().toISOString()),
+        updated_at: iso(orphan.updated_at, new Date().toISOString()),
+    };
+}
+
 function rowsByPrimaryKey(table, rows) {
     const primaryKey = PRIMARY_KEYS[table];
     if (!primaryKey) throw new Error(`unsupported postgres table: ${table}`);
@@ -840,13 +878,14 @@ class PostgresStore {
     }
 
     async mediaLifecycleInventory() {
-        const [assets, events, memoryMedia, careCards, users, uploadIntents] = await Promise.all([
+        const [assets, events, memoryMedia, careCards, users, uploadIntents, orphans] = await Promise.all([
             this.pool.query("select * from media_assets"),
             this.pool.query("select * from events"),
             this.pool.query("select memory_id, asset_id from family_memory_media"),
             this.pool.query("select id, image_url from care_cards"),
             this.pool.query("select id, metadata from users"),
             this.pool.query("select * from media_upload_intents"),
+            this.pool.query("select * from media_orphan_cleanup"),
         ]);
         return {
             assets: assets.rows.map(mediaLifecycleAsset),
@@ -855,6 +894,7 @@ class PostgresStore {
             care_cards: careCards.rows,
             users: users.rows,
             media_upload_intents: uploadIntents.rows,
+            media_orphans: orphans.rows.map(mediaLifecycleOrphan),
         };
     }
 
@@ -908,6 +948,99 @@ class PostgresStore {
                         }
                     }
                     this.persistedTables.media_assets = [...persisted.values()];
+                    this.last_save_error = "";
+                } catch (error) {
+                    await client.query("rollback");
+                    this.last_save_error = error.message || String(error);
+                    throw error;
+                } finally {
+                    client.release();
+                }
+            });
+        return this.pendingSave;
+    }
+
+    saveMediaLifecycleOrphans(orphans) {
+        const updates = (orphans || [])
+            .map(mediaLifecycleOrphanPersistenceRow)
+            .filter((orphan) => orphan.storage_provider && orphan.storage_key);
+        if (!updates.length) return this.pendingSave;
+        this.pendingSave = this.pendingSave
+            .catch(() => undefined)
+            .then(async () => {
+                const client = await this.pool.connect();
+                try {
+                    await client.query("begin");
+                    await client.query("select pg_advisory_xact_lock(hashtext('gohome-media-lifecycle'))");
+                    await client.query(
+                        `insert into media_orphan_cleanup (
+                            storage_provider,
+                            storage_key,
+                            size_bytes,
+                            source_modified_at,
+                            first_seen_at,
+                            last_seen_at,
+                            status,
+                            deletion_attempts,
+                            deletion_error,
+                            next_deletion_at,
+                            deleted_at,
+                            resolved_at,
+                            created_at,
+                            updated_at
+                        )
+                        select
+                            row.storage_provider,
+                            row.storage_key,
+                            row.size_bytes,
+                            row.source_modified_at,
+                            row.first_seen_at,
+                            row.last_seen_at,
+                            row.status,
+                            row.deletion_attempts,
+                            row.deletion_error,
+                            row.next_deletion_at,
+                            row.deleted_at,
+                            row.resolved_at,
+                            row.created_at,
+                            row.updated_at
+                        from jsonb_to_recordset($1::jsonb) as row(
+                            storage_provider text,
+                            storage_key text,
+                            size_bytes bigint,
+                            source_modified_at timestamptz,
+                            first_seen_at timestamptz,
+                            last_seen_at timestamptz,
+                            status text,
+                            deletion_attempts integer,
+                            deletion_error text,
+                            next_deletion_at timestamptz,
+                            deleted_at timestamptz,
+                            resolved_at timestamptz,
+                            created_at timestamptz,
+                            updated_at timestamptz
+                        )
+                        on conflict (storage_provider, storage_key) do update set
+                            size_bytes = excluded.size_bytes,
+                            source_modified_at = excluded.source_modified_at,
+                            first_seen_at = excluded.first_seen_at,
+                            last_seen_at = excluded.last_seen_at,
+                            status = excluded.status,
+                            deletion_attempts = excluded.deletion_attempts,
+                            deletion_error = excluded.deletion_error,
+                            next_deletion_at = excluded.next_deletion_at,
+                            deleted_at = excluded.deleted_at,
+                            resolved_at = excluded.resolved_at,
+                            updated_at = excluded.updated_at`,
+                        [JSON.stringify(updates)],
+                    );
+                    await client.query("commit");
+                    this.db.media_orphans = Array.isArray(this.db.media_orphans) ? this.db.media_orphans : [];
+                    const persisted = new Map(this.db.media_orphans.map((item) => (
+                        [`${item.storage_provider}:${item.storage_key}`, item]
+                    )));
+                    for (const update of updates) persisted.set(`${update.storage_provider}:${update.storage_key}`, update);
+                    this.db.media_orphans = [...persisted.values()];
                     this.last_save_error = "";
                 } catch (error) {
                     await client.query("rollback");
