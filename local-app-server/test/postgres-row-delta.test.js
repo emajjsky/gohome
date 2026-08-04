@@ -184,10 +184,12 @@ test('media lifecycle reads fresh PostgreSQL references and persists retention r
     source_modified_at: '2026-08-01T00:00:00.000Z',
     first_seen_at: '2026-08-04T08:00:00.000Z',
     last_seen_at: '2026-08-04T08:00:00.000Z',
-    status: 'failed',
-    deletion_attempts: 1,
-    deletion_error: 'ServiceUnavailable: retry',
-    next_deletion_at: '2026-08-04T08:01:00.000Z',
+    status: 'protected',
+    protection_reason: 'ownership_not_reconciled',
+    metadata: { audit: 'historical_media_reconciliation' },
+    deletion_attempts: 0,
+    deletion_error: '',
+    next_deletion_at: null,
     created_at: '2026-08-04T08:00:00.000Z',
     updated_at: '2026-08-04T08:00:00.000Z',
   }]);
@@ -195,8 +197,11 @@ test('media lifecycle reads fresh PostgreSQL references and persists retention r
   const orphanUpsert = pool.queries.find((query) => /insert into media_orphan_cleanup/i.test(query.text));
   assert.ok(orphanUpsert);
   assert.match(orphanUpsert.text, /on conflict \(storage_provider, storage_key\)/i);
-  assert.equal(JSON.parse(orphanUpsert.values[0])[0].storage_key, 'event-evidence/orphan.jpg');
-  assert.equal(store.db.media_orphans[0].status, 'failed');
+  const persistedOrphan = JSON.parse(orphanUpsert.values[0])[0];
+  assert.equal(persistedOrphan.storage_key, 'event-evidence/orphan.jpg');
+  assert.equal(persistedOrphan.protection_reason, 'ownership_not_reconciled');
+  assert.deepEqual(persistedOrphan.metadata, { audit: 'historical_media_reconciliation' });
+  assert.equal(store.db.media_orphans[0].status, 'protected');
 });
 
 test('postgres date values retain their Shanghai calendar day after hydration', () => {

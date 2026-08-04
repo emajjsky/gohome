@@ -10,7 +10,7 @@ const {
     withoutEventMediaPayload,
 } = require("../local-app-server/event-media");
 
-const CLOUD_SEED_SCHEMA_VERSION = "016_event_media_assets";
+const CLOUD_SEED_SCHEMA_VERSION = "017_protected_media_orphans";
 
 function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));

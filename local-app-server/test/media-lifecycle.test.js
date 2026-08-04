@@ -265,6 +265,58 @@ test("classification-only mode persists retention state without deleting assets 
     fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("protected orphan audit rows never enter the deletion selection", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-media-protected-orphan-"));
+    const mediaDir = path.join(root, "media");
+    const protectedPath = path.join(mediaDir, "unknown-owner.jpg");
+    fs.mkdirSync(mediaDir, { recursive: true });
+    fs.writeFileSync(protectedPath, "protected");
+    const nowMs = Date.parse("2026-08-04T08:00:00.000Z");
+    const oldTime = new Date(nowMs - 10 * DAY_MS);
+    fs.utimesSync(protectedPath, oldTime, oldTime);
+    const stat = fs.statSync(protectedPath);
+    const store = {
+        db: {
+            assets: [],
+            events: [],
+            family_memory_media: [],
+            media_upload_intents: [],
+            media_orphans: [{
+                storage_provider: "local",
+                storage_key: "unknown-owner.jpg",
+                size_bytes: stat.size,
+                source_modified_at: new Date(Math.trunc(stat.mtimeMs)).toISOString(),
+                first_seen_at: iso(nowMs, 5),
+                last_seen_at: iso(nowMs, 1),
+                status: "protected",
+                protection_reason: "ownership_not_reconciled",
+                metadata: { reviewed_by: "historical_media_reconciliation" },
+                deletion_attempts: 0,
+                created_at: iso(nowMs, 5),
+                updated_at: iso(nowMs, 1),
+            }],
+            scheduler_runs: [],
+        },
+        async save() {},
+    };
+    const manager = new MediaLifecycleManager({
+        store,
+        mediaDir,
+        clock: () => nowMs,
+        cosStorage: { enabled: false },
+    });
+
+    const result = await manager.run();
+
+    assert.equal(result.local_orphans.planned, 1);
+    assert.equal(result.local_orphans.protected, 1);
+    assert.equal(result.local_orphans.selected, 0);
+    assert.equal(result.local_orphans.deleted, 0);
+    assert.equal(store.db.media_orphans[0].status, "protected");
+    assert.equal(fs.existsSync(protectedPath), true);
+    fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("media lifecycle bounds physical deletion and processes the oldest data first", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-media-bounded-delete-"));
     const mediaDir = path.join(root, "media");
@@ -789,4 +841,11 @@ test("media lifecycle PostgreSQL migrations expose retention, orphan retry, and 
     assert.match(eventMediaMigration, /unique \(event_id, asset_id\)/);
     assert.match(eventMediaMigration, /where canonical/);
     assert.match(eventMediaMigration, /payload\s*-\s*'evidence_media_assets'/);
+    const protectedOrphanMigration = fs.readFileSync(
+        path.join(__dirname, "..", "migrations", "017_protected_media_orphans.sql"),
+        "utf8",
+    );
+    assert.match(protectedOrphanMigration, /status in \('pending', 'protected'/);
+    assert.match(protectedOrphanMigration, /protection_reason/);
+    assert.match(protectedOrphanMigration, /jsonb_typeof\(metadata\) = 'object'/);
 });

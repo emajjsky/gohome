@@ -289,6 +289,7 @@ function reconciliationResult(scanned = 0) {
         limited: 0,
         oversized: 0,
         deferred: 0,
+        protected: 0,
         resolved: 0,
         deleted: 0,
         failed: 0,
@@ -422,6 +423,7 @@ class MediaLifecycleManager {
         );
         const changes = new Map();
         let resolved = 0;
+        let protectedCount = 0;
 
         if (!dryRun) {
             for (const state of states.values()) {
@@ -472,6 +474,10 @@ class MediaLifecycleManager {
                 state.next_deletion_at = null;
             }
             if (!dryRun) changes.set(orphanIdentity(provider, item.key), state);
+            if (String(state.status || "") === "protected") {
+                protectedCount += 1;
+                continue;
+            }
             const nextRetryMs = timestamp(state.next_deletion_at);
             if (nextRetryMs && nextRetryMs > nowMs) {
                 deferred += 1;
@@ -495,6 +501,7 @@ class MediaLifecycleManager {
                 limited: due.length - selection.selected.length,
                 oversized: selection.oversized,
                 deferred,
+                protected: protectedCount,
                 resolved: 0,
                 deleted: 0,
                 failed: 0,
@@ -543,6 +550,7 @@ class MediaLifecycleManager {
             limited: due.length - selection.selected.length,
             oversized: selection.oversized,
             deferred,
+            protected: protectedCount,
             resolved,
             deleted,
             failed,
