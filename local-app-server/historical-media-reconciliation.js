@@ -33,6 +33,11 @@ function contentType(fileName) {
     return "image/jpeg";
 }
 
+function localCameraId(snapshotPath) {
+    const match = text(snapshotPath).replace(/\\/g, "/").match(/(?:^|\/)camera_([^/]+)(?:\/|$)/);
+    return match?.[1] || null;
+}
+
 function timestamp(value) {
     const parsed = Date.parse(value || "");
     return Number.isFinite(parsed) ? parsed : 0;
@@ -202,6 +207,7 @@ function buildHistoricalMediaPlan({ files, assets, relations, snapshots, orphanS
                     reconciliation_version: "historical-media-v1",
                     original_numeric_asset_id: row.legacy_asset_id,
                     evidence_frame_role: role,
+                    local_camera_id: localCameraId(row.snapshot_path),
                     captured_at: row.captured_at,
                     snapshot_id: row.snapshot_id,
                 },

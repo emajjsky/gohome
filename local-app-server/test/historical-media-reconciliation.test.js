@@ -83,6 +83,7 @@ test("historical reconciliation replaces collision relations and protects unknow
     assert.equal(plan.protected_orphans[0].protection_reason, "family_memory_derivative_not_original");
     assert.equal(plan.assets_to_create.every((asset) => asset.id.startsWith("asset-recovered-")), true);
     assert.equal(plan.assets_to_create.every((asset) => asset.metadata.checksum_sha256.length === 64), true);
+    assert.equal(plan.assets_to_create.every((asset) => asset.metadata.local_camera_id === "1"), true);
     const currentRelations = plan.relations_to_create.filter((relation) => relation.event_id === "event-1");
     assert.equal(currentRelations.filter((relation) => relation.canonical).length, 1);
     assert.equal(currentRelations.filter((relation) => relation.metadata.duplicate_of_asset_id).length, 1);
