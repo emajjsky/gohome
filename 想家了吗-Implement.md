@@ -12853,3 +12853,29 @@ P4 风险升频边界：
 - 中继生命周期改为先通知摄像头线程停止，由该线程在 `finally` 中关闭自己的发布器；旧线程 5 秒内未退出时禁止创建同路第二线程。摄像头签名覆盖源、账号、远端 ID、设备身份摘要、发布地址、FFmpeg、尺寸、FPS、码率和写超时，任何正式配置变化都触发完整重建。
 - 新专项回归覆盖 URL 安全、命令参数、最新帧替换、非连续图像、模式重启、异常进程退出、阻塞管道超时、凭据脱敏、校准暂停和无 JPEG 中继。完整边缘确定性回归 `58/58` 通过。
 - Pi 上 FFmpeg `7.1.5-0+deb13u1+rpt1` 已确认启用 `libx264` 与 GnuTLS。相同参数对真实节奏的 BGR 输入、奇数尺寸 padding 和 H.264 编码通过；RTSPS 输出命令完成参数解析并按预期进入连接阶段。生产 MediaMTX、鉴权和 iOS WHEP 尚未接通，因此本阶段代码不单独部署到盒子，不改变 Build 9 当前可用链路。
+
+## 190. 2026-08-04 云端媒体鉴权与 MediaMTX 部署边界
+
+### 权限模型
+
+- `MediaAccessService` 是云端唯一媒体权限实现。路径固定为 `live/{device_id}/{camera_id}`，两个标识都经过独立安全段校验，不接受斜杠、查询、空格或无界长字符。
+- RTSPS 发布仅接受 MediaMTX `protocol=rtsp / action=publish`。用户名必须等于路径中的设备 ID，密码与云端已签发设备令牌的 SHA-256 做常数时间比较；随后再核对活跃令牌、设备、家庭、摄像头和 enabled 状态。
+- WHEP 读取令牌使用 HMAC-SHA256，默认 120 秒、最长 300 秒，绑定随机会话 ID、动作、媒体路径、用户、家庭、设备、摄像头、隐私模式、签发时间和到期时间。WHEP URL 与 Bearer 令牌分开返回，令牌不进入 URL、nginx 访问日志或页面路由。
+- 会话签发自身不信任调用参数：签发前就验证家庭成员、摄像头归属、设备归属和当前隐私模式。MediaMTX 每次建连再做相同动态校验；成员撤销、摄像头停用/转移或隐私模式变化都会拒绝旧令牌。
+
+### 内部鉴权边界
+
+- `POST /internal/mediamtx/auth` 仅允许实际 socket 来源为本机回环，同时要求独立 `GOHOME_MEDIAMTX_AUTH_SHARED_SECRET`。共享密钥与媒体签名密钥、设备令牌彼此独立。
+- 成功只返回 `204` 空响应；拒绝使用 `400/401/403/409/503`。`/health` 只公开两项是否配置、传输类型、合成所有者、TTL 和无凭据 WHEP 基址，不返回任何密钥或令牌。
+
+### 最小生产媒体面
+
+- `deploy/cloud-media/mediamtx.yml` 固定目标 MediaMTX `v1.19.3`。RTSP 只使用 TLS + TCP + Basic，禁止新发布者覆盖现有发布者；只接受两个安全标识构成的 `live/.../...` 路径。
+- WebRTC WHEP HTTP、Control API 和 Metrics 均只监听回环。nginx 仅在主域名 `/media/` 去前缀代理 WHEP；ICE 媒体通过固定 `8189/udp+tcp`，Coturn 通过短时共享密钥凭据应对蜂窝网和受限 Wi-Fi。
+- RTMP、HLS、SRT、MoQ、录像和公网管理端口全部关闭。systemd 使用无登录账号、只读系统、无提权、独立临时目录和受限地址族；证书和真实密钥只放 `/etc/gohome/media`，不进仓库。
+
+### 验证与未完成边界
+
+- 鉴权专项 `3/3` 通过；完整 Node 回归 `104` 项中 `103` 通过、`1` 项因本机未配 PostgreSQL 集成地址跳过。JavaScript 语法、YAML 独立解析和 `git diff --check` 通过。
+- 当前网络无法下载官方 MediaMTX 发行包，因此没有将“二进制实际加载配置”标记为通过。生产机上还必须完成版本/校验和、TLS、防火墙、Coturn、nginx、匿名拒绝、真实盒子发布和强制 TURN 读取验收。
+- 现有播放会话还未调用 `MediaAccessService`，iOS 仍是 MJPEG。为避免中间态中断当前 TestFlight，这一批不部署云端、不部署盒子 H.264 发布器、不删除 MJPEG 旧正式路由。

@@ -1,0 +1,61 @@
+# GoHome production media plane. Target version: MediaMTX v1.19.3.
+logLevel: info
+logDestinations: [stdout]
+logStructured: true
+readTimeout: 10s
+writeTimeout: 10s
+writeQueueSize: 256
+udpMaxPayloadSize: 1200
+
+authMethod: http
+authHTTPAddress: ""
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+api: true
+apiAddress: 127.0.0.1:9997
+metrics: true
+metricsAddress: 127.0.0.1:9998
+pprof: false
+playback: false
+
+rtsp: true
+rtspTransports: [tcp]
+rtspEncryption: strict
+rtspsAddress: ":8322"
+rtspServerKey: /etc/gohome/media/tls/server.key
+rtspServerCert: /etc/gohome/media/tls/server.crt
+rtspAuthMethods: [basic]
+
+rtmp: false
+hls: false
+srt: false
+moq: false
+
+webrtc: true
+webrtcAddress: 127.0.0.1:8889
+webrtcEncryption: false
+webrtcAllowOrigins: []
+webrtcTrustedProxies: ["127.0.0.1/32", "::1/128"]
+webrtcLocalUDPAddress: ":8189"
+webrtcLocalTCPAddress: ":8189"
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: []
+webrtcICEServers2: []
+webrtcSTUNGatherTimeout: 5s
+webrtcHandshakeTimeout: 10s
+webrtcTrackGatherTimeout: 2s
+
+pathDefaults:
+  source: publisher
+  sourceOnDemand: false
+  maxReaders: 8
+  useAbsoluteTimestamp: false
+  record: false
+  overridePublisher: false
+
+paths:
+  "~^live/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$":
+    source: publisher

@@ -659,6 +659,21 @@ function createLocalAppServer(options = {}) {
         secret: options.authSecret || process.env.GOHOME_AUTH_SECRET || "",
         smsProvider: options.smsProvider || null,
     });
+    const { MediaAccessError, MediaAccessService, safeEqual: safeMediaSecretEqual } = require("./media-access");
+    const mediaAuthSharedSecret = String(
+        options.mediaAuthSharedSecret || process.env.GOHOME_MEDIAMTX_AUTH_SHARED_SECRET || ""
+    );
+    const mediaAccessService = options.mediaAccessService || new MediaAccessService({
+        secret: options.mediaAuthSecret || process.env.GOHOME_MEDIA_AUTH_SECRET || "",
+        whepBaseURL: options.mediaWhepBaseURL || process.env.GOHOME_MEDIA_WHEP_BASE_URL || "",
+        readTTLSeconds: options.mediaReadTTLSeconds || process.env.GOHOME_MEDIA_READ_TTL_SECONDS || 120,
+        resolveDeviceTokens: (deviceId) => store.db.device_tokens.filter((item) => (
+            String(item.device_id || "") === String(deviceId || "")
+        )),
+        resolveCamera: (cameraId) => store.db.cameras[String(cameraId)] || null,
+        resolvePrivacyMode: (familyId) => videoPrivacyForFamily(familyId).minimum_mode,
+        canUserAccessFamily: (userId, familyId) => userCanAccessFamily(userId, familyId),
+    });
     const { JsonNativeRepository, applyAccountDeletionToDb } = require("./native-api/repository");
     const { PostgresNativeRepository } = require("./native-api/postgres-repository");
     const { NativeViewService } = require("./native-api/view-service");
@@ -8654,6 +8669,34 @@ function createLocalAppServer(options = {}) {
         }
 
         try {
+            if (req.method === "POST" && pathname === "/internal/mediamtx/auth") {
+                if (normalizeRemoteAddress(req.socket.remoteAddress) !== "127.0.0.1") {
+                    writeError(res, 403, "media authentication is restricted to the local host");
+                    return;
+                }
+                if (mediaAuthSharedSecret.length < 32) {
+                    writeError(res, 503, "media authentication is not configured");
+                    return;
+                }
+                const providedSecret = String(url.searchParams.get("secret") || "");
+                if (!safeMediaSecretEqual(providedSecret, mediaAuthSharedSecret)) {
+                    writeError(res, 403, "media authentication caller is not allowed");
+                    return;
+                }
+                try {
+                    const body = await readBody(req, 32 * 1024);
+                    const payload = body.length ? JSON.parse(body.toString("utf8")) : {};
+                    mediaAccessService.authorize(payload);
+                    res.writeHead(204, { "Cache-Control": "no-store" });
+                    res.end();
+                } catch (error) {
+                    const statusCode = error instanceof MediaAccessError
+                        ? error.statusCode
+                        : (error instanceof SyntaxError ? 400 : 500);
+                    writeError(res, statusCode, error.message || "media authentication failed");
+                }
+                return;
+            }
             if (req.method === "POST" && pathname === "/api/v2/memory-media-upload-intents") {
                 await handleMemoryMediaUploadIntents(req, res, url);
                 return;
@@ -8734,6 +8777,10 @@ function createLocalAppServer(options = {}) {
                     events: store.db.events.length,
                     assets: store.db.assets.length,
                     pending_media_uploads: store.db.media_upload_intents.length,
+                    media_access: {
+                        ...mediaAccessService.status(),
+                        mediamtx_auth_configured: mediaAuthSharedSecret.length >= 32,
+                    },
                     stream_metrics: streamMetricsSnapshot(),
                     push_metrics: pushDeliveryMetrics(),
                     updated_at: store.db.updated_at,
@@ -10744,6 +10791,7 @@ function createLocalAppServer(options = {}) {
         nativeRepository,
         cleanupExpiredMemoryUploads,
         mediaLifecycleManager,
+        mediaAccessService,
         runMediaLifecycle: (options = {}) => mediaLifecycleManager.run(options),
         cleanupExpiredActivityIntervals: () => nativeRepository.cleanupExpiredActivityIntervals(),
         dispatchQueuedPushDeliveries,
