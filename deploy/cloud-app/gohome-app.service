@@ -1,0 +1,30 @@
+[Unit]
+Description=GoHome cloud API
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=gohome
+Group=gohome
+WorkingDirectory=/opt/gohome/current
+EnvironmentFile=/etc/gohome/gohome.env
+ExecStart=/usr/bin/node /opt/gohome/current/local-app-server/server.js
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=20s
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/gohome/app-server
+
+[Install]
+WantedBy=multi-user.target

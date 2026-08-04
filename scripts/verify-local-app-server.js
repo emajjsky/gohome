@@ -53,6 +53,17 @@ async function requestJson(baseUrl, pathName, options = {}) {
     return payload;
 }
 
+function deviceMediaUploadPath(parameters) {
+    const idempotencyKey = String(parameters.idempotency_key || "").trim();
+    assert.ok(idempotencyKey.length >= 8, "device media upload idempotency key is required");
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(parameters)) {
+        if (value === null || value === undefined || value === "") continue;
+        query.set(key, String(value));
+    }
+    return `/api/v1/device/media-assets/upload?${query.toString()}`;
+}
+
 function schemaColumns(sql, tableName) {
     const escapedTable = tableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const match = sql.match(new RegExp(`create table if not exists ${escapedTable}\\s*\\((.*?)\\);`, "is"));
@@ -177,6 +188,9 @@ async function main() {
         appToken: APP_TOKEN,
         authMode: "demo",
         demoOtp: "000000",
+        mediaAuthSecret: "verify-media-access-secret-0123456789abcdef0123456789abcdef",
+        mediaAuthSharedSecret: "verify-mediamtx-auth-secret-0123456789abcdef0123456789abcdef",
+        mediaWhepBaseURL: "https://media.verify.test/media",
     });
     const baseUrl = await listen(app.server);
 
@@ -688,7 +702,15 @@ async function main() {
 
         const validationMedia = await requestJson(
             baseUrl,
-            `/api/v1/device/media-assets/upload?camera_id=${camera.id}&local_camera_id=11&edge_event_id=validation-1&purpose=validation_evidence&snapshot_path=validation.jpg&content_type=image/jpeg`,
+            deviceMediaUploadPath({
+                camera_id: camera.id,
+                local_camera_id: 11,
+                edge_event_id: "validation-1",
+                purpose: "validation_evidence",
+                snapshot_path: "validation.jpg",
+                content_type: "image/jpeg",
+                idempotency_key: `validation-evidence:${camera.id}:validation-1`,
+            }),
             {
                 method: "POST",
                 body: Buffer.from("validation-frame"),
@@ -722,7 +744,14 @@ async function main() {
 
         await requestJson(
             baseUrl,
-            `/api/v1/device/media-assets/upload?camera_id=${camera.id}&local_camera_id=11&purpose=live_preview&snapshot_path=live-preview.jpg&content_type=image/jpeg`,
+            deviceMediaUploadPath({
+                camera_id: camera.id,
+                local_camera_id: 11,
+                purpose: "live_preview",
+                snapshot_path: "live-preview.jpg",
+                content_type: "image/jpeg",
+                idempotency_key: `live-preview:${camera.id}:11`,
+            }),
             {
                 method: "POST",
                 body: Buffer.from("live-preview-frame"),
@@ -840,7 +869,16 @@ async function main() {
         const imageBytes = Buffer.from("fake-jpeg-content");
         const media = await requestJson(
             baseUrl,
-            `/api/v1/device/media-assets/upload?file_name=test.jpg&snapshot_path=events/test.jpg&content_type=image/jpeg&edge_event_id=42&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence`,
+            deviceMediaUploadPath({
+                file_name: "test.jpg",
+                snapshot_path: "events/test.jpg",
+                content_type: "image/jpeg",
+                edge_event_id: 42,
+                camera_id: camera.id,
+                local_camera_id: 11,
+                purpose: "event_evidence",
+                idempotency_key: `event-evidence:${camera.id}:42:current`,
+            }),
             {
                 method: "POST",
                 body: imageBytes,
@@ -975,7 +1013,18 @@ async function main() {
             process.env.GOHOME_MULTIMODAL_MODEL = "mock-vision-model";
             const verificationMedia = await requestJson(
                 baseUrl,
-                `/api/v1/device/media-assets/upload?file_name=verification.jpg&snapshot_path=events/verification.jpg&content_type=image/jpeg&edge_event_id=43&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence&evidence_frame_role=current&captured_at=2026-07-05T10%3A00%3A03.000Z`,
+                deviceMediaUploadPath({
+                    file_name: "verification.jpg",
+                    snapshot_path: "events/verification.jpg",
+                    content_type: "image/jpeg",
+                    edge_event_id: 43,
+                    camera_id: camera.id,
+                    local_camera_id: 11,
+                    purpose: "event_evidence",
+                    evidence_frame_role: "current",
+                    captured_at: "2026-07-05T10:00:03.000Z",
+                    idempotency_key: `event-evidence:${camera.id}:43:current`,
+                }),
                 {
                     method: "POST",
                     body: Buffer.from("mock-verification-jpeg"),
@@ -984,7 +1033,18 @@ async function main() {
             );
             const verificationBeforeMedia = await requestJson(
                 baseUrl,
-                `/api/v1/device/media-assets/upload?file_name=verification-before.jpg&snapshot_path=events/verification-before.jpg&content_type=image/jpeg&edge_event_id=43&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence_keyframe&evidence_frame_role=before&captured_at=2026-07-05T10%3A00%3A01.000Z`,
+                deviceMediaUploadPath({
+                    file_name: "verification-before.jpg",
+                    snapshot_path: "events/verification-before.jpg",
+                    content_type: "image/jpeg",
+                    edge_event_id: 43,
+                    camera_id: camera.id,
+                    local_camera_id: 11,
+                    purpose: "event_evidence_keyframe",
+                    evidence_frame_role: "before",
+                    captured_at: "2026-07-05T10:00:01.000Z",
+                    idempotency_key: `event-evidence:${camera.id}:43:before`,
+                }),
                 {
                     method: "POST",
                     body: Buffer.from("mock-verification-before-jpeg"),
@@ -993,7 +1053,18 @@ async function main() {
             );
             const verificationTransitionMedia = await requestJson(
                 baseUrl,
-                `/api/v1/device/media-assets/upload?file_name=verification-transition.jpg&snapshot_path=events/verification-transition.jpg&content_type=image/jpeg&edge_event_id=43&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence_keyframe&evidence_frame_role=transition&captured_at=2026-07-05T10%3A00%3A02.000Z`,
+                deviceMediaUploadPath({
+                    file_name: "verification-transition.jpg",
+                    snapshot_path: "events/verification-transition.jpg",
+                    content_type: "image/jpeg",
+                    edge_event_id: 43,
+                    camera_id: camera.id,
+                    local_camera_id: 11,
+                    purpose: "event_evidence_keyframe",
+                    evidence_frame_role: "transition",
+                    captured_at: "2026-07-05T10:00:02.000Z",
+                    idempotency_key: `event-evidence:${camera.id}:43:transition`,
+                }),
                 {
                     method: "POST",
                     body: Buffer.from("mock-verification-transition-jpeg"),
@@ -1098,7 +1169,18 @@ async function main() {
             const createVerificationPolicyProbe = async ({ edgeEventId, summary, occurredAt }) => {
                 const media = await requestJson(
                     baseUrl,
-                    `/api/v1/device/media-assets/upload?file_name=${edgeEventId}.jpg&snapshot_path=events/${edgeEventId}.jpg&content_type=image/jpeg&edge_event_id=${edgeEventId}&camera_id=${camera.id}&local_camera_id=11&purpose=event_evidence&evidence_frame_role=current&captured_at=${encodeURIComponent(occurredAt)}`,
+                    deviceMediaUploadPath({
+                        file_name: `${edgeEventId}.jpg`,
+                        snapshot_path: `events/${edgeEventId}.jpg`,
+                        content_type: "image/jpeg",
+                        edge_event_id: edgeEventId,
+                        camera_id: camera.id,
+                        local_camera_id: 11,
+                        purpose: "event_evidence",
+                        evidence_frame_role: "current",
+                        captured_at: occurredAt,
+                        idempotency_key: `event-evidence:${camera.id}:${edgeEventId}:current`,
+                    }),
                     {
                         method: "POST",
                         body: Buffer.from(`mock-${edgeEventId}-jpeg`),
@@ -1876,12 +1958,9 @@ async function main() {
             assert.ok(careImageAsset);
             assert.equal(careImageAsset.content_type, "image/png");
             assert.equal(careImageAsset.size, mockImageBytes.length);
-            const imageSession = await requestJson(baseUrl, "/api/v1/video/sessions", {
-                method: "POST",
-                body: JSON.stringify({ resource_type: "snapshot", snapshot_path: imageCareCard.card.image_url }),
+            const careImageResponse = await fetch(`${baseUrl}/api/v1/video/assets/${careImageAsset.id}`, {
                 headers: { Authorization: `Bearer ${appSessionToken}` },
             });
-            const careImageResponse = await fetch(`${baseUrl}/api/v1/video/media/snapshots/${encodeURIComponent(imageCareCard.card.image_url)}?playback_ticket=${imageSession.ticket}`);
             assert.equal(careImageResponse.status, 200);
             assert.equal(careImageResponse.headers.get("content-type"), "image/png");
             assert.equal(await careImageResponse.text(), "mock-png-content");
@@ -1928,14 +2007,9 @@ async function main() {
             opsApp.server.close();
         }
 
-        const session = await requestJson(baseUrl, "/api/v1/video/sessions", {
-            method: "POST",
-            body: JSON.stringify({ resource_type: "snapshot", snapshot_path: "events/test.jpg" }),
+        const mediaResponse = await fetch(`${baseUrl}${media.asset.url}`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        assert.ok(session.ticket);
-
-        const mediaResponse = await fetch(`${baseUrl}/api/v1/video/media/snapshots/events/test.jpg?playback_ticket=${session.ticket}`);
         assert.equal(mediaResponse.status, 200);
         assert.equal(await mediaResponse.text(), "fake-jpeg-content");
 
@@ -1944,10 +2018,17 @@ async function main() {
             body: JSON.stringify({ resource_type: "stream", camera_id: camera.id }),
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        const streamResponse = await fetch(`${baseUrl}/api/v1/video/cameras/${camera.id}/stream.mjpg?playback_ticket=${streamSession.ticket}`);
-        assert.equal(streamResponse.status, 200);
-        assert.match(streamResponse.headers.get("content-type") || "", /multipart\/x-mixed-replace/);
-        streamResponse.body.cancel();
+        assert.equal(streamSession.display_transport, "whep-h264-v1");
+        assert.equal(streamSession.composition_owner, "edge");
+        assert.equal(streamSession.ticket, undefined);
+        assert.equal(streamSession.authorization.scheme, "Bearer");
+        assert.match(streamSession.authorization.token, /^m1\./);
+        assert.match(streamSession.whep_url, new RegExp(`/media/live/[^/]+/${camera.id}/whep$`));
+        assert.equal(streamSession.whep_url.includes(streamSession.authorization.token), false);
+        const removedMjpegResponse = await fetch(`${baseUrl}/api/v1/video/cameras/${camera.id}/stream.mjpg`, {
+            headers: { Authorization: `Bearer ${appSessionToken}` },
+        });
+        assert.equal(removedMjpegResponse.status, 404);
 
         const customizedRules = await requestJson(baseUrl, `/api/rules?family_id=${family.id}`, {
             method: "PUT",
@@ -1986,13 +2067,21 @@ async function main() {
         assert.ok(seededFamilyRules);
         assert.equal(seededFamilyRules.rule_type, "edge_rules");
         assert.equal(seededFamilyRules.config.activity_detection_enabled, false);
-        assert.equal(seedBundle.tables.events.length, 8);
-        const seededFallEvent = seedBundle.tables.events.find((event) => event.event_type === "fall_candidate");
+        assert.equal(seedBundle.tables.events.length, app.store.db.events.length);
+        assert.equal(
+            new Set(seedBundle.tables.events.map((event) => String(event.id))).size,
+            seedBundle.tables.events.length,
+        );
+        const seededFallEvent = seedBundle.tables.events.find((event) => String(event.id) === String(created.event.id));
         const seededStaleOfflineEvent = seedBundle.tables.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(seededFallEvent);
         assert.ok(seededStaleOfflineEvent);
         assert.equal(seededFallEvent.camera_id, String(camera.id));
-        assert.equal(seedBundle.tables.media_assets.length, 7);
+        assert.equal(seedBundle.tables.media_assets.length, app.store.db.assets.length);
+        assert.equal(
+            new Set(seedBundle.tables.media_assets.map((asset) => String(asset.id))).size,
+            seedBundle.tables.media_assets.length,
+        );
         const seededEventAsset = seedBundle.tables.media_assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(seededEventAsset.metadata.purpose, "event_evidence");
         assert.equal(seedBundle.tables.care_preferences.length, 1);
@@ -2030,14 +2119,16 @@ async function main() {
         assert.equal(restoredDb.elder_profiles[`${family.id}:elder_primary`].home_phone, "057100000000");
         assert.equal(Object.values(restoredDb.cameras).length, 2);
         assert.equal(String(restoredDb.cameras[String(claimFamilyCamera.id)].family_id), String(claimFamily.id));
-        assert.equal(restoredDb.events.length, 8);
-        const restoredFallEvent = restoredDb.events.find((event) => event.event_type === "fall_candidate");
+        assert.equal(restoredDb.events.length, seedBundle.tables.events.length);
+        assert.equal(new Set(restoredDb.events.map((event) => String(event.id))).size, restoredDb.events.length);
+        const restoredFallEvent = restoredDb.events.find((event) => String(event.id) === String(created.event.id));
         const restoredStaleOfflineEvent = restoredDb.events.find((event) => String(event.id) === String(staleOffline.event.id));
         assert.ok(restoredFallEvent);
         assert.ok(restoredStaleOfflineEvent);
         assert.equal(restoredFallEvent.summary, "疑似跌倒");
         assert.equal(String(restoredFallEvent.camera_id), String(camera.id));
-        assert.equal(restoredDb.assets.length, 7);
+        assert.equal(restoredDb.assets.length, seedBundle.tables.media_assets.length);
+        assert.equal(new Set(restoredDb.assets.map((asset) => String(asset.id))).size, restoredDb.assets.length);
         const restoredEventAsset = restoredDb.assets.find((asset) => asset.snapshot_path === "events/test.jpg");
         assert.equal(restoredEventAsset.purpose, "event_evidence");
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);

@@ -12917,3 +12917,12 @@ P4 风险升频边界：
 - `/etc/gohome` 原 `0750 root:gohome` 会阻止 `turnserver` 与 `mediamtx` 穿越到媒体配置，即使目标文件组权限正确也无法读取。仅把共享媒体目录设为 `0711` 又会阻断 MediaMTX 的运行时配置监听。最终生产目录契约为 `/etc/gohome 0751 root:gohome`、`/etc/gohome/media 0750 root:mediamtx`、`/etc/gohome/coturn 0750 root:turnserver`，三个职责各自只能列出和读取自己的配置。修正后 Coturn 稳定运行并监听 `10.0.12.4:3478/tcp`，进程命令仅为 `turnserver -c /etc/gohome/coturn/turnserver.conf`。
 - MediaMTX 生产实例已加载固定版本配置并稳定监听 `8322/tcp`、`8189/tcp+udp`，WHEP、API 与指标仅监听回环 `8889/9997/9998`。回环 API 与指标返回 200，匿名 WHEP 实际读取返回拒绝，匿名 RTSPS 发布无法建立；nginx `/media/` 代理配置检查通过。
 - 证书部署钩子真实执行后，证书与私钥内容哈希保持一致、权限保持 `root:mediamtx / 0640`，MediaMTX 重启成功。`certbot renew --dry-run --cert-name gohome.ai2shx.club` 完整通过。Mac 外网探测 `8322/8189/3478` 均超时，确认下一阻塞位于腾讯云安全组，而不是主机 UFW 或服务监听。
+
+## 193. 2026-08-04 云 API 不可变发布
+
+- 生产 `/opt/gohome/app` 是长期原地覆盖的旧目录，混入 Web、边缘、iOS、AppleDouble 和历史备份文件，并由普通登录用户可写；该结构不能继续承担正式 API 发布。
+- 新增云 API 发布构建器，只从已提交 Git 内容打包运行模块、数据库迁移、保留 Web 页面及其静态资源。构建阶段拒绝测试目录、iOS、边缘代码、研究资料、`node_modules`、AppleDouble 和备份文件。
+- 新增 root 安装器：先验证 SHA-256、单一安全归档根和必需入口，再以 `gohome` 身份执行 `npm ci --omit=dev --ignore-scripts`；发布目录最终为 `root:gohome` 只读，`/opt/gohome/current` 原子指向新版本。
+- systemd 只从 `/opt/gohome/current` 启动，启用严格文件系统和内核边界。重启后最多等待 30 秒检查 `/health`，失败时原子恢复前一目标；正式版本只保留最近三份。首次迁移暂时保留旧 `/opt/gohome/app` 作为唯一回滚源，完成 WebRTC TestFlight 与盒子切换后删除。
+- 生产模拟首次发现 `gohome` 历史全局 npm 缓存含 root 文件；安装器改用每个 staging 目录内的隔离缓存并在依赖完成后删除，不修改也不依赖共享缓存。Tailwind 仅用于 CSS 构建，已从生产依赖移入开发依赖，正式 `npm ci --omit=dev` 不再安装整套前端构建链。
+- 归档在真实云服务器以 `gohome` 用户完成生产依赖安装和全部运行 JS 语法检查；确认无测试、iOS、边缘、研究和 Tailwind 目录。发布总校验同时发现旧验证脚本未携带证据上传幂等键，已按正式接口合同为验证证据和保留 Web 快照分别增加稳定幂等身份，不降低服务端门禁。
