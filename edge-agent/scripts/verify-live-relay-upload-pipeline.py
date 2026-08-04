@@ -321,6 +321,16 @@ def verify_latest_frame_and_context_restart() -> None:
     assert status["process_starts"] == 1
     assert status["raw_input_bytes_written"] == base.nbytes * 2
     assert "bytes_written" not in status
+    active_process = factory.processes[0]
+    assert publisher._consume_progress_line(active_process, "frame=2")
+    assert publisher._consume_progress_line(active_process, "fps=14.92")
+    assert publisher._consume_progress_line(active_process, "stream_0_0_q=9.0")
+    assert publisher._consume_progress_line(active_process, "out_time=00:00:00.133333")
+    assert not publisher._consume_progress_line(active_process, "Packet corrupt")
+    progress_status = publisher.status()
+    assert progress_status["publish_ready"]
+    assert progress_status["encoded_frames_reported"] == 2
+    assert progress_status["stderr_tail"] == []
 
     publisher.submit(
         np.full((36, 64, 3), 21, dtype=np.uint8),

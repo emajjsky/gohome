@@ -29,6 +29,21 @@ class _FrameWriteFailed(H264PublisherError):
         self.frame_size = max(0, int(frame_size))
 
 
+_FFMPEG_PROGRESS_KEYS = {
+    "frame",
+    "fps",
+    "bitrate",
+    "total_size",
+    "out_time_us",
+    "out_time_ms",
+    "out_time",
+    "dup_frames",
+    "drop_frames",
+    "speed",
+    "progress",
+}
+
+
 def build_rtsps_publish_url(
     base_url: str,
     *,
@@ -608,7 +623,9 @@ class H264StreamPublisher:
 
     def _consume_progress_line(self, process: Any, line: str) -> bool:
         key, separator, value = str(line).partition("=")
-        if not separator or key not in {"frame", "progress"}:
+        key = key.strip()
+        is_stream_quality = key.startswith("stream_") and key.endswith("_q")
+        if not separator or (key not in _FFMPEG_PROGRESS_KEYS and not is_stream_quality):
             return False
         with self._state_lock:
             if self._process is not process:
