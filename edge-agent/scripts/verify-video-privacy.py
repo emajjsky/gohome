@@ -277,6 +277,26 @@ def main() -> int:
         assert mean_delta(blurred, occupied_a, PERSON_SLICE) > 18.0
         assert mean_delta(blurred, occupied_a, OUTSIDE_SLICE) < 8.0
 
+        blur_image_frame_id = "1-blur-image"
+        blur_image_monotonic = time.monotonic()
+        tracker.payload = metadata(
+            camera_id=1,
+            person=True,
+            frame_id=blur_image_frame_id,
+            source_key=source_a_g1,
+        )
+        tracker.payload["tracking"]["captured_monotonic"] = blur_image_monotonic
+        blurred_image = renderer.render_image(
+            1,
+            occupied_a,
+            "person_blur",
+            source_key=source_a_g1,
+            frame_id=blur_image_frame_id,
+            captured_monotonic=blur_image_monotonic,
+        )
+        assert np.array_equal(blurred_image[OUTSIDE_SLICE], occupied_a[OUTSIDE_SLICE])
+        assert mean_delta(blurred_image, occupied_a, PERSON_SLICE) > 18.0
+
         segmentation_calls_before_block = renderer.segmentation_backend.call_count
         assert_calibration_required(lambda: render(
             renderer,

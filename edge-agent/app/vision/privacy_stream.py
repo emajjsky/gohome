@@ -20,7 +20,7 @@ SKELETON_JOINT_BGR = (255, 255, 255)
 class PrivacyFrameRenderer:
     """Render privacy-safe relay frames without changing safety inference inputs."""
 
-    version = "privacy-frame-renderer-v21"
+    version = "privacy-frame-renderer-v22"
     maximum_pose_wait_seconds = 0.055
 
     def __init__(
@@ -1018,14 +1018,7 @@ class PrivacyFrameRenderer:
                 (time.perf_counter() - started_at) * 1000.0,
             )
             return output
-        blurred = self._strong_blur(cv2, frame)
-        feather = cv2.GaussianBlur(mask, (9, 9), 0).astype(np.float32) / 255.0
-        alpha = feather[..., None]
-        output = np.clip(
-            blurred.astype(np.float32) * alpha + frame.astype(np.float32) * (1.0 - alpha),
-            0,
-            255,
-        ).astype(np.uint8)
+        output = self._masked_privacy_blur(cv2, frame, mask)
         self._record_stage_latency(
             int(camera_id),
             "person_blur_composition",
@@ -1220,8 +1213,46 @@ class PrivacyFrameRenderer:
 
     def _strong_blur(self, cv2: Any, frame: Any) -> Any:
         height, width = frame.shape[:2]
-        kernel = max(21, min(81, ((min(width, height) // 5) | 1)))
-        return cv2.GaussianBlur(frame, (kernel, kernel), 0)
+        reduced_width = max(8, int(round(width / 10.0)))
+        reduced_height = max(8, int(round(height / 10.0)))
+        reduced = cv2.resize(
+            frame,
+            (reduced_width, reduced_height),
+            interpolation=cv2.INTER_AREA,
+        )
+        kernel = max(3, min(9, ((min(reduced_width, reduced_height) // 4) | 1)))
+        softened = cv2.GaussianBlur(reduced, (kernel, kernel), 0)
+        return cv2.resize(
+            softened,
+            (int(width), int(height)),
+            interpolation=cv2.INTER_LINEAR,
+        )
+
+    def _masked_privacy_blur(self, cv2: Any, frame: Any, mask: Any) -> Any:
+        points = cv2.findNonZero(mask)
+        if points is None:
+            return frame.copy()
+        x, y, width, height = cv2.boundingRect(points)
+        padding = max(6, int(round(max(width, height) * 0.04)))
+        x1 = max(0, x - padding)
+        y1 = max(0, y - padding)
+        x2 = min(int(frame.shape[1]), x + width + padding)
+        y2 = min(int(frame.shape[0]), y + height + padding)
+        source = frame[y1:y2, x1:x2]
+        local_mask = mask[y1:y2, x1:x2]
+        blurred = self._strong_blur(cv2, source)
+        feather = cv2.GaussianBlur(local_mask, (9, 9), 0).astype(np.uint16)
+        alpha = feather[..., None]
+        source_u16 = source.astype(np.uint16)
+        output = frame.copy()
+        output[y1:y2, x1:x2] = (
+            (
+                blurred.astype(np.uint16) * alpha
+                + source_u16 * (255 - alpha)
+                + 127
+            ) // 255
+        ).astype(np.uint8)
+        return output
 
     def _draw_head(
         self,
