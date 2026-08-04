@@ -580,7 +580,7 @@ function createLocalAppServer(options = {}) {
     const opsToken = String(options.opsToken || DEFAULT_OPS_TOKEN);
     const { createCosStorage } = require("./cos-storage");
     const cosStorage = options.cosStorage || createCosStorage();
-    const { MediaLifecycleManager } = require("./media-lifecycle");
+    const { COS_PREFIXES, MediaLifecycleManager } = require("./media-lifecycle");
     const mediaLifecycleManager = options.mediaLifecycleManager || new MediaLifecycleManager({
         store,
         cosStorage,
@@ -6761,7 +6761,7 @@ function createLocalAppServer(options = {}) {
         const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
         const familyId = issuedToken?.family_id || mappedCamera?.family_id || null;
         const contentType = url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg";
-        const storageKey = `edge-evidence/${familyId || "unbound"}/${relativePath}`;
+        const storageKey = `${COS_PREFIXES.eventEvidence}${familyId || "unbound"}/${relativePath}`;
         const useCos = Boolean(cosStorage.enabled);
         if (useCos) {
             await cosStorage.putObject({ key: storageKey, body: req, contentType, contentLength });

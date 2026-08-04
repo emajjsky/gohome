@@ -37,3 +37,11 @@ three managed releases are retained.
 
 The first migration can roll back to the existing `/opt/gohome/app` tree. Remove
 that legacy mutable tree only after the WebRTC TestFlight and box cutover pass.
+
+## COS permissions
+
+The cloud service identity has object `PutObject`, `GetObject`, `HeadObject`, and
+`DeleteObject` access only under `memory-media/*` and `event-evidence/*`. Media
+lifecycle inventory additionally requires bucket-level `GetBucket` on the
+single production bucket. Do not grant `cos:*`, public bucket access, or access
+to unrelated prefixes.

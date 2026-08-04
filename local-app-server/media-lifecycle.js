@@ -4,7 +4,11 @@ const fs = require("fs");
 const path = require("path");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const MANAGED_COS_PREFIXES = Object.freeze(["edge-evidence/", "memory-media/"]);
+const COS_PREFIXES = Object.freeze({
+    eventEvidence: "event-evidence/",
+    familyMemory: "memory-media/",
+});
+const MANAGED_COS_PREFIXES = Object.freeze(Object.values(COS_PREFIXES));
 
 function positiveDays(value, fallback) {
     const number = Number(value);
@@ -359,6 +363,7 @@ class MediaLifecycleManager {
 }
 
 module.exports = {
+    COS_PREFIXES,
     DAY_MS,
     MANAGED_COS_PREFIXES,
     MediaLifecycleManager,

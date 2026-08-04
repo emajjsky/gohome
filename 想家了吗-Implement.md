@@ -12233,7 +12233,7 @@ P4 风险升频边界：
 
 - 新增 `MediaLifecycleManager` 和迁移 `013_media_lifecycle.sql`。资产持久化 `retention_class / retention_status / retention_reason / retain_until / deletion_attempts / deletion_error / next_deletion_at / deleted_at`。
 - 权威引用来自家庭记忆和事件。家庭记忆、用户上传、显式保护资产及未解决严重事件不自动删除；默认保留期为严重事件 180 天、普通事件 90 天、验证证据 30 天、临时上传 7 天。
-- COS 使用分页 `GetBucket` 遍历，仅管理 `edge-evidence/` 和 `memory-media/`。上传意图计入已跟踪对象；本地媒体和 COS 分别构造 key 清单，避免同名路径跨存储后端误保护。孤儿默认等待 2 天后处理。
+- COS 使用分页 `GetBucket` 遍历，仅管理 `event-evidence/` 和 `memory-media/`。上传意图计入已跟踪对象；本地媒体和 COS 分别构造 key 清单，避免同名路径跨存储后端误保护。孤儿默认等待 2 天后处理。
 - 正式资产按“对象先删、墓碑后写”执行；失败保存错误、尝试次数和下次重试。受鉴权播放入口拒绝已删除墓碑，不再返回失效文件或签名地址。
 - `POST /api/v1/internal/media-lifecycle/run` 仅允许运维 token，支持 `reconcile_orphans` 和 `dry_run`。dry-run 不修改资产、不保存数据库、不删除 COS/本地文件，只返回待删资产与孤儿数量。盘点任务可默认运行，但真实删除由独立 `GOHOME_MEDIA_LIFECYCLE_DELETE_ENABLED=1` 解锁；未解锁时接口默认 dry-run，并对显式真实删除返回 409。
 - 原上传意图回收与正式资产/孤儿生命周期由同一个定时器调度；旧环境变量仅作为兼容输入，不存在第二个周期任务。

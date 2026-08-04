@@ -63,8 +63,8 @@ test('device event evidence is stored in COS and served through an authorized as
       body: JSON.stringify({ name: '证据家庭' }),
     });
     const familyID = Number(family.body.id);
-    const deviceID = 'edge-evidence-cos';
-    const deviceToken = 'edge-evidence-cos-token';
+    const deviceID = 'event-evidence-cos';
+    const deviceToken = 'event-evidence-cos-token';
     app.store.db.devices[deviceID] = { id: deviceID, device_id: deviceID, family_id: familyID, status: 'online' };
     app.store.db.device_tokens.push({
       id: 'device-evidence-token', token: deviceToken, device_id: deviceID,
@@ -83,7 +83,7 @@ test('device event evidence is stored in COS and served through an authorized as
     );
     assert.equal(uploaded.response.status, 200);
     assert.equal(uploaded.body.asset.storage_provider, 'cos');
-    assert.match(uploaded.body.asset.storage_key, new RegExp(`^edge-evidence/${familyID}/`));
+    assert.match(uploaded.body.asset.storage_key, new RegExp(`^event-evidence/${familyID}/`));
     assert.deepEqual(objects.get(uploaded.body.asset.storage_key).body, jpeg);
     assert.equal(fs.existsSync(path.join(dataDir, 'media', uploaded.body.asset.storage_key)), false);
 

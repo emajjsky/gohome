@@ -34,9 +34,9 @@ test("media lifecycle protects user media and unresolved alerts while deleting e
     fs.mkdirSync(mediaDir, { recursive: true });
     const now = { value: Date.parse("2026-08-02T08:00:00.000Z") };
     const deletedKeys = [];
-    const failures = new Set(["edge-evidence/fail-once.jpg"]);
+    const failures = new Set(["event-evidence/fail-once.jpg"]);
     const listed = [
-        { key: "edge-evidence/orphan.jpg", last_modified: iso(now.value, 4), size: 10 },
+        { key: "event-evidence/orphan.jpg", last_modified: iso(now.value, 4), size: 10 },
         { key: "memory-media/pending.jpg", last_modified: iso(now.value, 4), size: 10 },
     ];
     const cosStorage = {
@@ -54,13 +54,13 @@ test("media lifecycle protects user media and unresolved alerts while deleting e
             asset("memory", "memory-media/family/photo.jpg", iso(now.value, 400), {
                 purpose: "family_memory",
             }),
-            asset("open-critical", "edge-evidence/open-critical.jpg", iso(now.value, 400)),
-            asset("resolved-critical", "edge-evidence/resolved-critical.jpg", iso(now.value, 181)),
-            asset("normal-event", "edge-evidence/normal.jpg", iso(now.value, 91)),
-            asset("verification", "edge-evidence/verification.jpg", iso(now.value, 31), {
+            asset("open-critical", "event-evidence/open-critical.jpg", iso(now.value, 400)),
+            asset("resolved-critical", "event-evidence/resolved-critical.jpg", iso(now.value, 181)),
+            asset("normal-event", "event-evidence/normal.jpg", iso(now.value, 91)),
+            asset("verification", "event-evidence/verification.jpg", iso(now.value, 31), {
                 purpose: "validation_evidence",
             }),
-            asset("fail-once", "edge-evidence/fail-once.jpg", iso(now.value, 20), {
+            asset("fail-once", "event-evidence/fail-once.jpg", iso(now.value, 20), {
                 purpose: "transient_upload",
             }),
         ],
@@ -118,7 +118,7 @@ test("media lifecycle protects user media and unresolved alerts while deleting e
     assert.equal(first.cos_orphans.deleted, 1);
     assert.equal(first.local_orphans.deleted, 1);
     assert.equal(fs.existsSync(localOrphan), false);
-    assert.ok(deletedKeys.includes("edge-evidence/orphan.jpg"));
+    assert.ok(deletedKeys.includes("event-evidence/orphan.jpg"));
     assert.ok(!deletedKeys.includes("memory-media/pending.jpg"));
     assert.ok(!deletedKeys.includes("memory-media/family/photo.jpg"));
     assert.ok(saves >= 1);
@@ -128,7 +128,7 @@ test("media lifecycle protects user media and unresolved alerts while deleting e
     assert.equal(second.deleted, 1);
     assert.equal(second.failed, 0);
     assert.equal(db.assets.find((item) => item.id === "fail-once").retention_status, "deleted");
-    assert.ok(deletedKeys.includes("edge-evidence/fail-once.jpg"));
+    assert.ok(deletedKeys.includes("event-evidence/fail-once.jpg"));
 
     fs.rmSync(root, { recursive: true, force: true });
 });
@@ -136,7 +136,7 @@ test("media lifecycle protects user media and unresolved alerts while deleting e
 test("orphan reconciliation keeps COS and local ownership namespaces isolated", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-media-provider-ownership-"));
     const mediaDir = path.join(root, "media");
-    const sharedKey = "edge-evidence/shared.jpg";
+    const sharedKey = "event-evidence/shared.jpg";
     const localPath = path.join(mediaDir, sharedKey);
     fs.mkdirSync(path.dirname(localPath), { recursive: true });
     fs.writeFileSync(localPath, "local orphan");
@@ -181,7 +181,7 @@ test("media lifecycle dry run reports due assets and orphans without changing st
     const nowMs = Date.parse("2026-08-02T08:00:00.000Z");
     const oldTime = new Date(nowMs - 4 * DAY_MS);
     fs.utimesSync(localPath, oldTime, oldTime);
-    const expiredAsset = asset("expired", "edge-evidence/expired.jpg", iso(nowMs, 91));
+    const expiredAsset = asset("expired", "event-evidence/expired.jpg", iso(nowMs, 91));
     const deletedKeys = [];
     let saves = 0;
     const manager = new MediaLifecycleManager({
@@ -194,8 +194,8 @@ test("media lifecycle dry run reports due assets and orphans without changing st
         cosStorage: {
             enabled: true,
             async listObjects({ prefix }) {
-                return prefix === "edge-evidence/"
-                    ? [{ key: "edge-evidence/orphan.jpg", last_modified: iso(nowMs, 4) }]
+                return prefix === "event-evidence/"
+                    ? [{ key: "event-evidence/orphan.jpg", last_modified: iso(nowMs, 4) }]
                     : [];
             },
             async deleteObject({ key }) { deletedKeys.push(key); },
@@ -228,12 +228,12 @@ test("COS listing follows continuation markers until the complete inventory is r
                 return {
                     IsTruncated: "true",
                     NextMarker: "page-2",
-                    Contents: [{ Key: "edge-evidence/first.jpg", Size: "10", LastModified: "2026-08-01T00:00:00.000Z" }],
+                    Contents: [{ Key: "event-evidence/first.jpg", Size: "10", LastModified: "2026-08-01T00:00:00.000Z" }],
                 };
             }
             return {
                 IsTruncated: false,
-                Contents: [{ Key: "edge-evidence/second.jpg", Size: "20", LastModified: "2026-08-02T00:00:00.000Z" }],
+                Contents: [{ Key: "event-evidence/second.jpg", Size: "20", LastModified: "2026-08-02T00:00:00.000Z" }],
             };
         },
     };
@@ -244,14 +244,14 @@ test("COS listing follows continuation markers until the complete inventory is r
         client,
     });
 
-    const objects = await storage.listObjects({ prefix: "edge-evidence/" });
+    const objects = await storage.listObjects({ prefix: "event-evidence/" });
 
     assert.deepEqual(objects.map((item) => item.key), [
-        "edge-evidence/first.jpg",
-        "edge-evidence/second.jpg",
+        "event-evidence/first.jpg",
+        "event-evidence/second.jpg",
     ]);
     assert.deepEqual(requests.map((request) => request.Marker), ["", "page-2"]);
-    assert.ok(requests.every((request) => request.Prefix === "edge-evidence/" && request.MaxKeys === 1000));
+    assert.ok(requests.every((request) => request.Prefix === "event-evidence/" && request.MaxKeys === 1000));
 });
 
 function listen(server) {
