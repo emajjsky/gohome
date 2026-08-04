@@ -24,7 +24,8 @@ trap 'rm -f "${manifest}" "${temporary_archive}"' EXIT HUP INT TERM
         package.json \
         package-lock.json \
         scripts/apply-postgres-migrations.js \
-        scripts/export-local-app-db.js
+        scripts/export-local-app-db.js \
+        scripts/reconcile-historical-media.js
     git ls-files local-app-server | awk '
         /^local-app-server\/test\// { next }
         /\.(js|sql)$/ { print }

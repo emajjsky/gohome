@@ -799,5 +799,6 @@ module.exports = {
     buildAssetReferences,
     classifyAsset,
     lifecycleLimits,
+    listLocalFiles,
     retentionPolicies,
 };
