@@ -53,6 +53,57 @@ function eventAssetIds(event) {
     return ids;
 }
 
+function mediaReferenceCandidates(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return [];
+    const candidates = new Set([raw]);
+    try {
+        const parsed = new URL(raw, "https://gohome.invalid");
+        const pathname = decodeURIComponent(parsed.pathname || "").replace(/^\/+/, "");
+        if (pathname) candidates.add(pathname);
+        const mediaIndex = pathname.indexOf("media/");
+        if (mediaIndex >= 0) candidates.add(pathname.slice(mediaIndex + "media/".length));
+        const assetMatch = pathname.match(/(?:^|\/)assets\/([^/]+)$/);
+        if (assetMatch?.[1]) candidates.add(assetMatch[1]);
+    } catch (_error) {
+        candidates.add(raw.split(/[?#]/, 1)[0].replace(/^\/+/, ""));
+    }
+    return [...candidates].filter(Boolean);
+}
+
+function assetReferenceIndex(assets) {
+    const index = new Map();
+    for (const asset of assets || []) {
+        const id = String(asset?.id || "");
+        if (!id) continue;
+        const metadata = objectValue(asset.metadata);
+        for (const value of [
+            id,
+            asset.relative_path,
+            asset.storage_key,
+            asset.file_name,
+            asset.url,
+            metadata.url,
+        ]) {
+            for (const candidate of mediaReferenceCandidates(value)) {
+                if (!index.has(candidate)) index.set(candidate, id);
+            }
+        }
+    }
+    return index;
+}
+
+function referencedAssetIds(rows, referenceValue, index) {
+    const ids = new Set();
+    for (const row of rows || []) {
+        for (const candidate of mediaReferenceCandidates(referenceValue(row))) {
+            const id = index.get(candidate);
+            if (id) ids.add(id);
+        }
+    }
+    return ids;
+}
+
 function buildAssetReferences(db) {
     const events = new Map();
     for (const event of db.events || []) {
@@ -65,7 +116,10 @@ function buildAssetReferences(db) {
     const memoryAssetIds = new Set(
         (db.family_memory_media || []).map((item) => String(item.asset_id || "")).filter(Boolean),
     );
-    return { events, memoryAssetIds };
+    const index = assetReferenceIndex(db.assets || []);
+    const careCardAssetIds = referencedAssetIds(db.care_cards, (card) => card?.image_url, index);
+    const avatarAssetIds = referencedAssetIds(db.users, (user) => user?.metadata?.avatar_asset_id, index);
+    return { events, memoryAssetIds, careCardAssetIds, avatarAssetIds };
 }
 
 function classifyAsset(asset, references, policies, nowMs) {
@@ -74,6 +128,8 @@ function classifyAsset(asset, references, policies, nowMs) {
     const metadata = objectValue(asset.metadata);
     const linkedEvents = references.events.get(id) || [];
     const linkedMemory = references.memoryAssetIds.has(id);
+    const linkedCareCard = references.careCardAssetIds.has(id);
+    const linkedAvatar = references.avatarAssetIds.has(id);
     let retentionClass = String(asset.retention_class || "").trim();
     if (linkedMemory || purpose === "family_memory") retentionClass = "family_memory";
     else if (purpose.includes("validation") || purpose.includes("verification")) retentionClass = "verification_evidence";
@@ -89,21 +145,25 @@ function classifyAsset(asset, references, policies, nowMs) {
         && !String(event.resolution || "").trim()
     ));
     const explicitlyProtected = metadata.retention_protected === true;
-    const protectedAsset = policies[retentionClass] === null || unresolvedCritical || explicitlyProtected;
+    const protectedAsset = policies[retentionClass] === null
+        || unresolvedCritical
+        || explicitlyProtected
+        || linkedCareCard
+        || linkedAvatar;
     const baseTime = timestamp(asset.created_at || asset.updated_at) || nowMs;
     const retainUntilMs = protectedAsset ? null : baseTime + policies[retentionClass] * DAY_MS;
+    let reason = "retention_policy";
+    if (policies[retentionClass] === null) reason = "user_managed";
+    if (unresolvedCritical) reason = "unresolved_critical_event";
+    if (linkedAvatar) reason = "active_avatar";
+    if (linkedCareCard) reason = "active_care_card";
+    if (explicitlyProtected) reason = "explicitly_protected";
     return {
         retention_class: retentionClass,
         retention_protected: protectedAsset,
         retain_until: retainUntilMs === null ? null : new Date(retainUntilMs).toISOString(),
         expired: retainUntilMs !== null && retainUntilMs <= nowMs,
-        reason: explicitlyProtected
-            ? "explicitly_protected"
-            : unresolvedCritical
-                ? "unresolved_critical_event"
-                : policies[retentionClass] === null
-                    ? "user_managed"
-                    : "retention_policy",
+        reason,
     };
 }
 

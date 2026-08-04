@@ -219,6 +219,64 @@ test("media lifecycle dry run reports due assets and orphans without changing st
     fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("media lifecycle protects assets still referenced by product views", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-media-product-reference-"));
+    const mediaDir = path.join(root, "media");
+    fs.mkdirSync(mediaDir, { recursive: true });
+    const nowMs = Date.parse("2026-08-02T08:00:00.000Z");
+    const cardAsset = asset("card-image", "care-cards/2026-07-01/card.webp", iso(nowMs, 32), {
+        storage_provider: "local",
+        relative_path: "care-cards/2026-07-01/card.webp",
+        purpose: "care_card_image",
+    });
+    const avatarAsset = asset("avatar-image", "profiles/avatar.jpg", iso(nowMs, 32), {
+        storage_provider: "local",
+        relative_path: "profiles/avatar.jpg",
+        purpose: "transient_upload",
+    });
+    const unusedAsset = asset("unused-image", "care-cards/2026-07-01/unused.webp", iso(nowMs, 32), {
+        storage_provider: "local",
+        relative_path: "care-cards/2026-07-01/unused.webp",
+        purpose: "care_card_image",
+    });
+    for (const item of [cardAsset, avatarAsset, unusedAsset]) {
+        const filePath = path.join(mediaDir, item.relative_path);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, item.id);
+    }
+    const store = {
+        db: {
+            assets: [cardAsset, avatarAsset, unusedAsset],
+            events: [],
+            family_memory_media: [],
+            media_upload_intents: [],
+            care_cards: [{ id: "card", image_url: "/media/care-cards/2026-07-01/card.webp?token=short" }],
+            users: [{ id: "user", metadata: { avatar_asset_id: "avatar-image" } }],
+        },
+        async save() {},
+    };
+    const manager = new MediaLifecycleManager({
+        store,
+        mediaDir,
+        clock: () => nowMs,
+        cosStorage: { enabled: false },
+    });
+
+    const result = await manager.run({ reconcileOrphans: false });
+
+    assert.equal(cardAsset.retention_status, "active");
+    assert.equal(cardAsset.retention_reason, "active_care_card");
+    assert.equal(avatarAsset.retention_status, "active");
+    assert.equal(avatarAsset.retention_reason, "active_avatar");
+    assert.equal(unusedAsset.retention_status, "deleted");
+    assert.equal(result.protected, 2);
+    assert.equal(result.deleted, 1);
+    assert.equal(fs.existsSync(path.join(mediaDir, cardAsset.relative_path)), true);
+    assert.equal(fs.existsSync(path.join(mediaDir, avatarAsset.relative_path)), true);
+    assert.equal(fs.existsSync(path.join(mediaDir, unusedAsset.relative_path)), false);
+    fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("COS listing follows continuation markers until the complete inventory is returned", async () => {
     const requests = [];
     const client = {
