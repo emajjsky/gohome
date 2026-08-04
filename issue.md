@@ -460,7 +460,7 @@ Build 8 不满足本台账的骨架产品契约，不作为最终交付版本。
 
 **根因**：安装器进入发布 staging 目录执行 `npm ci` 后，继续使用调用方传入的相对 `gohome-app.service` 路径。文件因当前目录变化而不可见，但此时 `/opt/gohome/current` 已经切到新发布；原 trap 只清理 staging 和临时链接，不恢复流量指针。
 **处理**：安装开始时将归档和 unit 文件解析为绝对路径；完整发布目录就位后先安装 unit 并 `daemon-reload`，然后才原子切换 `current`。切换后的重启、健康检查或任何命令失败统一触发 EXIT 事务：恢复旧指针、重启旧版本、清理失败发布目录。
-**当前验证**：首次失败未重启生产进程，旧 API 持续 `active`；`current` 已显式恢复为 `/opt/gohome/app`。修正脚本通过 `sh -n` 与路径顺序检查，待新发布成功并确认健康回滚边界后关闭。
+**生产验证**：首次失败未重启生产进程，旧 API 持续 `active`，`current` 已显式恢复为 `/opt/gohome/app`。修正脚本通过 `sh -n` 与路径顺序检查；随后从干净提交构建并成功切换到不可变发布 `/opt/gohome/releases/20260804035908-aac1a9d2333d`。API 健康检查通过、`NRestarts=0`，MediaMTX 与 Coturn 保持 `active`，GH-052 已关闭。
 
 ### GH-053 云端发布遗漏 PostgreSQL 迁移
 
@@ -468,4 +468,4 @@ Build 8 不满足本台账的骨架产品契约，不作为最终交付版本。
 **根因**：发布包包含 `local-app-server/migrations/*.sql`，却遗漏唯一迁移执行器 `scripts/apply-postgres-migrations.js`；安装器只安装 Node 依赖、切换版本并重启服务，没有在切流前执行迁移。应用健康检查没有覆盖当前完整数据库结构，因此代码版本和 PostgreSQL Schema 发生漂移。
 **处理**：发布清单显式包含迁移执行器；安装器在切流前以 `gohome` 服务账号读取正式环境并执行所有按版本排序、校验和保护的迁移。迁移失败时禁止安装 unit、切换 `/opt/gohome/current` 或重启服务。数据库迁移不随应用文件回滚，因此每个迁移必须与上一应用版本向后兼容，禁止破坏性字段删除和语义替换。
 **验收**：新发布归档同时包含迁移执行器和完整迁移目录；生产 `schema_migrations` 登记至 `013_media_lifecycle.sql` 且校验和一致；`media_assets.retention_class` 等生命周期字段存在；盒子配置同步恢复 2xx；发布后 API、MediaMTX、Coturn 均无重启和新增 5xx。重复部署或重复执行迁移必须幂等，不产生重复字段、索引或种子数据。
-**当前状态**：本地发布清单与安装顺序已修正，待脚本验证、独立提交、生产原子发布和盒子同步复验。
+**生产验证**：修复已由提交 `aac1a9d` 独立推送。新归档包含迁移执行器、完整迁移目录及云端入口，共 125 个受控文件；安装阶段 `001` 至 `012` 校验和一致并跳过，`013_media_lifecycle.sql` 成功应用。生产 `schema_migrations` 共 13 条且最新版本为 `013_media_lifecycle.sql`，8 个媒体生命周期字段全部存在。切流后盒子 `/api/v1/device/sync` 从连续 500 恢复为连续 200，云端三个服务均为 `active`、API `NRestarts=0`。GH-053 已关闭。
