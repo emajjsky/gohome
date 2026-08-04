@@ -547,31 +547,6 @@ def current_v1_device_session(
     return session
 
 
-def current_v1_device_stream_session(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    x_device_token: str | None = Header(default=None, alias="X-GoHome-Device-Token"),
-) -> Dict[str, Any]:
-    token = x_device_token
-    if credentials is not None and credentials.scheme.lower() == "bearer":
-        token = credentials.credentials
-    if not token:
-        raise HTTPException(status_code=401, detail="Device token required")
-    session = storage.get_device_token_by_raw_token(token)
-    if session is not None:
-        return session
-    settings_token = str(settings.device_api_token or "").strip()
-    if settings_token and token == settings_token:
-        identity = local_device_identity()
-        return {
-            "id": 0,
-            "family_id": 1,
-            "device_id": identity["device_id"],
-            "device_name": identity["device_name"],
-            "status": "settings_token",
-        }
-    raise HTTPException(status_code=401, detail="Invalid device token")
-
-
 def v1_device_summary() -> Dict[str, Any]:
     identity = local_device_identity()
     token = storage.get_active_device_token_by_device(identity["device_id"])
@@ -3320,26 +3295,6 @@ def synchronized_camera_pose_stream(
             "X-GoHome-Composition": "diagnostic-pose-overlay",
             "X-GoHome-Pose-Owner": "edge",
         },
-    )
-
-
-@app.get("/api/v1/device/cameras/{camera_id}/stream.mjpg")
-def v1_device_camera_mjpeg_stream(
-    camera_id: int,
-    fps: int = 5,
-    width: int = 1280,
-    height: int = 720,
-    quality: int = 70,
-    privacy_mode: str = "original",
-    _device_session: Dict[str, Any] = Depends(current_v1_device_stream_session),
-) -> StreamingResponse:
-    return camera_mjpeg_stream(
-        camera_id=camera_id,
-        fps=fps,
-        width=width,
-        height=height,
-        quality=quality,
-        privacy_mode=privacy_mode,
     )
 
 

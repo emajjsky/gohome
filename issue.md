@@ -1,6 +1,6 @@
 # GoHome 产品交付问题台账
 
-更新时间：2026-08-03
+更新时间：2026-08-04
 适用范围：树莓派 5 + Hailo-8 HAT+ 盒子、生产云端、盒子管理端、正式 GoHome iOS App
 正式 iOS 工程：`ios-shell`
 正式 Bundle ID：`com.gohome.family`
@@ -152,7 +152,7 @@
 **设备结论**：当前 Pi 5 系统虽列出 `h264_v4l2m2m`，真实编码探测返回无可用设备，不能把不存在的硬件编码能力写进方案。运行中使用 `libx264` 对 `640x360@15 FPS`、450 帧基准达到约 `36.1x` 实时、CPU 时间约 `1.4s`、峰值内存约 `63 MB`、码率约 `1.26 Mbps`；双路软件 H.264 编码具备明确余量。Hailo 只负责 Pose、分割和目标模型，不承担视频编码。
 **验收**：所有 FPS 都标明源流、端侧合成、云端接收和客户端解码口径；不得以重复帧或 UI 刷新伪造 FPS。
 
-GH-012 的本地结构已收口：边缘端删除独立 `video_app.py`、视频节点调度、旧视频档位、播放票据和全部 `/api/app/*`、`/api/v1/video/*` 路由；管理端仅保留 `/api/cameras/*`，生产云端只通过带设备凭证的 `/api/v1/device/cameras/*` 获取同一盒子成品帧。事件证据提升和受鉴权媒体读取统一归属 `ObjectStorageService`，不再依赖视频服务。正式 App 的 `/api/app/*` 与 `/api/v1/video/*` 始终归生产云端，不由盒子实现。部署脚本会删除树莓派残留模块，SQLite 初始化会清除无消费者的 `video_service_nodes` 表，Bootstrap 会迁移历史废弃环境变量。尚需树莓派部署、生产云端和 TestFlight 实机确认后关闭。
+GH-012 的本地结构已收口：边缘端删除独立 `video_app.py`、视频节点调度、旧视频档位、播放票据和全部 `/api/app/*`、`/api/v1/video/*` 路由；管理端仅保留 `/api/cameras/*` 局域网管理与诊断 MJPEG。旧 `/api/v1/device/cameras/*/stream.mjpg` 公网设备入口及宽松的设置令牌兼容已删除；正式公网视频只允许盒子通过 RTSPS 发布 H.264，云端通过短效鉴权 WHEP 会话向 App 转发。事件证据和受鉴权媒体读取统一归属云端；正式 App 的 `/api/v1/video/*` 始终归生产云端，不由盒子实现。尚需树莓派部署、生产云端和 TestFlight 实机确认后关闭。
 
 ## GH-013 存储与 COS 生命周期
 
@@ -451,5 +451,5 @@ Build 8 不满足本台账的骨架产品契约，不作为最终交付版本。
 **部署边界**：固定 MediaMTX `v1.19.3`，仅允许 RTSPS/TCP 发布和 WHEP/WebRTC 读取；管理 API、指标和 WHEP 监听仅回环，nginx 只暴露 `/media/`；公网仅开放 `8322/tcp`、`8189/tcp+udp`、`3478/tcp` 和 Coturn `49160-49200/udp` 中继范围。禁用 RTMP、HLS、SRT、MoQ、录像和任意路径，禁止新发布者踢掉现有发布者。Coturn 使用独立 systemd 单元和 `root:turnserver / 0640` 配置文件，密钥不得进入进程参数；Let’s Encrypt 部署钩子验证证书/私钥匹配后原子更新 MediaMTX 证书并重启服务。
 **本地验证**：鉴权专项 `3/3` 通过，覆盖设备令牌哈希、路径篡改、归属变化、成员撤销、隐私变化、到期、内部调用者密钥和健康信息脱敏。完整云端回归 `104` 项中 `103` 通过、`1` 项因本机未配置 PostgreSQL 集成地址跳过；MediaMTX YAML 已独立解析通过。
 **WHEP 接入进展**：正式播放会话已改为调用 `MediaAccessService`，返回短时 WHEP URL、Bearer 权限和会话元数据，不再签发播放票据或暴露 MJPEG 产品地址。iOS 原生客户端在会话创建后用同一 Bearer 权限完成 WHEP 能力发现和 SDP 交换，并拒绝非 HTTPS、跨源资源地址和过期会话。旧云端/App 正式 MJPEG 路径已删除；当前剩余边界是生产媒体服务和 TURN 的真实部署、盒子 H.264 发布以及 TestFlight 实机验收。
-**生产部署进展**：云服务器已安装并校验官方 MediaMTX `v1.19.3` 与 Coturn `4.6.1`。首次部署发现远程脚本把三组密钥写成字面量占位符，同时 `/etc/gohome` 的目录权限阻断专用服务账号读取配置；占位符已全部替换为三组独立随机密钥。Coturn 已改为读取 `/etc/gohome/coturn/turnserver.conf`，MediaMTX 独占 `/etc/gohome/media`，两个目录分别由 `turnserver` 与 `mediamtx` 组管理，避免配置监听与最小权限互相冲突。Coturn 与 MediaMTX 当前均稳定运行；回环 API/指标为 200，匿名 WHEP 实际读取和匿名 RTSPS 发布均被拒绝，nginx 配置检查通过，证书部署钩子和 Certbot 续期 dry-run 均成功。公网 `8322/8189/3478` 仍被腾讯云安全组超时阻断，真实发布、直连 ICE、TURN 分配和 TestFlight 仍未验收，GH-051 保持处理中。
+**生产部署进展**：云服务器已安装并校验官方 MediaMTX `v1.19.3` 与 Coturn `4.6.1`。首次部署发现远程脚本把三组密钥写成字面量占位符，同时 `/etc/gohome` 的目录权限阻断专用服务账号读取配置；占位符已全部替换为三组独立随机密钥。Coturn 已改为读取 `/etc/gohome/coturn/turnserver.conf`，MediaMTX 独占 `/etc/gohome/media`，两个目录分别由 `turnserver` 与 `mediamtx` 组管理。账号下实际资源已核实为轻量应用服务器 `lhins-rf6o2tns`（`118.25.151.101`），而非 CVM；轻量防火墙已最小放通 `8322/tcp`、`8189/tcp+udp`、`3478/tcp` 和 `49160-49200/udp`，未修改域名、证书、`80/443` 或原有规则。外网 TCP 建连、`8322` TLS 1.3 证书校验和 UDP 抵达 `8189/49160` 均通过；`gohome-mediamtx` 与 `gohome-coturn` 稳定运行。尚需新云端 API 原子切换、盒子 H.264 真实发布、直连 ICE、强制 TURN 和 TestFlight 双摄 30 分钟验收，GH-051 保持处理中。
 **验收**：匿名发布/读取拒绝，跨设备、跨摄像头和过期成员拒绝，隐私模式变化后旧会话立即失效；直连 ICE 和强制 TURN 均通过双摄 30 分钟 TestFlight 验收后才能关闭。

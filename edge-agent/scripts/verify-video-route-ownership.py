@@ -7,7 +7,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 EDGE_APP = ROOT / "edge-agent" / "app"
 CLOUD_SERVER = ROOT / "local-app-server" / "server.js"
-IOS_STREAM_CLIENT = ROOT / "ios-shell" / "GoHomeShell" / "Sources" / "Streaming" / "MJPEGStreamClient.swift"
+CLOUD_MEDIA_ACCESS = ROOT / "local-app-server" / "media-access.js"
+IOS_STREAM_DIR = ROOT / "ios-shell" / "GoHomeShell" / "Sources" / "Streaming"
+IOS_STREAM_CLIENT = IOS_STREAM_DIR / "WHEPStreamClient.swift"
+IOS_STREAM_CONTRACT = IOS_STREAM_DIR / "CameraStreamClient.swift"
 
 
 def decorated_routes(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -54,14 +57,19 @@ def main() -> None:
     if forbidden:
         raise SystemExit(f"edge still owns cloud/app playback routes: {forbidden}")
 
-    expected = {
+    expected_local_routes = {
         "/api/cameras/{camera_id}/stream.mjpg",
         "/api/cameras/{camera_id}/continual-pose/stream.mjpg",
-        "/api/v1/device/cameras/{camera_id}/stream.mjpg",
     }
-    missing = sorted(expected - set(routes))
+    missing = sorted(expected_local_routes - set(routes))
     if missing:
         raise SystemExit(f"required edge privacy routes are missing: {missing}")
+    forbidden_device_streams = sorted(
+        route for route in routes
+        if route.startswith("/api/v1/device/") and route.endswith("/stream.mjpg")
+    )
+    if forbidden_device_streams:
+        raise SystemExit(f"retired public device MJPEG routes remain: {forbidden_device_streams}")
 
     management_calls = called_attribute_names(routes["/api/cameras/{camera_id}/stream.mjpg"])
     if "privacy_mjpeg_stream.mjpeg_frames" not in management_calls:
@@ -73,43 +81,70 @@ def main() -> None:
     if "privacy_mjpeg_stream.mjpeg_frames" in diagnostic_calls:
         raise SystemExit("algorithm diagnostic stream still changes with the user privacy mode")
 
-    device_node = routes["/api/v1/device/cameras/{camera_id}/stream.mjpg"]
-    direct_calls = {
-        child.func.id
-        for child in ast.walk(device_node)
-        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
-    }
-    if "camera_mjpeg_stream" not in direct_calls:
-        raise SystemExit("cloud device stream does not delegate to the management privacy stream")
-
     cloud_source = CLOUD_SERVER.read_text(encoding="utf-8")
     required_cloud_contracts = (
         'pathname === "/api/v1/video/sessions"',
-        "/api/v1/device/cameras/${localCameraId}/stream.mjpg",
-        '"X-GoHome-Composition-Owner": "edge"',
+        "mediaAccessService.issueReadSession",
     )
     missing_cloud_contracts = [item for item in required_cloud_contracts if item not in cloud_source]
     if missing_cloud_contracts:
         raise SystemExit(f"production cloud ownership contract is incomplete: {missing_cloud_contracts}")
+    retired_cloud_contracts = (
+        "/api/v1/device/cameras/${localCameraId}/stream.mjpg",
+        "edge-composed-mjpeg-v1",
+    )
+    remaining_cloud_contracts = [item for item in retired_cloud_contracts if item in cloud_source]
+    if remaining_cloud_contracts:
+        raise SystemExit(f"retired cloud MJPEG contract remains: {remaining_cloud_contracts}")
+
+    media_access_source = CLOUD_MEDIA_ACCESS.read_text(encoding="utf-8")
+    required_media_contracts = (
+        'display_transport: "whep-h264-v1"',
+        'composition_owner: "edge"',
+        "authorizePublish(request)",
+        "authorizeRead(request)",
+    )
+    missing_media_contracts = [item for item in required_media_contracts if item not in media_access_source]
+    if missing_media_contracts:
+        raise SystemExit(f"cloud media access contract is incomplete: {missing_media_contracts}")
+
+    publisher_source = (EDGE_APP / "h264_publisher.py").read_text(encoding="utf-8")
+    relay_source = (EDGE_APP / "live_relay_agent.py").read_text(encoding="utf-8")
+    required_edge_contracts = (
+        (publisher_source, "class H264StreamPublisher"),
+        (publisher_source, "build_rtsps_publish_url"),
+        (relay_source, "H264StreamPublisher"),
+        (relay_source, '"transport": "h264-rtsps"'),
+    )
+    missing_edge_contracts = [item for source, item in required_edge_contracts if item not in source]
+    if missing_edge_contracts:
+        raise SystemExit(f"edge H.264 publishing contract is incomplete: {missing_edge_contracts}")
 
     ios_source = IOS_STREAM_CLIENT.read_text(encoding="utf-8")
+    ios_contract_source = IOS_STREAM_CONTRACT.read_text(encoding="utf-8")
     required_ios_contracts = (
         'path: "/api/v1/video/sessions"',
-        'fallbackPath: "/api/v1/video/cameras/\\(cameraID)/stream.mjpg"',
+        "CameraDisplayTransport.whepH264",
+        'playback.compositionOwner == "edge"',
     )
     missing_ios_contracts = [item for item in required_ios_contracts if item not in ios_source]
     if missing_ios_contracts:
         raise SystemExit(f"formal iOS playback contract is incomplete: {missing_ios_contracts}")
+    if 'static let whepH264 = "whep-h264-v1"' not in ios_contract_source:
+        raise SystemExit("formal iOS transport version is missing")
+    if (IOS_STREAM_DIR / "MJPEGStreamClient.swift").exists() or "fallbackPath" in ios_source:
+        raise SystemExit("formal iOS playback still contains an MJPEG fallback")
 
     print({
         "ok": True,
         "composition_owner": "edge",
         "management_routes": 2,
         "diagnostic_stream_privacy_independent": True,
-        "cloud_device_routes": 1,
+        "public_device_mjpeg_routes": 0,
         "obsolete_playback_routes": 0,
         "obsolete_video_services": 0,
         "production_cloud_owner": True,
+        "public_transport": "rtsps-whep-h264",
         "formal_ios_cloud_only": True,
     })
 
