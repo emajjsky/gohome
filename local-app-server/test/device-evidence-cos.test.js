@@ -82,6 +82,7 @@ test('device event evidence is stored in COS and served through an authorized as
       },
     );
     assert.equal(uploaded.response.status, 200);
+    assert.match(uploaded.body.asset.id, /^asset-device-[a-f0-9]{32}$/);
     assert.equal(uploaded.body.asset.storage_provider, 'cos');
     assert.match(uploaded.body.asset.storage_key, new RegExp(`^event-evidence/${familyID}/`));
     assert.deepEqual(objects.get(uploaded.body.asset.storage_key).body, jpeg);
@@ -100,6 +101,21 @@ test('device event evidence is stored in COS and served through an authorized as
     assert.equal(duplicate.body.duplicate, true);
     assert.equal(duplicate.body.asset.id, uploaded.body.asset.id);
     assert.equal(objects.size, 1);
+
+    app.store.db.next_ids.asset = 1;
+    const second = await request(
+      baseURL,
+      '/api/v1/device/media-assets/upload?file_name=second.jpg&snapshot_path=camera-1/second.jpg&content_type=image%2Fjpeg&edge_event_id=43&idempotency_key=evidence-job-43',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${deviceToken}`, 'Content-Type': 'image/jpeg' },
+        body: jpeg,
+      },
+    );
+    assert.equal(second.response.status, 200);
+    assert.match(second.body.asset.id, /^asset-device-[a-f0-9]{32}$/);
+    assert.notEqual(second.body.asset.id, uploaded.body.asset.id);
+    assert.equal(objects.size, 2);
 
     const served = await fetch(`${baseURL}${uploaded.body.asset.url}`, {
       headers: appHeaders,

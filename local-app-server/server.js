@@ -167,6 +167,12 @@ function normalizeNumber(value, fallback = null) {
     return Number.isFinite(number) ? number : fallback;
 }
 
+function sameId(left, right) {
+    if (left === null || left === undefined || left === "") return false;
+    if (right === null || right === undefined || right === "") return false;
+    return String(left) === String(right);
+}
+
 function normalizeBool(value) {
     if (typeof value === "boolean") return value;
     if (value === "false" || value === "0" || value === 0) return false;
@@ -2148,11 +2154,11 @@ function createLocalAppServer(options = {}) {
     function publicEvent(event) {
         const camera = store.db.cameras[String(event.camera_id)] || {};
         const asset = event.media_asset_id
-            ? store.db.assets.find((item) => Number(item.id) === Number(event.media_asset_id))
+            ? store.db.assets.find((item) => sameId(item.id, event.media_asset_id))
             : null;
         const evidenceMedia = (event.payload?.evidence_media_assets || [])
             .map((entry) => {
-                const evidenceAsset = store.db.assets.find((item) => Number(item.id) === Number(entry?.asset_id || entry?.id));
+                const evidenceAsset = store.db.assets.find((item) => sameId(item.id, entry?.asset_id || entry?.id));
                 if (!evidenceAsset) return null;
                 return {
                     asset_id: evidenceAsset.id,
@@ -2191,7 +2197,7 @@ function createLocalAppServer(options = {}) {
     function publicEventSummary(event) {
         const camera = store.db.cameras[String(event.camera_id)] || {};
         const asset = event.media_asset_id
-            ? store.db.assets.find((item) => Number(item.id) === Number(event.media_asset_id))
+            ? store.db.assets.find((item) => sameId(item.id, event.media_asset_id))
             : null;
         const incident = event.payload?.incident || null;
         const verification = event.payload?.verification || null;
@@ -4342,12 +4348,12 @@ function createLocalAppServer(options = {}) {
         const roleOrder = { before: 0, transition: 1, current: 2, evidence: 3 };
         const ids = [];
         for (const item of event.payload?.evidence_media_assets || []) {
-            const assetId = normalizeNumber(item?.asset_id || item?.id, null);
-            if (assetId !== null && !ids.includes(assetId)) ids.push(assetId);
+            const assetId = String(item?.asset_id || item?.id || "");
+            if (assetId && !ids.includes(assetId)) ids.push(assetId);
         }
-        if (primaryAsset?.id && !ids.includes(Number(primaryAsset.id))) ids.push(Number(primaryAsset.id));
+        if (primaryAsset?.id && !ids.includes(String(primaryAsset.id))) ids.push(String(primaryAsset.id));
         return ids
-            .map((id) => store.db.assets.find((item) => Number(item.id) === Number(id)))
+            .map((id) => store.db.assets.find((item) => sameId(item.id, id)))
             .filter((item) => item && verificationAssetPath(item))
             .sort((a, b) => {
                 const roleDifference = (roleOrder[String(a.evidence_frame_role || "evidence")] ?? 3)
@@ -6529,7 +6535,7 @@ function createLocalAppServer(options = {}) {
     function isValidationAsset(asset) {
         const purpose = String(asset?.purpose || "").toLowerCase();
         if (purpose.startsWith("validation") || purpose.startsWith("test")) return true;
-        return store.db.events.some((event) => Number(event.media_asset_id) === Number(asset?.id) && isValidationEvent(event));
+        return store.db.events.some((event) => sameId(event.media_asset_id, asset?.id) && isValidationEvent(event));
     }
 
     function latestCameraAsset(cameraId = null, options = {}) {
@@ -6564,7 +6570,7 @@ function createLocalAppServer(options = {}) {
 
     function eventAsset(event) {
         if (!event?.media_asset_id) return null;
-        return store.db.assets.find((asset) => Number(asset.id) === Number(event.media_asset_id)) || null;
+        return store.db.assets.find((asset) => sameId(asset.id, event.media_asset_id)) || null;
     }
 
     function familyIdForAsset(asset) {
@@ -6574,7 +6580,7 @@ function createLocalAppServer(options = {}) {
             const cameraFamilyId = familyIdForCamera(asset.camera_id);
             if (cameraFamilyId) return cameraFamilyId;
         }
-        const event = store.db.events.find((item) => Number(item.media_asset_id) === Number(asset.id));
+        const event = store.db.events.find((item) => sameId(item.media_asset_id, asset.id));
         if (event) {
             const camera = store.db.cameras[String(event.camera_id)] || {};
             return event.family_id || camera.family_id || null;
@@ -6739,19 +6745,22 @@ function createLocalAppServer(options = {}) {
         const existingAsset = store.db.assets.find((asset) => (
             String(asset.device_id || "") === deviceId
             && String(asset.metadata?.device_upload_idempotency_key || "") === idempotencyKey
-            && String(asset.retention_status || "active") !== "deleted"
         ));
         if (existingAsset) {
             for await (const _chunk of req) {
                 // Drain the authenticated retry without buffering it.
             }
+            if (String(existingAsset.retention_status || "active") === "deleted") {
+                writeError(res, 410, "device evidence upload has expired");
+                return;
+            }
             write(res, 200, { ok: true, asset: existingAsset, duplicate: true });
             return;
         }
-        const assetId = store.nextId("asset");
         const fileName = path.basename(url.searchParams.get("file_name") || "evidence.jpg").replace(/[^\w.\-]+/g, "_");
         const dateDir = new Date().toISOString().slice(0, 10);
         const objectIdentity = sha256(`${deviceId}:${idempotencyKey}`).slice(0, 32);
+        const assetId = `asset-device-${objectIdentity}`;
         const relativePath = `${dateDir}/${objectIdentity}-${fileName}`;
         const snapshotPath = String(url.searchParams.get("snapshot_path") || relativePath).replace(/^\/+/, "");
         const rawCameraId = url.searchParams.get("camera_id");
@@ -6779,6 +6788,18 @@ function createLocalAppServer(options = {}) {
             } finally {
                 await fs.promises.rm(temporary, { force: true }).catch(() => {});
             }
+        }
+        const concurrentAsset = store.db.assets.find((asset) => (
+            String(asset.device_id || "") === deviceId
+            && String(asset.metadata?.device_upload_idempotency_key || "") === idempotencyKey
+        ));
+        if (concurrentAsset) {
+            if (String(concurrentAsset.retention_status || "active") === "deleted") {
+                writeError(res, 410, "device evidence upload has expired");
+                return;
+            }
+            write(res, 200, { ok: true, asset: concurrentAsset, duplicate: true });
+            return;
         }
         const asset = {
             id: assetId,
@@ -7434,17 +7455,17 @@ function createLocalAppServer(options = {}) {
             && (!edgeEventId || String(item.edge_event_id || "") === String(edgeEventId))
         );
         const asset = mediaFromPayload?.id
-            ? store.db.assets.find((item) => Number(item.id) === Number(mediaFromPayload.id) && deviceAsset(item))
+            ? store.db.assets.find((item) => sameId(item.id, mediaFromPayload.id) && deviceAsset(item))
             : [...store.db.assets].reverse().find((item) => deviceAsset(item));
         const requestedEvidenceAssets = Array.isArray(payload.payload?.evidence_media_assets)
             ? payload.payload.evidence_media_assets
             : [];
         const evidenceMediaAssets = requestedEvidenceAssets
             .map((entry) => {
-                const requestedAssetId = normalizeNumber(entry?.asset?.id || entry?.asset_id || entry?.id, null);
-                const matched = requestedAssetId === null
+                const requestedAssetId = String(entry?.asset?.id || entry?.asset_id || entry?.id || "");
+                const matched = !requestedAssetId
                     ? null
-                    : store.db.assets.find((item) => Number(item.id) === requestedAssetId && deviceAsset(item));
+                    : store.db.assets.find((item) => sameId(item.id, requestedAssetId) && deviceAsset(item));
                 if (!matched) return null;
                 return {
                     asset_id: matched.id,
@@ -7455,7 +7476,7 @@ function createLocalAppServer(options = {}) {
                 };
             })
             .filter(Boolean)
-            .filter((entry, index, items) => items.findIndex((item) => Number(item.asset_id) === Number(entry.asset_id)) === index)
+            .filter((entry, index, items) => items.findIndex((item) => sameId(item.asset_id, entry.asset_id)) === index)
             .slice(0, 3);
         const event = {
             id: store.nextId("event"),

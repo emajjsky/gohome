@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const CLOUD_SEED_SCHEMA_VERSION = "014_media_orphan_cleanup";
+const CLOUD_SEED_SCHEMA_VERSION = "015_media_asset_identity";
 
 function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
