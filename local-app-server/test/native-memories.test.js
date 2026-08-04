@@ -106,12 +106,39 @@ test('native memory media uses private COS upload intents and deletes remote obj
       body: JSON.stringify({ body: 'COS 直传照片', asset_ids: completed.body.assets.map((asset) => asset.id) }),
     });
     assert.equal(memory.response.status, 201);
+    const sharedMemory = await request(baseURL, `/api/v2/memories?family_id=${familyID}`, {
+      method: 'POST',
+      headers: authorization,
+      body: JSON.stringify({ body: '复用第一张照片', asset_ids: [completed.body.assets[0].id] }),
+    });
+    assert.equal(sharedMemory.response.status, 201);
     const removed = await request(baseURL, `/api/v2/memories/${memory.body.memory.id}?family_id=${familyID}`, {
       method: 'DELETE', headers: authorization,
     });
     assert.equal(removed.response.status, 200);
+    assert.equal(deletedKeys.length, 0);
+    const queuedImages = app.store.db.assets.filter((asset) => completed.body.assets.some((item) => item.id === asset.id));
+    assert.deepEqual(queuedImages.map((asset) => asset.retention_status || 'active'), ['active', 'deleting']);
+    assert.equal(queuedImages[0].metadata.deletion_requested_at, undefined);
+    assert.ok(queuedImages[1].metadata.deletion_requested_at);
+    const retainedImage = await fetch(`${baseURL}${completed.body.assets[0].image_url}`, {
+      headers: authorization, redirect: 'manual',
+    });
+    assert.equal(retainedImage.status, 302);
+    const blockedImage = await fetch(`${baseURL}${completed.body.assets[1].image_url}`, { headers: authorization });
+    assert.equal(blockedImage.status, 404);
+    const imageCleanup = await app.runMediaLifecycle({ reconcileOrphans: false });
+    assert.equal(imageCleanup.deleted, 1);
+    assert.equal(deletedKeys.length, 1);
+    assert.deepEqual(queuedImages.map((asset) => asset.retention_status || 'active'), ['active', 'deleted']);
+    await request(baseURL, `/api/v2/memories/${sharedMemory.body.memory.id}?family_id=${familyID}`, {
+      method: 'DELETE', headers: authorization,
+    });
+    assert.equal(queuedImages[0].retention_status, 'deleting');
+    const sharedCleanup = await app.runMediaLifecycle({ reconcileOrphans: false });
+    assert.equal(sharedCleanup.deleted, 1);
     assert.equal(deletedKeys.length, 2);
-    assert.equal(app.store.db.assets.some((asset) => completed.body.assets.some((item) => item.id === asset.id)), false);
+    assert.deepEqual(queuedImages.map((asset) => asset.retention_status), ['deleted', 'deleted']);
 
     const rejectedMixed = await request(baseURL, `/api/v2/memory-media-upload-intents?family_id=${familyID}`, {
       method: 'POST', headers: authorization, body: JSON.stringify({ items: [
@@ -163,7 +190,13 @@ test('native memory media uses private COS upload intents and deletes remote obj
     await request(baseURL, `/api/v2/memories/${videoMemory.body.memory.id}?family_id=${familyID}`, {
       method: 'DELETE', headers: authorization,
     });
+    assert.equal(deletedKeys.includes(videoKey), false);
+    const queuedVideo = app.store.db.assets.find((asset) => asset.id === completedVideo.body.assets[0].id);
+    assert.equal(queuedVideo.retention_status, 'deleting');
+    const videoCleanup = await app.runMediaLifecycle({ reconcileOrphans: false });
+    assert.equal(videoCleanup.deleted, 1);
     assert.ok(deletedKeys.includes(videoKey));
+    assert.equal(queuedVideo.retention_status, 'deleted');
 
     const abandonedIntentResult = await request(baseURL, `/api/v2/memory-media-upload-intents?family_id=${familyID}`, {
       method: 'POST', headers: authorization, body: JSON.stringify({ items: [images[0]] }),
@@ -336,7 +369,13 @@ test('native memories form a private family timeline with editable durable recor
     assert.equal(updated.response.status, 200);
     assert.match(updated.body.memory.body, /晚霞/);
     assert.equal(updated.body.memory.media[0].asset_id, replacementAssetID);
-    assert.equal(app.store.db.assets.some((asset) => String(asset.id) === assetID), false);
+    const queuedOriginal = app.store.db.assets.find((asset) => String(asset.id) === assetID);
+    assert.equal(queuedOriginal.retention_status, 'deleting');
+    const originalMedia = await fetch(`${baseURL}/api/v1/video/assets/${assetID}`, { headers: authorization });
+    assert.equal(originalMedia.status, 404);
+    const originalCleanup = await app.runMediaLifecycle({ reconcileOrphans: false });
+    assert.equal(originalCleanup.deleted, 1);
+    assert.equal(queuedOriginal.retention_status, 'deleted');
 
     const timeline = await request(baseURL, `/api/v2/memories?family_id=${familyID}`, { headers: authorization });
     assert.equal(timeline.body.memories.length, 1);
@@ -373,10 +412,14 @@ test('native memories form a private family timeline with editable durable recor
     assert.equal(deleted.response.status, 200);
     assert.equal(deleted.body.deleted, true);
     assert.equal(app.store.db.family_memories.length, 0);
-    assert.equal(app.store.db.assets.some((asset) => String(asset.id) === replacementAssetID), false);
+    const queuedReplacement = app.store.db.assets.find((asset) => String(asset.id) === replacementAssetID);
+    assert.equal(queuedReplacement.retention_status, 'deleting');
 
     const removedMedia = await fetch(`${baseURL}/api/v1/video/assets/${replacementAssetID}`, { headers: authorization });
     assert.equal(removedMedia.status, 404);
+    const replacementCleanup = await app.runMediaLifecycle({ reconcileOrphans: false });
+    assert.equal(replacementCleanup.deleted, 1);
+    assert.equal(queuedReplacement.retention_status, 'deleted');
 
     const persisted = JSON.parse(fs.readFileSync(path.join(dataDir, 'db.json'), 'utf8'));
     assert.deepEqual(persisted.family_memories, []);

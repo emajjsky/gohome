@@ -150,6 +150,11 @@ function classifyAsset(asset, references, policies, nowMs) {
     const linkedMemory = references.memoryAssetIds.has(id);
     const linkedCareCard = references.careCardAssetIds.has(id);
     const linkedAvatar = references.avatarAssetIds.has(id);
+    const deletionRequestedAt = timestamp(metadata.deletion_requested_at);
+    const deletionRequested = deletionRequestedAt > 0;
+    const deletionRequestBlocked = deletionRequested && Boolean(
+        linkedEvents.length || linkedMemory || linkedCareCard || linkedAvatar
+    );
     let retentionClass = "";
     if (linkedMemory) retentionClass = "family_memory";
     else if (purpose.includes("validation") || purpose.includes("verification")) retentionClass = "verification_evidence";
@@ -169,15 +174,20 @@ function classifyAsset(asset, references, policies, nowMs) {
         || unresolvedCritical
         || explicitlyProtected
         || linkedCareCard
-        || linkedAvatar;
+        || linkedAvatar
+        || deletionRequestBlocked;
     const baseTime = timestamp(asset.created_at || asset.updated_at) || nowMs;
-    const retainUntilMs = protectedAsset ? null : baseTime + policies[retentionClass] * DAY_MS;
+    const retainUntilMs = protectedAsset
+        ? null
+        : (deletionRequested ? deletionRequestedAt : baseTime + policies[retentionClass] * DAY_MS);
     let reason = "retention_policy";
     if (policies[retentionClass] === null) reason = "user_managed";
     if (unresolvedCritical) reason = "unresolved_critical_event";
     if (linkedAvatar) reason = "active_avatar";
     if (linkedCareCard) reason = "active_care_card";
     if (explicitlyProtected) reason = "explicitly_protected";
+    if (deletionRequested && !deletionRequestBlocked && !explicitlyProtected) reason = "user_requested_deletion";
+    if (deletionRequestBlocked) reason = "deletion_request_blocked_by_active_reference";
     return {
         retention_class: retentionClass,
         retention_protected: protectedAsset,

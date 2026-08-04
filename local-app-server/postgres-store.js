@@ -925,6 +925,16 @@ class PostgresStore {
         };
     }
 
+    async referencedMemoryAssetIds(assetIds) {
+        const ids = [...new Set((assetIds || []).map(textId).filter(Boolean))];
+        if (!ids.length) return new Set();
+        const result = await this.pool.query(
+            "select distinct asset_id from family_memory_media where asset_id = any($1::text[])",
+            [ids],
+        );
+        return new Set(result.rows.map((row) => textId(row.asset_id)).filter(Boolean));
+    }
+
     saveMediaLifecycleAssets(assets) {
         const updates = (assets || []).map(mediaLifecyclePersistenceRow).filter((asset) => asset.id);
         if (!updates.length) return this.pendingSave;

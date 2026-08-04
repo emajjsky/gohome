@@ -7526,7 +7526,33 @@ function createLocalAppServer(options = {}) {
     }
 
     async function cleanupMemoryAssets(assetIds = []) {
-        return cleanupStoredAssets(assetIds, { memoryOnly: true });
+        const ids = new Set(assetIds.map(String).filter(Boolean));
+        if (!ids.size) return;
+        const retainedIds = typeof store.referencedMemoryAssetIds === "function"
+            ? await store.referencedMemoryAssetIds([...ids])
+            : new Set((store.db.family_memory_media || []).map((item) => String(item.asset_id || "")).filter(Boolean));
+        const requestedAt = nowIso();
+        let changed = false;
+        for (const asset of store.db.assets) {
+            if (!ids.has(String(asset.id))) continue;
+            if (retainedIds.has(String(asset.id))) continue;
+            if (String(asset.purpose || asset.metadata?.purpose || "") !== "family_memory") continue;
+            if (String(asset.retention_status || "active") === "deleted") continue;
+            asset.metadata = {
+                ...objectValue(asset.metadata),
+                deletion_requested_at: requestedAt,
+                deletion_request_reason: "family_memory_unlinked",
+            };
+            asset.retention_class = "transient_upload";
+            asset.retention_status = "deleting";
+            asset.retention_reason = "user_requested_deletion";
+            asset.retain_until = requestedAt;
+            asset.deletion_error = "";
+            asset.next_deletion_at = null;
+            asset.updated_at = requestedAt;
+            changed = true;
+        }
+        if (changed) await store.save();
     }
 
     async function cleanupStorageObjects(objects = []) {
@@ -8123,7 +8149,7 @@ function createLocalAppServer(options = {}) {
     function serveMedia(req, res, snapshotPath) {
         if (!requireApp(req, res)) return;
         const asset = latestAssetForSnapshot(decodeURIComponent(snapshotPath || ""));
-        if (asset && String(asset.retention_status || "active") === "deleted") {
+        if (asset && String(asset.retention_status || "active") !== "active") {
             writeError(res, 404, "media asset not found");
             return;
         }
@@ -8143,7 +8169,7 @@ function createLocalAppServer(options = {}) {
     function serveAsset(req, res, assetId, url) {
         if (!requireApp(req, res)) return;
         const asset = store.db.assets.find((item) => String(item.id) === String(assetId));
-        if (!asset || String(asset.retention_status || "active") === "deleted") {
+        if (!asset || String(asset.retention_status || "active") !== "active") {
             writeError(res, 404, "media asset not found");
             return;
         }

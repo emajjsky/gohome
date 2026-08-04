@@ -208,6 +208,22 @@ test('media lifecycle reads fresh PostgreSQL references and persists retention r
   assert.equal(store.db.media_orphans[0].status, 'protected');
 });
 
+test('memory cleanup checks current PostgreSQL references before requesting physical deletion', async () => {
+  const queries = [];
+  const pool = recordingPool();
+  pool.query = async (text, values) => {
+    queries.push({ text: String(text), values });
+    return { rows: [{ asset_id: 'shared-asset' }] };
+  };
+  const store = new PostgresStore({ pool, db: {}, persistedTables: emptyTables() });
+
+  const referenced = await store.referencedMemoryAssetIds(['removed-asset', 'shared-asset', 'shared-asset']);
+
+  assert.deepEqual([...referenced], ['shared-asset']);
+  assert.match(queries[0].text, /where asset_id = any\(\$1::text\[\]\)/i);
+  assert.deepEqual(queries[0].values, [['removed-asset', 'shared-asset']]);
+});
+
 test('PostgreSQL orphan timestamps preserve milliseconds and protected files stay out of deletion selection', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-postgres-orphan-time-'));
   const mediaDir = path.join(root, 'media');

@@ -7,7 +7,13 @@ const path = require("node:path");
 const test = require("node:test");
 
 const { createCosStorage } = require("../cos-storage");
-const { DAY_MS, MediaLifecycleManager } = require("../media-lifecycle");
+const {
+    DAY_MS,
+    MediaLifecycleManager,
+    buildAssetReferences,
+    classifyAsset,
+    retentionPolicies,
+} = require("../media-lifecycle");
 const { createLocalAppServer } = require("../server");
 
 function iso(nowMs, daysAgo) {
@@ -315,6 +321,37 @@ test("protected orphan audit rows never enter the deletion selection", async () 
     assert.equal(store.db.media_orphans[0].status, "protected");
     assert.equal(fs.existsSync(protectedPath), true);
     fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("user-requested media deletion is durable and waits for active references to disappear", async () => {
+    const nowMs = Date.parse("2026-08-04T08:00:00.000Z");
+    const requestedAt = new Date(nowMs - DAY_MS).toISOString();
+    const requested = asset("requested", "memory-media/requested.jpg", new Date(nowMs - 20 * DAY_MS).toISOString(), {
+        storage_provider: "cos",
+        purpose: "family_memory",
+        retention_status: "deleting",
+        metadata: {
+            purpose: "family_memory",
+            deletion_requested_at: requestedAt,
+            deletion_request_reason: "family_memory_unlinked",
+        },
+    });
+    const policies = retentionPolicies({});
+    const unreferenced = classifyAsset(requested, buildAssetReferences({ assets: [requested] }), policies, nowMs);
+
+    assert.equal(unreferenced.expired, true);
+    assert.equal(unreferenced.retention_protected, false);
+    assert.equal(unreferenced.retain_until, requestedAt);
+    assert.equal(unreferenced.reason, "user_requested_deletion");
+
+    const linked = classifyAsset(requested, buildAssetReferences({
+        assets: [requested],
+        family_memory_media: [{ memory_id: "memory", asset_id: requested.id }],
+    }), policies, nowMs);
+    assert.equal(linked.expired, false);
+    assert.equal(linked.retention_protected, true);
+    assert.equal(linked.retain_until, null);
+    assert.equal(linked.reason, "deletion_request_blocked_by_active_reference");
 });
 
 test("media lifecycle bounds physical deletion and processes the oldest data first", async () => {
