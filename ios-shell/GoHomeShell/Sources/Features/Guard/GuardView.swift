@@ -38,7 +38,7 @@ struct GuardView: View {
         _section = section
         _model = StateObject(wrappedValue: GuardViewModel(
             streamClient: apiClient.map { client in
-                MJPEGStreamClient(apiClient: client)
+                WHEPStreamClient(apiClient: client)
             } ?? UnavailableStreamClient(),
             privacyService: apiClient.map(VideoPrivacyService.init(apiClient:)),
             familyID: familyID
@@ -119,7 +119,7 @@ struct GuardView: View {
         VStack(alignment: .leading, spacing: 20) {
             privacyModeControl
             CameraStageView(
-                image: model.latestImage,
+                surface: model.videoSurface,
                 state: model.streamState,
                 displayFPS: model.displayFPS,
                 privacyMode: model.selectedPrivacyMode

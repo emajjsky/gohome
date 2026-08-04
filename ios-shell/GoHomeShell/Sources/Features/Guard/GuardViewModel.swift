@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 enum GuardStreamState: Equatable {
     case idle
@@ -34,8 +33,7 @@ struct FrameRateMeter: Sendable {
 @MainActor
 final class GuardViewModel: ObservableObject {
     @Published private(set) var selectedCameraID: String?
-    @Published private(set) var latestFrame: Data?
-    @Published private(set) var latestImage: UIImage?
+    @Published private(set) var videoSurface: WebRTCVideoSurface?
     @Published private(set) var displayFPS: Double = 0
     @Published private(set) var streamState: GuardStreamState = .idle
     @Published private(set) var selectedPrivacyMode: VideoPrivacyMode
@@ -83,21 +81,18 @@ final class GuardViewModel: ObservableObject {
                 break
             }
         }
-        startStream(cameraID: cameraID, profile: profile, preserveFrame: false)
+        startStream(cameraID: cameraID, profile: profile)
     }
 
-    private func startStream(cameraID: String, profile: String, preserveFrame: Bool) {
+    private func startStream(cameraID: String, profile: String) {
         selectionGeneration += 1
         let generation = selectionGeneration
         frameTask?.cancel()
         selectedCameraID = cameraID
-        if !preserveFrame {
-            latestFrame = nil
-            latestImage = nil
-        }
+        videoSurface = nil
         frameRateMeter.reset()
         displayFPS = 0
-        if latestFrame == nil { streamState = .connecting }
+        streamState = .connecting
         let privacyMode = selectedPrivacyMode
         frameTask = Task { [weak self, streamClient] in
             await streamClient.stop()
@@ -126,9 +121,11 @@ final class GuardViewModel: ObservableObject {
                     }
                     failedAttempts += 1
                     guard failedAttempts <= self.maxReconnectAttempts else {
+                        self.videoSurface = nil
                         self.streamState = .failed(error.localizedDescription)
                         return
                     }
+                    self.videoSurface = nil
                     self.streamState = .connecting
                     do {
                         try await Task.sleep(nanoseconds: self.reconnectDelayNanoseconds)
@@ -152,6 +149,7 @@ final class GuardViewModel: ObservableObject {
             profile: profile,
             privacyMode: privacyMode
         )
+        videoSurface = streams.surface
         lastFrameAt = Date()
         let watchdog = Task { [weak self, streamClient] in
             guard let self else { return }
@@ -173,26 +171,13 @@ final class GuardViewModel: ObservableObject {
             watchdog.cancel()
         }
 
-        for try await frame in streams.frames {
-            guard !Task.isCancelled, generation == selectionGeneration else {
-                throw CancellationError()
-            }
-            let decoded = await Task.detached(priority: .userInitiated) {
-                autoreleasepool {
-                    guard let image = UIImage(data: frame) else { return nil as DecodedCameraFrame? }
-                    return DecodedCameraFrame(image: image.preparingForDisplay() ?? image)
-                }
-            }.value
+        for try await timestamp in streams.renderedFrames {
             guard !Task.isCancelled, generation == selectionGeneration else {
                 throw CancellationError()
             }
             lastFrameAt = Date()
             currentSessionReceivedFrame = true
-            latestFrame = frame
-            if let decoded {
-                latestImage = decoded.image
-                displayFPS = frameRateMeter.record(at: ProcessInfo.processInfo.systemUptime)
-            }
+            displayFPS = frameRateMeter.record(at: timestamp)
             streamState = .playing
         }
     }
@@ -205,6 +190,7 @@ final class GuardViewModel: ObservableObject {
         frameTask = Task { [streamClient] in
             await streamClient.stop()
         }
+        videoSurface = nil
         streamState = .idle
         frameRateMeter.reset()
         displayFPS = 0
@@ -213,8 +199,6 @@ final class GuardViewModel: ObservableObject {
     func clearSelection() {
         stop()
         selectedCameraID = nil
-        latestFrame = nil
-        latestImage = nil
         displayFPS = 0
     }
 
@@ -271,7 +255,7 @@ final class GuardViewModel: ObservableObject {
         guard selectedPrivacyMode != policy.minimumMode else { return }
         selectedPrivacyMode = policy.minimumMode
         if let selectedCameraID {
-            startStream(cameraID: selectedCameraID, profile: "mobile", preserveFrame: true)
+            startStream(cameraID: selectedCameraID, profile: "mobile")
         }
     }
 
@@ -281,8 +265,4 @@ final class GuardViewModel: ObservableObject {
         let streamClient = streamClient
         Task { await streamClient.stop() }
     }
-}
-
-private struct DecodedCameraFrame: @unchecked Sendable {
-    let image: UIImage
 }

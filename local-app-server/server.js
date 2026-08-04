@@ -15,7 +15,6 @@ const {
     dateKeysEndingAt: activityDateKeysEndingAt,
     groupIntervalsByDate,
 } = require("./native-api/activity-reporting");
-const { RollingStreamMetrics, percentile } = require("./stream-metrics");
 
 function parseEnvValue(raw) {
     let value = String(raw || "").trim();
@@ -65,8 +64,6 @@ const DEFAULT_HOST = process.env.GOHOME_APP_SERVER_HOST || "0.0.0.0";
 const DEFAULT_DEVICE_TOKEN = process.env.GOHOME_DEVICE_API_TOKEN || "gohome-local-device-token";
 const DEFAULT_APP_TOKEN = process.env.GOHOME_APP_TOKEN || "gohome-local-app-token";
 const DEFAULT_OPS_TOKEN = process.env.GOHOME_OPS_TOKEN || "";
-const DEFAULT_BOX_ADMIN_USERNAME = process.env.GOHOME_BOX_ADMIN_USERNAME || "admin";
-const DEFAULT_BOX_ADMIN_PASSWORD = process.env.GOHOME_BOX_ADMIN_PASSWORD || "123456";
 const DEFAULT_STORE_KIND = process.env.GOHOME_APP_STORE || (process.env.GOHOME_DATABASE_URL || process.env.DATABASE_URL ? "postgres" : "json");
 const VIDEO_PRIVACY_MODES = ["original", "person_blur", "skeleton"];
 const VIDEO_PRIVACY_RANK = new Map(VIDEO_PRIVACY_MODES.map((mode, index) => [mode, index]));
@@ -78,14 +75,6 @@ function normalizeVideoPrivacyMode(value, fallback = "original") {
 
 function isVideoPrivacyMode(value) {
     return VIDEO_PRIVACY_RANK.has(String(value || "").trim().toLowerCase());
-}
-
-function stricterVideoPrivacyMode(first, second) {
-    const resolvedFirst = normalizeVideoPrivacyMode(first);
-    const resolvedSecond = normalizeVideoPrivacyMode(second);
-    return VIDEO_PRIVACY_RANK.get(resolvedFirst) >= VIDEO_PRIVACY_RANK.get(resolvedSecond)
-        ? resolvedFirst
-        : resolvedSecond;
 }
 
 function nowIso() {
@@ -120,56 +109,6 @@ function readBody(req, limitBytes = 25 * 1024 * 1024) {
         req.on("end", () => resolve(Buffer.concat(chunks)));
         req.on("error", reject);
     });
-}
-
-function mjpegHeaderValue(value) {
-    return String(value || "").replace(/[\r\n]+/g, " ").trim();
-}
-
-function encodeMjpegFrame(boundary, relayFrame) {
-    const headers = [
-        `--${boundary}`,
-        `Content-Type: ${mjpegHeaderValue(relayFrame.contentType) || "image/jpeg"}`,
-        `Content-Length: ${relayFrame.frame.length}`,
-        `X-GoHome-Frame-Source: ${mjpegHeaderValue(relayFrame.source) || "live"}`,
-        `X-GoHome-Privacy-Mode: ${mjpegHeaderValue(relayFrame.privacyMode) || "original"}`,
-    ];
-    if (relayFrame.assetId) headers.push(`X-GoHome-Asset-Id: ${mjpegHeaderValue(relayFrame.assetId)}`);
-    if (relayFrame.capturedAt) headers.push(`X-GoHome-Captured-At: ${mjpegHeaderValue(relayFrame.capturedAt)}`);
-    return Buffer.concat([
-        Buffer.from(`${headers.join("\r\n")}\r\n\r\n`),
-        relayFrame.frame,
-        Buffer.from("\r\n"),
-    ]);
-}
-
-function createLatestFrameMjpegWriter(response, { boundary, getLatestFrame }) {
-    let lastFrameKey = "";
-    let waitingForDrain = false;
-    let closed = false;
-
-    function writeLatest({ force = false } = {}) {
-        if (closed || waitingForDrain || response.destroyed || response.writableEnded) return false;
-        const relayFrame = getLatestFrame();
-        if (!relayFrame || (!force && relayFrame.key === lastFrameKey)) return false;
-        lastFrameKey = relayFrame.key;
-        waitingForDrain = !response.write(encodeMjpegFrame(boundary, relayFrame));
-        return true;
-    }
-
-    function handleDrain() {
-        waitingForDrain = false;
-        writeLatest();
-    }
-
-    response.on("drain", handleDrain);
-    return {
-        writeLatest,
-        close() {
-            closed = true;
-            response.removeListener("drain", handleDrain);
-        },
-    };
 }
 
 function parseJsonBody(req) {
@@ -735,15 +674,9 @@ function createLocalAppServer(options = {}) {
             };
         },
     }));
-    const playbackTickets = new Map();
-    const boxAdminSessions = new Map();
     const providerCache = new Map();
     const careCardGenerationJobs = new Map();
-    const liveFrameCache = new Map();
-    const liveFrameSequence = new Map();
     const activityInsightNextEvaluationAt = new Map();
-    const liveStreamMetrics = new RollingStreamMetrics();
-    const activeStreamClients = { video: 0 };
     const eventLoopDelaySamples = [];
     let expectedEventLoopTick = Date.now() + 100;
     const eventLoopDelayTimer = setInterval(() => {
@@ -760,20 +693,14 @@ function createLocalAppServer(options = {}) {
     let visionVerificationRunning = false;
     let memoryUploadCleanupRunning = false;
     let apnsDispatchRunning = false;
-    const LIVE_FRAME_TTL_MS = 10000;
-    const LIVE_DISPLAY_TRANSPORT = "edge-composed-mjpeg-v1";
-
-    function recordLiveFrameMetric(cameraId, sample) {
-        liveStreamMetrics.record(cameraId, sample);
-    }
-
-    function streamMetricsSnapshot() {
+    function runtimeMetricsSnapshot() {
         const now = Date.now();
         const loopDelays = eventLoopDelaySamples.map((sample) => sample.delay_ms);
+        const sorted = [...loopDelays].sort((first, second) => first - second);
+        const p95Index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * 0.95)));
         return {
-            cameras: liveStreamMetrics.snapshot(now),
-            active_clients: { ...activeStreamClients },
-            event_loop_delay_ms_p95: Number(percentile(loopDelays, 0.95).toFixed(2)),
+            sampled_at: new Date(now).toISOString(),
+            event_loop_delay_ms_p95: Number((sorted[p95Index] || 0).toFixed(2)),
             event_loop_delay_ms_max: Number((loopDelays.length ? Math.max(...loopDelays) : 0).toFixed(2)),
         };
     }
@@ -1182,11 +1109,6 @@ function createLocalAppServer(options = {}) {
         return address === "127.0.0.1" || address === "localhost";
     }
 
-    function isLocalBrowserRequest(req) {
-        const rawHost = String(req.headers.host || "").split(":")[0].trim().toLowerCase();
-        return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(rawHost);
-    }
-
     function cloudDeviceClaimsEnabled() {
         const configured = String(process.env.GOHOME_ALLOW_CLOUD_DEVICE_CLAIMS || "").trim().toLowerCase();
         if (configured) return ["1", "true", "yes", "on"].includes(configured);
@@ -1211,26 +1133,9 @@ function createLocalAppServer(options = {}) {
         return true;
     }
 
-    function playbackTicketFromRequest(req) {
-        const url = new URL(req.url, "http://local");
-        const ticketId = url.searchParams.get("playback_ticket") || "";
-        if (!ticketId) return null;
-        const ticket = playbackTickets.get(ticketId) || null;
-        if (!ticket || Number(ticket.expires_at || 0) <= Date.now()) {
-            playbackTickets.delete(ticketId);
-            return null;
-        }
-        return { id: ticketId, ...ticket };
-    }
-
     function requireApp(req, res) {
         const url = new URL(req.url, "http://local");
         const token = tokenFrom(req) || url.searchParams.get("access_token") || "";
-        const ticket = playbackTicketFromRequest(req);
-        if (ticket) {
-            if (ticket.user_id) req.appUserId = ticket.user_id;
-            return true;
-        }
         const session = sessionForToken(token);
         if (session) {
             session.last_seen_at = nowIso();
@@ -2022,51 +1927,6 @@ function createLocalAppServer(options = {}) {
         if (!remoteAddress || remoteAddress === "127.0.0.1") return "";
         const port = normalizeNumber(runtime.api_port || runtime.port, 8711);
         return normalizeBaseUrl(`http://${remoteAddress}:${port}`);
-    }
-
-    function streamProxyTokenForDevice(deviceId) {
-        const issued = [...store.db.device_tokens]
-            .reverse()
-            .find((item) => item.status === "active" && (!deviceId || String(item.device_id || "") === String(deviceId)));
-        return issued?.token || activeDeviceToken()?.token || deviceToken;
-    }
-
-    function streamProfileConfig(profile) {
-        const normalized = String(profile || "mobile").trim().toLowerCase();
-        if (normalized === "detail") return { fps: 24, width: 1280, height: 720, quality: 78, drop: 1 };
-        if (normalized === "monitor") return { fps: 30, width: 960, height: 540, quality: 70, drop: 1 };
-        return { fps: 24, width: 720, height: 405, quality: 64, drop: 1 };
-    }
-
-    function cameraStreamProxyTarget(req, cameraId) {
-        const camera = store.db.cameras[String(cameraId)];
-        if (!camera) return null;
-        const localCameraIds = [
-            camera.local_camera_id,
-            camera.edge_camera_id,
-            camera.local_id,
-            cameraId,
-        ]
-            .map((value) => normalizeNumber(value, null))
-            .filter(Boolean)
-            .filter((value, index, values) => values.indexOf(value) === index);
-        if (!localCameraIds.length) return null;
-        const device = store.db.devices[String(camera.device_id || "")] || Object.values(store.db.devices)[0] || {};
-        const runtime = device.runtime || {};
-        const base = [
-            camera.device_lan_url,
-            device.lan_url,
-            runtime.lan_url,
-            device.service_url,
-            runtime.service_url,
-            inferredDeviceBaseUrl(req, runtime),
-        ].map(normalizeBaseUrl).find(Boolean);
-        if (!base) return null;
-        return {
-            base,
-            localCameraIds,
-            token: streamProxyTokenForDevice(camera.device_id || device.device_id || device.id),
-        };
     }
 
     function cameraConfigVersion(familyId = null) {
@@ -6691,26 +6551,6 @@ function createLocalAppServer(options = {}) {
         return null;
     }
 
-    function effectiveVideoPrivacyMode(cameraId, requestedMode = "original") {
-        const familyId = familyIdForCamera(cameraId);
-        const minimumMode = videoPrivacyForFamily(familyId).minimum_mode;
-        return stricterVideoPrivacyMode(minimumMode, requestedMode);
-    }
-
-    function activeVideoPrivacyMode(cameraId) {
-        return videoPrivacyForFamily(familyIdForCamera(cameraId)).minimum_mode;
-    }
-
-    function streamPrivacyMode(req, cameraId) {
-        const ticket = playbackTicketFromRequest(req);
-        if (ticket) {
-            if (String(ticket.payload?.camera_id || "") !== String(cameraId)) return null;
-            return effectiveVideoPrivacyMode(cameraId, ticket.payload?.privacy_mode);
-        }
-        const requested = new URL(req.url, "http://local").searchParams.get("privacy_mode") || "original";
-        return effectiveVideoPrivacyMode(cameraId, requested);
-    }
-
     function requireCameraAccess(req, res, cameraId) {
         const familyId = familyIdForCamera(cameraId);
         if (!familyId) {
@@ -6870,390 +6710,6 @@ function createLocalAppServer(options = {}) {
         if (!requireCameraAccess(req, res, cameraId)) return;
         const summary = url?.searchParams?.get("view") === "summary";
         write(res, 200, summary ? latestCameraEvaluationSummaryPayload(cameraId) : latestCameraEvaluationPayload(cameraId));
-    }
-
-    function writeEmptyMjpeg(res) {
-        const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
-        res.writeHead(200, {
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-store, no-transform",
-            "Connection": "close",
-            "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
-            "X-GoHome-Stream-State": "waiting_for_frame",
-            "X-GoHome-Display-Transport": LIVE_DISPLAY_TRANSPORT,
-            "X-GoHome-Composition-Owner": "edge",
-        });
-        if (typeof res.flushHeaders === "function") res.flushHeaders();
-    }
-
-    function writeLatestFrameImage(res, cameraId) {
-        const asset = latestCameraAsset(cameraId, { purposes: ["live_preview"] });
-        const filePath = assetAbsolutePath(asset);
-        if (!asset || !filePath || !fs.existsSync(filePath)) return false;
-
-        const stat = fs.statSync(filePath);
-        if (!stat.isFile() || stat.size <= 0) return false;
-
-        const headers = {
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-store, no-transform",
-            "Connection": "close",
-            "Content-Length": String(stat.size),
-            "Content-Type": asset.content_type || "image/jpeg",
-            "X-GoHome-Stream-State": "latest_snapshot",
-            "X-GoHome-Display-Transport": LIVE_DISPLAY_TRANSPORT,
-            "X-GoHome-Composition-Owner": "edge",
-        };
-        if (asset.id) headers["X-GoHome-Asset-Id"] = String(asset.id);
-        res.writeHead(200, headers);
-        fs.createReadStream(filePath).pipe(res);
-        return true;
-    }
-
-    function liveFrameCacheKey(cameraId, privacyMode = "original") {
-        return `${cameraId}:${normalizeVideoPrivacyMode(privacyMode)}`;
-    }
-
-    function latestLiveFrame(cameraId, privacyMode = "original") {
-        const item = liveFrameCache.get(liveFrameCacheKey(cameraId, privacyMode));
-        if (!item?.frame || Date.now() - Number(item.received_at_ms || 0) > LIVE_FRAME_TTL_MS) return null;
-        return item;
-    }
-
-    function latestRelayFrame(cameraId, privacyMode = "original") {
-        const resolvedPrivacyMode = normalizeVideoPrivacyMode(privacyMode);
-        const live = latestLiveFrame(cameraId, resolvedPrivacyMode);
-        if (live) {
-            return {
-                key: `live:${live.frame_id}`,
-                frame: live.frame,
-                contentType: live.content_type || "image/jpeg",
-                capturedAt: live.captured_at || live.received_at,
-                source: "live",
-                assetId: "",
-                privacyMode: resolvedPrivacyMode,
-            };
-        }
-
-        if (resolvedPrivacyMode !== "original") return null;
-
-        const asset = latestCameraAsset(cameraId, { purposes: ["live_preview"] });
-        const filePath = assetAbsolutePath(asset);
-        if (!asset || !filePath || !fs.existsSync(filePath)) return null;
-        let stat;
-        try {
-            stat = fs.statSync(filePath);
-        } catch (_error) {
-            return null;
-        }
-        if (!stat.isFile() || stat.size <= 0) return null;
-        let frame;
-        try {
-            frame = fs.readFileSync(filePath);
-        } catch (_error) {
-            return null;
-        }
-        if (!frame.length) return null;
-        return {
-            key: `asset:${asset.id || ""}:${asset.relative_path || ""}:${stat.mtimeMs}:${stat.size}`,
-            frame,
-            contentType: asset.content_type || "image/jpeg",
-            capturedAt: asset.captured_at || asset.created_at,
-            source: "asset",
-            assetId: asset.id ? String(asset.id) : "",
-            privacyMode: "original",
-        };
-    }
-
-    function writeLatestFrameMjpegStream(req, res, cameraId, privacyMode = "original") {
-        const boundary = `gohome-${crypto.randomBytes(4).toString("hex")}`;
-        const profile = new URL(req.url, "http://local").searchParams.get("profile") || "mobile";
-        const resolvedPrivacyMode = normalizeVideoPrivacyMode(privacyMode);
-        const relayFps = streamProfileConfig(profile).fps;
-        const relayIntervalMs = Math.ceil(1000 / Math.max(1, relayFps));
-        let closed = false;
-        activeStreamClients.video += 1;
-
-        if (typeof req.setTimeout === "function") req.setTimeout(0);
-        if (req.socket && typeof req.socket.setTimeout === "function") req.socket.setTimeout(0);
-
-        res.writeHead(200, {
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-store, no-transform",
-            "Connection": "keep-alive",
-            "Content-Type": `multipart/x-mixed-replace; boundary=${boundary}`,
-            "X-Accel-Buffering": "no",
-            "X-GoHome-Stream-State": "cloud_relay",
-            "X-GoHome-Privacy-Mode": resolvedPrivacyMode,
-            "X-GoHome-Display-Transport": LIVE_DISPLAY_TRANSPORT,
-            "X-GoHome-Composition-Owner": "edge",
-        });
-        if (typeof res.flushHeaders === "function") res.flushHeaders();
-
-        const writer = createLatestFrameMjpegWriter(res, {
-            boundary,
-            getLatestFrame: () => latestRelayFrame(cameraId, resolvedPrivacyMode),
-        });
-        writer.writeLatest({ force: true });
-        const timer = setInterval(writer.writeLatest, relayIntervalMs);
-        function closeStream() {
-            if (closed) return;
-            closed = true;
-            activeStreamClients.video = Math.max(0, activeStreamClients.video - 1);
-            clearInterval(timer);
-            writer.close();
-        }
-        req.on("close", closeStream);
-        res.on("close", closeStream);
-        return true;
-    }
-
-    async function handleDeviceLiveFrameUpload(req, res, url) {
-        if (!requireDevice(req, res)) return;
-        const issuedToken = issuedDeviceTokenFromRequest(req);
-        const content = await readBody(req, 4 * 1024 * 1024);
-        if (!content.length) {
-            writeError(res, 400, "live frame body is empty");
-            return;
-        }
-        const rawCameraId = url.searchParams.get("camera_id");
-        const localCameraId = url.searchParams.get("local_camera_id") || rawCameraId;
-        const mappedCamera = resolveAppCameraForDeviceCameraId(rawCameraId, {
-            local_camera_id: localCameraId,
-            edge_camera_id: localCameraId,
-        }, issuedToken?.device_id || "");
-        const cameraId = normalizeNumber(mappedCamera?.id || rawCameraId, null);
-        if (!cameraId) {
-            writeError(res, 400, "camera_id is required");
-            return;
-        }
-        const receivedAt = nowIso();
-        const privacyMode = normalizeVideoPrivacyMode(url.searchParams.get("privacy_mode"));
-        const cacheKey = liveFrameCacheKey(cameraId, privacyMode);
-        const streamEpochMs = Math.max(0, Math.trunc(normalizeNumber(url.searchParams.get("stream_epoch_ms"), 0)));
-        const sourceSequence = Math.max(0, Math.trunc(normalizeNumber(url.searchParams.get("sequence"), 0)));
-        const current = liveFrameCache.get(cacheKey);
-        const orderedUpload = streamEpochMs > 0 && sourceSequence > 0;
-        const staleUpload = orderedUpload && current?.stream_epoch_ms > 0 && (
-            streamEpochMs < current.stream_epoch_ms
-            || (streamEpochMs === current.stream_epoch_ms && sourceSequence <= current.source_sequence)
-        );
-        if (staleUpload) {
-            recordLiveFrameMetric(cameraId, {
-                accepted: false,
-                capturedAt: url.searchParams.get("captured_at"),
-                receivedAtMs: Date.now(),
-            });
-            write(res, 200, {
-                ok: true,
-                accepted: false,
-                stale_ignored: true,
-                camera_id: cameraId,
-                live_frame_id: current.frame_id,
-                received_at: receivedAt,
-                received_privacy_mode: privacyMode,
-                requested_privacy_mode: activeVideoPrivacyMode(cameraId),
-                stream_epoch_ms: current.stream_epoch_ms,
-                source_sequence: current.source_sequence,
-            });
-            return;
-        }
-        const sequence = Number(liveFrameSequence.get(String(cameraId)) || 0) + 1;
-        liveFrameSequence.set(String(cameraId), sequence);
-        liveFrameCache.set(cacheKey, {
-            frame_id: `${cameraId}-${Date.now()}-${sequence}`,
-            frame: content,
-            camera_id: cameraId,
-            local_camera_id: normalizeNumber(localCameraId, null),
-            device_id: issuedToken?.device_id || "",
-            content_type: url.searchParams.get("content_type") || req.headers["content-type"] || "image/jpeg",
-            captured_at: url.searchParams.get("captured_at") || receivedAt,
-            received_at: receivedAt,
-            received_at_ms: Date.now(),
-            size: content.length,
-            privacy_mode: privacyMode,
-            stream_epoch_ms: streamEpochMs,
-            source_sequence: sourceSequence,
-        });
-        recordLiveFrameMetric(cameraId, {
-            accepted: true,
-            capturedAt: url.searchParams.get("captured_at") || receivedAt,
-            receivedAtMs: Date.now(),
-        });
-        write(res, 200, {
-            ok: true,
-            accepted: true,
-            stale_ignored: false,
-            camera_id: cameraId,
-            live_frame_id: liveFrameCache.get(cacheKey).frame_id,
-            received_at: receivedAt,
-            received_privacy_mode: privacyMode,
-            requested_privacy_mode: activeVideoPrivacyMode(cameraId),
-            stream_epoch_ms: streamEpochMs,
-            source_sequence: sourceSequence,
-        });
-    }
-
-    function applyStreamParams(sourceUrl, req, privacyMode = "original") {
-        const requestedUrl = new URL(req.url, "http://local");
-        const profile = requestedUrl.searchParams.get("profile") || "mobile";
-        const defaults = streamProfileConfig(profile);
-        sourceUrl.searchParams.set("profile", profile);
-        sourceUrl.searchParams.set("privacy_mode", normalizeVideoPrivacyMode(privacyMode));
-        for (const [key, value] of Object.entries(defaults)) {
-            sourceUrl.searchParams.set(key, String(requestedUrl.searchParams.get(key) || value));
-        }
-        return sourceUrl;
-    }
-
-    function proxyMjpegRequest(req, res, sourceUrl, headers = {}, metadata = {}) {
-        return new Promise((resolve) => {
-            const transport = sourceUrl.protocol === "https:" ? https : http;
-            const upstreamReq = transport.request(sourceUrl, {
-                method: "GET",
-                headers: {
-                    Accept: "multipart/x-mixed-replace,image/*,*/*",
-                    ...headers,
-                },
-                timeout: 3500,
-            }, (upstreamRes) => {
-                const status = Number(upstreamRes.statusCode || 0);
-                if (status < 200 || status >= 300) {
-                    upstreamRes.resume();
-                    resolve(false);
-                    return;
-                }
-
-                res.writeHead(200, {
-                    "Access-Control-Allow-Origin": "*",
-                    "Cache-Control": "no-store, no-transform",
-                    "Connection": "close",
-                    "Content-Type": upstreamRes.headers["content-type"] || "multipart/x-mixed-replace; boundary=frame",
-                    "X-GoHome-Stream-State": "proxied",
-                    ...metadata,
-                });
-                upstreamRes.pipe(res);
-                upstreamRes.on("error", () => {
-                    if (!res.destroyed) res.destroy();
-                });
-                req.on("close", () => {
-                    upstreamReq.destroy();
-                    upstreamRes.destroy();
-                });
-                resolve(true);
-            });
-
-            upstreamReq.on("timeout", () => {
-                upstreamReq.destroy();
-                resolve(false);
-            });
-            upstreamReq.on("error", () => resolve(false));
-            upstreamReq.end();
-        });
-    }
-
-    function requestBoxAdminCookie(base) {
-        const cached = boxAdminSessions.get(base);
-        if (cached?.cookie && Number(cached.expires_at || 0) > Date.now() + 60000) {
-            return Promise.resolve(cached.cookie);
-        }
-        const loginUrl = new URL("/api/admin/auth/login", base);
-        const body = Buffer.from(JSON.stringify({
-            username: DEFAULT_BOX_ADMIN_USERNAME,
-            password: DEFAULT_BOX_ADMIN_PASSWORD,
-        }));
-        return new Promise((resolve) => {
-            const transport = loginUrl.protocol === "https:" ? https : http;
-            const loginReq = transport.request(loginUrl, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Content-Length": body.length,
-                    Accept: "application/json",
-                },
-                timeout: 3000,
-            }, (loginRes) => {
-                loginRes.resume();
-                if (Number(loginRes.statusCode || 0) < 200 || Number(loginRes.statusCode || 0) >= 300) {
-                    resolve("");
-                    return;
-                }
-                const setCookie = loginRes.headers["set-cookie"] || [];
-                const rawCookie = (Array.isArray(setCookie) ? setCookie : [setCookie])
-                    .map((item) => String(item).split(";")[0])
-                    .find((item) => item.startsWith("gohome_admin_session="));
-                if (!rawCookie) {
-                    resolve("");
-                    return;
-                }
-                boxAdminSessions.set(base, {
-                    cookie: rawCookie,
-                    expires_at: Date.now() + 11 * 60 * 60 * 1000,
-                });
-                resolve(rawCookie);
-            });
-            loginReq.on("timeout", () => {
-                loginReq.destroy();
-                resolve("");
-            });
-            loginReq.on("error", () => resolve(""));
-            loginReq.write(body);
-            loginReq.end();
-        });
-    }
-
-    async function proxyCameraMjpeg(req, res, cameraId, privacyMode = "original") {
-        const target = cameraStreamProxyTarget(req, cameraId);
-        if (!target) return false;
-
-        for (const localCameraId of target.localCameraIds) {
-            const deviceUrl = applyStreamParams(new URL(`/api/v1/device/cameras/${localCameraId}/stream.mjpg`, target.base), req, privacyMode);
-            const deviceProxied = await proxyMjpegRequest(req, res, deviceUrl, {
-                Authorization: `Bearer ${target.token}`,
-                "X-GoHome-Device-Token": target.token,
-            }, {
-                "X-GoHome-Device-Base": target.base,
-                    "X-GoHome-Local-Camera-Id": String(localCameraId),
-                    "X-GoHome-Proxy-Mode": "device-token",
-                    "X-GoHome-Display-Transport": LIVE_DISPLAY_TRANSPORT,
-                    "X-GoHome-Composition-Owner": "edge",
-            });
-            if (deviceProxied || res.headersSent) return deviceProxied;
-        }
-
-        const adminCookie = await requestBoxAdminCookie(target.base);
-        if (!adminCookie) return false;
-        for (const localCameraId of target.localCameraIds) {
-            const adminUrl = applyStreamParams(new URL(`/api/cameras/${localCameraId}/stream.mjpg`, target.base), req, privacyMode);
-            const adminProxied = await proxyMjpegRequest(req, res, adminUrl, { Cookie: adminCookie }, {
-                "X-GoHome-Device-Base": target.base,
-                "X-GoHome-Local-Camera-Id": String(localCameraId),
-                "X-GoHome-Proxy-Mode": "admin-cookie",
-                "X-GoHome-Display-Transport": LIVE_DISPLAY_TRANSPORT,
-                "X-GoHome-Composition-Owner": "edge",
-            });
-            if (adminProxied || res.headersSent) return adminProxied;
-        }
-        return false;
-    }
-
-    async function serveCameraMjpeg(req, res, cameraId) {
-        if (!requireApp(req, res)) return;
-        if (!requireCameraAccess(req, res, cameraId)) return;
-        const privacyMode = streamPrivacyMode(req, cameraId);
-        if (!privacyMode) {
-            writeError(res, 403, "playback ticket does not match camera");
-            return;
-        }
-        if (isLocalBrowserRequest(req) && await proxyCameraMjpeg(req, res, cameraId, privacyMode)) return;
-        if (writeLatestFrameMjpegStream(req, res, cameraId, privacyMode)) return;
-        if (await proxyCameraMjpeg(req, res, cameraId, privacyMode)) return;
-        if (privacyMode !== "original") {
-            writeEmptyMjpeg(res);
-            return;
-        }
-        if (writeLatestFrameImage(res, cameraId)) return;
-        writeEmptyMjpeg(res);
     }
 
     async function handleDeviceMediaUpload(req, res, url) {
@@ -8781,7 +8237,7 @@ function createLocalAppServer(options = {}) {
                         ...mediaAccessService.status(),
                         mediamtx_auth_configured: mediaAuthSharedSecret.length >= 32,
                     },
-                    stream_metrics: streamMetricsSnapshot(),
+                    runtime_metrics: runtimeMetricsSnapshot(),
                     push_metrics: pushDeliveryMetrics(),
                     updated_at: store.db.updated_at,
                 };
@@ -9680,46 +9136,37 @@ function createLocalAppServer(options = {}) {
                 if (!requireApp(req, res)) return;
                 const payload = await parseJsonBody(req);
                 const resourceType = String(payload.resource_type || "").trim();
-                const ticketPayload = { ...payload, resource_type: resourceType };
-                let privacyMode = null;
-                if (resourceType === "stream") {
-                    const cameraId = String(payload.camera_id || "").trim();
-                    if (!cameraId) {
-                        writeError(res, 400, "camera_id is required");
-                        return;
-                    }
-                    if (!requireCameraAccess(req, res, cameraId)) return;
-                    privacyMode = videoPrivacyForFamily(familyIdForCamera(cameraId)).minimum_mode;
-                    Object.assign(ticketPayload, {
-                        camera_id: cameraId,
-                        profile: String(payload.profile || "mobile"),
-                        privacy_mode: privacyMode,
-                    });
+                if (resourceType !== "stream") {
+                    writeError(res, 400, "resource_type must be stream");
+                    return;
                 }
-                const ticket = stableId("play-");
-                const expiresAt = Date.now() + 120000;
-                playbackTickets.set(ticket, {
-                    payload: ticketPayload,
-                    user_id: activeAppUser(req).id,
-                    expires_at: expiresAt,
+                const cameraId = String(payload.camera_id || "").trim();
+                if (!cameraId) {
+                    writeError(res, 400, "camera_id is required");
+                    return;
+                }
+                if (!requireCameraAccess(req, res, cameraId)) return;
+                const camera = store.db.cameras[cameraId];
+                const familyId = String(camera?.family_id || "");
+                const deviceId = String(camera?.device_id || "");
+                if (!familyId || !deviceId) {
+                    writeError(res, 409, "camera is not attached to a bound device");
+                    return;
+                }
+                const currentPrivacyMode = videoPrivacyForFamily(familyId).minimum_mode;
+                const session = mediaAccessService.issueReadSession({
+                    userId: activeAppUser(req).id,
+                    familyId,
+                    deviceId,
+                    cameraId,
+                    privacyMode: currentPrivacyMode,
                 });
-                const response = {
-                    ticket,
-                    expires_at: new Date(expiresAt).toISOString(),
-                };
-                if (privacyMode) {
-                    response.privacy_mode = privacyMode;
-                    response.minimum_privacy_mode = privacyMode;
-                    response.display_transport = LIVE_DISPLAY_TRANSPORT;
-                }
-                write(res, 200, response);
-                return;
-            }
-
-            const streamMatch = pathname.match(/^\/api\/v1\/video\/cameras\/([^/]+)\/stream\.mjpg$/)
-                || pathname.match(/^\/api\/app\/cameras\/([^/]+)\/stream\.mjpg$/);
-            if (req.method === "GET" && streamMatch) {
-                await serveCameraMjpeg(req, res, streamMatch[1]);
+                write(res, 200, {
+                    ...session,
+                    minimum_privacy_mode: currentPrivacyMode,
+                }, {
+                    "Cache-Control": "private, no-store",
+                });
                 return;
             }
 
@@ -9794,11 +9241,6 @@ function createLocalAppServer(options = {}) {
 
             if (req.method === "POST" && pathname === "/api/v1/device/activity-intervals") {
                 await handleDeviceActivityIntervals(req, res);
-                return;
-            }
-
-            if (req.method === "POST" && pathname === "/api/v1/device/live-frames/upload") {
-                await handleDeviceLiveFrameUpload(req, res, url);
                 return;
             }
 
@@ -10865,7 +10307,6 @@ if (require.main === module) {
 
 module.exports = {
     createDefaultDb,
-    createLatestFrameMjpegWriter,
     createLocalAppServer,
     createLocalAppServerAsync,
     normalizeDb,

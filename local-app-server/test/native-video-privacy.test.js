@@ -37,6 +37,9 @@ test('video privacy is one family state shared by app playback and the edge devi
     dataDir,
     authMode: 'demo',
     demoOtp: '246810',
+    mediaAuthSecret: 'native-video-privacy-media-secret-32-bytes',
+    mediaAuthSharedSecret: 'native-video-privacy-shared-secret-32-bytes',
+    mediaWhepBaseURL: 'https://media.example.test/media',
   });
   const baseURL = await listen(app.server);
   try {
@@ -122,7 +125,14 @@ test('video privacy is one family state shared by app playback and the edge devi
     assert.equal(playback.response.status, 200);
     assert.equal(playback.body.privacy_mode, 'skeleton');
     assert.equal(playback.body.minimum_privacy_mode, 'skeleton');
-    assert.equal(playback.body.display_transport, 'edge-composed-mjpeg-v1');
+    assert.equal(playback.body.display_transport, 'whep-h264-v1');
+    assert.equal(playback.body.composition_owner, 'edge');
+    assert.equal(playback.body.media_path, `live/${deviceID}/${camera.body.id}`);
+    assert.equal(playback.body.whep_url, `https://media.example.test/media/live/${deviceID}/${camera.body.id}/whep`);
+    assert.equal(playback.body.authorization.scheme, 'Bearer');
+    assert.match(playback.body.authorization.token, /^m1\./);
+    assert.equal(playback.body.whep_url.includes(playback.body.authorization.token), false);
+    assert.equal(playback.body.ticket, undefined);
     assert.equal(playback.body.pose_stream_path, undefined);
     assert.equal(playback.body.scene_stream_path, undefined);
 
@@ -148,96 +158,35 @@ test('video privacy is one family state shared by app playback and the edge devi
     );
     assert.equal(removedSceneUpload.status, 404);
 
-    const playbackQuery = `playback_ticket=${encodeURIComponent(playback.body.ticket)}&privacy_mode=skeleton`;
-    const removedPoseStream = await fetch(`${baseURL}/api/v1/video/cameras/${camera.body.id}/pose-stream?${playbackQuery}`);
+    const playbackQuery = 'privacy_mode=skeleton';
+    const removedPoseStream = await fetch(`${baseURL}/api/v1/video/cameras/${camera.body.id}/pose-stream?${playbackQuery}`, {
+      headers: owner.headers,
+    });
     assert.equal(removedPoseStream.status, 404);
-    const removedSceneStream = await fetch(`${baseURL}/api/v1/video/cameras/${camera.body.id}/scene.mjpg?${playbackQuery}`);
+    const removedSceneStream = await fetch(`${baseURL}/api/v1/video/cameras/${camera.body.id}/scene.mjpg?${playbackQuery}`, {
+      headers: owner.headers,
+    });
     assert.equal(removedSceneStream.status, 404);
 
-    const composedSkeleton = Buffer.from([0xff, 0xd8, 0x9a, 0xbc, 0xff, 0xd9]);
-    const composedUpload = await fetch(
+    const removedComposedUpload = await fetch(
       `${baseURL}/api/v1/device/live-frames/upload?camera_id=${camera.body.id}&local_camera_id=24&privacy_mode=skeleton&stream_epoch_ms=3000&sequence=1`,
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${deviceToken}`, 'Content-Type': 'image/jpeg' },
-        body: composedSkeleton,
+        body: jpeg,
       },
     );
-    assert.equal(composedUpload.status, 200);
-    const composedStream = await fetch(
+    assert.equal(removedComposedUpload.status, 404);
+    const removedComposedStream = await fetch(
       `${baseURL}/api/v1/video/cameras/${camera.body.id}/stream.mjpg?${playbackQuery}`,
+      { headers: owner.headers },
     );
-    assert.equal(composedStream.status, 200);
-    assert.equal(composedStream.headers.get('x-gohome-display-transport'), 'edge-composed-mjpeg-v1');
-    assert.equal(composedStream.headers.get('x-gohome-composition-owner'), 'edge');
-    const composedReader = composedStream.body.getReader();
-    const composedChunk = await composedReader.read();
-    assert.ok(Buffer.from(composedChunk.value).includes(composedSkeleton));
-    await composedReader.cancel();
-
-    const upload = await fetch(
-      `${baseURL}/api/v1/device/live-frames/upload?camera_id=${camera.body.id}&local_camera_id=24&privacy_mode=original&stream_epoch_ms=1000&sequence=2`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${deviceToken}`,
-          'Content-Type': 'image/jpeg',
-        },
-        body: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
-      },
-    );
-    assert.equal(upload.status, 200);
-    const uploadBody = await upload.json();
-    assert.equal(uploadBody.received_privacy_mode, 'original');
-    assert.equal(uploadBody.requested_privacy_mode, 'skeleton');
-    assert.equal(uploadBody.accepted, true);
-    assert.equal(uploadBody.source_sequence, 2);
-
-    const staleUpload = await fetch(
-      `${baseURL}/api/v1/device/live-frames/upload?camera_id=${camera.body.id}&local_camera_id=24&privacy_mode=original&stream_epoch_ms=1000&sequence=1`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${deviceToken}`,
-          'Content-Type': 'image/jpeg',
-        },
-        body: Buffer.from([0xff, 0xd8, 0x01, 0xff, 0xd9]),
-      },
-    );
-    assert.equal(staleUpload.status, 200);
-    const staleUploadBody = await staleUpload.json();
-    assert.equal(staleUploadBody.accepted, false);
-    assert.equal(staleUploadBody.stale_ignored, true);
-    assert.equal(staleUploadBody.source_sequence, 2);
-
-    const nextSessionUpload = await fetch(
-      `${baseURL}/api/v1/device/live-frames/upload?camera_id=${camera.body.id}&local_camera_id=24&privacy_mode=original&stream_epoch_ms=1001&sequence=1`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${deviceToken}`,
-          'Content-Type': 'image/jpeg',
-        },
-        body: Buffer.from([0xff, 0xd8, 0x02, 0xff, 0xd9]),
-      },
-    );
-    assert.equal(nextSessionUpload.status, 200);
-    const nextSessionUploadBody = await nextSessionUpload.json();
-    assert.equal(nextSessionUploadBody.accepted, true);
-    assert.equal(nextSessionUploadBody.stream_epoch_ms, 1001);
-    assert.equal(nextSessionUploadBody.source_sequence, 1);
+    assert.equal(removedComposedStream.status, 404);
 
     const health = await request(baseURL, '/health');
     assert.equal(health.response.status, 200);
-    const streamMetric = health.body.stream_metrics.cameras[String(camera.body.id)];
-    assert.ok(streamMetric.accepted_fps_10s > 0);
-    assert.ok(streamMetric.accepted_sample_count_10s >= 3);
-    assert.ok(streamMetric.frame_gap_ms_max >= streamMetric.frame_gap_ms_p95);
-    assert.ok(streamMetric.last_frame_age_ms >= 0);
-    assert.equal(streamMetric.stale_rejections, 1);
-    assert.ok(streamMetric.transport_latency_ms_max >= streamMetric.transport_latency_ms_p95);
-    assert.equal(health.body.stream_metrics.scene_cameras, undefined);
-    assert.deepEqual(health.body.stream_metrics.active_clients, { video: 0 });
+    assert.equal(health.body.stream_metrics, undefined);
+    assert.ok(health.body.runtime_metrics.event_loop_delay_ms_p95 >= 0);
 
     const boxUpdated = await request(baseURL, '/api/v1/device/video-privacy', {
       method: 'PUT',

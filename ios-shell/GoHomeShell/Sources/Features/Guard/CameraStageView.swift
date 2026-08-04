@@ -1,8 +1,7 @@
 import SwiftUI
-import UIKit
 
 struct CameraStageView: View {
-    let image: UIImage?
+    let surface: WebRTCVideoSurface?
     let state: GuardStreamState
     let displayFPS: Double
     let privacyMode: VideoPrivacyMode
@@ -10,10 +9,8 @@ struct CameraStageView: View {
     var body: some View {
         ZStack {
             Color.black
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
+            if let surface {
+                WebRTCVideoView(surface: surface)
             } else {
                 VStack(spacing: 10) {
                     Image(systemName: iconName)

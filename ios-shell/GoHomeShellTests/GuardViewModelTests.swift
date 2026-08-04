@@ -17,7 +17,7 @@ final class GuardViewModelTests: XCTestCase {
 
     func testSkeletonRateLabelUsesDecodedVideoFPS() {
         let stage = CameraStageView(
-            image: nil,
+            surface: nil,
             state: .playing,
             displayFPS: 12.4,
             privacyMode: .skeleton
@@ -29,7 +29,7 @@ final class GuardViewModelTests: XCTestCase {
 
     func testSkeletonRateLabelUsesDecodedFPSImmediately() {
         let stage = CameraStageView(
-            image: nil,
+            surface: nil,
             state: .playing,
             displayFPS: 11.7,
             privacyMode: .skeleton
@@ -110,7 +110,7 @@ final class GuardViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testOnlySelectedCameraCanPublishFrames() async throws {
+    func testOnlySelectedCameraCanPublishRenderedFrames() async throws {
         let client = RecordingStreamClient()
         let model = GuardViewModel(streamClient: client)
 
@@ -119,11 +119,12 @@ final class GuardViewModelTests: XCTestCase {
         model.select(cameraID: "camera-b")
         try await waitUntil { await client.hasStarted(cameraID: "camera-b") }
 
-        await client.yield(Data([0x01]), cameraID: "camera-a")
-        await client.yield(Data([0x02]), cameraID: "camera-b")
-        try await waitUntil { await MainActor.run { model.latestFrame == Data([0x02]) } }
+        await client.yield(timestamp: 10, cameraID: "camera-a")
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(model.streamState, .connecting)
+        await client.yield(timestamp: 10, cameraID: "camera-b")
+        try await waitUntil { await MainActor.run { model.streamState == .playing } }
 
-        XCTAssertEqual(model.latestFrame, Data([0x02]))
         XCTAssertEqual(model.streamState, .playing)
     }
 
@@ -197,7 +198,7 @@ final class GuardViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testSharedPrivacyPolicyRestartsTheSameCameraWithoutClearingTheCurrentFrame() async throws {
+    func testSharedPrivacyPolicyRestartsTheSameCameraWithTheNewMode() async throws {
         let client = RecordingStreamClient()
         let privacy = RecordingPrivacyService(policy: VideoPrivacyPolicy(
             familyID: "family-1",
@@ -212,8 +213,8 @@ final class GuardViewModelTests: XCTestCase {
 
         model.select(cameraID: "camera-a")
         try await waitUntil { await client.hasStarted(cameraID: "camera-a") }
-        await client.yield(Data([0x01]), cameraID: "camera-a")
-        try await waitUntil { await MainActor.run { model.latestFrame == Data([0x01]) } }
+        await client.yield(timestamp: 10, cameraID: "camera-a")
+        try await waitUntil { await MainActor.run { model.streamState == .playing } }
 
         model.startPrivacySync()
         try await waitUntil {
@@ -222,7 +223,7 @@ final class GuardViewModelTests: XCTestCase {
             return selectedSkeleton && streamedMode == .skeleton
         }
 
-        XCTAssertEqual(model.latestFrame, Data([0x01]))
+        XCTAssertEqual(model.selectedCameraID, "camera-a")
         model.stop()
     }
 
@@ -269,7 +270,7 @@ private actor FailingStreamClient: CameraStreamClient {
 
 private actor RecordingStreamClient: CameraStreamClient {
     private(set) var events: [String] = []
-    private var continuations: [String: AsyncThrowingStream<Data, Error>.Continuation] = [:]
+    private var continuations: [String: AsyncThrowingStream<TimeInterval, Error>.Continuation] = [:]
     private var privacyModes: [String: VideoPrivacyMode] = [:]
 
     var stopCount: Int { events.filter { $0 == "stop" }.count }
@@ -281,10 +282,10 @@ private actor RecordingStreamClient: CameraStreamClient {
     ) async throws -> CameraDisplayStreams {
         events.append("start:\(cameraID)")
         privacyModes[cameraID] = privacyMode
-        let frames = AsyncThrowingStream<Data, Error>(bufferingPolicy: .bufferingNewest(1)) { continuation in
+        let frames = AsyncThrowingStream<TimeInterval, Error>(bufferingPolicy: .bufferingNewest(1)) { continuation in
             continuations[cameraID] = continuation
         }
-        return CameraDisplayStreams(frames: frames)
+        return CameraDisplayStreams(surface: nil, renderedFrames: frames)
     }
 
     func stop() async {
@@ -305,8 +306,8 @@ private actor RecordingStreamClient: CameraStreamClient {
         privacyModes[cameraID]
     }
 
-    func yield(_ data: Data, cameraID: String) {
-        continuations[cameraID]?.yield(data)
+    func yield(timestamp: TimeInterval, cameraID: String) {
+        continuations[cameraID]?.yield(timestamp)
     }
 
     func fail(cameraID: String) {

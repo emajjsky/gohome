@@ -3804,14 +3804,14 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 4. [x] `PrivacyFrameRenderer` 输出未经传输编码的 BGR 成品帧；JPEG 只由局域网管理诊断消费者按需编码，缓存不再绑定 JPEG 质量。
 5. [x] 实现每路一个有界 H.264 发布进程，绑定摄像头源代次、隐私模式和关停生命周期；进程异常时重建当前流，不排队补发旧帧。专项和完整边缘回归 `58/58` 通过，Pi FFmpeg 实际参数验证通过；生产媒体服务就绪前不单独部署。
 6. [ ] 云端部署固定版本 MediaMTX，完成 TLS、RTSP/TCP 发布、WHEP、ICE/TURN、外部鉴权、路径隔离、指标和 systemd/nginx 配置。代码库已完成固定 `v1.19.3` 的最小权限配置、systemd、nginx、加密环境模板和 TURN 契约；真实服务器安装与端到端建连仍未完成。
-7. [ ] Node 播放会话签发短时媒体权限；鉴权必须绑定家庭、盒子、摄像头、动作、路径、隐私模式和有效期，云端不得解码或二次合成。底层 `MediaAccessService` 与 MediaMTX 回环鉴权端点已完成；现有 `/api/v1/video/sessions` 还未切换到 WHEP 会话。
-8. [ ] iOS 使用成熟 WebRTC 库和原生视频渲染器消费 WHEP；FPS 只统计实际渲染的新视频帧，前后台、换路和换模式必须释放旧会话。
-9. [ ] 删除正式 `_LatestFrameUploader`、逐帧上传 API、云端 JPEG 缓存/MJPEG 产品路由和 iOS `MJPEGStreamClient`。盒子 LAN 管理 MJPEG 不得被公网 App 自动回退使用。
+7. [x] Node 播放会话已统一调用 `MediaAccessService` 签发短时 WHEP 权限，绑定家庭、盒子、摄像头、动作、路径、隐私模式和有效期；云端不解码、不合成、不保存直播像素。
+8. [x] iOS 已使用 WebRTC M137 和原生 Metal 视频渲染器消费 WHEP；显示 FPS 只统计当前渲染器实际收到的新视频帧，换路、换模式和生命周期变化会关闭旧 PeerConnection 与 WHEP 资源。
+9. [x] 删除正式 `_LatestFrameUploader`、逐帧上传 API、云端 JPEG 缓存/MJPEG 产品路由、播放票据和 iOS `MJPEGStreamClient`；盒子 LAN 管理 MJPEG 保持独立且正式 App 无自动降级。
 10. [ ] 双摄执行 30 分钟原画/模糊/骨架、前后台、蜂窝网络、断网重连和模式切换验收；记录源、合成、编码、发布、云接收、WebRTC 接收/渲染 FPS，端到端延迟、丢包、CPU、温度、内存和重连次数。
 
 ## 15.55 云端媒体鉴权与部署契约（2026-08-04）
 
-状态：本地代码、配置与自动回归完成；生产服务器部署和 iOS WHEP 尚未完成。
+状态：本地媒体鉴权、WHEP 会话、iOS 原生 WebRTC 和旧正式 MJPEG 删除已完成；生产服务器、盒子发布和 TestFlight 验收尚未完成。
 
 1. [x] 建立唯一 `live/{device}/{camera}` 路径规则，设备 ID 和摄像头 ID 仅允许有界安全字符。
 2. [x] 发布鉴权使用已签发设备令牌哈希，每次核对活跃令牌、设备、家庭、摄像头归属和启用状态。
@@ -3821,4 +3821,7 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 6. [x] 新增 MediaMTX `v1.19.3` 最小生产配置、systemd 单元、nginx WHEP 代理、加密环境模板、ICE/TURN 参数和防火墙/证书验收契约。
 7. [x] 鉴权专项 `3/3`、完整云端 `103/104` 通过，唯一跳过为未配 PostgreSQL 连接的集成项；YAML 独立解析和差异检查通过。
 8. [ ] 在生产机安装并实际加载官方 MediaMTX `v1.19.3`，配置 TLS、Coturn、防火墙和 nginx，完成匿名/跨路径拒绝与真实盒子发布。
-9. [ ] 将正式播放会话接入 `MediaAccessService`，再完成 iOS WHEP 客户端；这两步完成前不部署边缘 H.264 发布器，不删除当前可用 MJPEG 链路。
+9. [x] 正式播放会话已接入 `MediaAccessService`；iOS 已完成受鉴权 WHEP `OPTIONS/POST/DELETE`、完整 ICE 收集、SDP 应答、原生渲染和严格生命周期管理。
+10. [x] 删除云端播放票据、逐帧直播上传、JPEG 缓存、产品 MJPEG 路由和 iOS MJPEG 客户端；云端回归 `98/99`、iOS 单元 `122/122`、UI `25/25` 通过，其中 WHEP 信令 `6/6`、守护页 ViewModel `13/13`，唯一云端跳过项为未配置 PostgreSQL 集成地址。
+11. [ ] 在生产机实际安装 MediaMTX/Coturn 并完成 TLS、防火墙、nginx、匿名/跨路径拒绝、真实盒子发布、直连 ICE 和强制 TURN；完成前整批迁移不得部署。
+12. [ ] 从唯一正式工程生成下一 TestFlight，执行双摄三模式、前后台、切路、切模式、Wi-Fi/蜂窝、断网恢复和 30 分钟长时验收，再关闭 GH-033/GH-051。

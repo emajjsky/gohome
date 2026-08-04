@@ -1,6 +1,10 @@
 name: GoHomeShell
 options:
   minimumXcodeGenVersion: 2.38.0
+packages:
+  WebRTC:
+    url: https://github.com/stasel/WebRTC.git
+    exactVersion: 137.0.0
 settings:
   base:
     SWIFT_VERSION: 5.10
@@ -32,6 +36,8 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
         DEVELOPMENT_ASSET_PATHS: ""
+    dependencies:
+      - package: WebRTC
   GoHomeShellTests:
     type: bundle.unit-test
     platform: iOS

@@ -1,7 +1,7 @@
 import Foundation
 
 enum CameraDisplayTransport {
-    static let edgeComposedMJPEG = "edge-composed-mjpeg-v1"
+    static let whepH264 = "whep-h264-v1"
 }
 
 protocol CameraStreamClient: Sendable {
@@ -14,25 +14,35 @@ protocol CameraStreamClient: Sendable {
 }
 
 struct CameraDisplayStreams: Sendable {
-    let frames: AsyncThrowingStream<Data, Error>
+    let surface: WebRTCVideoSurface?
+    let renderedFrames: AsyncThrowingStream<TimeInterval, Error>
 }
 
 struct CameraPlaybackSession: Decodable, Sendable {
-    let ticket: String
+    struct Authorization: Decodable, Sendable {
+        let scheme: String
+        let token: String
+    }
+
+    let sessionID: String
     let expiresAt: String?
-    let streamURL: String?
-    let streamPath: String?
+    let whepURL: URL
+    let authorization: Authorization
+    let mediaPath: String
     let privacyMode: VideoPrivacyMode?
     let minimumPrivacyMode: VideoPrivacyMode?
     let displayTransport: String?
+    let compositionOwner: String?
 
     enum CodingKeys: String, CodingKey {
-        case ticket
+        case sessionID = "session_id"
         case expiresAt = "expires_at"
-        case streamURL = "stream_url"
-        case streamPath = "stream_path"
+        case whepURL = "whep_url"
+        case authorization
+        case mediaPath = "media_path"
         case privacyMode = "privacy_mode"
         case minimumPrivacyMode = "minimum_privacy_mode"
         case displayTransport = "display_transport"
+        case compositionOwner = "composition_owner"
     }
 }

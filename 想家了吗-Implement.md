@@ -12878,4 +12878,31 @@ P4 风险升频边界：
 
 - 鉴权专项 `3/3` 通过；完整 Node 回归 `104` 项中 `103` 通过、`1` 项因本机未配 PostgreSQL 集成地址跳过。JavaScript 语法、YAML 独立解析和 `git diff --check` 通过。
 - 当前网络无法下载官方 MediaMTX 发行包，因此没有将“二进制实际加载配置”标记为通过。生产机上还必须完成版本/校验和、TLS、防火墙、Coturn、nginx、匿名拒绝、真实盒子发布和强制 TURN 读取验收。
-- 现有播放会话还未调用 `MediaAccessService`，iOS 仍是 MJPEG。为避免中间态中断当前 TestFlight，这一批不部署云端、不部署盒子 H.264 发布器、不删除 MJPEG 旧正式路由。
+- 本阶段结束时播放会话尚未调用 `MediaAccessService`，iOS 仍是 MJPEG，因此当时没有部署云端或盒子 H.264 发布器，也没有删除旧正式链路；后续完成情况见第 191 节。
+
+## 191. 2026-08-04 WHEP 会话、iOS 原生 WebRTC 与旧正式 MJPEG 删除
+
+### 云端唯一播放会话
+
+- `/api/v1/video/sessions` 已统一交给 `MediaAccessService` 创建短时 WHEP 会话，继续执行家庭成员、设备、摄像头、隐私模式和有效期校验；Node 不再签发播放票据、不代理盒子管理流，也不保存直播 JPEG。
+- 删除 `/api/v1/device/live-frames/upload`、云端最新 JPEG 缓存、产品 MJPEG/静态帧路由、播放票据、旧 writer/parser 和只适用于逐帧 JPEG 的流指标。`/health` 改为报告事件循环延迟等运行指标，不再把 JPEG 接收节拍包装成正式视频质量。
+- 盒子局域网管理 MJPEG 保持独立诊断用途；正式 App 不允许自动回退到该链路，避免重新引入管理凭据代理、双协议状态和公网逐帧 JPEG。
+
+### iOS 原生 WHEP 客户端
+
+- 引入精确版本 WebRTC M137，使用 Unified Plan PeerConnection 和 recv-only video transceiver。会话创建后先以 Bearer 权限执行 WHEP `OPTIONS` 发现 ICE/TURN，再创建 offer、等待完整 ICE gathering、执行受鉴权 SDP `POST` 并应用 answer。
+- WHEP URL 必须为 HTTPS；服务端返回的资源 `Location` 必须与会话地址同源。关闭时异步发送资源 `DELETE`，同时停止 PeerConnection、结束帧事件和清理当前 renderer，旧会话不能在切摄像头、切隐私模式或视图重建后继续投递帧。
+- 视频通过 `RTCMTLVideoView` 原生渲染；FPS 只统计 WebRTC track 实际转交给当前 renderer 的新帧。renderer 替换在同一串行状态机内完成，旧帧不能进入复用后的 Metal 视图。
+- 删除 `MJPEGStreamClient` 及对应测试，守护页、ViewModel 和视频表面全部切换到 `CameraStreamClient -> WHEPStreamClient`，不存在正式 App MJPEG fallback。
+
+### 自动验证与依赖完整性
+
+- 云端完整 Node 回归共 `99` 项，`98` 通过，`1` 项仅因本机未配置 PostgreSQL 集成地址跳过。iOS 完整测试为单元 `122/122`、UI `25/25`，`xcodebuild` 返回 `TEST SUCCEEDED`；其中 WHEP 信令专项 `6/6`、守护页 ViewModel `13/13` 通过。
+- WebRTC framework 归档的 SHA-256 为 `9b45c5c5ecae392403758bb7262f408aa3cff705d41e862dd766856b610c3edd`，与包清单完全一致；实际 M137 framework 已完成模拟器编译验证，不以 stub 或自建编解码器替代。
+- Xcode 远程二进制下载曾在验证环境挂起，因此测试阶段临时使用同一校验通过的本地 Swift package；提交前必须恢复 `https://github.com/stasel/WebRTC.git` 精确版本 `137.0.0` 并重新生成工程，仓库不得留下 `/tmp` 依赖。
+
+### 未完成边界
+
+- 当前迁移不能部署。生产服务器仍需安装并实际加载 MediaMTX `v1.19.3`、Coturn、TLS、nginx 和防火墙配置，完成匿名、跨路径、过期和撤权拒绝。
+- 盒子 H.264 发布器尚未指向生产媒体面；必须在云端就绪后再整体部署，避免破坏当前 Build 9 可用链路。
+- 最终还需生成下一 TestFlight，执行双摄原画、人物模糊、纯骨架，前后台、摄像头/模式切换、Wi-Fi/蜂窝、直连 ICE、强制 TURN、断网恢复和 30 分钟长时验收。完成前 GH-033、GH-051 均保持处理中。
