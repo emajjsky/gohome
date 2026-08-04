@@ -1,6 +1,6 @@
 [Unit]
 Description=GoHome MediaMTX media plane
-After=network-online.target
+After=network-online.target gohome-app.service
 Wants=network-online.target
 
 [Service]

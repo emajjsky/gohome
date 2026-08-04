@@ -12906,3 +12906,10 @@ P4 风险升频边界：
 - 当前迁移不能部署。生产服务器仍需安装并实际加载 MediaMTX `v1.19.3`、Coturn、TLS、nginx 和防火墙配置，完成匿名、跨路径、过期和撤权拒绝。
 - 盒子 H.264 发布器尚未指向生产媒体面；必须在云端就绪后再整体部署，避免破坏当前 Build 9 可用链路。
 - 最终还需生成下一 TestFlight，执行双摄原画、人物模糊、纯骨架，前后台、摄像头/模式切换、Wi-Fi/蜂窝、直连 ICE、强制 TURN、断网恢复和 30 分钟长时验收。完成前 GH-033、GH-051 均保持处理中。
+
+## 192. 2026-08-04 Coturn 与媒体证书生命周期
+
+- 新增 GoHome 独立 Coturn systemd 单元，不依赖发行版默认配置。公网监听固定为 `3478/tcp`，中继分配固定为 `49160-49200/udp`；禁用 UDP 客户端监听、TLS/DTLS、CLI、多播和回环 peer，使用 TURN REST shared secret、明确 realm、公私网地址映射和 stdout 日志。
+- Coturn 参数全部来自权限为 `0600` 的 `/etc/gohome/media/coturn.env`；TURN 密钥与媒体签名密钥、MediaMTX 内部鉴权密钥和设备令牌保持独立，只与 `MTX_WEBRTCICESERVERS2_0_PASSWORD` 使用同一值。
+- 新增 Let’s Encrypt deploy hook。续期时先在目标文件系统的私有暂存目录复制证书和私钥，分别提取公钥并比对 SHA-256；不匹配时拒绝替换。匹配后原子移动到 MediaMTX 路径，恢复 `root:mediamtx / 0640`，再尝试重启服务。
+- 部署文档同步固定云安全组端口、证书续期验收和 stock Coturn unit 禁用要求。下一步在生产机安装官方 MediaMTX `v1.19.3` 与发行版 Coturn，使用真实公私网地址和独立随机密钥加载这些配置；未完成匿名拒绝、TURN 分配和续期 dry-run 前不部署新版 API、盒子或 TestFlight。
