@@ -65,6 +65,7 @@ class ContinualPoseTracker:
         *,
         max_age_seconds: float = 0.6,
         max_display_age_seconds: float = 1.2,
+        max_model_rebase_seconds: float = 0.2,
         minimum_interval_seconds: float = 0.02,
         tracking_scale: float = 0.5,
         min_tracked_points: int = 6,
@@ -78,6 +79,10 @@ class ContinualPoseTracker:
     ) -> None:
         self.max_age_seconds = max(0.1, float(max_age_seconds))
         self.max_display_age_seconds = max(self.max_age_seconds, float(max_display_age_seconds))
+        self.max_model_rebase_seconds = max(
+            0.05,
+            min(self.max_age_seconds, float(max_model_rebase_seconds)),
+        )
         self.minimum_interval_seconds = max(0.02, float(minimum_interval_seconds))
         self.tracking_scale = max(0.35, min(1.0, float(tracking_scale)))
         self.min_tracked_points = max(3, int(min_tracked_points))
@@ -126,22 +131,57 @@ class ContinualPoseTracker:
         with self._camera_lock(camera_id):
             self._record_rate_sample(self._model_updates, camera_id, now)
             publish_display = self._display_frame_is_newer_locked(camera_id, sample_at, frame_id)
-            if not tracked_poses:
-                if not publish_display:
-                    metric = self._metric(camera_id)
-                    metric["late_model_result_drop_count"] += 1
-                    metric["last_reason"] = "late_model_result"
-                    payload = self._empty_payload(
+            if not publish_display:
+                rebased = self._rebase_model_result_locked(
+                    cv2,
+                    np,
+                    camera_id,
+                    model_gray=gray,
+                    model_frame_id=frame_id,
+                    model_captured_at=captured_at,
+                    model_sample_at=sample_at,
+                    tracked_poses=tracked_poses,
+                    context=context or {},
+                    source_key=source_key,
+                    person_present=person_present,
+                    now=now,
+                )
+                if rebased is not None:
+                    return deepcopy(rebased)
+                metric = self._metric(camera_id)
+                if tracked_poses:
+                    metric["late_anchor_count"] += 1
+                    reason = str(metric.get("last_reason") or "late_model_anchor")
+                    return deepcopy(self._payload(
                         camera_id,
-                        "untracked" if bool(person_present or poses) else "empty",
-                        "late_model_result",
-                        frame_id,
-                        captured_at,
+                        state="observed",
+                        reason=reason,
+                        frame_id=frame_id,
+                        captured_at=captured_at,
                         captured_monotonic=sample_at,
+                        age_seconds=max(0.0, now - sample_at),
+                        poses=[self._public_observed_pose(item["pose"]) for item in tracked_poses],
+                        quality={
+                            "tracked_point_count": sum(len(item["points"]) for item in tracked_poses),
+                            "forward_backward_error": 0.0,
+                            "geometry_scale": 1.0,
+                        },
                         source_key=source_key,
                         display_published=False,
-                    )
-                    return deepcopy(payload)
+                    ))
+                metric["late_model_result_drop_count"] += 1
+                metric["last_reason"] = str(metric.get("last_reason") or "late_model_result")
+                return deepcopy(self._empty_payload(
+                    camera_id,
+                    "untracked" if bool(person_present or poses) else "empty",
+                    metric["last_reason"],
+                    frame_id,
+                    captured_at,
+                    captured_monotonic=sample_at,
+                    source_key=source_key,
+                    display_published=False,
+                ))
+            if not tracked_poses:
                 self._states.pop(camera_id, None)
                 confirmed_person = bool(person_present or poses)
                 payload = self._empty_payload(
@@ -197,11 +237,6 @@ class ContinualPoseTracker:
                 source_key=source_key,
                 display_published=publish_display,
             )
-            if not publish_display:
-                metric = self._metric(camera_id)
-                metric["late_anchor_count"] += 1
-                metric["last_reason"] = "late_model_anchor"
-                return deepcopy(payload)
             self._latest[camera_id] = payload
             self._latest_frames[camera_id] = frame.copy()
             self._latest_contexts[camera_id] = self._display_context(context or {})
@@ -212,6 +247,159 @@ class ContinualPoseTracker:
             metric["last_frame_id"] = str(frame_id or "")
             metric["last_reason"] = ""
             return deepcopy(payload)
+
+    def _rebase_model_result_locked(
+        self,
+        cv2: Any,
+        np: Any,
+        camera_id: int,
+        *,
+        model_gray: Any,
+        model_frame_id: str,
+        model_captured_at: str,
+        model_sample_at: float,
+        tracked_poses: list[Dict[str, Any]],
+        context: Dict[str, Any],
+        source_key: str,
+        person_present: bool,
+        now: float,
+    ) -> Dict[str, Any] | None:
+        latest = self._latest.get(camera_id)
+        current_frame = self._latest_frames.get(camera_id)
+        if latest is None or current_frame is None:
+            return None
+        current_frame_id = str(latest.get("frame_id") or "")
+        current_captured_at = str(latest.get("captured_at") or "")
+        current_source_key = str(latest.get("source_key") or "")
+        if not current_frame_id:
+            return None
+        if source_key and current_source_key and str(source_key) != current_source_key:
+            metric = self._metric(camera_id)
+            metric["late_model_source_rejection_count"] += 1
+            metric["last_reason"] = "late_model_source_changed"
+            return None
+        try:
+            current_sample_at = float(latest.get("captured_monotonic"))
+        except (TypeError, ValueError):
+            return None
+        lag_seconds = current_sample_at - float(model_sample_at)
+        if lag_seconds <= 1e-6:
+            return None
+        if lag_seconds > self.max_model_rebase_seconds:
+            metric = self._metric(camera_id)
+            metric["late_model_expired_count"] += 1
+            metric["last_reason"] = "late_model_expired"
+            return None
+
+        resolved_source_key = current_source_key or str(source_key or "")
+        display_context = self._display_context(context)
+        if not tracked_poses:
+            self._states.pop(camera_id, None)
+            confirmed_person = bool(person_present)
+            payload = self._empty_payload(
+                camera_id,
+                "untracked" if confirmed_person else "empty",
+                "person_without_trackable_pose" if confirmed_person else "no_observed_pose",
+                current_frame_id,
+                current_captured_at,
+                captured_monotonic=current_sample_at,
+                source_key=resolved_source_key,
+            )
+            payload["model_frame_id"] = str(model_frame_id or "")
+            payload["model_result_lag_seconds"] = round(lag_seconds, 4)
+            self._latest[camera_id] = payload
+            self._latest_contexts[camera_id] = display_context
+            self._store_metadata_history_locked(camera_id, current_frame_id)
+            metric = self._metric(camera_id)
+            metric["late_untracked_applied_count" if confirmed_person else "late_empty_applied_count"] += 1
+            metric["last_state"] = payload["state"]
+            metric["last_frame_id"] = current_frame_id
+            metric["last_reason"] = payload["reason"]
+            return payload
+
+        current_gray = self._gray(cv2, current_frame)
+        next_poses = []
+        public_poses = []
+        tracked_points = 0
+        errors = []
+        scales = []
+        inlier_ratios = []
+        rejection_reasons = []
+        for item in tracked_poses:
+            result = self._track_pose(
+                cv2,
+                np,
+                model_gray,
+                current_gray,
+                item,
+                current_frame,
+                max(self.minimum_interval_seconds, lag_seconds),
+                lag_seconds,
+            )
+            if not result.get("ok"):
+                rejection_reasons.append(str(result.get("reason") or "optical_flow_failed"))
+                continue
+            pose = result["pose"]
+            pose["tracking_state"] = "tracked"
+            pose["tracking_source"] = "model_anchor_rebased"
+            pose["track_age_seconds"] = round(lag_seconds, 4)
+            result["state"]["pose"] = pose
+            next_poses.append(result["state"])
+            public_poses.append(pose)
+            tracked_points += int(result["tracked_point_count"])
+            errors.append(float(result["forward_backward_error"]))
+            scales.append(float(result["geometry_scale"]))
+            inlier_ratios.append(float(result.get("affine_inlier_ratio") or 0.0))
+        if not next_poses:
+            metric = self._metric(camera_id)
+            metric["late_anchor_rebase_rejection_count"] += 1
+            metric["last_reason"] = rejection_reasons[0] if rejection_reasons else "late_anchor_rebase_failed"
+            return None
+
+        self._states[camera_id] = {
+            "observed_monotonic": float(model_sample_at),
+            "last_updated_monotonic": float(now),
+            "previous_gray": current_gray,
+            "frame_id": current_frame_id,
+            "display_frame_id": current_frame_id,
+            "captured_at": current_captured_at,
+            "captured_monotonic": current_sample_at,
+            "image_width": int(current_frame.shape[1]),
+            "image_height": int(current_frame.shape[0]),
+            "poses": next_poses,
+            "context": display_context,
+            "source_key": resolved_source_key,
+        }
+        payload = self._payload(
+            camera_id,
+            state="tracked",
+            reason="late_anchor_rebased",
+            frame_id=current_frame_id,
+            captured_at=current_captured_at,
+            captured_monotonic=current_sample_at,
+            age_seconds=lag_seconds,
+            poses=public_poses,
+            quality={
+                "tracked_point_count": tracked_points,
+                "forward_backward_error": round(max(errors, default=0.0), 4),
+                "geometry_scale": round(sum(scales) / max(1, len(scales)), 4),
+                "affine_inlier_ratio": round(sum(inlier_ratios) / max(1, len(inlier_ratios)), 4),
+            },
+            source_key=resolved_source_key,
+        )
+        payload["model_frame_id"] = str(model_frame_id or "")
+        payload["model_captured_at"] = str(model_captured_at or "")
+        payload["model_result_lag_seconds"] = round(lag_seconds, 4)
+        self._latest[camera_id] = payload
+        self._latest_contexts[camera_id] = display_context
+        self._store_metadata_history_locked(camera_id, current_frame_id)
+        metric = self._metric(camera_id)
+        metric["late_anchor_rebased_count"] += 1
+        metric["last_state"] = "tracked"
+        metric["last_frame_id"] = current_frame_id
+        metric["last_reason"] = "late_anchor_rebased"
+        metric["last_quality"] = dict(payload["quality"])
+        return payload
 
     def update_frame(
         self,
@@ -542,6 +730,7 @@ class ContinualPoseTracker:
             "schema_version": self.version,
             "max_age_seconds": self.max_age_seconds,
             "max_display_age_seconds": self.max_display_age_seconds,
+            "max_model_rebase_seconds": self.max_model_rebase_seconds,
             "minimum_interval_seconds": self.minimum_interval_seconds,
             "tracking_scale": self.tracking_scale,
             "cameras": cameras,
@@ -936,6 +1125,12 @@ class ContinualPoseTracker:
             "untracked_count": 0,
             "late_anchor_count": 0,
             "late_model_result_drop_count": 0,
+            "late_anchor_rebased_count": 0,
+            "late_empty_applied_count": 0,
+            "late_untracked_applied_count": 0,
+            "late_anchor_rebase_rejection_count": 0,
+            "late_model_source_rejection_count": 0,
+            "late_model_expired_count": 0,
             "late_frame_drop_count": 0,
             "risk_hint_count": 0,
             "last_risk_hint_at_monotonic": None,

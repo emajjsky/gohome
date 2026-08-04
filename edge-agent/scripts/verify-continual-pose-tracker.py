@@ -84,12 +84,14 @@ def main() -> None:
 
     ordering_clock = {"now": 700.2}
     ordering_tracker = ContinualPoseTracker(monotonic_clock=lambda: ordering_clock["now"])
+    current_ordering_frame = translate(frame, dx=4, dy=2)
     ordering_tracker.update_frame(
         29,
-        frame,
+        current_ordering_frame,
         frame_id="29-300",
         captured_at="2026-07-17T02:00:00.200000+00:00",
         captured_monotonic=700.2,
+        source_key="camera-29:g1",
     )
     ordering_clock["now"] = 700.25
     late_anchor = ordering_tracker.observe(
@@ -99,9 +101,18 @@ def main() -> None:
         captured_at="2026-07-17T02:00:00.100000+00:00",
         captured_monotonic=700.1,
         poses=[pose],
+        source_key="camera-29:g1",
     )
-    if late_anchor.get("display_published") or ordering_tracker.latest(29).get("frame_id") != "29-300":
-        raise SystemExit("late model anchor moved the displayed video backward")
+    if (
+        not late_anchor.get("display_published")
+        or late_anchor.get("frame_id") != "29-300"
+        or late_anchor.get("reason") != "late_anchor_rebased"
+        or (late_anchor.get("poses") or [{}])[0].get("tracking_source") != "model_anchor_rebased"
+    ):
+        raise SystemExit(f"late model anchor was not rebased onto the current display frame: {late_anchor}")
+    rebased_frame = ordering_tracker.latest_frame(29)
+    if rebased_frame is None or not np.array_equal(rebased_frame["frame"], current_ordering_frame):
+        raise SystemExit("rebased model anchor replaced the current display pixels")
     if not ordering_tracker.has_anchor(29):
         raise SystemExit("late model result was not retained as a tracking anchor")
     ordering_clock["now"] = 700.31
@@ -111,9 +122,83 @@ def main() -> None:
         frame_id="29-301",
         captured_at="2026-07-17T02:00:00.300000+00:00",
         captured_monotonic=700.3,
+        source_key="camera-29:g1",
     )
     if ordered_track.get("frame_id") != "29-301" or not ordered_track.get("display_published"):
         raise SystemExit(f"late anchor did not resume on the next current source frame: {ordered_track}")
+
+    empty_rebase_clock = {"now": 800.0}
+    empty_rebase_tracker = ContinualPoseTracker(monotonic_clock=lambda: empty_rebase_clock["now"])
+    empty_rebase_tracker.observe(
+        30,
+        frame,
+        frame_id="30-100",
+        captured_at="2026-07-17T02:00:00+00:00",
+        captured_monotonic=800.0,
+        poses=[pose],
+        source_key="camera-30:g1",
+    )
+    empty_rebase_clock["now"] = 800.1
+    current_empty_frame = translate(frame, dx=3, dy=1)
+    empty_rebase_tracker.update_frame(
+        30,
+        current_empty_frame,
+        frame_id="30-101",
+        captured_at="2026-07-17T02:00:00.100000+00:00",
+        captured_monotonic=800.1,
+        source_key="camera-30:g1",
+    )
+    empty_rebase_clock["now"] = 800.15
+    rebased_empty = empty_rebase_tracker.observe(
+        30,
+        np.zeros_like(frame),
+        frame_id="30-model-empty",
+        captured_at="2026-07-17T02:00:00.050000+00:00",
+        captured_monotonic=800.05,
+        poses=[],
+        context={"pose_model_status": "ready", "people": []},
+        source_key="camera-30:g1",
+    )
+    if (
+        rebased_empty.get("state") != "empty"
+        or rebased_empty.get("frame_id") != "30-101"
+        or rebased_empty.get("reason") != "no_observed_pose"
+        or empty_rebase_tracker.has_anchor(30)
+    ):
+        raise SystemExit(f"late authoritative empty result did not clear the current pose: {rebased_empty}")
+    synchronized_rebased_empty = empty_rebase_tracker.latest_synchronized_frame(30)
+    if synchronized_rebased_empty is None or not np.array_equal(
+        synchronized_rebased_empty["frame"], current_empty_frame
+    ):
+        raise SystemExit("late authoritative empty result replaced the current display pixels")
+
+    rejected_late_tracker = ContinualPoseTracker(monotonic_clock=lambda: empty_rebase_clock["now"])
+    rejected_late_tracker.update_frame(
+        31,
+        current_empty_frame,
+        frame_id="31-200",
+        captured_at="2026-07-17T02:00:00.200000+00:00",
+        captured_monotonic=800.2,
+        source_key="camera-31:g2",
+    )
+    empty_rebase_clock["now"] = 800.25
+    rejected_cross_source = rejected_late_tracker.observe(
+        31,
+        frame,
+        frame_id="31-old-source",
+        captured_at="2026-07-17T02:00:00.100000+00:00",
+        captured_monotonic=800.1,
+        poses=[pose],
+        source_key="camera-31:g1",
+    )
+    rejected_runtime = rejected_late_tracker.status([31])["cameras"][0]
+    if (
+        rejected_cross_source.get("display_published")
+        or rejected_late_tracker.latest(31).get("frame_id") != "31-200"
+        or rejected_late_tracker.has_anchor(31)
+        or rejected_runtime.get("late_model_source_rejection_count") != 1
+    ):
+        raise SystemExit("cross-source late model result changed current display state")
     clock["now"] = 100.0
     observed = tracker.observe(
         24,
