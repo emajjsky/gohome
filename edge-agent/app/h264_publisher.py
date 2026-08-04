@@ -108,12 +108,19 @@ class H264StreamPublisher:
             "dropped_unavailable": 0,
             "process_starts": 0,
             "process_failures": 0,
-            "bytes_written": 0,
+            "raw_input_bytes_written": 0,
+            "process_stop_reasons": {},
+            "last_process_start_reason": "",
+            "last_process_stop_reason": "",
+            "last_failure_at_monotonic": None,
+            "last_recovered_at_monotonic": None,
+            "last_recovered_error": "",
             "last_error": "",
             "last_written_frame_id": "",
         }
         self._consecutive_failures = 0
         self._next_start_at = 0.0
+        self._next_process_start_reason = "initial"
         self._thread = Thread(
             target=self._run,
             name=f"gohome-h264-publisher-{self.camera_id}",
@@ -240,17 +247,17 @@ class H264StreamPublisher:
                     item = self._pending
                     self._pending = None
                 if control_changed:
-                    self._stop_process()
+                    self._stop_process("control_changed")
                 if item is None:
                     continue
                 try:
                     self._publish(item, control_revision=applied_control_revision)
                 except _PublisherControlChanged:
-                    self._stop_process()
+                    self._stop_process("control_changed")
                 except Exception as exc:
                     self._record_failure(exc)
         finally:
-            self._stop_process()
+            self._stop_process("publisher_stopping")
 
     def _publish(self, item: Dict[str, Any], *, control_revision: int) -> None:
         now = self._clock()
@@ -264,7 +271,7 @@ class H264StreamPublisher:
         with self._state_lock:
             context_changed = self._context != context
         if context_changed:
-            self._stop_process()
+            self._stop_process("context_changed")
             with self._state_lock:
                 self._context = context
         process = self._ensure_process(int(width), int(height))
@@ -282,8 +289,12 @@ class H264StreamPublisher:
         if captured <= 0.0 or captured > finished_at + 1.0 or finished_at - captured > 3600.0:
             captured = finished_at
         with self._state_lock:
+            recovered_error = str(self._stats.get("last_error") or "") if self._consecutive_failures else ""
             self._stats["frames_written"] += 1
-            self._stats["bytes_written"] += len(payload)
+            self._stats["raw_input_bytes_written"] += len(payload)
+            if recovered_error:
+                self._stats["last_recovered_at_monotonic"] = round(finished_at, 6)
+                self._stats["last_recovered_error"] = recovered_error
             self._stats["last_error"] = ""
             self._stats["last_written_frame_id"] = str(item.get("frame_id") or "")
             self._published_at.append(finished_at)
@@ -299,9 +310,9 @@ class H264StreamPublisher:
             if returncode is None and self._process_geometry == (width, height):
                 return process
             if returncode is not None:
-                self._stop_process()
+                self._stop_process("process_exited")
                 raise H264PublisherError(f"FFmpeg exited with code {returncode}")
-        self._stop_process()
+        self._stop_process("geometry_changed")
         command = self.command(width=width, height=height)
         process = self._process_factory(command)
         try:
@@ -322,6 +333,8 @@ class H264StreamPublisher:
             self._process = process
             self._process_geometry = (width, height)
             self._stats["process_starts"] += 1
+            self._stats["last_process_start_reason"] = self._next_process_start_reason
+            self._next_process_start_reason = "process_recovery"
         if process.stderr is not None:
             self._stderr_thread = Thread(
                 target=self._read_stderr,
@@ -350,8 +363,8 @@ class H264StreamPublisher:
             f"{int(width)}x{int(height)}",
             "-framerate",
             str(self.fps),
-            "-use_wallclock_as_timestamps",
-            "1",
+            "-fflags",
+            "+genpts",
             "-i",
             "pipe:0",
             "-an",
@@ -421,22 +434,30 @@ class H264StreamPublisher:
             offset += written
 
     def _record_failure(self, exc: Exception) -> None:
-        self._stop_process()
+        self._stop_process("publish_failure")
         now = self._clock()
         with self._state_lock:
             self._consecutive_failures += 1
             self._stats["process_failures"] += 1
             self._stats["last_error"] = self._sanitize_text(exc)[:240]
+            self._stats["last_failure_at_monotonic"] = round(now, 6)
             delay = min(8.0, 0.5 * (2 ** min(self._consecutive_failures - 1, 4)))
             self._next_start_at = now + delay
 
-    def _stop_process(self) -> None:
+    def _stop_process(self, reason: str) -> None:
+        resolved_reason = str(reason or "unspecified")
         with self._state_lock:
             process = self._process
             stderr_thread = self._stderr_thread
             self._process = None
             self._process_geometry = None
             self._stderr_thread = None
+            if process is not None:
+                stop_reasons = dict(self._stats.get("process_stop_reasons") or {})
+                stop_reasons[resolved_reason] = int(stop_reasons.get(resolved_reason) or 0) + 1
+                self._stats["process_stop_reasons"] = stop_reasons
+                self._stats["last_process_stop_reason"] = resolved_reason
+                self._next_process_start_reason = resolved_reason
         if process is None:
             return
         try:

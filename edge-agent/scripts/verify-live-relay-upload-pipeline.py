@@ -215,11 +215,12 @@ def verify_url_and_command_contract() -> None:
         "-bf 0",
         "-g 15",
         "-rtsp_transport tcp",
-        "-use_wallclock_as_timestamps 1",
+        "-fflags +genpts",
         "-fps_mode passthrough",
         "pad=ceil(iw/2)*2:ceil(ih/2)*2",
     ):
         assert required in joined, required
+    assert "use_wallclock_as_timestamps" not in joined
     assert "mjpeg" not in joined
     publisher.close()
 
@@ -275,6 +276,8 @@ def verify_latest_frame_and_context_restart() -> None:
     assert status["last_written_frame_id"] == "2-20"
     assert payload_first_bytes == [0, 20]
     assert status["process_starts"] == 1
+    assert status["raw_input_bytes_written"] == base.nbytes * 2
+    assert "bytes_written" not in status
 
     publisher.submit(
         np.full((36, 64, 3), 21, dtype=np.uint8),
@@ -285,6 +288,7 @@ def verify_latest_frame_and_context_restart() -> None:
     )
     wait_until(lambda: publisher.status()["frames_written"] == 3)
     assert publisher.status()["process_starts"] == 2
+    assert publisher.status()["process_stop_reasons"] == {"context_changed": 1}
     assert factory.processes[0].returncode is not None
     assert publisher.status()["context"]["source_generation"] != "source-a"
 
@@ -308,6 +312,9 @@ def verify_latest_frame_and_context_restart() -> None:
     )
     wait_until(lambda: publisher.status()["frames_written"] == 4)
     assert publisher.status()["process_starts"] == 3
+    recovered = publisher.status()
+    assert recovered["last_recovered_error"] == "FFmpeg exited with code -15"
+    assert recovered["last_recovered_at_monotonic"] is not None
 
     publisher.pause(f"publisher failed at {publisher.publish_url}")
     wait_until(lambda: not publisher.status()["running"])
@@ -380,9 +387,19 @@ def verify_relay_uses_single_composed_h264_publisher() -> None:
     assert publisher.configuration["fps"] == 15
     assert "stream_revalidation_required" in publisher.pauses
     assert relay.status()["camera_privacy_states"]["2"]["status"] == "ready"
+    assert relay.status()["last_error"] == ""
     assert LiveRelayAgent._privacy_block_status("calibration_in_progress") == "calibrating"
     assert LiveRelayAgent._privacy_block_status("stream_revalidation_required") == "revalidating"
     assert LiveRelayAgent._privacy_block_status("scene_revalidation_required") == "scene_review_required"
+
+    relay._set_camera_error(2, "capture thread did not stop within 5 seconds")
+    active_error = relay.status()
+    assert active_error["last_error"] == "camera 2: capture thread did not stop within 5 seconds"
+    assert active_error["camera_errors"]["2"]["message"] == "capture thread did not stop within 5 seconds"
+    relay._clear_camera_error(2)
+    recovered_error = relay.status()
+    assert recovered_error["last_error"] == ""
+    assert recovered_error["recovered_camera_errors"]["2"]["recovered_at"]
 
     source = (ROOT / "app" / "live_relay_agent.py").read_text(encoding="utf-8")
     for retired in ("cv2.imencode", "image/jpeg", "_post_frame", "HTTPConnection"):
