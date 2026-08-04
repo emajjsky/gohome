@@ -131,6 +131,12 @@ class ContinualPoseTracker:
         with self._camera_lock(camera_id):
             self._record_rate_sample(self._model_updates, camera_id, now)
             publish_display = self._display_frame_is_newer_locked(camera_id, sample_at, frame_id)
+            if not publish_display and self._model_frame_is_current_display_locked(
+                camera_id,
+                frame_id=frame_id,
+                source_key=source_key,
+            ):
+                publish_display = True
             if not publish_display:
                 rebased = self._rebase_model_result_locked(
                     cv2,
@@ -1165,6 +1171,19 @@ class ContinualPoseTracker:
         if frame_id == previous_frame_id:
             return False
         return float(sample_at) > float(previous_at) + 1e-6
+
+    def _model_frame_is_current_display_locked(
+        self,
+        camera_id: int,
+        *,
+        frame_id: str,
+        source_key: str,
+    ) -> bool:
+        latest = self._latest.get(int(camera_id)) or {}
+        if not frame_id or str(latest.get("frame_id") or "") != str(frame_id):
+            return False
+        current_source_key = str(latest.get("source_key") or "")
+        return not source_key or not current_source_key or str(source_key) == current_source_key
 
     def _record_display_sample(self, camera_id: int, now: float, frame_id: str) -> None:
         camera_id = int(camera_id)

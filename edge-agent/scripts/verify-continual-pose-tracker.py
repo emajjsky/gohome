@@ -46,6 +46,21 @@ def main() -> None:
     )
     if len(tracker._display_updates.get(25) or ()) != 1:
         raise SystemExit("display FPS counted the same frame more than once")
+    same_frame_model = tracker.observe(
+        25,
+        frame,
+        frame_id="25-1",
+        captured_at="2026-07-17T01:59:59+00:00",
+        poses=[pose],
+        source_key="camera-25:g1",
+    )
+    if (
+        same_frame_model.get("state") != "observed"
+        or not same_frame_model.get("display_published")
+        or tracker.status([25])["cameras"][0].get("late_anchor_count") != 0
+        or len(tracker._display_updates.get(25) or ()) != 1
+    ):
+        raise SystemExit("same-frame model result was incorrectly treated as a late anchor")
 
     rate_clock = {"now": 600.2}
     rate_tracker = ContinualPoseTracker(monotonic_clock=lambda: rate_clock["now"])
