@@ -508,6 +508,7 @@ Build 8 不满足本台账的骨架产品契约，不作为最终交付版本。
 **验收**：受保护对象在普通运行、dry-run、classification-only 和删除开关开启的测试中 selected/deleted 均为 `0`；PostgreSQL 批量持久化保留保护原因和审计元数据；生产迁移后将未确定归属对象置为 protected，再运行生命周期 dry-run 验证保护数量和删除候选互斥。
 **本地验证**：受保护孤儿专项及 PostgreSQL 批量持久化通过；全部 Node 测试 `111` 通过、`1` 项因本机未配置 PostgreSQL 集成地址跳过、`0` 失败，完整 `npm test` 与 `git diff --check` 通过。
 **生产部署**：提交 `3d74c42` 已部署为 `/opt/gohome/releases/20260804103318-3d74c42a9b58`，迁移 017 成功应用；保护原因和 JSON 元数据字段存在，三项服务 active、API `NRestarts=0` 且无 warning。当前尚未提前写入保护记录，需由 GH-057 的固定计划清单一次性生成，避免人工散写状态。
+**生产阻塞复核**：GH-057 应用后首次生命周期 dry-run 错误显示本地孤儿 `planned=20、selected=20、protected=0`。物理删除开关保持关闭，因此未删除文件。根因不是保护策略失效，而是 PostgreSQL `timestamptz` 被驱动返回为 `Date` 后，公共 `iso()` 又交给 `Date.parse()`；隐式字符串化丢失毫秒，使 `source_modified_at` 与磁盘 `mtime` 不再相等，20 个保护对象全部被误判为内容已替换并重置成 pending。修复必须在 PostgreSQL 反序列化边界保留 `Date.getTime()` 精度，并以真实 `Date` 行、带毫秒文件时间和完整 dry-run 共同回归。部署验收要求固定为 `planned=20、protected=20、selected=0、deleted=0`，否则不得启用物理删除。
 
 ### GH-057 历史本地媒体身份恢复
 
@@ -516,3 +517,4 @@ Build 8 不满足本台账的骨架产品契约，不作为最终交付版本。
 **处理**：新增只读优先的 `reconcile-historical-media.js`。旧数字前缀只用于识别候选，永久新 ID 由 `local + 相对路径` 的 SHA-256 生成；事件归属必须由结构化 `temporal_evidence_bundle.snapshots[].snapshot_path` 唯一命中，并记录文件 SHA-256、大小、mtime、角色和采集时间。同事件同快照内容冲突、跨事件命中、同事件多角色或无命中全部转 protected。应用必须提供固定计划文件和哈希，在可串行化事务中同时持有 App Store、生命周期和恢复锁，重新扫描文件与数据库后完全一致才写入。事务只新增资产身份、修正事件关系和写审计，不移动、覆盖或删除文件。
 **验收**：先在生产生成 0600 只读计划，人工核对恢复数、保护数、关系删除数和事件主图更新数；计划哈希固定后才允许 `--apply`。应用后所有恢复文件必须有唯一资产和事件关系，错误碰撞关系必须消失，protected 不得进入删除选择；再次预览必须幂等为零恢复。最后运行生命周期 dry-run，生产物理删除继续保持关闭。
 **本地验证**：覆盖错误碰撞关系替换、正确现有关系保留、同快照重复物理文件、内容冲突、跨角色歧义、未映射衍生图保护和路径驱动稳定身份。全部 Node 测试 `115` 通过、`1` 项因本机未配置 PostgreSQL 集成地址跳过、`0` 失败；完整 `npm test`、脚本语法、发布清单语法和 `git diff --check` 均通过。
+**生产执行**：固定计划 `/var/lib/gohome/reconciliation/historical-media-v1.json` 以 SHA-256 `8530ee04b4d11296de0d5ec593741c5451dca9ee7e1afc20e179a95d8d36b11c` 在可串行化事务中应用：227 个候选中恢复 207 个独立资产、207 条事件关系和 13 条 canonical 关系，更新 5 个事件主图，20 个无法可靠归属的文件写入 protected；未移动、覆盖或删除物理文件。全部 207 个恢复文件按物理路径重新读取并通过大小与 SHA-256 校验；应用后再次预览为恢复 0、保护 20、关系变更 0、事件变更 0。当前仍需完成 GH-056 所记录的 PostgreSQL 毫秒精度修复及生产生命周期复验，物理删除继续关闭。

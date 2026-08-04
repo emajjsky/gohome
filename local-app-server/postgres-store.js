@@ -77,7 +77,7 @@ function textId(value, fallback = "") {
 
 function iso(value, fallback = null) {
     if (!value) return fallback;
-    const time = Date.parse(value);
+    const time = value instanceof Date ? value.getTime() : Date.parse(value);
     return Number.isFinite(time) ? new Date(time).toISOString() : fallback;
 }
 

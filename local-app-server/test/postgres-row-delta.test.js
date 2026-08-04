@@ -1,4 +1,7 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const {
   createDbFromCloudRows,
@@ -6,6 +9,7 @@ const {
   PostgresStore,
   TABLE_ORDER,
 } = require('../postgres-store');
+const { MediaLifecycleManager } = require('../media-lifecycle');
 const { buildCloudSeedBundle } = require('../../scripts/export-local-app-db');
 
 function emptyTables() {
@@ -202,6 +206,63 @@ test('media lifecycle reads fresh PostgreSQL references and persists retention r
   assert.equal(persistedOrphan.protection_reason, 'ownership_not_reconciled');
   assert.deepEqual(persistedOrphan.metadata, { audit: 'historical_media_reconciliation' });
   assert.equal(store.db.media_orphans[0].status, 'protected');
+});
+
+test('PostgreSQL orphan timestamps preserve milliseconds and protected files stay out of deletion selection', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-postgres-orphan-time-'));
+  const mediaDir = path.join(root, 'media');
+  const filePath = path.join(mediaDir, 'unknown-owner.jpg');
+  fs.mkdirSync(mediaDir, { recursive: true });
+  fs.writeFileSync(filePath, 'protected');
+  const nowMs = Date.parse('2026-08-04T08:00:00.000Z');
+  const modifiedMs = Date.parse('2026-07-11T07:44:25.864Z');
+  fs.utimesSync(filePath, new Date(modifiedMs), new Date(modifiedMs));
+  const persistedModifiedMs = Math.trunc(fs.statSync(filePath).mtimeMs);
+  const pool = recordingPool();
+  pool.query = async (text) => {
+    if (/from media_orphan_cleanup/i.test(text)) {
+      return { rows: [{
+        storage_provider: 'local',
+        storage_key: 'unknown-owner.jpg',
+        size_bytes: fs.statSync(filePath).size,
+        source_modified_at: new Date(persistedModifiedMs),
+        first_seen_at: new Date('2026-08-01T08:00:00.000Z'),
+        last_seen_at: new Date('2026-08-03T08:00:00.000Z'),
+        status: 'protected',
+        protection_reason: 'ownership_not_reconciled',
+        metadata: { audit: 'historical_media_reconciliation' },
+        deletion_attempts: 0,
+        created_at: new Date('2026-08-01T08:00:00.000Z'),
+        updated_at: new Date('2026-08-03T08:00:00.000Z'),
+      }] };
+    }
+    return { rows: [] };
+  };
+  const store = new PostgresStore({
+    pool,
+    db: { assets: [], media_orphans: [], scheduler_runs: [] },
+    persistedTables: emptyTables(),
+  });
+  try {
+    const inventory = await store.mediaLifecycleInventory();
+    assert.equal(inventory.media_orphans[0].source_modified_at, new Date(persistedModifiedMs).toISOString());
+
+    const manager = new MediaLifecycleManager({
+      store,
+      mediaDir,
+      clock: () => nowMs,
+      cosStorage: { enabled: false },
+    });
+    const result = await manager.run({ dryRun: true });
+
+    assert.equal(result.local_orphans.planned, 1);
+    assert.equal(result.local_orphans.protected, 1);
+    assert.equal(result.local_orphans.selected, 0);
+    assert.equal(result.local_orphans.deleted, 0);
+    assert.equal(fs.existsSync(filePath), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('postgres date values retain their Shanghai calendar day after hydration', () => {
