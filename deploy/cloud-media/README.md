@@ -19,11 +19,11 @@ output.
 1. Install the official MediaMTX `v1.19.3` binary at
    `/usr/local/bin/mediamtx` and verify its release checksum.
 2. Create the locked service account `mediamtx` without a login shell.
-3. Keep `/etc/gohome` owned by `root:gohome` with mode `0751` and
-   `/etc/gohome/media` owned by `root:root` with mode `0711`. These modes allow
-   the dedicated media service users to traverse the known media path without
-   listing the application configuration directory. Install `mediamtx.yml` and
-   a completed `mediamtx.env` under
+3. Keep `/etc/gohome` owned by `root:gohome` with mode `0751`. Create
+   `/etc/gohome/media` as `root:mediamtx / 0750` and `/etc/gohome/coturn` as
+   `root:turnserver / 0750`. The application, media plane and relay can traverse
+   the common root but can list and read only their own configuration boundary.
+   Install `mediamtx.yml` and a completed `mediamtx.env` under
    `/etc/gohome/media/`; set both to `root:mediamtx`, mode `0640` and `0600`
    respectively.
 4. Install `renew-media-certificates.sh` as
@@ -34,8 +34,9 @@ output.
    `GOHOME_MEDIAMTX_AUTH_SHARED_SECRET`, and the Coturn shared secret. Never use
    a device token as one of these service secrets.
 6. Install the distribution `coturn` package, disable its stock unit, and install
-   `gohome-coturn.service` plus a completed `coturn.conf` owned by
-   `root:turnserver` with mode `0640`. The TURN secret must be identical to
+   `gohome-coturn.service` plus a completed
+   `/etc/gohome/coturn/turnserver.conf` owned by `root:turnserver` with mode
+   `0640`. The TURN secret must be identical to
    `MTX_WEBRTCICESERVERS2_0_PASSWORD` in `mediamtx.env`; the public and private IP
    values must match the current cloud instance network. Keep the secret in the
    configuration file so it is never exposed through process arguments.

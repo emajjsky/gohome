@@ -1,4 +1,4 @@
-# Install as /etc/gohome/media/coturn.conf with owner root:turnserver and mode 0640.
+# Install as /etc/gohome/coturn/turnserver.conf with owner root:turnserver and mode 0640.
 no-cli
 fingerprint
 use-auth-secret

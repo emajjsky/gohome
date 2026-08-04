@@ -12910,8 +12910,10 @@ P4 风险升频边界：
 ## 192. 2026-08-04 Coturn 与媒体证书生命周期
 
 - 新增 GoHome 独立 Coturn systemd 单元，不依赖发行版默认配置。公网监听固定为 `3478/tcp`，中继分配固定为 `49160-49200/udp`；禁用 UDP 客户端监听、TLS/DTLS、CLI 和多播 peer，使用 TURN REST shared secret、明确 realm、公私网地址映射和 stdout 日志。Ubuntu Coturn `4.6.1` 不提供 `--no-loopback-peers` 参数，首次加载已明确拒绝该无效参数，正式单元不保留版本不支持的伪安全开关。
-- Coturn 参数全部来自 `root:turnserver / 0640` 的 `/etc/gohome/media/coturn.conf`；systemd 进程参数只包含配置文件路径，TURN 密钥不会暴露在 `ps` 或 `systemctl status` 中。TURN 密钥与媒体签名密钥、MediaMTX 内部鉴权密钥和设备令牌保持独立，只与 `MTX_WEBRTCICESERVERS2_0_PASSWORD` 使用同一值。
+- Coturn 参数全部来自 `root:turnserver / 0640` 的 `/etc/gohome/coturn/turnserver.conf`；systemd 进程参数只包含配置文件路径，TURN 密钥不会暴露在 `ps` 或 `systemctl status` 中。TURN 密钥与媒体签名密钥、MediaMTX 内部鉴权密钥和设备令牌保持独立，只与 `MTX_WEBRTCICESERVERS2_0_PASSWORD` 使用同一值。
 - 新增 Let’s Encrypt deploy hook。续期时先在目标文件系统的私有暂存目录复制证书和私钥，分别提取公钥并比对 SHA-256；不匹配时拒绝替换。匹配后原子移动到 MediaMTX 路径，恢复 `root:mediamtx / 0640`，再尝试重启服务。
 - 部署文档同步固定云安全组端口、证书续期验收和 stock Coturn unit 禁用要求。下一步在生产机安装官方 MediaMTX `v1.19.3` 与发行版 Coturn，使用真实公私网地址和独立随机密钥加载这些配置；未完成匿名拒绝、TURN 分配和续期 dry-run 前不部署新版 API、盒子或 TestFlight。
 - 生产首次加载发现远程脚本把三组随机密钥错误写成字面量占位符，立即停止 Coturn 并重新生成三组互不相同的 32 字节随机值；`coturn.conf`、`mediamtx.env` 和 `gohome.env` 已原子替换，字面量占位符计数为 0，权限分别为 `root:turnserver / 0640`、`root:mediamtx / 0600`、`root:gohome / 0640`。
-- `/etc/gohome` 原 `0750 root:gohome` 会阻止 `turnserver` 与 `mediamtx` 穿越到媒体配置，即使目标文件组权限正确也无法读取。生产目录契约改为 `/etc/gohome 0751 root:gohome`、`/etc/gohome/media 0711 root:root`：专用服务只能访问已知路径，不能列出应用配置目录；具体文件内容继续由独立组权限隔离。修正后 Coturn 稳定运行并监听 `10.0.12.4:3478/tcp`，进程命令仅为 `turnserver -c /etc/gohome/media/coturn.conf`。
+- `/etc/gohome` 原 `0750 root:gohome` 会阻止 `turnserver` 与 `mediamtx` 穿越到媒体配置，即使目标文件组权限正确也无法读取。仅把共享媒体目录设为 `0711` 又会阻断 MediaMTX 的运行时配置监听。最终生产目录契约为 `/etc/gohome 0751 root:gohome`、`/etc/gohome/media 0750 root:mediamtx`、`/etc/gohome/coturn 0750 root:turnserver`，三个职责各自只能列出和读取自己的配置。修正后 Coturn 稳定运行并监听 `10.0.12.4:3478/tcp`，进程命令仅为 `turnserver -c /etc/gohome/coturn/turnserver.conf`。
+- MediaMTX 生产实例已加载固定版本配置并稳定监听 `8322/tcp`、`8189/tcp+udp`，WHEP、API 与指标仅监听回环 `8889/9997/9998`。回环 API 与指标返回 200，匿名 WHEP 实际读取返回拒绝，匿名 RTSPS 发布无法建立；nginx `/media/` 代理配置检查通过。
+- 证书部署钩子真实执行后，证书与私钥内容哈希保持一致、权限保持 `root:mediamtx / 0640`，MediaMTX 重启成功。`certbot renew --dry-run --cert-name gohome.ai2shx.club` 完整通过。Mac 外网探测 `8322/8189/3478` 均超时，确认下一阻塞位于腾讯云安全组，而不是主机 UFW 或服务监听。
