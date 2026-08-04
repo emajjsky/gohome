@@ -26,8 +26,10 @@ sudo install-release.sh ARCHIVE EXPECTED_SHA256 RELEASE_ID gohome-app.service
 ```
 
 The installer verifies archive paths and checksum, runs `npm ci --omit=dev`,
-atomically switches `/opt/gohome/current`, restarts the service, and checks
-`/health`. A failed health check restores the previous target. At most three
+resolves every deployment input before entering the release directory, installs
+the systemd unit before switching traffic, atomically switches
+`/opt/gohome/current`, restarts the service, and checks `/health`. Any failure
+after the switch restores and restarts the previous target. At most three
 managed releases are retained.
 
 The first migration can roll back to the existing `/opt/gohome/app` tree. Remove

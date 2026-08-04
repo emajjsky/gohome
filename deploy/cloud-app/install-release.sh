@@ -10,10 +10,10 @@ if [ "$#" -ne 4 ]; then
     exit 1
 fi
 
-archive="$1"
+archive="$(readlink -f -- "$1")"
 expected_sha256="$2"
 release_id="$3"
-unit_file="$4"
+unit_file="$(readlink -f -- "$4")"
 
 case "${release_id}" in
     *[!A-Za-z0-9._-]*|'') echo "invalid release id" >&2; exit 1 ;;
@@ -45,7 +45,29 @@ release_dir="${releases_dir}/${release_id}"
 install -d -o root -g gohome -m 0750 "${releases_dir}"
 staging_dir="$(mktemp -d "${releases_dir}/.staging-${release_id}.XXXXXX")"
 next_link=""
-trap 'rm -rf "${staging_dir}"; [ -z "${next_link}" ] || rm -f "${next_link}"' EXIT HUP INT TERM
+previous_target=""
+switched=false
+
+cleanup() {
+    status="$?"
+    trap - EXIT HUP INT TERM
+    [ -z "${staging_dir}" ] || rm -rf -- "${staging_dir}"
+    [ -z "${next_link}" ] || rm -f -- "${next_link}"
+    if [ "${status}" -ne 0 ] && [ "${switched}" = true ] && [ -n "${previous_target}" ]; then
+        rollback_link="/opt/gohome/.rollback-${release_id}"
+        rm -f -- "${rollback_link}"
+        ln -s "${previous_target}" "${rollback_link}"
+        mv -Tf "${rollback_link}" /opt/gohome/current
+        systemctl restart gohome-app.service || true
+    fi
+    if [ "${status}" -ne 0 ] && [ -d "${release_dir}" ]; then
+        current_target="$(readlink -f /opt/gohome/current 2>/dev/null || true)"
+        [ "${current_target}" = "${release_dir}" ] || rm -rf -- "${release_dir}"
+    fi
+    exit "${status}"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 
 tar -xzf "${archive}" --strip-components=1 -C "${staging_dir}" --no-same-owner --no-same-permissions
 for file in package.json package-lock.json local-app-server/server.js scripts/export-local-app-db.js; do
@@ -72,15 +94,17 @@ find "${staging_dir}" -type f -exec chmod 0640 {} +
 mv "${staging_dir}" "${release_dir}"
 staging_dir=""
 
+install -o root -g root -m 0644 "${unit_file}" /etc/systemd/system/gohome-app.service
+systemctl daemon-reload
+
 previous_target="$(readlink -f /opt/gohome/current 2>/dev/null || true)"
 [ -n "${previous_target}" ] || previous_target="/opt/gohome/app"
 next_link="/opt/gohome/.current-${release_id}"
 ln -s "${release_dir}" "${next_link}"
 mv -Tf "${next_link}" /opt/gohome/current
 next_link=""
+switched=true
 
-install -o root -g root -m 0644 "${unit_file}" /etc/systemd/system/gohome-app.service
-systemctl daemon-reload
 systemctl restart gohome-app.service
 
 healthy=false
@@ -95,12 +119,7 @@ while [ "${attempt}" -lt 30 ]; do
 done
 
 if [ "${healthy}" != true ]; then
-    rollback_link="/opt/gohome/.rollback-${release_id}"
-    ln -s "${previous_target}" "${rollback_link}"
-    mv -Tf "${rollback_link}" /opt/gohome/current
-    systemctl restart gohome-app.service || true
-    rm -rf -- "${release_dir}"
-    echo "release health check failed; previous release restored" >&2
+    echo "release health check failed; restoring previous release" >&2
     exit 1
 fi
 
