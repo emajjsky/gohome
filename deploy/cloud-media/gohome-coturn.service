@@ -7,28 +7,7 @@ Wants=network-online.target
 Type=simple
 User=turnserver
 Group=turnserver
-EnvironmentFile=/etc/gohome/media/coturn.env
-ExecStart=/usr/bin/turnserver \
-    --no-cli \
-    --fingerprint \
-    --use-auth-secret \
-    --static-auth-secret=${GOHOME_TURN_SHARED_SECRET} \
-    --realm=${GOHOME_TURN_REALM} \
-    --server-name=${GOHOME_TURN_REALM} \
-    --listening-ip=${GOHOME_TURN_PRIVATE_IP} \
-    --relay-ip=${GOHOME_TURN_PRIVATE_IP} \
-    --external-ip=${GOHOME_TURN_PUBLIC_IP}/${GOHOME_TURN_PRIVATE_IP} \
-    --listening-port=3478 \
-    --min-port=49160 \
-    --max-port=49200 \
-    --no-udp \
-    --no-tls \
-    --no-dtls \
-    --no-multicast-peers \
-    --stale-nonce=600 \
-    --pidfile= \
-    --log-file=stdout \
-    --simple-log
+ExecStart=/usr/bin/turnserver -c /etc/gohome/media/coturn.conf
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=15s

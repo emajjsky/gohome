@@ -1,0 +1,21 @@
+# Install as /etc/gohome/media/coturn.conf with owner root:turnserver and mode 0640.
+no-cli
+fingerprint
+use-auth-secret
+static-auth-secret=REPLACE_WITH_TURN_SECRET
+realm=gohome.ai2shx.club
+server-name=gohome.ai2shx.club
+listening-ip=10.0.12.4
+relay-ip=10.0.12.4
+external-ip=118.25.151.101/10.0.12.4
+listening-port=3478
+min-port=49160
+max-port=49200
+no-udp
+no-tls
+no-dtls
+no-multicast-peers
+stale-nonce=600
+pidfile=
+log-file=stdout
+simple-log
