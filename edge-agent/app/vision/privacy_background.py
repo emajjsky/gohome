@@ -12,6 +12,8 @@ from typing import Any, Callable
 
 import numpy as np
 
+from .privacy_scene_geometry import SceneGeometryVerifier
+
 
 class PrivacyCalibrationRequired(RuntimeError):
     def __init__(self, camera_id: int, reason: str = "calibration_required") -> None:
@@ -35,6 +37,15 @@ class _BackgroundState:
     scene_mismatch_observations: int = 0
     last_scene_match_ratio: float | None = None
     last_scene_median_residual: float | None = None
+    last_geometry_check_at: float = 0.0
+    last_geometry_status: str = "not_checked"
+    last_geometry_reason: str = ""
+    last_geometry_good_matches: int = 0
+    last_geometry_inliers: int = 0
+    last_geometry_inlier_ratio: float | None = None
+    last_geometry_median_corner_displacement_ratio: float | None = None
+    last_geometry_max_corner_displacement_ratio: float | None = None
+    last_geometry_signature: Any | None = None
     calibration_active: bool = False
     calibration_id: str = ""
     calibration_reference: Any | None = None
@@ -66,6 +77,8 @@ class PrivacyBackgroundReconstructor:
         revalidation_frames: int = 3,
         foreground_threshold: int = 24,
         recent_mask_seconds: float = 1.4,
+        geometry_recheck_seconds: float = 1.0,
+        geometry_verifier: SceneGeometryVerifier | None = None,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.storage_dir = Path(storage_dir) if storage_dir else None
@@ -74,6 +87,8 @@ class PrivacyBackgroundReconstructor:
         self.revalidation_frames = max(2, int(revalidation_frames))
         self.foreground_threshold = max(8, min(80, int(foreground_threshold)))
         self.recent_mask_seconds = max(0.2, min(float(recent_mask_seconds), 3.0))
+        self.geometry_recheck_seconds = max(0.25, min(float(geometry_recheck_seconds), 5.0))
+        self.geometry_verifier = geometry_verifier or SceneGeometryVerifier()
         self._clock = monotonic_clock or time.monotonic
         self._states: OrderedDict[tuple[int, str, int, int], _BackgroundState] = OrderedDict()
         self._lock = RLock()
@@ -209,6 +224,10 @@ class PrivacyBackgroundReconstructor:
                 state.scene_mismatch_observations = 0
                 state.last_scene_match_ratio = 1.0
                 state.last_scene_median_residual = 0.0
+                state.last_geometry_check_at = 0.0
+                state.last_geometry_status = "not_checked"
+                state.last_geometry_reason = ""
+                state.last_geometry_signature = None
                 state.calibration_active = False
                 state.calibration_reference = None
                 state.calibration_average = None
@@ -272,7 +291,13 @@ class PrivacyBackgroundReconstructor:
             if not generation_ready:
                 raise PrivacyCalibrationRequired(camera_id, blocked_reason)
 
-        assessment = self._scene_assessment(background, frame, excluded_mask=mask)
+        assessment = self._scene_assessment(
+            key,
+            baseline_revision,
+            background,
+            frame,
+            excluded_mask=mask,
+        )
         if not bool(cv2.countNonZero(mask)):
             if not assessment["accepted"]:
                 self._mark_scene_review(key, baseline_revision, assessment)
@@ -465,6 +490,7 @@ class PrivacyBackgroundReconstructor:
             "confirmation_frames": self.confirmation_frames,
             "revalidation_frames": self.revalidation_frames,
             "foreground_threshold": self.foreground_threshold,
+            "geometry_recheck_seconds": self.geometry_recheck_seconds,
             "state_count": len(states),
             "max_states": self.max_states,
             "memory_bytes": memory_bytes,
@@ -516,6 +542,10 @@ class PrivacyBackgroundReconstructor:
         state.scene_status = "revalidation_required" if state.background is not None else "calibration_required"
         state.recent_person_mask = None
         state.recent_person_at = 0.0
+        state.last_geometry_check_at = 0.0
+        state.last_geometry_status = "not_checked"
+        state.last_geometry_reason = ""
+        state.last_geometry_signature = None
 
     def _protected_mask(self, cv2: Any, state: _BackgroundState, mask: Any) -> Any:
         now = self._clock()
@@ -538,7 +568,7 @@ class PrivacyBackgroundReconstructor:
         background: Any,
         frame: Any,
     ) -> tuple[bool, str]:
-        assessment = self._scene_assessment(background, frame)
+        assessment = self._scene_assessment(key, baseline_revision, background, frame)
         with self._lock:
             state = self._states.get(key)
             if state is None or state.baseline_revision != baseline_revision:
@@ -603,6 +633,19 @@ class PrivacyBackgroundReconstructor:
     def _store_scene_metrics(self, state: _BackgroundState, assessment: dict[str, Any]) -> None:
         state.last_scene_match_ratio = assessment.get("match_ratio")
         state.last_scene_median_residual = assessment.get("median_residual")
+        geometry_status = assessment.get("geometry_status")
+        if geometry_status and geometry_status != "not_required":
+            state.last_geometry_status = str(geometry_status)
+            state.last_geometry_reason = str(assessment.get("geometry_reason") or "")
+            state.last_geometry_good_matches = int(assessment.get("geometry_good_matches") or 0)
+            state.last_geometry_inliers = int(assessment.get("geometry_inliers") or 0)
+            state.last_geometry_inlier_ratio = assessment.get("geometry_inlier_ratio")
+            state.last_geometry_median_corner_displacement_ratio = assessment.get(
+                "geometry_median_corner_displacement_ratio"
+            )
+            state.last_geometry_max_corner_displacement_ratio = assessment.get(
+                "geometry_max_corner_displacement_ratio"
+            )
 
     def _calibration_frame_matches(self, reference: Any, frame: Any) -> bool:
         if reference.shape != frame.shape:
@@ -612,6 +655,8 @@ class PrivacyBackgroundReconstructor:
 
     def _scene_assessment(
         self,
+        key: tuple[int, str, int, int],
+        baseline_revision: int,
         background: Any,
         frame: Any,
         excluded_mask: Any | None = None,
@@ -645,14 +690,88 @@ class PrivacyBackgroundReconstructor:
         match_ratio = float(np.mean(residual <= 44.0))
         accepted = bool(median_residual <= 24.0 and match_ratio >= 0.68)
         status = "stable" if median_residual <= 12.0 and match_ratio >= 0.90 else "local_change"
-        return {
+        photometric = {
             "accepted": accepted,
             "status": status if accepted else "scene_review_required",
             "reason": "" if accepted else "scene_geometry_changed",
             "match_ratio": round(match_ratio, 4),
             "median_residual": round(median_residual, 3),
             "color_shift_bgr": [int(value) for value in color_shift],
+            "geometry_status": "not_required" if accepted else "not_checked",
+            "geometry_reason": "",
+            "geometry_good_matches": 0,
+            "geometry_inliers": 0,
+            "geometry_inlier_ratio": None,
+            "geometry_median_corner_displacement_ratio": None,
+            "geometry_max_corner_displacement_ratio": None,
         }
+        if accepted:
+            return photometric
+        geometry = self._geometry_assessment_cached(
+            key,
+            baseline_revision,
+            background,
+            frame,
+            excluded_mask=excluded_mask,
+        )
+        geometry_accepted = bool(geometry.get("accepted"))
+        return {
+            **photometric,
+            "accepted": geometry_accepted,
+            "status": "local_change" if geometry_accepted else "scene_review_required",
+            "reason": "" if geometry_accepted else str(geometry.get("geometry_reason") or "scene_geometry_changed"),
+            **{name: value for name, value in geometry.items() if name != "accepted"},
+        }
+
+    def _geometry_assessment_cached(
+        self,
+        key: tuple[int, str, int, int],
+        baseline_revision: int,
+        background: Any,
+        frame: Any,
+        *,
+        excluded_mask: Any | None,
+    ) -> dict[str, Any]:
+        now = self._clock()
+        signature = self.geometry_verifier.signature(frame, excluded_mask=excluded_mask)
+        with self._lock:
+            state = self._states.get(key)
+            if (
+                state is not None
+                and state.baseline_revision == baseline_revision
+                and state.last_geometry_check_at > 0.0
+                and now - state.last_geometry_check_at < self.geometry_recheck_seconds
+                and self.geometry_verifier.signatures_match(state.last_geometry_signature, signature)
+            ):
+                return {
+                    "accepted": state.last_geometry_status == "same_view",
+                    "geometry_status": state.last_geometry_status,
+                    "geometry_reason": state.last_geometry_reason,
+                    "geometry_good_matches": state.last_geometry_good_matches,
+                    "geometry_inliers": state.last_geometry_inliers,
+                    "geometry_inlier_ratio": state.last_geometry_inlier_ratio,
+                    "geometry_median_corner_displacement_ratio": state.last_geometry_median_corner_displacement_ratio,
+                    "geometry_max_corner_displacement_ratio": state.last_geometry_max_corner_displacement_ratio,
+                    "geometry_cached": True,
+                }
+        assessment = self.geometry_verifier.assess(background, frame, excluded_mask=excluded_mask)
+        with self._lock:
+            state = self._states.get(key)
+            if state is not None and state.baseline_revision == baseline_revision:
+                state.last_geometry_check_at = now
+                state.last_geometry_status = str(assessment.get("geometry_status") or "unverifiable")
+                state.last_geometry_reason = str(assessment.get("geometry_reason") or "")
+                state.last_geometry_good_matches = int(assessment.get("geometry_good_matches") or 0)
+                state.last_geometry_inliers = int(assessment.get("geometry_inliers") or 0)
+                state.last_geometry_inlier_ratio = assessment.get("geometry_inlier_ratio")
+                state.last_geometry_median_corner_displacement_ratio = assessment.get(
+                    "geometry_median_corner_displacement_ratio"
+                )
+                state.last_geometry_max_corner_displacement_ratio = assessment.get(
+                    "geometry_max_corner_displacement_ratio"
+                )
+                state.last_geometry_signature = signature
+        return assessment
 
     def _expand_person_mask(self, cv2: Any, frame: Any, background: Any, mask: Any) -> Any:
         points = cv2.findNonZero(mask)
@@ -729,6 +848,18 @@ class PrivacyBackgroundReconstructor:
             "scene_mismatch_observations": state.scene_mismatch_observations,
             "last_scene_match_ratio": state.last_scene_match_ratio,
             "last_scene_median_residual": state.last_scene_median_residual,
+            "last_geometry_status": state.last_geometry_status,
+            "last_geometry_reason": state.last_geometry_reason,
+            "last_geometry_good_matches": state.last_geometry_good_matches,
+            "last_geometry_inliers": state.last_geometry_inliers,
+            "last_geometry_inlier_ratio": state.last_geometry_inlier_ratio,
+            "last_geometry_median_corner_displacement_ratio": state.last_geometry_median_corner_displacement_ratio,
+            "last_geometry_max_corner_displacement_ratio": state.last_geometry_max_corner_displacement_ratio,
+            "last_geometry_check_age_ms": (
+                round(max(0.0, self._clock() - state.last_geometry_check_at) * 1000.0, 1)
+                if state.last_geometry_check_at > 0.0
+                else None
+            ),
             "calibration_active": bool(state.calibration_active),
             "calibration_id": state.calibration_id,
             "calibration_observations": state.calibration_observations,

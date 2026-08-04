@@ -459,7 +459,10 @@ def main() -> int:
         persisted_file_sha256 = sha256(persisted_path.read_bytes()).hexdigest()
         persisted = PrivacyFrameRenderer(
             tracker,
-            PrivacyBackgroundReconstructor(storage_dir=temporary_dir),
+            PrivacyBackgroundReconstructor(
+                storage_dir=temporary_dir,
+                monotonic_clock=revalidation_clock,
+            ),
             SyntheticSegmentation({"camera-a": clean_a}),
             revalidation_interval_seconds=1.0,
             monotonic_clock=revalidation_clock,
@@ -574,6 +577,25 @@ def main() -> int:
         assert mean_delta(local_change_render, local_change) < 8.0
         assert persisted.background_reconstructor.status()["states"][0]["baseline_retained"] is True
 
+        revalidation_clock.advance(2.0)
+        household_change = clean_a.copy()
+        cv2.rectangle(household_change, (0, 0), (80, 179), (38, 92, 210), -1)
+        cv2.rectangle(household_change, (245, 0), (319, 179), (215, 210, 205), -1)
+        household_change_render = render(
+            persisted,
+            tracker,
+            household_change,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-household-layout-change",
+            person=False,
+            mode="skeleton",
+        )
+        assert mean_delta(household_change_render, household_change) < 8.0
+        household_status = persisted.background_reconstructor.status()["states"][0]
+        assert household_status["last_geometry_status"] == "same_view"
+        assert household_status["last_geometry_inliers"] >= 10
+
         lighting_change = np.clip(clean_a.astype(np.int16) + np.asarray([18, 12, 22]), 0, 255).astype(np.uint8)
         lighting_render = render(
             persisted,
@@ -586,6 +608,40 @@ def main() -> int:
             mode="skeleton",
         )
         assert mean_delta(lighting_render, lighting_change) < 12.0
+
+        changed_restart = PrivacyFrameRenderer(
+            tracker,
+            PrivacyBackgroundReconstructor(storage_dir=temporary_dir),
+            SyntheticSegmentation({"camera-a": clean_a}),
+            revalidation_interval_seconds=1.0,
+            monotonic_clock=revalidation_clock,
+        )
+        for sequence in range(changed_restart.background_reconstructor.revalidation_frames - 1):
+            assert_calibration_required(lambda sequence=sequence: render(
+                changed_restart,
+                tracker,
+                household_change,
+                camera_id=1,
+                source_key=source_a_g1,
+                frame_id=f"1-household-revalidate-{sequence}",
+                person=False,
+                mode="skeleton",
+            ), "stream_revalidation_required")
+            revalidation_clock.advance(1.0)
+        changed_revalidated = render(
+            changed_restart,
+            tracker,
+            household_change,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-household-revalidate-complete",
+            person=False,
+            mode="skeleton",
+        )
+        assert mean_delta(changed_revalidated, household_change) < 8.0
+        changed_restart_status = changed_restart.background_reconstructor.status()["states"][0]
+        assert changed_restart_status["ready"] is True
+        assert changed_restart_status["last_geometry_status"] == "same_view"
 
         moved_scene = np.roll(clean_a, 52, axis=1)
         assert_calibration_required(lambda: render(
@@ -834,6 +890,8 @@ def main() -> int:
         "concurrent_calibration_rejected": True,
         "persistence_failure_preserves_baseline": True,
         "local_scene_change_retained": True,
+        "large_household_change_retained": True,
+        "large_household_change_restart_revalidated": True,
         "lighting_change_retained": True,
         "camera_move_preserves_baseline": True,
         "stream_generation_revalidation": True,
