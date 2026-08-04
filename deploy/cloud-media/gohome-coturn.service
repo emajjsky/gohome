@@ -25,7 +25,6 @@ ExecStart=/usr/bin/turnserver \
     --no-tls \
     --no-dtls \
     --no-multicast-peers \
-    --no-loopback-peers \
     --stale-nonce=600 \
     --pidfile= \
     --log-file=stdout \
