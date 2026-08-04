@@ -474,6 +474,6 @@ Build 8 不满足本台账的骨架产品契约，不作为最终交付版本。
 
 **现象**：数据库迁移恢复后，盒子历史证据上传持续返回 403；云端媒体生命周期任务每五分钟报告 `Access Denied`。
 **根因**：生产 CAM 子账号只被授权访问 `memory-media/*` 与 `event-evidence/*`，云端代码却将盒子证据写入 `edge-evidence/*`。同一密钥在 `memory-media/*` 的 Put/Head/Delete 实测全部成功，证明密钥、存储桶和地域配置有效；`edge-evidence/*` 的 Put/Head/Delete 全部被策略正确拒绝。生命周期孤儿对账还调用桶级 `GetBucket`，现有策略只含对象操作，因而两个受管前缀的分页清单均被拒绝。
-**处理**：删除失配的 `edge-evidence/` 运行时语义，上传、生命周期、测试与产品文档统一使用 `event-evidence/`；由单一共享常量约束证据和家庭记忆前缀。CAM 策略仅增加生产桶的 `GetBucket`，继续把对象 Put/Get/Head/Delete 限定在两个受管前缀，禁止 `cos:*` 和公共访问。
+**处理**：删除失配的 `edge-evidence/` 运行时语义，上传、生命周期、测试与产品文档统一使用 `event-evidence/`；由单一共享常量约束证据和家庭记忆前缀。进一步核对正式 SDK 后确认 `getBucket` 会把请求的 `Prefix` 作为授权 `ResourceKey`，因此把 `GetBucket` 单独授权给不带路径的桶资源无法命中。正确最小策略是将 `GetBucket` 与 Put/Get/Head/Delete 放在同一条语句中，共同限定为 `memory-media/*` 和 `event-evidence/*`，禁止裸桶列举、`cos:*` 和公共访问。
 **验收**：生产密钥对 `memory-media/*` 与 `event-evidence/*` 可 Put/Head/Delete，对其它前缀保持拒绝；两个受管前缀可完整分页列举。盒子失败队列恢复 200 并幂等排空，数据库对象键均使用正式前缀；生命周期 dry-run 成功返回盘点结果且不删除对象，确认清单后才启用真实删除。
-**当前状态**：根因和最小授权边界已确认，代码与文档正在统一；待自动回归、CAM 授权确认、生产发布和真实队列复验。
+**生产验收**：策略版本 4 已设为当前版本，`GetBucket` 与对象 Put/Get/Head/Delete 已共同限定到两个受管前缀。生产分页列举成功：`event-evidence/` 119 个对象、`memory-media/` 16 个对象；未授权 `unmanaged-probe/` 列举和写入均保持 403。两个受管前缀的临时 Put/Head/Delete 均成功，删除后 Head 返回 404。两项历史权限测试对象已清理。生命周期 dry-run 手动和自动周期均成功：资产 1033、COS 对象 133、COS 孤儿 0、失败 0、删除 0；自动周期时间为 `2026-08-04T05:58:34Z`。策略更新后生产日志无新增 `AccessDenied`，API、MediaMTX、Coturn 均 active，API `NRestarts=0`。GH-054 已关闭。

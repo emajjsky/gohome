@@ -40,8 +40,35 @@ that legacy mutable tree only after the WebRTC TestFlight and box cutover pass.
 
 ## COS permissions
 
-The cloud service identity has object `PutObject`, `GetObject`, `HeadObject`, and
-`DeleteObject` access only under `memory-media/*` and `event-evidence/*`. Media
-lifecycle inventory additionally requires bucket-level `GetBucket` on the
-single production bucket. Do not grant `cos:*`, public bucket access, or access
-to unrelated prefixes.
+The cloud service identity has `PutObject`, `GetObject`, `HeadObject`,
+`DeleteObject`, and `GetBucket` access only under `memory-media/*` and
+`event-evidence/*`. The COS SDK authorizes `GetBucket` against the requested
+`Prefix`, so a policy that grants it only on the bare bucket resource does not
+match either inventory request.
+
+Keep all five actions in the same prefix-scoped statement:
+
+```json
+{
+  "version": "2.0",
+  "statement": [
+    {
+      "effect": "allow",
+      "action": [
+        "name/cos:PutObject",
+        "name/cos:GetObject",
+        "name/cos:HeadObject",
+        "name/cos:DeleteObject",
+        "name/cos:GetBucket"
+      ],
+      "resource": [
+        "qcs::cos:REGION:uid/OWNER_UIN:BUCKET/memory-media/*",
+        "qcs::cos:REGION:uid/OWNER_UIN:BUCKET/event-evidence/*"
+      ]
+    }
+  ]
+}
+```
+
+Do not add a bare-bucket `GetBucket` statement, grant `cos:*`, enable public
+bucket access, or authorize unrelated prefixes.
