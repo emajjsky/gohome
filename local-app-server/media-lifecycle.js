@@ -15,6 +15,21 @@ function positiveDays(value, fallback) {
     return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
+function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) return fallback;
+    return Math.min(maximum, Math.max(1, Math.trunc(number)));
+}
+
+function lifecycleLimits(env = process.env) {
+    return Object.freeze({
+        asset_count: positiveInteger(env.GOHOME_MEDIA_LIFECYCLE_MAX_ASSETS_PER_RUN, 10, 1000),
+        asset_bytes: positiveInteger(env.GOHOME_MEDIA_LIFECYCLE_MAX_ASSET_BYTES_PER_RUN, 64 * 1024 * 1024),
+        orphan_count: positiveInteger(env.GOHOME_MEDIA_LIFECYCLE_MAX_ORPHANS_PER_RUN, 25, 5000),
+        orphan_bytes: positiveInteger(env.GOHOME_MEDIA_LIFECYCLE_MAX_ORPHAN_BYTES_PER_RUN, 64 * 1024 * 1024),
+    });
+}
+
 function retentionPolicies(env = process.env) {
     return Object.freeze({
         family_memory: null,
@@ -211,6 +226,37 @@ async function listLocalFiles(root) {
     return files;
 }
 
+function boundedSelection(items, { maxCount, maxBytes, sizeOf }) {
+    const selected = [];
+    let selectedBytes = 0;
+    let oversized = 0;
+    for (const item of items) {
+        if (selected.length >= maxCount) break;
+        const size = Math.max(0, Number(sizeOf(item) || 0));
+        if (selectedBytes + size > maxBytes) {
+            oversized += 1;
+            continue;
+        }
+        selected.push(item);
+        selectedBytes += size;
+    }
+    return { selected, selectedBytes, oversized };
+}
+
+function reconciliationResult(scanned = 0) {
+    return {
+        scanned,
+        planned: 0,
+        planned_bytes: 0,
+        selected: 0,
+        selected_bytes: 0,
+        limited: 0,
+        oversized: 0,
+        deleted: 0,
+        failed: 0,
+    };
+}
+
 class MediaLifecycleManager {
     constructor({ store, cosStorage, mediaDir, clock = () => Date.now(), env = process.env, logger = console }) {
         this.store = store;
@@ -224,7 +270,12 @@ class MediaLifecycleManager {
     }
 
     status() {
-        return { running: this.running, last_run: this.lastRun, policies: retentionPolicies(this.env) };
+        return {
+            running: this.running,
+            last_run: this.lastRun,
+            policies: retentionPolicies(this.env),
+            limits: lifecycleLimits(this.env),
+        };
     }
 
     async save() {
@@ -263,14 +314,12 @@ class MediaLifecycleManager {
         });
     }
 
-    async reconcileCosOrphans({ trackedKeys, nowMs, graceMs, dryRun = false }) {
+    async reconcileCosOrphans({ trackedKeys, nowMs, graceMs, limits, dryRun = false }) {
         if (!this.cosStorage?.enabled || typeof this.cosStorage.listObjects !== "function") {
-            return { scanned: 0, planned: 0, deleted: 0, failed: 0 };
+            return reconciliationResult();
         }
         let scanned = 0;
-        let planned = 0;
-        let deleted = 0;
-        let failed = 0;
+        const candidates = [];
         for (const prefix of MANAGED_COS_PREFIXES) {
             const objects = await this.cosStorage.listObjects({ prefix });
             for (const object of objects) {
@@ -278,38 +327,75 @@ class MediaLifecycleManager {
                 const key = String(object.key || "");
                 const modifiedAt = timestamp(object.last_modified);
                 if (!key || trackedKeys.has(key) || !modifiedAt || nowMs - modifiedAt < graceMs) continue;
-                planned += 1;
-                if (dryRun) continue;
+                candidates.push({ ...object, key, modifiedAt, size: Math.max(0, Number(object.size || 0)) });
+            }
+        }
+        candidates.sort((first, second) => first.modifiedAt - second.modifiedAt || first.key.localeCompare(second.key));
+        const selection = boundedSelection(candidates, {
+            maxCount: limits.orphan_count,
+            maxBytes: limits.orphan_bytes,
+            sizeOf: (object) => object.size,
+        });
+        let deleted = 0;
+        let failed = 0;
+        if (!dryRun) {
+            for (const object of selection.selected) {
                 try {
-                    await this.cosStorage.deleteObject({ key });
+                    await this.cosStorage.deleteObject({ key: object.key });
                     deleted += 1;
                 } catch (error) {
                     failed += 1;
-                    this.logger.warn?.(`COS orphan cleanup failed for ${key}: ${error.code || error.message}`);
+                    this.logger.warn?.(`COS orphan cleanup failed for ${object.key}: ${error.code || error.message}`);
                 }
             }
         }
-        return { scanned, planned, deleted, failed };
+        return {
+            scanned,
+            planned: candidates.length,
+            planned_bytes: candidates.reduce((total, object) => total + object.size, 0),
+            selected: selection.selected.length,
+            selected_bytes: selection.selectedBytes,
+            limited: candidates.length - selection.selected.length,
+            oversized: selection.oversized,
+            deleted,
+            failed,
+        };
     }
 
-    async reconcileLocalOrphans({ trackedKeys, nowMs, graceMs, dryRun = false }) {
+    async reconcileLocalOrphans({ trackedKeys, nowMs, graceMs, limits, dryRun = false }) {
         const files = await listLocalFiles(this.mediaDir);
-        let planned = 0;
+        const candidates = files
+            .filter((file) => !trackedKeys.has(file.key) && nowMs - file.last_modified_ms >= graceMs)
+            .sort((first, second) => first.last_modified_ms - second.last_modified_ms || first.key.localeCompare(second.key));
+        const selection = boundedSelection(candidates, {
+            maxCount: limits.orphan_count,
+            maxBytes: limits.orphan_bytes,
+            sizeOf: (file) => file.size,
+        });
         let deleted = 0;
         let failed = 0;
-        for (const file of files) {
-            if (trackedKeys.has(file.key) || nowMs - file.last_modified_ms < graceMs) continue;
-            planned += 1;
-            if (dryRun) continue;
-            try {
-                await fs.promises.unlink(file.path);
-                deleted += 1;
-            } catch (error) {
-                failed += 1;
-                this.logger.warn?.(`Local media orphan cleanup failed for ${file.key}: ${error.message}`);
+        if (!dryRun) {
+            for (const file of selection.selected) {
+                try {
+                    await fs.promises.unlink(file.path);
+                    deleted += 1;
+                } catch (error) {
+                    failed += 1;
+                    this.logger.warn?.(`Local media orphan cleanup failed for ${file.key}: ${error.message}`);
+                }
             }
         }
-        return { scanned: files.length, planned, deleted, failed };
+        return {
+            scanned: files.length,
+            planned: candidates.length,
+            planned_bytes: candidates.reduce((total, file) => total + file.size, 0),
+            selected: selection.selected.length,
+            selected_bytes: selection.selectedBytes,
+            limited: candidates.length - selection.selected.length,
+            oversized: selection.oversized,
+            deleted,
+            failed,
+        };
     }
 
     async run({ reconcileOrphans = true, dryRun = false, classificationOnly = false } = {}) {
@@ -317,26 +403,34 @@ class MediaLifecycleManager {
         this.running = true;
         const nowMs = Number(this.clock());
         const policies = retentionPolicies(this.env);
+        const limits = lifecycleLimits(this.env);
         const result = {
             ok: true,
             running: false,
             scanned: 0,
             classified: 0,
             planned_deletions: 0,
+            planned_deletion_bytes: 0,
+            selected_deletions: 0,
+            selected_deletion_bytes: 0,
+            limited_deletions: 0,
+            oversized_deletions: 0,
             deleted: 0,
             failed: 0,
             protected: 0,
             deferred: 0,
             dry_run: Boolean(dryRun),
             classification_only: Boolean(classificationOnly),
-            cos_orphans: { scanned: 0, planned: 0, deleted: 0, failed: 0 },
-            local_orphans: { scanned: 0, planned: 0, deleted: 0, failed: 0 },
+            limits,
+            cos_orphans: reconciliationResult(),
+            local_orphans: reconciliationResult(),
             started_at: new Date(nowMs).toISOString(),
         };
         try {
             const db = await this.inventory();
             const references = buildAssetReferences(db);
             const classificationChanges = new Map();
+            const dueAssets = [];
             for (const asset of db.assets || []) {
                 result.scanned += 1;
                 if (String(asset.retention_status || "active") === "deleted") continue;
@@ -370,36 +464,59 @@ class MediaLifecycleManager {
                     result.deferred += 1;
                     continue;
                 }
-                result.planned_deletions += 1;
-                if (dryRun || classificationOnly) continue;
-                const attempts = Number(asset.deletion_attempts || 0) + 1;
-                asset.retention_status = "deleting";
-                asset.deletion_attempts = attempts;
-                asset.deletion_error = "";
-                asset.updated_at = new Date(nowMs).toISOString();
-                await this.saveAssets([asset]);
-                classificationChanges.delete(String(asset.id));
-                try {
-                    await this.deleteAssetObject(asset);
-                    asset.retention_status = "deleted";
-                    asset.deleted_at = new Date(nowMs).toISOString();
-                    asset.deletion_error = "";
-                    asset.next_deletion_at = null;
-                    asset.size = 0;
-                    asset.updated_at = new Date(nowMs).toISOString();
-                    result.deleted += 1;
-                } catch (error) {
-                    asset.retention_status = "failed";
-                    asset.deletion_error = String(error.message || error).slice(0, 1000);
-                    asset.next_deletion_at = retryAt(nowMs, attempts);
-                    asset.updated_at = new Date(nowMs).toISOString();
-                    result.failed += 1;
-                }
-                await this.saveAssets([asset]);
+                dueAssets.push(asset);
             }
 
             if (!dryRun && classificationChanges.size) {
                 await this.saveAssets([...classificationChanges.values()]);
+                classificationChanges.clear();
+            }
+
+            dueAssets.sort((first, second) => (
+                timestamp(first.created_at || first.updated_at) - timestamp(second.created_at || second.updated_at)
+                || String(first.id || "").localeCompare(String(second.id || ""))
+            ));
+            const deletionSelection = boundedSelection(dueAssets, {
+                maxCount: limits.asset_count,
+                maxBytes: limits.asset_bytes,
+                sizeOf: (asset) => asset.size ?? asset.size_bytes,
+            });
+            result.planned_deletions = dueAssets.length;
+            result.planned_deletion_bytes = dueAssets.reduce(
+                (total, asset) => total + Math.max(0, Number(asset.size ?? asset.size_bytes ?? 0)),
+                0,
+            );
+            result.selected_deletions = deletionSelection.selected.length;
+            result.selected_deletion_bytes = deletionSelection.selectedBytes;
+            result.limited_deletions = dueAssets.length - deletionSelection.selected.length;
+            result.oversized_deletions = deletionSelection.oversized;
+
+            if (!dryRun && !classificationOnly) {
+                for (const asset of deletionSelection.selected) {
+                    const attempts = Number(asset.deletion_attempts || 0) + 1;
+                    asset.retention_status = "deleting";
+                    asset.deletion_attempts = attempts;
+                    asset.deletion_error = "";
+                    asset.updated_at = new Date(nowMs).toISOString();
+                    await this.saveAssets([asset]);
+                    try {
+                        await this.deleteAssetObject(asset);
+                        asset.retention_status = "deleted";
+                        asset.deleted_at = new Date(nowMs).toISOString();
+                        asset.deletion_error = "";
+                        asset.next_deletion_at = null;
+                        asset.size = 0;
+                        asset.updated_at = new Date(nowMs).toISOString();
+                        result.deleted += 1;
+                    } catch (error) {
+                        asset.retention_status = "failed";
+                        asset.deletion_error = String(error.message || error).slice(0, 1000);
+                        asset.next_deletion_at = retryAt(nowMs, attempts);
+                        asset.updated_at = new Date(nowMs).toISOString();
+                        result.failed += 1;
+                    }
+                    await this.saveAssets([asset]);
+                }
             }
             if (reconcileOrphans) {
                 const activeAssets = (db.assets || [])
@@ -424,12 +541,14 @@ class MediaLifecycleManager {
                     trackedKeys: cosTrackedKeys,
                     nowMs,
                     graceMs,
+                    limits,
                     dryRun: dryRun || classificationOnly,
                 });
                 result.local_orphans = await this.reconcileLocalOrphans({
                     trackedKeys: localTrackedKeys,
                     nowMs,
                     graceMs,
+                    limits,
                     dryRun: dryRun || classificationOnly,
                 });
             }
@@ -452,5 +571,6 @@ module.exports = {
     MediaLifecycleManager,
     buildAssetReferences,
     classifyAsset,
+    lifecycleLimits,
     retentionPolicies,
 };

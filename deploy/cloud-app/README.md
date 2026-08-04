@@ -94,3 +94,16 @@ orphan counts. Do not enable deletion until current care-card images, published
 family memories, avatars, unresolved critical evidence, and upload intents are
 confirmed protected. Physical deletion must remain bounded and independently
 auditable.
+
+Each deletion cycle is oldest-first and bounded by both count and bytes. The
+defaults are deliberately conservative:
+
+```sh
+GOHOME_MEDIA_LIFECYCLE_MAX_ASSETS_PER_RUN=10
+GOHOME_MEDIA_LIFECYCLE_MAX_ASSET_BYTES_PER_RUN=67108864
+GOHOME_MEDIA_LIFECYCLE_MAX_ORPHANS_PER_RUN=25
+GOHOME_MEDIA_LIFECYCLE_MAX_ORPHAN_BYTES_PER_RUN=67108864
+```
+
+Review `selected_deletions`, `selected_deletion_bytes`, `limited_deletions`,
+and the corresponding COS/local orphan fields before changing these limits.

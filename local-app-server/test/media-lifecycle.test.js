@@ -264,6 +264,70 @@ test("classification-only mode persists retention state without deleting assets 
     fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("media lifecycle bounds physical deletion and processes the oldest data first", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-media-bounded-delete-"));
+    const mediaDir = path.join(root, "media");
+    fs.mkdirSync(mediaDir, { recursive: true });
+    const nowMs = Date.parse("2026-08-02T08:00:00.000Z");
+    const assets = [12, 11, 10].map((daysAgo, index) => asset(
+        `asset-${index + 1}`,
+        `assets/asset-${index + 1}.jpg`,
+        iso(nowMs, daysAgo),
+        {
+            storage_provider: "local",
+            relative_path: `assets/asset-${index + 1}.jpg`,
+            purpose: "transient_upload",
+            size: 10,
+        },
+    ));
+    for (const item of assets) {
+        const filePath = path.join(mediaDir, item.relative_path);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, item.id);
+    }
+    const orphanPaths = [9, 8, 7].map((daysAgo, index) => {
+        const filePath = path.join(mediaDir, `orphans/orphan-${index + 1}.jpg`);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, `orphan-${index + 1}`);
+        const oldTime = new Date(nowMs - daysAgo * DAY_MS);
+        fs.utimesSync(filePath, oldTime, oldTime);
+        return filePath;
+    });
+    const manager = new MediaLifecycleManager({
+        mediaDir,
+        clock: () => nowMs,
+        env: {
+            GOHOME_MEDIA_LIFECYCLE_MAX_ASSETS_PER_RUN: "2",
+            GOHOME_MEDIA_LIFECYCLE_MAX_ASSET_BYTES_PER_RUN: "100",
+            GOHOME_MEDIA_LIFECYCLE_MAX_ORPHANS_PER_RUN: "1",
+            GOHOME_MEDIA_LIFECYCLE_MAX_ORPHAN_BYTES_PER_RUN: "100",
+        },
+        store: {
+            db: { assets, events: [], family_memory_media: [], media_upload_intents: [] },
+            async save() {},
+        },
+        cosStorage: { enabled: false },
+    });
+
+    const result = await manager.run();
+
+    assert.equal(result.planned_deletions, 3);
+    assert.equal(result.selected_deletions, 2);
+    assert.equal(result.limited_deletions, 1);
+    assert.equal(result.deleted, 2);
+    assert.equal(assets[0].retention_status, "deleted");
+    assert.equal(assets[1].retention_status, "deleted");
+    assert.equal(assets[2].retention_status, "active");
+    assert.equal(result.local_orphans.planned, 3);
+    assert.equal(result.local_orphans.selected, 1);
+    assert.equal(result.local_orphans.limited, 2);
+    assert.equal(result.local_orphans.deleted, 1);
+    assert.equal(fs.existsSync(orphanPaths[0]), false);
+    assert.equal(fs.existsSync(orphanPaths[1]), true);
+    assert.equal(fs.existsSync(orphanPaths[2]), true);
+    fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("media lifecycle protects assets still referenced by product views", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "gohome-media-product-reference-"));
     const mediaDir = path.join(root, "media");
