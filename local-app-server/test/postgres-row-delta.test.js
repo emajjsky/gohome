@@ -68,6 +68,23 @@ test('explicit row deletion is parameterized and updates the persisted snapshot'
   await assert.rejects(store.deleteRow('cameras; drop table users', 'camera-1'), /unsupported postgres table/);
 });
 
+test('event deletion mirrors PostgreSQL cascade into relation snapshots', async () => {
+  const pool = recordingPool();
+  const persisted = emptyTables();
+  persisted.events = [{ id: 'event-1' }];
+  persisted.event_media_assets = [
+    { id: 'relation-1', event_id: 'event-1', asset_id: 'asset-1' },
+    { id: 'relation-2', event_id: 'event-2', asset_id: 'asset-2' },
+  ];
+  const db = { event_media_assets: structuredClone(persisted.event_media_assets) };
+  const store = new PostgresStore({ pool, db, persistedTables: persisted });
+
+  await store.deleteRow('events', 'event-1');
+
+  assert.deepEqual(store.persistedTables.event_media_assets.map((row) => row.id), ['relation-2']);
+  assert.deepEqual(store.db.event_media_assets.map((row) => row.id), ['relation-2']);
+});
+
 test('scheduler run persistence updates one row and prunes retained history without a full save', async () => {
   const pool = recordingPool();
   const persisted = emptyTables();
@@ -118,6 +135,7 @@ test('media lifecycle reads fresh PostgreSQL references and persists retention r
   pool.query = async (text) => {
     inventoryQueries.push(String(text));
     if (/from media_assets/i.test(text)) return { rows: [{ id: 'asset-1', size_bytes: 42, metadata: { purpose: 'family_memory' } }] };
+    if (/from event_media_assets/i.test(text)) return { rows: [{ id: 'relation-1', event_id: 'event-1', asset_id: 'asset-1' }] };
     if (/from events/i.test(text)) return { rows: [{ id: 'event-1', media_asset_id: 'asset-1' }] };
     if (/from family_memory_media/i.test(text)) return { rows: [{ memory_id: 'memory-1', asset_id: 'asset-1' }] };
     if (/from care_cards/i.test(text)) return { rows: [{ id: 'card-1', image_url: 'care-cards/card.webp' }] };
@@ -134,8 +152,9 @@ test('media lifecycle reads fresh PostgreSQL references and persists retention r
   const inventory = await store.mediaLifecycleInventory();
   assert.equal(inventory.assets[0].purpose, 'family_memory');
   assert.equal(inventory.assets[0].size, 42);
+  assert.equal(inventory.event_media_assets[0].asset_id, 'asset-1');
   assert.equal(inventory.family_memory_media[0].asset_id, 'asset-1');
-  assert.equal(inventoryQueries.length, 7);
+  assert.equal(inventoryQueries.length, 8);
 
   await store.saveMediaLifecycleAssets([{
     id: 'asset-1',

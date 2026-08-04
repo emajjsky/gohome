@@ -1101,7 +1101,7 @@ async function main() {
                 headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
             });
             assert.equal(verificationEvent.event.media_asset_id, verificationMedia.asset.id);
-            assert.equal(verificationEvent.event.payload.evidence_media_assets.length, 3);
+            assert.equal(verificationEvent.event.payload.evidence_media_assets, undefined);
             assert.equal(verificationEvent.event.evidence_media.length, 3);
             assert.deepEqual(verificationEvent.event.evidence_media.map((item) => item.role), ["before", "transition", "current"]);
             assert.equal(verificationEvent.verification.status, "pending");

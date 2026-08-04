@@ -4,8 +4,13 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const {
+    canonicalizeEventMedia,
+    eventMediaRole,
+    withoutEventMediaPayload,
+} = require("../local-app-server/event-media");
 
-const CLOUD_SEED_SCHEMA_VERSION = "015_media_asset_identity";
+const CLOUD_SEED_SCHEMA_VERSION = "016_event_media_assets";
 
 function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -498,11 +503,51 @@ function buildCloudSeedBundle(db, options = {}) {
         snapshot_path: String(event.snapshot_path || ""),
         acknowledged: bool(event.acknowledged),
         resolution: String(event.resolution || ""),
-        payload: event.payload || {},
+        payload: withoutEventMediaPayload(event.payload),
         occurred_at: iso(event.occurred_at, exportedAt),
         created_at: iso(event.created_at, iso(event.occurred_at, exportedAt)),
         updated_at: iso(event.updated_at, iso(event.created_at, exportedAt)),
     }));
+
+    const validAssetIds = new Set(mediaAssets.map((asset) => String(asset.id || "")).filter(Boolean));
+    const validEventIds = new Set(events.map((event) => String(event.id || "")).filter(Boolean));
+    const explicitEventMedia = toArray(db.event_media_assets);
+    const legacyEventMedia = sourceEvents.flatMap((event) => (
+        toArray(event.payload?.evidence_media_assets).map((entry) => {
+            const assetId = textId(entry?.asset_id || entry?.asset?.id || entry?.id);
+            const role = eventMediaRole(entry?.role);
+            return {
+                id: `event-media:${textId(event.id)}:${assetId}`,
+                event_id: textId(event.id),
+                asset_id: assetId,
+                role,
+                captured_at: iso(entry?.captured_at),
+                snapshot_id: nullableTextId(entry?.snapshot_id),
+                postures: Array.isArray(entry?.postures) ? entry.postures.map(String).slice(0, 8) : [],
+                metadata: { migrated_from_event_payload: true },
+                created_at: iso(event.created_at, iso(event.occurred_at, exportedAt)),
+                updated_at: iso(event.updated_at, iso(event.created_at, exportedAt)),
+            };
+        })
+    ));
+    const serializedEventMedia = [...explicitEventMedia, ...legacyEventMedia]
+        .map((entry) => ({
+            id: textId(entry.id || `event-media:${entry.event_id}:${entry.asset_id}`),
+            event_id: textId(entry.event_id),
+            asset_id: textId(entry.asset_id),
+            role: eventMediaRole(entry.role),
+            canonical: bool(entry.canonical, true),
+            captured_at: iso(entry.captured_at),
+            snapshot_id: nullableTextId(entry.snapshot_id),
+            postures: Array.isArray(entry.postures) ? entry.postures.map(String).slice(0, 8) : [],
+            metadata: entry.metadata && typeof entry.metadata === "object" && !Array.isArray(entry.metadata)
+                ? entry.metadata
+                : {},
+            created_at: iso(entry.created_at, exportedAt),
+            updated_at: iso(entry.updated_at, iso(entry.created_at, exportedAt)),
+        }))
+        .filter((entry) => entry.id && validEventIds.has(entry.event_id) && validAssetIds.has(entry.asset_id));
+    const eventMediaAssets = canonicalizeEventMedia(serializedEventMedia);
 
     const deviceHeartbeats = toArray(db.heartbeats).map((heartbeat) => ({
         id: textId(heartbeat.id),
@@ -704,6 +749,7 @@ function buildCloudSeedBundle(db, options = {}) {
         media_assets: mediaAssets,
         media_upload_intents: mediaUploadIntents,
         events,
+        event_media_assets: eventMediaAssets,
         device_heartbeats: deviceHeartbeats,
         calendar_events: calendarEvents,
         care_cards: careCards,

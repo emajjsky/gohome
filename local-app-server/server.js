@@ -15,6 +15,7 @@ const {
     dateKeysEndingAt: activityDateKeysEndingAt,
     groupIntervalsByDate,
 } = require("./native-api/activity-reporting");
+const { canonicalizeEventMedia, withoutEventMediaPayload } = require("./event-media");
 
 function parseEnvValue(raw) {
     let value = String(raw || "").trim();
@@ -395,6 +396,7 @@ function createDefaultDb() {
         media_upload_intents: [],
         media_orphans: [],
         events: [],
+        event_media_assets: [],
         heartbeats: [],
         rules: defaultRules(timestamp),
         family_rules: {
@@ -459,6 +461,55 @@ function compactSchedulerRuns(runs, limit = MAX_SCHEDULER_RUNS) {
             return Number(left.id || 0) - Number(right.id || 0);
         })
         .slice(-limit);
+}
+
+function normalizeEventMediaAssets(db) {
+    const validEventIds = new Set(db.events.map((event) => String(event.id || "")).filter(Boolean));
+    const validAssetIds = new Set(db.assets.map((asset) => String(asset.id || "")).filter(Boolean));
+    const candidates = Array.isArray(db.event_media_assets) ? [...db.event_media_assets] : [];
+    for (const event of db.events) {
+        const payloadEntries = Array.isArray(event.payload?.evidence_media_assets)
+            ? event.payload.evidence_media_assets
+            : [];
+        for (const entry of payloadEntries) {
+            const assetId = String(entry?.asset_id || entry?.asset?.id || entry?.id || "");
+            if (!assetId) continue;
+            candidates.push({
+                id: `event-media:${event.id}:${assetId}`,
+                event_id: event.id,
+                asset_id: assetId,
+                role: entry?.role || "evidence",
+                captured_at: entry?.captured_at || null,
+                snapshot_id: entry?.snapshot_id ?? null,
+                postures: Array.isArray(entry?.postures) ? entry.postures : [],
+                metadata: { migrated_from_event_payload: true },
+                created_at: event.created_at || event.occurred_at || db.created_at,
+                updated_at: event.updated_at || event.created_at || db.updated_at,
+            });
+        }
+        event.payload = withoutEventMediaPayload(event.payload);
+    }
+    const normalizedCandidates = [];
+    for (const raw of candidates) {
+        const eventId = String(raw?.event_id || "");
+        const assetId = String(raw?.asset_id || "");
+        if (!validEventIds.has(eventId) || !validAssetIds.has(assetId)) continue;
+        normalizedCandidates.push({
+            ...raw,
+            id: String(raw.id || `event-media:${eventId}:${assetId}`),
+            event_id: eventId,
+            asset_id: assetId,
+            captured_at: raw.captured_at || null,
+            snapshot_id: raw.snapshot_id ?? null,
+            postures: Array.isArray(raw.postures) ? raw.postures.map(String).slice(0, 8) : [],
+            metadata: raw.metadata && typeof raw.metadata === "object" && !Array.isArray(raw.metadata)
+                ? raw.metadata
+                : {},
+            created_at: raw.created_at || db.created_at,
+            updated_at: raw.updated_at || raw.created_at || db.updated_at,
+        });
+    }
+    return canonicalizeEventMedia(normalizedCandidates);
 }
 
 function normalizeDb(db) {
@@ -528,6 +579,7 @@ function normalizeDb(db) {
     db.media_upload_intents = Array.isArray(db.media_upload_intents) ? db.media_upload_intents : [];
     db.media_orphans = Array.isArray(db.media_orphans) ? db.media_orphans : [];
     db.events = Array.isArray(db.events) ? db.events : [];
+    db.event_media_assets = normalizeEventMediaAssets(db);
     db.heartbeats = Array.isArray(db.heartbeats) ? db.heartbeats : [];
     db.rules = normalizeRules(db.rules || defaults.rules, defaults.rules);
     db.family_rules = db.family_rules && typeof db.family_rules === "object" && !Array.isArray(db.family_rules)
@@ -2151,21 +2203,77 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function eventMediaRelations(event, { canonicalOnly = true } = {}) {
+        const roleOrder = { before: 0, transition: 1, current: 2, evidence: 3 };
+        return store.db.event_media_assets
+            .filter((relation) => sameId(relation.event_id, event?.id))
+            .filter((relation) => !canonicalOnly || relation.canonical !== false)
+            .sort((left, right) => (
+                (roleOrder[left.role] ?? 3) - (roleOrder[right.role] ?? 3)
+                || String(left.captured_at || left.created_at || "").localeCompare(String(right.captured_at || right.created_at || ""))
+                || String(left.id || "").localeCompare(String(right.id || ""))
+            ));
+    }
+
+    function replaceCanonicalEventMedia(event, entries) {
+        const timestamp = nowIso();
+        const normalizedEntries = canonicalizeEventMedia(entries.map((entry) => ({
+            ...entry,
+            event_id: String(event.id),
+        })));
+        const existingByAsset = new Map(
+            eventMediaRelations(event, { canonicalOnly: false })
+                .map((relation) => [String(relation.asset_id), relation]),
+        );
+        const nextAssetIds = new Set(
+            normalizedEntries.filter((entry) => entry.canonical).map((entry) => String(entry.asset_id)),
+        );
+        for (const relation of existingByAsset.values()) {
+            if (relation.canonical !== false && !nextAssetIds.has(String(relation.asset_id))) {
+                relation.canonical = false;
+                relation.updated_at = timestamp;
+            }
+        }
+        for (const entry of normalizedEntries) {
+            const assetId = String(entry.asset_id || "");
+            if (!assetId) continue;
+            const relation = existingByAsset.get(assetId);
+            const next = {
+                id: relation?.id || `event-media:${event.id}:${assetId}`,
+                event_id: String(event.id),
+                asset_id: assetId,
+                role: entry.role,
+                canonical: entry.canonical,
+                captured_at: entry.captured_at || null,
+                snapshot_id: entry.snapshot_id ?? null,
+                postures: Array.isArray(entry.postures) ? entry.postures.map(String).slice(0, 8) : [],
+                metadata: {
+                    ...(relation?.metadata || {}),
+                    ...(entry.metadata && typeof entry.metadata === "object" ? entry.metadata : {}),
+                },
+                created_at: relation?.created_at || timestamp,
+                updated_at: timestamp,
+            };
+            if (relation) Object.assign(relation, next);
+            else store.db.event_media_assets.push(next);
+        }
+    }
+
     function publicEvent(event) {
         const camera = store.db.cameras[String(event.camera_id)] || {};
         const asset = event.media_asset_id
             ? store.db.assets.find((item) => sameId(item.id, event.media_asset_id))
             : null;
-        const evidenceMedia = (event.payload?.evidence_media_assets || [])
-            .map((entry) => {
-                const evidenceAsset = store.db.assets.find((item) => sameId(item.id, entry?.asset_id || entry?.id));
+        const evidenceMedia = eventMediaRelations(event)
+            .map((relation) => {
+                const evidenceAsset = store.db.assets.find((item) => sameId(item.id, relation.asset_id));
                 if (!evidenceAsset) return null;
                 return {
                     asset_id: evidenceAsset.id,
                     url: `/api/v1/video/assets/${encodeURIComponent(evidenceAsset.id)}`,
-                    role: entry.role || evidenceAsset.evidence_frame_role || "evidence",
-                    captured_at: entry.captured_at || evidenceAsset.captured_at || evidenceAsset.created_at || "",
-                    postures: Array.isArray(entry.postures) ? entry.postures : [],
+                    role: relation.role || evidenceAsset.evidence_frame_role || "evidence",
+                    captured_at: relation.captured_at || evidenceAsset.captured_at || evidenceAsset.created_at || "",
+                    postures: Array.isArray(relation.postures) ? relation.postures : [],
                 };
             })
             .filter(Boolean)
@@ -4251,11 +4359,11 @@ function createLocalAppServer(options = {}) {
             objects: evidence.objects || {},
             pose_factor_graph: evidence.pose_factor_graph || event.payload?.pose_factor_graph || {},
             temporal_evidence_bundle: evidence.temporal_evidence_bundle || event.payload?.temporal_evidence_bundle || {},
-            evidence_frames: (event.payload?.evidence_media_assets || []).map((item) => ({
-                asset_id: item.asset_id || item.id || null,
-                role: item.role || "evidence",
-                captured_at: item.captured_at || "",
-                postures: Array.isArray(item.postures) ? item.postures : [],
+            evidence_frames: eventMediaRelations(event).map((relation) => ({
+                asset_id: relation.asset_id,
+                role: relation.role || "evidence",
+                captured_at: relation.captured_at || "",
+                postures: Array.isArray(relation.postures) ? relation.postures : [],
             })),
         };
     }
@@ -4289,7 +4397,8 @@ function createLocalAppServer(options = {}) {
     }
 
     function synchronizeEventEvidence(event, preferredAsset = null) {
-        if (!event || !event.payload) return { assets: [], expected_count: 1, ready: false };
+        if (!event) return { assets: [], expected_count: 1, ready: false };
+        event.payload = event.payload && typeof event.payload === "object" ? event.payload : {};
         const edgeEventId = String(event.edge_event_id || event.payload?.edge_upload?.edge_event_id || "");
         const edgeDeviceId = String(event.device_id || event.payload?.edge_upload?.edge_device_id || "");
         let assets = store.db.assets.filter((asset) => (
@@ -4330,7 +4439,7 @@ function createLocalAppServer(options = {}) {
                 postures: Array.isArray(source?.postures) ? source.postures.map(String).slice(0, 8) : [],
             };
         });
-        event.payload.evidence_media_assets = entries;
+        replaceCanonicalEventMedia(event, entries);
         const current = assets.find((asset) => asset.evidence_frame_role === "current") || assets[assets.length - 1] || null;
         if (current) {
             event.media_asset_id = current.id;
@@ -4346,11 +4455,7 @@ function createLocalAppServer(options = {}) {
 
     function visionEvidenceAssets(event, primaryAsset = null) {
         const roleOrder = { before: 0, transition: 1, current: 2, evidence: 3 };
-        const ids = [];
-        for (const item of event.payload?.evidence_media_assets || []) {
-            const assetId = String(item?.asset_id || item?.id || "");
-            if (assetId && !ids.includes(assetId)) ids.push(assetId);
-        }
+        const ids = eventMediaRelations(event).map((relation) => String(relation.asset_id));
         if (primaryAsset?.id && !ids.includes(String(primaryAsset.id))) ids.push(String(primaryAsset.id));
         return ids
             .map((id) => store.db.assets.find((item) => sameId(item.id, id)))
@@ -7478,6 +7583,11 @@ function createLocalAppServer(options = {}) {
             .filter(Boolean)
             .filter((entry, index, items) => items.findIndex((item) => sameId(item.asset_id, entry.asset_id)) === index)
             .slice(0, 3);
+        const storedEventPayload = withoutEventMediaPayload({
+            ...(payload.payload || {}),
+            edge_camera_id: payload.camera_id || null,
+            app_camera_id: camera?.id || payload.camera_id || null,
+        });
         const event = {
             id: store.nextId("event"),
             family_id: camera?.family_id || store.db.devices[String(camera?.device_id || "")]?.family_id || null,
@@ -7495,12 +7605,7 @@ function createLocalAppServer(options = {}) {
             occurred_at: String(payload.occurred_at || nowIso()),
             acknowledged: false,
             resolution: "",
-            payload: {
-                ...(payload.payload || {}),
-                evidence_media_assets: evidenceMediaAssets,
-                edge_camera_id: payload.camera_id || null,
-                app_camera_id: camera?.id || payload.camera_id || null,
-            },
+            payload: storedEventPayload,
             created_at: nowIso(),
             updated_at: nowIso(),
         };
@@ -7512,6 +7617,7 @@ function createLocalAppServer(options = {}) {
         const correlatedPrimary = correlateSafetyIncident(event);
         ensureSafetyIncident(event);
         store.db.events.push(event);
+        replaceCanonicalEventMedia(event, evidenceMediaAssets);
         const verificationJob = queueVisionVerification(event, asset);
         let message = null;
         let deliveries = [];

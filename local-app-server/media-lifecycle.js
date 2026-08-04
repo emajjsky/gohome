@@ -59,11 +59,6 @@ function eventAssetIds(event) {
     const ids = new Set();
     if (event?.media_asset_id) ids.add(String(event.media_asset_id));
     const payload = objectValue(event?.payload);
-    const evidence = Array.isArray(payload.evidence_media_assets) ? payload.evidence_media_assets : [];
-    for (const item of evidence) {
-        const id = item?.asset_id || item?.asset?.id || item?.id;
-        if (id !== null && id !== undefined && id !== "") ids.add(String(id));
-    }
     const uploaded = payload.media_upload_result?.asset || event?.media_upload_result?.asset;
     if (uploaded?.id) ids.add(String(uploaded.id));
     return ids;
@@ -122,12 +117,21 @@ function referencedAssetIds(rows, referenceValue, index) {
 
 function buildAssetReferences(db) {
     const events = new Map();
+    const eventsById = new Map((db.events || []).map((event) => [String(event.id || ""), event]));
     for (const event of db.events || []) {
         for (const assetId of eventAssetIds(event)) {
             const current = events.get(assetId) || [];
             current.push(event);
             events.set(assetId, current);
         }
+    }
+    for (const relation of db.event_media_assets || []) {
+        const assetId = String(relation.asset_id || "");
+        const event = eventsById.get(String(relation.event_id || ""));
+        if (!assetId || !event) continue;
+        const current = events.get(assetId) || [];
+        if (!current.some((item) => String(item.id || "") === String(event.id || ""))) current.push(event);
+        events.set(assetId, current);
     }
     const memoryAssetIds = new Set(
         (db.family_memory_media || []).map((item) => String(item.asset_id || "")).filter(Boolean),

@@ -22,6 +22,7 @@ const TABLE_ORDER = [
     "media_assets",
     "media_upload_intents",
     "events",
+    "event_media_assets",
     "device_heartbeats",
     "calendar_events",
     "care_cards",
@@ -55,6 +56,7 @@ const PRIMARY_KEYS = Object.freeze({
     media_assets: "id",
     media_upload_intents: "asset_id",
     events: "id",
+    event_media_assets: "id",
     device_heartbeats: "id",
     calendar_events: "id",
     care_cards: "id",
@@ -116,6 +118,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         assets: [],
         media_upload_intents: [],
         events: [],
+        event_media_assets: [],
         heartbeats: [],
         calendar_events: [],
         care_preferences: {},
@@ -452,6 +455,22 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             occurred_at: iso(event.occurred_at, db.created_at),
             created_at: iso(event.created_at, iso(event.occurred_at, db.created_at)),
             updated_at: iso(event.updated_at, iso(event.created_at, db.created_at)),
+        });
+    }
+
+    for (const relation of rowsByTable.event_media_assets || []) {
+        db.event_media_assets.push({
+            id: relation.id,
+            event_id: relation.event_id,
+            asset_id: relation.asset_id,
+            role: relation.role || "evidence",
+            canonical: relation.canonical !== false,
+            captured_at: iso(relation.captured_at),
+            snapshot_id: relation.snapshot_id || null,
+            postures: Array.isArray(relation.postures) ? relation.postures : [],
+            metadata: relation.metadata && typeof relation.metadata === "object" ? relation.metadata : {},
+            created_at: iso(relation.created_at, db.created_at),
+            updated_at: iso(relation.updated_at, iso(relation.created_at, db.created_at)),
         });
     }
 
@@ -878,9 +897,10 @@ class PostgresStore {
     }
 
     async mediaLifecycleInventory() {
-        const [assets, events, memoryMedia, careCards, users, uploadIntents, orphans] = await Promise.all([
+        const [assets, events, eventMedia, memoryMedia, careCards, users, uploadIntents, orphans] = await Promise.all([
             this.pool.query("select * from media_assets"),
             this.pool.query("select * from events"),
+            this.pool.query("select * from event_media_assets"),
             this.pool.query("select memory_id, asset_id from family_memory_media"),
             this.pool.query("select id, image_url from care_cards"),
             this.pool.query("select id, metadata from users"),
@@ -890,6 +910,7 @@ class PostgresStore {
         return {
             assets: assets.rows.map(mediaLifecycleAsset),
             events: events.rows.map(mediaLifecycleEvent),
+            event_media_assets: eventMedia.rows,
             family_memory_media: memoryMedia.rows,
             care_cards: careCards.rows,
             users: users.rows,
@@ -1108,6 +1129,14 @@ class PostgresStore {
                             .filter((row) => textId(row.camera_id) !== rowId);
                         this.persistedTables.care_rules = (this.persistedTables.care_rules || [])
                             .filter((row) => textId(row.camera_id) !== rowId);
+                    }
+                    if (table === "events") {
+                        this.persistedTables.event_media_assets = (this.persistedTables.event_media_assets || [])
+                            .filter((row) => textId(row.event_id) !== rowId);
+                        if (Array.isArray(this.db.event_media_assets)) {
+                            this.db.event_media_assets = this.db.event_media_assets
+                                .filter((row) => textId(row.event_id) !== rowId);
+                        }
                     }
                     this.last_save_error = "";
                 } catch (error) {

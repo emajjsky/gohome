@@ -310,9 +310,10 @@ function accountExportForDb(db, userId, generatedAt = new Date().toISOString()) 
         const memoryFavorites = (db.family_memory_favorites || []).filter((item) => memoryIds.has(textId(item.memory_id)));
         const messageIds = new Set(forFamily(db.app_messages, familyId).map((item) => textId(item.message_id || item.id)));
         const events = forFamily(db.events, familyId).map((item) => {
-            const evidenceIds = [item.media_asset_id, ...(Array.isArray(item.payload?.evidence_media_assets)
-                ? item.payload.evidence_media_assets.map((evidence) => evidence?.asset_id || evidence?.id)
-                : [])].map(textId).filter(Boolean);
+            const relationAssetIds = (db.event_media_assets || [])
+                .filter((relation) => textId(relation.event_id) === textId(item.id))
+                .map((relation) => relation.asset_id);
+            const evidenceIds = [item.media_asset_id, ...relationAssetIds].map(textId).filter(Boolean);
             return {
                 id: textId(item.id),
                 event_type: String(item.event_type || "event"),
@@ -479,6 +480,9 @@ function applyAccountDeletionToDb(db, userId, plan) {
     const deletedMessageIds = new Set((db.app_messages || [])
         .filter((item) => familyMatches(item) || textId(item.user_id) === user)
         .map((item) => textId(item.message_id || item.id)));
+    const deletedEventIds = new Set((db.events || [])
+        .filter(familyMatches)
+        .map((item) => textId(item.id)));
 
     arrayFilter("families", (item) => deletedFamilyIds.has(textId(item.id)));
     arrayFilter("family_members", (item) => familyMatches(item) || textId(item.user_id) === user);
@@ -492,6 +496,7 @@ function applyAccountDeletionToDb(db, userId, plan) {
     arrayFilter("binding_codes", familyMatches);
     arrayFilter("device_tokens", familyMatches);
     arrayFilter("media_upload_intents", (item) => familyMatches(item) || textId(item.user_id) === user);
+    arrayFilter("event_media_assets", (item) => deletedEventIds.has(textId(item.event_id)));
     arrayFilter("events", familyMatches);
     arrayFilter("heartbeats", (item) => deletedDeviceIds.has(textId(item.device_id)));
     arrayFilter("calendar_events", familyMatches);

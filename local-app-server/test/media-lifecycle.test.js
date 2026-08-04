@@ -742,7 +742,7 @@ test("media lifecycle deletion stays locked until production enables it explicit
     }
 });
 
-test("media lifecycle PostgreSQL migrations expose retention, orphan retry, and media identity constraints", () => {
+test("media lifecycle PostgreSQL migrations expose retention, orphan retry, and event media identity", () => {
     const migration = fs.readFileSync(
         path.join(__dirname, "..", "migrations", "013_media_lifecycle.sql"),
         "utf8",
@@ -781,4 +781,12 @@ test("media lifecycle PostgreSQL migrations expose retention, orphan retry, and 
     assert.match(identityMigration, /media_assets_storage_object_unique_idx/);
     assert.match(identityMigration, /media_assets_device_upload_idempotency_unique_idx/);
     assert.match(identityMigration, /metadata\s*->>\s*'device_upload_idempotency_key'/);
+    const eventMediaMigration = fs.readFileSync(
+        path.join(__dirname, "..", "migrations", "016_event_media_assets.sql"),
+        "utf8",
+    );
+    assert.match(eventMediaMigration, /create table if not exists event_media_assets/);
+    assert.match(eventMediaMigration, /unique \(event_id, asset_id\)/);
+    assert.match(eventMediaMigration, /where canonical/);
+    assert.match(eventMediaMigration, /payload\s*-\s*'evidence_media_assets'/);
 });
