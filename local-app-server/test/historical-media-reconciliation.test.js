@@ -39,7 +39,12 @@ function file(storageKey, checksum = "a".repeat(64)) {
 
 test("historical reconciliation replaces collision relations and protects unknown ownership", () => {
     const assets = [
-        { id: "asset-wrong", relative_path: "2026-07-30/900-other.jpg", snapshot_path: "camera_1/other.jpg" },
+        {
+            id: "asset-wrong",
+            storage_provider: "local",
+            relative_path: "2026-07-30/900-other.jpg",
+            snapshot_path: "camera_1/shot.jpg",
+        },
         { id: "asset-existing", storage_provider: "cos", storage_key: "event-evidence/before.jpg", snapshot_path: "camera_1/before.jpg" },
         { id: "asset-tracked", relative_path: "tracked.jpg" },
     ];

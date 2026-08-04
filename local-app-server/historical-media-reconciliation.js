@@ -39,6 +39,13 @@ function timestamp(value) {
 }
 
 function assetSnapshotBasename(asset) {
+    const provider = text(asset?.storage_provider || "local").toLowerCase();
+    if (["local", "localfs"].includes(provider)) {
+        const physical = originalSnapshotBasename(asset?.relative_path || asset?.storage_key || asset?.file_name);
+        if (physical?.snapshot_basename) return physical.snapshot_basename;
+        const localName = basename(asset?.relative_path || asset?.storage_key || asset?.file_name);
+        if (localName) return localName;
+    }
     const direct = basename(asset?.snapshot_path);
     if (direct) return direct;
     const parsed = originalSnapshotBasename(asset?.relative_path || asset?.storage_key || asset?.file_name);

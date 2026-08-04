@@ -43,10 +43,9 @@ function sha256File(filePath) {
 }
 
 async function loadInputs(client, mediaRoot) {
-    const [assetsResult, relationsResult, snapshotsResult, orphanResult] = await Promise.all([
-        client.query("select * from media_assets where retention_status <> 'deleted'"),
-        client.query("select * from event_media_assets"),
-        client.query(`
+    const assetsResult = await client.query("select * from media_assets where retention_status <> 'deleted'");
+    const relationsResult = await client.query("select * from event_media_assets");
+    const snapshotsResult = await client.query(`
             select
                 event.id as event_id,
                 event.family_id,
@@ -67,9 +66,8 @@ async function loadInputs(client, mediaRoot) {
                      then event.payload->'temporal_evidence_bundle'->'snapshots' else '[]'::jsonb end
             ) as snapshot(value)
             where coalesce(snapshot.value->>'snapshot_path', '') <> ''
-        `),
-        client.query("select * from media_orphan_cleanup where storage_provider = 'local'"),
-    ]);
+        `);
+    const orphanResult = await client.query("select * from media_orphan_cleanup where storage_provider = 'local'");
     const trackedKeys = new Set(assetsResult.rows.map((asset) => (
         String(asset.relative_path || asset.storage_key || "").replace(/^\/+/, "")
     )).filter(Boolean));
