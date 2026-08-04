@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from types import SimpleNamespace
 import os
 import sys
@@ -34,13 +34,31 @@ def wait_until(predicate, *, timeout: float = 2.0) -> None:
     raise AssertionError("condition was not satisfied before timeout")
 
 
+class FakeStdin:
+    def __init__(self, descriptor: int, lifecycle: list[str]) -> None:
+        self._descriptor = int(descriptor)
+        self._lifecycle = lifecycle
+        self.closed = False
+
+    def fileno(self) -> int:
+        return self._descriptor
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        self._lifecycle.append("stdin_close")
+        os.close(self._descriptor)
+
+
 class FakeProcess:
     next_pid = 4100
 
     def __init__(self, command: list[str]) -> None:
         read_fd, write_fd = os.pipe()
         self.command = list(command)
-        self.stdin = os.fdopen(write_fd, "wb", buffering=0)
+        self.lifecycle: list[str] = []
+        self.stdin = FakeStdin(write_fd, self.lifecycle)
         self.stderr = None
         self._read_fd = read_fd
         self.returncode = None
@@ -51,9 +69,11 @@ class FakeProcess:
         return self.returncode
 
     def terminate(self) -> None:
+        self.lifecycle.append("terminate")
         self._finish(-15)
 
     def kill(self) -> None:
+        self.lifecycle.append("kill")
         self._finish(-9)
 
     def wait(self, timeout=None):
@@ -70,6 +90,26 @@ class FakeProcess:
             os.close(self._read_fd)
         except OSError:
             pass
+
+
+class DelayedReaderProcess(FakeProcess):
+    def __init__(self, command: list[str], *, delay_seconds: float) -> None:
+        super().__init__(command)
+        self._reader = Thread(
+            target=self._drain_after_delay,
+            args=(float(delay_seconds),),
+            daemon=True,
+        )
+        self._reader.start()
+
+    def _drain_after_delay(self, delay_seconds: float) -> None:
+        time.sleep(delay_seconds)
+        while self.returncode is None:
+            try:
+                if not os.read(self._read_fd, 65536):
+                    return
+            except OSError:
+                return
 
 
 class ProcessFactory:
@@ -93,6 +133,7 @@ class SettingsStub:
     media_publish_ffmpeg_path = sys.executable
     media_publish_bitrate_kbps = 1200
     media_publish_write_timeout_seconds = 0.2
+    media_publish_startup_timeout_seconds = 0.5
     device_api_token = "device-token"
     require_issued_device_token = False
 
@@ -217,6 +258,8 @@ def verify_url_and_command_contract() -> None:
         "-rtsp_transport tcp",
         "-fflags +genpts",
         "-fps_mode passthrough",
+        "-progress pipe:2",
+        "-stats_period 0.25",
         "pad=ceil(iw/2)*2:ceil(ih/2)*2",
     ):
         assert required in joined, required
@@ -334,6 +377,7 @@ def verify_blocked_pipe_timeout_and_restart() -> None:
         fps=15,
         bitrate_kbps=1200,
         write_timeout_seconds=0.1,
+        startup_timeout_seconds=0.1,
         process_factory=factory,
     )
     frame = np.zeros((720, 1280, 3), dtype=np.uint8)
@@ -345,7 +389,12 @@ def verify_blocked_pipe_timeout_and_restart() -> None:
         source_key="source-a",
     )
     wait_until(lambda: publisher.status()["process_failures"] == 1)
-    assert publisher.status()["last_error"] == "FFmpeg frame write timed out"
+    first_failure = publisher.status()
+    assert first_failure["last_error"] == "FFmpeg frame write timed out"
+    assert first_failure["partial_frame_aborts"] == 1
+    assert 0 < first_failure["last_partial_frame_bytes"] < frame.nbytes
+    assert first_failure["last_partial_frame_size"] == frame.nbytes
+    assert factory.processes[0].lifecycle[:2] == ["kill", "stdin_close"]
     time.sleep(0.55)
     publisher.submit(
         frame,
@@ -357,6 +406,70 @@ def verify_blocked_pipe_timeout_and_restart() -> None:
     wait_until(lambda: publisher.status()["process_failures"] == 2)
     assert publisher.status()["process_starts"] == 2
     publisher.close()
+
+
+def verify_cold_start_uses_handshake_deadline() -> None:
+    processes = []
+
+    def process_factory(command: list[str]) -> DelayedReaderProcess:
+        process = DelayedReaderProcess(command, delay_seconds=0.2)
+        processes.append(process)
+        return process
+
+    publisher = H264StreamPublisher(
+        camera_id=4,
+        publish_url="rtsps://edge:token@media.example.invalid:8322/live/edge/4",
+        ffmpeg_path="ffmpeg",
+        fps=15,
+        bitrate_kbps=1200,
+        write_timeout_seconds=0.1,
+        startup_timeout_seconds=0.5,
+        process_factory=process_factory,
+    )
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    publisher.submit(
+        frame,
+        frame_id="4-1",
+        captured_monotonic=time.monotonic(),
+        privacy_mode="original",
+        source_key="source-a",
+    )
+    wait_until(lambda: publisher.status()["frames_written"] == 1, timeout=1.0)
+    status = publisher.status()
+    assert status["process_failures"] == 0
+    assert status["startup_timeout_seconds"] == 0.5
+    assert processes[0].lifecycle == []
+    publisher.close()
+
+
+def verify_shutdown_aborts_partial_frame_before_closing_input() -> None:
+    factory = ProcessFactory()
+    publisher = H264StreamPublisher(
+        camera_id=5,
+        publish_url="rtsps://edge:token@media.example.invalid:8322/live/edge/5",
+        ffmpeg_path="ffmpeg",
+        fps=15,
+        bitrate_kbps=1200,
+        write_timeout_seconds=1.0,
+        startup_timeout_seconds=1.0,
+        process_factory=factory,
+    )
+    publisher.submit(
+        np.zeros((720, 1280, 3), dtype=np.uint8),
+        frame_id="5-1",
+        captured_monotonic=time.monotonic(),
+        privacy_mode="original",
+        source_key="source-a",
+    )
+    wait_until(lambda: bool(factory.processes), timeout=0.5)
+    time.sleep(0.05)
+    publisher.close()
+    process = factory.processes[0]
+    assert process.lifecycle[:2] == ["kill", "stdin_close"]
+    status = publisher.status()
+    assert status["process_stop_reasons"] == {"control_changed": 1}
+    assert status["partial_frame_aborts"] == 1
+    assert 0 < status["last_partial_frame_bytes"] < status["last_partial_frame_size"]
 
 
 def verify_relay_uses_single_composed_h264_publisher() -> None:
@@ -410,6 +523,8 @@ def main() -> int:
     verify_url_and_command_contract()
     verify_latest_frame_and_context_restart()
     verify_blocked_pipe_timeout_and_restart()
+    verify_cold_start_uses_handshake_deadline()
+    verify_shutdown_aborts_partial_frame_before_closing_input()
     verify_relay_uses_single_composed_h264_publisher()
     print({
         "ok": True,
@@ -418,6 +533,8 @@ def main() -> int:
         "latest_pending_frame_only": True,
         "context_restart": True,
         "bounded_write_timeout": True,
+        "bounded_startup_handshake": True,
+        "partial_frame_abort_order": True,
         "credentials_redacted": True,
         "jpeg_relay_removed": True,
         "calibration_pauses_publication": True,

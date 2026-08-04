@@ -286,6 +286,7 @@ class LiveRelayAgent:
             self._height(),
             self._bitrate_kbps(),
             self._write_timeout_seconds(),
+            self._startup_timeout_seconds(),
         )
 
     def _run_camera(self, camera: Dict[str, Any], stop_event: Event) -> None:
@@ -306,6 +307,7 @@ class LiveRelayAgent:
                 fps=self._fps(),
                 bitrate_kbps=self._bitrate_kbps(),
                 write_timeout_seconds=self._write_timeout_seconds(),
+                startup_timeout_seconds=self._startup_timeout_seconds(),
             )
             with self._state_lock:
                 self._publishers[camera_id] = publisher
@@ -475,6 +477,12 @@ class LiveRelayAgent:
 
     def _write_timeout_seconds(self) -> float:
         return max(0.1, float(getattr(self.settings, "media_publish_write_timeout_seconds", 0.75)))
+
+    def _startup_timeout_seconds(self) -> float:
+        return max(
+            self._write_timeout_seconds(),
+            float(getattr(self.settings, "media_publish_startup_timeout_seconds", 5.0)),
+        )
 
     @staticmethod
     def _utc_iso() -> str:

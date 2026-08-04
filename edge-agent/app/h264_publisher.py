@@ -16,7 +16,17 @@ class H264PublisherError(RuntimeError):
 
 
 class _PublisherControlChanged(RuntimeError):
-    pass
+    def __init__(self, *, bytes_written: int, frame_size: int) -> None:
+        super().__init__("publisher control changed during frame write")
+        self.bytes_written = max(0, int(bytes_written))
+        self.frame_size = max(0, int(frame_size))
+
+
+class _FrameWriteFailed(H264PublisherError):
+    def __init__(self, message: str, *, bytes_written: int, frame_size: int) -> None:
+        super().__init__(message)
+        self.bytes_written = max(0, int(bytes_written))
+        self.frame_size = max(0, int(frame_size))
 
 
 def build_rtsps_publish_url(
@@ -75,6 +85,7 @@ class H264StreamPublisher:
         fps: int,
         bitrate_kbps: int,
         write_timeout_seconds: float,
+        startup_timeout_seconds: float = 5.0,
         process_factory: Callable[[list[str]], Any] | None = None,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
@@ -84,6 +95,10 @@ class H264StreamPublisher:
         self.fps = max(1, min(int(fps), 30))
         self.bitrate_kbps = max(256, min(int(bitrate_kbps), 8000))
         self.write_timeout_seconds = max(0.1, min(float(write_timeout_seconds), 5.0))
+        self.startup_timeout_seconds = max(
+            self.write_timeout_seconds,
+            min(float(startup_timeout_seconds), 15.0),
+        )
         self._process_factory = process_factory or self._start_process
         self._clock = monotonic_clock or time.monotonic
         self._condition = Condition()
@@ -94,6 +109,9 @@ class H264StreamPublisher:
         self._pause_reason = ""
         self._process: Any | None = None
         self._process_geometry: tuple[int, int] | None = None
+        self._process_started_at: float | None = None
+        self._process_output_started = False
+        self._process_reported_frames = 0
         self._context: tuple[str, str] = ("", "")
         self._stderr_thread: Thread | None = None
         self._stderr_tail: deque[str] = deque(maxlen=20)
@@ -108,6 +126,7 @@ class H264StreamPublisher:
             "dropped_unavailable": 0,
             "process_starts": 0,
             "process_failures": 0,
+            "partial_frame_aborts": 0,
             "raw_input_bytes_written": 0,
             "process_stop_reasons": {},
             "last_process_start_reason": "",
@@ -115,6 +134,8 @@ class H264StreamPublisher:
             "last_failure_at_monotonic": None,
             "last_recovered_at_monotonic": None,
             "last_recovered_error": "",
+            "last_partial_frame_bytes": 0,
+            "last_partial_frame_size": 0,
             "last_error": "",
             "last_written_frame_id": "",
         }
@@ -203,6 +224,7 @@ class H264StreamPublisher:
             write_latency = sorted(self._write_latency_ms)
             frame_age = sorted(self._frame_age_ms)
             process = self._process
+            process_started_at = self._process_started_at
             return {
                 "schema_version": self.version,
                 "camera_id": self.camera_id,
@@ -211,6 +233,11 @@ class H264StreamPublisher:
                 "fps_target": self.fps,
                 "bitrate_kbps": self.bitrate_kbps,
                 "running": process is not None and process.poll() is None,
+                "publish_ready": bool(
+                    process is not None
+                    and process.poll() is None
+                    and self._process_output_started
+                ),
                 "paused": paused,
                 "pid": int(process.pid) if process is not None and getattr(process, "pid", None) else None,
                 "input_fps_10s": self._rate(submitted),
@@ -221,6 +248,11 @@ class H264StreamPublisher:
                 "source_to_encoder_input_ms_max": round(frame_age[-1], 2) if frame_age else 0.0,
                 "consecutive_failures": self._consecutive_failures,
                 "next_start_in_seconds": round(max(0.0, self._next_start_at - now), 2),
+                "startup_timeout_seconds": self.startup_timeout_seconds,
+                "process_age_seconds": round(max(0.0, now - process_started_at), 2)
+                if process_started_at is not None and process is not None
+                else 0.0,
+                "encoded_frames_reported": self._process_reported_frames,
                 "context": {
                     "privacy_mode": self._context[0],
                     "source_generation": self._source_generation(self._context[1]),
@@ -252,8 +284,12 @@ class H264StreamPublisher:
                     continue
                 try:
                     self._publish(item, control_revision=applied_control_revision)
-                except _PublisherControlChanged:
-                    self._stop_process("control_changed")
+                except _PublisherControlChanged as exc:
+                    self._stop_process(
+                        "control_changed",
+                        partial_frame_bytes=exc.bytes_written,
+                        frame_size=exc.frame_size,
+                    )
                 except Exception as exc:
                     self._record_failure(exc)
         finally:
@@ -332,6 +368,9 @@ class H264StreamPublisher:
         with self._state_lock:
             self._process = process
             self._process_geometry = (width, height)
+            self._process_started_at = self._clock()
+            self._process_output_started = False
+            self._process_reported_frames = 0
             self._stats["process_starts"] += 1
             self._stats["last_process_start_reason"] = self._next_process_start_reason
             self._next_process_start_reason = "process_recovery"
@@ -355,6 +394,11 @@ class H264StreamPublisher:
             "-loglevel",
             "warning",
             "-nostdin",
+            "-nostats",
+            "-stats_period",
+            "0.25",
+            "-progress",
+            "pipe:2",
             "-f",
             "rawvideo",
             "-pixel_format",
@@ -407,16 +451,27 @@ class H264StreamPublisher:
 
     def _write_all(self, process: Any, payload: memoryview, *, control_revision: int) -> None:
         descriptor = process.stdin.fileno()
-        deadline = self._clock() + self.write_timeout_seconds
+        deadline = self._write_deadline(process)
         offset = 0
         while offset < len(payload):
             if self._control_changed(control_revision):
-                raise _PublisherControlChanged()
+                raise _PublisherControlChanged(
+                    bytes_written=offset,
+                    frame_size=len(payload),
+                )
             if process.poll() is not None:
-                raise H264PublisherError(f"FFmpeg exited with code {process.returncode}")
+                raise _FrameWriteFailed(
+                    f"FFmpeg exited with code {process.returncode}",
+                    bytes_written=offset,
+                    frame_size=len(payload),
+                )
             remaining = deadline - self._clock()
             if remaining <= 0.0:
-                raise H264PublisherError("FFmpeg frame write timed out")
+                raise _FrameWriteFailed(
+                    "FFmpeg frame write timed out",
+                    bytes_written=offset,
+                    frame_size=len(payload),
+                )
             _readable, writable, _errors = select.select(
                 [],
                 [descriptor],
@@ -430,11 +485,21 @@ class H264StreamPublisher:
             except BlockingIOError:
                 continue
             if written <= 0:
-                raise H264PublisherError("FFmpeg stdin closed")
+                raise _FrameWriteFailed(
+                    "FFmpeg stdin closed",
+                    bytes_written=offset,
+                    frame_size=len(payload),
+                )
             offset += written
 
     def _record_failure(self, exc: Exception) -> None:
-        self._stop_process("publish_failure")
+        partial_bytes = max(0, int(getattr(exc, "bytes_written", 0) or 0))
+        frame_size = max(0, int(getattr(exc, "frame_size", 0) or 0))
+        self._stop_process(
+            "publish_failure",
+            partial_frame_bytes=partial_bytes,
+            frame_size=frame_size,
+        )
         now = self._clock()
         with self._state_lock:
             self._consecutive_failures += 1
@@ -444,13 +509,24 @@ class H264StreamPublisher:
             delay = min(8.0, 0.5 * (2 ** min(self._consecutive_failures - 1, 4)))
             self._next_start_at = now + delay
 
-    def _stop_process(self, reason: str) -> None:
+    def _stop_process(
+        self,
+        reason: str,
+        *,
+        partial_frame_bytes: int = 0,
+        frame_size: int = 0,
+    ) -> None:
         resolved_reason = str(reason or "unspecified")
+        partial_bytes = max(0, int(partial_frame_bytes))
+        resolved_frame_size = max(0, int(frame_size))
         with self._state_lock:
             process = self._process
             stderr_thread = self._stderr_thread
             self._process = None
             self._process_geometry = None
+            self._process_started_at = None
+            self._process_output_started = False
+            self._process_reported_frames = 0
             self._stderr_thread = None
             if process is not None:
                 stop_reasons = dict(self._stats.get("process_stop_reasons") or {})
@@ -458,8 +534,18 @@ class H264StreamPublisher:
                 self._stats["process_stop_reasons"] = stop_reasons
                 self._stats["last_process_stop_reason"] = resolved_reason
                 self._next_process_start_reason = resolved_reason
+                if partial_bytes > 0:
+                    self._stats["partial_frame_aborts"] += 1
+                    self._stats["last_partial_frame_bytes"] = partial_bytes
+                    self._stats["last_partial_frame_size"] = resolved_frame_size
         if process is None:
             return
+        if partial_bytes > 0 and process.poll() is None:
+            try:
+                process.kill()
+                process.wait(timeout=1.0)
+            except Exception:
+                pass
         try:
             if process.stdin is not None:
                 process.stdin.close()
@@ -487,6 +573,8 @@ class H264StreamPublisher:
                     else str(raw_line)
                 ).strip()
                 if line:
+                    if self._consume_progress_line(process, line):
+                        continue
                     with self._state_lock:
                         self._stderr_tail.append(self._sanitize_text(line)[:500])
         except Exception:
@@ -505,6 +593,40 @@ class H264StreamPublisher:
     def _control_changed(self, expected_revision: int) -> bool:
         with self._condition:
             return self._stopping or self._control_revision != int(expected_revision)
+
+    def _write_deadline(self, process: Any) -> float:
+        now = self._clock()
+        with self._state_lock:
+            startup_deadline = (
+                float(self._process_started_at) + self.startup_timeout_seconds
+                if self._process is process
+                and self._process_started_at is not None
+                and not self._process_output_started
+                else 0.0
+            )
+        return max(now + self.write_timeout_seconds, startup_deadline)
+
+    def _consume_progress_line(self, process: Any, line: str) -> bool:
+        key, separator, value = str(line).partition("=")
+        if not separator or key not in {"frame", "progress"}:
+            return False
+        with self._state_lock:
+            if self._process is not process:
+                return True
+            if key == "frame":
+                try:
+                    reported_frames = max(0, int(value.strip()))
+                except ValueError:
+                    return False
+                self._process_reported_frames = max(
+                    self._process_reported_frames,
+                    reported_frames,
+                )
+                if reported_frames > 0:
+                    self._process_output_started = True
+            elif value.strip() in {"continue", "end"} and self._process_reported_frames > 0:
+                self._process_output_started = True
+        return True
 
     def _sanitize_text(self, value: Any) -> str:
         text = str(value or "")

@@ -67,6 +67,9 @@ class Settings:
         self.media_publish_write_timeout_seconds = float(
             os.getenv("GOHOME_MEDIA_PUBLISH_WRITE_TIMEOUT_SECONDS", "0.75")
         )
+        self.media_publish_startup_timeout_seconds = float(
+            os.getenv("GOHOME_MEDIA_PUBLISH_STARTUP_TIMEOUT_SECONDS", "5")
+        )
         self.history_retention_hours = int(os.getenv("GOHOME_HISTORY_RETENTION_HOURS", "6"))
         self.history_cleanup_interval_seconds = float(os.getenv("GOHOME_HISTORY_CLEANUP_INTERVAL_SECONDS", "3600"))
         self.history_cleanup_batch_size = int(os.getenv("GOHOME_HISTORY_CLEANUP_BATCH_SIZE", "5000"))
