@@ -568,6 +568,7 @@ def verify_relay_preserves_camera_thread_lifecycle() -> None:
         privacy_renderer=None,
         publisher_factory=publisher_factory,
     )
+    relay.handle_camera_source_transition({"camera_id": 2, "reason": "pre_start_transition"})
     relay._sync_camera_threads()
     wait_until(lambda: len(publisher_factory.instances) == 1)
     initial = relay.status()["camera_lifecycle"]["2"]
@@ -575,6 +576,7 @@ def verify_relay_preserves_camera_thread_lifecycle() -> None:
     assert initial["thread_stops"] == 0
     assert initial["last_start_reason"] == "initial"
     assert initial["active"]
+    assert 2 not in relay._camera_stop_reasons
 
     remote_camera_id[0] = 202
     relay._sync_camera_threads()

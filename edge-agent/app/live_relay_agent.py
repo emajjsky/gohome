@@ -248,6 +248,7 @@ class LiveRelayAgent:
                 daemon=True,
             )
             with self._state_lock:
+                self._camera_stop_reasons.pop(camera_id, None)
                 self._camera_stops[camera_id] = stop_event
                 self._camera_signatures[camera_id] = signatures[camera_id]
                 self._camera_threads[camera_id] = thread
@@ -271,6 +272,9 @@ class LiveRelayAgent:
         with self._state_lock:
             stop_event = self._camera_stops.get(camera_id)
             publisher = self._publishers.get(camera_id)
+            thread = self._camera_threads.get(camera_id)
+            if stop_event is None and publisher is None and thread is None:
+                return
             self._camera_stop_reasons[camera_id] = resolved_reason
         if stop_event is not None:
             stop_event.set()
