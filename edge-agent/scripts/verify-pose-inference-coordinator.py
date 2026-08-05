@@ -159,6 +159,56 @@ def main() -> None:
     if status["queue_depth"] != 0 or status["in_flight"] is not None:
         raise SystemExit(f"coordinator did not drain cleanly: {status}")
 
+    cadence_service = ProbePoseService()
+    cadence_service.release_first.set()
+    cadence = PoseInferenceCoordinator(cadence_service)  # type: ignore[arg-type]
+    cadence.start()
+    cadence.submit_display(
+        camera_id=31,
+        frame=frame(5),
+        frame_id="31-5",
+        source_key="source-31",
+        captured_at="2026-08-05T00:00:01Z",
+        captured_monotonic=2.0,
+        config={"pose_detection_enabled": True},
+        minimum_interval_seconds=0.5,
+    )
+    if not cadence_service.first_started.wait(0.1) or cadence_service.calls != [5]:
+        raise SystemExit(f"first frame was incorrectly delayed by cadence: {cadence_service.calls}")
+    cadence.submit_display(
+        camera_id=31,
+        frame=frame(6),
+        frame_id="31-6",
+        source_key="source-31",
+        captured_at="2026-08-05T00:00:01.020Z",
+        captured_monotonic=2.02,
+        config={"pose_detection_enabled": True},
+        minimum_interval_seconds=0.08,
+    )
+    cadence.submit_display(
+        camera_id=31,
+        frame=frame(7),
+        frame_id="31-7",
+        source_key="source-31",
+        captured_at="2026-08-05T00:00:01.040Z",
+        captured_monotonic=2.04,
+        config={"pose_detection_enabled": True},
+        minimum_interval_seconds=0.08,
+    )
+    time.sleep(0.03)
+    if cadence_service.calls != [5]:
+        raise SystemExit(f"deferred cadence ran before its deadline: {cadence_service.calls}")
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and cadence_service.calls != [5, 7]:
+        time.sleep(0.005)
+    cadence_status = cadence.status()
+    cadence.stop()
+    if cadence_service.calls != [5, 7]:
+        raise SystemExit(f"deferred cadence did not retain the latest frame: {cadence_service.calls}")
+    cadence_camera = cadence_status["cameras"][0]
+    if cadence_camera["display_deferred"] < 2 or cadence_camera["display_replaced"] != 1:
+        raise SystemExit(f"deferred cadence metrics are incomplete: {cadence_camera}")
+
     print({
         "ok": True,
         "calls": service.calls,
@@ -167,6 +217,7 @@ def main() -> None:
         "latest_frame_replacement": True,
         "display_formal_coalescing": True,
         "dual_camera_progress": True,
+        "deadline_keeps_latest_frame": True,
     })
 
 

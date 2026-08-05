@@ -23,6 +23,7 @@ class _PoseRequest:
     captured_monotonic: float | None
     config: Dict[str, Any]
     submitted_at: float
+    not_before_at: float
     sequence: int
     reset_revision: int
     roles: set[str] = field(default_factory=set)
@@ -145,18 +146,26 @@ class PoseInferenceCoordinator:
                 return True
 
             last_started = self._last_display_started_at.get(camera_id)
-            if last_started is not None and now - last_started < max(0.0, float(minimum_interval_seconds)):
-                metric["display_throttled"] += 1
-                return False
+            not_before_at = (
+                now
+                if last_started is None
+                else max(
+                    now,
+                    last_started + max(0.0, float(minimum_interval_seconds)),
+                )
+            )
             existing = self._pending_display.get(camera_id)
             if existing is not None:
                 if not self._is_newer(captured_monotonic, frame_id, existing):
                     metric["display_stale_rejected"] += 1
                     return False
                 if "formal" in existing.roles:
-                    metric["display_throttled"] += 1
+                    metric["display_deferred"] += 1
                     return False
                 metric["display_replaced"] += 1
+                not_before_at = existing.not_before_at
+            if not_before_at > now:
+                metric["display_deferred"] += 1
             request = self._new_request(
                 camera_id=camera_id,
                 frame=frame,
@@ -167,6 +176,7 @@ class PoseInferenceCoordinator:
                 config=config,
                 roles={"display"},
                 now=now,
+                not_before_at=not_before_at,
             )
             self._pending_display[camera_id] = request
             self._update_queue_depth_locked()
@@ -205,6 +215,7 @@ class PoseInferenceCoordinator:
                 if display is not None and display.identity == (source_key, frame_id):
                     request = display
                     request.roles.add("formal")
+                    request.not_before_at = now
                     self._pending_formal[camera_id] = request
                     metric["formal_coalesced"] += 1
                 else:
@@ -221,6 +232,7 @@ class PoseInferenceCoordinator:
                         config=config,
                         roles={"formal"},
                         now=now,
+                        not_before_at=now,
                     )
                     self._pending_formal[camera_id] = request
                     self._update_queue_depth_locked()
@@ -295,13 +307,19 @@ class PoseInferenceCoordinator:
     def _run(self) -> None:
         while True:
             with self._condition:
-                while not self._stop and not self._unique_pending_locked():
-                    self._condition.wait(0.25)
+                while not self._stop:
+                    pending = self._unique_pending_locked()
+                    if not pending:
+                        self._condition.wait(0.25)
+                        continue
+                    now = float(self._clock())
+                    request = self._select_request_locked(now=now)
+                    if request is not None:
+                        break
+                    next_due_at = min(item.not_before_at for item in pending)
+                    self._condition.wait(max(0.001, min(0.25, next_due_at - now)))
                 if self._stop:
                     return
-                request = self._select_request_locked()
-                if request is None:
-                    continue
                 self._remove_pending_locked(request)
                 self._in_flight = request
                 started_at = float(self._clock())
@@ -389,6 +407,7 @@ class PoseInferenceCoordinator:
         config: Dict[str, Any],
         roles: set[str],
         now: float,
+        not_before_at: float,
     ) -> _PoseRequest:
         self._sequence += 1
         return _PoseRequest(
@@ -402,13 +421,18 @@ class PoseInferenceCoordinator:
             ),
             config=dict(config),
             submitted_at=now,
+            not_before_at=float(not_before_at),
             sequence=self._sequence,
             reset_revision=self._reset_revisions.get(camera_id, 0),
             roles=set(roles),
         )
 
-    def _select_request_locked(self) -> _PoseRequest | None:
-        requests = self._unique_pending_locked()
+    def _select_request_locked(self, *, now: float) -> _PoseRequest | None:
+        requests = [
+            request
+            for request in self._unique_pending_locked()
+            if request.not_before_at <= float(now)
+        ]
         if not requests:
             return None
         return min(
@@ -445,7 +469,7 @@ class PoseInferenceCoordinator:
         return self._metrics.setdefault(int(camera_id), {
             "display_submitted": 0,
             "display_replaced": 0,
-            "display_throttled": 0,
+            "display_deferred": 0,
             "display_stale_rejected": 0,
             "display_coalesced": 0,
             "display_cache_hits": 0,
