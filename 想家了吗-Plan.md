@@ -3839,5 +3839,6 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 7. [x] 精确最新版完成 61 次、30 分钟采样：服务零重启，两路线程和 FFmpeg 进程均 `starts=1 / stops=0`，发布失败、半帧中止、stderr 和 journal warning 均为 0。
 8. [x] 摄像头 31 编码输入 `12.44-14.78 FPS`，摄像头 32 `9.75-14.97 FPS`；进程约 `63.7% CPU / 349472 KiB RSS`，温度 `59.5-63.4°C`。
 9. [x] 完成 GH-030 第一结构步骤：`DetectAgent` 与 `VisionPipeline` 共用一个 `PoseInferenceService`，唯一拥有 Hailo Pose runtime 和结果解释器；运行状态报告 `runtime_count=1`，原推理行为和串行边界不变，完整边缘回归 `58/58` 通过。Pi 部署后服务零重启，Hailo ready、双路 streaming、发布器单次启动且无错误，四个源码哈希与主线一致。
-10. [ ] 在共享所有权上实现有界、最新帧优先的 Pose 协调器，把高频当前帧 Pose 锚点与低频完整产品分析拆开；不得复制 runtime、并发访问状态型 Pipeline 或让显示锚点直接升级为正式风险证据。
-11. [ ] 在 GH-030 调度完成后执行双摄有人、遮挡、快速移动和离开实测，目标活跃人物 Pose 每路约 `10-15 Hz`，并记录 Hailo 队列、阶段 P50/P95、CPU、温度和真实成品 FPS。
+10. [x] 本地实现有界、最新帧优先的 Pose 协调器：每路单最新槽、全局单在途、双路持续进展、display/formal 同帧合并、完整源身份和 reset revision；完整 Pipeline 复用同帧 Hailo 结果，不复制 runtime。新目标只唤醒正式分析，只有已验证同源连续骨架可被高频刷新。完整边缘回归 `59/59` 通过。
+11. [ ] 精确部署 Pi，确认协调器 running、`runtime_count=1`、队列有界、正式分析 direct Pose 调用为 0、两路无饿死、Hailo 无失败且 H.264/隐私链路无回退。
+12. [ ] 执行双摄有人、遮挡、快速移动、离开、宠物和电视内容实测，目标活跃人物 Pose 每路约 `10-15 Hz`；记录 Hailo 队列、合并/替换、阶段 P50/P95、CPU、温度、Tracker 锚点 Hz 和真实成品 FPS。

@@ -75,6 +75,11 @@ class ContinualTracker:
         self.frames = []
         self.reset = []
         self.next_state = "tracked"
+        self.metadata = {
+            "tracking": {"state": "empty", "poses": []},
+            "analysis_context": {},
+            "source_key": "",
+        }
 
     def observe(
         self,
@@ -133,6 +138,9 @@ class ContinualTracker:
 
     def latest(self, camera_id):
         return {"camera_id": camera_id, "state": "tracked", "pose_count": 1}
+
+    def latest_metadata(self, camera_id):
+        return dict(self.metadata)
 
     def status(self, camera_ids=None):
         return {"schema_version": self.version, "camera_ids": sorted(camera_ids or [])}
@@ -251,6 +259,8 @@ def main() -> None:
         raise SystemExit(f"persisted analysis runtime metadata is missing: {analysis_runtime}")
     if analysis_runtime.get("mode") != "active" or not analysis_runtime.get("pose_requested"):
         raise SystemExit(f"persisted analysis mode does not match scheduler state: {analysis_runtime}")
+    if analysis_runtime.get("formal_evidence_eligible") is not True:
+        raise SystemExit(f"formal analysis did not declare its evidence boundary: {analysis_runtime}")
 
     persistence_rules = {"capture_interval_seconds": 600}
     if worker._should_persist_analysis(24, {}, {}, persistence_rules, now=200.0):
@@ -403,6 +413,56 @@ def main() -> None:
     if worker._continual_tracking_wait_seconds(cadence_started) != 0.0:
         raise SystemExit("continual tracking cadence slept after exceeding its frame deadline")
 
+    worker._runtime_cameras = {24: {"id": 24, "enabled": True}}
+    continual_tracker.metadata = {
+        "tracking": {
+            "state": "observed",
+            "display_only_stale": False,
+            "poses": [{"bbox": [100.0, 40.0, 220.0, 300.0]}],
+        },
+        "analysis_context": {
+            "inference_runtime": {"formal_evidence_eligible": True},
+        },
+        "source_key": "camera-24:g1",
+    }
+    observed_before_coordinator = len(continual_tracker.observed)
+    worker._handle_coordinated_display_pose({
+        "camera_id": 24,
+        "frame": "coordinated-frame",
+        "frame_id": "24-300",
+        "captured_at": "2026-07-17T00:00:00.3+00:00",
+        "captured_monotonic": 100.3,
+        "source_key": "camera-24:g1",
+        "roles": ["display"],
+        "analysis": {"poses": [{"bbox": [104.0, 44.0, 224.0, 304.0]}]},
+    })
+    if len(continual_tracker.observed) != observed_before_coordinator + 1:
+        raise SystemExit("validated coordinated Pose did not refresh the existing display anchor")
+    if not continual_tracker.observed[-1]["context"].get("inference_runtime", {}).get("formal_evidence_eligible"):
+        raise SystemExit("display refresh discarded the validated formal-analysis boundary")
+    worker._handle_coordinated_display_pose({
+        "camera_id": 24,
+        "frame": "unvalidated-frame",
+        "frame_id": "24-301",
+        "captured_at": "2026-07-17T00:00:00.31+00:00",
+        "captured_monotonic": 100.31,
+        "source_key": "camera-24:g1",
+        "roles": ["display"],
+        "analysis": {"poses": [{"bbox": [350.0, 40.0, 470.0, 300.0]}]},
+    })
+    worker._handle_coordinated_display_pose({
+        "camera_id": 24,
+        "frame": "formal-frame",
+        "frame_id": "24-302",
+        "captured_at": "2026-07-17T00:00:00.32+00:00",
+        "captured_monotonic": 100.32,
+        "source_key": "camera-24:g1",
+        "roles": ["display", "formal"],
+        "analysis": {"poses": [{"bbox": [104.0, 44.0, 224.0, 304.0]}]},
+    })
+    if len(continual_tracker.observed) != observed_before_coordinator + 1:
+        raise SystemExit("unvalidated or formal coordinator output bypassed the full pipeline")
+
     worker._reset_camera_runtime_memory(24)
     if continual_tracker.reset != [24]:
         raise SystemExit("camera lifecycle reset left continual pose state behind")
@@ -435,6 +495,7 @@ def main() -> None:
         "fixed_five_second_sleep_removed": True,
         "hailo_idle_pose_result_reused": True,
         "active_pose_enabled": True,
+        "coordinated_pose_requires_validated_anchor": True,
     })
 
 

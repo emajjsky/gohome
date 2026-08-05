@@ -123,6 +123,9 @@ class VisionPipeline:
         frame: Any,
         previous_frame: Any | None = None,
         config: Dict[str, Any] | None = None,
+        *,
+        pose_accelerated: Dict[str, Any] | None = None,
+        pose_accelerated_provided: bool = False,
     ) -> Dict[str, Any]:
         pipeline_started_at = time.perf_counter()
         runtime_config = {**self.default_config, **(config or {})}
@@ -132,7 +135,11 @@ class VisionPipeline:
         runtime_config["frame_width"] = int(frame_width)
         runtime_config["frame_height"] = int(frame_height)
         runtime_config["frame_motion_score"] = float(quality.get("motion_score") or 0.0)
-        accelerated = self.pose_inference.infer_accelerated(frame, runtime_config)
+        accelerated = (
+            pose_accelerated
+            if pose_accelerated_provided
+            else self.pose_inference.infer_accelerated(frame, runtime_config)
+        )
         accelerated_context = self.hailo_object.analyze(frame, runtime_config)
         context_runtime = self._hailo_context_entities(accelerated_context, frame)
         if context_runtime:

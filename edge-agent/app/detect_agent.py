@@ -112,9 +112,20 @@ class DetectAgent:
         frame: Any,
         previous_frame: Optional[Any] = None,
         config: Optional[Dict[str, Any]] = None,
+        *,
+        pose_accelerated: Dict[str, Any] | None = None,
+        pose_accelerated_provided: bool = False,
     ) -> Dict[str, Any]:
         with self._inference_lock:
-            return self.pipeline.analyze(frame, previous_frame=previous_frame, config=config)
+            if not pose_accelerated_provided:
+                return self.pipeline.analyze(frame, previous_frame=previous_frame, config=config)
+            return self.pipeline.analyze(
+                frame,
+                previous_frame=previous_frame,
+                config=config,
+                pose_accelerated=pose_accelerated,
+                pose_accelerated_provided=True,
+            )
 
     def runtime_status(self) -> Dict[str, Any]:
         return self.pipeline.runtime_status()

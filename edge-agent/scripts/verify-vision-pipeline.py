@@ -76,6 +76,7 @@ def main() -> None:
     hailo_decoder = verify_hailo_pose_decoder()
     hailo_object = verify_hailo_object_decoder_and_cache()
     hailo_fallback = verify_hailo_failure_falls_back()
+    coordinated_pose = verify_pipeline_reuses_coordinated_pose()
 
     checks = {
         "black_screen": bool(black_result["black_screen"]),
@@ -166,6 +167,8 @@ def main() -> None:
         "hailo_object_inference_calls": hailo_object["inference_calls"],
         "hailo_object_cache_hit": hailo_object["cache_hit"],
         "hailo_fallback_status": hailo_fallback,
+        "coordinated_pose_backend": coordinated_pose["backend"],
+        "coordinated_pose_direct_calls": coordinated_pose["direct_calls"],
         "pose_result_status": normal_result.get("algorithm_results", {}).get("pose", {}).get("status"),
         "pipeline_version": normal_result.get("pipeline_version"),
         "algorithm_results": sorted((normal_result.get("algorithm_results") or {}).keys()),
@@ -175,6 +178,8 @@ def main() -> None:
         raise SystemExit("black screen check failed")
     if checks["algorithm_results"] != expected_algorithms:
         raise SystemExit(f"algorithm result keys mismatch: {checks['algorithm_results']}")
+    if checks["coordinated_pose_backend"] != "hailo" or checks["coordinated_pose_direct_calls"] != 0:
+        raise SystemExit("pipeline did not reuse the coordinated Pose result")
     if not isinstance(checks["demo_person_count"], int) or checks["demo_person_count"] < 1:
         raise SystemExit("demo person check failed")
     if checks["default_classical_presence_person_count"] != 0:
@@ -1451,6 +1456,44 @@ def verify_hailo_failure_falls_back() -> str:
         if backend.analyze(frame, {}) is not None:
             raise SystemExit("failed Hailo runtime must not return an accelerated result")
         return str(backend.status().get("status") or "")
+
+
+def verify_pipeline_reuses_coordinated_pose() -> dict:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+    )
+    direct_calls = 0
+
+    def direct_inference(frame, config):
+        nonlocal direct_calls
+        direct_calls += 1
+        raise RuntimeError("pipeline issued a duplicate Pose inference")
+
+    pipeline.pose_inference.infer_accelerated = direct_inference  # type: ignore[method-assign]
+    frame = np.zeros((120, 160, 3), dtype=np.uint8)
+    accelerated = {
+        "boxes": np.empty((0, 4), dtype=np.float32),
+        "keypoints": np.empty((0, 17, 2), dtype=np.float32),
+        "keypoint_scores": np.empty((0, 17), dtype=np.float32),
+        "scores": np.empty((0,), dtype=np.float32),
+        "latency_ms": 12.5,
+        "stage_latency_ms": {"total": 12.5},
+        "model_name": "coordinated-pose.hef",
+    }
+    result = pipeline.analyze(
+        frame,
+        config={"pose_detection_enabled": True},
+        pose_accelerated=accelerated,
+        pose_accelerated_provided=True,
+    )
+    pipeline.close()
+    return {
+        "backend": str(result.get("inference_backend") or ""),
+        "direct_calls": direct_calls,
+    }
 
 
 if __name__ == "__main__":

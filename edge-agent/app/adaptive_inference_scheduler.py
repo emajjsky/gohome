@@ -239,6 +239,13 @@ class AdaptiveInferenceScheduler:
             state = self._states.get(int(camera_id))
             return self._mode_at(state, float(now)) if state is not None else "idle"
 
+    def pose_interval(self, camera_id: int, *, now: float) -> float:
+        """Return the accelerated Pose cadence independently of full analysis."""
+        with self._lock:
+            state = self._states.get(int(camera_id))
+            mode = self._mode_at(state, float(now)) if state is not None else "idle"
+            return self._interval_for_mode(mode, accelerated=True)
+
     def camera_state(self, camera_id: int, *, now: float) -> Dict[str, Any]:
         with self._lock:
             state = self._states.get(int(camera_id))
@@ -252,6 +259,7 @@ class AdaptiveInferenceScheduler:
                 "pose_required": float(now) < state.person_until,
                 "person_confirmed_until": round(state.person_until, 6),
                 "interval_seconds": self._interval_for_mode(mode, accelerated=state.accelerated),
+                "pose_interval_seconds": self._interval_for_mode(mode, accelerated=True),
                 "next_due_at": round(state.next_due_at, 6),
                 "next_due_in_seconds": round(max(0.0, state.next_due_at - float(now)), 4),
                 "in_flight": state.in_flight,

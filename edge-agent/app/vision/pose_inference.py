@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import RLock
 from typing import Any, Dict
 
 from .hailo_pose import HailoPoseBackend
@@ -54,6 +55,7 @@ class PoseInferenceService:
             max_poses=pose_max_poses,
             retry_seconds=hailo_retry_seconds,
         )
+        self._interpreter_lock = RLock()
 
     def infer_accelerated(
         self,
@@ -62,7 +64,47 @@ class PoseInferenceService:
     ) -> Dict[str, Any] | None:
         return self.hailo_backend.analyze(frame, config)
 
+    def analyze_accelerated_frame(
+        self,
+        frame: Any,
+        config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Run one Hailo Pose frame and prepare display-only Pose output."""
+        accelerated = self.hailo_backend.analyze(frame, config)
+        if accelerated is None:
+            return {"accelerated": None, "analysis": None}
+        display_config = {
+            **config,
+            "pose_detection_enabled": True,
+            "pose_allow_internal_detector_fallback": False,
+        }
+        return {
+            "accelerated": accelerated,
+            "analysis": self.interpret(
+                frame,
+                display_config,
+                accelerated=accelerated,
+                people=[],
+            ),
+        }
+
     def interpret(
+        self,
+        frame: Any,
+        config: Dict[str, Any],
+        *,
+        accelerated: Dict[str, Any] | None,
+        people: list[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        with self._interpreter_lock:
+            return self._interpret_unlocked(
+                frame,
+                config,
+                accelerated=accelerated,
+                people=people,
+            )
+
+    def _interpret_unlocked(
         self,
         frame: Any,
         config: Dict[str, Any],

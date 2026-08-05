@@ -1489,6 +1489,7 @@ def health() -> Dict[str, Any]:
         },
         "persistence": worker_status.get("persistence") or {},
         "camera_streams": worker_status.get("camera_streams") or {},
+        "pose_inference_coordinator": worker_status.get("pose_inference_coordinator") or {},
         "continual_pose": worker_status.get("continual_pose") or {},
         "continual_pose_error": str(worker_status.get("continual_pose_error") or ""),
         "config_sync_agent": config_sync_agent.status(),

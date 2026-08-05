@@ -13,6 +13,7 @@ from .vision.temporal import TemporalObservationEngine
 from .vision.pose_factor_graph import PoseFactorGraphEngine
 from .vision.continual_pose_tracker import ContinualPoseTracker
 from .vision.motion_gate import MotionGate
+from .vision.pose_coordinator import PoseCoordinatorError, PoseInferenceCoordinator
 from .observation_coverage import ObservationCoverageTracker
 
 
@@ -129,6 +130,17 @@ class EdgeWorker:
         self._safety_state_generation: Dict[int, int] = {}
         self._camera_online_reconciled_ids: set[int] = set()
         self.last_event_state_command: Dict[str, Any] = {}
+        pose_service = getattr(self.detect_agent, "pose_inference_service", None)
+        self.pose_inference_coordinator = (
+            PoseInferenceCoordinator(
+                pose_service,
+                on_display_result=self._handle_coordinated_display_pose,
+                monotonic_clock=self._monotonic_clock,
+            )
+            if pose_service is not None
+            else None
+        )
+        self._coordinated_display_person_present: Dict[int, bool] = {}
 
     @property
     def is_running(self) -> bool:
@@ -139,6 +151,8 @@ class EdgeWorker:
             return
         self._stop.clear()
         self._wake.clear()
+        if self.pose_inference_coordinator is not None:
+            self.pose_inference_coordinator.start()
         self._thread = Thread(target=self._run, name="gohome-edge-worker", daemon=True)
         self._tracking_thread = Thread(
             target=self._run_continual_tracking,
@@ -152,6 +166,8 @@ class EdgeWorker:
         self._stop.set()
         self._wake.set()
         self._stop_continual_tracking_threads()
+        if self.pose_inference_coordinator is not None:
+            self.pose_inference_coordinator.stop()
         if self._thread:
             self._thread.join(timeout=5)
         if self._tracking_thread:
@@ -243,6 +259,11 @@ class EdgeWorker:
             "continual_pose_camera_threads": self._continual_tracking_thread_status(),
             "continual_pose": continual_status,
             "continual_pose_error": self.last_continual_pose_error,
+            "pose_inference_coordinator": (
+                self.pose_inference_coordinator.status()
+                if self.pose_inference_coordinator is not None
+                else {"schema_version": "disabled", "running": False}
+            ),
             "continual_identity_bridge": {
                 "count": self.continual_identity_bridge_count,
                 "last": dict(self.last_continual_identity_bridge),
@@ -347,6 +368,8 @@ class EdgeWorker:
             self._safety_state_generation[camera_id] = self._safety_state_generation.get(camera_id, 0) + 1
         if self.continual_pose_tracker is not None:
             self.continual_pose_tracker.reset_camera(camera_id)
+        if self.pose_inference_coordinator is not None:
+            self.pose_inference_coordinator.reset_camera(camera_id)
         if self.motion_gate is not None:
             self.motion_gate.reset_camera(camera_id)
         self.previous_frames.pop(camera_id, None)
@@ -358,6 +381,7 @@ class EdgeWorker:
         self.pending_activity_absence.pop(camera_id, None)
         self.last_persistence_reason.pop(camera_id, None)
         self._last_continual_frame_ids.pop(camera_id, None)
+        self._coordinated_display_person_present.pop(camera_id, None)
         self.observation_coverage_tracker.reset_camera(camera_id)
 
     def apply_event_state_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
@@ -533,7 +557,136 @@ class EdgeWorker:
                     now=self._monotonic_clock(),
                 )
                 self._wake.set()
+        self._submit_coordinated_display_pose(camera, capture)
         self.observe_stream_frame(camera, capture["frame"], capture)
+
+    def _submit_coordinated_display_pose(
+        self,
+        camera: Dict[str, Any],
+        capture: Dict[str, Any],
+    ) -> None:
+        coordinator = self.pose_inference_coordinator
+        if coordinator is None or not coordinator.is_running:
+            return
+        rules = dict(self.last_rules_snapshot)
+        if not bool(rules.get("fall_detection_enabled") or rules.get("activity_detection_enabled")):
+            return
+        camera_id = int(camera["id"])
+        now = self._monotonic_clock()
+        config = {
+            **rules,
+            "camera_id": camera_id,
+            "force_demo_vision": str(camera.get("stream_url", "")).strip().lower().startswith("demo:"),
+            "pose_detection_enabled": True,
+            "pose_runtime_reason": "coordinated_display_anchor",
+            "pose_allow_internal_detector_fallback": False,
+            "eacp_mode": self.inference_scheduler.mode(camera_id, now=now),
+        }
+        try:
+            coordinator.submit_display(
+                camera_id=camera_id,
+                frame=capture["frame"],
+                frame_id=str(capture.get("frame_id") or ""),
+                source_key=str(capture.get("source_key") or ""),
+                captured_at=str(capture.get("captured_at") or ""),
+                captured_monotonic=capture.get("captured_monotonic"),
+                config=config,
+                minimum_interval_seconds=self.inference_scheduler.pose_interval(camera_id, now=now),
+            )
+        except (PoseCoordinatorError, ValueError) as exc:
+            self.last_continual_pose_error = str(exc)
+
+    def _handle_coordinated_display_pose(self, delivery: Dict[str, Any]) -> None:
+        if self.continual_pose_tracker is None:
+            return
+        camera_id = int(delivery.get("camera_id") or 0)
+        camera = self._runtime_cameras.get(camera_id)
+        if camera is None or not self._capture_identity_matches(camera, delivery):
+            return
+        analysis = delivery.get("analysis")
+        if not isinstance(analysis, dict):
+            return
+        poses = [
+            pose
+            for pose in (analysis.get("poses") or [])
+            if isinstance(pose, dict)
+        ]
+        person_present = bool(poses)
+        try:
+            validated_context = self._validated_anchor_context(camera_id, delivery, poses)
+            if (
+                "formal" not in set(delivery.get("roles") or [])
+                and poses
+                and validated_context is not None
+            ):
+                context = {
+                    **validated_context,
+                    **analysis,
+                    "inference_backend": "hailo",
+                    "display_anchor_runtime": {
+                        "schema_version": "eacp-display-anchor-v1",
+                        "formal_evidence_eligible": False,
+                        "source": "pose_inference_coordinator",
+                    },
+                }
+                self.continual_pose_tracker.observe(
+                    camera_id,
+                    delivery["frame"],
+                    frame_id=str(delivery.get("frame_id") or ""),
+                    captured_at=str(delivery.get("captured_at") or ""),
+                    captured_monotonic=delivery.get("captured_monotonic"),
+                    poses=poses,
+                    context=context,
+                    source_key=str(delivery.get("source_key") or ""),
+                    person_present=True,
+                )
+            previous_presence = self._coordinated_display_person_present.get(camera_id)
+            self._coordinated_display_person_present[camera_id] = person_present
+            if previous_presence is None or previous_presence != person_present:
+                self.inference_scheduler.request_refresh(
+                    camera_id,
+                    now=self._monotonic_clock(),
+                    reason=(
+                        "coordinated_pose_person_entered"
+                        if person_present
+                        else "coordinated_pose_person_cleared"
+                    ),
+                )
+                self._wake.set()
+            self.last_continual_pose_error = ""
+        except Exception as exc:
+            self.last_continual_pose_error = str(exc)
+
+    def _validated_anchor_context(
+        self,
+        camera_id: int,
+        delivery: Dict[str, Any],
+        poses: list[Dict[str, Any]],
+    ) -> Dict[str, Any] | None:
+        metadata = self.continual_pose_tracker.latest_metadata(int(camera_id))
+        tracking = metadata.get("tracking") if isinstance(metadata.get("tracking"), dict) else {}
+        context = metadata.get("analysis_context") if isinstance(metadata.get("analysis_context"), dict) else {}
+        if str(tracking.get("state") or "") not in {"observed", "tracked"}:
+            return None
+        if bool(tracking.get("display_only_stale")):
+            return None
+        if str(metadata.get("source_key") or "") != str(delivery.get("source_key") or ""):
+            return None
+        runtime = context.get("inference_runtime") if isinstance(context.get("inference_runtime"), dict) else {}
+        if runtime.get("formal_evidence_eligible") is not True:
+            return None
+        validated = [
+            item
+            for item in (tracking.get("poses") or [])
+            if isinstance(item, dict) and self._valid_bbox(item.get("bbox"))
+        ]
+        matched = any(
+            self._bbox_iou(pose.get("bbox"), anchor.get("bbox")) >= 0.12
+            for pose in poses
+            if self._valid_bbox(pose.get("bbox"))
+            for anchor in validated
+        )
+        return dict(context) if matched else None
 
     def _prune_history_if_due(self) -> None:
         if self.snapshot_dir is None:
@@ -658,12 +811,42 @@ class EdgeWorker:
                 "camera_id": camera_id,
                 **pose_runtime_config,
             }
-            analysis = self.detect_agent.analyze_frame_with_config(
-                frame,
-                previous_frame=self.previous_frames.get(camera_id),
-                config=analysis_config,
+            coordinated_pose: Dict[str, Any] | None = None
+            if self.pose_inference_coordinator is not None and self.pose_inference_coordinator.is_running:
+                coordinated_pose = self.pose_inference_coordinator.infer_for_analysis(
+                    camera_id=camera_id,
+                    frame=frame,
+                    frame_id=str(capture.get("frame_id") or ""),
+                    source_key=str(capture.get("source_key") or ""),
+                    captured_at=str(capture.get("captured_at") or ""),
+                    captured_monotonic=capture.get("captured_monotonic"),
+                    config=analysis_config,
+                )
+                if (
+                    coordinated_pose.get("accelerated") is not None
+                    and bool(rules.get("fall_detection_enabled") or rules.get("activity_detection_enabled"))
+                ):
+                    analysis_config["pose_detection_enabled"] = True
+                    if not pose_runtime_config.get("pose_detection_enabled"):
+                        analysis_config["pose_runtime_reason"] = "coordinated_hailo_pose_probe"
+            if coordinated_pose is None:
+                analysis = self.detect_agent.analyze_frame_with_config(
+                    frame,
+                    previous_frame=self.previous_frames.get(camera_id),
+                    config=analysis_config,
+                )
+            else:
+                analysis = self.detect_agent.analyze_frame_with_config(
+                    frame,
+                    previous_frame=self.previous_frames.get(camera_id),
+                    config=analysis_config,
+                    pose_accelerated=coordinated_pose.get("accelerated"),
+                    pose_accelerated_provided=True,
+                )
+            analysis["inference_runtime"] = self._inference_runtime_payload(
+                analysis_config,
+                coordinated_pose=coordinated_pose,
             )
-            analysis["inference_runtime"] = self._inference_runtime_payload(pose_runtime_config)
             self._attach_continual_identity_hints(camera_id, analysis)
             temporal = self.temporal_engine.update(camera_id, analysis)
             self.observation_coverage_tracker.observe(
@@ -779,6 +962,8 @@ class EdgeWorker:
                 "evaluation": persisted_evaluation or evaluation_dict,
             }
 
+        except PoseCoordinatorError as exc:
+            return {"ok": False, "error": str(exc)}
         except CameraError as exc:
             self.storage.update_camera_status(camera_id, "offline", str(exc))
             self.storage.close_camera_runtime_state(camera_id, reason="camera_offline")
@@ -1454,9 +1639,15 @@ class EdgeWorker:
         except ValueError:
             return None
 
-    def _inference_runtime_payload(self, pose_runtime_config: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+    def _inference_runtime_payload(
+        self,
+        pose_runtime_config: Dict[str, Any],
+        *,
+        coordinated_pose: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        payload = {
             "schema_version": "eacp-analysis-runtime-v1",
+            "formal_evidence_eligible": True,
             "scheduler_version": self.inference_scheduler.version,
             "mode": str(pose_runtime_config.get("eacp_mode") or "idle"),
             "pose_requested": bool(pose_runtime_config.get("pose_detection_enabled")),
@@ -1465,6 +1656,16 @@ class EdgeWorker:
             "rapid_descent_age_seconds": pose_runtime_config.get("rapid_descent_age_seconds"),
             "rapid_descent_source": str(pose_runtime_config.get("rapid_descent_source") or ""),
         }
+        if coordinated_pose is not None:
+            payload["pose_coordinator"] = {
+                "schema_version": self.pose_inference_coordinator.version,
+                "frame_id": str(coordinated_pose.get("frame_id") or ""),
+                "cache_hit": bool(coordinated_pose.get("cache_hit")),
+                "display_delivered": bool(coordinated_pose.get("display_delivered")),
+                "queue_wait_ms": coordinated_pose.get("queue_wait_ms"),
+                "latency_ms": coordinated_pose.get("coordinator_latency_ms"),
+            }
+        return payload
 
     def _analysis_persistence_reason(
         self,

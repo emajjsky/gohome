@@ -12988,3 +12988,31 @@ P4 风险升频边界：
 - 运行中 `/health` 返回 `shared-pose-inference-v1 / single_shared_service / runtime_count=1`。服务 `active`、`NRestarts=0`，systemd 自重启后无 warning；Hailo Pose 与 Object 均为 ready、失败为 0。
 - 两路摄像头均为 streaming、重连为 0；验收时有效源帧约 `12.39 / 14.04 FPS`。两个 H.264 发布线程均 `starts=1 / stops=0`，发布器 `publish_ready=true`、进程启动一次、失败为 0、stderr 为空。
 - `main.py`、`detect_agent.py`、`vision/pipeline.py` 和 `vision/pose_inference.py` 的 Pi SHA-256 与主线逐项一致。该结果只关闭共享所有权结构步骤，不关闭 GH-030 性能目标。
+
+## 196. 2026-08-05 有界最新帧 Pose 协调器
+
+### 调度与复用
+
+- `PoseInferenceCoordinator` 是共享 Pose 服务之上的唯一高频调度者。每路摄像头只有一个最新显示待处理槽，旧待处理帧被新帧原子替换；正式分析拥有独立有界请求，但与相同 `source_key + frame_id` 的显示请求合并，原始 Hailo 结果只计算一次。
+- 协调器只有一个工作线程和一个全局在途请求。选择按提交时间与正式角色稳定排序，两路都能前进；结果缓存仅保存每路最近 8 项小型 Pose 元数据和模型输出，不保存视频像素。
+- 摄像头 reset revision 绑定请求生命周期。换源、断流、禁用或重新配置会同时废止待处理请求、同帧缓存和晚到结果；Worker 与 Tracker 继续使用现有完整帧身份校验。
+- `VisionPipeline.analyze()` 增加显式 `pose_accelerated_provided` 契约。Worker 使用协调器时只传入同帧预计算结果，Pipeline 不再自行调用 Hailo Pose；没有协调器的独立测试和 CPU 环境保持原调用路径。
+
+### 性能边界
+
+- Hailo 后端自身继续保证单设备推理在途；`PoseInferenceService` 只对共享 `RtmposeAnalyzer` 解释阶段加锁。这样下一帧 Hailo 设备推理可以与上一帧 CPU 姿态解释重叠，不用一把大锁重新串死整条链路。
+- 显示 cadence 从现有自适应调度器独立读取：idle 目标约 2 Hz，active 约 15 Hz，risk 约 20 Hz；实际频率仍受源唯一帧、Hailo 设备、温控和双路公平约束，不能复制像素伪造指标。
+- `/health` 新增 `pose_inference_coordinator`，公开队列深度、最大深度、在途身份、每路提交/替换/节流/合并/缓存命中、等待、推理失败和真实完成 Hz。
+
+### 准确性与风险隔离
+
+- 原始协调器 Pose 不能创建新显示人物，也不能确认人物消失。新人物、空结果、远距离跳变和 display/formal 合并帧只触发正式分析刷新。
+- 高频结果只有在 Tracker 已持有同源、非 stale、由完整分析声明 `formal_evidence_eligible=true` 的骨架，且新旧人体框 IoU 至少 `0.12` 时才能刷新显示锚点。完整分析仍负责人物一致性、电视画面抑制、场景、宠物、姿态和风险规则。
+- 高频显示上下文明确声明自身不具备正式证据资格，并保留上一项完整分析的正式边界；规则、因子图、持久化和事件链仍只读取完整分析结果。
+
+### 本地验证
+
+- 新协调器专项固定验证：摄像头 31 的待处理帧 `2` 被最新帧 `3` 替换；摄像头 32 同时取得进展；display 与 formal 的帧 `31-3` 合并；实际调用顺序为 `1, 3, 4`；最大并发为 1。
+- 视觉管线专项注入预计算 Hailo 结果并把直接推理替换为失败探针，确认正式分析后端为 Hailo、直接 Pose 调用次数为 0。
+- Worker 专项确认只有已验证同源连续骨架可被协调器刷新，远距离新目标与 formal 合并帧不能绕过完整管线；正式分析元数据明确 `formal_evidence_eligible=true`。
+- Python 编译、专项和完整边缘回归 `59/59` 通过。Pi 部署、双路真人 cadence、CPU/温度、场景误骨架和长时稳定性仍待实机验收。
