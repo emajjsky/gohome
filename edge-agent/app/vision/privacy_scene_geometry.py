@@ -8,7 +8,7 @@ import numpy as np
 class SceneGeometryVerifier:
     """Distinguish camera viewpoint changes from ordinary household changes."""
 
-    version = "privacy-scene-geometry-v2"
+    version = "privacy-scene-geometry-v3"
 
     def __init__(
         self,
@@ -20,6 +20,8 @@ class SceneGeometryVerifier:
         minimum_transform_matches: int = 8,
         minimum_transform_inliers: int = 6,
         minimum_transform_inlier_ratio: float = 0.40,
+        minimum_change_spatial_coverage_ratio: float = 0.12,
+        minimum_change_grid_coverage_ratio: float = 0.25,
         maximum_median_corner_displacement_ratio: float = 0.015,
         maximum_corner_displacement_ratio: float = 0.025,
     ) -> None:
@@ -38,6 +40,14 @@ class SceneGeometryVerifier:
         self.minimum_transform_inlier_ratio = max(
             0.25,
             min(self.minimum_inlier_ratio, float(minimum_transform_inlier_ratio)),
+        )
+        self.minimum_change_spatial_coverage_ratio = max(
+            0.05,
+            min(0.8, float(minimum_change_spatial_coverage_ratio)),
+        )
+        self.minimum_change_grid_coverage_ratio = max(
+            0.1,
+            min(0.8, float(minimum_change_grid_coverage_ratio)),
         )
         self.maximum_median_corner_displacement_ratio = max(
             0.002,
@@ -127,6 +137,13 @@ class SceneGeometryVerifier:
             )
 
         height, width = frame.shape[:2]
+        inlier_flags = np.asarray(inlier_mask).reshape(-1).astype(bool)
+        current_inliers = current_coordinates.reshape(-1, 2)[inlier_flags]
+        baseline_inliers = baseline_coordinates.reshape(-1, 2)[inlier_flags]
+        current_coverage = self._spatial_coverage(current_inliers, width, height)
+        baseline_coverage = self._spatial_coverage(baseline_inliers, width, height)
+        spatial_coverage = min(current_coverage[0], baseline_coverage[0])
+        grid_coverage = min(current_coverage[1], baseline_coverage[1])
         corners = np.float32([
             [[0.0, 0.0]],
             [[float(width - 1), 0.0]],
@@ -140,37 +157,185 @@ class SceneGeometryVerifier:
         ) / max(1.0, float(np.hypot(width, height)))
         median_displacement = float(np.median(displacement))
         maximum_displacement = float(np.max(displacement))
-        same_view = bool(
+        homography_same_view = bool(
             median_displacement <= self.maximum_median_corner_displacement_ratio
             and maximum_displacement <= self.maximum_corner_displacement_ratio
         )
-        strong_evidence = bool(
+        homography_strong = bool(
             len(matches) >= self.minimum_matches
             and inliers >= self.minimum_inliers
             and inlier_ratio >= self.minimum_inlier_ratio
         )
-        if not same_view and not strong_evidence:
-            return self._unverifiable(
-                "camera_change_evidence_weak",
-                good_matches=len(matches),
-                inliers=inliers,
-                inlier_ratio=inlier_ratio,
-                median_corner_displacement_ratio=median_displacement,
-                max_corner_displacement_ratio=maximum_displacement,
-                confidence="moderate",
+
+        affine, affine_inlier_mask = cv2.estimateAffinePartial2D(
+            current_coordinates.reshape(-1, 2),
+            baseline_coordinates.reshape(-1, 2),
+            method=cv2.RANSAC,
+            ransacReprojThreshold=3.0,
+            maxIters=2000,
+            confidence=0.995,
+            refineIters=10,
+        )
+        affine_inliers = (
+            int(np.count_nonzero(affine_inlier_mask))
+            if affine_inlier_mask is not None
+            else 0
+        )
+        affine_inlier_ratio = affine_inliers / max(1, len(matches))
+        affine_reliable = bool(
+            affine is not None
+            and affine_inliers >= self.minimum_transform_inliers
+            and affine_inlier_ratio >= self.minimum_transform_inlier_ratio
+        )
+        affine_strong = bool(
+            affine_reliable
+            and len(matches) >= self.minimum_matches
+            and affine_inliers >= self.minimum_inliers
+            and affine_inlier_ratio >= self.minimum_inlier_ratio
+        )
+        affine_median_displacement: float | None = None
+        affine_maximum_displacement: float | None = None
+        affine_same_view: bool | None = None
+        affine_spatial_coverage = 0.0
+        affine_grid_coverage = 0.0
+        if affine_reliable:
+            affine_inlier_flags = np.asarray(affine_inlier_mask).reshape(-1).astype(bool)
+            affine_current_coverage = self._spatial_coverage(
+                current_coordinates.reshape(-1, 2)[affine_inlier_flags],
+                width,
+                height,
             )
-        return {
-            "accepted": same_view,
-            "geometry_status": "same_view" if same_view else "camera_view_changed",
-            "geometry_reason": "" if same_view else "camera_view_changed",
-            "geometry_confidence": "strong" if strong_evidence else "moderate",
+            affine_baseline_coverage = self._spatial_coverage(
+                baseline_coordinates.reshape(-1, 2)[affine_inlier_flags],
+                width,
+                height,
+            )
+            affine_spatial_coverage = min(
+                affine_current_coverage[0],
+                affine_baseline_coverage[0],
+            )
+            affine_grid_coverage = min(
+                affine_current_coverage[1],
+                affine_baseline_coverage[1],
+            )
+            affine_corners = cv2.transform(corners, affine)
+            affine_displacement = np.linalg.norm(
+                (affine_corners - corners).reshape(-1, 2),
+                axis=1,
+            ) / max(1.0, float(np.hypot(width, height)))
+            affine_median_displacement = float(np.median(affine_displacement))
+            affine_maximum_displacement = float(np.max(affine_displacement))
+            affine_same_view = bool(
+                affine_median_displacement <= self.maximum_median_corner_displacement_ratio
+                and affine_maximum_displacement <= self.maximum_corner_displacement_ratio
+            )
+
+        broad_evidence = bool(
+            min(spatial_coverage, affine_spatial_coverage)
+            >= self.minimum_change_spatial_coverage_ratio
+            and min(grid_coverage, affine_grid_coverage)
+            >= self.minimum_change_grid_coverage_ratio
+        )
+        model_agreement = (
+            "same_view"
+            if affine_same_view is True and homography_same_view
+            else "camera_view_changed"
+            if affine_same_view is False and not homography_same_view
+            else "conflict"
+            if affine_same_view is not None
+            else "homography_only"
+        )
+        common = {
             "geometry_good_matches": len(matches),
             "geometry_inliers": inliers,
             "geometry_inlier_ratio": round(inlier_ratio, 4),
             "geometry_median_corner_displacement_ratio": round(median_displacement, 5),
             "geometry_max_corner_displacement_ratio": round(maximum_displacement, 5),
+            "geometry_spatial_coverage_ratio": round(spatial_coverage, 4),
+            "geometry_grid_coverage_ratio": round(grid_coverage, 4),
+            "geometry_affine_inliers": affine_inliers,
+            "geometry_affine_inlier_ratio": round(affine_inlier_ratio, 4),
+            "geometry_affine_spatial_coverage_ratio": round(
+                affine_spatial_coverage,
+                4,
+            ),
+            "geometry_affine_grid_coverage_ratio": round(affine_grid_coverage, 4),
+            "geometry_affine_median_corner_displacement_ratio": (
+                None
+                if affine_median_displacement is None
+                else round(affine_median_displacement, 5)
+            ),
+            "geometry_affine_max_corner_displacement_ratio": (
+                None
+                if affine_maximum_displacement is None
+                else round(affine_maximum_displacement, 5)
+            ),
+            "geometry_model_agreement": model_agreement,
             "geometry_cached": False,
         }
+
+        same_view = bool(
+            homography_same_view
+            and (affine_same_view is not False or not affine_strong)
+        ) or bool(
+            affine_same_view is True
+            and affine_strong
+            and not broad_evidence
+        )
+        if same_view:
+            return {
+                "accepted": True,
+                "geometry_status": "same_view",
+                "geometry_reason": "",
+                "geometry_confidence": (
+                    "strong" if homography_strong or affine_strong else "moderate"
+                ),
+                **common,
+            }
+
+        confirmed_change = bool(
+            not homography_same_view
+            and affine_same_view is False
+            and homography_strong
+            and affine_strong
+            and broad_evidence
+        )
+        if not confirmed_change:
+            return self._unverifiable(
+                "geometry_models_inconclusive",
+                good_matches=len(matches),
+                inliers=inliers,
+                inlier_ratio=inlier_ratio,
+                median_corner_displacement_ratio=median_displacement,
+                max_corner_displacement_ratio=maximum_displacement,
+                confidence="strong" if homography_strong or affine_strong else "moderate",
+                extra=common,
+            )
+        return {
+            "accepted": False,
+            "geometry_status": "camera_view_changed",
+            "geometry_reason": "camera_view_changed",
+            "geometry_confidence": "strong",
+            **common,
+        }
+
+    @staticmethod
+    def _spatial_coverage(points: Any, width: int, height: int) -> tuple[float, float]:
+        coordinates = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+        if len(coordinates) < 2:
+            return 0.0, 0.0
+        span = np.ptp(coordinates, axis=0)
+        area_ratio = float(
+            (span[0] * span[1])
+            / max(1.0, float((width - 1) * (height - 1)))
+        )
+        columns = np.clip((coordinates[:, 0] * 4 / max(1, width)).astype(int), 0, 3)
+        rows = np.clip((coordinates[:, 1] * 3 / max(1, height)).astype(int), 0, 2)
+        occupied_cells = len({
+            (int(row), int(column))
+            for row, column in zip(rows, columns)
+        })
+        return min(1.0, area_ratio), occupied_cells / 12.0
 
     def signature(
         self,
@@ -218,8 +383,9 @@ class SceneGeometryVerifier:
         median_corner_displacement_ratio: float | None = None,
         max_corner_displacement_ratio: float | None = None,
         confidence: str = "none",
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {
+        result = {
             "accepted": False,
             "geometry_status": "unverifiable",
             "geometry_reason": str(reason),
@@ -241,3 +407,6 @@ class SceneGeometryVerifier:
             ),
             "geometry_cached": False,
         }
+        if extra:
+            result.update(extra)
+        return result

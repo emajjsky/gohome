@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 
 from app.camera_agent import _load_cv2
 from app.vision.privacy_background import PrivacyBackgroundReconstructor, PrivacyCalibrationRequired
+from app.vision.privacy_scene_geometry import SceneGeometryVerifier
 from app.vision.privacy_stream import PrivacyFrameRenderer
 
 
@@ -265,6 +266,29 @@ def assert_calibration_required(callable_value, expected_reason: str | None = No
 
 def main() -> int:
     cv2 = _load_cv2()
+    local_texture = np.random.default_rng(7).integers(
+        0,
+        256,
+        size=(100, 100),
+        dtype=np.uint8,
+    )
+    local_texture = cv2.cvtColor(local_texture, cv2.COLOR_GRAY2BGR)
+    clustered_baseline = np.full((360, 640, 3), 30, dtype=np.uint8)
+    clustered_current = np.full((360, 640, 3), 190, dtype=np.uint8)
+    clustered_baseline[100:200, 100:200] = local_texture
+    clustered_current[100:200, 160:260] = local_texture
+    clustered_assessment = SceneGeometryVerifier().assess(
+        clustered_baseline,
+        clustered_current,
+        excluded_mask=None,
+    )
+    assert clustered_assessment["geometry_status"] == "unverifiable"
+    assert clustered_assessment["geometry_reason"] == "geometry_models_inconclusive"
+    assert (
+        clustered_assessment["geometry_spatial_coverage_ratio"] < 0.12
+        or clustered_assessment["geometry_grid_coverage_ratio"] < 0.25
+    )
+
     clean_a = scene(1)
     clean_b = scene(7)
     occupied_a = occupied_scene(cv2, clean_a)
@@ -1075,6 +1099,7 @@ def main() -> int:
         "large_household_change_retained": True,
         "large_household_change_restart_revalidated": True,
         "lighting_change_retained": True,
+        "clustered_features_do_not_confirm_camera_move": True,
         "unverifiable_scene_retains_baseline": True,
         "unverifiable_scene_recovers": True,
         "revalidation_camera_isolation": True,

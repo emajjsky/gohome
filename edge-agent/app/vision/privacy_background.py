@@ -47,6 +47,15 @@ class _BackgroundState:
     last_geometry_inlier_ratio: float | None = None
     last_geometry_median_corner_displacement_ratio: float | None = None
     last_geometry_max_corner_displacement_ratio: float | None = None
+    last_geometry_spatial_coverage_ratio: float | None = None
+    last_geometry_grid_coverage_ratio: float | None = None
+    last_geometry_affine_inliers: int = 0
+    last_geometry_affine_inlier_ratio: float | None = None
+    last_geometry_affine_spatial_coverage_ratio: float | None = None
+    last_geometry_affine_grid_coverage_ratio: float | None = None
+    last_geometry_affine_median_corner_displacement_ratio: float | None = None
+    last_geometry_affine_max_corner_displacement_ratio: float | None = None
+    last_geometry_model_agreement: str = "not_checked"
     last_geometry_signature: Any | None = None
     calibration_active: bool = False
     calibration_id: str = ""
@@ -239,6 +248,15 @@ class PrivacyBackgroundReconstructor:
                 state.last_geometry_status = "not_checked"
                 state.last_geometry_reason = ""
                 state.last_geometry_confidence = "none"
+                state.last_geometry_spatial_coverage_ratio = None
+                state.last_geometry_grid_coverage_ratio = None
+                state.last_geometry_affine_inliers = 0
+                state.last_geometry_affine_inlier_ratio = None
+                state.last_geometry_affine_spatial_coverage_ratio = None
+                state.last_geometry_affine_grid_coverage_ratio = None
+                state.last_geometry_affine_median_corner_displacement_ratio = None
+                state.last_geometry_affine_max_corner_displacement_ratio = None
+                state.last_geometry_model_agreement = "not_checked"
                 state.last_geometry_signature = None
                 state.calibration_active = False
                 state.calibration_reference = None
@@ -569,6 +587,15 @@ class PrivacyBackgroundReconstructor:
         state.last_geometry_status = "not_checked"
         state.last_geometry_reason = ""
         state.last_geometry_confidence = "none"
+        state.last_geometry_spatial_coverage_ratio = None
+        state.last_geometry_grid_coverage_ratio = None
+        state.last_geometry_affine_inliers = 0
+        state.last_geometry_affine_inlier_ratio = None
+        state.last_geometry_affine_spatial_coverage_ratio = None
+        state.last_geometry_affine_grid_coverage_ratio = None
+        state.last_geometry_affine_median_corner_displacement_ratio = None
+        state.last_geometry_affine_max_corner_displacement_ratio = None
+        state.last_geometry_model_agreement = "not_checked"
         state.last_geometry_signature = None
 
     def _protected_mask(self, cv2: Any, state: _BackgroundState, mask: Any) -> Any:
@@ -760,6 +787,33 @@ class PrivacyBackgroundReconstructor:
             state.last_geometry_max_corner_displacement_ratio = assessment.get(
                 "geometry_max_corner_displacement_ratio"
             )
+            state.last_geometry_spatial_coverage_ratio = assessment.get(
+                "geometry_spatial_coverage_ratio"
+            )
+            state.last_geometry_grid_coverage_ratio = assessment.get(
+                "geometry_grid_coverage_ratio"
+            )
+            state.last_geometry_affine_inliers = int(
+                assessment.get("geometry_affine_inliers") or 0
+            )
+            state.last_geometry_affine_inlier_ratio = assessment.get(
+                "geometry_affine_inlier_ratio"
+            )
+            state.last_geometry_affine_spatial_coverage_ratio = assessment.get(
+                "geometry_affine_spatial_coverage_ratio"
+            )
+            state.last_geometry_affine_grid_coverage_ratio = assessment.get(
+                "geometry_affine_grid_coverage_ratio"
+            )
+            state.last_geometry_affine_median_corner_displacement_ratio = assessment.get(
+                "geometry_affine_median_corner_displacement_ratio"
+            )
+            state.last_geometry_affine_max_corner_displacement_ratio = assessment.get(
+                "geometry_affine_max_corner_displacement_ratio"
+            )
+            state.last_geometry_model_agreement = str(
+                assessment.get("geometry_model_agreement") or "not_checked"
+            )
 
     def _calibration_frame_matches(self, reference: Any, frame: Any) -> bool:
         if reference.shape != frame.shape:
@@ -891,6 +945,15 @@ class PrivacyBackgroundReconstructor:
                     "geometry_inlier_ratio": state.last_geometry_inlier_ratio,
                     "geometry_median_corner_displacement_ratio": state.last_geometry_median_corner_displacement_ratio,
                     "geometry_max_corner_displacement_ratio": state.last_geometry_max_corner_displacement_ratio,
+                    "geometry_spatial_coverage_ratio": state.last_geometry_spatial_coverage_ratio,
+                    "geometry_grid_coverage_ratio": state.last_geometry_grid_coverage_ratio,
+                    "geometry_affine_inliers": state.last_geometry_affine_inliers,
+                    "geometry_affine_inlier_ratio": state.last_geometry_affine_inlier_ratio,
+                    "geometry_affine_spatial_coverage_ratio": state.last_geometry_affine_spatial_coverage_ratio,
+                    "geometry_affine_grid_coverage_ratio": state.last_geometry_affine_grid_coverage_ratio,
+                    "geometry_affine_median_corner_displacement_ratio": state.last_geometry_affine_median_corner_displacement_ratio,
+                    "geometry_affine_max_corner_displacement_ratio": state.last_geometry_affine_max_corner_displacement_ratio,
+                    "geometry_model_agreement": state.last_geometry_model_agreement,
                     "geometry_cached": True,
                 }
         assessment = self.geometry_verifier.assess(background, frame, excluded_mask=excluded_mask)
@@ -911,6 +974,33 @@ class PrivacyBackgroundReconstructor:
                 )
                 state.last_geometry_max_corner_displacement_ratio = assessment.get(
                     "geometry_max_corner_displacement_ratio"
+                )
+                state.last_geometry_spatial_coverage_ratio = assessment.get(
+                    "geometry_spatial_coverage_ratio"
+                )
+                state.last_geometry_grid_coverage_ratio = assessment.get(
+                    "geometry_grid_coverage_ratio"
+                )
+                state.last_geometry_affine_inliers = int(
+                    assessment.get("geometry_affine_inliers") or 0
+                )
+                state.last_geometry_affine_inlier_ratio = assessment.get(
+                    "geometry_affine_inlier_ratio"
+                )
+                state.last_geometry_affine_spatial_coverage_ratio = assessment.get(
+                    "geometry_affine_spatial_coverage_ratio"
+                )
+                state.last_geometry_affine_grid_coverage_ratio = assessment.get(
+                    "geometry_affine_grid_coverage_ratio"
+                )
+                state.last_geometry_affine_median_corner_displacement_ratio = assessment.get(
+                    "geometry_affine_median_corner_displacement_ratio"
+                )
+                state.last_geometry_affine_max_corner_displacement_ratio = assessment.get(
+                    "geometry_affine_max_corner_displacement_ratio"
+                )
+                state.last_geometry_model_agreement = str(
+                    assessment.get("geometry_model_agreement") or "not_checked"
                 )
                 state.last_geometry_signature = signature
         return assessment
@@ -1000,6 +1090,15 @@ class PrivacyBackgroundReconstructor:
             "last_geometry_inlier_ratio": state.last_geometry_inlier_ratio,
             "last_geometry_median_corner_displacement_ratio": state.last_geometry_median_corner_displacement_ratio,
             "last_geometry_max_corner_displacement_ratio": state.last_geometry_max_corner_displacement_ratio,
+            "last_geometry_spatial_coverage_ratio": state.last_geometry_spatial_coverage_ratio,
+            "last_geometry_grid_coverage_ratio": state.last_geometry_grid_coverage_ratio,
+            "last_geometry_affine_inliers": state.last_geometry_affine_inliers,
+            "last_geometry_affine_inlier_ratio": state.last_geometry_affine_inlier_ratio,
+            "last_geometry_affine_spatial_coverage_ratio": state.last_geometry_affine_spatial_coverage_ratio,
+            "last_geometry_affine_grid_coverage_ratio": state.last_geometry_affine_grid_coverage_ratio,
+            "last_geometry_affine_median_corner_displacement_ratio": state.last_geometry_affine_median_corner_displacement_ratio,
+            "last_geometry_affine_max_corner_displacement_ratio": state.last_geometry_affine_max_corner_displacement_ratio,
+            "last_geometry_model_agreement": state.last_geometry_model_agreement,
             "last_geometry_check_age_ms": (
                 round(max(0.0, self._clock() - state.last_geometry_check_at) * 1000.0, 1)
                 if state.last_geometry_check_at > 0.0
