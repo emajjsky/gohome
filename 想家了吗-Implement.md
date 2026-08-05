@@ -12973,6 +12973,7 @@ P4 风险升频边界：
 ### 可观测性与验证
 
 - `runtime_status()` 保留原 `inference_backend` 状态，并新增 `pose_inference_service`，固定声明 `schema_version=shared-pose-inference-v1`、`runtime_ownership=single_shared_service`、`runtime_count=1`。
+- `/health` 显式投影同一非敏感所有权摘要，生产运维无需管理会话即可核对唯一 runtime；生产边界验证固定该字段，避免后续健康白名单重构再次隐藏关键指标。
 - 所有权专项验证 `DetectAgent.pipeline.pose_inference` 与 `DetectAgent.pose_inference_service` 为同一对象，并固定运行时状态契约；视觉管线测试改为通过共享服务注入 Hailo 结果和 Pose estimator，不再依赖已删除的重复属性。
 - Python 编译、DetectAgent 串行专项、视觉管线、运行环境检查和完整边缘回归 `58/58` 全部通过。
 

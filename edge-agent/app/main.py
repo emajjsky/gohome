@@ -1468,6 +1468,7 @@ def health() -> Dict[str, Any]:
         "service": "gohome-edge-agent",
         "worker_running": worker.is_running,
         "vision_runtime": {
+            "pose_inference_service": vision_status.get("pose_inference_service") or {},
             "pose": {
                 key: pose_status.get(key)
                 for key in (

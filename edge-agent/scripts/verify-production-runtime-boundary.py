@@ -157,6 +157,10 @@ def main() -> None:
     if "/ui" in mounted_paths:
         raise SystemExit("retired Web pilot remains mounted at /ui")
 
+    main_source = (APP_DIR / "main.py").read_text(encoding="utf-8")
+    if '"pose_inference_service": vision_status.get("pose_inference_service") or {}' not in main_source:
+        raise SystemExit("health endpoint does not expose Pose runtime ownership")
+
     forbidden_settings = {
         "frontend_dir",
         "edge_bootstrap_dir",
