@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from threading import Event, Lock, RLock, Thread
 from typing import Any, Callable, Dict
@@ -250,6 +251,7 @@ class ConfigSyncAgent:
 
     def _apply_config_locked(self, config: Dict[str, Any]) -> Dict[str, Any]:
         state = self._load_state()
+        original_state = deepcopy(state)
         camera_map = dict(state.get("camera_map") or {})
         desired_remote_ids: set[str] = set()
         reports: list[Dict[str, Any]] = []
@@ -322,7 +324,6 @@ class ConfigSyncAgent:
 
         state["camera_map"] = camera_map
         state["config_version"] = str(config.get("config_version") or "")
-        state["last_applied_at"] = self._utc_iso()
         self.observe_video_privacy_mode(
             normalize_privacy_mode(
                 dict(config.get("video_privacy") or {}).get("minimum_mode"),
@@ -330,7 +331,11 @@ class ConfigSyncAgent:
             )
         )
         state["video_privacy_mode"] = self.current_video_privacy_mode
-        rules_result = self._apply_rules(config.get("rules") or {}, str(config.get("rules_version") or ""))
+        rules_result = self._apply_rules(
+            config.get("rules") or {},
+            str(config.get("rules_version") or ""),
+            current_rules_version=str(state.get("rules_version") or ""),
+        )
         if rules_result.get("applied"):
             state["rules_version"] = rules_result.get("rules_version") or ""
         maintenance_result = self._apply_maintenance(config.get("maintenance") or {}, state)
@@ -338,7 +343,9 @@ class ConfigSyncAgent:
             config.get("event_state_commands") or [],
             state,
         )
-        self._save_state(state)
+        if state != original_state:
+            state["last_applied_at"] = self._utc_iso()
+            self._save_state(state)
 
         return {
             "applied": applied,
@@ -527,9 +534,21 @@ class ConfigSyncAgent:
                 "error": str(exc),
             }
 
-    def _apply_rules(self, rules: Dict[str, Any], rules_version: str = "") -> Dict[str, Any]:
+    def _apply_rules(
+        self,
+        rules: Dict[str, Any],
+        rules_version: str = "",
+        *,
+        current_rules_version: str = "",
+    ) -> Dict[str, Any]:
         if not rules:
-            return {"applied": False, "rules_version": ""}
+            return {"applied": False, "rules_version": str(current_rules_version or "")}
+        if rules_version and str(rules_version) == str(current_rules_version):
+            return {
+                "applied": False,
+                "unchanged": True,
+                "rules_version": str(current_rules_version),
+            }
         try:
             updated = self.storage.update_rules(rules)
             return {

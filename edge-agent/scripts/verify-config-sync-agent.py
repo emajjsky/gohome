@@ -219,10 +219,18 @@ def main() -> None:
         if len(command_reports) != 1 or command_reports[0].get("status") != "applied":
             raise SystemExit(f"event state command was not reported as applied: {reports[-1]}")
 
+        state_before_duplicate = state_path.read_bytes()
+        rules_before_duplicate = storage.get_rules()
         duplicate = agent.process_once()
+        state_after_duplicate = state_path.read_bytes()
+        rules_after_duplicate = storage.get_rules()
         duplicate_reports = reports[-1].get("event_state_commands") or []
         if duplicate.get("ok") is not True or len(duplicate_reports) != 1 or duplicate_reports[0].get("status") != "already_applied":
             raise SystemExit(f"duplicate event state command was not idempotent: {duplicate_reports}")
+        if state_after_duplicate != state_before_duplicate:
+            raise SystemExit("unchanged config sync rewrote durable state")
+        if rules_after_duplicate.get("updated_at") != rules_before_duplicate.get("updated_at"):
+            raise SystemExit("unchanged config sync rewrote the active rules")
 
         config_holder["payload"] = {
             "ok": True,
