@@ -156,6 +156,22 @@ class CameraAgentStub:
         self.stop_event.set()
 
 
+class ContinuousCameraAgentStub:
+    def raw_frames(self, camera, **options):
+        assert options == {"fps": 15, "max_width": 640, "max_height": 360}
+        index = 0
+        while True:
+            index += 1
+            yield {
+                "frame": np.full((36, 64, 3), index % 255, dtype=np.uint8),
+                "frame_id": f"{camera['id']}-{index}",
+                "source_key": f"camera-{camera['id']}-source",
+                "captured_at": "2026-08-03T08:00:00+00:00",
+                "captured_monotonic": time.monotonic(),
+            }
+            time.sleep(0.005)
+
+
 class PrivacyRendererStub:
     def __init__(self, blocked_frames: int = 0) -> None:
         self.render_calls = 0
@@ -529,6 +545,56 @@ def verify_relay_uses_single_composed_h264_publisher() -> None:
         assert retired not in source
 
 
+def verify_relay_preserves_camera_thread_lifecycle() -> None:
+    publisher_factory = PublisherRecorderFactory()
+    remote_camera_id = [102]
+    storage = SimpleNamespace(
+        list_cameras=lambda **_kwargs: [{
+            "id": 2,
+            "stream_url": "demo:living_room",
+            "username": None,
+            "password": None,
+            "enabled": True,
+        }]
+    )
+    relay = LiveRelayAgent(
+        storage=storage,
+        settings=SettingsStub(),
+        camera_agent=ContinuousCameraAgentStub(),
+        device_id_resolver=lambda: "edge-test",
+        token_resolver=lambda: "issued-token",
+        remote_camera_id_resolver=lambda _camera_id: remote_camera_id[0],
+        privacy_mode_resolver=lambda: "original",
+        privacy_renderer=None,
+        publisher_factory=publisher_factory,
+    )
+    relay._sync_camera_threads()
+    wait_until(lambda: len(publisher_factory.instances) == 1)
+    initial = relay.status()["camera_lifecycle"]["2"]
+    assert initial["thread_starts"] == 1
+    assert initial["thread_stops"] == 0
+    assert initial["last_start_reason"] == "initial"
+    assert initial["active"]
+
+    remote_camera_id[0] = 202
+    relay._sync_camera_threads()
+    wait_until(lambda: len(publisher_factory.instances) == 2)
+    restarted = relay.status()["camera_lifecycle"]["2"]
+    assert restarted["thread_starts"] == 2
+    assert restarted["thread_stops"] == 1
+    assert restarted["last_stop_reason"] == "camera_signature_changed"
+    assert restarted["last_start_reason"] == "camera_signature_changed"
+    assert restarted["active"]
+    assert publisher_factory.instances[0].closed
+
+    relay._stop_all_camera_threads(reason="verification_complete")
+    stopped = relay.status()["camera_lifecycle"]["2"]
+    assert stopped["thread_starts"] == 2
+    assert stopped["thread_stops"] == 2
+    assert stopped["last_stop_reason"] == "verification_complete"
+    assert not stopped["active"]
+
+
 def main() -> int:
     verify_url_and_command_contract()
     verify_latest_frame_and_context_restart()
@@ -536,6 +602,7 @@ def main() -> int:
     verify_cold_start_uses_handshake_deadline()
     verify_shutdown_aborts_partial_frame_before_closing_input()
     verify_relay_uses_single_composed_h264_publisher()
+    verify_relay_preserves_camera_thread_lifecycle()
     print({
         "ok": True,
         "transport": "h264-rtsps",

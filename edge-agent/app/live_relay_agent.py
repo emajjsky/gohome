@@ -44,7 +44,9 @@ class LiveRelayAgent:
         self._thread: Thread | None = None
         self._camera_threads: Dict[int, Thread] = {}
         self._camera_stops: Dict[int, Event] = {}
+        self._camera_stop_reasons: Dict[int, str] = {}
         self._camera_signatures: Dict[int, tuple[Any, ...]] = {}
+        self._camera_lifecycle: Dict[int, Dict[str, Any]] = {}
         self._publishers: Dict[int, H264StreamPublisher] = {}
         self._state_lock = Lock()
         self._camera_privacy_modes: Dict[int, str] = {}
@@ -94,13 +96,10 @@ class LiveRelayAgent:
         camera_id = int(transition.get("camera_id") or 0)
         if camera_id <= 0:
             return
-        with self._state_lock:
-            stop_event = self._camera_stops.get(camera_id)
-            publisher = self._publishers.get(camera_id)
-        if stop_event is not None:
-            stop_event.set()
-        if publisher is not None:
-            publisher.pause(str(transition.get("reason") or "source_transition"))
+        self._request_camera_stop(
+            camera_id,
+            str(transition.get("reason") or "source_transition"),
+        )
         self._wake.set()
 
     def status(self) -> Dict[str, Any]:
@@ -124,6 +123,16 @@ class LiveRelayAgent:
             recovered_camera_errors = {
                 str(camera_id): dict(error)
                 for camera_id, error in sorted(self._recovered_camera_errors.items())
+            }
+            camera_lifecycle = {
+                str(camera_id): {
+                    **dict(state),
+                    "active": bool(
+                        self._camera_threads.get(camera_id)
+                        and self._camera_threads[camera_id].is_alive()
+                    ),
+                }
+                for camera_id, state in sorted(self._camera_lifecycle.items())
             }
             current_error = self._service_error
             if not current_error:
@@ -152,6 +161,7 @@ class LiveRelayAgent:
             "last_error": current_error,
             "camera_errors": camera_errors,
             "recovered_camera_errors": recovered_camera_errors,
+            "camera_lifecycle": camera_lifecycle,
             "cameras": publisher_status,
             "privacy_mode": normalize_privacy_mode(self.privacy_mode_resolver()),
             "camera_privacy_modes": {
@@ -205,11 +215,24 @@ class LiveRelayAgent:
                 )
                 for camera_id, thread in self._camera_threads.items()
             }
+        restart_reasons: Dict[int, str] = {}
         for camera_id, (thread, stop_event, signature) in existing.items():
             changed = signature != signatures.get(camera_id)
             stopping = stop_event is not None and stop_event.is_set()
-            if camera_id not in active_ids or not thread.is_alive() or changed or stopping:
-                self._stop_camera(camera_id)
+            if camera_id not in active_ids:
+                reason = "camera_removed_or_disabled"
+            elif not thread.is_alive():
+                reason = "camera_thread_exited"
+            elif changed:
+                reason = "camera_signature_changed"
+            elif stopping:
+                with self._state_lock:
+                    reason = self._camera_stop_reasons.get(camera_id, "camera_stop_requested")
+            else:
+                continue
+            stopped = self._stop_camera(camera_id, reason=reason)
+            if stopped and camera_id in active_ids:
+                restart_reasons[camera_id] = reason
 
         for camera in cameras:
             camera_id = int(camera["id"])
@@ -228,18 +251,46 @@ class LiveRelayAgent:
                 self._camera_stops[camera_id] = stop_event
                 self._camera_signatures[camera_id] = signatures[camera_id]
                 self._camera_threads[camera_id] = thread
+                lifecycle = dict(self._camera_lifecycle.get(camera_id) or {})
+                start_reason = restart_reasons.get(
+                    camera_id,
+                    "initial" if not int(lifecycle.get("thread_starts") or 0) else "camera_thread_recovered",
+                )
+                self._camera_lifecycle[camera_id] = {
+                    **lifecycle,
+                    "thread_starts": int(lifecycle.get("thread_starts") or 0) + 1,
+                    "thread_stops": int(lifecycle.get("thread_stops") or 0),
+                    "last_start_reason": start_reason,
+                    "last_started_at": self._utc_iso(),
+                }
             thread.start()
 
-    def _stop_camera(self, camera_id: int) -> bool:
+    def _request_camera_stop(self, camera_id: int, reason: str) -> None:
         camera_id = int(camera_id)
+        resolved_reason = str(reason or "camera_stop_requested")
+        with self._state_lock:
+            stop_event = self._camera_stops.get(camera_id)
+            publisher = self._publishers.get(camera_id)
+            self._camera_stop_reasons[camera_id] = resolved_reason
+        if stop_event is not None:
+            stop_event.set()
+        if publisher is not None:
+            publisher.pause(resolved_reason)
+
+    def _stop_camera(self, camera_id: int, *, reason: str) -> bool:
+        camera_id = int(camera_id)
+        resolved_reason = str(reason or "camera_stopping")
         with self._state_lock:
             stop_event = self._camera_stops.get(camera_id)
             publisher = self._publishers.get(camera_id)
             thread = self._camera_threads.get(camera_id)
+            requested_reason = self._camera_stop_reasons.get(camera_id)
+        if requested_reason:
+            resolved_reason = requested_reason
         if stop_event is not None:
             stop_event.set()
         if publisher is not None:
-            publisher.pause("camera_stopping")
+            publisher.pause(resolved_reason)
         if thread is not None and thread.is_alive():
             thread.join(timeout=5.0)
         if thread is not None and thread.is_alive():
@@ -250,9 +301,18 @@ class LiveRelayAgent:
                 self._camera_threads.pop(camera_id, None)
             if self._camera_stops.get(camera_id) is stop_event:
                 self._camera_stops.pop(camera_id, None)
+            self._camera_stop_reasons.pop(camera_id, None)
             self._camera_signatures.pop(camera_id, None)
             self._camera_privacy_modes.pop(camera_id, None)
             self._camera_privacy_states.pop(camera_id, None)
+            lifecycle = dict(self._camera_lifecycle.get(camera_id) or {})
+            self._camera_lifecycle[camera_id] = {
+                **lifecycle,
+                "thread_starts": int(lifecycle.get("thread_starts") or 0),
+                "thread_stops": int(lifecycle.get("thread_stops") or 0) + 1,
+                "last_stop_reason": resolved_reason,
+                "last_stopped_at": self._utc_iso(),
+            }
         self._clear_camera_error(camera_id)
         return True
 
@@ -261,12 +321,14 @@ class LiveRelayAgent:
             stop_events = list(self._camera_stops.values())
             publishers = list(self._publishers.values())
             camera_ids = list(self._camera_threads)
+            for camera_id in camera_ids:
+                self._camera_stop_reasons[camera_id] = str(reason or "relay_stopping")
         for stop_event in stop_events:
             stop_event.set()
         for publisher in publishers:
             publisher.pause(reason)
         for camera_id in camera_ids:
-            self._stop_camera(camera_id)
+            self._stop_camera(camera_id, reason=reason)
 
     def _camera_signature(self, camera: Dict[str, Any]) -> tuple[Any, ...]:
         token_digest = sha256(self._device_token().encode("utf-8")).hexdigest()
