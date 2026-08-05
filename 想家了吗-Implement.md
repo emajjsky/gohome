@@ -13138,3 +13138,12 @@ P4 风险升频边界：
 - 不读取家庭图片，直到取得明确数据使用授权。
 - 单独启动带模式前置断言的纯骨架长测：开始前必须两路 ready 且每个采样均为 `privacy_mode=skeleton`，否则立即判定验收无效，不再用原画稳定性替代骨架结果。
 - 长测结束后安排 SQLite 受控压缩；先停写并做完整性校验，压缩后验证数据库、服务、双路发布和文件大小。物理文件较大主要是可复用空闲页，不允许在实时视频验收期间执行 `VACUUM`。
+
+## 200. 2026-08-06 盒子 SQLite 受控压缩
+
+- 长测结束后预检 `data/agent.db`：物理大小 `693,161,984` 字节，页大小 `4096`、总页数 `169229`、freelist `141875`，可复用空闲页 `581,120,000` 字节，估算有效内容 `112,041,984` 字节；`quick_check=ok`、WAL 模式、磁盘可用约 `41.6 GB`。
+- 停止 `gohome-edge-agent` 作为唯一写入方后执行 WAL checkpoint；使用 SQLite `VACUUM INTO` 生成同目录候选库，不原地改写源库。候选库独立 `quick_check=ok / integrity_check=ok / freelist=0` 后，保留原权限并以目录 fsync 的原子重命名切换。
+- 服务启动和 `/health` 通过后再次读取活动库，`quick_check=ok`，物理大小 `110,723,072` 字节；随后才删除旧库并 fsync 数据目录。压缩候选和旧库备份均无残留。
+- 恢复后 `snapshots=307`、`detection_results=305`、`rule_evaluations=484`、`event_candidates=283`、`events=484`、`upload_jobs=7367`、`media_lifecycle_jobs=26744`。计数相对长测前继续增长，证明不是清空数据库。
+- 两路摄像头均为 streaming，发布器 `publish_ready=true / process_starts=1 / process_failures=0`；读取、重连、Pose、Object 和发布失败为 0，温度 `62.25°C`，服务 `NRestarts=0` 且无 warning。
+- 压缩只回收历史删除留下的物理空闲页，不替代现有环形留存。后续数据库先复用内部空闲页并在留存高水位删除最旧记录；GH-013 仍需持续高水位、断电恢复和多轮循环删除实机验收。
