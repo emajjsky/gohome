@@ -13147,3 +13147,25 @@ P4 风险升频边界：
 - 恢复后 `snapshots=307`、`detection_results=305`、`rule_evaluations=484`、`event_candidates=283`、`events=484`、`upload_jobs=7367`、`media_lifecycle_jobs=26744`。计数相对长测前继续增长，证明不是清空数据库。
 - 两路摄像头均为 streaming，发布器 `publish_ready=true / process_starts=1 / process_failures=0`；读取、重连、Pose、Object 和发布失败为 0，温度 `62.25°C`，服务 `NRestarts=0` 且无 warning。
 - 压缩只回收历史删除留下的物理空闲页，不替代现有环形留存。后续数据库先复用内部空闲页并在留存高水位删除最旧记录；GH-013 仍需持续高水位、断电恢复和多轮循环删除实机验收。
+
+## 201. 2026-08-06 重启场景复验三态状态机
+
+### 现场根因
+
+- SQLite 压缩后的正常服务重启保留了两路持久基线，但摄像头 31/32 都被永久标记为 `scene_review_required`。
+- 31 路已有 `13` 个匹配、`8` 个内点、内点率 `0.6154`；32 路已有 `22` 个匹配、`12` 个内点、内点率 `0.5455`。几何层给出的真实结论均为 `unverifiable`，不是 `camera_view_changed`。
+- 旧几何实现会在固定强证据门槛前提前返回，无法给已有中等证据计算角点位移；背景状态机随后只检查 `accepted=false`，把证据不足和可靠移动合并为同一永久失败。
+
+### 实现边界
+
+- `SceneGeometryVerifier` 现在先以最低可估计门槛求单应变换，再把证据分为 strong、moderate 和 none。同视角允许中等证据配合严格位移边界；机位改变必须是强证据。位移超限但证据不够强时固定返回 `unverifiable / camera_change_evidence_weak`。
+- `PrivacyBackgroundReconstructor` 统一消费 `same_view / camera_view_changed / unverifiable`。重启复验只有连续同视角达到 `3` 帧才 ready；不可验证会清除移动候选、保留文件并继续复验；连续 `3` 帧可靠移动才进入 `scene_review_required`。
+- 对已经 ready 的流，不可验证只作为诊断状态，人物清除仍使用当前帧分割、当前帧 Pose 辅助掩码和原持久基线。没有新增原画、模糊、旧帧或客户端合成兜底。
+- 健康状态新增不可验证次数、移动确认门槛和几何置信度，便于区分“正在取证”和“确认移动”。每个状态仍以摄像头、配置源和分辨率隔离。
+
+### 自动验证
+
+- 新增脚本化几何序列：连续 4 次不可验证不得丢失基线或进入场景复核；另一摄像头可独立完成复验；随后 3 次中等置信同视角可恢复 ready。
+- 摄像头移动用例由单帧阻断改为连续 3 次强证据确认，确认后仍保留旧基线，恢复原场景或显式重校准路径不变。
+- 原有纯骨架、人物掩码、电视局部变化、大面积家具变化、灯光、流代、服务重启、相邻 Pose 拒绝、事务校准和持久化失败用例全部通过。
+- `verify-video-privacy.py`、`verify-privacy-calibration-api.py` 和完整边缘回归 `59/59` 通过；下一步必须用 Pi 现有两份真实基线验证自动恢复，不能用重校准掩盖问题。

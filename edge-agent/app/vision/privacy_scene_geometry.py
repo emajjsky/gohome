@@ -8,7 +8,7 @@ import numpy as np
 class SceneGeometryVerifier:
     """Distinguish camera viewpoint changes from ordinary household changes."""
 
-    version = "privacy-scene-geometry-v1"
+    version = "privacy-scene-geometry-v2"
 
     def __init__(
         self,
@@ -17,6 +17,9 @@ class SceneGeometryVerifier:
         minimum_matches: int = 12,
         minimum_inliers: int = 10,
         minimum_inlier_ratio: float = 0.55,
+        minimum_transform_matches: int = 8,
+        minimum_transform_inliers: int = 6,
+        minimum_transform_inlier_ratio: float = 0.40,
         maximum_median_corner_displacement_ratio: float = 0.015,
         maximum_corner_displacement_ratio: float = 0.025,
     ) -> None:
@@ -24,6 +27,18 @@ class SceneGeometryVerifier:
         self.minimum_matches = max(8, int(minimum_matches))
         self.minimum_inliers = max(6, int(minimum_inliers))
         self.minimum_inlier_ratio = max(0.3, min(0.95, float(minimum_inlier_ratio)))
+        self.minimum_transform_matches = max(6, min(
+            self.minimum_matches,
+            int(minimum_transform_matches),
+        ))
+        self.minimum_transform_inliers = max(4, min(
+            self.minimum_inliers,
+            int(minimum_transform_inliers),
+        ))
+        self.minimum_transform_inlier_ratio = max(
+            0.25,
+            min(self.minimum_inlier_ratio, float(minimum_transform_inlier_ratio)),
+        )
         self.maximum_median_corner_displacement_ratio = max(
             0.002,
             float(maximum_median_corner_displacement_ratio),
@@ -75,7 +90,7 @@ class SceneGeometryVerifier:
             first, second = pair
             if first.distance < 0.75 * second.distance:
                 matches.append(first)
-        if len(matches) < self.minimum_matches:
+        if len(matches) < self.minimum_transform_matches:
             return self._unverifiable(
                 "insufficient_geometry_matches",
                 good_matches=len(matches),
@@ -100,7 +115,10 @@ class SceneGeometryVerifier:
             )
         inliers = int(np.count_nonzero(inlier_mask))
         inlier_ratio = inliers / max(1, len(matches))
-        if inliers < self.minimum_inliers or inlier_ratio < self.minimum_inlier_ratio:
+        if (
+            inliers < self.minimum_transform_inliers
+            or inlier_ratio < self.minimum_transform_inlier_ratio
+        ):
             return self._unverifiable(
                 "insufficient_geometry_inliers",
                 good_matches=len(matches),
@@ -126,10 +144,26 @@ class SceneGeometryVerifier:
             median_displacement <= self.maximum_median_corner_displacement_ratio
             and maximum_displacement <= self.maximum_corner_displacement_ratio
         )
+        strong_evidence = bool(
+            len(matches) >= self.minimum_matches
+            and inliers >= self.minimum_inliers
+            and inlier_ratio >= self.minimum_inlier_ratio
+        )
+        if not same_view and not strong_evidence:
+            return self._unverifiable(
+                "camera_change_evidence_weak",
+                good_matches=len(matches),
+                inliers=inliers,
+                inlier_ratio=inlier_ratio,
+                median_corner_displacement_ratio=median_displacement,
+                max_corner_displacement_ratio=maximum_displacement,
+                confidence="moderate",
+            )
         return {
             "accepted": same_view,
             "geometry_status": "same_view" if same_view else "camera_view_changed",
             "geometry_reason": "" if same_view else "camera_view_changed",
+            "geometry_confidence": "strong" if strong_evidence else "moderate",
             "geometry_good_matches": len(matches),
             "geometry_inliers": inliers,
             "geometry_inlier_ratio": round(inlier_ratio, 4),
@@ -181,17 +215,29 @@ class SceneGeometryVerifier:
         good_matches: int = 0,
         inliers: int = 0,
         inlier_ratio: float | None = None,
+        median_corner_displacement_ratio: float | None = None,
+        max_corner_displacement_ratio: float | None = None,
+        confidence: str = "none",
     ) -> dict[str, Any]:
         return {
             "accepted": False,
             "geometry_status": "unverifiable",
             "geometry_reason": str(reason),
+            "geometry_confidence": str(confidence),
             "geometry_good_matches": int(good_matches),
             "geometry_inliers": int(inliers),
             "geometry_inlier_ratio": (
                 None if inlier_ratio is None else round(float(inlier_ratio), 4)
             ),
-            "geometry_median_corner_displacement_ratio": None,
-            "geometry_max_corner_displacement_ratio": None,
+            "geometry_median_corner_displacement_ratio": (
+                None
+                if median_corner_displacement_ratio is None
+                else round(float(median_corner_displacement_ratio), 5)
+            ),
+            "geometry_max_corner_displacement_ratio": (
+                None
+                if max_corner_displacement_ratio is None
+                else round(float(max_corner_displacement_ratio), 5)
+            ),
             "geometry_cached": False,
         }

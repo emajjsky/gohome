@@ -78,6 +78,41 @@ class ManualClock:
         self.value += float(seconds)
 
 
+class ScriptedGeometryVerifier:
+    def __init__(self, outcomes: list[dict]) -> None:
+        self.outcomes = [dict(outcome) for outcome in outcomes]
+        self.call_count = 0
+
+    def signature(self, frame, *, excluded_mask=None):
+        del frame, excluded_mask
+        return self.call_count
+
+    def signatures_match(self, previous, current) -> bool:
+        del previous, current
+        return False
+
+    def assess(self, background, frame, *, excluded_mask=None):
+        del background, frame, excluded_mask
+        index = min(self.call_count, len(self.outcomes) - 1)
+        self.call_count += 1
+        return dict(self.outcomes[index])
+
+
+def geometry_outcome(status: str, *, confidence: str = "strong") -> dict:
+    return {
+        "accepted": status == "same_view",
+        "geometry_status": status,
+        "geometry_reason": "" if status == "same_view" else status,
+        "geometry_confidence": confidence,
+        "geometry_good_matches": 24 if confidence == "strong" else 8,
+        "geometry_inliers": 18 if confidence == "strong" else 5,
+        "geometry_inlier_ratio": 0.75 if confidence == "strong" else 0.5,
+        "geometry_median_corner_displacement_ratio": 0.002 if status == "same_view" else None,
+        "geometry_max_corner_displacement_ratio": 0.004 if status == "same_view" else None,
+        "geometry_cached": False,
+    }
+
+
 class SyntheticSegmentation:
     def __init__(self, backgrounds: dict[str, np.ndarray]) -> None:
         self.backgrounds = {key: value.copy() for key, value in backgrounds.items()}
@@ -629,9 +664,122 @@ def main() -> int:
         )
         assert mean_delta(lighting_render, lighting_change) < 12.0
 
+        tri_state_dir = Path(temporary_dir) / "tri-state"
+        tri_state_seed = PrivacyFrameRenderer(
+            tracker,
+            PrivacyBackgroundReconstructor(storage_dir=tri_state_dir),
+            SyntheticSegmentation({"camera-a": clean_a, "camera-b": clean_b}),
+        )
+        calibrate(
+            tri_state_seed,
+            tracker,
+            clean_a,
+            camera_id=1,
+            source_key=source_a_g1,
+        )
+        calibrate(
+            tri_state_seed,
+            tracker,
+            clean_b,
+            camera_id=2,
+            source_key=source_b_g1,
+        )
+        scripted_geometry = ScriptedGeometryVerifier(
+            [geometry_outcome("unverifiable", confidence="none")] * 4
+            + [geometry_outcome("same_view", confidence="moderate")] * 3
+        )
+        tri_state = PrivacyFrameRenderer(
+            tracker,
+            PrivacyBackgroundReconstructor(
+                storage_dir=tri_state_dir,
+                geometry_verifier=scripted_geometry,
+                monotonic_clock=revalidation_clock,
+            ),
+            SyntheticSegmentation({"camera-a": clean_a, "camera-b": clean_b}),
+            revalidation_interval_seconds=1.0,
+            monotonic_clock=revalidation_clock,
+        )
+        low_feature_same_view = np.full_like(clean_a, 210)
+        for sequence in range(4):
+            revalidation_clock.advance(1.0)
+            render(
+                tri_state,
+                tracker,
+                low_feature_same_view,
+                camera_id=1,
+                source_key=source_a_g1,
+                frame_id=f"1-unverifiable-{sequence}",
+                person=False,
+                mode="original",
+            )
+        uncertain_status = tri_state.background_reconstructor.inspect(
+            1,
+            source_key=source_a_g1,
+            width=320,
+            height=180,
+        )
+        assert uncertain_status["ready"] is False
+        assert uncertain_status["status"] == "revalidating"
+        assert uncertain_status["scene_status"] == "revalidation_uncertain"
+        assert uncertain_status["scene_mismatch_observations"] == 0
+        assert uncertain_status["scene_unverifiable_observations"] == 4
+        assert uncertain_status["baseline_retained"] is True
+
+        for sequence in range(tri_state.background_reconstructor.revalidation_frames):
+            revalidation_clock.advance(1.0)
+            render(
+                tri_state,
+                tracker,
+                clean_b,
+                camera_id=2,
+                source_key=source_b_g1,
+                frame_id=f"2-independent-revalidate-{sequence}",
+                person=False,
+                mode="original",
+            )
+        independent_status = tri_state.background_reconstructor.inspect(
+            2,
+            source_key=source_b_g1,
+            width=320,
+            height=180,
+        )
+        assert independent_status["ready"] is True
+        assert tri_state.background_reconstructor.inspect(
+            1,
+            source_key=source_a_g1,
+            width=320,
+            height=180,
+        )["ready"] is False
+
+        for sequence in range(tri_state.background_reconstructor.revalidation_frames):
+            revalidation_clock.advance(1.0)
+            render(
+                tri_state,
+                tracker,
+                low_feature_same_view,
+                camera_id=1,
+                source_key=source_a_g1,
+                frame_id=f"1-reliable-recovery-{sequence}",
+                person=False,
+                mode="original",
+            )
+        recovered_status = tri_state.background_reconstructor.inspect(
+            1,
+            source_key=source_a_g1,
+            width=320,
+            height=180,
+        )
+        assert recovered_status["ready"] is True
+        assert recovered_status["last_geometry_status"] == "same_view"
+        assert recovered_status["last_geometry_confidence"] == "moderate"
+        assert recovered_status["scene_unverifiable_observations"] == 0
+
         changed_restart = PrivacyFrameRenderer(
             tracker,
-            PrivacyBackgroundReconstructor(storage_dir=temporary_dir),
+            PrivacyBackgroundReconstructor(
+                storage_dir=temporary_dir,
+                monotonic_clock=revalidation_clock,
+            ),
             SyntheticSegmentation({"camera-a": clean_a}),
             revalidation_interval_seconds=1.0,
             monotonic_clock=revalidation_clock,
@@ -664,7 +812,7 @@ def main() -> int:
         assert changed_restart_status["last_geometry_status"] == "same_view"
 
         moved_scene = np.roll(clean_a, 52, axis=1)
-        assert_calibration_required(lambda: render(
+        first_move_candidate = render(
             persisted,
             tracker,
             moved_scene,
@@ -673,14 +821,28 @@ def main() -> int:
             frame_id="1-moved-scene",
             person=False,
             mode="skeleton",
-        ), "scene_revalidation_required")
-        assert_calibration_required(lambda: render(
+        )
+        assert mean_delta(first_move_candidate, moved_scene) < 8.0
+        revalidation_clock.advance(1.0)
+        second_move_candidate = render(
             persisted,
             tracker,
             moved_scene,
             camera_id=1,
             source_key=source_a_g1,
             frame_id="1-moved-scene-repeat",
+            person=False,
+            mode="skeleton",
+        )
+        assert mean_delta(second_move_candidate, moved_scene) < 8.0
+        revalidation_clock.advance(1.0)
+        assert_calibration_required(lambda: render(
+            persisted,
+            tracker,
+            moved_scene,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-moved-scene-confirmed",
             person=False,
             mode="skeleton",
         ), "scene_revalidation_required")
@@ -913,6 +1075,10 @@ def main() -> int:
         "large_household_change_retained": True,
         "large_household_change_restart_revalidated": True,
         "lighting_change_retained": True,
+        "unverifiable_scene_retains_baseline": True,
+        "unverifiable_scene_recovers": True,
+        "revalidation_camera_isolation": True,
+        "camera_move_requires_reliable_sequence": True,
         "camera_move_preserves_baseline": True,
         "stream_generation_revalidation": True,
         "adjacent_pose_rejected": True,

@@ -35,11 +35,13 @@ class _BackgroundState:
     scene_status: str = "calibration_required"
     scene_match_observations: int = 0
     scene_mismatch_observations: int = 0
+    scene_unverifiable_observations: int = 0
     last_scene_match_ratio: float | None = None
     last_scene_median_residual: float | None = None
     last_geometry_check_at: float = 0.0
     last_geometry_status: str = "not_checked"
     last_geometry_reason: str = ""
+    last_geometry_confidence: str = "none"
     last_geometry_good_matches: int = 0
     last_geometry_inliers: int = 0
     last_geometry_inlier_ratio: float | None = None
@@ -66,7 +68,7 @@ class _BackgroundState:
 class PrivacyBackgroundReconstructor:
     """Compose pure-skeleton scenes from an explicitly calibrated empty room."""
 
-    version = "privacy-background-calibration-v2"
+    version = "privacy-background-calibration-v3"
 
     def __init__(
         self,
@@ -75,6 +77,7 @@ class PrivacyBackgroundReconstructor:
         max_states: int = 6,
         confirmation_frames: int = 8,
         revalidation_frames: int = 3,
+        scene_change_confirmation_frames: int = 3,
         foreground_threshold: int = 24,
         recent_mask_seconds: float = 1.4,
         geometry_recheck_seconds: float = 1.0,
@@ -85,6 +88,10 @@ class PrivacyBackgroundReconstructor:
         self.max_states = max(1, int(max_states))
         self.confirmation_frames = max(3, int(confirmation_frames))
         self.revalidation_frames = max(2, int(revalidation_frames))
+        self.scene_change_confirmation_frames = max(
+            2,
+            int(scene_change_confirmation_frames),
+        )
         self.foreground_threshold = max(8, min(80, int(foreground_threshold)))
         self.recent_mask_seconds = max(0.2, min(float(recent_mask_seconds), 3.0))
         self.geometry_recheck_seconds = max(0.25, min(float(geometry_recheck_seconds), 5.0))
@@ -115,6 +122,9 @@ class PrivacyBackgroundReconstructor:
             state.generation_validated = False
             state.revalidation_observations = 0
             state.scene_status = "calibrating"
+            state.scene_match_observations = 0
+            state.scene_mismatch_observations = 0
+            state.scene_unverifiable_observations = 0
             state.calibration_active = True
             state.calibration_id = str(calibration_id)
             state.calibration_reference = None
@@ -222,11 +232,13 @@ class PrivacyBackgroundReconstructor:
                 state.scene_status = "stable"
                 state.scene_match_observations = 0
                 state.scene_mismatch_observations = 0
+                state.scene_unverifiable_observations = 0
                 state.last_scene_match_ratio = 1.0
                 state.last_scene_median_residual = 0.0
                 state.last_geometry_check_at = 0.0
                 state.last_geometry_status = "not_checked"
                 state.last_geometry_reason = ""
+                state.last_geometry_confidence = "none"
                 state.last_geometry_signature = None
                 state.calibration_active = False
                 state.calibration_reference = None
@@ -298,18 +310,25 @@ class PrivacyBackgroundReconstructor:
             frame,
             excluded_mask=mask,
         )
+        decision = str(assessment.get("decision") or "unverifiable")
         if not bool(cv2.countNonZero(mask)):
-            if not assessment["accepted"]:
-                self._mark_scene_review(key, baseline_revision, assessment)
-                raise PrivacyCalibrationRequired(camera_id, "scene_revalidation_required")
-            self._record_scene_match(key, baseline_revision, assessment)
+            if decision == "same_view":
+                self._record_scene_match(key, baseline_revision, assessment)
+            elif decision == "camera_view_changed":
+                if self._record_scene_change(key, baseline_revision, assessment):
+                    raise PrivacyCalibrationRequired(camera_id, "scene_revalidation_required")
+            else:
+                self._record_scene_unverifiable(key, baseline_revision, assessment)
             return frame.copy()
 
         if assessment["status"] != "insufficient_visible_area":
-            if not assessment["accepted"]:
-                self._mark_scene_review(key, baseline_revision, assessment)
-                raise PrivacyCalibrationRequired(camera_id, "scene_revalidation_required")
-            self._record_scene_match(key, baseline_revision, assessment)
+            if decision == "same_view":
+                self._record_scene_match(key, baseline_revision, assessment)
+            elif decision == "camera_view_changed":
+                if self._record_scene_change(key, baseline_revision, assessment):
+                    raise PrivacyCalibrationRequired(camera_id, "scene_revalidation_required")
+            else:
+                self._record_scene_unverifiable(key, baseline_revision, assessment)
 
         with self._lock:
             current = self._states.get(key)
@@ -489,6 +508,7 @@ class PrivacyBackgroundReconstructor:
             "neutral_fill": False,
             "confirmation_frames": self.confirmation_frames,
             "revalidation_frames": self.revalidation_frames,
+            "scene_change_confirmation_frames": self.scene_change_confirmation_frames,
             "foreground_threshold": self.foreground_threshold,
             "geometry_recheck_seconds": self.geometry_recheck_seconds,
             "state_count": len(states),
@@ -540,11 +560,15 @@ class PrivacyBackgroundReconstructor:
         state.revalidation_observations = 0
         state.last_revalidation_token = ""
         state.scene_status = "revalidation_required" if state.background is not None else "calibration_required"
+        state.scene_match_observations = 0
+        state.scene_mismatch_observations = 0
+        state.scene_unverifiable_observations = 0
         state.recent_person_mask = None
         state.recent_person_at = 0.0
         state.last_geometry_check_at = 0.0
         state.last_geometry_status = "not_checked"
         state.last_geometry_reason = ""
+        state.last_geometry_confidence = "none"
         state.last_geometry_signature = None
 
     def _protected_mask(self, cv2: Any, state: _BackgroundState, mask: Any) -> Any:
@@ -569,21 +593,62 @@ class PrivacyBackgroundReconstructor:
         frame: Any,
     ) -> tuple[bool, str]:
         assessment = self._scene_assessment(key, baseline_revision, background, frame)
+        decision = str(assessment.get("decision") or "unverifiable")
         with self._lock:
             state = self._states.get(key)
             if state is None or state.baseline_revision != baseline_revision:
                 return False, "background_state_changed"
-            if assessment["accepted"]:
+            if bool(assessment.get("geometry_cached")):
+                self._store_scene_metrics(state, assessment)
+                return (
+                    bool(state.generation_validated),
+                    "scene_revalidation_required"
+                    if state.scene_status == "scene_review_required"
+                    else "stream_revalidation_required",
+                )
+            if decision == "same_view":
                 state.revalidation_observations += 1
+                state.scene_match_observations += 1
+                state.scene_mismatch_observations = 0
+                state.scene_unverifiable_observations = 0
                 state.scene_status = str(assessment["status"])
                 state.last_error = ""
                 self._store_scene_metrics(state, assessment)
                 if state.revalidation_observations >= self.revalidation_frames:
                     state.generation_validated = True
+            elif decision == "camera_view_changed":
+                state.revalidation_observations = 0
+                state.scene_match_observations = 0
+                state.scene_unverifiable_observations = 0
+                state.scene_mismatch_observations += 1
+                confirmed = (
+                    state.scene_mismatch_observations
+                    >= self.scene_change_confirmation_frames
+                )
+                if (
+                    confirmed
+                    and state.scene_mismatch_observations
+                    == self.scene_change_confirmation_frames
+                ):
+                    state.scene_review_events += 1
+                state.scene_status = (
+                    "scene_review_required" if confirmed else "scene_change_pending"
+                )
+                state.last_error = (
+                    "camera_view_changed"
+                    if confirmed
+                    else "scene_change_confirmation_pending"
+                )
+                self._store_scene_metrics(state, assessment)
             else:
                 state.revalidation_observations = 0
-                state.scene_status = "scene_review_required"
-                state.last_error = "stream_revalidation_failed"
+                state.scene_match_observations = 0
+                state.scene_mismatch_observations = 0
+                state.scene_unverifiable_observations += 1
+                state.scene_status = "revalidation_uncertain"
+                state.last_error = str(
+                    assessment.get("reason") or "scene_geometry_unverifiable"
+                )
                 self._store_scene_metrics(state, assessment)
             state.last_used = self._clock()
             self._states.move_to_end(key)
@@ -591,12 +656,50 @@ class PrivacyBackgroundReconstructor:
                 return True, ""
             return (
                 False,
-                "stream_revalidation_required"
-                if assessment["accepted"]
-                else "scene_revalidation_required",
+                "scene_revalidation_required"
+                if state.scene_status == "scene_review_required"
+                else "stream_revalidation_required",
             )
 
-    def _mark_scene_review(
+    def _record_scene_change(
+        self,
+        key: tuple[int, str, int, int],
+        baseline_revision: int,
+        assessment: dict[str, Any],
+    ) -> bool:
+        with self._lock:
+            state = self._states.get(key)
+            if state is None or state.baseline_revision != baseline_revision:
+                return False
+            if bool(assessment.get("geometry_cached")):
+                self._store_scene_metrics(state, assessment)
+                return state.scene_status == "scene_review_required"
+            state.scene_match_observations = 0
+            state.scene_unverifiable_observations = 0
+            state.scene_mismatch_observations += 1
+            confirmed = (
+                state.scene_mismatch_observations
+                >= self.scene_change_confirmation_frames
+            )
+            if confirmed:
+                state.generation_validated = False
+                state.revalidation_observations = 0
+                state.scene_status = "scene_review_required"
+                if (
+                    state.scene_mismatch_observations
+                    == self.scene_change_confirmation_frames
+                ):
+                    state.scene_review_events += 1
+                state.last_error = str(
+                    assessment.get("reason") or "camera_view_changed"
+                )
+            else:
+                state.scene_status = "scene_change_pending"
+                state.last_error = "scene_change_confirmation_pending"
+            self._store_scene_metrics(state, assessment)
+            return confirmed
+
+    def _record_scene_unverifiable(
         self,
         key: tuple[int, str, int, int],
         baseline_revision: int,
@@ -606,12 +709,16 @@ class PrivacyBackgroundReconstructor:
             state = self._states.get(key)
             if state is None or state.baseline_revision != baseline_revision:
                 return
-            state.generation_validated = False
-            state.revalidation_observations = 0
-            state.scene_status = "scene_review_required"
-            state.scene_mismatch_observations += 1
-            state.scene_review_events += 1
-            state.last_error = str(assessment.get("reason") or "scene_revalidation_required")
+            if bool(assessment.get("geometry_cached")):
+                self._store_scene_metrics(state, assessment)
+                return
+            state.scene_match_observations = 0
+            state.scene_mismatch_observations = 0
+            state.scene_unverifiable_observations += 1
+            state.scene_status = "verification_pending"
+            state.last_error = str(
+                assessment.get("reason") or "scene_geometry_unverifiable"
+            )
             self._store_scene_metrics(state, assessment)
 
     def _record_scene_match(
@@ -624,9 +731,13 @@ class PrivacyBackgroundReconstructor:
             state = self._states.get(key)
             if state is None or state.baseline_revision != baseline_revision:
                 return
+            if bool(assessment.get("geometry_cached")):
+                self._store_scene_metrics(state, assessment)
+                return
             state.scene_status = str(assessment["status"])
             state.scene_match_observations += 1
             state.scene_mismatch_observations = 0
+            state.scene_unverifiable_observations = 0
             state.last_error = ""
             self._store_scene_metrics(state, assessment)
 
@@ -637,6 +748,9 @@ class PrivacyBackgroundReconstructor:
         if geometry_status and geometry_status != "not_required":
             state.last_geometry_status = str(geometry_status)
             state.last_geometry_reason = str(assessment.get("geometry_reason") or "")
+            state.last_geometry_confidence = str(
+                assessment.get("geometry_confidence") or "none"
+            )
             state.last_geometry_good_matches = int(assessment.get("geometry_good_matches") or 0)
             state.last_geometry_inliers = int(assessment.get("geometry_inliers") or 0)
             state.last_geometry_inlier_ratio = assessment.get("geometry_inlier_ratio")
@@ -664,6 +778,7 @@ class PrivacyBackgroundReconstructor:
         if background.shape != frame.shape:
             return {
                 "accepted": False,
+                "decision": "camera_view_changed",
                 "status": "scene_review_required",
                 "reason": "resolution_changed",
                 "match_ratio": 0.0,
@@ -677,6 +792,7 @@ class PrivacyBackgroundReconstructor:
         if int(np.count_nonzero(visible)) < 256:
             return {
                 "accepted": False,
+                "decision": "unverifiable",
                 "status": "insufficient_visible_area",
                 "reason": "insufficient_visible_area",
                 "match_ratio": None,
@@ -692,6 +808,7 @@ class PrivacyBackgroundReconstructor:
         status = "stable" if median_residual <= 12.0 and match_ratio >= 0.90 else "local_change"
         photometric = {
             "accepted": accepted,
+            "decision": "same_view" if accepted else "unverifiable",
             "status": status if accepted else "scene_review_required",
             "reason": "" if accepted else "scene_geometry_changed",
             "match_ratio": round(match_ratio, 4),
@@ -699,6 +816,7 @@ class PrivacyBackgroundReconstructor:
             "color_shift_bgr": [int(value) for value in color_shift],
             "geometry_status": "not_required" if accepted else "not_checked",
             "geometry_reason": "",
+            "geometry_confidence": "photometric" if accepted else "none",
             "geometry_good_matches": 0,
             "geometry_inliers": 0,
             "geometry_inlier_ratio": None,
@@ -714,12 +832,31 @@ class PrivacyBackgroundReconstructor:
             frame,
             excluded_mask=excluded_mask,
         )
-        geometry_accepted = bool(geometry.get("accepted"))
+        geometry_status = str(geometry.get("geometry_status") or "unverifiable")
+        geometry_accepted = geometry_status == "same_view"
+        decision = (
+            "same_view"
+            if geometry_accepted
+            else "camera_view_changed"
+            if geometry_status == "camera_view_changed"
+            else "unverifiable"
+        )
         return {
             **photometric,
             "accepted": geometry_accepted,
-            "status": "local_change" if geometry_accepted else "scene_review_required",
-            "reason": "" if geometry_accepted else str(geometry.get("geometry_reason") or "scene_geometry_changed"),
+            "decision": decision,
+            "status": (
+                "local_change"
+                if geometry_accepted
+                else "scene_review_required"
+                if decision == "camera_view_changed"
+                else "geometry_unverifiable"
+            ),
+            "reason": (
+                ""
+                if geometry_accepted
+                else str(geometry.get("geometry_reason") or "scene_geometry_unverifiable")
+            ),
             **{name: value for name, value in geometry.items() if name != "accepted"},
         }
 
@@ -745,8 +882,10 @@ class PrivacyBackgroundReconstructor:
             ):
                 return {
                     "accepted": state.last_geometry_status == "same_view",
+                    "decision": state.last_geometry_status,
                     "geometry_status": state.last_geometry_status,
                     "geometry_reason": state.last_geometry_reason,
+                    "geometry_confidence": state.last_geometry_confidence,
                     "geometry_good_matches": state.last_geometry_good_matches,
                     "geometry_inliers": state.last_geometry_inliers,
                     "geometry_inlier_ratio": state.last_geometry_inlier_ratio,
@@ -761,6 +900,9 @@ class PrivacyBackgroundReconstructor:
                 state.last_geometry_check_at = now
                 state.last_geometry_status = str(assessment.get("geometry_status") or "unverifiable")
                 state.last_geometry_reason = str(assessment.get("geometry_reason") or "")
+                state.last_geometry_confidence = str(
+                    assessment.get("geometry_confidence") or "none"
+                )
                 state.last_geometry_good_matches = int(assessment.get("geometry_good_matches") or 0)
                 state.last_geometry_inliers = int(assessment.get("geometry_inliers") or 0)
                 state.last_geometry_inlier_ratio = assessment.get("geometry_inlier_ratio")
@@ -846,10 +988,13 @@ class PrivacyBackgroundReconstructor:
             "scene_status": state.scene_status,
             "scene_match_observations": state.scene_match_observations,
             "scene_mismatch_observations": state.scene_mismatch_observations,
+            "scene_unverifiable_observations": state.scene_unverifiable_observations,
+            "scene_change_confirmation_frames": self.scene_change_confirmation_frames,
             "last_scene_match_ratio": state.last_scene_match_ratio,
             "last_scene_median_residual": state.last_scene_median_residual,
             "last_geometry_status": state.last_geometry_status,
             "last_geometry_reason": state.last_geometry_reason,
+            "last_geometry_confidence": state.last_geometry_confidence,
             "last_geometry_good_matches": state.last_geometry_good_matches,
             "last_geometry_inliers": state.last_geometry_inliers,
             "last_geometry_inlier_ratio": state.last_geometry_inlier_ratio,
