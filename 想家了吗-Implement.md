@@ -12981,3 +12981,10 @@ P4 风险升频边界：
 
 - 本阶段只建立唯一所有者，不提高调度频率，也不删除 `DetectAgent` 的全局锁。当前端到端 Pose Hz 应保持部署前水平；任何变化都属于回归，不能解释为优化收益。
 - 下一阶段在该服务上增加有界最新帧协调器：高频显示锚点与低频完整产品分析分离，共享一个 runtime，结果携带完整摄像头与帧身份。显示结果只允许短时跟踪和唤醒正式分析，未经完整产品管线验证不得直接产生风险事件。
+
+### Pi 部署验收
+
+- 提交 `79db1ce` 建立共享所有权，提交 `abb5d2a` 将所有权摘要纳入 `/health`；两项均已推送主线并按文件精确部署，没有覆盖 `.env`、`.venv-pi`、模型、数据库、校准文件或设备状态。
+- 运行中 `/health` 返回 `shared-pose-inference-v1 / single_shared_service / runtime_count=1`。服务 `active`、`NRestarts=0`，systemd 自重启后无 warning；Hailo Pose 与 Object 均为 ready、失败为 0。
+- 两路摄像头均为 streaming、重连为 0；验收时有效源帧约 `12.39 / 14.04 FPS`。两个 H.264 发布线程均 `starts=1 / stops=0`，发布器 `publish_ready=true`、进程启动一次、失败为 0、stderr 为空。
+- `main.py`、`detect_agent.py`、`vision/pipeline.py` 和 `vision/pose_inference.py` 的 Pi SHA-256 与主线逐项一致。该结果只关闭共享所有权结构步骤，不关闭 GH-030 性能目标。
