@@ -519,6 +519,11 @@ def main() -> None:
     gate_status = worker.pose_candidate_gate.status()["cameras"][0]
     if gate_status["validation_requests"] != 1 or gate_status["consistent_hits"] != 2:
         raise SystemExit(f"Pose candidate temporal gate is incomplete: {gate_status}")
+    if (
+        gate_status["last_validation_requested_at_monotonic"] != clock.value
+        or gate_status["last_validation_requested_age_seconds"] != 0.0
+    ):
+        raise SystemExit(f"Pose validation request timestamp is missing: {gate_status}")
     clock.value += 0.02
     worker._handle_coordinated_display_pose({
         "camera_id": 24,
@@ -549,6 +554,8 @@ def main() -> None:
         rejected_status["formal_rejections"] != 1
         or rejected_status["rejection_streak"] != 1
         or first_cooldown <= 0.0
+        or rejected_status["last_formal_rejection_at_monotonic"] != clock.value + 0.05
+        or rejected_status["last_formal_rejection_age_seconds"] != 0.0
     ):
         raise SystemExit(f"formal rejection did not cool down raw Pose candidates: {rejected_status}")
     clock.value += first_cooldown + 0.1
@@ -591,10 +598,43 @@ def main() -> None:
     worker.pose_candidate_gate.observe_formal_error(
         24,
         analysis_started_at=clock.value + 0.21,
+        now=clock.value + 0.25,
     )
     error_status = worker.pose_candidate_gate.status()["cameras"][0]
     if error_status["formal_errors"] != 1 or error_status["awaiting_formal"]:
         raise SystemExit(f"formal analysis error left candidate validation stuck: {error_status}")
+    if (
+        error_status["last_formal_error_at_monotonic"] != clock.value + 0.25
+        or error_status["last_formal_error_age_seconds"] != 0.0
+    ):
+        raise SystemExit(f"formal analysis error timestamp is missing: {error_status}")
+
+    worker.pose_candidate_gate.reset_camera(24)
+    for offset in (0.1, 0.2):
+        confirmation_decision = worker.pose_candidate_gate.observe(
+            24,
+            source_key="camera-24:g1",
+            poses=[{"bbox": [100.0, 40.0, 220.0, 300.0]}],
+            frame_width=640,
+            frame_height=360,
+            now=clock.value + offset,
+        )
+    if not confirmation_decision["validation_requested"]:
+        raise SystemExit(f"formal-confirmation probe did not request validation: {confirmation_decision}")
+    worker.pose_candidate_gate.observe_formal(
+        24,
+        person_present=True,
+        analysis_started_at=clock.value + 0.21,
+        now=clock.value + 0.25,
+    )
+    confirmation_status = worker.pose_candidate_gate.status()["cameras"][0]
+    if (
+        confirmation_status["formal_confirmations"] != 1
+        or confirmation_status["rejection_streak"] != 0
+        or confirmation_status["last_formal_confirmation_at_monotonic"] != clock.value + 0.25
+        or confirmation_status["last_formal_confirmation_age_seconds"] != 0.0
+    ):
+        raise SystemExit(f"formal confirmation timestamp is missing: {confirmation_status}")
 
     worker._reset_camera_runtime_memory(24)
     if continual_tracker.reset != [24]:

@@ -123,6 +123,7 @@ class PoseCandidateValidationGate:
                 state["awaiting_formal"] = True
                 state["validation_requested_at"] = current
                 metric["validation_requests"] += 1
+                metric["last_validation_requested_at_monotonic"] = current
             return self._decision(
                 camera_id,
                 state,
@@ -152,10 +153,12 @@ class PoseCandidateValidationGate:
             metric = self._metric_locked(camera_id)
             if person_present:
                 metric["formal_confirmations"] += 1
+                metric["last_formal_confirmation_at_monotonic"] = current
                 state["cooldown_until"] = 0.0
                 state["rejection_streak"] = 0
             else:
                 metric["formal_rejections"] += 1
+                metric["last_formal_rejection_at_monotonic"] = current
                 state["rejection_streak"] = int(state.get("rejection_streak") or 0) + 1
                 cooldown_seconds = min(
                     self.maximum_rejection_cooldown_seconds,
@@ -169,8 +172,10 @@ class PoseCandidateValidationGate:
         camera_id: int,
         *,
         analysis_started_at: float,
+        now: float | None = None,
     ) -> None:
         camera_id = int(camera_id)
+        current = float(self._clock() if now is None else now)
         with self._lock:
             state = self._states.get(camera_id)
             if state is None:
@@ -180,7 +185,9 @@ class PoseCandidateValidationGate:
                 return
             if float(analysis_started_at) + 1e-6 < float(requested_at):
                 return
-            self._metric_locked(camera_id)["formal_errors"] += 1
+            metric = self._metric_locked(camera_id)
+            metric["formal_errors"] += 1
+            metric["last_formal_error_at_monotonic"] = current
             self._clear_candidate(state)
 
     def reset_camera(self, camera_id: int) -> None:
@@ -199,20 +206,35 @@ class PoseCandidateValidationGate:
                 "rejection_cooldown_seconds": self.rejection_cooldown_seconds,
                 "maximum_rejection_cooldown_seconds": self.maximum_rejection_cooldown_seconds,
                 "cameras": [
-                    {
-                        "camera_id": camera_id,
-                        **dict(self._metric_locked(camera_id)),
-                        "consistent_hits": int((self._states.get(camera_id) or {}).get("consistent_hits") or 0),
-                        "awaiting_formal": bool((self._states.get(camera_id) or {}).get("awaiting_formal")),
-                        "rejection_streak": int((self._states.get(camera_id) or {}).get("rejection_streak") or 0),
-                        "cooldown_remaining_seconds": round(max(
-                            0.0,
-                            float((self._states.get(camera_id) or {}).get("cooldown_until") or 0.0) - current,
-                        ), 3),
-                    }
+                    self._camera_status_locked(camera_id, current=current)
                     for camera_id in camera_ids
                 ],
             }
+
+    def _camera_status_locked(self, camera_id: int, *, current: float) -> Dict[str, Any]:
+        metric = dict(self._metric_locked(camera_id))
+        state = self._states.get(camera_id) or {}
+        for field in (
+            "last_validation_requested_at_monotonic",
+            "last_formal_confirmation_at_monotonic",
+            "last_formal_rejection_at_monotonic",
+            "last_formal_error_at_monotonic",
+        ):
+            value = metric.get(field)
+            metric[field.removesuffix("_at_monotonic") + "_age_seconds"] = (
+                None if value is None else round(max(0.0, current - float(value)), 3)
+            )
+        return {
+            "camera_id": int(camera_id),
+            **metric,
+            "consistent_hits": int(state.get("consistent_hits") or 0),
+            "awaiting_formal": bool(state.get("awaiting_formal")),
+            "rejection_streak": int(state.get("rejection_streak") or 0),
+            "cooldown_remaining_seconds": round(max(
+                0.0,
+                float(state.get("cooldown_until") or 0.0) - current,
+            ), 3),
+        }
 
     def _geometry_continues(
         self,
@@ -270,6 +292,10 @@ class PoseCandidateValidationGate:
             "formal_confirmations": 0,
             "formal_rejections": 0,
             "formal_errors": 0,
+            "last_validation_requested_at_monotonic": None,
+            "last_formal_confirmation_at_monotonic": None,
+            "last_formal_rejection_at_monotonic": None,
+            "last_formal_error_at_monotonic": None,
             "cooldown_suppressions": 0,
             "awaiting_formal_samples": 0,
         })
