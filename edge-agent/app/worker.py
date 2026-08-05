@@ -13,6 +13,7 @@ from .vision.temporal import TemporalObservationEngine
 from .vision.pose_factor_graph import PoseFactorGraphEngine
 from .vision.continual_pose_tracker import ContinualPoseTracker
 from .vision.motion_gate import MotionGate
+from .vision.pose_candidate_gate import PoseCandidateValidationGate
 from .vision.pose_coordinator import PoseCoordinatorError, PoseInferenceCoordinator
 from .observation_coverage import ObservationCoverageTracker
 
@@ -49,6 +50,7 @@ class EdgeWorker:
         inference_scheduler: AdaptiveInferenceScheduler | None = None,
         continual_pose_tracker: Any | None = None,
         motion_gate: Any | None = None,
+        pose_candidate_gate: Any | None = None,
         observation_coverage_tracker: ObservationCoverageTracker | None = None,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
@@ -81,6 +83,9 @@ class EdgeWorker:
         self.continual_pose_tracker = continual_pose_tracker or ContinualPoseTracker()
         self.motion_gate = motion_gate or MotionGate()
         self._monotonic_clock = monotonic_clock or time.monotonic
+        self.pose_candidate_gate = pose_candidate_gate or PoseCandidateValidationGate(
+            monotonic_clock=self._monotonic_clock,
+        )
         self.observation_coverage_tracker = observation_coverage_tracker or ObservationCoverageTracker(
             monotonic_clock=self._monotonic_clock,
         )
@@ -140,7 +145,6 @@ class EdgeWorker:
             if pose_service is not None
             else None
         )
-        self._coordinated_display_person_present: Dict[int, bool] = {}
 
     @property
     def is_running(self) -> bool:
@@ -216,19 +220,34 @@ class EdgeWorker:
         try:
             result = self.process_camera(cameras_by_id[camera_id], rules, adaptive_pose=True)
         except Exception:
+            self.pose_candidate_gate.observe_formal_error(
+                camera_id,
+                analysis_started_at=now,
+            )
             self.inference_scheduler.mark_error(camera_id, now=self._monotonic_clock())
             raise
 
         completed_at = self._monotonic_clock()
         if result.get("ok"):
+            analysis = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
+            self.pose_candidate_gate.observe_formal(
+                camera_id,
+                person_present=int(analysis.get("person_count") or 0) > 0,
+                analysis_started_at=now,
+                now=completed_at,
+            )
             self.inference_scheduler.observe(
                 camera_id,
-                result.get("analysis") if isinstance(result.get("analysis"), dict) else {},
+                analysis,
                 now=completed_at,
                 frame_age_seconds=self._snapshot_frame_age_seconds(result.get("snapshot")),
             )
             self.last_error = ""
         else:
+            self.pose_candidate_gate.observe_formal_error(
+                camera_id,
+                analysis_started_at=now,
+            )
             self.inference_scheduler.mark_error(camera_id, now=completed_at)
             self.last_error = str(result.get("error") or "camera analysis failed")
         self._prune_history_if_due()
@@ -264,6 +283,7 @@ class EdgeWorker:
                 if self.pose_inference_coordinator is not None
                 else {"schema_version": "disabled", "running": False}
             ),
+            "pose_candidate_validation": self.pose_candidate_gate.status(),
             "continual_identity_bridge": {
                 "count": self.continual_identity_bridge_count,
                 "last": dict(self.last_continual_identity_bridge),
@@ -381,7 +401,7 @@ class EdgeWorker:
         self.pending_activity_absence.pop(camera_id, None)
         self.last_persistence_reason.pop(camera_id, None)
         self._last_continual_frame_ids.pop(camera_id, None)
-        self._coordinated_display_person_present.pop(camera_id, None)
+        self.pose_candidate_gate.reset_camera(camera_id)
         self.observation_coverage_tracker.reset_camera(camera_id)
 
     def apply_event_state_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
@@ -640,18 +660,21 @@ class EdgeWorker:
                     source_key=str(delivery.get("source_key") or ""),
                     person_present=True,
                 )
-            previous_presence = self._coordinated_display_person_present.get(camera_id)
-            self._coordinated_display_person_present[camera_id] = person_present
-            if previous_presence is None or previous_presence != person_present:
-                self.inference_scheduler.request_refresh(
-                    camera_id,
-                    now=self._monotonic_clock(),
-                    reason=(
-                        "coordinated_pose_person_entered"
-                        if person_present
-                        else "coordinated_pose_person_cleared"
-                    ),
-                )
+            frame = delivery.get("frame")
+            frame_height, frame_width = frame.shape[:2] if hasattr(frame, "shape") else (1, 1)
+            validation = self.pose_candidate_gate.observe(
+                camera_id,
+                source_key=str(delivery.get("source_key") or ""),
+                poses=poses,
+                frame_width=int(frame_width),
+                frame_height=int(frame_height),
+                now=self._monotonic_clock(),
+            )
+            if validation.get("validation_requested") and self.inference_scheduler.request_validation(
+                camera_id,
+                now=self._monotonic_clock(),
+                reason=str(validation.get("reason") or "consistent_pose_candidate"),
+            ):
                 self._wake.set()
             self.last_continual_pose_error = ""
         except Exception as exc:

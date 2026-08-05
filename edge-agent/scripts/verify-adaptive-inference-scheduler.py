@@ -143,6 +143,23 @@ def main() -> None:
     motion_only_result = accelerated_probe_scheduler.camera_state(30, now=150.24)
     if motion_only_result["mode"] != "idle" or motion_only_result["pose_required"]:
         raise SystemExit(f"Hailo motion-only result consumed active pose budget: {motion_only_result}")
+    validation_requested = accelerated_probe_scheduler.request_validation(
+        30,
+        now=150.3,
+        reason="consistent_pose_candidate",
+    )
+    validation_state = accelerated_probe_scheduler.camera_state(30, now=150.3)
+    if (
+        not validation_requested
+        or validation_state["mode"] != "idle"
+        or not validation_state["refresh_requested"]
+        or validation_state["validation_request_count"] != 1
+        or validation_state["last_validation_reason"] != "consistent_pose_candidate"
+        or float(validation_state["next_due_in_seconds"]) > 0.001
+    ):
+        raise SystemExit(f"candidate validation incorrectly promoted active mode: {validation_state}")
+    if accelerated_probe_scheduler.request_validation(30, now=150.31, reason="duplicate"):
+        raise SystemExit("pending candidate validation was not deduplicated")
     accelerated_probe_scheduler.mark_started(30, now=150.7)
     accelerated_probe_scheduler.observe(
         30,

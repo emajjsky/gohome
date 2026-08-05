@@ -164,6 +164,8 @@ def main() -> None:
         raise SystemExit("health endpoint does not expose Pose coordinator state")
     if '"inference_scheduler": worker_status.get("inference_scheduler") or {}' not in main_source:
         raise SystemExit("health endpoint does not expose adaptive inference state")
+    if '"pose_candidate_validation": worker_status.get("pose_candidate_validation") or {}' not in main_source:
+        raise SystemExit("health endpoint does not expose Pose candidate validation state")
 
     forbidden_settings = {
         "frontend_dir",

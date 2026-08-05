@@ -13038,3 +13038,11 @@ P4 风险升频边界：
 - Worker 的 `runtime_status()` 已经以 `AdaptiveInferenceScheduler.status()` 作为每路模式、节拍、刷新原因、风险信号和资源状态的唯一来源；此前 `/health` 仅投影协调器和 Tracker，丢失调度状态。
 - 健康接口直接投影同一 `inference_scheduler` 对象，不增加缓存、数据库字段或第二套计数。生产边界专项要求该字段必须保留，避免后续重构再次失去实机诊断能力。
 - 该变更只补齐可观测性，不根据 FPS 波动猜测或修改阈值。部署后先用真实 `mode / last_refresh_reason / refresh_request_count` 解释空场升频，再决定是否需要调整候选唤醒状态机。
+
+### 原始 Pose 候选验证边界
+
+- 实机调度状态证明空场升频来自单帧原始 Pose 的 `person_entered/person_cleared` 布尔翻转。原实现把未经正式分析的人体候选传给 `request_refresh()`，而该方法会延长 active hold；显示证据虽被挡住，Hailo 调度仍被错误升频。
+- 新增 `PoseCandidateValidationGate` 作为唯一候选时序状态：同一摄像头和源代次内，至少两帧有效 Pose 且人体框 IoU 或中心位移连续，才产生一次 `consistent_pose_candidate` 验证请求。初始空结果、单帧命中和清空都不能请求验证。
+- 候选请求后保持 `awaiting_formal`，即使中间高频帧为空也不能忘记或重复申请；只有开始时间不早于请求时间的正式分析可以裁决。正式拒绝进入 3 秒冷却，正式确认立即清除候选状态。
+- Scheduler 新增 `request_validation()`：只把下一次正式周期提到当前时间，不写 `active_until`。Tracker 几何失效继续使用 `request_refresh()` 保持快速重锚，两种职责不再共用同一状态语义。
+- Worker 在正式分析完成时回写候选裁决；正式分析错误只释放等待并记录错误，不伪判无人或进入拒绝冷却。摄像头换源、停用或删除时与 Tracker、Coordinator 一起重置；`/health` 输出候选采样、验证、确认、拒绝、错误、等待和冷却指标，不复制算法状态。

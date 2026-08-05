@@ -463,6 +463,109 @@ def main() -> None:
     if len(continual_tracker.observed) != observed_before_coordinator + 1:
         raise SystemExit("unvalidated or formal coordinator output bypassed the full pipeline")
 
+    worker.pose_candidate_gate.reset_camera(24)
+    scheduler.reset_camera(24)
+    scheduler.reconcile([24], now=clock.value)
+    scheduler.mark_started(24, now=clock.value)
+    clock.value += 0.04
+    scheduler.observe(
+        24,
+        {"inference_backend": "hailo", "person_count": 0, "motion_detected": False},
+        now=clock.value,
+    )
+    continual_tracker.metadata = {
+        "tracking": {"state": "empty", "poses": []},
+        "analysis_context": {},
+        "source_key": "camera-24:g1",
+    }
+    worker._handle_coordinated_display_pose({
+        "camera_id": 24,
+        "frame": "empty-candidate-frame",
+        "frame_id": "24-310",
+        "captured_at": "2026-07-17T00:00:00.34+00:00",
+        "captured_monotonic": 100.34,
+        "source_key": "camera-24:g1",
+        "roles": ["display"],
+        "analysis": {"poses": []},
+    })
+    empty_candidate_state = scheduler.camera_state(24, now=clock.value)
+    if empty_candidate_state["refresh_requested"] or empty_candidate_state["mode"] != "idle":
+        raise SystemExit(f"initial empty coordinated Pose woke formal analysis: {empty_candidate_state}")
+
+    for frame_id, bbox in (
+        ("24-311", [100.0, 40.0, 220.0, 300.0]),
+        ("24-312", [106.0, 44.0, 226.0, 304.0]),
+    ):
+        clock.value += 0.2
+        worker._handle_coordinated_display_pose({
+            "camera_id": 24,
+            "frame": "candidate-frame",
+            "frame_id": frame_id,
+            "captured_at": "2026-07-17T00:00:00.4+00:00",
+            "captured_monotonic": clock.value,
+            "source_key": "camera-24:g1",
+            "roles": ["display"],
+            "analysis": {"poses": [{"bbox": bbox}]},
+        })
+    candidate_state = scheduler.camera_state(24, now=clock.value)
+    if (
+        candidate_state["mode"] != "idle"
+        or not candidate_state["refresh_requested"]
+        or candidate_state["validation_request_count"] != 1
+        or candidate_state["refresh_request_count"] != 0
+        or candidate_state["last_validation_reason"] != "consistent_pose_candidate"
+    ):
+        raise SystemExit(f"consistent raw Pose did not request one idle validation: {candidate_state}")
+    gate_status = worker.pose_candidate_gate.status()["cameras"][0]
+    if gate_status["validation_requests"] != 1 or gate_status["consistent_hits"] != 2:
+        raise SystemExit(f"Pose candidate temporal gate is incomplete: {gate_status}")
+    clock.value += 0.02
+    worker._handle_coordinated_display_pose({
+        "camera_id": 24,
+        "frame": "candidate-empty-before-formal",
+        "frame_id": "24-313",
+        "captured_at": "2026-07-17T00:00:00.82+00:00",
+        "captured_monotonic": clock.value,
+        "source_key": "camera-24:g1",
+        "roles": ["display"],
+        "analysis": {"poses": []},
+    })
+    pending_gate_status = worker.pose_candidate_gate.status()["cameras"][0]
+    if (
+        not pending_gate_status["awaiting_formal"]
+        or pending_gate_status["validation_requests"] != 1
+        or scheduler.camera_state(24, now=clock.value)["validation_request_count"] != 1
+    ):
+        raise SystemExit(f"empty frame forgot a pending formal validation: {pending_gate_status}")
+    worker.pose_candidate_gate.observe_formal(
+        24,
+        person_present=False,
+        analysis_started_at=clock.value + 0.01,
+        now=clock.value + 0.05,
+    )
+    rejected_status = worker.pose_candidate_gate.status()["cameras"][0]
+    if rejected_status["formal_rejections"] != 1 or rejected_status["cooldown_remaining_seconds"] <= 0.0:
+        raise SystemExit(f"formal rejection did not cool down raw Pose candidates: {rejected_status}")
+    worker.pose_candidate_gate.reset_camera(24)
+    for offset in (0.1, 0.2):
+        decision = worker.pose_candidate_gate.observe(
+            24,
+            source_key="camera-24:g1",
+            poses=[{"bbox": [100.0, 40.0, 220.0, 300.0]}],
+            frame_width=640,
+            frame_height=360,
+            now=clock.value + offset,
+        )
+    if not decision["validation_requested"]:
+        raise SystemExit(f"formal-error probe did not request validation: {decision}")
+    worker.pose_candidate_gate.observe_formal_error(
+        24,
+        analysis_started_at=clock.value + 0.21,
+    )
+    error_status = worker.pose_candidate_gate.status()["cameras"][0]
+    if error_status["formal_errors"] != 1 or error_status["awaiting_formal"]:
+        raise SystemExit(f"formal analysis error left candidate validation stuck: {error_status}")
+
     worker._reset_camera_runtime_memory(24)
     if continual_tracker.reset != [24]:
         raise SystemExit("camera lifecycle reset left continual pose state behind")

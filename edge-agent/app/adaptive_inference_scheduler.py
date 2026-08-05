@@ -29,6 +29,9 @@ class _CameraSchedule:
     refresh_request_count: int = 0
     last_refresh_requested_at: float | None = None
     last_refresh_reason: str = ""
+    validation_request_count: int = 0
+    last_validation_requested_at: float | None = None
+    last_validation_reason: str = ""
     risk_signals: deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=64))
     starts: deque[float] = field(default_factory=lambda: deque(maxlen=24))
 
@@ -132,6 +135,27 @@ class AdaptiveInferenceScheduler:
             state.active_until = max(state.active_until, current + self.active_hold_seconds)
             if not state.in_flight:
                 state.next_due_at = min(state.next_due_at, current)
+
+    def request_validation(
+        self,
+        camera_id: int,
+        *,
+        now: float,
+        reason: str,
+    ) -> bool:
+        """Request one immediate formal cycle without promoting the camera to active."""
+        with self._lock:
+            current = float(now)
+            state = self._states.setdefault(int(camera_id), _CameraSchedule(next_due_at=current))
+            if state.refresh_requested:
+                return False
+            state.refresh_requested = True
+            state.validation_request_count += 1
+            state.last_validation_requested_at = current
+            state.last_validation_reason = str(reason or "pose_candidate_validation")
+            if not state.in_flight:
+                state.next_due_at = min(state.next_due_at, current)
+            return True
 
     def next_due_camera(self, camera_ids: Iterable[int], *, now: float) -> int | None:
         allowed = {int(camera_id) for camera_id in camera_ids}
@@ -274,6 +298,9 @@ class AdaptiveInferenceScheduler:
                 "refresh_request_count": state.refresh_request_count,
                 "last_refresh_requested_at_monotonic": state.last_refresh_requested_at,
                 "last_refresh_reason": state.last_refresh_reason,
+                "validation_request_count": state.validation_request_count,
+                "last_validation_requested_at_monotonic": state.last_validation_requested_at,
+                "last_validation_reason": state.last_validation_reason,
                 "last_risk_signal_at_monotonic": (
                     state.risk_signals[-1]["at_monotonic"] if state.risk_signals else None
                 ),
