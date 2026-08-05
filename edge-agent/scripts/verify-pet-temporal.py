@@ -36,6 +36,20 @@ def main() -> int:
     assert [item["class_id"] for item in confirmed] == [15]
     assert confirmed[0]["temporal_hits"] == 2
     assert confirmed_status["confirmed_count"] == 1
+    camera_status = stabilizer.status(now=2.0)["cameras"][0]
+    assert camera_status["camera_id"] == 1
+    assert camera_status["confirmed_count"] == 1
+    assert camera_status["tracks"] == [{
+        "confirmed_class_id": 15,
+        "confirmed_category": "cat",
+        "confirmed_confidence": 0.462,
+        "hits": 2,
+        "last_seen_age_seconds": 0.0,
+        "class_evidence": [
+            {"class_id": 15, "category": "cat", "hits": 2, "confidence": 0.462},
+            {"class_id": 16, "category": "dog", "hits": 1, "confidence": 0.29},
+        ],
+    }]
 
     uncertain = PetTemporalStabilizer()
     for index in range(5):

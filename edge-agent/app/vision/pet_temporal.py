@@ -3,11 +3,13 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 import math
+from threading import RLock
 import time
 from typing import Any, Callable, Dict
 
 
 PET_CLASS_IDS = {15, 16}
+PET_CLASS_NAMES = {15: "cat", 16: "dog"}
 
 
 @dataclass
@@ -44,6 +46,7 @@ class PetTemporalStabilizer:
         self.final_class_confidence = max(0.0, min(1.0, float(final_class_confidence)))
         self._clock = monotonic_clock or time.monotonic
         self._tracks: dict[str, list[_PetTrack]] = {}
+        self._lock = RLock()
 
     def update(
         self,
@@ -53,6 +56,16 @@ class PetTemporalStabilizer:
         now: float | None = None,
     ) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
         observed_at = float(self._clock() if now is None else now)
+        with self._lock:
+            return self._update_locked(camera_id, detections, observed_at=observed_at)
+
+    def _update_locked(
+        self,
+        camera_id: Any,
+        detections: list[Dict[str, Any]],
+        *,
+        observed_at: float,
+    ) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
         camera_key = str(camera_id)
         passthrough = [
             deepcopy(item)
@@ -129,21 +142,66 @@ class PetTemporalStabilizer:
         }
 
     def reset_camera(self, camera_id: Any) -> None:
-        self._tracks.pop(str(camera_id), None)
+        with self._lock:
+            self._tracks.pop(str(camera_id), None)
 
     def reset(self) -> None:
-        self._tracks.clear()
+        with self._lock:
+            self._tracks.clear()
 
-    def status(self) -> Dict[str, Any]:
-        tracks = [track for camera_tracks in self._tracks.values() for track in camera_tracks]
+    def status(self, *, now: float | None = None) -> Dict[str, Any]:
+        current = float(self._clock() if now is None else now)
+        with self._lock:
+            tracks = [track for camera_tracks in self._tracks.values() for track in camera_tracks]
+            return {
+                "schema_version": self.version,
+                "camera_count": len(self._tracks),
+                "track_count": len(tracks),
+                "uncertain_track_count": sum(1 for track in tracks if self._uncertain_track(track)),
+                "confirmation_hits": self.confirmation_hits,
+                "hold_seconds": self.hold_seconds,
+                "final_class_confidence": self.final_class_confidence,
+                "cameras": [
+                    self._camera_status_locked(camera_key, camera_tracks, current=current)
+                    for camera_key, camera_tracks in sorted(self._tracks.items())
+                ],
+            }
+
+    def _camera_status_locked(
+        self,
+        camera_key: str,
+        tracks: list[_PetTrack],
+        *,
+        current: float,
+    ) -> Dict[str, Any]:
         return {
-            "schema_version": self.version,
-            "camera_count": len(self._tracks),
+            "camera_id": int(camera_key) if camera_key.isdigit() else camera_key,
             "track_count": len(tracks),
-            "uncertain_track_count": sum(1 for track in tracks if self._uncertain_track(track)),
-            "confirmation_hits": self.confirmation_hits,
-            "hold_seconds": self.hold_seconds,
-            "final_class_confidence": self.final_class_confidence,
+            "confirmed_count": sum(1 for track in tracks if track.confirmed_class_id is not None),
+            "uncertain_count": sum(1 for track in tracks if self._uncertain_track(track)),
+            "tracks": [
+                {
+                    "confirmed_class_id": track.confirmed_class_id,
+                    "confirmed_category": PET_CLASS_NAMES.get(track.confirmed_class_id),
+                    "confirmed_confidence": (
+                        None
+                        if track.confirmed_class_id is None
+                        else round(self._class_confidence(track, track.confirmed_class_id), 4)
+                    ),
+                    "hits": int(track.hits),
+                    "last_seen_age_seconds": round(max(0.0, current - track.last_seen), 3),
+                    "class_evidence": [
+                        {
+                            "class_id": class_id,
+                            "category": PET_CLASS_NAMES.get(class_id),
+                            "hits": int(track.class_hits.get(class_id, 0)),
+                            "confidence": round(self._class_confidence(track, class_id), 4),
+                        }
+                        for class_id in sorted(track.class_scores)
+                    ],
+                }
+                for track in tracks
+            ],
         }
 
     def _observe(self, track: _PetTrack, group: list[Dict[str, Any]], observed_at: float) -> None:
