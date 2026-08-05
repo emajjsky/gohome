@@ -13032,3 +13032,9 @@ P4 风险升频边界：
 - 每路只有一个最新待处理槽，全局最大队列深度 2；正式超时、推理失败、stale 拒绝均为 0。Hailo Pose 中位 `22.82 ms`、P95 `43.65 ms`、累计失败 0。
 - 两路源唯一帧约 `13.24 / 10.40 FPS`，隐私 renderer 与 H.264 编码输入保持相同速率；两个发布器均单次启动、publish ready、无进程失败、连续失败和错误。
 - 服务 `NRestarts=0`、journal warning 为 0；短时主进程约 `82.9% CPU / 337344 KiB RSS`，温度 `64.5°C`。本项 cadence 根因修复通过，下一步仍需真人与复杂场景长时验收，不能仅凭空场指标关闭 GH-030。
+
+### 调度状态健康投影
+
+- Worker 的 `runtime_status()` 已经以 `AdaptiveInferenceScheduler.status()` 作为每路模式、节拍、刷新原因、风险信号和资源状态的唯一来源；此前 `/health` 仅投影协调器和 Tracker，丢失调度状态。
+- 健康接口直接投影同一 `inference_scheduler` 对象，不增加缓存、数据库字段或第二套计数。生产边界专项要求该字段必须保留，避免后续重构再次失去实机诊断能力。
+- 该变更只补齐可观测性，不根据 FPS 波动猜测或修改阈值。部署后先用真实 `mode / last_refresh_reason / refresh_request_count` 解释空场升频，再决定是否需要调整候选唤醒状态机。

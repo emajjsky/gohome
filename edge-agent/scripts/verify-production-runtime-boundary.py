@@ -162,6 +162,8 @@ def main() -> None:
         raise SystemExit("health endpoint does not expose Pose runtime ownership")
     if '"pose_inference_coordinator": worker_status.get("pose_inference_coordinator") or {}' not in main_source:
         raise SystemExit("health endpoint does not expose Pose coordinator state")
+    if '"inference_scheduler": worker_status.get("inference_scheduler") or {}' not in main_source:
+        raise SystemExit("health endpoint does not expose adaptive inference state")
 
     forbidden_settings = {
         "frontend_dir",
