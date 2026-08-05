@@ -18,7 +18,8 @@ class PoseCandidateValidationGate:
         maximum_gap_seconds: float = 0.8,
         minimum_iou: float = 0.08,
         maximum_center_shift: float = 0.22,
-        rejection_cooldown_seconds: float = 3.0,
+        rejection_cooldown_seconds: float = 10.0,
+        maximum_rejection_cooldown_seconds: float = 60.0,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.minimum_consistent_hits = max(2, int(minimum_consistent_hits))
@@ -26,6 +27,10 @@ class PoseCandidateValidationGate:
         self.minimum_iou = max(0.0, min(1.0, float(minimum_iou)))
         self.maximum_center_shift = max(0.02, float(maximum_center_shift))
         self.rejection_cooldown_seconds = max(0.5, float(rejection_cooldown_seconds))
+        self.maximum_rejection_cooldown_seconds = max(
+            self.rejection_cooldown_seconds,
+            float(maximum_rejection_cooldown_seconds),
+        )
         self._clock = monotonic_clock or time.monotonic
         self._states: dict[int, Dict[str, Any]] = {}
         self._metrics: dict[int, Dict[str, Any]] = {}
@@ -148,9 +153,15 @@ class PoseCandidateValidationGate:
             if person_present:
                 metric["formal_confirmations"] += 1
                 state["cooldown_until"] = 0.0
+                state["rejection_streak"] = 0
             else:
                 metric["formal_rejections"] += 1
-                state["cooldown_until"] = current + self.rejection_cooldown_seconds
+                state["rejection_streak"] = int(state.get("rejection_streak") or 0) + 1
+                cooldown_seconds = min(
+                    self.maximum_rejection_cooldown_seconds,
+                    self.rejection_cooldown_seconds * (2 ** min(16, int(state["rejection_streak"]) - 1)),
+                )
+                state["cooldown_until"] = current + cooldown_seconds
             self._clear_candidate(state)
 
     def observe_formal_error(
@@ -186,12 +197,14 @@ class PoseCandidateValidationGate:
                 "minimum_consistent_hits": self.minimum_consistent_hits,
                 "maximum_gap_seconds": self.maximum_gap_seconds,
                 "rejection_cooldown_seconds": self.rejection_cooldown_seconds,
+                "maximum_rejection_cooldown_seconds": self.maximum_rejection_cooldown_seconds,
                 "cameras": [
                     {
                         "camera_id": camera_id,
                         **dict(self._metric_locked(camera_id)),
                         "consistent_hits": int((self._states.get(camera_id) or {}).get("consistent_hits") or 0),
                         "awaiting_formal": bool((self._states.get(camera_id) or {}).get("awaiting_formal")),
+                        "rejection_streak": int((self._states.get(camera_id) or {}).get("rejection_streak") or 0),
                         "cooldown_remaining_seconds": round(max(
                             0.0,
                             float((self._states.get(camera_id) or {}).get("cooldown_until") or 0.0) - current,
@@ -271,6 +284,7 @@ class PoseCandidateValidationGate:
             "awaiting_formal": False,
             "validation_requested_at": None,
             "cooldown_until": 0.0,
+            "rejection_streak": 0,
         }
 
     @staticmethod

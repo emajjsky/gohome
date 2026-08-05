@@ -544,8 +544,38 @@ def main() -> None:
         now=clock.value + 0.05,
     )
     rejected_status = worker.pose_candidate_gate.status()["cameras"][0]
-    if rejected_status["formal_rejections"] != 1 or rejected_status["cooldown_remaining_seconds"] <= 0.0:
+    first_cooldown = float(rejected_status["cooldown_remaining_seconds"])
+    if (
+        rejected_status["formal_rejections"] != 1
+        or rejected_status["rejection_streak"] != 1
+        or first_cooldown <= 0.0
+    ):
         raise SystemExit(f"formal rejection did not cool down raw Pose candidates: {rejected_status}")
+    clock.value += first_cooldown + 0.1
+    for offset in (0.1, 0.2):
+        second_decision = worker.pose_candidate_gate.observe(
+            24,
+            source_key="camera-24:g1",
+            poses=[{"bbox": [100.0, 40.0, 220.0, 300.0]}],
+            frame_width=640,
+            frame_height=360,
+            now=clock.value + offset,
+        )
+    if not second_decision["validation_requested"]:
+        raise SystemExit(f"post-cooldown candidate did not request validation: {second_decision}")
+    worker.pose_candidate_gate.observe_formal(
+        24,
+        person_present=False,
+        analysis_started_at=clock.value + 0.21,
+        now=clock.value + 0.25,
+    )
+    backed_off_status = worker.pose_candidate_gate.status()["cameras"][0]
+    if (
+        backed_off_status["formal_rejections"] != 2
+        or backed_off_status["rejection_streak"] != 2
+        or float(backed_off_status["cooldown_remaining_seconds"]) <= first_cooldown
+    ):
+        raise SystemExit(f"repeated formal rejection did not back off: {backed_off_status}")
     worker.pose_candidate_gate.reset_camera(24)
     for offset in (0.1, 0.2):
         decision = worker.pose_candidate_gate.observe(
