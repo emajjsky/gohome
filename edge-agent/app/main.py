@@ -373,23 +373,6 @@ def read_local_device_token() -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
-def remote_camera_id_for_local_camera(local_camera_id: int) -> str | int:
-    state_path = settings.runtime_dir / "config-sync-state.json"
-    if not state_path.exists():
-        return local_camera_id
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return local_camera_id
-    camera_map = state.get("camera_map") if isinstance(state, dict) else {}
-    if not isinstance(camera_map, dict):
-        return local_camera_id
-    for remote_id, mapped_local_id in camera_map.items():
-        if str(mapped_local_id) == str(local_camera_id):
-            return str(remote_id)
-    return local_camera_id
-
-
 def write_local_device_token(token: str) -> None:
     local_device_token_path().write_text(token.strip(), encoding="utf-8")
 
@@ -1144,21 +1127,6 @@ worker = EdgeWorker(
 )
 synchronized_pose_stream = SynchronizedPoseStream(camera_agent, worker.continual_pose_tracker)
 package_artifact_service = PackageArtifactService(storage=storage, settings=settings)
-upload_agent = UploadAgent(
-    storage=storage,
-    settings=settings,
-    device_id_resolver=current_device_id,
-    token_resolver=read_local_device_token,
-    remote_camera_id_resolver=remote_camera_id_for_local_camera,
-)
-eacp_acceptance_service = EacpAcceptanceService(
-    state_path=settings.data_dir / "eacp_acceptance.json",
-    runtime_resolver=worker.runtime_status,
-    events_resolver=lambda: storage.list_events(limit=200),
-    candidates_resolver=lambda: storage.list_event_candidates(limit=200),
-    uploads_resolver=lambda: storage.list_upload_jobs(limit=500),
-    cloud_verification_resolver=lambda: upload_agent.vision_verification_status(limit=50),
-)
 config_sync_agent = ConfigSyncAgent(
     storage=storage,
     settings=settings,
@@ -1190,6 +1158,21 @@ config_sync_agent = ConfigSyncAgent(
     },
     presence_status_resolver=worker.camera_presence_status,
 )
+upload_agent = UploadAgent(
+    storage=storage,
+    settings=settings,
+    device_id_resolver=current_device_id,
+    token_resolver=read_local_device_token,
+    remote_camera_id_resolver=config_sync_agent.remote_camera_id_for_local_camera,
+)
+eacp_acceptance_service = EacpAcceptanceService(
+    state_path=settings.data_dir / "eacp_acceptance.json",
+    runtime_resolver=worker.runtime_status,
+    events_resolver=lambda: storage.list_events(limit=200),
+    candidates_resolver=lambda: storage.list_event_candidates(limit=200),
+    uploads_resolver=lambda: storage.list_upload_jobs(limit=500),
+    cloud_verification_resolver=lambda: upload_agent.vision_verification_status(limit=50),
+)
 person_segmentation_backend = HailoPersonSegmentationBackend(
     mode=settings.hailo_segmentation_mode,
     model_path=settings.hailo_segmentation_model,
@@ -1212,7 +1195,7 @@ live_relay_agent = LiveRelayAgent(
     camera_agent=camera_agent,
     device_id_resolver=current_device_id,
     token_resolver=read_local_device_token,
-    remote_camera_id_resolver=remote_camera_id_for_local_camera,
+    remote_camera_id_resolver=config_sync_agent.remote_camera_id_for_local_camera,
     privacy_mode_resolver=config_sync_agent.video_privacy_mode,
     privacy_renderer=privacy_frame_renderer,
 )

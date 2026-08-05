@@ -122,6 +122,23 @@ def main() -> None:
             raise SystemExit(f"sync report did not mark camera synced: {reports[-1]}")
         if not reconciled_camera_sets or reconciled_camera_sets[-1][0]["stream_url"] != "demo:living_room":
             raise SystemExit("config sync did not immediately reconcile the active camera runtime")
+        local_camera_id = int(cameras[0]["id"])
+        if agent.remote_camera_id_for_local_camera(local_camera_id) != "101":
+            raise SystemExit("remote camera resolver did not publish the committed camera map")
+        state_path = root / "runtime" / "config-sync-state.json"
+        state_path.write_text('{"camera_map":', encoding="utf-8")
+        if agent.remote_camera_id_for_local_camera(local_camera_id) != "101":
+            raise SystemExit("remote camera resolver must not reread a partially written state file")
+        agent._save_state({
+            "camera_map": {"101": local_camera_id},
+            "config_version": "camera-config-test-1",
+            "video_privacy_mode": agent.video_privacy_mode(),
+        })
+        persisted_after_repair = json.loads(state_path.read_text(encoding="utf-8"))
+        if persisted_after_repair.get("camera_map") != {"101": local_camera_id}:
+            raise SystemExit(f"atomic state repair lost the camera map: {persisted_after_repair}")
+        if list(state_path.parent.glob(f".{state_path.name}.*.tmp")):
+            raise SystemExit("atomic config state persistence left temporary files behind")
         if "presence" not in reports[-1]["cameras"][0]:
             raise SystemExit("sync report must include camera presence status")
         edge_event = storage.create_event(

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from threading import Event, Lock, Thread
+from threading import Event, Lock, RLock, Thread
 from typing import Any, Callable, Dict
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import json
+import os
+import tempfile
 import time
 
 from .video_privacy import normalize_privacy_mode
@@ -39,6 +41,7 @@ class ConfigSyncAgent:
         self._stop = Event()
         self._wake = Event()
         self._wake_lock = Lock()
+        self._state_lock = RLock()
         self._last_wake_requested_at = float("-inf")
         self._thread: Thread | None = None
         self.last_loop_started_at: str | None = None
@@ -51,8 +54,10 @@ class ConfigSyncAgent:
         self.last_result: Dict[str, Any] = {}
         self.last_video_privacy_sync_at: str | None = None
         self.last_video_privacy_error = ""
+        initial_state = self._load_state()
+        self._camera_map = dict(initial_state.get("camera_map") or {})
         self.current_video_privacy_mode = normalize_privacy_mode(
-            self._load_state().get("video_privacy_mode")
+            initial_state.get("video_privacy_mode")
         )
 
     @property
@@ -105,6 +110,14 @@ class ConfigSyncAgent:
 
     def video_privacy_mode(self) -> str:
         return self.current_video_privacy_mode
+
+    def remote_camera_id_for_local_camera(self, local_camera_id: int) -> str | int:
+        with self._state_lock:
+            camera_map = tuple(self._camera_map.items())
+        for remote_id, mapped_local_id in camera_map:
+            if str(mapped_local_id) == str(local_camera_id):
+                return str(remote_id)
+        return int(local_camera_id)
 
     def observe_video_privacy_mode(self, mode: str, *, wake: bool = False) -> bool:
         observed_mode = normalize_privacy_mode(mode, self.current_video_privacy_mode)
@@ -232,6 +245,10 @@ class ConfigSyncAgent:
         self.consecutive_failures = 0
 
     def _apply_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        with self._state_lock:
+            return self._apply_config_locked(config)
+
+    def _apply_config_locked(self, config: Dict[str, Any]) -> Dict[str, Any]:
         state = self._load_state()
         camera_map = dict(state.get("camera_map") or {})
         desired_remote_ids: set[str] = set()
@@ -465,10 +482,11 @@ class ConfigSyncAgent:
         }
 
     def _persist_video_privacy_mode(self) -> None:
-        state = self._load_state()
-        state["video_privacy_mode"] = self.current_video_privacy_mode
-        state["video_privacy_updated_at"] = self._utc_iso()
-        self._save_state(state)
+        with self._state_lock:
+            state = self._load_state()
+            state["video_privacy_mode"] = self.current_video_privacy_mode
+            state["video_privacy_updated_at"] = self._utc_iso()
+            self._save_state(state)
 
     def _apply_maintenance(self, command: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         command_id = str(command.get("command_id") or "").strip()
@@ -714,22 +732,48 @@ class ConfigSyncAgent:
         return str(camera_config.get("camera_id") or camera_config.get("id") or "").strip()
 
     def _load_state(self) -> Dict[str, Any]:
-        path = self._state_path()
-        if not path.exists():
-            return {"camera_map": {}}
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {"camera_map": {}}
-        if not isinstance(data, dict):
-            return {"camera_map": {}}
-        data["camera_map"] = data.get("camera_map") if isinstance(data.get("camera_map"), dict) else {}
-        return data
+        with self._state_lock:
+            path = self._state_path()
+            if not path.exists():
+                return {"camera_map": {}}
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return {"camera_map": {}}
+            if not isinstance(data, dict):
+                return {"camera_map": {}}
+            data["camera_map"] = data.get("camera_map") if isinstance(data.get("camera_map"), dict) else {}
+            return data
 
     def _save_state(self, state: Dict[str, Any]) -> None:
-        path = self._state_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"{json.dumps(state, ensure_ascii=False, indent=2)}\n", encoding="utf-8")
+        with self._state_lock:
+            path = self._state_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = f"{json.dumps(state, ensure_ascii=False, indent=2)}\n"
+            temporary_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=path.parent,
+                    prefix=f".{path.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as handle:
+                    temporary_path = Path(handle.name)
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary_path, path)
+                directory_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            finally:
+                if temporary_path is not None and temporary_path.exists():
+                    temporary_path.unlink()
+            self._camera_map = dict(state.get("camera_map") or {})
 
     def _state_path(self) -> Path:
         return Path(getattr(self.settings, "runtime_dir")) / "config-sync-state.json"
