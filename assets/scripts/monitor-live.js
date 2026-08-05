@@ -70,10 +70,8 @@
         return Number.isFinite(value) ? `${Math.round(value * 100)}%` : "待统计";
     }
 
-    function petTypesLabel(types) {
-        const labels = { cat: "猫", dog: "狗" };
-        const values = [...new Set((Array.isArray(types) ? types : []).map((item) => labels[String(item)] || String(item)).filter(Boolean))];
-        return values.join("、") || "宠物";
+    function petTypesLabel() {
+        return "宠物";
     }
 
     function postureFromEvaluation(evaluation) {

@@ -140,6 +140,16 @@ function assertCareCardPresentationContract() {
     assert.doesNotMatch(homeScript, /item\.className = "gohome-mini-fact";[\s\S]{0,500}facts\.append\(item\)/, "home summary must not repeat fact pills below the card copy");
 }
 
+function assertPetPresentationContract() {
+    const root = path.resolve(__dirname, "..");
+    const monitorScript = fs.readFileSync(path.join(root, "assets/scripts/monitor-live.js"), "utf8");
+    const adminScript = fs.readFileSync(path.join(root, "edge-agent/admin/console.js"), "utf8");
+    assert.match(monitorScript, /function petTypesLabel\(\)\s*\{\s*return "宠物";/, "family monitoring must not expose unverified cat/dog labels");
+    assert.doesNotMatch(monitorScript, /const labels = \{ cat:/, "family monitoring must not translate raw species evidence");
+    assert.match(adminScript, /const label = "宠物";/, "edge product UI must use the generic pet identity");
+    assert.doesNotMatch(adminScript, /pet\.type === "dog"/, "edge product UI must not infer a species label from raw model output");
+}
+
 async function flush() {
     await new Promise((resolve) => setImmediate(resolve));
 }
@@ -148,6 +158,7 @@ async function main() {
     assertMainPagesHaveNoBlockingLoadingCopy();
     assertAppShellNavigationCache();
     assertCareCardPresentationContract();
+    assertPetPresentationContract();
     const harness = createHarness();
     const { context, window, localStorage, sessionStorage, events, fetches } = harness;
     let payload = { revision: 1 };

@@ -158,6 +158,12 @@ def main() -> None:
         "pet_event_evidence_count": pet_isolation["event_evidence_count"],
         "pet_screen_suppressed": pet_isolation["screen_suppressed"],
         "pet_default_confidence": pet_isolation["default_confidence"],
+        "pet_product_type": pet_isolation["product_type"],
+        "pet_product_label": pet_isolation["product_label"],
+        "pet_species_status": pet_isolation["species_status"],
+        "pet_raw_model_type": pet_isolation["raw_model_type"],
+        "pet_hailo_product_type": pet_isolation["hailo_product_type"],
+        "pet_hailo_raw_model_type": pet_isolation["hailo_raw_model_type"],
         "detector_cache_calls": detector_cache["calls"],
         "detector_cache_motion_refresh": detector_cache["motion_refresh"],
         "pose_requires_person_box": pose_requires_person_box["fallback_calls"],
@@ -252,6 +258,12 @@ def main() -> None:
         raise SystemExit("pets displayed inside a stable TV zone must be suppressed")
     if checks["pet_default_confidence"] != 0.40:
         raise SystemExit("pet detections must use an independent conservative confidence threshold")
+    if checks["pet_product_type"] != "pet" or checks["pet_product_label"] != "宠物":
+        raise SystemExit("CPU pet detections must expose a generic user-facing product identity")
+    if checks["pet_species_status"] != "unverified" or checks["pet_raw_model_type"] != "cat":
+        raise SystemExit("CPU pet detections must preserve unverified raw species evidence separately")
+    if checks["pet_hailo_product_type"] != "pet" or checks["pet_hailo_raw_model_type"] != "dog":
+        raise SystemExit("Hailo pet detections must use the same product and diagnostic identity contract")
     if checks["pose_det_frequency_with_tracking"] != 8:
         raise SystemExit("RTMPose tracking mode should preserve configured detector frequency")
     if checks["pose_fall_low_quality_eligible"]:
@@ -544,6 +556,19 @@ def verify_pet_detection_isolated_from_people_and_fall(frame: np.ndarray) -> dic
         "stable": True,
     }]
     _, suppressed = pipeline._suppress_pet_display_content([pet], tv_zone, {})
+    hailo_context = pipeline._hailo_context_entities(
+        {
+            "detections": [{
+                "class_id": 16,
+                "confidence": 0.61,
+                "bbox": [300.0, 180.0, 430.0, 335.0],
+            }],
+            "backend": "hailo",
+        },
+        frame,
+    )
+    product_pet = (analysis.get("pets") or [{}])[0]
+    hailo_pet = (hailo_context.get("pets") or [{}])[0]
     return {
         "pet_count": analysis.get("pet_count"),
         "person_count": analysis.get("person_count"),
@@ -551,6 +576,12 @@ def verify_pet_detection_isolated_from_people_and_fall(frame: np.ndarray) -> dic
         "event_evidence_count": len(evidence.get("objects", {}).get("pets") or []),
         "screen_suppressed": len(suppressed),
         "default_confidence": detector_config.get("pet_confidence"),
+        "product_type": product_pet.get("type"),
+        "product_label": product_pet.get("label_zh"),
+        "species_status": product_pet.get("species_status"),
+        "raw_model_type": product_pet.get("raw_model_type"),
+        "hailo_product_type": hailo_pet.get("type"),
+        "hailo_raw_model_type": hailo_pet.get("raw_model_type"),
     }
 
 

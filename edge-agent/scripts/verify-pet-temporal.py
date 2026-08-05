@@ -13,10 +13,19 @@ from app.vision.pet_temporal import PetTemporalStabilizer
 
 
 def detection(class_id: int, confidence: float, x: float = 20.0):
+    raw_model_type = {15: "cat", 16: "dog"}[class_id]
     return {
         "class_id": class_id,
         "confidence": confidence,
         "bbox": [x, 30.0, x + 80.0, 130.0],
+        "type": "pet",
+        "label": "pet",
+        "label_zh": "宠物",
+        "species_status": "unverified",
+        "raw_model_class_id": class_id,
+        "raw_model_type": raw_model_type,
+        "raw_model_label": raw_model_type,
+        "raw_model_confidence": confidence,
     }
 
 
@@ -34,6 +43,10 @@ def main() -> int:
 
     confirmed, confirmed_status = stabilizer.update(1, [detection(15, 0.48, 23.0)], now=2.0)
     assert [item["class_id"] for item in confirmed] == [15]
+    assert confirmed[0]["type"] == "pet"
+    assert confirmed[0]["label_zh"] == "宠物"
+    assert confirmed[0]["species_status"] == "unverified"
+    assert confirmed[0]["raw_model_type"] == "cat"
     assert confirmed[0]["temporal_hits"] == 2
     assert confirmed_status["confirmed_count"] == 1
     camera_status = stabilizer.status(now=2.0)["cameras"][0]
@@ -71,6 +84,8 @@ def main() -> int:
     assert other_camera == []
     other_confirmed, _ = stabilizer.update(2, [detection(16, 0.68, 22.0)], now=4.0)
     assert [item["class_id"] for item in other_confirmed] == [16]
+    assert other_confirmed[0]["type"] == "pet"
+    assert other_confirmed[0]["raw_model_type"] == "dog"
 
     held, _ = stabilizer.update(1, [], now=4.5)
     assert [item["class_id"] for item in held] == [15]

@@ -546,9 +546,15 @@ class PersonDetector:
         )
         return {
             **box,
-            "type": pet_type,
-            "label": pet_type,
-            "label_zh": label_zh,
+            "type": "pet",
+            "label": "pet",
+            "label_zh": "宠物",
+            "species_status": "unverified",
+            "raw_model_class_id": class_id,
+            "raw_model_type": pet_type,
+            "raw_model_label": pet_type,
+            "raw_model_label_zh": label_zh,
+            "raw_model_confidence": round(confidence, 4),
             "source": "yolo_pet",
             "person_evidence_eligible": False,
             "pose_eligible": False,

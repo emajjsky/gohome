@@ -1407,14 +1407,14 @@ function renderPerceptionTargetList(snapshot) {
     `);
   }
   for (const pet of pets) {
-    const label = pet.label_zh || (pet.type === "dog" ? "狗" : "猫");
+    const label = "宠物";
     const confidence = pet.confidence ? `置信 ${Math.round(Number(pet.confidence) * 100)}%` : "";
     const sceneText = pet.scene_zone_label_zh || "";
     rows.push(`
       <div class="perception-target-row pet-target">
         <span class="perception-target-icon" aria-hidden="true">宠</span>
         <div><strong>${escapeHtml(label)}</strong><span>${escapeHtml([sceneText, confidence].filter(Boolean).join(" · ") || "宠物活动")}</span></div>
-        <em>独立识别</em>
+        <em>活动识别</em>
       </div>
     `);
   }
