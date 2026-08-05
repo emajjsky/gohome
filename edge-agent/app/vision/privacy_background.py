@@ -56,6 +56,10 @@ class _BackgroundState:
     last_geometry_affine_median_corner_displacement_ratio: float | None = None
     last_geometry_affine_max_corner_displacement_ratio: float | None = None
     last_geometry_model_agreement: str = "not_checked"
+    last_geometry_phase_status: str = "not_checked"
+    last_geometry_phase_reason: str = ""
+    last_geometry_phase_response: float | None = None
+    last_geometry_phase_displacement_ratio: float | None = None
     last_geometry_signature: Any | None = None
     calibration_active: bool = False
     calibration_id: str = ""
@@ -257,6 +261,10 @@ class PrivacyBackgroundReconstructor:
                 state.last_geometry_affine_median_corner_displacement_ratio = None
                 state.last_geometry_affine_max_corner_displacement_ratio = None
                 state.last_geometry_model_agreement = "not_checked"
+                state.last_geometry_phase_status = "not_checked"
+                state.last_geometry_phase_reason = ""
+                state.last_geometry_phase_response = None
+                state.last_geometry_phase_displacement_ratio = None
                 state.last_geometry_signature = None
                 state.calibration_active = False
                 state.calibration_reference = None
@@ -596,6 +604,10 @@ class PrivacyBackgroundReconstructor:
         state.last_geometry_affine_median_corner_displacement_ratio = None
         state.last_geometry_affine_max_corner_displacement_ratio = None
         state.last_geometry_model_agreement = "not_checked"
+        state.last_geometry_phase_status = "not_checked"
+        state.last_geometry_phase_reason = ""
+        state.last_geometry_phase_response = None
+        state.last_geometry_phase_displacement_ratio = None
         state.last_geometry_signature = None
 
     def _protected_mask(self, cv2: Any, state: _BackgroundState, mask: Any) -> Any:
@@ -814,6 +826,18 @@ class PrivacyBackgroundReconstructor:
             state.last_geometry_model_agreement = str(
                 assessment.get("geometry_model_agreement") or "not_checked"
             )
+            state.last_geometry_phase_status = str(
+                assessment.get("geometry_phase_status") or "not_checked"
+            )
+            state.last_geometry_phase_reason = str(
+                assessment.get("geometry_phase_reason") or ""
+            )
+            state.last_geometry_phase_response = assessment.get(
+                "geometry_phase_response"
+            )
+            state.last_geometry_phase_displacement_ratio = assessment.get(
+                "geometry_phase_displacement_ratio"
+            )
 
     def _calibration_frame_matches(self, reference: Any, frame: Any) -> bool:
         if reference.shape != frame.shape:
@@ -954,6 +978,10 @@ class PrivacyBackgroundReconstructor:
                     "geometry_affine_median_corner_displacement_ratio": state.last_geometry_affine_median_corner_displacement_ratio,
                     "geometry_affine_max_corner_displacement_ratio": state.last_geometry_affine_max_corner_displacement_ratio,
                     "geometry_model_agreement": state.last_geometry_model_agreement,
+                    "geometry_phase_status": state.last_geometry_phase_status,
+                    "geometry_phase_reason": state.last_geometry_phase_reason,
+                    "geometry_phase_response": state.last_geometry_phase_response,
+                    "geometry_phase_displacement_ratio": state.last_geometry_phase_displacement_ratio,
                     "geometry_cached": True,
                 }
         assessment = self.geometry_verifier.assess(background, frame, excluded_mask=excluded_mask)
@@ -1001,6 +1029,18 @@ class PrivacyBackgroundReconstructor:
                 )
                 state.last_geometry_model_agreement = str(
                     assessment.get("geometry_model_agreement") or "not_checked"
+                )
+                state.last_geometry_phase_status = str(
+                    assessment.get("geometry_phase_status") or "not_checked"
+                )
+                state.last_geometry_phase_reason = str(
+                    assessment.get("geometry_phase_reason") or ""
+                )
+                state.last_geometry_phase_response = assessment.get(
+                    "geometry_phase_response"
+                )
+                state.last_geometry_phase_displacement_ratio = assessment.get(
+                    "geometry_phase_displacement_ratio"
                 )
                 state.last_geometry_signature = signature
         return assessment
@@ -1099,6 +1139,10 @@ class PrivacyBackgroundReconstructor:
             "last_geometry_affine_median_corner_displacement_ratio": state.last_geometry_affine_median_corner_displacement_ratio,
             "last_geometry_affine_max_corner_displacement_ratio": state.last_geometry_affine_max_corner_displacement_ratio,
             "last_geometry_model_agreement": state.last_geometry_model_agreement,
+            "last_geometry_phase_status": state.last_geometry_phase_status,
+            "last_geometry_phase_reason": state.last_geometry_phase_reason,
+            "last_geometry_phase_response": state.last_geometry_phase_response,
+            "last_geometry_phase_displacement_ratio": state.last_geometry_phase_displacement_ratio,
             "last_geometry_check_age_ms": (
                 round(max(0.0, self._clock() - state.last_geometry_check_at) * 1000.0, 1)
                 if state.last_geometry_check_at > 0.0

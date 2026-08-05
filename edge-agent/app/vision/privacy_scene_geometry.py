@@ -8,7 +8,7 @@ import numpy as np
 class SceneGeometryVerifier:
     """Distinguish camera viewpoint changes from ordinary household changes."""
 
-    version = "privacy-scene-geometry-v3"
+    version = "privacy-scene-geometry-v4"
 
     def __init__(
         self,
@@ -24,6 +24,8 @@ class SceneGeometryVerifier:
         minimum_change_grid_coverage_ratio: float = 0.25,
         maximum_median_corner_displacement_ratio: float = 0.015,
         maximum_corner_displacement_ratio: float = 0.025,
+        minimum_phase_response: float = 0.08,
+        maximum_phase_displacement_ratio: float = 0.012,
     ) -> None:
         self.minimum_features = max(8, int(minimum_features))
         self.minimum_matches = max(8, int(minimum_matches))
@@ -57,6 +59,11 @@ class SceneGeometryVerifier:
             self.maximum_median_corner_displacement_ratio,
             float(maximum_corner_displacement_ratio),
         )
+        self.minimum_phase_response = max(0.02, min(0.8, float(minimum_phase_response)))
+        self.maximum_phase_displacement_ratio = max(
+            0.002,
+            min(0.05, float(maximum_phase_displacement_ratio)),
+        )
 
     def assess(
         self,
@@ -72,6 +79,12 @@ class SceneGeometryVerifier:
         current_mask = None
         if excluded_mask is not None:
             current_mask = np.where(np.asarray(excluded_mask) == 0, 255, 0).astype(np.uint8)
+        phase = self._phase_alignment(
+            cv2,
+            baseline_gray,
+            current_gray,
+            visible_mask=current_mask,
+        )
         detector = cv2.ORB_create(
             nfeatures=800,
             scaleFactor=1.2,
@@ -86,7 +99,10 @@ class SceneGeometryVerifier:
             or len(baseline_points) < self.minimum_features
             or len(current_points) < self.minimum_features
         ):
-            return self._unverifiable("insufficient_geometry_features")
+            return self._feature_fallback(
+                "insufficient_geometry_features",
+                phase=phase,
+            )
 
         pairs = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(
             current_descriptors,
@@ -101,8 +117,9 @@ class SceneGeometryVerifier:
             if first.distance < 0.75 * second.distance:
                 matches.append(first)
         if len(matches) < self.minimum_transform_matches:
-            return self._unverifiable(
+            return self._feature_fallback(
                 "insufficient_geometry_matches",
+                phase=phase,
                 good_matches=len(matches),
             )
 
@@ -119,8 +136,9 @@ class SceneGeometryVerifier:
             3.0,
         )
         if transform is None or inlier_mask is None:
-            return self._unverifiable(
+            return self._feature_fallback(
                 "geometry_transform_failed",
+                phase=phase,
                 good_matches=len(matches),
             )
         inliers = int(np.count_nonzero(inlier_mask))
@@ -129,8 +147,9 @@ class SceneGeometryVerifier:
             inliers < self.minimum_transform_inliers
             or inlier_ratio < self.minimum_transform_inlier_ratio
         ):
-            return self._unverifiable(
+            return self._feature_fallback(
                 "insufficient_geometry_inliers",
+                phase=phase,
                 good_matches=len(matches),
                 inliers=inliers,
                 inlier_ratio=inlier_ratio,
@@ -271,6 +290,7 @@ class SceneGeometryVerifier:
                 else round(affine_maximum_displacement, 5)
             ),
             "geometry_model_agreement": model_agreement,
+            **phase,
             "geometry_cached": False,
         }
 
@@ -317,6 +337,91 @@ class SceneGeometryVerifier:
             "geometry_reason": "camera_view_changed",
             "geometry_confidence": "strong",
             **common,
+        }
+
+    def _feature_fallback(
+        self,
+        reason: str,
+        *,
+        phase: dict[str, Any],
+        good_matches: int = 0,
+        inliers: int = 0,
+        inlier_ratio: float | None = None,
+    ) -> dict[str, Any]:
+        if phase.get("geometry_phase_status") == "same_view":
+            return {
+                "accepted": True,
+                "geometry_status": "same_view",
+                "geometry_reason": "",
+                "geometry_confidence": "moderate",
+                "geometry_good_matches": int(good_matches),
+                "geometry_inliers": int(inliers),
+                "geometry_inlier_ratio": (
+                    None if inlier_ratio is None else round(float(inlier_ratio), 4)
+                ),
+                "geometry_median_corner_displacement_ratio": None,
+                "geometry_max_corner_displacement_ratio": None,
+                **phase,
+                "geometry_cached": False,
+            }
+        return self._unverifiable(
+            reason,
+            good_matches=good_matches,
+            inliers=inliers,
+            inlier_ratio=inlier_ratio,
+            extra=phase,
+        )
+
+    def _phase_alignment(
+        self,
+        cv2: Any,
+        baseline_gray: Any,
+        current_gray: Any,
+        *,
+        visible_mask: Any | None,
+    ) -> dict[str, Any]:
+        baseline_x = cv2.Sobel(baseline_gray, cv2.CV_32F, 1, 0, ksize=3)
+        baseline_y = cv2.Sobel(baseline_gray, cv2.CV_32F, 0, 1, ksize=3)
+        current_x = cv2.Sobel(current_gray, cv2.CV_32F, 1, 0, ksize=3)
+        current_y = cv2.Sobel(current_gray, cv2.CV_32F, 0, 1, ksize=3)
+        baseline_edges = cv2.magnitude(baseline_x, baseline_y)
+        current_edges = cv2.magnitude(current_x, current_y)
+        if visible_mask is not None:
+            visible = np.asarray(visible_mask) > 0
+            baseline_edges = np.where(visible, baseline_edges, 0.0).astype(np.float32)
+            current_edges = np.where(visible, current_edges, 0.0).astype(np.float32)
+        edge_energy = min(float(np.std(baseline_edges)), float(np.std(current_edges)))
+        if edge_energy < 4.0:
+            return {
+                "geometry_phase_status": "unverifiable",
+                "geometry_phase_reason": "insufficient_global_edge_energy",
+                "geometry_phase_response": None,
+                "geometry_phase_displacement_ratio": None,
+            }
+        height, width = baseline_gray.shape[:2]
+        window = cv2.createHanningWindow((int(width), int(height)), cv2.CV_32F)
+        shift, response = cv2.phaseCorrelate(
+            baseline_edges,
+            current_edges,
+            window,
+        )
+        displacement_ratio = float(np.hypot(float(shift[0]), float(shift[1]))) / max(
+            1.0,
+            float(np.hypot(width, height)),
+        )
+        same_view = bool(
+            np.isfinite(response)
+            and np.isfinite(displacement_ratio)
+            and float(response) >= self.minimum_phase_response
+            and displacement_ratio <= self.maximum_phase_displacement_ratio
+        )
+        return {
+            "geometry_phase_status": "same_view" if same_view else "unverifiable",
+            "geometry_phase_reason": "" if same_view else "global_phase_alignment_inconclusive",
+            "geometry_phase_response": round(float(response), 5) if np.isfinite(response) else None,
+            "geometry_phase_displacement_ratio": (
+                round(displacement_ratio, 5) if np.isfinite(displacement_ratio) else None
+            ),
         }
 
     @staticmethod

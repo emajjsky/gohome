@@ -289,6 +289,34 @@ def main() -> int:
         or clustered_assessment["geometry_grid_coverage_ratio"] < 0.25
     )
 
+    low_feature_baseline = np.random.default_rng(9).integers(
+        0,
+        256,
+        size=(360, 640, 3),
+        dtype=np.uint8,
+    )
+    low_feature_lighting = np.clip(
+        low_feature_baseline.astype(np.int16) + 20,
+        0,
+        255,
+    ).astype(np.uint8)
+    phase_only_verifier = SceneGeometryVerifier(minimum_features=1000)
+    low_feature_assessment = phase_only_verifier.assess(
+        low_feature_baseline,
+        low_feature_lighting,
+        excluded_mask=None,
+    )
+    assert low_feature_assessment["geometry_status"] == "same_view"
+    assert low_feature_assessment["geometry_phase_status"] == "same_view"
+    assert low_feature_assessment["geometry_phase_displacement_ratio"] == 0.0
+    low_feature_moved = phase_only_verifier.assess(
+        low_feature_baseline,
+        np.roll(low_feature_baseline, 50, axis=1),
+        excluded_mask=None,
+    )
+    assert low_feature_moved["geometry_status"] == "unverifiable"
+    assert low_feature_moved["geometry_phase_status"] == "unverifiable"
+
     clean_a = scene(1)
     clean_b = scene(7)
     occupied_a = occupied_scene(cv2, clean_a)
@@ -1100,6 +1128,7 @@ def main() -> int:
         "large_household_change_restart_revalidated": True,
         "lighting_change_retained": True,
         "clustered_features_do_not_confirm_camera_move": True,
+        "low_feature_phase_revalidation": True,
         "unverifiable_scene_retains_baseline": True,
         "unverifiable_scene_recovers": True,
         "revalidation_camera_isolation": True,
