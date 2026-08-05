@@ -348,7 +348,8 @@ class HailoPersonSegmentationDecoder:
 class HailoPersonSegmentationBackend:
     """Anchor person masks on Hailo and propagate them across exact stream frames."""
 
-    version = "hailo-yolov11s-person-segmentation-v2"
+    version = "hailo-yolov11s-person-segmentation-v3"
+    flow_algorithm = "dis_ultrafast"
 
     def __init__(
         self,
@@ -379,6 +380,9 @@ class HailoPersonSegmentationBackend:
         self._runtime: Any | None = None
         self._runtime_lock = RLock()
         self._camera_locks: Dict[int, RLock] = {}
+        self._flow_estimators: Dict[int, Any] = {}
+        self._flow_grids: Dict[tuple[int, int], tuple[Any, Any]] = {}
+        self._morphology_kernels: tuple[Any, Any] | None = None
         self._cache: OrderedDict[tuple[int, str, str], Dict[str, Any]] = OrderedDict()
         self._temporal_states: Dict[int, _TemporalMaskState] = {}
         self._lock = RLock()
@@ -552,6 +556,7 @@ class HailoPersonSegmentationBackend:
             for key in [item for item in self._cache if item[0] == camera_id]:
                 self._cache.pop(key, None)
             self._camera_locks.pop(camera_id, None)
+            self._flow_estimators.pop(camera_id, None)
             self._temporal_states.pop(camera_id, None)
 
     def status(self) -> Dict[str, Any]:
@@ -578,9 +583,12 @@ class HailoPersonSegmentationBackend:
                 "anchor_interval_seconds": self.anchor_interval_seconds,
                 "maximum_propagation_seconds": self.maximum_propagation_seconds,
                 "flow_width": self.flow_width,
+                "flow_algorithm": self.flow_algorithm,
                 "flow_latency_summary_ms": self._latency_summary(
                     sorted(float(value) for value in self._flow_latency_history)
                 ),
+                "flow_estimator_count": len(self._flow_estimators),
+                "flow_grid_cache_entries": len(self._flow_grids),
                 "cache_entries": len(self._cache),
                 "runtime_count": runtime_count,
                 "runtime_ownership": "shared_per_hef",
@@ -593,6 +601,9 @@ class HailoPersonSegmentationBackend:
         with self._lock:
             self._cache.clear()
             self._camera_locks.clear()
+            self._flow_estimators.clear()
+            self._flow_grids.clear()
+            self._morphology_kernels = None
             self._temporal_states.clear()
 
     def _ensure_runtime(self) -> Any:
@@ -655,40 +666,29 @@ class HailoPersonSegmentationBackend:
                 self._propagation_rejections += 1
             return None
         started_at = time.perf_counter()
-        flow = cv2.calcOpticalFlowFarneback(
-            gray,
-            state.gray,
-            None,
-            0.5,
-            2,
-            15,
-            2,
-            5,
-            1.1,
-            0,
-        )
-        grid_x, grid_y = np.meshgrid(
-            np.arange(gray.shape[1], dtype=np.float32),
-            np.arange(gray.shape[0], dtype=np.float32),
-        )
+        flow = self._flow_estimator(cv2, int(camera_id)).calc(gray, state.gray, None)
+        grid_x, grid_y = self._flow_grid(int(gray.shape[0]), int(gray.shape[1]))
+        flow[..., 0] += grid_x
+        flow[..., 1] += grid_y
         warped = cv2.remap(
             state.mask,
-            grid_x + flow[..., 0],
-            grid_y + flow[..., 1],
+            flow[..., 0],
+            flow[..., 1],
             cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=0,
         )
         warped = np.where(warped >= 72, 255, 0).astype(np.uint8)
         if bool(np.any(warped)):
+            close_kernel, dilate_kernel = self._flow_morphology_kernels(cv2)
             warped = cv2.morphologyEx(
                 warped,
                 cv2.MORPH_CLOSE,
-                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+                close_kernel,
             )
             warped = cv2.dilate(
                 warped,
-                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+                dilate_kernel,
                 iterations=1,
             )
         mask = cv2.resize(warped, (int(width), int(height)), interpolation=cv2.INTER_NEAREST)
@@ -769,6 +769,36 @@ class HailoPersonSegmentationBackend:
             else cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
         )
         return cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+
+    def _flow_estimator(self, cv2: Any, camera_id: int) -> Any:
+        with self._lock:
+            estimator = self._flow_estimators.get(int(camera_id))
+            if estimator is None:
+                estimator = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_ULTRAFAST)
+                self._flow_estimators[int(camera_id)] = estimator
+            return estimator
+
+    def _flow_grid(self, height: int, width: int) -> tuple[Any, Any]:
+        key = (int(height), int(width))
+        with self._lock:
+            cached = self._flow_grids.get(key)
+            if cached is not None:
+                return cached
+            grid_x, grid_y = np.meshgrid(
+                np.arange(key[1], dtype=np.float32),
+                np.arange(key[0], dtype=np.float32),
+            )
+            self._flow_grids[key] = (grid_x, grid_y)
+            return grid_x, grid_y
+
+    def _flow_morphology_kernels(self, cv2: Any) -> tuple[Any, Any]:
+        with self._lock:
+            if self._morphology_kernels is None:
+                self._morphology_kernels = (
+                    cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+                    cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+                )
+            return self._morphology_kernels
 
     def _store_result(self, key: tuple[int, str, str], result: Dict[str, Any]) -> None:
         with self._lock:
