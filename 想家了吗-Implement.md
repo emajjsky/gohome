@@ -12961,3 +12961,22 @@ P4 风险升频边界：
 - 当前 Hailo Pose 单次推理中位约 `22.9 ms`、P95 `37.46 ms`，失败为 0；空房每路约 2 Hz 的原因不是 Hailo 只能运行几 FPS。
 - `EdgeWorker` 只有一个完整分析循环，`DetectAgent` 以全局锁串行整个 `VisionPipeline`；Pose、Object、场景、活动、规则和持久化共同占用一次周期。直接删锁会并发访问状态型 `SceneContextTracker`、Pipeline 缓存和共享模型绑定，不是正确修复。
 - GH-030 的唯一方向是建立一个共享、有界、最新帧优先的 Pose 调度所有者。它拥有唯一 Pose runtime，高频锚点按摄像头和完整源身份发布给 Tracker；低频完整产品分析继续负责正式人证、场景、姿态、规则和持久化。显示锚点只能触发刷新或风险唤醒，未经当前帧完整验证不得直接产生正式事件。
+
+## 195. 2026-08-05 共享 Pose 推理所有权
+
+### 结构边界
+
+- 新增 `PoseInferenceService`，集中拥有 `HailoPoseBackend` 与 `RtmposeAnalyzer`。`DetectAgent` 创建唯一服务并注入 `VisionPipeline`，二者不再分别表达 Pose runtime 所有权。
+- `VisionPipeline` 仍支持独立构造，但仅在没有外部服务时创建一项自有服务，并只关闭自己拥有的实例；由 `DetectAgent` 注入时，管线关闭不触碰共享实例，最终由 Agent 关闭。
+- Hailo 预计算结果与 CPU/RTMPose 解释继续通过同一服务进入现有管线。原推理顺序、阈值、人物证据、跌倒证据、输出字段和全局串行锁均未改变，避免在所有权与调度两个变量同时变化时失去反溯能力。
+
+### 可观测性与验证
+
+- `runtime_status()` 保留原 `inference_backend` 状态，并新增 `pose_inference_service`，固定声明 `schema_version=shared-pose-inference-v1`、`runtime_ownership=single_shared_service`、`runtime_count=1`。
+- 所有权专项验证 `DetectAgent.pipeline.pose_inference` 与 `DetectAgent.pose_inference_service` 为同一对象，并固定运行时状态契约；视觉管线测试改为通过共享服务注入 Hailo 结果和 Pose estimator，不再依赖已删除的重复属性。
+- Python 编译、DetectAgent 串行专项、视觉管线、运行环境检查和完整边缘回归 `58/58` 全部通过。
+
+### 未完成边界
+
+- 本阶段只建立唯一所有者，不提高调度频率，也不删除 `DetectAgent` 的全局锁。当前端到端 Pose Hz 应保持部署前水平；任何变化都属于回归，不能解释为优化收益。
+- 下一阶段在该服务上增加有界最新帧协调器：高频显示锚点与低频完整产品分析分离，共享一个 runtime，结果携带完整摄像头与帧身份。显示结果只允许短时跟踪和唤醒正式分析，未经完整产品管线验证不得直接产生风险事件。

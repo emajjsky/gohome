@@ -4,6 +4,7 @@ from threading import Lock
 from typing import Any, Dict, Optional
 
 from .vision import VisionPipeline
+from .vision.pose_inference import PoseInferenceService
 
 
 class DetectAgent:
@@ -43,6 +44,25 @@ class DetectAgent:
         hailo_retry_seconds: float = 30.0,
         context_detection_interval_seconds: float = 3.0,
     ) -> None:
+        self.pose_inference_service = PoseInferenceService(
+            pose_enabled=pose_enabled,
+            pose_mode=pose_mode,
+            pose_runtime_backend=pose_runtime_backend,
+            pose_device=pose_device,
+            pose_fall_threshold=pose_fall_threshold,
+            pose_fall_min_confidence=pose_fall_min_confidence,
+            pose_fall_min_visible_keypoints=pose_fall_min_visible_keypoints,
+            pose_fall_min_core_keypoints=pose_fall_min_core_keypoints,
+            pose_det_frequency=pose_det_frequency,
+            pose_min_keypoint_confidence=pose_min_keypoint_confidence,
+            pose_max_poses=pose_max_poses,
+            pose_tracking=pose_tracking,
+            inference_backend=inference_backend,
+            hailo_pose_model=hailo_pose_model,
+            hailo_pose_confidence=hailo_pose_confidence,
+            hailo_pose_nms_iou=hailo_pose_nms_iou,
+            hailo_retry_seconds=hailo_retry_seconds,
+        )
         self.pipeline = VisionPipeline(
             black_brightness_threshold=black_brightness_threshold,
             black_contrast_threshold=black_contrast_threshold,
@@ -77,6 +97,7 @@ class DetectAgent:
             hailo_object_interval_seconds=hailo_object_interval_seconds,
             hailo_retry_seconds=hailo_retry_seconds,
             context_detection_interval_seconds=context_detection_interval_seconds,
+            pose_inference_service=self.pose_inference_service,
         )
         self._initialize_inference_lock()
 
@@ -100,3 +121,4 @@ class DetectAgent:
 
     def close(self) -> None:
         self.pipeline.close()
+        self.pose_inference_service.close()

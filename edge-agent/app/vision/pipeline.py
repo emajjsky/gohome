@@ -8,10 +8,9 @@ from typing import Any, Dict
 from .activity import ActivityAnalyzer
 from .fall import FallAnalyzer
 from .hailo_object import HailoObjectBackend
-from .hailo_pose import HailoPoseBackend
 from .human_evidence import HumanEvidenceGate
 from .person_yolo import PET_CLASS_LABELS, SCENE_CLASS_LABELS, PersonDetector
-from .pose_rtmpose import RtmposeAnalyzer
+from .pose_inference import PoseInferenceService
 from .quality import QualityAnalyzer
 from .scene_context import SceneContextTracker
 
@@ -55,6 +54,7 @@ class VisionPipeline:
         hailo_object_interval_seconds: float = 1.0,
         hailo_retry_seconds: float = 30.0,
         context_detection_interval_seconds: float = 3.0,
+        pose_inference_service: PoseInferenceService | None = None,
     ) -> None:
         self.default_config = {
             "black_brightness_threshold": black_brightness_threshold,
@@ -91,27 +91,25 @@ class VisionPipeline:
         )
         self.fall = FallAnalyzer()
         self.activity = ActivityAnalyzer()
-        self.pose = RtmposeAnalyzer(
-            enabled=pose_enabled,
-            mode=pose_mode,
-            runtime_backend=pose_runtime_backend,
-            device=pose_device,
-            fall_threshold=pose_fall_threshold,
-            fall_min_pose_confidence=pose_fall_min_confidence,
-            fall_min_visible_keypoints=pose_fall_min_visible_keypoints,
-            fall_min_core_keypoints=pose_fall_min_core_keypoints,
-            det_frequency=pose_det_frequency,
-            min_keypoint_confidence=pose_min_keypoint_confidence,
-            max_poses=pose_max_poses,
-            tracking=pose_tracking,
-        )
-        self.hailo_pose = HailoPoseBackend(
-            mode=inference_backend,
-            model_path=hailo_pose_model,
-            confidence=hailo_pose_confidence,
-            nms_iou=hailo_pose_nms_iou,
-            max_poses=pose_max_poses,
-            retry_seconds=hailo_retry_seconds,
+        self._owns_pose_inference_service = pose_inference_service is None
+        self.pose_inference = pose_inference_service or PoseInferenceService(
+            pose_enabled=pose_enabled,
+            pose_mode=pose_mode,
+            pose_runtime_backend=pose_runtime_backend,
+            pose_device=pose_device,
+            pose_fall_threshold=pose_fall_threshold,
+            pose_fall_min_confidence=pose_fall_min_confidence,
+            pose_fall_min_visible_keypoints=pose_fall_min_visible_keypoints,
+            pose_fall_min_core_keypoints=pose_fall_min_core_keypoints,
+            pose_det_frequency=pose_det_frequency,
+            pose_min_keypoint_confidence=pose_min_keypoint_confidence,
+            pose_max_poses=pose_max_poses,
+            pose_tracking=pose_tracking,
+            inference_backend=inference_backend,
+            hailo_pose_model=hailo_pose_model,
+            hailo_pose_confidence=hailo_pose_confidence,
+            hailo_pose_nms_iou=hailo_pose_nms_iou,
+            hailo_retry_seconds=hailo_retry_seconds,
         )
         self.hailo_object = HailoObjectBackend(
             mode=hailo_object_mode,
@@ -134,7 +132,7 @@ class VisionPipeline:
         runtime_config["frame_width"] = int(frame_width)
         runtime_config["frame_height"] = int(frame_height)
         runtime_config["frame_motion_score"] = float(quality.get("motion_score") or 0.0)
-        accelerated = self.hailo_pose.analyze(frame, runtime_config)
+        accelerated = self.pose_inference.infer_accelerated(frame, runtime_config)
         accelerated_context = self.hailo_object.analyze(frame, runtime_config)
         context_runtime = self._hailo_context_entities(accelerated_context, frame)
         if context_runtime:
@@ -153,21 +151,11 @@ class VisionPipeline:
             person = self.person.analyze(frame, runtime_config)
         raw_people = list(person.get("people") or [])
         raw_pets = list(person.get("pets") or [])
-        raw_pose = (
-            self.pose.analyze_precomputed(
-                frame,
-                runtime_config,
-                keypoints=accelerated["keypoints"],
-                scores=accelerated["keypoint_scores"],
-                source_person_boxes=[list(map(float, box)) for box in accelerated["boxes"]],
-                source_person_scores=[float(score) for score in accelerated["scores"]],
-                model_name=str(accelerated.get("model_name") or "yolov8s_pose_h8.hef"),
-                model_message=f"Hailo 姿态推理 {accelerated['latency_ms']:.1f} ms。",
-                backend="hailo",
-                detection_source="hailo_unified_person_pose",
-            )
-            if accelerated is not None
-            else self.pose.analyze(frame, runtime_config, people=raw_people)
+        raw_pose = self.pose_inference.interpret(
+            frame,
+            runtime_config,
+            accelerated=accelerated,
+            people=raw_people,
         )
         pose = self._pose_with_short_cache(raw_pose, runtime_config, quality)
         scene_candidates = self._scene_objects_without_human_overlap(
@@ -276,7 +264,7 @@ class VisionPipeline:
 
         result = {
             "inference_backend": "hailo" if accelerated is not None else "cpu",
-            "inference_backend_status": self.hailo_pose.status(),
+            "inference_backend_status": self.pose_inference.hailo_backend.status(),
             "inference_latency_ms": accelerated.get("latency_ms") if accelerated is not None else None,
             "inference_stage_latency_ms": accelerated.get("stage_latency_ms") if accelerated is not None else {},
             "context_detection_cached": context_runtime.get("cached") if context_runtime else None,
@@ -352,8 +340,14 @@ class VisionPipeline:
         return result
 
     def runtime_status(self) -> Dict[str, Any]:
+        pose_inference_status = self.pose_inference.status()
         return {
-            "inference_backend": self.hailo_pose.status(),
+            "inference_backend": pose_inference_status["inference_backend"],
+            "pose_inference_service": {
+                key: value
+                for key, value in pose_inference_status.items()
+                if key != "inference_backend"
+            },
             "context_inference_backend": self.hailo_object.status(),
             "human_evidence": self.human_evidence.status(),
             "pipeline_latency_ms": {
@@ -363,7 +357,8 @@ class VisionPipeline:
         }
 
     def close(self) -> None:
-        self.hailo_pose.close()
+        if self._owns_pose_inference_service:
+            self.pose_inference.close()
         self.hailo_object.close()
         self.human_evidence.reset()
 

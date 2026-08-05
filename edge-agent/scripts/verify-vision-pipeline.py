@@ -1032,7 +1032,7 @@ def verify_pipeline_requires_independent_person_evidence() -> dict:
         "latency_ms": 12.0,
         "model_name": "synthetic-pose.hef",
     }
-    pipeline.hailo_pose.analyze = lambda frame, config: accelerated  # type: ignore[method-assign]
+    pipeline.pose_inference.hailo_backend.analyze = lambda frame, config: accelerated  # type: ignore[method-assign]
 
     def object_result(frame, config):
         detections = []
@@ -1224,7 +1224,7 @@ def verify_pipeline_reports_pose_detection_source() -> dict:
     frame = np.dstack([gradient, np.roll(gradient, 24, axis=1), np.full_like(gradient, 96)])
     keypoints = np.array([[[120.0 + index * 2.0, 80.0 + index * 8.0] for index in range(17)]])
     scores = np.full((1, 17), 0.92, dtype=np.float32)
-    pipeline.pose._pose_estimator = lambda image, *, bboxes: (keypoints, scores)
+    pipeline.pose_inference.interpreter._pose_estimator = lambda image, *, bboxes: (keypoints, scores)
     analysis = pipeline.analyze(
         frame,
         config={"force_demo_vision": True, "pose_detection_enabled": True},

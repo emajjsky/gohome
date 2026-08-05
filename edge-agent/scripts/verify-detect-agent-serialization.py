@@ -30,6 +30,19 @@ class ConcurrentProbePipeline:
 
 
 def main() -> None:
+    owned_agent = DetectAgent(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+    )
+    if owned_agent.pipeline.pose_inference is not owned_agent.pose_inference_service:
+        raise SystemExit("DetectAgent and VisionPipeline must share one Pose inference owner")
+    ownership = owned_agent.runtime_status().get("pose_inference_service") or {}
+    if ownership.get("runtime_ownership") != "single_shared_service" or ownership.get("runtime_count") != 1:
+        raise SystemExit(f"Pose inference ownership status is invalid: {ownership}")
+    owned_agent.close()
+
     agent = DetectAgent.__new__(DetectAgent)
     agent.pipeline = ConcurrentProbePipeline()
     agent._initialize_inference_lock()
