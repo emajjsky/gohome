@@ -629,3 +629,13 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 **验收**：生产 unit 与主线一致并单次重启 MediaMTX；真实 Build 11 请求必须达到 `session 200 -> OPTIONS 204 -> SDP POST 201 -> candidate PATCH 204`，MediaMTX 不再记录本机接口错误，reader 和 outbound bytes 持续增长。随后完成双路三模式切换、前后台与 Wi-Fi/蜂窝验收；在取得真实证据前 GH-063 不关闭。
 
 **关闭验证（2026-08-06）**：提交 `efc7977` 已推送并部署到轻量服务器；只重启 `gohome-mediamtx`，API、Coturn 和盒子未重启。两路发布约 2 秒内恢复 `ready/online`，MediaMTX `NRestarts=0`。Build 11 真实请求在 11:49-11:50 多次达到 `session 200 -> OPTIONS 204 -> SDP POST 201 -> candidate PATCH 204`；两路均出现 peer connection established 并读取 H.264 path，`outboundBytes` 实测约 `199147 / 5176909` 且持续增长。日志不再出现 `error getting local interfaces`。Build 11 已证明 WHEP 协商根因修复，GH-061、GH-062、GH-063 关闭；三模式与网络长时仍按交付验收计划继续，不以短时播放替代长测。
+
+### GH-064 本地闭环校验器把合法空资料当成失败
+
+**现象**：使用当前主线启动全新 JSON 临时服务运行 `verify-local-closed-loop.js` 时，服务、登录和家庭创建通过，但在首次读取老人资料处以 `404` 退出。
+
+**根因**：新家庭允许先完成账号/家庭/盒子流程，再由用户补充老人资料；正式 API 对未填写资料返回结构化 `404`，而校验器无条件要求读取必须 `2xx`。此前直接复用本机 7 月遗留的 8788 服务，未暴露这个初始状态边界。
+
+**处理与验证**：校验器现在只将精确的“老人资料尚未填写”状态记为 warning，继续执行天气、关怀卡、设备、摄像头、事件和清理检查；其他 `404/5xx` 仍立即失败。未修改产品 API 或伪造默认老人资料。修复完成后重新运行全新临时服务闭环，后续以实际结果决定是否还存在产品问题。
+
+**关闭验证**：全新临时 JSON 实例进一步确认没有预置盒子和摄像头，这是干净开发环境而非绑定丢失。校验器只在“回环地址 + JSON store”组合下把空拓扑标为 warning，并明确引用独立 onboarding 验证；生产 PostgreSQL、远程地址或已配置摄像头仍使用严格失败条件。当前主线临时实例的 onboarding `13/13` 通过，闭环校验无产品错误退出，测试数据由正式清理接口删除。GH-064 关闭。

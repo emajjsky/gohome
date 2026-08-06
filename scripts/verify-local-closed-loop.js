@@ -245,6 +245,8 @@ async function main() {
         printAndExit();
         return;
     }
+    const localJsonDevelopment = health?.store === "json"
+        && /^https?:\/\/(127\.0\.0\.1|localhost)(?::|\/)/.test(baseUrl);
 
     const user = await requestJson("/api/users/me");
     if (user?.id) pass("app auth", `${user.display_name || user.email || user.id}`);
@@ -256,9 +258,18 @@ async function main() {
     else fail("family", "no family returned");
 
     if (family?.id) {
-        const profile = await requestJson(`/api/v1/families/${family.id}/elders/elder_primary/profile`);
-        if (profile?.display_name) pass("elder profile", `${profile.display_name} ${profile.city || ""}`.trim());
-        else warn("elder profile", "display name is empty");
+        const profileResult = await request(`/api/v1/families/${family.id}/elders/elder_primary/profile`);
+        let profile = profileResult.payload;
+        if (profileResult.response.status === 404 && profileResult.payload?.detail === "老人资料尚未填写。") {
+            profile = {};
+            warn("elder profile", "profile is not filled yet");
+        } else if (!profileResult.response.ok) {
+            throw new Error(`/api/v1/families/${family.id}/elders/elder_primary/profile -> ${profileResult.response.status} ${profileResult.text}`);
+        } else if (profile?.display_name) {
+            pass("elder profile", `${profile.display_name} ${profile.city || ""}`.trim());
+        } else {
+            warn("elder profile", "display name is empty");
+        }
         if (profile?.mobile_phone || profile?.phone || profile?.home_phone) pass("elder contact", "phone configured");
         else warn("elder contact", "phone/home phone is empty, call action cannot dial directly");
 
@@ -301,6 +312,7 @@ async function main() {
 
     const device = await requestJson("/api/app/device");
     if (device?.device_id) pass("device visible", `${device.device_id}`);
+    else if (localJsonDevelopment) warn("device visible", "clean local JSON has no seeded box; binding is covered by cloud onboarding verification");
     else fail("device visible", "missing app device");
     if (device?.worker_running) pass("edge worker", "reported running");
     else warn("edge worker", "worker_running is false or not reported");
@@ -314,7 +326,7 @@ async function main() {
     else fail("device sync state", "missing config version");
     if (syncState?.rules_version && syncState.applied_rule_version && syncState.rules_version === syncState.applied_rule_version) {
         pass("rules applied", syncState.rules_version);
-    } else if (health?.store === "json" && /^https?:\/\/(127\.0\.0\.1|localhost)(?::|\/)/.test(baseUrl)) {
+    } else if (localJsonDevelopment) {
         pass("rules applied", "local JSON is development-only; the real box follows cloud family rules");
     } else if (syncState?.rules_version) {
         warn("rules applied", `desired=${syncState.rules_version}, applied=${syncState.applied_rule_version || "not reported"}`);
@@ -326,9 +338,12 @@ async function main() {
     const enabledCameras = Array.isArray(cameras) ? cameras.filter((camera) => camera.enabled !== false) : [];
     const onlineCameras = enabledCameras.filter((camera) => String(camera.status || "").toLowerCase() === "online");
     if (enabledCameras.length) pass("cameras configured", `${enabledCameras.length} enabled`);
+    else if (localJsonDevelopment) warn("cameras configured", "clean local JSON has no seeded cameras");
     else fail("cameras configured", "no enabled cameras");
     if (onlineCameras.length === enabledCameras.length && enabledCameras.length) {
         pass("camera online", `${onlineCameras.length}/${enabledCameras.length}`);
+    } else if (!enabledCameras.length && localJsonDevelopment) {
+        warn("camera online", "not applicable until a box camera is configured");
     } else {
         fail("camera online", `${onlineCameras.length}/${enabledCameras.length}`);
     }
