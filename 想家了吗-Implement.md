@@ -13360,7 +13360,12 @@ P4 风险升频边界：
 - `edge-agent/.venv/bin/python edge-agent/scripts/verify-video-privacy.py` 通过；专项新增确认新机位、保留旧文件、重启后自动发现两份基线、切换到已知角度、返回原角度、未知角度阻断和状态隔离，输出 `known_camera_views_restore_after_restart=true`。
 - `verify-privacy-calibration-api.py`、`verify-config-sync-agent.py`、Python 编译和 `git diff --check` 通过。
 
+### Pi 部署证据
+
+- 提交 `cb88d26` 中 `config_sync_agent.py`、`live_relay_agent.py`、`main.py` 和 `vision/privacy_background.py` 已精确安装到 `192.168.1.12`；远端 SHA-256 与主线一致。
+- 只重启 `gohome-edge-agent.service`，服务保持 `active`、`NRestarts=0`；两路源流约 `15 FPS`，两路隐私状态 `ready`、`publish_ready=true`，端侧纯骨架输出约 `14.7 / 11.8 FPS`。
+- 现有 `camera-31-...-640x360.npz` 和 `camera-32-...-640x360.npz` 数量、大小未变，证明部署没有删除或覆盖现场校准文件。
+
 ### 未关闭条件
 
-- 本轮只完成源码与本地回归，尚未部署盒子，未改变当前生产校准文件。
 - 仍需在无人时真实转动/断电重连摄像头，确认已知角度自动恢复；再转到未确认角度，确认原画/模糊可用、纯骨架给出明确待确认状态；最后验证 App、管理端、云端四级状态一致。

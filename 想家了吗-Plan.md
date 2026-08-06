@@ -3992,5 +3992,5 @@ Build 12 已上传 App Store Connect，等待 TestFlight 处理后执行上述�
 3. [x] 未知机位只允许原画/人物模糊继续使用，纯骨架返回结构化“新机位待空房确认”；不自动学习有人画面，不覆盖旧基线。
 4. [x] 新基线以候选平均帧、临时文件、fsync、原子替换提交；容量达到上限时只淘汰最旧非活动机位，持久化失败不改变现有状态。
 5. [x] 回归覆盖新机位提交、重启发现、已知角度恢复、返回原角度、未知角度阻断和单路隔离；隐私专项通过并包含 `known_camera_views_restore_after_restart`。
-6. [ ] 精确部署 `privacy_background.py` 和相关运行文件到盒子，验证断电/插回和控制云台不会让已知机位失效。
+6. [x] 精确部署 `privacy_background.py`、`config_sync_agent.py`、`live_relay_agent.py` 和 `main.py` 到盒子；远端哈希与提交 `cb88d26` 一致，服务 `active`、`NRestarts=0`，现有两份旧格式基线未变。
 7. [ ] 真实验收管理端、App 和云端状态：源流在线、隐私复核、成品发布、WHEP 可读四级状态必须一致。
