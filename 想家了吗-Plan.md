@@ -3908,3 +3908,14 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 5. [x] 新增云媒体部署契约门禁，锁定精确地址族、安全限制、回环 WHEP 和 8189 UDP/TCP 配置。
 6. [ ] 部署并单次重启生产 MediaMTX，验证 SDP `POST 201`、candidate `PATCH 204`、reader/outbound bytes 和无本机接口错误。
 7. [ ] 用 Build 11 完成双路三模式、前后台、Wi-Fi/蜂窝、切路切模式和断网恢复验收，再关闭 GH-061/GH-062/GH-063。
+
+## 15.61 WHEP 生产协商根因关闭（2026-08-06）
+
+状态：GH-061、GH-062、GH-063 的协议、ICE 和生产 systemd 根因均已修复并取得 Build 11 真实证据；产品长时交付验收继续进行。
+
+1. [x] 生产 MediaMTX unit 增加 `AF_NETLINK`，保留其余最小权限边界；部署提交 `efc7977`。
+2. [x] 两路 H.264 发布在 MediaMTX 单次重启后自动恢复，服务 `active`、`NRestarts=0`。
+3. [x] Build 11 两路真实会话均完成 `session 200 -> OPTIONS 204 -> SDP POST 201 -> candidate PATCH 204`。
+4. [x] MediaMTX 两路均报告 peer connection established 和 H.264 reader，出站字节持续增长，接口读取错误为 0。
+5. [x] 关闭 GH-061/GH-062/GH-063；不新增 MJPEG、双传输或宽松解析。
+6. [ ] 继续双路三模式长时验收：每个采样强制记录 `privacy_mode`、视频接收/渲染 FPS、端到端延迟、断线恢复、前后台和切路代次。

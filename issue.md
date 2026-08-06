@@ -627,3 +627,5 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 **处理**：只在 MediaMTX 单元的受限网络族中加入 `AF_NETLINK`，保留 `NoNewPrivileges`、`ProtectSystem=strict`、专用账号、回环 WHEP/API/metrics 和其余最小权限边界；Coturn 与云端 API 不需要 route netlink，不扩大其权限。新增正式部署契约校验，锁定 MediaMTX 只允许 `AF_UNIX/AF_INET/AF_INET6/AF_NETLINK`，同时确认 WHEP 回环监听、8189 UDP/TCP 和禁止 `PrivateNetwork=true`。
 
 **验收**：生产 unit 与主线一致并单次重启 MediaMTX；真实 Build 11 请求必须达到 `session 200 -> OPTIONS 204 -> SDP POST 201 -> candidate PATCH 204`，MediaMTX 不再记录本机接口错误，reader 和 outbound bytes 持续增长。随后完成双路三模式切换、前后台与 Wi-Fi/蜂窝验收；在取得真实证据前 GH-063 不关闭。
+
+**关闭验证（2026-08-06）**：提交 `efc7977` 已推送并部署到轻量服务器；只重启 `gohome-mediamtx`，API、Coturn 和盒子未重启。两路发布约 2 秒内恢复 `ready/online`，MediaMTX `NRestarts=0`。Build 11 真实请求在 11:49-11:50 多次达到 `session 200 -> OPTIONS 204 -> SDP POST 201 -> candidate PATCH 204`；两路均出现 peer connection established 并读取 H.264 path，`outboundBytes` 实测约 `199147 / 5176909` 且持续增长。日志不再出现 `error getting local interfaces`。Build 11 已证明 WHEP 协商根因修复，GH-061、GH-062、GH-063 关闭；三模式与网络长时仍按交付验收计划继续，不以短时播放替代长测。

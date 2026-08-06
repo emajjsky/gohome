@@ -13250,3 +13250,9 @@ P4 风险升频边界：
 - MediaMTX unit 的受限地址族精确改为 `AF_UNIX AF_INET AF_INET6 AF_NETLINK`。保留专用账号、`NoNewPrivileges`、`ProtectSystem=strict`、回环 WHEP/API/metrics 和现有公网端口边界；不扩大 Coturn 或 API 服务权限。
 - 新增 `verify-cloud-media-deployment.js` 并纳入根 `npm test`。门禁要求地址族集合精确匹配，不允许 `PrivateNetwork=true`，并锁定 WHEP 回环监听与 8189 UDP/TCP 媒体地址。
 - 部署后只重启 MediaMTX，不重启云端 API、Coturn 或盒子。真实验收要求 SDP POST 返回 201、candidate PATCH 返回 204、reader/outbound bytes 增长且日志不再出现接口读取错误。
+
+### 生产关闭证据
+
+- 提交 `efc7977` 已推送并部署；MediaMTX 单次重启后约 2 秒恢复两路 H.264 `ready/online`，API、Coturn 和盒子未重启，MediaMTX `NRestarts=0`。
+- Build 11 于 11:49-11:50 多次完成两路 `session 200 -> OPTIONS 204 -> SDP POST 201 -> candidate PATCH 204`。两路均建立 WebRTC peer 并读取对应 H.264 path，`outboundBytes` 约为 `199147 / 5176909`，日志无 `error getting local interfaces`。
+- GH-061、GH-062、GH-063 已关闭。后续工作不再修改 WHEP 协商链路，转入双路三模式、前后台、网络切换、断网恢复和 30 分钟稳定性验收；所有采样必须带隐私模式和真实渲染 FPS。
