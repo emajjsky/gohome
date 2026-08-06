@@ -36,6 +36,33 @@ final class WHEPSignalingClientTests: XCTestCase {
         XCTAssertEqual(session.compositionOwner, "edge")
     }
 
+    func testPlaybackSessionDecodesProductionShapeWithoutOptionalMinimumMode() throws {
+        let payload = Data(#"""
+        {
+            "session_id":"b733fb03-6288-48a9-a1b4-e57fd1859b13",
+            "expires_at":"2026-08-06T00:52:54.000Z",
+            "display_transport":"whep-h264-v1",
+            "composition_owner":"edge",
+            "privacy_mode":"skeleton",
+            "media_path":"live/edge-042714be475b91da/28",
+            "whep_url":"https://gohome.ai2shx.club/media/live/edge-042714be475b91da/28/whep",
+            "authorization":{
+                "scheme":"Bearer",
+                "token":"m1.production-shaped-base64url-payload.production-shaped-signature"
+            }
+        }
+        """#.utf8)
+
+        let session = try JSONDecoder().decode(CameraPlaybackSession.self, from: payload)
+
+        XCTAssertEqual(session.sessionID, "b733fb03-6288-48a9-a1b4-e57fd1859b13")
+        XCTAssertEqual(session.mediaPath, "live/edge-042714be475b91da/28")
+        XCTAssertEqual(session.privacyMode, .skeleton)
+        XCTAssertNil(session.minimumPrivacyMode)
+        XCTAssertEqual(session.displayTransport, CameraDisplayTransport.whepH264)
+        XCTAssertEqual(session.compositionOwner, "edge")
+    }
+
     func testParsesMediaMTXICEServerLinks() throws {
         let header = #"<stun:stun.example.com:3478>; rel="ice-server", <turn:turn.example.com:3478?transport=udp>; rel="ice-server"; username="family\"1"; credential="secret\\value"; credential-type="password""#
 

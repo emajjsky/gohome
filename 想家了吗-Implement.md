@@ -13191,3 +13191,24 @@ P4 风险升频边界：
 - 32 路保持 ready，相位结果为 `0.34105 / 0.00074`。两路最终均 `ready / local_change`，移动候选和不可验证次数为 0，复验 scheduler 的 active streams 为 0。
 - 两份持久基线文件 SHA-256 全程不变；服务 active、`NRestarts=0`、journal 无 warning。没有执行重校准、模式降级或文件替换，证明恢复来自三态、多模型和低纹理全局验证本身。
 - GH-060 已关闭。下一项回到 GH-008/GH-020：只有每个采样明确为 `privacy_mode=skeleton` 的双路真人长测，才能验收无人物像素、无残影、无串流和稳定 FPS。
+
+## 202. 2026-08-06 TestFlight Build 9 与生产 WHEP 契约错配
+
+### 故障边界与根因
+
+- 用户手机可切换原画、模糊和骨架，但三种模式均无画面并提示“服务器数据格式暂时无法读取”。生产 `/api/v1/video/sessions` 同期持续返回 `200`，Pi 两路 H.264 发布约 `14-15 FPS` 且 MediaMTX path ready；WHEP reader、WebRTC session 和协商请求均为 0，因此故障发生在 App JSON 解码阶段，不在盒子、Hailo、编码器或媒体服务器取流阶段。
+- TestFlight Build 9 归档于 2026-08-03 23:16，正式 WHEP 迁移提交 `ecc694a` 完成于 2026-08-04 09:27。Build 9 的 `CameraPlaybackSession` 仍把 `ticket` 作为必填字段，并消费 `stream_url / stream_path / edge-composed-mjpeg-v1`；生产云已经只返回 `session_id / whep_url / authorization / media_path / whep-h264-v1`。缺失 `ticket` 直接触发 `Decodable` 失败，App 尚未创建 `WHEPStreamClient`。
+- 根因属于发布顺序和跨端契约门禁缺失。三种模式共用同一播放会话结构，因此会同时失败；切换隐私模式成功只代表配置状态同步成功，不能证明视频传输协议兼容。
+
+### 正式处理
+
+- 不恢复旧 MJPEG、不增加双轨传输或松散字典解析。生产链路继续唯一使用 H.264 + WHEP/WebRTC，由盒子完成隐私成品帧合成，App 只播放服务器签发的对应媒体路径。
+- `CURRENT_PROJECT_VERSION` 从 9 提升到 10，并重新生成唯一正式 `GoHomeShell.xcodeproj`。新增生产响应形状测试，确认 `minimum_privacy_mode` 作为可选字段缺省时仍能解码，且 `display_transport / composition_owner / privacy_mode / media_path / authorization` 保持严格类型约束。
+- `verify-ios-release.js` 现在同时读取正式 iOS 和云端源码：要求 `project.yml` 与生成工程版本完全一致；要求两端传输标识都为 `whep-h264-v1`；要求 WHEP URL、Bearer 授权、正式会话端点和 `WHEPSignalingClient` 存在；禁止正式播放代码重新引入旧 MJPEG 标识或客户端。
+- Xcode 26 在远程二进制解析期间阻塞于用户钥匙串查询。没有修改或清理用户钥匙串，也没有把 87 MB XCFramework 提交到仓库。使用 SHA-256 `9b45c5c5ecae392403758bb7262f408aa3cff705d41e862dd766856b610c3edd` 匹配官方 WebRTC 137.0.0 发布包的本地 SwiftPM 引用，仅用于本机测试和归档；完成后由正式 `project.yml` 重新生成工程并清除本地路径。
+
+### 自动验证与剩余验收
+
+- WHEP 定向测试 `7/7` 通过。iPhone 16 Pro iOS 18.3.1 模拟器完整单元与 UI 测试 `148/148` 通过，失败和跳过均为 0。
+- 云端 Node 回归共 `119` 项：`118` 通过、`1` 项因未设置真实 PostgreSQL URL 按设计跳过；媒体鉴权、隐私状态、推送幂等、COS 生命周期和家庭位置契约均通过。`verify-ios-release.js` 与 `git diff --check` 通过。
+- 自动测试只能证明 Build 10 源码与生产 WHEP 契约一致。仍需归档上传并在 TestFlight 真机观察：会话签发后出现 WHEP `OPTIONS/POST`，MediaMTX reader 大于 0，原画、模糊和骨架无需重启 App 即可显示；摄像头切换、前后台恢复和模式切换不能再出现格式错误。完成这些现场证据前 GH-061 保持处理中。
