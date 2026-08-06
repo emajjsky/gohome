@@ -13334,3 +13334,10 @@ P4 风险升频边界：
 - 完整 iOS 测试结果：`154` 项，`153` 通过、`0` 失败、`1` 跳过（模拟器环境项）；发布门禁通过。
 - 归档 `ios-shell/build/GoHomeShell-1.0.0-12.xcarchive` 成功，bundle id 为 `com.gohome.family`，已通过 `xcodebuild -exportArchive` 上传 App Store Connect，当前状态为 processing。
 - 上传警告仅为上游 WebRTC framework 未附带对应 dSYM，应用自身 dSYM 已生成；不影响安装、WHEP 协商和播放功能。
+
+## 209. 2026-08-06 电视柜摄像头在线但成品流暂停
+
+- 摄像头 `31` 源流 `streaming`、解码约 `15 FPS`，但 `publish_ready=false`、`paused=true`，隐私状态为 `scene_review_required`。
+- 摄像头 `32` 同时发布正常，说明不是盒子服务、Hailo 运行时、云端媒体服务或账户绑定整体故障。
+- `camera_view_changed` 的几何判定约为 `7.7%` 仿射位移，当前不能安全自动放行；需要确认摄像头是否被插拔碰动，或在无人时恢复角度/重新确认空房基线。
+- 新增 GH-068，后续补齐“源流在线”和“隐私成品可发布”在管理端、云端和 App 的分层状态，避免在线标签掩盖实时不可用原因。
