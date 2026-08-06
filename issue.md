@@ -88,6 +88,7 @@
 | GH-059 | P1 | H.264 发布器使用墙钟生成重复 DTS，重启原因、错误恢复和字节指标语义不正确 | 已关闭 |
 | GH-060 | P0 | 服务重启后单次几何证据不足被误判为摄像头移动，两路持久骨架基线永久阻塞 | 已关闭 |
 | GH-061 | P0 | TestFlight Build 9 仍使用旧 MJPEG 会话契约，生产云切换 WHEP 后三种模式均无法解码 | 处理中 |
+| GH-062 | P0 | iOS WHEP 错误等待 ICE gathering complete，Build 10 在 SDP POST 前超时 | 处理中 |
 
 ## GH-001 文档产品契约错误
 
@@ -598,3 +599,19 @@ Build 8 不满足本台账的骨架产品契约，不作为最终交付版本。
 **验收**：Build 10 从 TestFlight 安装后，原画、模糊、骨架均能在不退出 App 的情况下建立 WHEP reader；生产访问日志出现会话签发和 WHEP 协商，MediaMTX reader 大于 0；两路切换、前后台恢复和模式切换不再出现数据格式错误。完成真机验收前 GH-061 不关闭。
 
 **当前进展**：修复提交 `79ead62` 已推送主线；WHEP 定向测试 `7/7`、iOS 完整测试 `148/148`、云端回归 `118/119`（唯一跳过为未配置真实 PostgreSQL URL）和发布门禁均通过。Build 10 已于 2026-08-06 08:35 上传 App Store Connect 并进入处理，等待 TestFlight 真机完成关闭证据。
+
+Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS`，但进一步暴露 GH-062 的 ICE 状态机错误。GH-061 在 Build 11 完成真实播放前仍不关闭。
+
+### GH-062 WHEP Trickle ICE 状态机错误
+
+**现象**：TestFlight Build 10 已能解析生产会话并切换三种模式，但均无画面，约 8 秒后提示 `NSURLErrorDomain -1001`。
+
+**现场证据**：Build 10 对两路 `/api/v1/video/sessions` 均取得 `200`，随后 WHEP `OPTIONS` 均立即取得 `204`；每次重试都没有 SDP `POST`，MediaMTX WHEP session 与 reader 始终为 0。盒子两路纯骨架合成约 `12.5/13.2 FPS`，H.264 path ready、输入错误为 0，排除盒子、算法、编码和云端流源。错误周期与 iOS `completeOffer()` 固定 8 秒超时完全一致。
+
+**根因**：iOS 在发送 WHEP offer 前轮询 `iceGatheringState == complete`，偏离 MediaMTX 1.19.3 正式 reader 的 Trickle ICE 流程；真实 iPhone 的候选收集没有在 8 秒内进入 complete，因此永远不发送 offer。生产 `/etc/gohome/media/mediamtx.env` 已正确包含公网 `webrtcAdditionalHosts`、Coturn TCP 中继和 secret-based 临时凭据，8189/3478 TCP 从电脑和盒子均可达；静态 YAML 的空数组只是由环境覆盖的安全默认值，不是配置缺失。
+
+**处理**：iOS 改为设置本地描述后立即 POST offer，按 SDP media line 生成 `application/trickle-ice-sdpfrag`，通过同一 WHEP resource 串行 PATCH 当前候选；候选与会话代次绑定，切路、切模式和停止后拒绝旧候选。保持现有生产公网 8189 直连候选与 Coturn TCP 中继，不改动或输出共享密钥。不得通过增加等待时间、忽略候选失败或恢复 MJPEG 处理。
+
+**验收**：自动测试覆盖 offer 不等待 gathering complete、候选片段严格生成、Bearer PATCH、乱序串行和生命周期失效；生产日志必须出现 `POST -> PATCH`，MediaMTX WHEP reader 大于 0并产生 outbound bytes。Build 11 真机完成两路三模式、Wi-Fi/蜂窝、前后台、切路切模式和断网恢复后关闭。
+
+**当前进展**：版本已提升为 `1.0.0 (11)`；实现已与 MediaMTX `v1.19.3` 正式 reader 对齐，并进一步删除冗余 `sdpMid`、使用锁保护的单一候选队列和 Actor 批量排空，补齐连接建立期早期失败与候选 PATCH 失败的资源清理。WHEP/Peer 定向测试 `13/13`、iOS 完整单元与 UI `154/154` 均零失败零跳过；云端回归 `118/119`，唯一跳过为未配置真实 PostgreSQL URL；发布门禁通过。尚未归档上传，也尚未取得真机 `SDP POST 201 / candidate PATCH 204 / reader > 0` 证据，因此保持处理中。

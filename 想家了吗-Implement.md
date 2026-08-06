@@ -12890,7 +12890,7 @@ P4 风险升频边界：
 
 ### iOS 原生 WHEP 客户端
 
-- 引入精确版本 WebRTC M137，使用 Unified Plan PeerConnection 和 recv-only video transceiver。会话创建后先以 Bearer 权限执行 WHEP `OPTIONS` 发现 ICE/TURN，再创建 offer、等待完整 ICE gathering、执行受鉴权 SDP `POST` 并应用 answer。
+- 引入精确版本 WebRTC M137，使用 Unified Plan PeerConnection 和 recv-only video transceiver。会话创建后先以 Bearer 权限执行 WHEP `OPTIONS` 发现 ICE/TURN；创建 offer 并设置本地描述后立即执行受鉴权 SDP `POST`，后续候选按 Trickle ICE 串行 PATCH，不等待 ICE gathering complete。
 - WHEP URL 必须为 HTTPS；服务端返回的资源 `Location` 必须与会话地址同源。关闭时异步发送资源 `DELETE`，同时停止 PeerConnection、结束帧事件和清理当前 renderer，旧会话不能在切摄像头、切隐私模式或视图重建后继续投递帧。
 - 视频通过 `RTCMTLVideoView` 原生渲染；FPS 只统计 WebRTC track 实际转交给当前 renderer 的新帧。renderer 替换在同一串行状态机内完成，旧帧不能进入复用后的 Metal 视图。
 - 删除 `MJPEGStreamClient` 及对应测试，守护页、ViewModel 和视频表面全部切换到 `CameraStreamClient -> WHEPStreamClient`，不存在正式 App MJPEG fallback。
@@ -13213,3 +13213,24 @@ P4 风险升频边界：
 - 云端 Node 回归共 `119` 项：`118` 通过、`1` 项因未设置真实 PostgreSQL URL 按设计跳过；媒体鉴权、隐私状态、推送幂等、COS 生命周期和家庭位置契约均通过。`verify-ios-release.js` 与 `git diff --check` 通过。
 - 自动测试只能证明 Build 10 源码与生产 WHEP 契约一致。仍需归档上传并在 TestFlight 真机观察：会话签发后出现 WHEP `OPTIONS/POST`，MediaMTX reader 大于 0，原画、模糊和骨架无需重启 App 即可显示；摄像头切换、前后台恢复和模式切换不能再出现格式错误。完成这些现场证据前 GH-061 保持处理中。
 - Build 10 已从唯一正式工程归档并于 2026-08-06 08:35 上传成功。归档为 arm64、`1.0.0 (10)`、`com.gohome.family`、Team `X4M4T6Z4CJ`，生产 API 为 `https://gohome.ai2shx.club`，包含正式 WHEP 会话端点和 WebRTC.framework。上传阶段唯一警告是上游 WebRTC 137.0.0 二进制包未附带匹配 dSYM；这不影响安装、播放和审核，但第三方框架内部崩溃的符号化受限，应用自身 dSYM 正常存在。Apple 当前正在处理该构建。
+
+## 203. 2026-08-06 Build 10 ICE 超时与 Build 11 Trickle ICE
+
+### 生产故障证据
+
+- TestFlight Build 10 已成功解析会话，三模式都能完成 `/api/v1/video/sessions` 的 `200` 和 WHEP `OPTIONS` 的 `204`，但约 8 秒后统一返回 `NSURLErrorDomain -1001`。同期没有任何 WHEP SDP `POST`，MediaMTX WHEP session/reader 始终为 0。
+- Pi 两路纯骨架成品流约 `12.5/13.2 FPS`，H.264 publisher ready、无采集重连、推理失败或发布失败。生产有效 ICE 配置已包含公网 `8189` 直连和 Coturn `3478` TCP 中继，端口从电脑和 Pi 可达，因此故障不在盒子、算法、编码、云端源流或 ICE 服务配置。
+- 固定 8 秒周期与 iOS `completeOffer()` 等待 `iceGatheringState == complete` 的超时完全一致。MediaMTX `v1.19.3` 正式 reader 设置本地描述后立即 POST offer，并把后续候选作为 `application/trickle-ice-sdpfrag` PATCH；旧 iOS 流程偏离该实现。
+
+### 正式实现
+
+- `NativeWebRTCPeer.prepareOffer()` 返回 `createOffer()` 的原始 SDP，不读取可能已追加候选的 local description，也不轮询 gathering 状态；`didGenerate candidate` 只产生带 `sdpMLineIndex` 的本地候选值。
+- `WHEPOffer` 统一解析 `CRLF/LF/CR`，严格校验 ICE 属性、媒体段和候选单行语法。候选按媒体索引与原顺序分组，生成数字 `mid` 的 SDP fragment，与 MediaMTX 正式 reader 一致；不信任或传递冗余的 `sdpMid`。
+- `WHEPCandidateQueue` 是唯一候选缓冲：资源建立前保留早到候选，激活后通过单一通知触发 Actor 批量 `drain`，每批 PATCH 完成后才发送下一批。该结构保持候选产生顺序，避免为每个候选创建独立发送任务导致调度乱序。
+- 会话 generation 同时约束 offer、resource、answer、candidate 和终止回调。切摄像头、切隐私模式或停止会原子关闭队列、PeerConnection、渲染 surface 和 WHEP resource；连接建立期的早期 peer 错误不会因 active peer 尚未赋值而丢失，PATCH 失败也不留下半活跃资源。
+
+### 自动验证与发布边界
+
+- 新增原始 offer 不等待完整 ICE、严格 SDP fragment、跨媒体和换行注入拒绝、媒体/候选顺序、Bearer PATCH、候选队列激活前缓冲、关闭后拒绝旧候选测试。WHEP/Peer 定向 `13/13`，iPhone 16 Pro iOS 18.3.1 模拟器完整单元与 UI `154/154`，失败和跳过均为 0。
+- 云端回归 `118/119`，唯一跳过为未配置真实 PostgreSQL URL；前端状态缓存和 iOS 发布门禁通过。门禁要求 `prepareOffer`、有序候选队列、批量排空、Trickle ICE PATCH 和 candidate delegate 存在，并拒绝 ICE-complete 轮询、`completeOffer`、旧 MJPEG 正式链路、本地 Swift Package 和 `/tmp` 依赖路径。
+- 版本提升为 `1.0.0 (11)`。自动测试不能替代真机网络协商；关闭 GH-061/GH-062 前必须在生产看到 `POST session -> OPTIONS -> POST offer -> PATCH candidate`、MediaMTX reader/outbound bytes，并完成双路三模式、前后台、Wi-Fi/蜂窝、切换和断网恢复。

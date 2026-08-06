@@ -135,6 +135,85 @@ final class WHEPSignalingClientTests: XCTestCase {
         XCTAssertEqual(WHEPURLProtocolStub.requests.map(\.httpMethod), ["POST", "DELETE"])
     }
 
+    func testPatchesMediaMTXWithAuthenticatedTrickleICECandidates() async throws {
+        let offer = try WHEPOffer(sdp: """
+        v=0\r
+        a=ice-ufrag:localUfrag\r
+        a=ice-pwd:localPassword\r
+        m=video 9 UDP/TLS/RTP/SAVPF 96\r
+        a=mid:video0\r
+        """)
+        let candidate = WHEPLocalCandidate(
+            sdp: "candidate:1 1 UDP 2130706431 192.0.2.10 50000 typ host",
+            mediaLineIndex: 0
+        )
+        WHEPURLProtocolStub.handler = { request in
+            XCTAssertEqual(request.httpMethod, "PATCH")
+            XCTAssertEqual(request.url?.absoluteString, "https://media.example.com/media/live/box-1/2/whep/reader-1")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer m1.signed")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/trickle-ice-sdpfrag")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "If-Match"), "*")
+            XCTAssertEqual(
+                String(data: try XCTUnwrap(requestBody(request)), encoding: .utf8),
+                "a=ice-ufrag:localUfrag\r\na=ice-pwd:localPassword\r\n"
+                    + "m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n"
+                    + "a=candidate:1 1 UDP 2130706431 192.0.2.10 50000 typ host\r\n"
+            )
+            return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!, Data())
+        }
+        let client = WHEPSignalingClient(session: makeSession())
+
+        try await client.addCandidates(
+            [candidate],
+            offer: offer,
+            resourceURL: URL(string: "https://media.example.com/media/live/box-1/2/whep/reader-1")!,
+            playback: playback()
+        )
+
+        XCTAssertEqual(WHEPURLProtocolStub.requests.map(\.httpMethod), ["PATCH"])
+    }
+
+    func testCandidateFragmentRejectsCrossMediaAndInjectedCandidates() throws {
+        let offer = try WHEPOffer(sdp: """
+        v=0\r
+        a=ice-ufrag:localUfrag\r
+        a=ice-pwd:localPassword\r
+        m=video 9 UDP/TLS/RTP/SAVPF 96\r
+        """)
+
+        XCTAssertThrowsError(try offer.candidateFragment([
+            WHEPLocalCandidate(sdp: "candidate:1 1 UDP 1 192.0.2.1 9 typ host", mediaLineIndex: 1),
+        ]))
+        XCTAssertThrowsError(try offer.candidateFragment([
+            WHEPLocalCandidate(sdp: "candidate:1 1 UDP 1 192.0.2.1 9 typ host\r\na=sendrecv", mediaLineIndex: 0),
+        ]))
+    }
+
+    func testCandidateFragmentKeepsMediaOrderAndCandidateOrder() throws {
+        let offer = try WHEPOffer(sdp: """
+        v=0\r
+        a=ice-ufrag:u1\r
+        a=ice-pwd:p1\r
+        m=video 9 UDP/TLS/RTP/SAVPF 96\r
+        m=audio 9 UDP/TLS/RTP/SAVPF 111\r
+        """)
+        let fragment = try offer.candidateFragment([
+            WHEPLocalCandidate(sdp: "candidate:v1 1 UDP 3 192.0.2.1 1000 typ host", mediaLineIndex: 0),
+            WHEPLocalCandidate(sdp: "candidate:a1 1 UDP 2 192.0.2.2 2000 typ host", mediaLineIndex: 1),
+            WHEPLocalCandidate(sdp: "candidate:v2 1 TCP 1 192.0.2.3 3000 typ relay", mediaLineIndex: 0),
+        ])
+
+        XCTAssertEqual(
+            fragment,
+            "a=ice-ufrag:u1\r\na=ice-pwd:p1\r\n"
+                + "m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n"
+                + "a=candidate:v1 1 UDP 3 192.0.2.1 1000 typ host\r\n"
+                + "a=candidate:v2 1 TCP 1 192.0.2.3 3000 typ relay\r\n"
+                + "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:1\r\n"
+                + "a=candidate:a1 1 UDP 2 192.0.2.2 2000 typ host\r\n"
+        )
+    }
+
     func testRejectsNonCreatedWHEPResponse() async {
         WHEPURLProtocolStub.handler = { request in
             (

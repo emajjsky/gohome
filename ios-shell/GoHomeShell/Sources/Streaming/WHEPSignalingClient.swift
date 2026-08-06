@@ -1,5 +1,93 @@
 import Foundation
 
+struct WHEPLocalCandidate: Equatable, Sendable {
+    let sdp: String
+    let mediaLineIndex: Int32
+}
+
+struct WHEPOffer: Equatable, Sendable {
+    let sdp: String
+    let iceUfrag: String
+    let icePassword: String
+    let mediaSections: [String]
+
+    init(sdp: String) throws {
+        let lines = sdp
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard
+            let iceUfrag = lines.first(where: { $0.hasPrefix("a=ice-ufrag:") })?.dropFirst(12),
+            let icePassword = lines.first(where: { $0.hasPrefix("a=ice-pwd:") })?.dropFirst(10)
+        else { throw APIError.invalidResponse }
+
+        let mediaSections = lines.compactMap { line -> String? in
+            guard line.hasPrefix("m=") else { return nil }
+            return String(line.dropFirst(2))
+        }
+        guard
+            Self.isSDPAttributeValue(String(iceUfrag)),
+            Self.isSDPAttributeValue(String(icePassword)),
+            !mediaSections.isEmpty,
+            mediaSections.allSatisfy(Self.isSDPLineValue)
+        else { throw APIError.invalidResponse }
+
+        self.sdp = sdp
+        self.iceUfrag = String(iceUfrag)
+        self.icePassword = String(icePassword)
+        self.mediaSections = mediaSections
+    }
+
+    func candidateFragment(_ candidates: [WHEPLocalCandidate]) throws -> String {
+        guard !candidates.isEmpty else { throw APIError.invalidResponse }
+        var grouped: [Int: [String]] = [:]
+        for candidate in candidates {
+            let index = Int(candidate.mediaLineIndex)
+            guard
+                mediaSections.indices.contains(index),
+                Self.isCandidateLine(candidate.sdp)
+            else { throw APIError.invalidResponse }
+            grouped[index, default: []].append(candidate.sdp)
+        }
+
+        var fragment = "a=ice-ufrag:\(iceUfrag)\r\na=ice-pwd:\(icePassword)\r\n"
+        for index in mediaSections.indices {
+            guard let mediaCandidates = grouped[index] else { continue }
+            fragment += "m=\(mediaSections[index])\r\na=mid:\(index)\r\n"
+            for candidate in mediaCandidates {
+                fragment += "a=\(candidate)\r\n"
+            }
+        }
+        return fragment
+    }
+
+    private static func isCandidateLine(_ value: String) -> Bool {
+        guard value.hasPrefix("candidate:"), isSDPLineValue(value) else { return false }
+        let fields = value.split(separator: " ", omittingEmptySubsequences: true)
+        guard
+            fields.count >= 8,
+            !fields[0].dropFirst("candidate:".count).isEmpty,
+            UInt16(fields[1]) != nil,
+            !fields[2].isEmpty,
+            UInt32(fields[3]) != nil,
+            !fields[4].isEmpty,
+            UInt16(fields[5]) != nil,
+            fields[6] == "typ",
+            ["host", "srflx", "prflx", "relay"].contains(String(fields[7]))
+        else { return false }
+        return true
+    }
+
+    private static func isSDPAttributeValue(_ value: String) -> Bool {
+        !value.isEmpty && !value.contains(" ") && isSDPLineValue(value)
+    }
+
+    private static func isSDPLineValue(_ value: String) -> Bool {
+        !value.isEmpty && value.unicodeScalars.allSatisfy { $0.value >= 0x20 && $0.value != 0x7F }
+    }
+}
+
 struct WHEPICEServer: Equatable, Sendable {
     let urls: [String]
     let username: String
@@ -45,6 +133,22 @@ struct WHEPSignalingClient: Sendable {
             !answerSDP.isEmpty
         else { throw APIError.invalidResponse }
         return WHEPResource(answerSDP: answerSDP, resourceURL: resourceURL)
+    }
+
+    func addCandidates(
+        _ candidates: [WHEPLocalCandidate],
+        offer: WHEPOffer,
+        resourceURL: URL,
+        playback: CameraPlaybackSession
+    ) async throws {
+        var request = authorizedRequest(url: resourceURL, playback: playback)
+        request.httpMethod = "PATCH"
+        request.timeoutInterval = 5
+        request.setValue("application/trickle-ice-sdpfrag", forHTTPHeaderField: "Content-Type")
+        request.setValue("*", forHTTPHeaderField: "If-Match")
+        request.httpBody = Data(try offer.candidateFragment(candidates).utf8)
+        let (_, response) = try await session.data(for: request)
+        _ = try validatedHTTPResponse(response, allowedStatus: 204..<205)
     }
 
     func deleteResource(_ resourceURL: URL, playback: CameraPlaybackSession) async {

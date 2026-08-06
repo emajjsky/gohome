@@ -3869,7 +3869,7 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 
 ## 15.58 TestFlight Build 10 WHEP 发布一致性（2026-08-06）
 
-状态：根因、正式代码、发布门禁、自动回归、Build 10 归档和上传已完成；等待 Apple 处理和 TestFlight 真机验收。
+状态：Build 10 已完成旧会话契约到 WHEP 契约的一致性修复；真机继续暴露 Trickle ICE 状态机错误，后续收口转入 15.59。
 
 1. [x] 以生产访问日志、MediaMTX reader 和盒子发布状态定位故障边界：两路 H.264 持续 ready、会话签发持续 `200`，但 WHEP reader 始终为 0，证明 App 在协商前失败。
 2. [x] 核对归档与提交时间，确认 TestFlight Build 9 早于 WHEP 迁移，仍要求旧 `ticket / stream_url / stream_path / edge-composed-mjpeg-v1`，无法解码生产 `whep-h264-v1` 契约。
@@ -3879,5 +3879,20 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 6. [x] 使用校验和匹配官方发布的本地 WebRTC XCFramework 完成构建验证；本地依赖只用于规避 Xcode 二进制下载钥匙串阻塞，不进入仓库或产品配置。
 7. [x] iOS 定向 WHEP 测试 `7/7`、完整单元与 UI 测试 `148/148`、云端回归 `118` 通过且 `1` 个真实 PostgreSQL 用例按环境跳过，发布校验通过。
 8. [x] 从唯一正式工程归档并上传 Build 10；归档核对为 `1.0.0 (10)`、`com.gohome.family`、arm64、生产 API，并包含 WHEP 会话端点和 WebRTC.framework。App Store Connect 于 2026-08-06 08:35 接受上传并进入处理。
-9. [ ] TestFlight 真机验证三种模式无需退出 App 即可建立画面；两路切换、前后台恢复和模式切换均产生 WHEP reader，且不再出现“服务器数据格式暂时无法读取”。
-10. [ ] 真机成功后关闭 GH-061，并清理本机构建使用的 `/tmp` WebRTC 包、下载文件和诊断样本。
+9. [x] Build 10 真机确认生产 WHEP 会话可解码并成功完成 `OPTIONS`，不再出现旧 JSON 数据格式错误；但三模式均在 SDP `POST` 前约 8 秒超时，作为 GH-062 独立处理。
+10. [ ] Build 11 完成端到端播放后再关闭 GH-061，并清理本机构建使用的 `/tmp` WebRTC 包、下载文件和诊断样本。
+
+## 15.59 TestFlight Build 11 Trickle ICE 状态机（2026-08-06）
+
+状态：根因修复、代码收口和自动验证完成；待恢复正式远程依赖、提交归档并执行 TestFlight 真机验收。
+
+1. [x] 以生产日志确定 Build 10 每次均为会话 `POST 200 -> WHEP OPTIONS 204`，没有 SDP `POST`，MediaMTX session/reader 为 0；故障严格限定在 iPhone 本地 offer 阶段。
+2. [x] 对照 MediaMTX `v1.19.3` 正式 reader，确认旧客户端错误等待 `iceGatheringState == complete`；iPhone 未在固定 8 秒内完成收集，触发 `NSURLErrorDomain -1001`。
+3. [x] `NativeWebRTCPeer` 设置本地描述后立即返回原始 offer，不轮询 ICE complete；本地候选由 delegate 实时交给单一有序队列。
+4. [x] 候选严格按 `sdpMLineIndex` 分组生成 `application/trickle-ice-sdpfrag`，以同一 Bearer 权限和 `If-Match: *` 串行 PATCH 当前 WHEP resource；实现与 MediaMTX 正式 reader 的数字 `mid` 契约一致。
+5. [x] 队列在资源创建和 answer 应用前保留早到候选，Actor 只批量排空队列，不为每个候选维护可乱序的独立发送任务；切路、切模式、停止或连接失败后关闭队列并拒绝旧代次。
+6. [x] 连接建立期间的早期 PeerConnection 失败纳入同一连接状态，不能在 active peer 尚未赋值时丢失；候选 PATCH 失败会结束画面、关闭 peer 并删除 WHEP resource。
+7. [x] 定向 WHEP/Peer 测试 `13/13`、完整 iOS 单元与 UI 测试 `154/154`，失败和跳过均为 0；云端回归 `118/119`，唯一跳过为未配置真实 PostgreSQL URL；发布门禁通过，版本提升为 `1.0.0 (11)`。
+8. [ ] 从唯一正式工程和 SHA-256 匹配的官方 WebRTC `137.0.0` 二进制归档上传 Build 11；提交与上传后的工程必须保持远程 package 声明，且不得包含本地 `/tmp` 引用。
+9. [ ] 真机观察生产请求顺序包含会话 `POST 200 -> OPTIONS 204 -> SDP POST 201 -> candidate PATCH 204`，MediaMTX reader 大于 0且 outbound bytes 持续增长。
+10. [ ] 完成两路三模式、连续切换、前后台、Wi-Fi/蜂窝和断网恢复；全部通过后关闭 GH-061/GH-062并清理临时依赖与诊断源码。

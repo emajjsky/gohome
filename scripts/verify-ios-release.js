@@ -14,6 +14,8 @@ const exportOptionsPath = path.join(root, "ios-shell/ExportOptions.plist");
 const iconPath = path.join(root, "ios-shell/GoHomeShell/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png");
 const cameraStreamPath = path.join(root, "ios-shell/GoHomeShell/Sources/Streaming/CameraStreamClient.swift");
 const whepStreamPath = path.join(root, "ios-shell/GoHomeShell/Sources/Streaming/WHEPStreamClient.swift");
+const whepSignalingPath = path.join(root, "ios-shell/GoHomeShell/Sources/Streaming/WHEPSignalingClient.swift");
+const nativeWebRTCPath = path.join(root, "ios-shell/GoHomeShell/Sources/Streaming/NativeWebRTCPeer.swift");
 const mediaAccessPath = path.join(root, "local-app-server/media-access.js");
 
 const info = fs.readFileSync(infoPath, "utf8");
@@ -24,6 +26,8 @@ const projectSpec = fs.readFileSync(projectSpecPath, "utf8");
 const exportOptions = fs.readFileSync(exportOptionsPath, "utf8");
 const cameraStream = fs.readFileSync(cameraStreamPath, "utf8");
 const whepStream = fs.readFileSync(whepStreamPath, "utf8");
+const whepSignaling = fs.readFileSync(whepSignalingPath, "utf8");
+const nativeWebRTC = fs.readFileSync(nativeWebRTCPath, "utf8");
 const mediaAccess = fs.readFileSync(mediaAccessPath, "utf8");
 
 function hasNonEmptyPlistString(source, key) {
@@ -75,6 +79,9 @@ const generatedBuilds = [...project.matchAll(/CURRENT_PROJECT_VERSION = ([1-9]\d
 assert.ok(specBuild, "project.yml must declare a positive build number");
 assert.ok(generatedBuilds.length > 0, "generated Xcode project must declare a build number");
 assert.ok(generatedBuilds.every((build) => build === specBuild[1]), "project.yml and generated Xcode build numbers must match");
+assert.match(projectSpec, /WebRTC:\s*\n\s*url: https:\/\/github\.com\/stasel\/WebRTC\.git\s*\n\s*exactVersion: 137\.0\.0/);
+assert.match(project, /XCRemoteSwiftPackageReference "WebRTC"/);
+assert.doesNotMatch(project, /XCLocalSwiftPackageReference|\/tmp\/WebRTC/, "release project must not contain a local WebRTC package");
 
 const iosTransport = cameraStream.match(/static let whepH264 = "([^"]+)"/);
 const cloudTransport = mediaAccess.match(/transport:\s*"([^"]+)"/);
@@ -86,6 +93,15 @@ assert.match(cameraStream, /let whepURL: URL/);
 assert.match(cameraStream, /let authorization: Authorization/);
 assert.match(whepStream, /path: "\/api\/v1\/video\/sessions"/);
 assert.match(whepStream, /WHEPSignalingClient/);
+assert.match(whepStream, /prepareOffer\(\)/, "WHEP must send the initial offer without waiting for complete ICE gathering");
+assert.match(whepStream, /WHEPCandidateQueue/, "WHEP must retain candidates generated before resource creation");
+assert.match(whepStream, /deliverCandidates/, "WHEP must serialize generated ICE candidates");
+assert.match(whepStream, /queue\.drain\(\)/, "WHEP candidate delivery must preserve queue order");
+assert.match(whepSignaling, /request\.httpMethod = "PATCH"/);
+assert.match(whepSignaling, /application\/trickle-ice-sdpfrag/);
+assert.match(whepSignaling, /request\.setValue\("\*", forHTTPHeaderField: "If-Match"\)/);
+assert.match(nativeWebRTC, /didGenerate candidate:[\s\S]*reportCandidate\(candidate\)/);
+assert.doesNotMatch(nativeWebRTC, /iceGatheringState\s*!=\s*\.complete|completeOffer/, "WHEP must not block SDP POST on ICE gathering completion");
 assert.doesNotMatch(cameraStream, /edge-composed-mjpeg-v1|stream_url|stream_path/);
 assert.doesNotMatch(whepStream, /MJPEG/);
 

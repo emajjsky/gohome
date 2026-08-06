@@ -8,6 +8,12 @@ actor WHEPStreamClient: CameraStreamClient {
     private var activeResourceURL: URL?
     private var activePeer: NativeWebRTCPeer?
     private var activeSurface: WebRTCVideoSurface?
+    private var activeOffer: WHEPOffer?
+    private var candidateQueue: WHEPCandidateQueue?
+    private var candidateDeliveryRunning = false
+    private var candidateDeliveryGeneration = 0
+    private var connectingGeneration: Int?
+    private var connectingError: Error?
 
     init(apiClient: APIClient, signaling: WHEPSignalingClient = WHEPSignalingClient()) {
         self.apiClient = apiClient
@@ -46,26 +52,47 @@ actor WHEPStreamClient: CameraStreamClient {
 
         let iceServers = try await signaling.discoverICEServers(for: playback)
         try ensureCurrent(requestGeneration)
-        let peer = try NativeWebRTCPeer(iceServers: iceServers) { [weak self] error in
-            Task { await self?.peerTerminated(generation: requestGeneration, error: error) }
-        }
+        let queue = WHEPCandidateQueue()
+        connectingGeneration = requestGeneration
+        connectingError = nil
+        let peer = try NativeWebRTCPeer(
+            iceServers: iceServers,
+            localCandidateHandler: { candidate in queue.append(candidate) },
+            terminalHandler: { [weak self] error in
+                Task { await self?.peerTerminated(generation: requestGeneration, error: error) }
+            }
+        )
         var resourceURL: URL?
         do {
-            let offer = try await peer.completeOffer()
-            try ensureCurrent(requestGeneration)
-            let resource = try await signaling.createResource(playback: playback, offerSDP: offer)
+            let offer = try await peer.prepareOffer()
+            try ensureConnectionCurrent(requestGeneration)
+            let resource = try await signaling.createResource(playback: playback, offerSDP: offer.sdp)
             resourceURL = resource.resourceURL
-            try ensureCurrent(requestGeneration)
+            try ensureConnectionCurrent(requestGeneration)
             let track = try await peer.applyAnswer(resource.answerSDP)
-            try ensureCurrent(requestGeneration)
+            try ensureConnectionCurrent(requestGeneration)
 
             let surface = WebRTCVideoSurface(track: track)
             activePlayback = playback
             activeResourceURL = resource.resourceURL
             activePeer = peer
             activeSurface = surface
+            activeOffer = offer
+            candidateQueue = queue
+            candidateDeliveryGeneration = requestGeneration
+            candidateDeliveryRunning = false
+            connectingGeneration = nil
+            connectingError = nil
+            queue.activate { [weak self] in
+                Task { await self?.deliverCandidates(generation: requestGeneration) }
+            }
             return CameraDisplayStreams(surface: surface, renderedFrames: surface.renderedFrames)
         } catch {
+            if connectingGeneration == requestGeneration {
+                connectingGeneration = nil
+                connectingError = nil
+            }
+            queue.close()
             peer.close()
             if let resourceURL {
                 await signaling.deleteResource(resourceURL, playback: playback)
@@ -85,26 +112,144 @@ actor WHEPStreamClient: CameraStreamClient {
         }
     }
 
-    private func peerTerminated(generation expectedGeneration: Int, error: Error) async {
-        guard expectedGeneration == generation else { return }
-        activeSurface?.finish(throwing: error)
+    private func ensureConnectionCurrent(_ expectedGeneration: Int) throws {
+        try ensureCurrent(expectedGeneration)
+        if connectingGeneration == expectedGeneration, let connectingError {
+            throw connectingError
+        }
     }
 
-    private func stopActiveSession() {
+    private func peerTerminated(generation expectedGeneration: Int, error: Error) async {
+        guard expectedGeneration == generation else { return }
+        if connectingGeneration == expectedGeneration, activePeer == nil {
+            connectingError = error
+            return
+        }
+        stopActiveSession(error: error)
+    }
+
+    private func deliverCandidates(generation expectedGeneration: Int) async {
+        guard
+            expectedGeneration == generation,
+            activePlayback != nil,
+            activeResourceURL != nil,
+            activeOffer != nil,
+            candidateQueue != nil
+        else { return }
+        guard !candidateDeliveryRunning || candidateDeliveryGeneration != expectedGeneration else { return }
+
+        candidateDeliveryRunning = true
+        candidateDeliveryGeneration = expectedGeneration
+        while expectedGeneration == generation {
+            guard
+                let playback = activePlayback,
+                let resourceURL = activeResourceURL,
+                let offer = activeOffer,
+                let queue = candidateQueue
+            else { break }
+            let batch = queue.drain()
+            guard !batch.isEmpty else { break }
+            do {
+                try await signaling.addCandidates(
+                    batch,
+                    offer: offer,
+                    resourceURL: resourceURL,
+                    playback: playback
+                )
+            } catch {
+                if expectedGeneration == generation {
+                    stopActiveSession(error: error)
+                }
+                break
+            }
+        }
+        if candidateDeliveryGeneration == expectedGeneration {
+            candidateDeliveryRunning = false
+        }
+    }
+
+    private func stopActiveSession(error: Error? = nil) {
         let surface = activeSurface
         let peer = activePeer
         let playback = activePlayback
         let resourceURL = activeResourceURL
+        candidateQueue?.close()
+        candidateQueue = nil
         activeSurface = nil
         activePeer = nil
         activePlayback = nil
         activeResourceURL = nil
+        activeOffer = nil
+        candidateDeliveryRunning = false
+        candidateDeliveryGeneration = generation
+        connectingGeneration = nil
+        connectingError = nil
 
-        surface?.finish()
+        surface?.finish(throwing: error)
         peer?.close()
         if let playback, let resourceURL {
             let signaling = signaling
             Task { await signaling.deleteResource(resourceURL, playback: playback) }
         }
+    }
+}
+
+final class WHEPCandidateQueue: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: [WHEPLocalCandidate] = []
+    private var notify: (@Sendable () -> Void)?
+    private var notificationPending = false
+    private var closed = false
+
+    func append(_ candidate: WHEPLocalCandidate) {
+        lock.lock()
+        guard !closed else {
+            lock.unlock()
+            return
+        }
+        pending.append(candidate)
+        let callback = notificationCallbackLocked()
+        lock.unlock()
+        callback?()
+    }
+
+    func activate(_ notify: @escaping @Sendable () -> Void) {
+        lock.lock()
+        guard !closed else {
+            lock.unlock()
+            return
+        }
+        self.notify = notify
+        let callback = notificationCallbackLocked()
+        lock.unlock()
+        callback?()
+    }
+
+    func drain() -> [WHEPLocalCandidate] {
+        lock.lock()
+        guard !closed else {
+            lock.unlock()
+            return []
+        }
+        let candidates = pending
+        pending.removeAll(keepingCapacity: true)
+        notificationPending = false
+        lock.unlock()
+        return candidates
+    }
+
+    func close() {
+        lock.lock()
+        closed = true
+        notify = nil
+        notificationPending = false
+        pending.removeAll(keepingCapacity: false)
+        lock.unlock()
+    }
+
+    private func notificationCallbackLocked() -> (@Sendable () -> Void)? {
+        guard !pending.isEmpty, !notificationPending, let notify else { return nil }
+        notificationPending = true
+        return notify
     }
 }

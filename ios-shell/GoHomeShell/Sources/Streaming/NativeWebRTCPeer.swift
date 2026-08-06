@@ -8,14 +8,17 @@ final class NativeWebRTCPeer: NSObject, @unchecked Sendable {
     }()
 
     private let terminalHandler: @Sendable (Error) -> Void
+    private let localCandidateHandler: @Sendable (WHEPLocalCandidate) -> Void
     private var connection: RTCPeerConnection!
     private let lock = NSLock()
     private var closed = false
 
     init(
         iceServers: [WHEPICEServer],
+        localCandidateHandler: @escaping @Sendable (WHEPLocalCandidate) -> Void,
         terminalHandler: @escaping @Sendable (Error) -> Void
     ) throws {
+        self.localCandidateHandler = localCandidateHandler
         self.terminalHandler = terminalHandler
         super.init()
 
@@ -47,7 +50,7 @@ final class NativeWebRTCPeer: NSObject, @unchecked Sendable {
         }
     }
 
-    func completeOffer(timeoutNanoseconds: UInt64 = 8_000_000_000) async throws -> String {
+    func prepareOffer() async throws -> WHEPOffer {
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         let offer: RTCSessionDescription = try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
@@ -63,20 +66,10 @@ final class NativeWebRTCPeer: NSObject, @unchecked Sendable {
         }
         try Task.checkCancellation()
         try await setLocalDescription(offer)
-
-        let deadline = ProcessInfo.processInfo.systemUptime
-            + TimeInterval(timeoutNanoseconds) / 1_000_000_000
-        while connection.iceGatheringState != .complete {
-            try Task.checkCancellation()
-            guard ProcessInfo.processInfo.systemUptime < deadline else {
-                throw URLError(.timedOut)
-            }
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
-        guard let sdp = connection.localDescription?.sdp, !sdp.isEmpty else {
+        guard !offer.sdp.isEmpty else {
             throw APIError.invalidResponse
         }
-        return sdp
+        return try WHEPOffer(sdp: offer.sdp)
     }
 
     func applyAnswer(
@@ -142,6 +135,17 @@ final class NativeWebRTCPeer: NSObject, @unchecked Sendable {
         lock.unlock()
         if shouldReport { terminalHandler(error) }
     }
+
+    private func reportCandidate(_ candidate: RTCIceCandidate) {
+        lock.lock()
+        let shouldReport = !closed
+        lock.unlock()
+        guard shouldReport else { return }
+        localCandidateHandler(WHEPLocalCandidate(
+            sdp: candidate.sdp,
+            mediaLineIndex: candidate.sdpMLineIndex
+        ))
+    }
 }
 
 extension NativeWebRTCPeer: RTCPeerConnectionDelegate {
@@ -157,7 +161,9 @@ extension NativeWebRTCPeer: RTCPeerConnectionDelegate {
     }
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
+        reportCandidate(candidate)
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
 
