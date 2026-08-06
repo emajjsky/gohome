@@ -13256,3 +13256,10 @@ P4 风险升频边界：
 - 提交 `efc7977` 已推送并部署；MediaMTX 单次重启后约 2 秒恢复两路 H.264 `ready/online`，API、Coturn 和盒子未重启，MediaMTX `NRestarts=0`。
 - Build 11 于 11:49-11:50 多次完成两路 `session 200 -> OPTIONS 204 -> SDP POST 201 -> candidate PATCH 204`。两路均建立 WebRTC peer 并读取对应 H.264 path，`outboundBytes` 约为 `199147 / 5176909`，日志无 `error getting local interfaces`。
 - GH-061、GH-062、GH-063 已关闭。后续工作不再修改 WHEP 协商链路，转入双路三模式、前后台、网络切换、断网恢复和 30 分钟稳定性验收；所有采样必须带隐私模式和真实渲染 FPS。
+
+## 205. 2026-08-06 本地闭环校验器空状态修复
+
+- `verify-cloud-onboarding.js` 失败原因是本机 8788 由 2026-07-15 的旧进程占用；使用当前主线启动全新临时服务后，onboarding `13/13` 通过并清理测试数据，确认不是当前路由缺失。
+- `verify-local-closed-loop.js` 原先把新家庭老人资料的合法结构化 `404` 当失败；现只对精确的“老人资料尚未填写”记录 warning，其他错误仍失败。
+- 干净本地 JSON 没有预置盒子和摄像头，校验器现在明确记录开发环境 warning；生产 PostgreSQL、远程地址或已有摄像头仍严格要求在线。当前临时闭环 `24 passed / 0 failed`，无测试数据残留。
+- `npm test`、云端 Node `119` 项（`118` 通过、1 项未配置 PostgreSQL 集成跳过）通过。该项不修改产品接口，正式绑定能力继续由云端 onboarding 和真实盒子验收负责。
