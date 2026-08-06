@@ -225,6 +225,56 @@ def main() -> None:
     if agent.managed_stream_status().get("managed_stream_count") != 0:
         raise SystemExit("removed camera retained a managed stream reader")
 
+    semantic_agent = CameraAgent(Path("/tmp/gohome-frame-semantics-test"))
+    semantic_camera = {"id": 11, "stream_url": "rtsp://example.invalid/semantics"}
+    semantic_frame = np.full((48, 64, 3), 126, dtype=np.uint8)
+    content_identity = semantic_agent._store_latest_frame(
+        semantic_camera,
+        semantic_frame,
+        "semantic stream",
+        stream_generation=1,
+    )
+    if content_identity is None:
+        raise SystemExit("content frame identity was not created")
+    first_delivery = semantic_agent._store_latest_live_frame(
+        semantic_camera,
+        semantic_frame,
+        "semantic stream",
+        stream_generation=1,
+        content_identity=content_identity,
+    )
+    content_before_repeat = semantic_agent.latest_cached_frame(semantic_camera, max_age_seconds=1)
+    repeated_delivery = semantic_agent._store_latest_live_frame(
+        semantic_camera,
+        semantic_frame.copy(),
+        "semantic stream",
+        stream_generation=1,
+    )
+    content_after_repeat = semantic_agent.latest_cached_frame(semantic_camera, max_age_seconds=1)
+    live_after_repeat = semantic_agent.latest_live_frame(semantic_camera, max_age_seconds=1)
+    if not all((first_delivery, repeated_delivery, content_before_repeat, content_after_repeat, live_after_repeat)):
+        raise SystemExit("content/live frame semantic fixture is incomplete")
+    if content_after_repeat["frame_id"] != content_before_repeat["frame_id"]:
+        raise SystemExit("repeated live delivery advanced the analysis frame identity")
+    if content_after_repeat["captured_monotonic"] != content_before_repeat["captured_monotonic"]:
+        raise SystemExit("repeated live delivery changed the analysis capture timestamp")
+    if live_after_repeat["delivery_frame_id"] == first_delivery["delivery_frame_id"]:
+        raise SystemExit("repeated decoded frame did not advance the live delivery identity")
+    if not live_after_repeat.get("content_repeated"):
+        raise SystemExit("repeated live delivery lost its content classification")
+    if semantic_agent.wait_for_frame_update(
+        [semantic_camera],
+        {11: str(content_before_repeat["frame_id"])},
+        timeout=0.01,
+    ):
+        raise SystemExit("repeated live delivery woke the analysis-frame consumer")
+    semantic_agent._clear_camera_cache(11)
+    if (
+        semantic_agent.latest_cached_frame(semantic_camera, max_age_seconds=1) is not None
+        or semantic_agent.latest_live_frame(semantic_camera, max_age_seconds=1) is not None
+    ):
+        raise SystemExit("camera invalidation did not clear both frame semantics")
+
     frozen_agent = CameraAgent(Path("/tmp/gohome-frozen-stream-test"))
     fingerprint_base = np.zeros((48, 64, 3), dtype=np.uint8)
     fingerprint_local_change = fingerprint_base.copy()
@@ -252,7 +302,9 @@ def main() -> None:
         if frozen_status.get("decoded_frames", 0) <= 1:
             raise SystemExit(f"frozen stream test did not decode repeated frames: {frozen_status}")
         if frozen_status.get("unique_frames") != 1 or frozen_status.get("repeated_frames", 0) <= 0:
-            raise SystemExit(f"repeated pixels were counted as live frames: {frozen_status}")
+            raise SystemExit(f"repeated pixels were counted as content frames: {frozen_status}")
+        if frozen_status.get("live_deliveries", 0) <= frozen_status.get("unique_frames", 0):
+            raise SystemExit(f"valid repeated frames did not maintain live delivery cadence: {frozen_status}")
         if frozen_status.get("effective_fps") != 0.0:
             raise SystemExit(f"frozen stream still reports an effective FPS: {frozen_status}")
         if len(frozen_transitions) != 1 or frozen_transitions[0].get("reason") != "stream_pixels_frozen":
@@ -261,6 +313,8 @@ def main() -> None:
             raise SystemExit("frozen stream lifecycle invalidation did not clear stale pose state")
         if frozen_agent.latest_cached_frame(frozen_camera, max_age_seconds=1) is not None:
             raise SystemExit("frozen stream retained its last unique frame after invalidation")
+        if frozen_agent.latest_live_frame(frozen_camera, max_age_seconds=1) is not None:
+            raise SystemExit("frozen stream retained its last live delivery after invalidation")
         if int(frozen_status.get("stream_generation") or 0) < 2:
             raise SystemExit(f"frozen stream did not advance its generation: {frozen_status}")
     finally:
@@ -274,15 +328,19 @@ def main() -> None:
         "subscribers": len(consumers),
         "managed_stream_survived_preview": True,
         "new_frame_notification": True,
-        "single_cache_frame_owner": True,
+        "reader_retains_duplicate_frame": False,
+        "bounded_content_and_live_caches": True,
         "offline_fallback_capture": False,
         "capture_metrics": stream_status,
         "source_transition": transitions[0],
         "old_reader_retired": True,
         "stale_cache_rejected": True,
-        "repeated_pixels_counted_as_live": False,
+        "repeated_pixels_counted_as_content": False,
+        "repeated_pixels_delivered_before_freeze": True,
         "localized_frame_change_detected": True,
+        "analysis_and_live_frame_semantics_separated": True,
         "frozen_stream_invalidated_stale_pose": True,
+        "frozen_stream_invalidated_live_delivery": True,
     })
 
 

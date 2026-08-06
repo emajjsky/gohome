@@ -1652,35 +1652,38 @@ function runtimeVideoMetrics(payload, cameraId) {
   const synchronization = renderer?.synchronization_rejections?.[String(cameraId)] || {};
   const segmentationAssist = renderer?.segmentation_assists?.[String(cameraId)] || {};
   const mode = String(relay.privacy_mode || "original");
-  const sourceFps = Number(stream.source_fps);
-  const privacyFps = Number(privacy.output_fps);
+  const decodedFps = Number(stream.decoded_fps);
+  const contentFps = Number(stream.content_fps ?? stream.source_fps);
+  const deliveryFps = Number(stream.live_delivery_fps);
+  const deliveryAgeMs = stream.latest_delivery_age_ms === null || stream.latest_delivery_age_ms === undefined
+    ? Number.NaN
+    : Number(stream.latest_delivery_age_ms);
+  const encoderInputFps = Number(relayCamera.encoder_input_fps_10s);
   const poseFps = Number(tracker.display_output_fps);
   const modelFps = Number(tracker.model_anchor_fps);
   const segmentationLatencyMs = Number(segmentation.last_latency_ms);
-  const renderLatencyP95Ms = Number(stageLatency?.total?.p95);
+  const renderLatencyP95Ms = Number(stageLatency?.composition_total?.p95);
   const jpegLatencyP95Ms = Number(stageLatency?.jpeg_encode?.p95);
-  const cloudAcceptedFps = Number(relayCamera.accepted_fps);
-  const sourceToCloudP95Ms = Number(relayCamera.source_to_cloud_ms_p95);
   return {
     mode,
-    sourceFps,
+    decodedFps,
+    contentFps,
+    deliveryFps,
+    deliveryAgeMs,
+    encoderInputFps,
     poseFps,
     modelFps,
     segmentationStatus: String(segmentation.status || ""),
     segmentationLatencyMs,
     renderLatencyP95Ms,
     jpegLatencyP95Ms,
-    cloudAcceptedFps,
-    sourceToCloudP95Ms,
     synchronizationIssue: Number(synchronization.last_age_ms) <= 2500
       ? String(synchronization.last_reason || "")
       : "",
     segmentationAssisted: Number(segmentationAssist.last_age_ms) <= 2500,
-    outputFps: mode === "original"
-      ? sourceFps
-      : Number.isFinite(privacyFps) && privacyFps > 0
-        ? privacyFps
-        : poseFps,
+    outputFps: Number.isFinite(encoderInputFps) && encoderInputFps > 0
+      ? encoderInputFps
+      : deliveryFps,
   };
 }
 
@@ -1697,14 +1700,16 @@ function renderStreamHealth(payload = state.runtimeStatus) {
   }
   const video = runtimeVideoMetrics(payload, state.selectedCameraId);
   const fps = Number(video.outputFps);
-  const sourceFps = Number(video.sourceFps);
+  const decodedFps = Number(video.decodedFps);
+  const contentFps = Number(video.contentFps);
+  const deliveryFps = Number(video.deliveryFps);
   const modelFps = Number(video.modelFps);
   const segmentationLatencyMs = Number(video.segmentationLatencyMs);
   const renderLatencyP95Ms = Number(video.renderLatencyP95Ms);
   const jpegLatencyP95Ms = Number(video.jpegLatencyP95Ms);
-  const cloudAcceptedFps = Number(video.cloudAcceptedFps);
-  const sourceToCloudP95Ms = Number(video.sourceToCloudP95Ms);
-  const ageMs = Number(selected.latest_frame_age_ms);
+  const ageMs = Number.isFinite(Number(video.deliveryAgeMs))
+    ? Number(video.deliveryAgeMs)
+    : Number(selected.latest_frame_age_ms);
   if (selected.state === "retrying") {
     setText("streamFrameTime", "源流重连中");
     setText("streamFpsBadge", "重连中");
@@ -1719,8 +1724,14 @@ function renderStreamHealth(payload = state.runtimeStatus) {
   }
   const modeLabel = video.mode === "skeleton" ? "骨架" : video.mode === "person_blur" ? "模糊" : "原画";
   const fpsLabel = Number.isFinite(fps) && fps > 0 ? `${modeLabel} ${fps.toFixed(1)} FPS` : `${modeLabel}预热`;
-  const sourceLabel = Number.isFinite(sourceFps) && sourceFps > 0 && video.mode !== "original"
-    ? ` · 源流 ${sourceFps.toFixed(1)} FPS`
+  const decodedLabel = Number.isFinite(decodedFps) && decodedFps > 0
+    ? ` · 解码 ${decodedFps.toFixed(1)} FPS`
+    : "";
+  const contentLabel = Number.isFinite(contentFps) && contentFps > 0
+    ? ` · 内容 ${contentFps.toFixed(1)} FPS`
+    : "";
+  const deliveryLabel = Number.isFinite(deliveryFps) && deliveryFps > 0
+    ? ` · 投递 ${deliveryFps.toFixed(1)} FPS`
     : "";
   const modelLabel = Number.isFinite(modelFps) && modelFps > 0
     ? ` · Hailo ${modelFps.toFixed(1)} Hz`
@@ -1743,13 +1754,10 @@ function renderStreamHealth(payload = state.runtimeStatus) {
   const jpegLabel = Number.isFinite(jpegLatencyP95Ms) && jpegLatencyP95Ms > 0
     ? ` · JPEG P95 ${jpegLatencyP95Ms.toFixed(0)} ms`
     : "";
-  const cloudLabel = Number.isFinite(cloudAcceptedFps) && cloudAcceptedFps > 0
-    ? ` · 云端 ${cloudAcceptedFps.toFixed(1)} FPS${Number.isFinite(sourceToCloudP95Ms) && sourceToCloudP95Ms > 0 ? ` / P95 ${sourceToCloudP95Ms.toFixed(0)} ms` : ""}`
-    : " · 云端预热";
   const frameMetric = $("streamFrameTime");
-  setText("streamFrameTime", `${fpsLabel}${sourceLabel}${cloudLabel}${ageLabel}`);
+  setText("streamFrameTime", `${fpsLabel}${decodedLabel}${ageLabel}`);
   if (frameMetric) {
-    frameMetric.title = `${fpsLabel}${sourceLabel}${modelLabel}${segmentationLabel}${renderLabel}${jpegLabel}${cloudLabel}${ageLabel}`;
+    frameMetric.title = `${fpsLabel}${decodedLabel}${contentLabel}${deliveryLabel}${modelLabel}${segmentationLabel}${renderLabel}${jpegLabel}${ageLabel}`;
   }
   setText("streamFpsBadge", Number.isFinite(fps) && fps > 0 ? `${fps.toFixed(1)} FPS` : "-- FPS");
   $("streamFpsBadge")?.classList.toggle("is-live", Number.isFinite(fps) && fps > 0);

@@ -430,8 +430,16 @@ class LiveRelayAgent:
                         self._set_privacy_state(camera_id, "ready", "")
                         publisher.submit(
                             output,
-                            frame_id=str(capture.get("frame_id") or ""),
-                            captured_monotonic=capture.get("captured_monotonic"),
+                            frame_id=str(
+                                capture.get("delivery_frame_id")
+                                or capture.get("frame_id")
+                                or ""
+                            ),
+                            captured_monotonic=(
+                                capture.get("delivery_captured_monotonic")
+                                if capture.get("delivery_captured_monotonic") is not None
+                                else capture.get("captured_monotonic")
+                            ),
                             privacy_mode=privacy_mode,
                             source_key=source_key,
                         )

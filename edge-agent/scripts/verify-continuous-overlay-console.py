@@ -63,9 +63,19 @@ def main() -> None:
         raise SystemExit("live metadata does not supervise the MJPEG stream lifecycle")
 
     runtime_metrics = function_source(console, "function runtimeVideoMetrics", "function renderStreamHealth")
-    for token in ("stage_latency_ms", "accepted_fps", "source_to_cloud_ms_p95"):
+    for token in (
+        "stage_latency_ms",
+        "decoded_fps",
+        "content_fps",
+        "live_delivery_fps",
+        "latest_delivery_age_ms",
+        "encoder_input_fps_10s",
+    ):
         if token not in runtime_metrics:
             raise SystemExit(f"management console is missing measured video metric: {token}")
+    for retired in ("accepted_fps", "source_to_cloud_ms_p95"):
+        if retired in runtime_metrics:
+            raise SystemExit(f"management console still reads retired JPEG relay metric: {retired}")
 
     forbidden_client_composition = (
         "poseCompositionOwner",

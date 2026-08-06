@@ -96,12 +96,14 @@ class _SharedStreamReader:
             daemon=True,
         )
         self._sequence = 0
+        self._delivery_sequence = 0
         self._last_error = ""
         self._last_error_at = ""
         self._last_frame_at = ""
         self._last_frame_monotonic: float | None = None
         self._frame_arrivals: deque[float] = deque(maxlen=600)
         self._decoded_arrivals: deque[float] = deque(maxlen=600)
+        self._delivery_arrivals: deque[float] = deque(maxlen=600)
         self._read_samples: deque[tuple[float, float]] = deque(maxlen=600)
         self._open_count = 0
         self._open_attempt_count = 0
@@ -147,11 +149,22 @@ class _SharedStreamReader:
                 return after_sequence, self._last_error
             return self._sequence, self._last_error
 
+    def wait_for_delivery(self, after_sequence: int, timeout: float = 3.5) -> tuple[int, str]:
+        with self._condition:
+            self._condition.wait_for(
+                lambda: self._delivery_sequence > after_sequence or self._stop.is_set(),
+                timeout=max(0.1, float(timeout)),
+            )
+            if self._delivery_sequence <= after_sequence:
+                return after_sequence, self._last_error
+            return self._delivery_sequence, self._last_error
+
     def status(self) -> Dict[str, Any]:
         now = time.monotonic()
         with self._condition:
             arrivals = [value for value in self._frame_arrivals if value >= now - 10.0]
             decoded_arrivals = [value for value in self._decoded_arrivals if value >= now - 10.0]
+            delivery_arrivals = [value for value in self._delivery_arrivals if value >= now - 10.0]
             reads = [value for value in self._read_samples if value[0] >= now - 10.0]
             gaps_ms = [
                 (current - previous) * 1000.0
@@ -163,6 +176,11 @@ class _SharedStreamReader:
                 if self._last_frame_monotonic is not None
                 else None
             )
+            delivery_age = (
+                max(0.0, now - delivery_arrivals[-1])
+                if delivery_arrivals
+                else None
+            )
             source_fps = (
                 (len(arrivals) - 1) / max(0.001, arrivals[-1] - arrivals[0])
                 if len(arrivals) >= 2
@@ -171,6 +189,11 @@ class _SharedStreamReader:
             decoded_fps = (
                 (len(decoded_arrivals) - 1) / max(0.001, decoded_arrivals[-1] - decoded_arrivals[0])
                 if len(decoded_arrivals) >= 2
+                else 0.0
+            )
+            delivery_fps = (
+                (len(delivery_arrivals) - 1) / max(0.001, delivery_arrivals[-1] - delivery_arrivals[0])
+                if len(delivery_arrivals) >= 2
                 else 0.0
             )
             state = "streaming"
@@ -185,16 +208,24 @@ class _SharedStreamReader:
             return {
                 "state": state,
                 "source_fps": round(source_fps, 2),
+                "content_fps": round(source_fps, 2),
                 "effective_fps": round(source_fps, 2),
                 "decoded_fps": round(decoded_fps, 2),
+                "live_delivery_fps": round(delivery_fps, 2),
                 "advertised_fps": round(self._advertised_fps, 2),
                 "latest_frame_age_ms": round(frame_age * 1000.0, 1) if frame_age is not None else None,
+                "latest_delivery_age_ms": (
+                    round(delivery_age * 1000.0, 1)
+                    if delivery_age is not None
+                    else None
+                ),
                 "frame_gap_ms_p95": round(self._percentile(gaps_ms, 0.95), 1),
                 "frame_gap_ms_max": round(max(gaps_ms), 1) if gaps_ms else 0.0,
                 "read_latency_ms_p95": round(self._percentile(read_ms, 0.95), 1),
                 "read_latency_ms_max": round(max(read_ms), 1) if read_ms else 0.0,
                 "decoded_frames": self._decoded_frame_count,
                 "unique_frames": self._sequence,
+                "live_deliveries": self._delivery_sequence,
                 "repeated_frames": self._repeated_frame_count,
                 "consecutive_repeated_frames": self._consecutive_repeated_frames,
                 "near_black_frames": self._near_black_frame_count,
@@ -306,17 +337,34 @@ class _SharedStreamReader:
                         cap = None
                         self._invalidate_stream("stream_pixels_frozen")
                         self._wait_after_failure()
+                    else:
+                        delivery = self.agent._store_latest_live_frame(
+                            self.camera,
+                            frame,
+                            self.source_label,
+                            stream_generation=self.stream_generation,
+                        )
+                        if delivery is not None:
+                            self._record_delivery(read_finished_at)
                     continue
-                self.agent._store_latest_frame(
+                identity = self.agent._store_latest_frame(
                     self.camera,
                     frame,
                     self.source_label,
                     stream_generation=self.stream_generation,
                 )
-                with self._condition:
-                    self._sequence += 1
-                    self._last_error = ""
-                    self._condition.notify_all()
+                if identity is not None:
+                    delivery = self.agent._store_latest_live_frame(
+                        self.camera,
+                        frame,
+                        self.source_label,
+                        stream_generation=self.stream_generation,
+                        content_identity=identity,
+                    )
+                    if delivery is not None:
+                        with self._condition:
+                            self._sequence += 1
+                        self._record_delivery(read_finished_at)
         finally:
             if cap is not None:
                 cap.release()
@@ -348,6 +396,7 @@ class _SharedStreamReader:
             self._last_frame_monotonic = None
             self._frame_arrivals.clear()
             self._decoded_arrivals.clear()
+            self._delivery_arrivals.clear()
             self._read_samples.clear()
             self._consecutive_repeated_frames = 0
             self._consecutive_near_black_frames = 0
@@ -357,6 +406,13 @@ class _SharedStreamReader:
             reader=self,
             reason=reason,
         )
+
+    def _record_delivery(self, arrived_at: float) -> None:
+        with self._condition:
+            self._delivery_sequence += 1
+            self._delivery_arrivals.append(float(arrived_at))
+            self._last_error = ""
+            self._condition.notify_all()
 
     def _wait_after_failure(self) -> None:
         with self._condition:
@@ -437,7 +493,9 @@ class CameraAgent:
         self._frame_cache_lock = Lock()
         self._frame_cache_condition = Condition(self._frame_cache_lock)
         self._frame_cache: Dict[str, Dict[str, Any]] = {}
+        self._live_frame_cache: Dict[str, Dict[str, Any]] = {}
         self._frame_sequences: Dict[str, int] = {}
+        self._delivery_sequences: Dict[str, int] = {}
         self._shared_stream_lock = Lock()
         self._reconcile_lock = Lock()
         self._shared_streams: Dict[str, _SharedStreamReader] = {}
@@ -569,6 +627,9 @@ class CameraAgent:
             for key, cached in list(self._frame_cache.items()):
                 if int(cached.get("camera_id") or 0) == int(camera_id):
                     self._frame_cache.pop(key, None)
+            for key, cached in list(self._live_frame_cache.items()):
+                if int(cached.get("camera_id") or 0) == int(camera_id):
+                    self._live_frame_cache.pop(key, None)
             self._frame_cache_condition.notify_all()
 
     def _notify_source_change(self, transition: Dict[str, Any]) -> None:
@@ -708,6 +769,35 @@ class CameraAgent:
                 "stream_generation": cached["stream_generation"],
             }
 
+    def latest_live_frame(self, camera: Dict[str, Any], max_age_seconds: float = 2.0) -> Dict[str, Any] | None:
+        key = self._frame_cache_key(camera)
+        now = time.monotonic()
+        with self._frame_cache_lock:
+            cached = self._live_frame_cache.get(key)
+            if not cached:
+                return None
+            age = now - float(cached.get("delivery_monotonic", 0.0))
+            if age > max(0.1, float(max_age_seconds)):
+                return None
+            return {
+                "frame": cached["frame"].copy(),
+                "width": cached["width"],
+                "height": cached["height"],
+                "elapsed_ms": int(age * 1000),
+                "source": f"{cached['source']} live",
+                "frame_id": cached["frame_id"],
+                "captured_at": cached["captured_at"],
+                "captured_monotonic": cached["captured_monotonic"],
+                "delivery_frame_id": cached["delivery_frame_id"],
+                "delivery_captured_at": cached["delivery_captured_at"],
+                "delivery_captured_monotonic": cached["delivery_monotonic"],
+                "content_repeated": cached["content_repeated"],
+                "camera_id": cached["camera_id"],
+                "source_key": cached["source_key"],
+                "configured_source_key": cached["configured_source_key"],
+                "stream_generation": cached["stream_generation"],
+            }
+
     def wait_for_frame_update(
         self,
         cameras: list[Dict[str, Any]],
@@ -783,6 +873,83 @@ class CameraAgent:
             "camera_id": camera_id,
             "source_key": source_key,
             "configured_source_key": configured_source_key,
+            "stream_generation": max(0, int(stream_generation)),
+        }
+
+    def _store_latest_live_frame(
+        self,
+        camera: Dict[str, Any],
+        frame: Any,
+        source_label: str,
+        *,
+        stream_generation: int = 0,
+        content_identity: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any] | None:
+        try:
+            height, width = frame.shape[:2]
+        except (AttributeError, ValueError):
+            return None
+        key = self._frame_cache_key(camera)
+        camera_id = int(camera.get("id") or 0)
+        configured_source_key = self.frame_source_key(camera)
+        source_key = f"{configured_source_key}:g{max(0, int(stream_generation))}"
+        delivery_captured_at = datetime.now(timezone.utc).isoformat()
+        delivery_monotonic = time.monotonic()
+        with self._frame_cache_condition:
+            content = dict(content_identity or {})
+            latest_content = self._frame_cache.get(key)
+            if not content:
+                if (
+                    latest_content is None
+                    or str(latest_content.get("source_key") or "") != source_key
+                ):
+                    return None
+                content = latest_content
+            elif str(content.get("source_key") or "") != source_key:
+                return None
+            frame_id = str(content.get("frame_id") or "")
+            captured_at = str(content.get("captured_at") or "")
+            captured_monotonic = content.get("captured_monotonic")
+            if not frame_id or not captured_at or captured_monotonic is None:
+                return None
+            sequence_key = str(camera_id or key)
+            sequence = self._delivery_sequences.get(sequence_key, 0) + 1
+            self._delivery_sequences[sequence_key] = sequence
+            delivery_frame_id = f"{camera_id or 'source'}-d{sequence}"
+            stored_frame = (
+                latest_content["frame"]
+                if latest_content is not None
+                and str(latest_content.get("frame_id") or "") == frame_id
+                and str(latest_content.get("source_key") or "") == source_key
+                and content_identity is not None
+                else frame.copy()
+            )
+            self._live_frame_cache[key] = {
+                "frame": stored_frame,
+                "width": int(width),
+                "height": int(height),
+                "source": source_label,
+                "frame_id": frame_id,
+                "captured_at": captured_at,
+                "captured_monotonic": captured_monotonic,
+                "delivery_frame_id": delivery_frame_id,
+                "delivery_captured_at": delivery_captured_at,
+                "delivery_monotonic": delivery_monotonic,
+                "content_repeated": content_identity is None,
+                "camera_id": camera_id,
+                "source_key": source_key,
+                "configured_source_key": configured_source_key,
+                "stream_generation": max(0, int(stream_generation)),
+            }
+            self._frame_cache_condition.notify_all()
+        return {
+            "frame_id": frame_id,
+            "delivery_frame_id": delivery_frame_id,
+            "delivery_captured_at": delivery_captured_at,
+            "delivery_captured_monotonic": delivery_monotonic,
+            "content_repeated": content_identity is None,
+            "camera_id": camera_id,
+            "source_key": source_key,
             "stream_generation": max(0, int(stream_generation)),
         }
 
@@ -1013,24 +1180,24 @@ class CameraAgent:
             source_label=source_label,
         )
         last_sequence = 0
-        last_frame_id = ""
+        last_delivery_frame_id = ""
         frame_interval = 1.0 / bounded_stream_fps(fps)
         frame_deadline = time.monotonic()
         try:
             while True:
-                sequence, _error = reader.wait_for_update(last_sequence)
+                sequence, _error = reader.wait_for_delivery(last_sequence)
                 if sequence <= last_sequence:
                     if reader.is_stopped:
                         return
                     continue
                 last_sequence = sequence
-                capture = self.latest_cached_frame(camera, max_age_seconds=0.75)
+                capture = self.latest_live_frame(camera, max_age_seconds=0.75)
                 if capture is None:
                     continue
-                frame_id = str(capture.get("frame_id") or "")
-                if not frame_id or frame_id == last_frame_id:
+                delivery_frame_id = str(capture.get("delivery_frame_id") or "")
+                if not delivery_frame_id or delivery_frame_id == last_delivery_frame_id:
                     continue
-                last_frame_id = frame_id
+                last_delivery_frame_id = delivery_frame_id
                 frame = capture["frame"]
                 output_frame = self._resize_for_stream(
                     cv2,
@@ -1176,6 +1343,12 @@ class CameraAgent:
         while True:
             frame = self._demo_frame(cv2, camera, frame_index=frame_index)
             identity = self._store_latest_frame(camera, frame, "demo stream") or {}
+            delivery = self._store_latest_live_frame(
+                camera,
+                frame,
+                "demo stream",
+                content_identity=identity,
+            ) or {}
             output = self._resize_for_stream(cv2, frame, max_width=max_width, max_height=max_height)
             yield {
                 "frame": output,
@@ -1184,6 +1357,7 @@ class CameraAgent:
                 "elapsed_ms": 0,
                 "source": "demo stream",
                 **identity,
+                **delivery,
             }
             frame_index += 1
             time.sleep(delay)

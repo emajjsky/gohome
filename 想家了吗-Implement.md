@@ -13263,3 +13263,25 @@ P4 风险升频边界：
 - `verify-local-closed-loop.js` 原先把新家庭老人资料的合法结构化 `404` 当失败；现只对精确的“老人资料尚未填写”记录 warning，其他错误仍失败。
 - 干净本地 JSON 没有预置盒子和摄像头，校验器现在明确记录开发环境 warning；生产 PostgreSQL、远程地址或已有摄像头仍严格要求在线。当前临时闭环 `24 passed / 0 failed`，无测试数据残留。
 - `npm test`、云端 Node `119` 项（`118` 通过、1 项未配置 PostgreSQL 集成跳过）通过。该项不修改产品接口，正式绑定能力继续由云端 onboarding 和真实盒子验收负责。
+
+## 206. 2026-08-06 内容帧与直播投递帧语义拆分
+
+### 根因
+
+- `_SharedStreamReader` 原先用内容指纹同时定义“算法有效帧”和“直播可发送帧”。指纹相同但尚未达到 3 秒冻结门槛的解码帧被直接丢弃，导致约 `15 FPS` 解码流在静止场景只能向 H.264 发布约 `10-12 FPS`。
+- 该设计正确保护了 Pose、风险与有效 FPS，却错误限制了视频节奏。直接取消重复帧过滤又会让 Hailo、Motion、活动日志和冻结检测把重复像素当成新证据，因此必须拆分身份和消费者，不能简单删除 `continue`。
+
+### 实现
+
+- 每路摄像头现在有内容最新槽和直播投递最新槽。内容槽继续以 `frame_id + captured_monotonic` 表示真实内容变化；直播槽以 `delivery_frame_id + delivery_captured_monotonic` 表示有效解码投递。每个槽只保存最新一帧，唯一内容帧在两个槽之间共享同一数组，重复内容时才保留各自必要的最新数组。
+- Worker、Motion、Pose、分割调度和活动日志继续只读取内容槽并等待内容身份变化。`raw_frames()` 改为等待直播投递身份；隐私渲染仍消费内容身份以命中同帧 Pose 和现有成品缓存，H.264 发布器只用投递身份计数和计算源到编码输入延迟。
+- 状态新增 `content_fps`、`live_delivery_fps`、`live_deliveries` 和 `latest_delivery_age_ms`。`decoded_fps` 表示解码器产出，`content_fps/effective_fps` 表示真实变化，`live_delivery_fps` 表示未冻结有效帧进入直播的节奏，`encoder_input_fps_10s` 继续表示 FFmpeg 实际收到的成品帧。
+- 管理端删除旧 JPEG 中继的 `accepted_fps/source_to_cloud_ms_p95` 读取，右上角输出 FPS 改为 FFmpeg 真实编码输入，预热时使用直播投递 FPS；详情明确区分解码、内容变化、投递、Hailo 和合成延迟，帧龄使用最新直播投递时间。
+- 近黑帧不会进入内容或直播槽。连续重复超过冻结门槛时，两个槽位同时清空，`stream_generation` 提升，旧 Pose/分割/成品帧通过既有源变化监听器失效，读取器重连；没有新增 MJPEG、公网降级、客户端补帧或第二套算法。
+
+### 自动验证
+
+- `verify-camera-shared-stream.py` 新增内容/投递身份隔离：重复投递不改变内容帧号和内容时间戳、不唤醒分析消费者，但投递序号必须前进；失效必须同时清除两个槽位。
+- 冻结回归确认重复像素不进入内容 FPS，同时在冻结门槛前维持直播投递；门槛后流代提升、旧 Pose 失效、两个槽位清空。近黑恢复与缓存超前回归同步更新为投递身份。
+- `verify-live-relay-upload-pipeline.py` 使用重复内容身份和独立投递身份，确认隐私合成仍按内容帧，发布器按每次投递持续前进。
+- Python 编译、三个定向专项和完整边缘回归 `59/59` 通过。本轮未部署 Pi，未修改云端、iOS、模型、数据库、校准文件或设备状态；真实 FPS 和 30 分钟稳定性等待用户回家后验收。

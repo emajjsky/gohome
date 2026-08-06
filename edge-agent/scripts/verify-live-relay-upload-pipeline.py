@@ -148,10 +148,12 @@ class CameraAgentStub:
         for index in range(self.frame_count):
             yield {
                 "frame": np.full((36, 64, 3), index, dtype=np.uint8),
-                "frame_id": f"{camera['id']}-{index + 1}",
+                "frame_id": f"{camera['id']}-{index // 2 + 1}",
+                "delivery_frame_id": f"{camera['id']}-d{index + 1}",
                 "source_key": f"camera-{camera['id']}-source",
                 "captured_at": "2026-08-03T08:00:00+00:00",
                 "captured_monotonic": time.monotonic(),
+                "delivery_captured_monotonic": time.monotonic(),
             }
         self.stop_event.set()
 
@@ -519,7 +521,7 @@ def verify_relay_uses_single_composed_h264_publisher() -> None:
     assert publisher.closed
     assert renderer.render_calls == 8
     assert len(publisher.submissions) == 6
-    assert publisher.submissions[-1][1]["frame_id"] == "2-8"
+    assert publisher.submissions[-1][1]["frame_id"] == "2-d8"
     assert publisher.submissions[-1][1]["privacy_mode"] == "skeleton"
     assert publisher.configuration["camera_id"] == 2
     assert publisher.configuration["publish_url"].endswith("/live/edge-test/102")

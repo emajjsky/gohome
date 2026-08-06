@@ -41,7 +41,7 @@ class AheadOfNotificationReader:
     def __init__(self) -> None:
         self.sequence = 0
 
-    def wait_for_update(self, _after_sequence: int, timeout: float = 3.5):
+    def wait_for_delivery(self, _after_sequence: int, timeout: float = 3.5):
         del timeout
         self.sequence += 1
         return self.sequence, ""
@@ -157,13 +157,13 @@ def main() -> None:
     race_agent = CameraAgent(Path("/tmp/gohome-stream-cache-ahead-test"))
     race_reader = AheadOfNotificationReader()
     cached_frames = [
-        {"frame": normal, "frame_id": "9-1"},
-        {"frame": normal, "frame_id": "9-1"},
-        {"frame": np.full_like(normal, 112), "frame_id": "9-2"},
+        {"frame": normal, "frame_id": "9-1", "delivery_frame_id": "9-d1"},
+        {"frame": normal, "frame_id": "9-1", "delivery_frame_id": "9-d1"},
+        {"frame": np.full_like(normal, 112), "frame_id": "9-2", "delivery_frame_id": "9-d2"},
     ]
     race_agent._acquire_shared_stream = lambda *args, **kwargs: race_reader  # type: ignore[method-assign]
     race_agent._release_shared_stream = lambda *args, **kwargs: None  # type: ignore[method-assign]
-    race_agent.latest_cached_frame = (  # type: ignore[method-assign]
+    race_agent.latest_live_frame = (  # type: ignore[method-assign]
         lambda *args, **kwargs: cached_frames.pop(0)
     )
     race_stream = race_agent.raw_frames(
