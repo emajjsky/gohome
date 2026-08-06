@@ -543,6 +543,7 @@ class CameraAgent:
                 self._clear_camera_cache(camera_id)
                 transitions.append({
                     "camera_id": camera_id,
+                    "transition_type": "configuration",
                     "reason": "source_changed" if current is not None else "camera_removed_or_disabled",
                     "previous": self._public_camera_identity(previous),
                     "current": self._public_camera_identity(current),
@@ -665,6 +666,7 @@ class CameraAgent:
         identity = self._public_camera_identity(camera)
         self._notify_source_change({
             "camera_id": camera_id,
+            "transition_type": "stream_discontinuity",
             "reason": str(reason or "stream_discontinuity"),
             "previous": identity,
             "current": identity,

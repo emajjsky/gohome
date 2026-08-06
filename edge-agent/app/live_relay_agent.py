@@ -135,11 +135,36 @@ class LiveRelayAgent:
         camera_id = int(transition.get("camera_id") or 0)
         if camera_id <= 0:
             return
+        reason = str(transition.get("reason") or "source_transition")
+        if self._is_stream_discontinuity(transition):
+            self._pause_camera_publisher(camera_id, reason)
+            self._wake.set()
+            return
         self._request_camera_stop(
             camera_id,
-            str(transition.get("reason") or "source_transition"),
+            reason,
         )
         self._wake.set()
+
+    @staticmethod
+    def _is_stream_discontinuity(transition: Dict[str, Any]) -> bool:
+        transition_type = str(transition.get("transition_type") or "").strip().lower()
+        if transition_type:
+            return transition_type == "stream_discontinuity"
+        return str(transition.get("reason") or "").strip().lower().startswith("stream_")
+
+    def _pause_camera_publisher(self, camera_id: int, reason: str) -> None:
+        resolved_reason = str(reason or "stream_discontinuity")[:240]
+        with self._state_lock:
+            publisher = self._publishers.get(int(camera_id))
+        if publisher is not None:
+            publisher.pause(resolved_reason)
+        self._set_privacy_state(
+            int(camera_id),
+            "revalidating",
+            "stream_revalidation_required",
+        )
+        self._notify_delivery_status_if_changed(int(camera_id))
 
     def status(self) -> Dict[str, Any]:
         configured, reason = self._configured()

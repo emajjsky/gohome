@@ -599,6 +599,53 @@ def verify_relay_preserves_camera_thread_lifecycle() -> None:
     assert not stopped["active"]
 
 
+def verify_stream_discontinuity_does_not_restart_camera_thread() -> None:
+    publisher_factory = PublisherRecorderFactory()
+    storage = SimpleNamespace(
+        list_cameras=lambda **_kwargs: [{
+            "id": 3,
+            "stream_url": "demo:living_room",
+            "username": None,
+            "password": None,
+            "enabled": True,
+        }]
+    )
+    relay = LiveRelayAgent(
+        storage=storage,
+        settings=SettingsStub(),
+        camera_agent=ContinuousCameraAgentStub(),
+        device_id_resolver=lambda: "edge-test",
+        token_resolver=lambda: "issued-token",
+        remote_camera_id_resolver=lambda camera_id: camera_id + 100,
+        privacy_mode_resolver=lambda: "original",
+        privacy_renderer=None,
+        publisher_factory=publisher_factory,
+    )
+    relay._sync_camera_threads()
+    wait_until(lambda: len(publisher_factory.instances) == 1)
+    publisher = publisher_factory.instances[0]
+
+    relay.handle_camera_source_transition({
+        "camera_id": 3,
+        "transition_type": "stream_discontinuity",
+        "reason": "stream_read_failed",
+        "stream_generation": 2,
+    })
+    time.sleep(0.03)
+    lifecycle = relay.status()["camera_lifecycle"]["3"]
+    assert len(publisher_factory.instances) == 1
+    assert not publisher.closed
+    assert lifecycle["thread_starts"] == 1
+    assert lifecycle["thread_stops"] == 0
+    assert "stream_read_failed" in publisher.pauses
+    assert relay.status()["camera_privacy_states"]["3"]["status"] in {
+        "revalidating",
+        "ready",
+    }
+
+    relay._stop_all_camera_threads(reason="verification_complete")
+
+
 def main() -> int:
     verify_url_and_command_contract()
     verify_latest_frame_and_context_restart()
@@ -607,6 +654,7 @@ def main() -> int:
     verify_shutdown_aborts_partial_frame_before_closing_input()
     verify_relay_uses_single_composed_h264_publisher()
     verify_relay_preserves_camera_thread_lifecycle()
+    verify_stream_discontinuity_does_not_restart_camera_thread()
     print({
         "ok": True,
         "transport": "h264-rtsps",
