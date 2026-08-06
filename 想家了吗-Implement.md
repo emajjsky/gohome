@@ -13305,3 +13305,25 @@ P4 风险升频边界：
 - 用户在同一正式 App 会话完成 `original -> person_blur -> skeleton` 连续切换，确认三种模式均能显示且流畅。
 - 切换后盒子两路 `camera_privacy_states` 均为 `ready`；实时解码/直播投递约 `15.2/15.2 FPS`，H.264 编码输入约 `12.7/12.3 FPS`，读取、重连和发布失败均为 `0`。
 - 模式协议和状态机基础闭环通过；编码输入长尾仍需结合遮挡、快速移动、断流恢复和 30 分钟长测判定，不把主观流畅度当作全部性能验收。
+
+## 208. 2026-08-06 断流恢复：隐私复验与 App 播放生命周期
+
+### 根因
+
+- 摄像头源断流恢复会提升 `stream_generation`，但空房复验要求 `pose_synchronized`，导致“当前分割明确无人、Pose 暂无同帧结果”被错误清零为 `person_evidence_unavailable`，H.264 发布器因此保持暂停。
+- App `GuardViewModel` 在 `maxReconnectAttempts` 后结束播放任务并保持 `failed`，没有继续观察同一选中摄像头的恢复。
+
+### 实现
+
+- `PrivacyFrameRenderer` 以当前 Hailo 分割锚点作为空房证据：空掩码不依赖 Pose；非空掩码仍要求同帧 Pose；分割不可用仍阻断。没有复用旧 Pose、旧视频帧或跨摄像头状态。
+- `GuardViewModel` 采用同一选中摄像头和 selection generation 的单循环：先快速重试，超过快速次数后以 `5/10/20/30s` 封顶退避继续重新签发 WHEP 会话。停止、切换摄像头、页面离开和 App 后台仍会取消循环。
+
+### 自动验证
+
+- `verify-video-privacy.py` 通过，新增空分割/无 Pose 复验用例，原有人证据阻断和流代隔离用例保持通过。
+- `GuardViewModelTests` 定向 `13/13` 通过，新增持续自动恢复测试。
+
+### 未关闭条件
+
+- 尚未部署本次改动到 Pi，也尚未做真实拔出/插回测试。
+- 未获得“盒子 `publish_ready` 恢复、App 自动建立新 WHEP 会话、另一路持续播放”的现场证据前，GH-066/GH-067 保持处理中。

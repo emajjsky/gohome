@@ -544,6 +544,15 @@ class PrivacyFrameRenderer:
             force_anchor=True,
         )
         render_identity = dict(metadata.get("render_identity") or {})
+        mask_has_person = bool(mask is not None and cv2.countNonZero(mask))
+        pose_synchronized = bool(render_identity.get("pose_synchronized"))
+        # An empty segmentation anchor is complete current-frame evidence that
+        # the room is unoccupied. Pose is required only when a person is present,
+        # because the skeleton/privacy path must then use matching-frame geometry.
+        evidence_synchronized = bool(
+            mask is not None
+            and (not mask_has_person or pose_synchronized)
+        )
         result = self.background_reconstructor.observe_revalidation(
             int(camera_id),
             frame,
@@ -551,12 +560,9 @@ class PrivacyFrameRenderer:
             source_key=str(source_key or ""),
             person_evidence=(
                 self._has_person_evidence(metadata)
-                or bool(mask is not None and cv2.countNonZero(mask))
+                or mask_has_person
             ),
-            evidence_synchronized=bool(
-                mask is not None
-                and render_identity.get("pose_synchronized")
-            ),
+            evidence_synchronized=evidence_synchronized,
         )
         if result.get("ready"):
             self._clear_revalidation_schedule(

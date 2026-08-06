@@ -505,7 +505,28 @@ def main() -> int:
         )
         assert mean_delta(dropout, occupied_a, PERSON_SLICE) > 18.0
 
-        for sequence in range(renderer.background_reconstructor.revalidation_frames - 1):
+        # An empty current segmentation anchor is sufficient to continue room
+        # revalidation even when the pose worker has no matching-frame result.
+        tracker.payload = metadata(
+            camera_id=1,
+            person=False,
+            frame_id="1-stale-empty-pose",
+            source_key=source_a_g2,
+        )
+        assert_calibration_required(lambda: renderer.render_frame(
+            1,
+            clean_a,
+            "skeleton",
+            quality=90,
+            source_key=source_a_g2,
+            frame_id="1-empty-without-pose",
+            captured_monotonic=time.monotonic(),
+        ), "stream_revalidation_required")
+        empty_without_pose_status = renderer.background_reconstructor.status()["states"][0]
+        assert empty_without_pose_status["revalidation_observations"] == 1
+        revalidation_clock.advance(1.0)
+
+        for sequence in range(1, renderer.background_reconstructor.revalidation_frames - 1):
             assert_calibration_required(lambda sequence=sequence: render(
                 renderer,
                 tracker,

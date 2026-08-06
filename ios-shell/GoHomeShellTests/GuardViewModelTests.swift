@@ -177,24 +177,19 @@ final class GuardViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRepeatedConnectionFailuresStopAfterTheRetryLimit() async throws {
+    func testRepeatedConnectionFailuresContinueAutomaticRecoveryAfterFastRetries() async throws {
         let client = FailingStreamClient()
         let model = GuardViewModel(
             streamClient: client,
             reconnectDelayNanoseconds: 1_000_000,
-            maxReconnectAttempts: 2
+            maxReconnectAttempts: 2,
+            recoveryRetryDelayNanoseconds: 1_000_000
         )
 
         model.select(cameraID: "camera-a")
-        try await waitUntil {
-            await MainActor.run {
-                if case .failed = model.streamState { return true }
-                return false
-            }
-        }
-
-        let startCount = await client.startCount
-        XCTAssertEqual(startCount, 3)
+        try await waitUntil { await client.startCount >= 5 }
+        XCTAssertEqual(model.selectedCameraID, "camera-a")
+        XCTAssertEqual(model.streamState, .connecting)
     }
 
     @MainActor

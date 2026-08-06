@@ -47,6 +47,7 @@ final class GuardViewModel: ObservableObject {
     private let frameTimeoutNanoseconds: UInt64
     private let reconnectDelayNanoseconds: UInt64
     private let maxReconnectAttempts: Int
+    private let recoveryRetryDelayNanoseconds: UInt64
     private var frameTask: Task<Void, Never>?
     private var privacySyncTask: Task<Void, Never>?
     private var selectionGeneration = 0
@@ -61,7 +62,8 @@ final class GuardViewModel: ObservableObject {
         initialPrivacyMode: VideoPrivacyMode = .original,
         frameTimeoutNanoseconds: UInt64 = 4_000_000_000,
         reconnectDelayNanoseconds: UInt64 = 500_000_000,
-        maxReconnectAttempts: Int = 4
+        maxReconnectAttempts: Int = 4,
+        recoveryRetryDelayNanoseconds: UInt64 = 5_000_000_000
     ) {
         self.streamClient = streamClient
         self.privacyService = privacyService
@@ -70,6 +72,7 @@ final class GuardViewModel: ObservableObject {
         self.frameTimeoutNanoseconds = frameTimeoutNanoseconds
         self.reconnectDelayNanoseconds = reconnectDelayNanoseconds
         self.maxReconnectAttempts = maxReconnectAttempts
+        self.recoveryRetryDelayNanoseconds = recoveryRetryDelayNanoseconds
     }
 
     func select(cameraID: String, profile: String = "mobile") {
@@ -120,21 +123,29 @@ final class GuardViewModel: ObservableObject {
                         failedAttempts = 0
                     }
                     failedAttempts += 1
-                    guard failedAttempts <= self.maxReconnectAttempts else {
-                        self.videoSurface = nil
-                        self.streamState = .failed(error.localizedDescription)
-                        return
-                    }
+                    let immediateRetry = failedAttempts <= self.maxReconnectAttempts
                     self.videoSurface = nil
                     self.streamState = .connecting
                     do {
-                        try await Task.sleep(nanoseconds: self.reconnectDelayNanoseconds)
+                        let delay = immediateRetry
+                            ? self.reconnectDelayNanoseconds
+                            : self.recoveryDelayNanoseconds(after: failedAttempts)
+                        try await Task.sleep(nanoseconds: delay)
                     } catch {
                         return
                     }
                 }
             }
         }
+    }
+
+    private func recoveryDelayNanoseconds(after failedAttempts: Int) -> UInt64 {
+        let recoveryAttempt = max(0, failedAttempts - maxReconnectAttempts - 1)
+        let multiplier = UInt64(1 << min(recoveryAttempt, 3))
+        let cappedDelay = recoveryRetryDelayNanoseconds.multipliedReportingOverflow(by: multiplier)
+        return cappedDelay.overflow
+            ? 30_000_000_000
+            : min(cappedDelay.partialValue, 30_000_000_000)
     }
 
     private func consumeSession(
