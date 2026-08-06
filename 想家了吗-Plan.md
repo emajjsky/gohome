@@ -3869,7 +3869,7 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 
 ## 15.58 TestFlight Build 10 WHEP 发布一致性（2026-08-06）
 
-状态：根因、正式代码、发布门禁和自动回归已完成；等待 Build 10 归档上传、Apple 处理和 TestFlight 真机验收。
+状态：根因、正式代码、发布门禁、自动回归、Build 10 归档和上传已完成；等待 Apple 处理和 TestFlight 真机验收。
 
 1. [x] 以生产访问日志、MediaMTX reader 和盒子发布状态定位故障边界：两路 H.264 持续 ready、会话签发持续 `200`，但 WHEP reader 始终为 0，证明 App 在协商前失败。
 2. [x] 核对归档与提交时间，确认 TestFlight Build 9 早于 WHEP 迁移，仍要求旧 `ticket / stream_url / stream_path / edge-composed-mjpeg-v1`，无法解码生产 `whep-h264-v1` 契约。
@@ -3878,6 +3878,6 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 5. [x] 发布门禁新增 `project.yml` 与生成工程版本一致性、iOS 与云端传输标识一致性、WHEP 会话字段和客户端实现存在性，并拒绝正式客户端重新出现旧 MJPEG 标识。
 6. [x] 使用校验和匹配官方发布的本地 WebRTC XCFramework 完成构建验证；本地依赖只用于规避 Xcode 二进制下载钥匙串阻塞，不进入仓库或产品配置。
 7. [x] iOS 定向 WHEP 测试 `7/7`、完整单元与 UI 测试 `148/148`、云端回归 `118` 通过且 `1` 个真实 PostgreSQL 用例按环境跳过，发布校验通过。
-8. [ ] 从唯一正式工程归档并上传 Build 10，核对 `com.gohome.family`、Release APNs、生产 API、WHEP 符号和签名元数据。
+8. [x] 从唯一正式工程归档并上传 Build 10；归档核对为 `1.0.0 (10)`、`com.gohome.family`、arm64、生产 API，并包含 WHEP 会话端点和 WebRTC.framework。App Store Connect 于 2026-08-06 08:35 接受上传并进入处理。
 9. [ ] TestFlight 真机验证三种模式无需退出 App 即可建立画面；两路切换、前后台恢复和模式切换均产生 WHEP reader，且不再出现“服务器数据格式暂时无法读取”。
 10. [ ] 真机成功后关闭 GH-061，并清理本机构建使用的 `/tmp` WebRTC 包、下载文件和诊断样本。

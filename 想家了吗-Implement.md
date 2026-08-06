@@ -13212,3 +13212,4 @@ P4 风险升频边界：
 - WHEP 定向测试 `7/7` 通过。iPhone 16 Pro iOS 18.3.1 模拟器完整单元与 UI 测试 `148/148` 通过，失败和跳过均为 0。
 - 云端 Node 回归共 `119` 项：`118` 通过、`1` 项因未设置真实 PostgreSQL URL 按设计跳过；媒体鉴权、隐私状态、推送幂等、COS 生命周期和家庭位置契约均通过。`verify-ios-release.js` 与 `git diff --check` 通过。
 - 自动测试只能证明 Build 10 源码与生产 WHEP 契约一致。仍需归档上传并在 TestFlight 真机观察：会话签发后出现 WHEP `OPTIONS/POST`，MediaMTX reader 大于 0，原画、模糊和骨架无需重启 App 即可显示；摄像头切换、前后台恢复和模式切换不能再出现格式错误。完成这些现场证据前 GH-061 保持处理中。
+- Build 10 已从唯一正式工程归档并于 2026-08-06 08:35 上传成功。归档为 arm64、`1.0.0 (10)`、`com.gohome.family`、Team `X4M4T6Z4CJ`，生产 API 为 `https://gohome.ai2shx.club`，包含正式 WHEP 会话端点和 WebRTC.framework。上传阶段唯一警告是上游 WebRTC 137.0.0 二进制包未附带匹配 dSYM；这不影响安装、播放和审核，但第三方框架内部崩溃的符号化受限，应用自身 dSYM 正常存在。Apple 当前正在处理该构建。

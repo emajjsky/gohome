@@ -596,3 +596,5 @@ Build 8 不满足本台账的骨架产品契约，不作为最终交付版本。
 **处理**：保持生产唯一链路为 H.264 + WHEP/WebRTC，不恢复 MJPEG、不放宽协议校验、不增加双轨传输。正式 iOS 主线使用 `CameraPlaybackSession` 的 WHEP 契约和 `WHEPStreamClient`，补充生产响应缺少可选 `minimum_privacy_mode` 时的解码回归；发布校验同时读取 iOS 与云端协议源，要求传输标识、组合所有者、WHEP 客户端文件和工程版本源一致。版本提升为 `1.0.0 (10)` 并从唯一正式工程重新归档上传。
 
 **验收**：Build 10 从 TestFlight 安装后，原画、模糊、骨架均能在不退出 App 的情况下建立 WHEP reader；生产访问日志出现会话签发和 WHEP 协商，MediaMTX reader 大于 0；两路切换、前后台恢复和模式切换不再出现数据格式错误。完成真机验收前 GH-061 不关闭。
+
+**当前进展**：修复提交 `79ead62` 已推送主线；WHEP 定向测试 `7/7`、iOS 完整测试 `148/148`、云端回归 `118/119`（唯一跳过为未配置真实 PostgreSQL URL）和发布门禁均通过。Build 10 已于 2026-08-06 08:35 上传 App Store Connect 并进入处理，等待 TestFlight 真机完成关闭证据。
