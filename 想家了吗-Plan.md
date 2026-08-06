@@ -3884,7 +3884,7 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 
 ## 15.59 TestFlight Build 11 Trickle ICE 状态机（2026-08-06）
 
-状态：根因修复、代码收口和自动验证完成；待恢复正式远程依赖、提交归档并执行 TestFlight 真机验收。
+状态：根因修复、代码收口、自动验证、正式工程恢复、Build 11 归档上传均已完成；等待 Apple 处理和 TestFlight 真机验收。
 
 1. [x] 以生产日志确定 Build 10 每次均为会话 `POST 200 -> WHEP OPTIONS 204`，没有 SDP `POST`，MediaMTX session/reader 为 0；故障严格限定在 iPhone 本地 offer 阶段。
 2. [x] 对照 MediaMTX `v1.19.3` 正式 reader，确认旧客户端错误等待 `iceGatheringState == complete`；iPhone 未在固定 8 秒内完成收集，触发 `NSURLErrorDomain -1001`。
@@ -3893,6 +3893,6 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 5. [x] 队列在资源创建和 answer 应用前保留早到候选，Actor 只批量排空队列，不为每个候选维护可乱序的独立发送任务；切路、切模式、停止或连接失败后关闭队列并拒绝旧代次。
 6. [x] 连接建立期间的早期 PeerConnection 失败纳入同一连接状态，不能在 active peer 尚未赋值时丢失；候选 PATCH 失败会结束画面、关闭 peer 并删除 WHEP resource。
 7. [x] 定向 WHEP/Peer 测试 `13/13`、完整 iOS 单元与 UI 测试 `154/154`，失败和跳过均为 0；云端回归 `118/119`，唯一跳过为未配置真实 PostgreSQL URL；发布门禁通过，版本提升为 `1.0.0 (11)`。
-8. [ ] 从唯一正式工程和 SHA-256 匹配的官方 WebRTC `137.0.0` 二进制归档上传 Build 11；提交与上传后的工程必须保持远程 package 声明，且不得包含本地 `/tmp` 引用。
+8. [x] 提交 `e023531` 已推送主线；使用唯一正式源码和 SHA-256 匹配的官方 WebRTC `137.0.0` 二进制完成 Build 11 归档并于 2026-08-06 09:39 上传。上传后工程已恢复远程 package 与精确锁文件，发布门禁确认不存在本地 `/tmp` 引用。
 9. [ ] 真机观察生产请求顺序包含会话 `POST 200 -> OPTIONS 204 -> SDP POST 201 -> candidate PATCH 204`，MediaMTX reader 大于 0且 outbound bytes 持续增长。
 10. [ ] 完成两路三模式、连续切换、前后台、Wi-Fi/蜂窝和断网恢复；全部通过后关闭 GH-061/GH-062并清理临时依赖与诊断源码。

@@ -13234,3 +13234,5 @@ P4 风险升频边界：
 - 新增原始 offer 不等待完整 ICE、严格 SDP fragment、跨媒体和换行注入拒绝、媒体/候选顺序、Bearer PATCH、候选队列激活前缓冲、关闭后拒绝旧候选测试。WHEP/Peer 定向 `13/13`，iPhone 16 Pro iOS 18.3.1 模拟器完整单元与 UI `154/154`，失败和跳过均为 0。
 - 云端回归 `118/119`，唯一跳过为未配置真实 PostgreSQL URL；前端状态缓存和 iOS 发布门禁通过。门禁要求 `prepareOffer`、有序候选队列、批量排空、Trickle ICE PATCH 和 candidate delegate 存在，并拒绝 ICE-complete 轮询、`completeOffer`、旧 MJPEG 正式链路、本地 Swift Package 和 `/tmp` 依赖路径。
 - 版本提升为 `1.0.0 (11)`。自动测试不能替代真机网络协商；关闭 GH-061/GH-062 前必须在生产看到 `POST session -> OPTIONS -> POST offer -> PATCH candidate`、MediaMTX reader/outbound bytes，并完成双路三模式、前后台、Wi-Fi/蜂窝、切换和断网恢复。
+- 修复提交 `e023531` 已推送 `main`。Build 11 归档核对为 `1.0.0 (11)`、`com.gohome.family`、arm64、生产 API、Trickle ICE fragment、正式 WebRTC.framework，应用二进制与 dSYM UUID 均为 `928500DE-19EB-3CAB-BFF7-73B8712C9C1C`。App Store Connect 于 2026-08-06 09:39 接受上传并进入处理。
+- GitHub 官方二进制下载在 Xcode 内超时，归档使用同一发行 URL 且 SHA-256 为 `9b45c5c5ecae392403758bb7262f408aa3cff705d41e862dd766856b610c3edd` 的完整包。上传后立即从 `project.yml` 重生成工程并恢复远程 WebRTC `137.0.0` 锁文件；发布门禁拒绝任何本地 package 或 `/tmp` 路径。上传唯一警告仍是上游 WebRTC framework 不附带匹配 dSYM，应用自身 dSYM 完整且 UUID 匹配。

@@ -614,4 +614,4 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **验收**：自动测试覆盖 offer 不等待 gathering complete、候选片段严格生成、Bearer PATCH、乱序串行和生命周期失效；生产日志必须出现 `POST -> PATCH`，MediaMTX WHEP reader 大于 0并产生 outbound bytes。Build 11 真机完成两路三模式、Wi-Fi/蜂窝、前后台、切路切模式和断网恢复后关闭。
 
-**当前进展**：版本已提升为 `1.0.0 (11)`；实现已与 MediaMTX `v1.19.3` 正式 reader 对齐，并进一步删除冗余 `sdpMid`、使用锁保护的单一候选队列和 Actor 批量排空，补齐连接建立期早期失败与候选 PATCH 失败的资源清理。WHEP/Peer 定向测试 `13/13`、iOS 完整单元与 UI `154/154` 均零失败零跳过；云端回归 `118/119`，唯一跳过为未配置真实 PostgreSQL URL；发布门禁通过。尚未归档上传，也尚未取得真机 `SDP POST 201 / candidate PATCH 204 / reader > 0` 证据，因此保持处理中。
+**当前进展**：版本已提升为 `1.0.0 (11)`；实现已与 MediaMTX `v1.19.3` 正式 reader 对齐，并进一步删除冗余 `sdpMid`、使用锁保护的单一候选队列和 Actor 批量排空，补齐连接建立期早期失败与候选 PATCH 失败的资源清理。WHEP/Peer 定向测试 `13/13`、iOS 完整单元与 UI `154/154` 均零失败零跳过；云端回归 `118/119`，唯一跳过为未配置真实 PostgreSQL URL；发布门禁通过。提交 `e023531` 已推送主线，Build 11 于 2026-08-06 09:39 上传并进入处理；尚未取得真机 `SDP POST 201 / candidate PATCH 204 / reader > 0` 证据，因此保持处理中。
