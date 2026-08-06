@@ -13236,3 +13236,17 @@ P4 风险升频边界：
 - 版本提升为 `1.0.0 (11)`。自动测试不能替代真机网络协商；关闭 GH-061/GH-062 前必须在生产看到 `POST session -> OPTIONS -> POST offer -> PATCH candidate`、MediaMTX reader/outbound bytes，并完成双路三模式、前后台、Wi-Fi/蜂窝、切换和断网恢复。
 - 修复提交 `e023531` 已推送 `main`。Build 11 归档核对为 `1.0.0 (11)`、`com.gohome.family`、arm64、生产 API、Trickle ICE fragment、正式 WebRTC.framework，应用二进制与 dSYM UUID 均为 `928500DE-19EB-3CAB-BFF7-73B8712C9C1C`。App Store Connect 于 2026-08-06 09:39 接受上传并进入处理。
 - GitHub 官方二进制下载在 Xcode 内超时，归档使用同一发行 URL 且 SHA-256 为 `9b45c5c5ecae392403758bb7262f408aa3cff705d41e862dd766856b610c3edd` 的完整包。上传后立即从 `project.yml` 重生成工程并恢复远程 WebRTC `137.0.0` 锁文件；发布门禁拒绝任何本地 package 或 `/tmp` 路径。上传唯一警告仍是上游 WebRTC framework 不附带匹配 dSYM，应用自身 dSYM 完整且 UUID 匹配。
+
+## 204. 2026-08-06 Build 11 生产 WHEP 协商失败
+
+### 生产证据与根因
+
+- Build 11 在 09:55-09:56 对两路摄像头均形成 `POST /api/v1/video/sessions 200 -> OPTIONS /whep 204 -> POST /whep 400`，证明 Trickle ICE 客户端修复已经生效，当前失败不是 App 继续等待 ICE。
+- MediaMTX 为每个 SDP offer 创建 WebRTC session 后立即关闭，错误统一为 `error getting local interfaces: route ip+net: netlinkrib: address family not supported by protocol`。两路 H.264 path 同期均 ready/online，输入字节持续增长，reader 和 outbound bytes 为 0。
+- 正式 systemd unit 只允许 `AF_UNIX AF_INET AF_INET6`。Pion 的 Linux route 实现需要 `AF_NETLINK` 读取网卡和路由；该 socket 被 systemd 拒绝后，MediaMTX 无法生成 SDP answer，因此所有摄像头和隐私模式统一返回 400。
+
+### 正式修复
+
+- MediaMTX unit 的受限地址族精确改为 `AF_UNIX AF_INET AF_INET6 AF_NETLINK`。保留专用账号、`NoNewPrivileges`、`ProtectSystem=strict`、回环 WHEP/API/metrics 和现有公网端口边界；不扩大 Coturn 或 API 服务权限。
+- 新增 `verify-cloud-media-deployment.js` 并纳入根 `npm test`。门禁要求地址族集合精确匹配，不允许 `PrivateNetwork=true`，并锁定 WHEP 回环监听与 8189 UDP/TCP 媒体地址。
+- 部署后只重启 MediaMTX，不重启云端 API、Coturn 或盒子。真实验收要求 SDP POST 返回 201、candidate PATCH 返回 204、reader/outbound bytes 增长且日志不再出现接口读取错误。

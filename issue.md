@@ -615,3 +615,15 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 **验收**：自动测试覆盖 offer 不等待 gathering complete、候选片段严格生成、Bearer PATCH、乱序串行和生命周期失效；生产日志必须出现 `POST -> PATCH`，MediaMTX WHEP reader 大于 0并产生 outbound bytes。Build 11 真机完成两路三模式、Wi-Fi/蜂窝、前后台、切路切模式和断网恢复后关闭。
 
 **当前进展**：版本已提升为 `1.0.0 (11)`；实现已与 MediaMTX `v1.19.3` 正式 reader 对齐，并进一步删除冗余 `sdpMid`、使用锁保护的单一候选队列和 Actor 批量排空，补齐连接建立期早期失败与候选 PATCH 失败的资源清理。WHEP/Peer 定向测试 `13/13`、iOS 完整单元与 UI `154/154` 均零失败零跳过；云端回归 `118/119`，唯一跳过为未配置真实 PostgreSQL URL；发布门禁通过。提交 `e023531` 已推送主线，Build 11 于 2026-08-06 09:39 上传并进入处理；尚未取得真机 `SDP POST 201 / candidate PATCH 204 / reader > 0` 证据，因此保持处理中。
+
+### GH-063 MediaMTX systemd 网络族限制阻断全部 WHEP 会话
+
+**现象**：TestFlight Build 11 的两路摄像头、原画/模糊/骨架三种模式全部提示“实时视频协商失败”。
+
+**现场证据**：2026-08-06 09:55-09:56，生产 `/api/v1/video/sessions` 持续返回 `200`，WHEP `OPTIONS` 返回 `204`，Build 11 已立即发送 SDP `POST`；两路 SDP `POST` 稳定返回 `400`。MediaMTX 同时记录每个 WebRTC session 创建后立即关闭，正文为 `error getting local interfaces: route ip+net: netlinkrib: address family not supported by protocol`。两路 H.264 path 均 `ready/online`、输入字节持续增长、编码为 `640x360 H264 Baseline`，reader 与 outbound bytes 为 0，排除盒子、摄像头、隐私模式和 H.264 发布链路。
+
+**根因**：正式 `gohome-mediamtx.service` 使用 `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`，遗漏 Linux 路由查询所需的 `AF_NETLINK`。MediaMTX/Pion 即使配置 `webrtcIPsFromInterfaces: false`，仍需通过 route netlink 选择可达的本地 ICE 地址；systemd 在进程级拒绝该 socket 后，服务器无法生成 SDP answer，所有摄像头和隐私模式共用的 WHEP 协商都必然失败。Build 10 因客户端尚未发送 SDP `POST`，没有提前暴露这个独立部署缺陷。
+
+**处理**：只在 MediaMTX 单元的受限网络族中加入 `AF_NETLINK`，保留 `NoNewPrivileges`、`ProtectSystem=strict`、专用账号、回环 WHEP/API/metrics 和其余最小权限边界；Coturn 与云端 API 不需要 route netlink，不扩大其权限。新增正式部署契约校验，锁定 MediaMTX 只允许 `AF_UNIX/AF_INET/AF_INET6/AF_NETLINK`，同时确认 WHEP 回环监听、8189 UDP/TCP 和禁止 `PrivateNetwork=true`。
+
+**验收**：生产 unit 与主线一致并单次重启 MediaMTX；真实 Build 11 请求必须达到 `session 200 -> OPTIONS 204 -> SDP POST 201 -> candidate PATCH 204`，MediaMTX 不再记录本机接口错误，reader 和 outbound bytes 持续增长。随后完成双路三模式切换、前后台与 Wi-Fi/蜂窝验收；在取得真实证据前 GH-063 不关闭。

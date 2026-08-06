@@ -15,8 +15,9 @@
     "verify:app-server": "node scripts/verify-local-app-server.js",
     "verify:frontend-cache": "node scripts/verify-frontend-state-cache.js",
     "verify:ios-release": "node scripts/verify-ios-release.js",
+    "verify:cloud-media": "node scripts/verify-cloud-media-deployment.js",
     "test:native-server": "node --test local-app-server/test/*.test.js",
-    "test": "npm run verify:frontend-cache && npm run verify:app-server && npm run verify:ios-release"
+    "test": "npm run verify:frontend-cache && npm run verify:app-server && npm run verify:ios-release && npm run verify:cloud-media"
   },
   "keywords": [],
   "author": "",

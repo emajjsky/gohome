@@ -3896,3 +3896,15 @@ Build 8 的“人物强模糊 + 骨架”方向违反正式产品定义，相关
 8. [x] 提交 `e023531` 已推送主线；使用唯一正式源码和 SHA-256 匹配的官方 WebRTC `137.0.0` 二进制完成 Build 11 归档并于 2026-08-06 09:39 上传。上传后工程已恢复远程 package 与精确锁文件，发布门禁确认不存在本地 `/tmp` 引用。
 9. [ ] 真机观察生产请求顺序包含会话 `POST 200 -> OPTIONS 204 -> SDP POST 201 -> candidate PATCH 204`，MediaMTX reader 大于 0且 outbound bytes 持续增长。
 10. [ ] 完成两路三模式、连续切换、前后台、Wi-Fi/蜂窝和断网恢复；全部通过后关闭 GH-061/GH-062并清理临时依赖与诊断源码。
+
+## 15.60 生产 WHEP 网络族权限修复（2026-08-06）
+
+状态：根因已由生产 HTTP 与 MediaMTX 日志确认，等待正式配置部署和 Build 11 真机复验。
+
+1. [x] 确认 Build 11 已越过本地 ICE 等待：会话 `POST 200`、WHEP `OPTIONS 204`、SDP `POST 400`，故障位于媒体服务器 answer 生成阶段。
+2. [x] 确认两路 H.264 path 均 ready/online，输入持续增长；三种隐私模式共用同一协商失败，排除摄像头、Hailo、隐私合成与发布链路。
+3. [x] 从 MediaMTX 日志取得唯一根因：systemd 拒绝 route netlink，Pion 无法读取本机接口并创建 ICE answer。
+4. [x] 正式 MediaMTX unit 的最小网络族增加 `AF_NETLINK`；不修改 Coturn/API 权限，不恢复 MJPEG或增加第二传输链路。
+5. [x] 新增云媒体部署契约门禁，锁定精确地址族、安全限制、回环 WHEP 和 8189 UDP/TCP 配置。
+6. [ ] 部署并单次重启生产 MediaMTX，验证 SDP `POST 201`、candidate `PATCH 204`、reader/outbound bytes 和无本机接口错误。
+7. [ ] 用 Build 11 完成双路三模式、前后台、Wi-Fi/蜂窝、切路切模式和断网恢复验收，再关闭 GH-061/GH-062/GH-063。

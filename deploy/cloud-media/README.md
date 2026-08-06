@@ -44,6 +44,10 @@ output.
    TLS virtual host, run `nginx -t`, then enable the GoHome MediaMTX and Coturn
    units. Open `8322/tcp`, `8189/tcp+udp`, `3478/tcp`, and
    `49160-49200/udp` in the cloud security group.
+   The MediaMTX unit must retain `AF_NETLINK` in `RestrictAddressFamilies`.
+   Pion uses Linux route netlink to select ICE interfaces even when interface
+   candidates are disabled; omitting it makes every WHEP SDP offer fail before
+   a reader is created.
 
 ## Acceptance checks
 
@@ -54,6 +58,8 @@ output.
 - A current family member can obtain a read session only for the family's
   current privacy mode; changing mode invalidates existing sessions.
 - MediaMTX API and metrics cannot be reached from the public network.
+- A real WHEP offer returns `201`, creates a reader, and does not log
+  `error getting local interfaces`.
 - Certificate renewal dry-run completes and the deploy hook preserves a matching
   certificate/key pair without changing file ownership or permissions.
 - Direct ICE and forced TURN playback both pass a 30-minute dual-camera test.
