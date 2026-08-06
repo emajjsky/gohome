@@ -28,6 +28,9 @@ class _BackgroundState:
     calibrated: bool = False
     baseline_revision: int = 0
     baseline_sha256: str = ""
+    baselines: OrderedDict[str, Any] = field(default_factory=OrderedDict)
+    active_view_id: str = ""
+    calibration_view_id: str = ""
     active_generation: str = ""
     generation_validated: bool = False
     revalidation_observations: int = 0
@@ -81,7 +84,7 @@ class _BackgroundState:
 class PrivacyBackgroundReconstructor:
     """Compose pure-skeleton scenes from an explicitly calibrated empty room."""
 
-    version = "privacy-background-calibration-v3"
+    version = "privacy-background-calibration-v4"
 
     def __init__(
         self,
@@ -94,6 +97,7 @@ class PrivacyBackgroundReconstructor:
         foreground_threshold: int = 24,
         recent_mask_seconds: float = 1.4,
         geometry_recheck_seconds: float = 1.0,
+        max_views_per_camera: int = 4,
         geometry_verifier: SceneGeometryVerifier | None = None,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
@@ -108,6 +112,7 @@ class PrivacyBackgroundReconstructor:
         self.foreground_threshold = max(8, min(80, int(foreground_threshold)))
         self.recent_mask_seconds = max(0.2, min(float(recent_mask_seconds), 3.0))
         self.geometry_recheck_seconds = max(0.25, min(float(geometry_recheck_seconds), 5.0))
+        self.max_views_per_camera = max(1, min(int(max_views_per_camera), 8))
         self.geometry_verifier = geometry_verifier or SceneGeometryVerifier()
         self._clock = monotonic_clock or time.monotonic
         self._states: OrderedDict[tuple[int, str, int, int], _BackgroundState] = OrderedDict()
@@ -140,6 +145,7 @@ class PrivacyBackgroundReconstructor:
             state.scene_unverifiable_observations = 0
             state.calibration_active = True
             state.calibration_id = str(calibration_id)
+            state.calibration_view_id = ""
             state.calibration_reference = None
             state.calibration_average = None
             state.calibration_observations = 0
@@ -235,8 +241,37 @@ class PrivacyBackgroundReconstructor:
                     0,
                     255,
                 ).astype(np.uint8)
-                self._persist(key, completed_background)
+                matched = self._matching_view(
+                    key,
+                    completed_background,
+                    excluded_mask=None,
+                    include_active=True,
+                )
+                view_id = (
+                    matched[0]
+                    if matched is not None
+                    else "legacy"
+                    if not state.baselines
+                    else self._view_id(completed_background)
+                )
+                self._persist(key, completed_background, view_id=view_id)
+                if view_id not in state.baselines:
+                    while len(state.baselines) >= self.max_views_per_camera:
+                        evicted_view_id = next(
+                            (
+                                candidate
+                                for candidate in state.baselines
+                                if candidate != state.active_view_id
+                            ),
+                            next(iter(state.baselines)),
+                        )
+                        state.baselines.pop(evicted_view_id, None)
+                        self._delete_persisted(key, evicted_view_id)
+                state.baselines[view_id] = completed_background
+                state.baselines.move_to_end(view_id)
                 state.background = completed_background
+                state.active_view_id = view_id
+                state.calibration_view_id = view_id
                 state.calibrated = True
                 state.baseline_revision += 1
                 state.baseline_sha256 = self._background_sha256(completed_background)
@@ -341,6 +376,8 @@ class PrivacyBackgroundReconstructor:
             if decision == "same_view":
                 self._record_scene_match(key, baseline_revision, assessment)
             elif decision == "camera_view_changed":
+                if self._switch_to_matching_view(key, frame, excluded_mask=mask):
+                    raise PrivacyCalibrationRequired(camera_id, "stream_revalidation_required")
                 if self._record_scene_change(key, baseline_revision, assessment):
                     raise PrivacyCalibrationRequired(camera_id, "scene_revalidation_required")
             else:
@@ -351,6 +388,8 @@ class PrivacyBackgroundReconstructor:
             if decision == "same_view":
                 self._record_scene_match(key, baseline_revision, assessment)
             elif decision == "camera_view_changed":
+                if self._switch_to_matching_view(key, frame, excluded_mask=mask):
+                    raise PrivacyCalibrationRequired(camera_id, "stream_revalidation_required")
                 if self._record_scene_change(key, baseline_revision, assessment):
                     raise PrivacyCalibrationRequired(camera_id, "scene_revalidation_required")
             else:
@@ -419,7 +458,8 @@ class PrivacyBackgroundReconstructor:
         configured_source = discovery_key[1]
         digest = sha256(configured_source.encode("utf-8")).hexdigest()[:16]
         filename_pattern = re.compile(
-            rf"camera-{int(camera_id)}-{re.escape(digest)}-(\d+)x(\d+)\.npz"
+            rf"camera-{int(camera_id)}-{re.escape(digest)}-(\d+)x(\d+)"
+            rf"(?:-view-[a-f0-9]{{16}})?\.npz"
         )
         dimensions: list[tuple[int, int]] = []
         for path in self.storage_dir.glob(f"camera-{int(camera_id)}-{digest}-*x*.npz"):
@@ -523,7 +563,7 @@ class PrivacyBackgroundReconstructor:
             state_items = list(self._states.items())
             states = [self._state_status(key, state) for key, state in state_items]
             memory_bytes = sum(
-                int(state.background.nbytes) if state.background is not None else 0
+                sum(int(background.nbytes) for background in state.baselines.values())
                 for _, state in state_items
             )
         return {
@@ -537,6 +577,7 @@ class PrivacyBackgroundReconstructor:
             "scene_change_confirmation_frames": self.scene_change_confirmation_frames,
             "foreground_threshold": self.foreground_threshold,
             "geometry_recheck_seconds": self.geometry_recheck_seconds,
+            "max_views_per_camera": self.max_views_per_camera,
             "state_count": len(states),
             "max_states": self.max_states,
             "memory_bytes": memory_bytes,
@@ -567,11 +608,14 @@ class PrivacyBackgroundReconstructor:
                 self._states.popitem(last=False)
             state = _BackgroundState(last_used=now)
             persisted = self._load_persisted(key)
-            if persisted is not None:
-                state.background = persisted
+            if persisted:
+                for view_id, background in persisted:
+                    state.baselines[view_id] = background
+                state.background = next(iter(state.baselines.values()))
+                state.active_view_id = next(iter(state.baselines))
                 state.calibrated = True
                 state.baseline_revision = 1
-                state.baseline_sha256 = self._background_sha256(persisted)
+                state.baseline_sha256 = self._background_sha256(state.background)
                 state.scene_status = "revalidation_required"
             self._states[key] = state
         state.last_used = now
@@ -633,6 +677,12 @@ class PrivacyBackgroundReconstructor:
     ) -> tuple[bool, str]:
         assessment = self._scene_assessment(key, baseline_revision, background, frame)
         decision = str(assessment.get("decision") or "unverifiable")
+        if decision == "camera_view_changed" and self._switch_to_matching_view(
+            key,
+            frame,
+            excluded_mask=None,
+        ):
+            return False, "stream_revalidation_required"
         with self._lock:
             state = self._states.get(key)
             if state is None or state.baseline_revision != baseline_revision:
@@ -852,6 +902,7 @@ class PrivacyBackgroundReconstructor:
         background: Any,
         frame: Any,
         excluded_mask: Any | None = None,
+        use_geometry_cache: bool = True,
     ) -> dict[str, Any]:
         if background.shape != frame.shape:
             return {
@@ -903,12 +954,20 @@ class PrivacyBackgroundReconstructor:
         }
         if accepted:
             return photometric
-        geometry = self._geometry_assessment_cached(
-            key,
-            baseline_revision,
-            background,
-            frame,
-            excluded_mask=excluded_mask,
+        geometry = (
+            self._geometry_assessment_cached(
+                key,
+                baseline_revision,
+                background,
+                frame,
+                excluded_mask=excluded_mask,
+            )
+            if use_geometry_cache
+            else self.geometry_verifier.assess(
+                background,
+                frame,
+                excluded_mask=excluded_mask,
+            )
         )
         geometry_status = str(geometry.get("geometry_status") or "unverifiable")
         geometry_accepted = geometry_status == "same_view"
@@ -1045,6 +1104,88 @@ class PrivacyBackgroundReconstructor:
                 state.last_geometry_signature = signature
         return assessment
 
+    def _switch_to_matching_view(
+        self,
+        key: tuple[int, str, int, int],
+        frame: Any,
+        *,
+        excluded_mask: Any | None,
+    ) -> bool:
+        matched = self._matching_view(
+            key,
+            frame,
+            excluded_mask=excluded_mask,
+            include_active=False,
+        )
+        if matched is None:
+            return False
+        view_id, _ = matched
+        with self._lock:
+            state = self._states.get(key)
+            if state is None or view_id not in state.baselines:
+                return False
+            state.active_view_id = view_id
+            state.background = state.baselines[view_id]
+            state.baseline_revision += 1
+            state.baseline_sha256 = self._background_sha256(state.background)
+            state.generation_validated = False
+            state.revalidation_observations = 0
+            state.last_revalidation_token = ""
+            state.scene_status = "revalidation_required"
+            state.scene_match_observations = 0
+            state.scene_mismatch_observations = 0
+            state.scene_unverifiable_observations = 0
+            state.last_error = "known_view_selected"
+            state.last_geometry_check_at = 0.0
+            state.last_geometry_signature = None
+            state.last_used = self._clock()
+            state.baselines.move_to_end(view_id)
+        return True
+
+    def _matching_view(
+        self,
+        key: tuple[int, str, int, int],
+        frame: Any,
+        *,
+        excluded_mask: Any | None,
+        include_active: bool,
+    ) -> tuple[str, Any] | None:
+        with self._lock:
+            state = self._states.get(key)
+            if state is None or not state.baselines:
+                return None
+            active_view_id = state.active_view_id
+            baseline_revision = state.baseline_revision
+            candidates = [
+                (view_id, background.copy())
+                for view_id, background in state.baselines.items()
+                if include_active or view_id != active_view_id
+            ]
+
+        matches: list[tuple[float, str, Any]] = []
+        for view_id, background in candidates:
+            assessment = self._scene_assessment(
+                key,
+                baseline_revision,
+                background,
+                frame,
+                excluded_mask=excluded_mask,
+                use_geometry_cache=False,
+            )
+            if str(assessment.get("decision")) != "same_view":
+                continue
+            confidence_rank = {
+                "photometric": 0.0,
+                "strong": 1.0,
+                "moderate": 2.0,
+                "weak": 3.0,
+            }.get(str(assessment.get("geometry_confidence") or "weak"), 4.0)
+            matches.append((confidence_rank, view_id, background))
+        if not matches:
+            return None
+        _, view_id, background = min(matches, key=lambda item: item[0])
+        return view_id, background
+
     def _expand_person_mask(self, cv2: Any, frame: Any, background: Any, mask: Any) -> Any:
         points = cv2.findNonZero(mask)
         if points is None:
@@ -1115,6 +1256,16 @@ class PrivacyBackgroundReconstructor:
             "baseline_retained": state.background is not None,
             "baseline_revision": state.baseline_revision,
             "baseline_sha256": state.baseline_sha256,
+            "active_view_id": state.active_view_id,
+            "known_view_count": len(state.baselines),
+            "known_views": [
+                {
+                    "view_id": view_id,
+                    "sha256": self._background_sha256(background),
+                    "active": view_id == state.active_view_id,
+                }
+                for view_id, background in state.baselines.items()
+            ],
             "scene_status": state.scene_status,
             "scene_match_observations": state.scene_match_observations,
             "scene_mismatch_observations": state.scene_mismatch_observations,
@@ -1163,14 +1314,26 @@ class PrivacyBackgroundReconstructor:
             "render_latency_ms_p95": round(self._percentile(list(state.latencies_ms), 0.95), 2),
         }
 
-    def _persisted_path(self, key: tuple[int, str, int, int]) -> Path | None:
+    def _persisted_path(
+        self,
+        key: tuple[int, str, int, int],
+        *,
+        view_id: str = "legacy",
+    ) -> Path | None:
         if self.storage_dir is None:
             return None
         digest = sha256(key[1].encode("utf-8")).hexdigest()[:16]
-        return self.storage_dir / f"camera-{key[0]}-{digest}-{key[2]}x{key[3]}.npz"
+        suffix = "" if view_id == "legacy" else f"-view-{view_id}"
+        return self.storage_dir / f"camera-{key[0]}-{digest}-{key[2]}x{key[3]}{suffix}.npz"
 
-    def _persist(self, key: tuple[int, str, int, int], background: Any) -> None:
-        path = self._persisted_path(key)
+    def _persist(
+        self,
+        key: tuple[int, str, int, int],
+        background: Any,
+        *,
+        view_id: str,
+    ) -> None:
+        path = self._persisted_path(key, view_id=view_id)
         if path is None:
             return
         temporary = path.with_suffix(".tmp")
@@ -1185,18 +1348,44 @@ class PrivacyBackgroundReconstructor:
             temporary.unlink(missing_ok=True)
             raise
 
-    def _load_persisted(self, key: tuple[int, str, int, int]) -> Any | None:
+    def _delete_persisted(
+        self,
+        key: tuple[int, str, int, int],
+        view_id: str,
+    ) -> None:
+        path = self._persisted_path(key, view_id=view_id)
+        if path is not None:
+            path.unlink(missing_ok=True)
+
+    def _load_persisted(self, key: tuple[int, str, int, int]) -> list[tuple[str, Any]]:
         path = self._persisted_path(key)
-        if path is None or not path.exists():
-            return None
-        try:
-            with np.load(path, allow_pickle=False) as values:
-                background = np.asarray(values["background"], dtype=np.uint8)
-            if background.shape != (key[3], key[2], 3):
-                return None
-            return background
-        except (OSError, ValueError, KeyError):
-            return None
+        if path is None:
+            return []
+        candidates = [path]
+        digest = sha256(key[1].encode("utf-8")).hexdigest()[:16]
+        candidates.extend(sorted(self.storage_dir.glob(
+            f"camera-{key[0]}-{digest}-{key[2]}x{key[3]}-view-*.npz"
+        )))
+        loaded: list[tuple[str, Any]] = []
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            try:
+                with np.load(candidate, allow_pickle=False) as values:
+                    background = np.asarray(values["background"], dtype=np.uint8)
+                if background.shape != (key[3], key[2], 3):
+                    continue
+                view_id = "legacy"
+                if candidate != path:
+                    view_id = candidate.stem.rsplit("-view-", 1)[-1]
+                if view_id and all(existing != view_id for existing, _ in loaded):
+                    loaded.append((view_id, background))
+            except (OSError, ValueError, KeyError):
+                continue
+        return loaded
+
+    def _view_id(self, background: Any) -> str:
+        return self._background_sha256(background)[:16]
 
     def _percentile(self, values: list[float], quantile: float) -> float:
         if not values:

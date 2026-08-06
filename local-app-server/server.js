@@ -1917,6 +1917,53 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function normalizeCameraLiveReport(value, reportedAt) {
+        const live = value && typeof value === "object" ? value : {};
+        const allowedPrivacyStatuses = new Set([
+            "ready", "starting", "revalidating", "calibrating",
+            "calibration_required", "scene_review_required", "render_error",
+            "publisher_error", "unavailable",
+        ]);
+        const privacyStatus = String(live.privacy_status || "starting").slice(0, 48);
+        return {
+            source_status: String(live.source_status || "warming").slice(0, 48),
+            source_ready: normalizeBool(live.source_ready),
+            privacy_status: allowedPrivacyStatuses.has(privacyStatus) ? privacyStatus : "unavailable",
+            publish_ready: normalizeBool(live.publish_ready),
+            privacy_mode: normalizeVideoPrivacyMode(live.privacy_mode),
+            output_fps: Math.max(0, Math.min(120, Number(live.output_fps) || 0)),
+            reason: String(live.reason || "").slice(0, 120),
+            reported_at: reportedAt,
+        };
+    }
+
+    function cameraLiveUnavailableMessage(camera, expectedPrivacyMode) {
+        const live = camera?.live;
+        if (!live || typeof live !== "object") return "";
+        const reportedAt = Date.parse(live.reported_at || "");
+        if (!Number.isFinite(reportedAt) || Date.now() - reportedAt > 30_000) {
+            return "盒子实时状态暂未更新，正在等待重新连接。";
+        }
+        if (!live.source_ready) return "摄像头当前没有有效画面，正在自动重连。";
+        if (live.privacy_mode !== expectedPrivacyMode) return "隐私模式正在同步，请稍候。";
+        if (live.publish_ready) return "";
+        switch (live.privacy_status) {
+        case "scene_review_required":
+            return "摄像头机位发生变化，请在房间无人时重新确认空房画面。";
+        case "calibration_required":
+            return "纯骨架模式需要先在房间无人时完成空房确认。";
+        case "calibrating":
+            return "正在确认空房画面，请稍候。";
+        case "revalidating":
+            return "摄像头已重连，正在进行隐私复核。";
+        case "render_error":
+        case "publisher_error":
+            return "盒子实时画面处理异常，正在自动恢复。";
+        default:
+            return "实时画面正在准备，请稍候。";
+        }
+    }
+
     function cameraConnectionSummary(camera) {
         const streamUrl = String(camera?.stream_url || "").trim();
         if (!streamUrl) return null;
@@ -8069,6 +8116,9 @@ function createLocalAppServer(options = {}) {
             if (!resolvedFamilyId && !isAppConfiguredCamera(existing)) continue;
             const reportLocalCameraId = report.local_camera_id ?? existing.local_camera_id ?? (!isAppConfiguredCamera(existing) ? rawCameraId : null);
             const presence = report.presence && typeof report.presence === "object" ? report.presence : (existing.presence || {});
+            const live = report.live && typeof report.live === "object"
+                ? normalizeCameraLiveReport(report.live, receivedAt)
+                : (existing.live || null);
             const camera = {
                 ...existing,
                 id: existing.id || rawCameraId,
@@ -8100,6 +8150,7 @@ function createLocalAppServer(options = {}) {
                     observation_coverage: Math.max(0, Math.min(1, normalizeNumber(presence.observation_coverage, 0))),
                     reported_at: receivedAt,
                 },
+                live,
                 created_at: existing.created_at || receivedAt,
                 updated_at: existing.updated_at || receivedAt,
             };
@@ -9309,6 +9360,11 @@ function createLocalAppServer(options = {}) {
                     return;
                 }
                 const currentPrivacyMode = videoPrivacyForFamily(familyId).minimum_mode;
+                const unavailableMessage = cameraLiveUnavailableMessage(camera, currentPrivacyMode);
+                if (unavailableMessage) {
+                    writeError(res, 409, unavailableMessage);
+                    return;
+                }
                 const session = mediaAccessService.issueReadSession({
                     userId: activeAppUser(req).id,
                     familyId,

@@ -68,6 +68,7 @@ struct CameraStageView: View {
         switch state {
         case .playing: return "LIVE"
         case .connecting: return "连接中"
+        case .waiting: return "等待隐私复核"
         case .failed: return "连接异常"
         case .idle: return "未选择"
         }
@@ -85,6 +86,7 @@ struct CameraStageView: View {
         switch state {
         case .failed: return "wifi.exclamationmark"
         case .connecting: return "dot.radiowaves.left.and.right"
+        case .waiting: return "checkmark.shield"
         default: return "video"
         }
     }
@@ -93,6 +95,7 @@ struct CameraStageView: View {
         switch state {
         case .failed: return "画面暂时不可用"
         case .connecting: return "正在连接画面"
+        case let .waiting(message): return message
         default: return "暂无画面"
         }
     }

@@ -362,6 +362,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             last_seen_at: iso(camera.last_seen_at),
             edge_reported_at: iso(camera.edge_reported_at),
             presence: metadataValue(camera, "presence", {}),
+            live: metadataValue(camera, "live", null),
             created_at: iso(camera.created_at, db.created_at),
             updated_at: iso(camera.updated_at, iso(camera.created_at, db.created_at)),
         };

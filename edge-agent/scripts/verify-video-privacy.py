@@ -1021,6 +1021,79 @@ def main() -> int:
             mode="skeleton",
         )
         assert mean_delta(replaced_baseline, occupied_moved, PERSON_SLICE) > 24.0
+        multi_view_status = restarted_after_move.background_reconstructor.status()["states"][0]
+        assert multi_view_status["known_view_count"] == 2
+        assert len(list(Path(temporary_dir).glob("*-view-*.npz"))) == 1
+
+        # A restart must recognize either previously confirmed camera angle.
+        multi_view_restart = PrivacyFrameRenderer(
+            tracker,
+            PrivacyBackgroundReconstructor(storage_dir=temporary_dir),
+            SyntheticSegmentation({"camera-a": moved_scene}),
+            revalidation_interval_seconds=1.0,
+            monotonic_clock=revalidation_clock,
+        )
+        assert_calibration_required(lambda: render(
+            multi_view_restart,
+            tracker,
+            moved_scene,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-known-view-switch",
+            person=False,
+            mode="skeleton",
+        ), "stream_revalidation_required")
+        for sequence in range(multi_view_restart.background_reconstructor.revalidation_frames):
+            revalidation_clock.advance(1.0)
+            try:
+                render(
+                    multi_view_restart,
+                    tracker,
+                    moved_scene,
+                    camera_id=1,
+                    source_key=source_a_g1,
+                    frame_id=f"1-known-view-revalidate-{sequence}",
+                    person=False,
+                    mode="skeleton",
+                )
+            except PrivacyCalibrationRequired as exc:
+                assert exc.reason == "stream_revalidation_required"
+        recovered_known_view = multi_view_restart.background_reconstructor.status()["states"][0]
+        assert recovered_known_view["ready"] is True
+        assert recovered_known_view["known_view_count"] == 2
+        assert recovered_known_view["active_view_id"] != "legacy"
+
+        # Returning to the original angle selects the retained legacy baseline.
+        multi_view_restart.segmentation_backend.backgrounds["camera-a"] = clean_a.copy()
+        assert_calibration_required(lambda: render(
+            multi_view_restart,
+            tracker,
+            clean_a,
+            camera_id=1,
+            source_key=source_a_g1,
+            frame_id="1-return-to-original-view",
+            person=False,
+            mode="skeleton",
+        ), "stream_revalidation_required")
+        for sequence in range(multi_view_restart.background_reconstructor.revalidation_frames):
+            revalidation_clock.advance(1.0)
+            try:
+                render(
+                    multi_view_restart,
+                    tracker,
+                    clean_a,
+                    camera_id=1,
+                    source_key=source_a_g1,
+                    frame_id=f"1-original-view-revalidate-{sequence}",
+                    person=False,
+                    mode="skeleton",
+                )
+            except PrivacyCalibrationRequired as exc:
+                assert exc.reason == "stream_revalidation_required"
+        returned_view = multi_view_restart.background_reconstructor.status()["states"][0]
+        assert returned_view["ready"] is True
+        assert returned_view["active_view_id"] == "legacy"
+        assert returned_view["known_view_count"] == 2
 
         failure_dir = Path(temporary_dir) / "persistence-failure"
         failing_background = PrivacyBackgroundReconstructor(storage_dir=failure_dir)
@@ -1155,6 +1228,7 @@ def main() -> int:
         "revalidation_camera_isolation": True,
         "camera_move_requires_reliable_sequence": True,
         "camera_move_preserves_baseline": True,
+        "known_camera_views_restore_after_restart": True,
         "stream_generation_revalidation": True,
         "adjacent_pose_rejected": True,
         "camera_isolation": True,

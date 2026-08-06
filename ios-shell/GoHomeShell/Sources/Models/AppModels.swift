@@ -1399,6 +1399,7 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
     let connection: CameraConnectionSummary?
     let passwordSet: Bool
     let enabled: Bool
+    let live: CameraLiveStatus?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1410,7 +1411,7 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
         case hasStreamConfig = "has_stream_config"
         case connection
         case passwordSet = "password_set"
-        case enabled
+        case enabled, live
     }
 
     init(
@@ -1425,7 +1426,8 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
         hasStreamConfig: Bool? = nil,
         connection: CameraConnectionSummary? = nil,
         passwordSet: Bool = false,
-        enabled: Bool = true
+        enabled: Bool = true,
+        live: CameraLiveStatus? = nil
     ) {
         self.id = id
         self.familyID = familyID
@@ -1439,6 +1441,7 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
         self.connection = connection
         self.passwordSet = passwordSet
         self.enabled = enabled
+        self.live = live
     }
 
 
@@ -1456,6 +1459,29 @@ struct CameraConfig: Codable, Equatable, Sendable, Identifiable {
         connection = try values.decodeIfPresent(CameraConnectionSummary.self, forKey: .connection)
         passwordSet = try values.decodeIfPresent(Bool.self, forKey: .passwordSet) ?? false
         enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        live = try values.decodeIfPresent(CameraLiveStatus.self, forKey: .live)
+    }
+}
+
+struct CameraLiveStatus: Codable, Equatable, Sendable {
+    let sourceStatus: String
+    let sourceReady: Bool
+    let privacyStatus: String
+    let publishReady: Bool
+    let privacyMode: VideoPrivacyMode
+    let outputFPS: Double
+    let reason: String
+    let reportedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case sourceStatus = "source_status"
+        case sourceReady = "source_ready"
+        case privacyStatus = "privacy_status"
+        case publishReady = "publish_ready"
+        case privacyMode = "privacy_mode"
+        case outputFPS = "output_fps"
+        case reason
+        case reportedAt = "reported_at"
     }
 }
 
@@ -1479,6 +1505,7 @@ extension CameraConfig {
         return enabled
             && readyStatuses.contains(status.lowercased())
             && readySyncStatuses.contains((syncStatus ?? "").lowercased())
+            && live?.publishReady != false
     }
 }
 

@@ -242,6 +242,15 @@ struct DeviceSettingsView: View {
 
     private func cameraStatus(_ camera: CameraConfig) -> String {
         if !camera.enabled { return "已暂停" }
+        if let live = camera.live, !live.publishReady {
+            switch live.privacyStatus {
+            case "scene_review_required": return "机位待确认"
+            case "calibration_required": return "待空房确认"
+            case "calibrating": return "确认中"
+            case "revalidating": return "隐私复核中"
+            default: return live.sourceReady ? "画面准备中" : "重新连接中"
+            }
+        }
         switch camera.status.lowercased() {
         case "online", "active", "connected": return "在线"
         case "pending", "syncing", "pending_edge_sync", "pending_edge_verify", "pending_edge_setup": return "配置中"

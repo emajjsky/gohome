@@ -113,6 +113,81 @@ test('video privacy is one family state shared by app playback and the edge devi
     assert.equal(devicePrivacy.response.status, 200);
     assert.equal(devicePrivacy.body.minimum_mode, 'skeleton');
 
+    const blockedSync = await request(baseURL, '/api/v1/device/sync', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${deviceToken}` },
+      body: JSON.stringify({
+        device_id: deviceID,
+        worker_running: true,
+        cameras: [{
+          camera_id: String(camera.body.id),
+          local_camera_id: 24,
+          status: 'online',
+          sync_status: 'synced',
+          live: {
+            source_status: 'streaming',
+            source_ready: true,
+            privacy_status: 'scene_review_required',
+            publish_ready: false,
+            privacy_mode: 'skeleton',
+            output_fps: 0,
+            reason: 'scene_revalidation_required',
+          },
+        }],
+      }),
+    });
+    assert.equal(blockedSync.response.status, 200);
+
+    const blockedCameraList = await request(baseURL, '/api/app/cameras', { headers: owner.headers });
+    assert.equal(blockedCameraList.response.status, 200);
+    assert.deepEqual(blockedCameraList.body[0].live, {
+      source_status: 'streaming',
+      source_ready: true,
+      privacy_status: 'scene_review_required',
+      publish_ready: false,
+      privacy_mode: 'skeleton',
+      output_fps: 0,
+      reason: 'scene_revalidation_required',
+      reported_at: blockedSync.body.received_at,
+    });
+
+    const blockedPlayback = await request(baseURL, '/api/v1/video/sessions', {
+      method: 'POST', headers: owner.headers,
+      body: JSON.stringify({
+        resource_type: 'stream',
+        camera_id: String(camera.body.id),
+        profile: 'mobile',
+        privacy_mode: 'skeleton',
+      }),
+    });
+    assert.equal(blockedPlayback.response.status, 409);
+    assert.equal(blockedPlayback.body.detail, '摄像头机位发生变化，请在房间无人时重新确认空房画面。');
+
+    const readySync = await request(baseURL, '/api/v1/device/sync', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${deviceToken}` },
+      body: JSON.stringify({
+        device_id: deviceID,
+        worker_running: true,
+        cameras: [{
+          camera_id: String(camera.body.id),
+          local_camera_id: 24,
+          status: 'online',
+          sync_status: 'synced',
+          live: {
+            source_status: 'streaming',
+            source_ready: true,
+            privacy_status: 'ready',
+            publish_ready: true,
+            privacy_mode: 'skeleton',
+            output_fps: 14.5,
+            reason: '',
+          },
+        }],
+      }),
+    });
+    assert.equal(readySync.response.status, 200);
+
     const playback = await request(baseURL, '/api/v1/video/sessions', {
       method: 'POST', headers: owner.headers,
       body: JSON.stringify({

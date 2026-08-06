@@ -355,6 +355,7 @@ function buildCloudSeedBundle(db, options = {}) {
         edge_reported_at: iso(camera.edge_reported_at),
         metadata: {
             presence: camera.presence && typeof camera.presence === "object" ? camera.presence : {},
+            live: camera.live && typeof camera.live === "object" ? camera.live : null,
         },
         created_at: iso(camera.created_at, exportedAt),
         updated_at: iso(camera.updated_at, iso(camera.created_at, exportedAt)),

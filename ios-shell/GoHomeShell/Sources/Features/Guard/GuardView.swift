@@ -212,6 +212,7 @@ struct GuardView: View {
         switch model.streamState {
         case .idle: return cameras.isEmpty ? "暂无可用画面" : "选择一路画面"
         case .connecting: return "正在连接"
+        case let .waiting(message): return message
         case .playing: return "实时播放中"
         case let .failed(message): return message.isEmpty ? "画面暂时不可用" : message
         }
@@ -221,6 +222,7 @@ struct GuardView: View {
         switch model.streamState {
         case .playing: return .green
         case .failed: return .red
+        case .waiting: return GoHomeTheme.ginger
         default: return GoHomeTheme.ginger
         }
     }

@@ -24,6 +24,7 @@ class ConfigSyncAgent:
         device_id_resolver: Callable[[], str],
         token_resolver: Callable[[], str],
         runtime_status_resolver: Callable[[], Dict[str, Any]] | None = None,
+        live_status_resolver: Callable[[int], Dict[str, Any]] | None = None,
         presence_status_resolver: Callable[..., Dict[str, Any]] | None = None,
         binding_summary_writer: Callable[[Dict[str, Any] | None], Any] | None = None,
         event_state_handler: Callable[[Dict[str, Any]], Dict[str, Any]] | None = None,
@@ -35,6 +36,7 @@ class ConfigSyncAgent:
         self.device_id_resolver = device_id_resolver
         self.token_resolver = token_resolver
         self.runtime_status_resolver = runtime_status_resolver or (lambda: {})
+        self.live_status_resolver = live_status_resolver or (lambda _camera_id: {})
         self.presence_status_resolver = presence_status_resolver or self.storage.camera_presence_status
         self.binding_summary_writer = binding_summary_writer
         self.event_state_handler = event_state_handler or self._apply_event_state_to_storage
@@ -402,7 +404,25 @@ class ConfigSyncAgent:
                 "status": status,
                 "last_error": last_error,
                 "runtime_stream": runtime,
+                "live": self._camera_live_status(camera_id, runtime, fresh),
             })
+
+    def _camera_live_status(
+        self,
+        camera_id: int,
+        runtime: Dict[str, Any],
+        source_ready: bool,
+    ) -> Dict[str, Any]:
+        delivery = self.live_status_resolver(int(camera_id)) or {}
+        return {
+            "source_status": str(runtime.get("state") or "warming"),
+            "source_ready": bool(source_ready),
+            "privacy_status": str(delivery.get("privacy_status") or "starting"),
+            "publish_ready": bool(delivery.get("publish_ready", False)),
+            "privacy_mode": normalize_privacy_mode(delivery.get("privacy_mode")),
+            "output_fps": round(max(0.0, float(delivery.get("output_fps") or 0.0)), 2),
+            "reason": str(delivery.get("reason") or "")[:120],
+        }
 
     def _apply_event_state_commands(
         self,

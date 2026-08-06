@@ -53,6 +53,8 @@ class LiveRelayAgent:
         self._camera_privacy_states: Dict[int, Dict[str, Any]] = {}
         self._camera_errors: Dict[int, Dict[str, str]] = {}
         self._recovered_camera_errors: Dict[int, Dict[str, str]] = {}
+        self._delivery_status_callback: Callable[[], Any] | None = None
+        self._delivery_status_signatures: Dict[int, tuple[Any, ...]] = {}
         self._service_error = ""
         self.last_loop_started_at: str | None = None
         self.last_relay_at: str | None = None
@@ -91,6 +93,43 @@ class LiveRelayAgent:
 
     def wake(self) -> None:
         self._wake.set()
+
+    def set_delivery_status_callback(self, callback: Callable[[], Any] | None) -> None:
+        self._delivery_status_callback = callback
+
+    def camera_delivery_status(self, camera_id: int) -> Dict[str, Any]:
+        camera_id = int(camera_id)
+        with self._state_lock:
+            publisher = self._publishers.get(camera_id)
+            privacy_state = dict(self._camera_privacy_states.get(camera_id) or {})
+            privacy_mode = self._camera_privacy_modes.get(
+                camera_id,
+                normalize_privacy_mode(self.privacy_mode_resolver()),
+            )
+            camera_error = str((self._camera_errors.get(camera_id) or {}).get("message") or "")
+            thread = self._camera_threads.get(camera_id)
+            thread_active = bool(thread and thread.is_alive())
+        publisher_status = publisher.status() if publisher is not None else {}
+        privacy_status = str(privacy_state.get("status") or ("starting" if thread_active else "unavailable"))
+        reason = str(
+            privacy_state.get("reason")
+            or publisher_status.get("last_error")
+            or camera_error
+            or ""
+        )[:120]
+        publish_ready = bool(
+            privacy_status == "ready"
+            and publisher_status.get("publish_ready")
+            and publisher_status.get("running")
+            and not publisher_status.get("paused")
+        )
+        return {
+            "privacy_status": privacy_status,
+            "publish_ready": publish_ready,
+            "privacy_mode": normalize_privacy_mode(privacy_mode),
+            "output_fps": round(float(publisher_status.get("encoder_input_fps_10s") or 0.0), 2),
+            "reason": reason,
+        }
 
     def handle_camera_source_transition(self, transition: Dict[str, Any]) -> None:
         camera_id = int(transition.get("camera_id") or 0)
@@ -418,11 +457,13 @@ class LiveRelayAgent:
                                 self._privacy_block_status(exc.reason),
                                 exc.reason,
                             )
+                            self._notify_delivery_status_if_changed(camera_id)
                             continue
                         except Exception as exc:
                             publisher.pause(f"render_error: {exc}")
                             self._set_privacy_state(camera_id, "render_error", str(exc)[:240])
                             self._set_camera_error(camera_id, f"privacy render failed: {exc}")
+                            self._notify_delivery_status_if_changed(camera_id)
                             continue
                         if self._stop.is_set() or stop_event.is_set():
                             publisher.pause("camera_stopping")
@@ -443,6 +484,7 @@ class LiveRelayAgent:
                             privacy_mode=privacy_mode,
                             source_key=source_key,
                         )
+                        self._notify_delivery_status_if_changed(camera_id)
                         self._clear_camera_error(camera_id)
                         self.last_relay_at = self._utc_iso()
                     if not self._stop.is_set() and not stop_event.is_set():
@@ -450,6 +492,7 @@ class LiveRelayAgent:
                 except Exception as exc:
                     self._set_camera_error(camera_id, str(exc))
                     publisher.pause(str(exc))
+                    self._notify_delivery_status_if_changed(camera_id)
                     time.sleep(2.0)
         except Exception as exc:
             self._set_camera_error(camera_id, f"publisher setup failed: {exc}")
@@ -467,6 +510,22 @@ class LiveRelayAgent:
                 "status": str(status),
                 "reason": str(reason),
             }
+
+    def _notify_delivery_status_if_changed(self, camera_id: int) -> None:
+        status = self.camera_delivery_status(camera_id)
+        signature = (
+            status["privacy_status"],
+            status["publish_ready"],
+            status["privacy_mode"],
+            status["reason"],
+        )
+        with self._state_lock:
+            if self._delivery_status_signatures.get(int(camera_id)) == signature:
+                return
+            self._delivery_status_signatures[int(camera_id)] = signature
+            callback = self._delivery_status_callback
+        if callback is not None:
+            callback()
 
     def _set_service_error(self, message: str) -> None:
         with self._state_lock:

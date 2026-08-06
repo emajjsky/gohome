@@ -36,7 +36,14 @@ def main() -> None:
             reconcile_managed_streams=lambda cameras: reconciled_camera_sets.append([
                 dict(camera) for camera in cameras
             ]),
-            managed_camera_status=lambda _camera: None,
+            managed_camera_status=lambda camera: {
+                "camera_id": int(camera["id"]),
+                "state": "streaming",
+                "unique_frames": 12,
+                "latest_frame_age_ms": 40.0,
+                "decoded_fps": 15.0,
+                "last_error": "",
+            },
         )
         monotonic_now = [100.0]
         agent = ConfigSyncAgent(
@@ -46,6 +53,15 @@ def main() -> None:
             device_id_resolver=lambda: "edge-test",
             token_resolver=lambda: "",
             runtime_status_resolver=lambda: {"worker_running": True},
+            live_status_resolver=lambda camera_id: {
+                "source_status": "streaming",
+                "source_ready": True,
+                "privacy_status": "scene_review_required" if camera_id == 1 else "ready",
+                "publish_ready": camera_id != 1,
+                "privacy_mode": "skeleton",
+                "output_fps": 0.0 if camera_id == 1 else 14.5,
+                "reason": "scene_revalidation_required" if camera_id == 1 else "",
+            },
             monotonic_clock=lambda: monotonic_now[0],
         )
 
@@ -116,7 +132,7 @@ def main() -> None:
         cameras = storage.list_cameras(include_secret=True)
         if created["applied"] != 1 or len(cameras) != 1:
             raise SystemExit(f"camera was not created from config: result={created} cameras={cameras}")
-        if cameras[0]["stream_url"] != "demo:living_room" or cameras[0]["status"] != "configured":
+        if cameras[0]["stream_url"] != "demo:living_room" or cameras[0]["status"] != "online":
             raise SystemExit(f"unexpected created camera: {cameras[0]}")
         if reports[-1]["cameras"][0]["sync_status"] != "synced":
             raise SystemExit(f"sync report did not mark camera synced: {reports[-1]}")
@@ -141,6 +157,17 @@ def main() -> None:
             raise SystemExit("atomic config state persistence left temporary files behind")
         if "presence" not in reports[-1]["cameras"][0]:
             raise SystemExit("sync report must include camera presence status")
+        expected_live = {
+            "source_status": "streaming",
+            "source_ready": True,
+            "privacy_status": "scene_review_required",
+            "publish_ready": False,
+            "privacy_mode": "skeleton",
+            "output_fps": 0.0,
+            "reason": "scene_revalidation_required",
+        }
+        if reports[-1]["cameras"][0].get("live") != expected_live:
+            raise SystemExit(f"sync report lost live delivery state: {reports[-1]}")
         edge_event = storage.create_event(
             event_type="fall_candidate",
             summary="test fall",

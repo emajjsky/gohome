@@ -3,6 +3,7 @@ import Foundation
 enum GuardStreamState: Equatable {
     case idle
     case connecting
+    case waiting(String)
     case playing
     case failed(String)
 }
@@ -78,7 +79,7 @@ final class GuardViewModel: ObservableObject {
     func select(cameraID: String, profile: String = "mobile") {
         if selectedCameraID == cameraID {
             switch streamState {
-            case .connecting, .playing:
+            case .connecting, .waiting, .playing:
                 return
             case .idle, .failed:
                 break
@@ -125,7 +126,7 @@ final class GuardViewModel: ObservableObject {
                     failedAttempts += 1
                     let immediateRetry = failedAttempts <= self.maxReconnectAttempts
                     self.videoSurface = nil
-                    self.streamState = .connecting
+                    self.streamState = self.recoveryState(for: error)
                     do {
                         let delay = immediateRetry
                             ? self.reconnectDelayNanoseconds
@@ -146,6 +147,13 @@ final class GuardViewModel: ObservableObject {
         return cappedDelay.overflow
             ? 30_000_000_000
             : min(cappedDelay.partialValue, 30_000_000_000)
+    }
+
+    private func recoveryState(for error: Error) -> GuardStreamState {
+        if case let APIError.server(statusCode, detail) = error, statusCode == 409 {
+            return .waiting(detail)
+        }
+        return .connecting
     }
 
     private func consumeSession(

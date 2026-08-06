@@ -1156,6 +1156,7 @@ config_sync_agent = ConfigSyncAgent(
             "last_cleanup": worker.last_history_cleanup_result,
         },
     },
+    live_status_resolver=lambda camera_id: live_relay_agent.camera_delivery_status(camera_id),
     presence_status_resolver=worker.camera_presence_status,
 )
 upload_agent = UploadAgent(
@@ -1199,6 +1200,7 @@ live_relay_agent = LiveRelayAgent(
     privacy_mode_resolver=config_sync_agent.video_privacy_mode,
     privacy_renderer=privacy_frame_renderer,
 )
+live_relay_agent.set_delivery_status_callback(config_sync_agent.wake)
 
 
 def handle_camera_source_transition(transition: Dict[str, Any]) -> None:

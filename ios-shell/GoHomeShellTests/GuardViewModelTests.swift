@@ -193,6 +193,34 @@ final class GuardViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testUnavailablePrivacyOutputShowsReasonWhileAutomaticRecoveryContinues() async throws {
+        let client = FailingStreamClient(error: APIError.server(
+            statusCode: 409,
+            detail: "摄像头机位发生变化，请在房间无人时重新确认空房画面。"
+        ))
+        let model = GuardViewModel(
+            streamClient: client,
+            reconnectDelayNanoseconds: 1_000_000,
+            maxReconnectAttempts: 0,
+            recoveryRetryDelayNanoseconds: 50_000_000
+        )
+
+        model.select(cameraID: "camera-a")
+        try await waitUntil { await client.startCount >= 1 }
+        try await waitUntil {
+            await MainActor.run {
+                model.streamState == .waiting("摄像头机位发生变化，请在房间无人时重新确认空房画面。")
+            }
+        }
+
+        try await waitUntil { await client.startCount >= 2 }
+        XCTAssertEqual(
+            model.streamState,
+            .waiting("摄像头机位发生变化，请在房间无人时重新确认空房画面。")
+        )
+    }
+
+    @MainActor
     func testSharedPrivacyPolicyRestartsTheSameCameraWithTheNewMode() async throws {
         let client = RecordingStreamClient()
         let privacy = RecordingPrivacyService(policy: VideoPrivacyPolicy(
@@ -250,6 +278,11 @@ final class GuardViewModelTests: XCTestCase {
 
 private actor FailingStreamClient: CameraStreamClient {
     private(set) var startCount = 0
+    private let error: Error
+
+    init(error: Error = URLError(.cannotConnectToHost)) {
+        self.error = error
+    }
 
     func streams(
         cameraID: String,
@@ -257,7 +290,7 @@ private actor FailingStreamClient: CameraStreamClient {
         privacyMode: VideoPrivacyMode
     ) async throws -> CameraDisplayStreams {
         startCount += 1
-        throw URLError(.cannotConnectToHost)
+        throw error
     }
 
     func stop() async {}
