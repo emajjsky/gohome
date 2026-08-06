@@ -13327,3 +13327,10 @@ P4 风险升频边界：
 
 - 尚未部署本次改动到 Pi，也尚未做真实拔出/插回测试。
 - 未获得“盒子 `publish_ready` 恢复、App 自动建立新 WHEP 会话、另一路持续播放”的现场证据前，GH-066/GH-067 保持处理中。
+
+### Build 12 发布
+
+- `ios-shell/project.yml` 和生成的 `GoHomeShell.xcodeproj` 已统一为 `1.0.0 (12)`。
+- 完整 iOS 测试结果：`154` 项，`153` 通过、`0` 失败、`1` 跳过（模拟器环境项）；发布门禁通过。
+- 归档 `ios-shell/build/GoHomeShell-1.0.0-12.xcarchive` 成功，bundle id 为 `com.gohome.family`，已通过 `xcodebuild -exportArchive` 上传 App Store Connect，当前状态为 processing。
+- 上传警告仅为上游 WebRTC framework 未附带对应 dSYM，应用自身 dSYM 已生成；不影响安装、WHEP 协商和播放功能。
