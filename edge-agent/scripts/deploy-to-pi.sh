@@ -8,6 +8,11 @@ PI_SSH="${GOHOME_PI_SSH:-gohome@192.168.1.12}"
 PI_ROOT="${GOHOME_PI_ROOT:-/home/gohome/gohome/edge-agent}"
 PI_SERVICE="${GOHOME_PI_SERVICE:-gohome-edge-agent.service}"
 
+[[ "$PI_SERVICE" =~ ^[A-Za-z0-9_.@-]+\.service$ ]] || {
+  echo "invalid Pi service name: $PI_SERVICE" >&2
+  exit 1
+}
+
 command -v rsync >/dev/null 2>&1 || {
   echo "rsync is required" >&2
   exit 1
@@ -53,6 +58,7 @@ rsync -az \
   "$staged_agent/" "$PI_SSH:$PI_ROOT/"
 
 ssh "$PI_SSH" "cd '$PI_ROOT' && sudo rm -rf backups"
+ssh "$PI_SSH" "sudo install -d -m 0755 '/etc/systemd/system/$PI_SERVICE.d' && printf '%s\\n' '[Service]' 'Environment=PYTHONDONTWRITEBYTECODE=1' | sudo tee '/etc/systemd/system/$PI_SERVICE.d/10-gohome-runtime-boundary.conf' >/dev/null && sudo systemctl daemon-reload"
 
 ssh "$PI_SSH" "cd '$PI_ROOT' && PYTHONDONTWRITEBYTECODE=1 .venv-pi/bin/python -m pip install --requirement requirements-security.txt"
 ssh "$PI_SSH" "cd '$PI_ROOT' && PYTHONDONTWRITEBYTECODE=1 .venv-pi/bin/python scripts/verify-vision-runtime.py --require-yolo --require-pose --require-hailo"

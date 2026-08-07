@@ -229,6 +229,8 @@ def main() -> None:
         "--exclude '/logs/'",
         "--exclude '/.env'",
         "sudo systemctl restart '$PI_SERVICE'",
+        "10-gohome-runtime-boundary.conf",
+        "sudo systemctl daemon-reload",
         "PYTHONDONTWRITEBYTECODE=1 .venv-pi/bin/python scripts/verify-vision-runtime.py",
         "http://127.0.0.1:8711/health",
     )
