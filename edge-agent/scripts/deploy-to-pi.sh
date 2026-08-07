@@ -30,7 +30,6 @@ rsync -az \
   --exclude '/.venv/' \
   --exclude '/.venv-pi/' \
   --exclude '/__pycache__/' \
-  --exclude '*.pyc' \
   --exclude '/data/' \
   --exclude '/logs/' \
   --exclude '/backups/' \
