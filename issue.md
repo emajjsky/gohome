@@ -871,3 +871,5 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 **处理**：删除上述账号/家庭/绑定编排方法及仅供它们使用的转换器，保留 `list_device_bindings_by_device()`、`list_device_bound_family_ids()`、`get_device_token_by_raw_token()` 和 `record_device_heartbeat()`。保留 users、families、family_members、device_bindings、device_binding_codes、device_tokens 历史表和迁移定义；生命周期验证脚本直接写入最小用户/家庭夹具，不把测试夹具变成盒子业务 API。
 
 **验收要求**：生产边界门禁禁止账号/绑定编排方法回归；安全配对、设备令牌校验、心跳、摄像头配置权威、媒体生命周期、完整边缘回归和 Python 编译通过；已有绑定、令牌、心跳及历史账户数据不删除。
+
+**部署证据**：提交 `e24f79f` 已通过完整边缘回归 `59/59` 并部署到 `192.168.1.12`；远端 `.release-commit` 为 `e24f79f040b738156c68f4d1b1ced20a8631019f`。部署后服务 `active/running`、`NRestarts=0`、主进程退出码 `0`；摄像头 31/32 解码与实时发布约 `14.89-14.98 FPS`，有效内容约 `12.3/13.6 FPS`，重连和读取失败均为 `0`；Pose 状态 `ready`，成功推理 `138` 次、失败 `0` 次，共享 runtime 为 `1`；两路隐私状态均为 `ready`，配置同步连续失败 `0`，最近十分钟 warning 为空。历史账号、绑定、令牌和心跳表未删除，运行数据与校准基线未替换。
