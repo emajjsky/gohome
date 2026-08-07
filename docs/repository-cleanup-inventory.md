@@ -46,7 +46,7 @@
 - 云端 `build-release.sh` 只从当前已提交树生成归档，并同时输出归档 SHA-256
   和逐文件 SHA-256 清单；清单中的测试、iOS、盒子、研究和备份路径会在构建时拒绝。
 - 盒子 `deploy/edge-agent/build-production-payload.sh` 是唯一设备包生成入口，
-  `deploy-to-pi.sh` 只负责传输和健康检查。它只从当前提交生成设备代码包。`yolo11n.pt` 和
+  `deploy-to-pi.sh` 只负责传输、重启唯一 systemd 服务和健康检查。它只从当前提交生成设备代码包。`yolo11n.pt` 和
   `yolov8n.pt` 是唯一允许从本机运行时输入复制的模型文件；`.env`、数据库、日志、
   `data/`、`logs/` 和虚拟环境始终不进入代码包。
 - 盒子同步对生产代码使用 `rsync --delete-delay` 收敛旧文件，但明确排除运行数据和

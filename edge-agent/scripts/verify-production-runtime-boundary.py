@@ -221,6 +221,19 @@ def main() -> None:
     if "launchctl" in deployment or "LaunchAgent" in deployment:
         raise SystemExit("macOS LaunchAgent logic remains in production edge installer")
 
+    pi_deployment = (EDGE_ROOT / "scripts" / "deploy-to-pi.sh").read_text(encoding="utf-8")
+    required_pi_contract = (
+        "--delete-delay",
+        "--exclude '/data/'",
+        "--exclude '/logs/'",
+        "--exclude '/.env'",
+        "sudo systemctl restart '$PI_SERVICE'",
+        "http://127.0.0.1:8711/health",
+    )
+    missing_pi = [item for item in required_pi_contract if item not in pi_deployment]
+    if missing_pi:
+        raise SystemExit(f"Pi deployment convergence contract is incomplete: {missing_pi}")
+
     cloud_server = CLOUD_SERVER.read_text(encoding="utf-8")
     cloud_provider = CLOUD_APNS_PROVIDER.read_text(encoding="utf-8")
     required_cloud_contract = (
