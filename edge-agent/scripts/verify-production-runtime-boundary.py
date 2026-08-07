@@ -201,6 +201,9 @@ def main() -> None:
     if "build_package_artifact_router" in (APP_DIR / "main.py").read_text(encoding="utf-8"):
         raise SystemExit("edge runtime still mounts user-facing package artifact routes")
 
+    if "CORSMiddleware" in (APP_DIR / "main.py").read_text(encoding="utf-8"):
+        raise SystemExit("edge runtime still exposes a wildcard browser CORS policy")
+
     main_source = (APP_DIR / "main.py").read_text(encoding="utf-8")
     if '"pose_inference_service": vision_status.get("pose_inference_service") or {}' not in main_source:
         raise SystemExit("health endpoint does not expose Pose runtime ownership")
