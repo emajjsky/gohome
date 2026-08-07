@@ -77,6 +77,27 @@ def main() -> None:
             raise SystemExit({"page": page_name, "missing_dependencies": missing})
 
     console_source = (ADMIN / "console.js").read_text(encoding="utf-8")
+    admin_sources = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in [*(ADMIN.glob("*.html")), *(ADMIN.glob("*.js"))]
+    }
+    forbidden_metric_contracts = {
+        "fabricated accuracy label": "准确率",
+        "fabricated accuracy field": "accuracy",
+        "fabricated balanced accuracy field": "balanced_accuracy",
+        "fabricated quality score helper": "algorithmQualityScore",
+        "fabricated demo metric helper": "algorithmDemoMetric",
+        "legacy algorithm selector": "previewAlgorithm",
+        "legacy percentage formatter": "fmtPercent",
+    }
+    metric_violations = [
+        {"file": file_name, "contract": label}
+        for file_name, source in admin_sources.items()
+        for label, forbidden in forbidden_metric_contracts.items()
+        if forbidden in source
+    ]
+    if metric_violations:
+        raise SystemExit({"forbidden_admin_metric_contract": metric_violations})
     required_stream_contracts = {
         "stream generation": "streamGeneration: 0",
         "fresh image element": "function replaceLiveStreamElement()",
