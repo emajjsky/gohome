@@ -1871,39 +1871,6 @@ class Storage:
             data.pop("password", None)
         return data
 
-    def _rules_allowed_keys(self) -> set[str]:
-        return {
-            "capture_interval_seconds",
-            "motion_threshold",
-            "black_brightness_threshold",
-            "black_contrast_threshold",
-            "yolo_confidence",
-            "no_motion_seconds",
-            "black_screen_enabled",
-            "no_motion_enabled",
-            "person_detection_enabled",
-            "fall_detection_enabled",
-            "fall_score_threshold",
-            "fall_confirm_frames",
-            "fall_confirm_seconds",
-            "fall_recover_frames",
-            "activity_detection_enabled",
-            "no_person_seconds",
-            "offline_enabled",
-        }
-
-    def _merge_rules_patch(self, patch: Dict[str, Any], base: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        allowed = self._rules_allowed_keys()
-        current = dict(base or self.get_rules())
-        next_values = {**current}
-        for key, value in patch.items():
-            if key in allowed and value is not None:
-                next_values[key] = value
-        return {key: next_values[key] for key in allowed if key in next_values}
-
-    def merge_rules_patch(self, patch: Dict[str, Any], base: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        return self._merge_rules_patch(patch, base=base)
-
     def _device_sync_state_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
         if row is None:
             return None
@@ -2252,14 +2219,6 @@ class Storage:
         if row is None:
             raise RuntimeError("DetectionResult was not persisted")
         return self._detection_result_to_dict(row)
-
-    def latest_detection_result(self, camera_id: int) -> Optional[Dict[str, Any]]:
-        with self.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM detection_results WHERE camera_id = ? ORDER BY captured_at DESC, id DESC LIMIT 1",
-                (camera_id,),
-            ).fetchone()
-        return self._detection_result_to_dict(row) if row else None
 
     def _rule_evaluation_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
         data = dict(row)
@@ -4260,43 +4219,6 @@ class Storage:
             row = conn.execute("SELECT * FROM upload_jobs WHERE id = ? LIMIT 1", (int(job_id),)).fetchone()
         return self._upload_job_to_dict(row)
 
-    def latest_completed_upload_job(
-        self,
-        *,
-        event_id: int,
-        job_type: str,
-    ) -> Optional[Dict[str, Any]]:
-        with self.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT *
-                FROM upload_jobs
-                WHERE event_id = ? AND job_type = ? AND status = 'completed'
-                ORDER BY completed_at DESC, updated_at DESC
-                LIMIT 1
-                """,
-                (int(event_id), str(job_type or "").strip()),
-            ).fetchone()
-        return self._upload_job_to_dict(row)
-
-    def completed_upload_jobs(
-        self,
-        *,
-        event_id: int,
-        job_type: str,
-    ) -> list[Dict[str, Any]]:
-        with self.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT *
-                FROM upload_jobs
-                WHERE event_id = ? AND job_type = ? AND status = 'completed'
-                ORDER BY priority ASC, completed_at ASC, id ASC
-                """,
-                (int(event_id), str(job_type or "").strip()),
-            ).fetchall()
-        return [job for row in rows if (job := self._upload_job_to_dict(row)) is not None]
-
     def upload_jobs_for_event(
         self,
         *,
@@ -4342,33 +4264,6 @@ class Storage:
             "total": sum(counts.values()),
         }
 
-    def update_upload_job_status(
-        self,
-        job_id: int,
-        *,
-        status: str,
-        last_error: str = "",
-    ) -> Optional[Dict[str, Any]]:
-        normalized = str(status or "").strip()
-        if normalized not in {"pending", "uploading", "completed", "failed"}:
-            raise ValueError("Unsupported upload job status")
-        timestamp = now_iso()
-        with self.connect() as conn:
-            conn.execute(
-                """
-                UPDATE upload_jobs
-                SET
-                    status = ?,
-                    last_error = ?,
-                    attempt_count = attempt_count + CASE WHEN ? IN ('failed', 'uploading') THEN 1 ELSE 0 END,
-                    updated_at = ?,
-                    completed_at = CASE WHEN ? = 'completed' THEN ? ELSE completed_at END
-                WHERE id = ?
-                """,
-                (normalized, str(last_error or ""), normalized, timestamp, normalized, timestamp, int(job_id)),
-            )
-            row = conn.execute("SELECT * FROM upload_jobs WHERE id = ?", (int(job_id),)).fetchone()
-        return self._upload_job_to_dict(row)
 
     def _event_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
         data = dict(row)
@@ -4606,16 +4501,6 @@ class Storage:
             raise RuntimeError("Event ingest was not persisted")
         return dict(row)
 
-    def get_device_sync_state(self, device_id: str) -> Optional[Dict[str, Any]]:
-        clean_device_id = str(device_id or "").strip()
-        if not clean_device_id:
-            return None
-        with self.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM device_sync_states WHERE device_id = ? LIMIT 1",
-                (clean_device_id,),
-            ).fetchone()
-        return self._device_sync_state_to_dict(row)
 
     def ensure_device_sync_state(self, device_id: str, family_id: int) -> Dict[str, Any]:
         clean_device_id = str(device_id or "").strip()
@@ -4650,120 +4535,6 @@ class Storage:
             ).fetchone()
         if row is None:
             raise RuntimeError("Device sync state was not persisted")
-        return self._device_sync_state_to_dict(row)  # type: ignore[return-value]
-
-    def update_device_sync_target(
-        self,
-        *,
-        device_id: str,
-        family_id: int,
-        desired_app_version: str = "",
-        desired_model_version: str = "",
-        rules_patch: Optional[Dict[str, Any]] = None,
-        config_patch: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        current_state = self.ensure_device_sync_state(device_id, family_id)
-        desired_rules = dict(current_state.get("desired_rules") or self.get_rules())
-        desired_config = dict(current_state.get("desired_config") or {})
-        if rules_patch:
-            desired_rules = self._merge_rules_patch(rules_patch, base=desired_rules)
-        if config_patch:
-            desired_config.update({key: value for key, value in config_patch.items() if value is not None})
-        timestamp = now_iso()
-        with self.connect() as conn:
-            conn.execute(
-                """
-                UPDATE device_sync_states
-                SET
-                    family_id = ?,
-                    desired_app_version = ?,
-                    desired_model_version = ?,
-                    desired_rules_json = ?,
-                    desired_rule_version = ?,
-                    desired_config_json = ?,
-                    desired_config_version = ?,
-                    updated_at = ?
-                WHERE device_id = ?
-                """,
-                (
-                    int(family_id),
-                    desired_app_version.strip(),
-                    desired_model_version.strip(),
-                    json.dumps(desired_rules, ensure_ascii=False),
-                    timestamp if rules_patch else str(current_state.get("desired_rule_version") or ""),
-                    json.dumps(desired_config, ensure_ascii=False),
-                    timestamp if config_patch else str(current_state.get("desired_config_version") or ""),
-                    timestamp,
-                    str(device_id).strip(),
-                ),
-            )
-            row = conn.execute(
-                "SELECT * FROM device_sync_states WHERE device_id = ? LIMIT 1",
-                (str(device_id).strip(),),
-            ).fetchone()
-        if row is None:
-            raise RuntimeError("Device sync target was not persisted")
-        return self._device_sync_state_to_dict(row)  # type: ignore[return-value]
-
-    def set_device_sync_target(
-        self,
-        *,
-        device_id: str,
-        family_id: int,
-        desired_app_version: str = "",
-        desired_model_version: str = "",
-        desired_rules: Optional[Dict[str, Any]] = None,
-        desired_rule_version: Optional[str] = None,
-        desired_config: Optional[Dict[str, Any]] = None,
-        desired_config_version: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        current_state = self.ensure_device_sync_state(device_id, family_id)
-        timestamp = now_iso()
-        next_rules = dict(desired_rules if desired_rules is not None else (current_state.get("desired_rules") or self.get_rules()))
-        next_config = dict(desired_config if desired_config is not None else (current_state.get("desired_config") or {}))
-        next_rule_version = (
-            str(current_state.get("desired_rule_version") or "")
-            if desired_rules is None
-            else (desired_rule_version if desired_rule_version is not None else timestamp)
-        )
-        next_config_version = (
-            str(current_state.get("desired_config_version") or "")
-            if desired_config is None
-            else (desired_config_version if desired_config_version is not None else timestamp)
-        )
-        with self.connect() as conn:
-            conn.execute(
-                """
-                UPDATE device_sync_states
-                SET
-                    family_id = ?,
-                    desired_app_version = ?,
-                    desired_model_version = ?,
-                    desired_rules_json = ?,
-                    desired_rule_version = ?,
-                    desired_config_json = ?,
-                    desired_config_version = ?,
-                    updated_at = ?
-                WHERE device_id = ?
-                """,
-                (
-                    int(family_id),
-                    desired_app_version.strip(),
-                    desired_model_version.strip(),
-                    json.dumps(next_rules, ensure_ascii=False),
-                    str(next_rule_version or ""),
-                    json.dumps(next_config, ensure_ascii=False),
-                    str(next_config_version or ""),
-                    timestamp,
-                    str(device_id).strip(),
-                ),
-            )
-            row = conn.execute(
-                "SELECT * FROM device_sync_states WHERE device_id = ? LIMIT 1",
-                (str(device_id).strip(),),
-            ).fetchone()
-        if row is None:
-            raise RuntimeError("Device sync target overwrite was not persisted")
         return self._device_sync_state_to_dict(row)  # type: ignore[return-value]
 
     def report_device_sync(

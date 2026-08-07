@@ -253,6 +253,16 @@ def main() -> None:
         "list_user_families",
         "list_user_family_ids",
         "user_has_device_access",
+        "_rules_allowed_keys",
+        "_merge_rules_patch",
+        "merge_rules_patch",
+        "latest_detection_result",
+        "latest_completed_upload_job",
+        "completed_upload_jobs",
+        "update_upload_job_status",
+        "get_device_sync_state",
+        "update_device_sync_target",
+        "set_device_sync_target",
     }
     storage_methods = {
         node.name
