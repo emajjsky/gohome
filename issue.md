@@ -785,6 +785,8 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **验收**：前端门禁直接检查共享客户端不存在 fallback，并锁定设备、摄像头、事件和汇总的正式路径；云端接口回归必须证明 `/api/app/*` 的鉴权、家庭隔离和数据返回正常。该变更只收敛云端静态客户端，不修改盒子代码、数据库、媒体、摄像头配置或 TestFlight 工程。
 
+**部署证据**：提交 `f35d27d` 已通过 `npm test`、云端 Node 测试 `119` 项中 `118` 通过、`1` 项因本机未配置 PostgreSQL 集成地址跳过；正式云归档 `20260807142001-f35d27d15a4c` 已通过唯一安装器原子部署到腾讯云轻量服务器 `118.25.151.101`。迁移全部 skipped；`/opt/gohome/current`、远端静态客户端和公网脚本 SHA-256 均为 `f305cab849cd09f6c74168a309c1edfdb68bec93470174661f2e45e7a0835f51`。部署后 `gohome-app.service=active`、`NRestarts=0`、主进程退出码 `0`、PostgreSQL/WHEP 健康检查通过；匿名访问 `/api/app/cameras` 返回 `401`。未修改盒子、数据库业务数据、摄像头配置、媒体资产和 TestFlight 工程。
+
 ### 2026-08-07 控制面退休接口残留
 
 **发现**：前一轮已从盒子删除用户侧设备、包发布、rollout 和运行控制路由，但盒子仍保留用户查询型 `/api/v1/events`、`/api/v1/events/{id}`、`PATCH /api/v1/events/{id}` 和 `/api/v1/summary/today`。这些路由依赖已删除的 `current_user`/设备访问逻辑，属于断裂接口；正式管理端使用本地 `/api/events`，正式 iOS 事件读取使用生产云，不应再访问盒子用户查询面。
