@@ -271,7 +271,7 @@ def main() -> None:
     env_source = (EDGE_ROOT / ".env.example").read_text(encoding="utf-8")
     if any(
         marker in main_source or marker in settings_source or marker in env_source
-        for marker in ("ensure_demo_camera_if_empty", "GOHOME_ENABLE_DEMO_CAMERA", "demo:living_room")
+        for marker in ("ensure_demo_camera_if_empty", "GOHOME_ENABLE_DEMO_CAMERA", "demo:living_room", 'startswith("demo:")')
     ):
         raise SystemExit("demo camera injection remains in the production edge runtime")
     if (EDGE_ROOT / "scripts" / "configure-demo-mode.sh").exists():

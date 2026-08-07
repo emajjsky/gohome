@@ -96,6 +96,8 @@ def main() -> None:
     ]
     opens = {"count": 0}
     agent = CameraAgent(Path("/tmp/gohome-stream-test"))
+    transitions: list[dict[str, object]] = []
+    agent.add_source_change_listener(lambda transition: transitions.append(dict(transition)))
 
     def open_capture(_cv2, _source, _is_local):
         opens["count"] += 1
@@ -147,8 +149,17 @@ def main() -> None:
     frame_ids = [str(capture.get("frame_id") or "") for capture in captures_out]
     if len(set(frame_ids)) != len(frame_ids) or any(not frame_id for frame_id in frame_ids):
         raise SystemExit(f"effective frames do not have unique source-owned identities: {frame_ids}")
-    if int(captures_out[1].get("stream_generation") or 0) <= int(captures_out[0].get("stream_generation") or 0):
-        raise SystemExit("near-black recovery did not advance the stream generation")
+    discontinuities = [
+        transition
+        for transition in transitions
+        if transition.get("transition_type") == "stream_discontinuity"
+    ]
+    reasons = [str(transition.get("reason") or "") for transition in discontinuities]
+    generations = [int(transition.get("stream_generation") or 0) for transition in discontinuities]
+    if "stream_read_failed" not in reasons or "stream_near_black" not in reasons:
+        raise SystemExit(f"stream invalidations were not fully reported: {discontinuities}")
+    if generations != sorted(generations) or len(set(generations)) != len(generations):
+        raise SystemExit(f"stream generations are not strictly monotonic: {generations}")
     if any(mean < 80 for mean in stored_means):
         raise SystemExit(f"near-black frames entered the shared effective-frame cache: {stored_means}")
     if agent._frame_sequences.get("1") != len(stored_means):
@@ -212,6 +223,8 @@ def main() -> None:
         "capture_opens": opens["count"],
         "near_black_frames_suppressed": 5,
         "near_black_effective_fps": near_black_status["effective_fps"],
+        "stream_discontinuities": reasons,
+        "stream_generations": generations,
         "old_pixels_republished": False,
         "effective_frame_ids": frame_ids,
         "cache_ahead_duplicate_suppressed": True,

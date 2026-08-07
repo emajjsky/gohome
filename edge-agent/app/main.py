@@ -847,7 +847,7 @@ def root(request: Request) -> Response:
     if request_is_setup_hotspot(request):
         return captive_setup_page()
     cameras = storage.list_cameras()
-    if not cameras or all(str(camera.get("stream_url", "")).startswith("demo:") for camera in cameras):
+    if not cameras:
         return RedirectResponse(url=SETUP_NETWORK_PAGE)
     return RedirectResponse(url="/admin/index.html")
 
@@ -1635,7 +1635,6 @@ def capture_preview(camera_payload: Dict[str, Any]) -> Dict[str, Any]:
         rules = storage.get_rules()
         analysis_config = {
             **rules,
-            "force_demo_vision": str(camera_payload.get("stream_url", "")).strip().lower().startswith("demo:"),
         }
         capture = camera_agent.capture_frame(camera_payload, prefer_cache=False)
         analysis = detect_agent.analyze_frame_with_config(capture["frame"], config=analysis_config)
@@ -1710,7 +1709,6 @@ def capture_and_store(
         rules = storage.get_rules()
         analysis_config = {
             **rules,
-            "force_demo_vision": str(camera.get("stream_url", "")).strip().lower().startswith("demo:"),
             "camera_id": camera_id,
             **(analysis_overrides or {}),
         }
