@@ -13411,6 +13411,12 @@ P4 风险升频边界：
 - `verify-config-sync-agent.py`：`setup_required` 会使旧源禁用且 reconcile 集合为空，完整连接配置到达后同一摄像头 ID 恢复。
 - `verify-camera-stream-resilience.py`、`verify-live-relay-upload-pipeline.py`、Python compileall、`git diff --check` 均通过。
 
+### Pi 首轮部署证据
+
+- 提交 `1094411` 只精确安装 `app/camera_agent.py` 和 `app/config_sync_agent.py`；旧文件备份在 `/home/gohome/deploy-backups/1094411/app/`，没有运行全量清理/部署脚本，没有修改数据库、模型、校准文件或 `.env`。
+- 远端两个文件 SHA-256 与主线一致；`gohome-edge-agent.service` 单次重启后为 `active`，`NRestarts=0`。
+- `/health` 现场状态：两路 `managed_stream_count=2`、reader 均 `running=true/state=streaming`，解码与直播投递约 `15 FPS`；两路 H.264 `publish_ready=true`，隐私状态为 `ready`，当前模式为 `skeleton`。本次没有执行真实地址变化或拔插操作。
+
 ### 未关闭条件
 
 - 本轮没有触碰盒子真实数据、校准文件、ONVIF/PTZ 状态或运行中的服务；还没有把本项代码部署到 Pi。
