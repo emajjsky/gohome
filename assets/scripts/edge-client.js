@@ -172,22 +172,6 @@
         }
     }
 
-    function isDeviceAccessError(error) {
-        const detail = String(error?.message || "").trim();
-        return Number(error?.status || 0) === 403 && /do not have access to this device/i.test(detail);
-    }
-
-    async function withDeviceAccessFallback(primary, fallback) {
-        try {
-            return await primary();
-        } catch (error) {
-            if (!isDeviceAccessError(error) || typeof fallback !== "function") {
-                throw error;
-            }
-            return fallback();
-        }
-    }
-
     function safeLocalPath(value, fallback = "") {
         const raw = String(value || "").trim();
         if (!raw) return fallback;
@@ -532,10 +516,7 @@
 
     function appLatestSnapshot(cameraId, options = {}) {
         const suffix = latestSnapshotSuffix(options);
-        return withDeviceAccessFallback(
-            () => request(`/api/app/cameras/${cameraId}/snapshot/latest${suffix}`),
-            () => request(`/api/cameras/${cameraId}/snapshot/latest${suffix}`)
-        );
+        return request(`/api/app/cameras/${cameraId}/snapshot/latest${suffix}`);
     }
 
     async function appStreamPlaybackUrl(cameraId, options = {}) {
@@ -1050,10 +1031,7 @@
         v1CurrentUser: () => request("/api/v1/identity/me"),
         currentUser: () => request("/api/users/me", { cacheTtlMs: 300_000 }),
         v1VideoProfiles: () => request("/api/v1/video/profiles"),
-        appDevice: () => withDeviceAccessFallback(
-            () => request("/api/app/device", { cacheTtlMs: 10_000 }),
-            () => request("/api/device", { cacheTtlMs: 10_000 })
-        ),
+        appDevice: () => request("/api/app/device", { cacheTtlMs: 10_000 }),
         v1CreateHousehold: (payload) => request("/api/v1/households", {
             method: "POST",
             body: JSON.stringify(payload),
@@ -1225,10 +1203,7 @@
             headers: token ? { Authorization: `Bearer ${token}` } : {},
             body: JSON.stringify(payload),
         }),
-        appCameras: () => withDeviceAccessFallback(
-            () => request("/api/app/cameras", { cacheTtlMs: 10_000 }),
-            () => request("/api/cameras", { cacheTtlMs: 10_000 })
-        ),
+        appCameras: () => request("/api/app/cameras", { cacheTtlMs: 10_000 }),
         v1VideoMediaPlaybackUrl,
         cameras: () => request("/api/cameras"),
         createCamera: (payload) => request("/api/cameras", {
@@ -1253,35 +1228,17 @@
         },
         appLatestSnapshot,
         latestEvaluation: (cameraId) => request(`/api/cameras/${cameraId}/evaluation/latest`),
-        appLatestEvaluation: (cameraId) => withDeviceAccessFallback(
-            () => request(`/api/app/cameras/${cameraId}/evaluation/latest`),
-            () => request(`/api/cameras/${cameraId}/evaluation/latest`)
-        ),
-        appLatestEvaluationSummary: (cameraId) => withDeviceAccessFallback(
-            () => request(`/api/app/cameras/${cameraId}/evaluation/latest?view=summary`, { cacheTtlMs: 3_000 }),
-            () => request(`/api/cameras/${cameraId}/evaluation/latest?view=summary`, { cacheTtlMs: 3_000 })
-        ),
+        appLatestEvaluation: (cameraId) => request(`/api/app/cameras/${cameraId}/evaluation/latest`),
+        appLatestEvaluationSummary: (cameraId) => request(`/api/app/cameras/${cameraId}/evaluation/latest?view=summary`, { cacheTtlMs: 3_000 }),
         capture: (cameraId) => request(`/api/cameras/${cameraId}/capture`, { method: "POST" }),
-        appEvents: (params = "limit=30") => withDeviceAccessFallback(
-            () => request(`/api/app/events?${params}`, { cacheTtlMs: 3_000 }),
-            () => request(`/api/events?${params}`, { cacheTtlMs: 3_000 })
-        ),
+        appEvents: (params = "limit=30") => request(`/api/app/events?${params}`, { cacheTtlMs: 3_000 }),
         events: (params = "limit=30") => request(`/api/events?${params}`),
-        appEvent: (eventId) => withDeviceAccessFallback(
-            () => request(`/api/app/events/${eventId}`),
-            () => request(`/api/events/${eventId}`)
-        ),
+        appEvent: (eventId) => request(`/api/app/events/${eventId}`),
         event: (eventId) => request(`/api/events/${eventId}`),
-        appUpdateEvent: (eventId, patch) => withDeviceAccessFallback(
-            () => request(`/api/app/events/${eventId}`, {
-                method: "PATCH",
-                body: JSON.stringify(patch),
-            }),
-            () => request(`/api/events/${eventId}`, {
-                method: "PATCH",
-                body: JSON.stringify(patch),
-            })
-        ),
+        appUpdateEvent: (eventId, patch) => request(`/api/app/events/${eventId}`, {
+            method: "PATCH",
+            body: JSON.stringify(patch),
+        }),
         updateEvent: (eventId, patch) => request(`/api/events/${eventId}`, {
             method: "PATCH",
             body: JSON.stringify(patch),
@@ -1292,10 +1249,7 @@
             method: "PUT",
             body: JSON.stringify(rules),
         }),
-        appSummary: () => withDeviceAccessFallback(
-            () => request("/api/app/summary/today"),
-            () => request("/api/summary/today")
-        ),
+        appSummary: () => request("/api/app/summary/today"),
         summary: () => request("/api/summary/today"),
     };
 

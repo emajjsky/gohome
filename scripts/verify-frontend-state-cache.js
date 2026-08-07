@@ -150,6 +150,15 @@ function assertPetPresentationContract() {
     assert.doesNotMatch(adminScript, /pet\.type === "dog"/, "edge product UI must not infer a species label from raw model output");
 }
 
+function assertAppClientUsesCanonicalUserContract() {
+    const source = fs.readFileSync(path.resolve(__dirname, "../assets/scripts/edge-client.js"), "utf8");
+    assert.doesNotMatch(source, /withDeviceAccessFallback|isDeviceAccessError/, "app client must not keep a second user API path");
+    assert.match(source, /appDevice:\s*\(\)\s*=>\s*request\("\/api\/app\/device"/, "app device must use the app contract");
+    assert.match(source, /appCameras:\s*\(\)\s*=>\s*request\("\/api\/app\/cameras"/, "app cameras must use the app contract");
+    assert.match(source, /appEvents:\s*\(params = "limit=30"\)\s*=>\s*request\(`\/api\/app\/events/, "app events must use the app contract");
+    assert.match(source, /appSummary:\s*\(\)\s*=>\s*request\("\/api\/app\/summary\/today"/, "app summary must use the app contract");
+}
+
 async function flush() {
     await new Promise((resolve) => setImmediate(resolve));
 }
@@ -159,6 +168,7 @@ async function main() {
     assertAppShellNavigationCache();
     assertCareCardPresentationContract();
     assertPetPresentationContract();
+    assertAppClientUsesCanonicalUserContract();
     const harness = createHarness();
     const { context, window, localStorage, sessionStorage, events, fetches } = harness;
     let payload = { revision: 1 };
