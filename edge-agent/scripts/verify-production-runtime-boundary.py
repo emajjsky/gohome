@@ -230,6 +230,8 @@ def main() -> None:
         for marker in ("ensure_demo_camera_if_empty", "GOHOME_ENABLE_DEMO_CAMERA", "demo:living_room")
     ):
         raise SystemExit("demo camera injection remains in the production edge runtime")
+    if (EDGE_ROOT / "scripts" / "configure-demo-mode.sh").exists():
+        raise SystemExit("demo mode configuration script remains in the production edge package")
 
     pi_deployment = (EDGE_ROOT / "scripts" / "deploy-to-pi.sh").read_text(encoding="utf-8")
     required_pi_contract = (

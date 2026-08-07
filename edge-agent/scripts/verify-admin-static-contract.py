@@ -98,6 +98,21 @@ def main() -> None:
     ]
     if metric_violations:
         raise SystemExit({"forbidden_admin_metric_contract": metric_violations})
+    forbidden_demo_contracts = {
+        "demo camera URL": "demo:",
+        "demo camera classifier": "isDemoStreamUrl",
+        "retired camera mode state": "cameraMode",
+        "retired local demo action": "quickLocal",
+        "retired manual mode action": "modeRtsp",
+    }
+    demo_violations = [
+        {"file": file_name, "contract": label}
+        for file_name, source in admin_sources.items()
+        for label, forbidden in forbidden_demo_contracts.items()
+        if forbidden in source
+    ]
+    if demo_violations:
+        raise SystemExit({"forbidden_admin_demo_contract": demo_violations})
     required_stream_contracts = {
         "stream generation": "streamGeneration: 0",
         "fresh image element": "function replaceLiveStreamElement()",

@@ -10,7 +10,6 @@ const state = {
   cameraDiscovery: [],
   cameras: [],
   selectedCameraId: null,
-  cameraMode: "lan",
   maxCameras: 3,
   detectorBackend: "basic",
   latestSnapshot: null,
@@ -360,13 +359,9 @@ function userSafeError(message) {
   return text || "操作失败，请稍后重试。";
 }
 
-function isDemoStreamUrl(value) {
-  return String(value ?? "").trim().toLowerCase().startsWith("demo:");
-}
-
 function isLocalStreamUrl(value) {
   const streamUrl = String(value ?? "").trim().toLowerCase();
-  return isDemoStreamUrl(streamUrl) || /^(local|webcam|device|camera):/.test(streamUrl) || /^\d+$/.test(streamUrl);
+  return /^(local|webcam|device|camera):/.test(streamUrl) || /^\d+$/.test(streamUrl);
 }
 
 function normalizeStreamUrl(value) {
@@ -415,10 +410,6 @@ function preferredCameraId(cameras) {
 
 function selectedCamera() {
   return state.cameras.find((camera) => Number(camera.id) === Number(state.selectedCameraId)) || null;
-}
-
-function physicalCameras() {
-  return state.cameras.filter((camera) => !isDemoStreamUrl(camera.stream_url));
 }
 
 function defaultCameraHost() {
@@ -491,7 +482,6 @@ function prefillCameraForm() {
   setCameraStreamControls(state.cameraPresets?.default_path || "/1/2");
   if ($("cameraPassword")) $("cameraPassword").value = "";
   state.cameraFormPrefilled = true;
-  syncLanUrlPreview();
   updateCameraLimitState();
   resetCameraTestState();
 }
@@ -762,13 +752,11 @@ function renderCameraDiscovery() {
 
 function applyDiscoveredCamera(button) {
   if (!button) return;
-  setCameraMode("lan");
   if ($("cameraHost")) $("cameraHost").value = button.dataset.host || defaultCameraHost();
   if ($("cameraPort")) $("cameraPort").value = button.dataset.port || "554";
   setCameraStreamControls(button.dataset.path || "/1/2");
   if ($("cameraRoom")) $("cameraRoom").value ||= "客厅";
   syncCameraName();
-  syncLanUrlPreview();
   updateCameraLimitState();
   resetCameraTestState();
   if ($("cameraPassword")) $("cameraPassword").focus();
@@ -779,7 +767,7 @@ async function loadCameras(options = {}) {
   state.cameras = await api("/api/cameras");
   const current = selectedCamera();
   if (pageName === "cameras") {
-    state.selectedCameraId = physicalCameras()[0]?.id || null;
+    state.selectedCameraId = state.cameras[0]?.id || null;
   } else if (!current || !current.enabled || options.preferNetwork) {
     state.selectedCameraId = preferredCameraId(state.cameras);
   }
@@ -808,7 +796,7 @@ async function loadCameras(options = {}) {
 }
 
 function updateCameraLimitState() {
-  const count = physicalCameras().length;
+  const count = state.cameras.length;
   const remaining = Math.max(0, state.maxCameras - count);
   const managed = cameraConfigIsCloudManaged();
   setText(
@@ -819,7 +807,7 @@ function updateCameraLimitState() {
   );
   const submit = $("cameraForm")?.querySelector('button[type="submit"]');
   const target = normalizeStreamUrl(cameraPayloadPreviewUrl());
-  const editingExisting = physicalCameras().some((camera) => normalizeStreamUrl(camera.stream_url) === target);
+  const editingExisting = state.cameras.some((camera) => normalizeStreamUrl(camera.stream_url) === target);
   if (submit) {
     submit.disabled = managed || (count >= state.maxCameras && !editingExisting);
     submit.innerHTML = submit.disabled
@@ -843,7 +831,7 @@ function renderSetupCameras() {
     ${state.cameras.map((camera) => `
       <div class="setup-camera-item">
         <strong>${escapeHtml(cameraDisplayName(camera))} · ${escapeHtml(camera.room || "未设置")}</strong>
-        <span>${escapeHtml(isDemoStreamUrl(camera.stream_url) ? "演示画面，可替换为真实摄像头" : cameraDisplayStatus(camera))}</span>
+        <span>${escapeHtml(cameraDisplayStatus(camera))}</span>
       </div>
     `).join("")}
   `;
@@ -864,14 +852,14 @@ function renderCameraSelect() {
 function renderCameraList() {
   const list = $("cameraList");
   if (!list) return;
-  const cameras = physicalCameras();
+  const cameras = state.cameras;
   if (!cameras.length) {
     list.innerHTML = '<div class="empty-state">还没有摄像头。添加后会在这里显示。</div>';
     return;
   }
   list.innerHTML = cameras.map((camera) => {
     const active = Number(camera.id) === Number(state.selectedCameraId);
-    const typeLabel = isDemoStreamUrl(camera.stream_url) ? "演示" : isLocalStreamUrl(camera.stream_url) ? "本机" : "局域网";
+    const typeLabel = isLocalStreamUrl(camera.stream_url) ? "本机" : "局域网";
     return `
       <article class="camera-row ${active ? "active" : ""} ${camera.enabled ? "" : "disabled"}">
         <div>
@@ -901,82 +889,22 @@ function buildLanRtspUrl() {
 }
 
 function cameraPayloadPreviewUrl() {
-  if (state.cameraMode === "lan") return buildLanRtspUrl();
-  return $("cameraUrl")?.value.trim() || "";
-}
-
-function syncLanUrlPreview() {
-  if (state.cameraMode === "lan" && $("cameraUrl")) $("cameraUrl").value = buildLanRtspUrl();
-}
-
-function setCameraMode(mode) {
-  state.cameraMode = mode;
-  for (const [id, active] of [["modeLan", mode === "lan"], ["modeRtsp", mode === "rtsp"], ["quickLocal", mode === "local"]]) {
-    if ($(id)) $(id).classList.toggle("active", active);
-  }
-  const lan = mode === "lan";
-  const manual = mode === "rtsp";
-  if ($("cameraAdvancedFields")) {
-    $("cameraAdvancedFields").classList.toggle("hidden", !lan);
-    $("cameraAdvancedFields").hidden = !lan;
-  }
-  for (const id of ["cameraHostField", "cameraPasswordQuickField", "cameraPortField", "cameraUserField", "cameraChannelField", "cameraStreamField"]) {
-    if ($(id)) {
-      $(id).classList.toggle("hidden", !lan);
-      $(id).hidden = !lan;
-    }
-  }
-  if ($("cameraUrlField")) {
-    $("cameraUrlField").classList.toggle("hidden", !manual);
-    $("cameraUrlField").hidden = !manual;
-  }
-  if (mode === "lan") {
-    if ($("cameraRoom")) $("cameraRoom").value ||= "客厅";
-    syncCameraName();
-    if ($("cameraHost")) $("cameraHost").value ||= defaultCameraHost();
-    if ($("cameraPort")) $("cameraPort").value ||= "554";
-    if ($("cameraUsername")) $("cameraUsername").value ||= "admin";
-    setCameraStreamControls(cameraStreamPath());
-    syncLanUrlPreview();
-  }
-  if (mode === "rtsp") {
-    if ($("cameraRoom")) $("cameraRoom").value ||= "客厅";
-    syncCameraName();
-    if ($("cameraUrl")) $("cameraUrl").value = buildLanRtspUrl();
-  }
-  if (mode === "local") {
-    if ($("cameraRoom")) $("cameraRoom").value = "客厅";
-    if ($("cameraName")) $("cameraName").value = "客厅演示摄像头";
-    if ($("cameraUrl")) $("cameraUrl").value = "demo:living_room";
-  }
-  updateCameraLimitState();
+  return buildLanRtspUrl();
 }
 
 function cameraPayloadFromForm() {
   syncCameraName();
   const name = $("cameraName").value.trim();
   const room = $("cameraRoom").value.trim();
-  if (state.cameraMode === "lan") {
-    const streamUrl = buildLanRtspUrl();
-    if (!streamUrl) throw new Error("请填写摄像头 IP");
-    const password = $("cameraPasswordQuick")?.value || $("cameraPassword")?.value || "";
-    return {
-      name: name || `${room || "客厅"}摄像头`,
-      room,
-      stream_url: streamUrl,
-      username: $("cameraUsername").value.trim() || null,
-      password: password || null,
-      enabled: true,
-    };
-  }
-  const streamUrl = $("cameraUrl").value.trim();
-  if (!streamUrl) throw new Error("请填写视频地址");
+  const streamUrl = buildLanRtspUrl();
+  if (!streamUrl) throw new Error("请填写摄像头 IP");
+  const password = $("cameraPassword")?.value || "";
   return {
-    name: name || (state.cameraMode === "local" ? "客厅演示摄像头" : `${room || "客厅"}摄像头`),
+    name: name || `${room || "客厅"}摄像头`,
     room,
     stream_url: streamUrl,
-    username: null,
-    password: null,
+    username: $("cameraUsername").value.trim() || null,
+    password: password || null,
     enabled: true,
   };
 }
@@ -1016,7 +944,7 @@ async function saveCamera(payload) {
   }
   const target = normalizeStreamUrl(payload.stream_url);
   const existing = state.cameras.find((camera) => normalizeStreamUrl(camera.stream_url) === target);
-  if (!existing && !isDemoStreamUrl(payload.stream_url) && physicalCameras().length >= state.maxCameras) {
+  if (!existing && state.cameras.length >= state.maxCameras) {
     throw new Error("最多只能接入 3 路摄像头");
   }
   const camera = existing
@@ -2699,32 +2627,22 @@ function bindEvents() {
     await loadRuntimeStatus().catch(() => null);
     startLiveAnalysisLoop();
   });
-  on("modeLan", "click", () => setCameraMode("lan"));
-  on("modeRtsp", "click", () => setCameraMode("rtsp"));
-  on("quickLocal", "click", () => setCameraMode("local"));
   on("cameraRoom", "input", () => {
     syncCameraName();
     updateCameraLimitState();
     resetCameraTestState();
   });
   on("cameraPassword", "input", resetCameraTestState);
-  on("cameraPasswordQuick", "input", () => {
-    if ($("cameraPassword")) $("cameraPassword").value = $("cameraPasswordQuick").value;
-    resetCameraTestState();
-  });
   for (const id of ["cameraHost", "cameraPort", "cameraChannel", "cameraStream"]) {
     on(id, "input", () => {
-      syncLanUrlPreview();
       updateCameraLimitState();
       resetCameraTestState();
     });
     on(id, "change", () => {
-      syncLanUrlPreview();
       updateCameraLimitState();
       resetCameraTestState();
     });
   }
-  on("cameraUrl", "input", updateCameraLimitState);
   const form = $("cameraForm");
   if (form) {
     form.addEventListener("submit", async (event) => {
@@ -2827,7 +2745,6 @@ document.addEventListener("DOMContentLoaded", () => {
   hydrateAdminSession();
   ensureVideoPrivacyControl();
   bindEvents();
-  if (pageName === "cameras") setCameraMode("lan");
   loadVideoPrivacyMode({ refreshStream: false })
     .catch(() => null)
     .finally(() => refreshAll());
