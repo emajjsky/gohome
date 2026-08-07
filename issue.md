@@ -881,3 +881,5 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 **处理**：删除上述无调用辅助方法，保留 `get_rules/update_rules`、设备同步的 `ensure/report/mark-applied`、上传队列的 `claim/complete/fail/list/summary` 以及检测结果写入。历史 `device_sync_states`、`upload_jobs` 和 `detection_results` 表及迁移保持不变，不改现有同步数据或上传记录。
 
 **验收要求**：生产边界门禁禁止旧辅助方法回归；设备同步、上传租约恢复、媒体留存、检测/事件、完整边缘回归和 Python 编译通过；不得出现第二套目标配置或上传状态写入路径。
+
+**部署证据**：提交 `d6af43a` 已通过完整边缘回归 `59/59` 并部署到 `192.168.1.12`；远端 `.release-commit` 为 `d6af43a0cc9a12f232e115b36fac193508bd7df3`。部署后服务 `active/running`、`NRestarts=0`、主进程退出码 `0`；摄像头 31/32 解码与实时发布约 `14.97-15.06 FPS`，有效内容约 `13.34/14.17 FPS`，重连和读取失败均为 `0`；Pose 状态 `ready`，成功推理 `149` 次、失败 `0` 次；两路隐私状态均为 `ready`，配置同步连续失败 `0`，最近十分钟 warning 为空。历史同步、上传和检测结果表未删除，运行数据与校准基线未替换。
