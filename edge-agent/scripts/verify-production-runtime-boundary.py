@@ -212,6 +212,10 @@ def main() -> None:
         "update_message_candidate_status",
         "get_elder_profile",
         "upsert_elder_profile",
+        "create_device_rollout",
+        "get_device_rollout",
+        "list_device_rollouts",
+        "update_device_rollout_state",
     }
     storage_methods = {
         node.name
