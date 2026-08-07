@@ -159,6 +159,7 @@ Restart=always
 RestartSec=3
 TimeoutStopSec=15
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHON_BIN=$PYTHON_BIN
 Environment=GOHOME_AGENT_DATA_DIR=$AGENT_ROOT/data
 

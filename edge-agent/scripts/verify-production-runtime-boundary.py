@@ -214,6 +214,7 @@ def main() -> None:
         "Restart=always",
         "systemctl enable \"$SERVICE_NAME\"",
         "systemctl restart \"$SERVICE_NAME\"",
+        "Environment=PYTHONDONTWRITEBYTECODE=1",
     )
     missing_systemd = [item for item in required_systemd_contract if item not in deployment]
     if missing_systemd:

@@ -51,6 +51,8 @@ PYTHON_BIN="$(select_python_bin)" || {
   exit 1
 }
 
+export PYTHONDONTWRITEBYTECODE="${PYTHONDONTWRITEBYTECODE:-1}"
+
 exec "$PYTHON_BIN" -m uvicorn app.main:app \
   --host "${GOHOME_AGENT_HOST:-0.0.0.0}" \
   --port "${GOHOME_AGENT_PORT:-8711}" \
