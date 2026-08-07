@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.error import HTTPError, URLError
@@ -39,7 +39,6 @@ from .package_service import PackageService
 from .pairing_window import PairingWindow
 from .resource_monitor import SystemResourceMonitor
 from .schemas import (
-    CalendarEventCreate,
     AdminLogin,
     AdminPasswordChange,
     CameraCreate,
@@ -47,16 +46,10 @@ from .schemas import (
     DeviceBindingCodeCreate,
     DeviceBindingCreate,
     DeviceHeartbeatIn,
-    ElderProfileUpsert,
     DeviceTokenExchange,
     EventUpdate,
-    FamilyCreate,
-    MessageGenerateRequest,
-    MessageStatusUpdate,
     V1DeviceUpgradeRun,
     RulesUpdate,
-    UserLogin,
-    UserRegister,
     WifiConnectRequest,
     V1PackageDownloadLinkCreate,
     V1PackageReleaseCreate,
@@ -451,11 +444,6 @@ def require_local_camera_mutation() -> None:
         )
 
 
-def require_family_access(user: Dict[str, Any], family_id: int) -> None:
-    if int(family_id) not in set(storage.list_user_family_ids(int(user["id"]))):
-        raise HTTPException(status_code=403, detail="You do not have access to this family")
-
-
 def record_local_package_execution(device_id: str, family_id: int) -> None:
     state = storage.ensure_device_sync_state(device_id, family_id)
     status = dict(state.get("reported_status") or {})
@@ -584,180 +572,6 @@ def resolve_accessible_family_id(user: Dict[str, Any], device_id: str) -> int:
     if not accessible_family_ids:
         raise HTTPException(status_code=403, detail="You do not have access to this device")
     return int(accessible_family_ids[0])
-
-
-def resolve_user_family_id(user: Dict[str, Any], requested_family_id: int | None = None) -> int:
-    user_family_ids = sorted(set(storage.list_user_family_ids(int(user["id"]))))
-    if requested_family_id is not None:
-        family_id = int(requested_family_id)
-        if family_id not in user_family_ids:
-            raise HTTPException(status_code=403, detail="You are not a member of this family")
-        return family_id
-    if not user_family_ids:
-        raise HTTPException(status_code=400, detail="Please create or join a family first")
-    return int(user_family_ids[0])
-
-
-def parse_iso_day(value: str) -> datetime | None:
-    clean_value = str(value or "").strip()
-    if not clean_value:
-        return None
-    try:
-        return datetime.fromisoformat(clean_value.replace("Z", "+00:00"))
-    except ValueError:
-        try:
-            return datetime.fromisoformat(f"{clean_value}T00:00:00+08:00")
-        except ValueError:
-            return None
-
-
-def build_mock_weather_signal(city: str, today: datetime | None = None) -> Dict[str, Any]:
-    current = today or datetime.now(timezone.utc)
-    signals = [
-        {"condition": "thunderstorm", "alerts": ["雷暴雨"], "temperature_min": 24, "temperature_max": 31},
-        {"condition": "cooling", "alerts": ["降温"], "temperature_min": 18, "temperature_max": 24},
-        {"condition": "hot", "alerts": ["高温"], "temperature_min": 28, "temperature_max": 36},
-        {"condition": "breezy", "alerts": ["大风"], "temperature_min": 22, "temperature_max": 29},
-    ]
-    signal = signals[current.day % len(signals)]
-    return {
-        "city": city or "苏州",
-        "date": current.astimezone(timezone.utc).date().isoformat(),
-        "condition": signal["condition"],
-        "temperature_min": signal["temperature_min"],
-        "temperature_max": signal["temperature_max"],
-        "alerts": signal["alerts"],
-        "source": "mock_weather_v1",
-    }
-
-
-def build_message_candidate_payloads(
-    *,
-    family_id: int,
-    elder_id: str,
-    device_id: str,
-    elder_profile: Dict[str, Any] | None,
-    calendar_events: list[Dict[str, Any]],
-    weather_signal: Dict[str, Any],
-    scenario_types: list[str],
-) -> list[Dict[str, Any]]:
-    requested = {item.strip() for item in scenario_types if str(item or "").strip()}
-    now = datetime.now(timezone.utc)
-    messages: list[Dict[str, Any]] = []
-    display_name = str((elder_profile or {}).get("display_name") or "妈妈")
-    likes = list((elder_profile or {}).get("likes") or [])
-    like_text = likes[0] if likes else "你回家陪她吃顿饭"
-
-    if not requested or "calendar" in requested:
-        for calendar_event in calendar_events:
-            event_type = str(calendar_event.get("type") or "").strip()
-            event_date = parse_iso_day(str(calendar_event.get("start_at") or ""))
-            if event_type != "birthday" or event_date is None:
-                continue
-            delta_days = (event_date.date() - now.date()).days
-            if delta_days < 0 or delta_days > 7:
-                continue
-            prefix = "今天" if delta_days == 0 else "明天" if delta_days == 1 else f"{delta_days} 天后"
-            messages.append(
-                {
-                    "message_id": f"msg_{uuid4().hex[:16]}",
-                    "family_id": family_id,
-                    "device_id": device_id,
-                    "elder_id": elder_id,
-                    "message_type": "gohome",
-                    "priority": "warm",
-                    "title": f"{prefix}是{display_name}生日",
-                    "subtitle": f"她喜欢{like_text}，也会更想见到你。",
-                    "body": "建议提前准备一个小心意，或者把回家时间先定下来。",
-                    "facts": [
-                        f"日历：{calendar_event.get('title') or '生日提醒'}",
-                        f"日期：{str(calendar_event.get('start_at') or '')[:10]}",
-                    ],
-                    "image_mode": "generated",
-                    "image_url": "",
-                    "actions": [
-                        {"key": "call", "label": "打电话"},
-                        {"key": "schedule_visit", "label": "安排回家"},
-                    ],
-                    "source": ["elder_profile", "calendar"],
-                    "source_event_ids": [],
-                    "source_media_ids": [],
-                    "generated_by": "calendar_rule_v1",
-                    "status": "open",
-                    "expires_at": (event_date + timedelta(days=1)).isoformat(),
-                }
-            )
-            break
-
-    if not requested or "weather" in requested:
-        alerts = list(weather_signal.get("alerts") or [])
-        if alerts:
-            first_alert = str(alerts[0])
-            messages.append(
-                {
-                    "message_id": f"msg_{uuid4().hex[:16]}",
-                    "family_id": family_id,
-                    "device_id": device_id,
-                    "elder_id": elder_id,
-                    "message_type": "accompany",
-                    "priority": "warm",
-                    "title": f"今天{weather_signal.get('city') or '家里那边'}有{first_alert}",
-                    "subtitle": f"可以提醒{display_name}少出门，先把窗户和阳台看一眼。",
-                    "body": "如果她今天要出门，建议先打个电话确认一下。",
-                    "facts": [
-                        f"天气：{first_alert}",
-                        f"温度：{weather_signal.get('temperature_min')} - {weather_signal.get('temperature_max')}°C",
-                    ],
-                    "image_mode": "generated",
-                    "image_url": "",
-                    "actions": [
-                        {"key": "call", "label": "打电话"},
-                        {"key": "send_message", "label": "发消息"},
-                    ],
-                    "source": ["weather_signal", "elder_profile"],
-                    "source_event_ids": [],
-                    "source_media_ids": [],
-                    "generated_by": "weather_rule_v1",
-                    "status": "open",
-                    "expires_at": "",
-                }
-            )
-
-    if not requested or "event" in requested:
-        latest_events = storage.list_events(limit=1, acknowledged=False)
-        if latest_events:
-            latest_event = latest_events[0]
-            messages.append(
-                {
-                    "message_id": f"msg_{uuid4().hex[:16]}",
-                    "family_id": family_id,
-                    "device_id": device_id,
-                    "elder_id": elder_id,
-                    "message_type": "alert",
-                    "priority": "warning",
-                    "title": str(latest_event.get("summary") or "家里有一条需要确认的提醒"),
-                    "subtitle": "这条消息来自盒子侧真实事件，不是情绪化猜测。",
-                    "body": "建议先看一眼事件详情，再决定要不要打电话或标记已确认。",
-                    "facts": [
-                        f"类型：{latest_event.get('type') or ''}",
-                        f"房间：{latest_event.get('room') or '未标记'}",
-                    ],
-                    "image_mode": "evidence" if latest_event.get("snapshot_path") else "none",
-                    "image_url": latest_event.get("snapshot_url") or "",
-                    "actions": [
-                        {"key": "view_event", "label": "查看事件"},
-                        {"key": "ack", "label": "标记已确认"},
-                    ],
-                    "source": ["vision_event"],
-                    "source_event_ids": [int(latest_event["id"])],
-                    "source_media_ids": [],
-                    "generated_by": "event_rule_v1",
-                    "status": "open",
-                    "expires_at": "",
-                }
-            )
-
-    return messages
 
 
 def build_device_sync_view(device_id: str, family_id: int) -> Dict[str, Any]:
@@ -1888,209 +1702,6 @@ async def discover_cameras(limit: int = 24) -> Dict[str, Any]:
     bounded_limit = max(1, min(int(limit), 48))
     cameras = await run_in_threadpool(discover_lan_cameras, bounded_limit)
     return {"cameras": cameras, "count": len(cameras), "subnet": ".".join(local_ip().split(".")[:3]) + ".0/24"}
-
-
-@app.post("/api/auth/register")
-def register_user(payload: UserRegister) -> Dict[str, Any]:
-    try:
-        user = storage.create_user(payload.email, payload.password, payload.display_name)
-    except ValueError as exc:
-        detail = str(exc)
-        status_code = 409 if "already registered" in detail else 400
-        raise HTTPException(status_code=status_code, detail=detail) from exc
-    session = storage.create_auth_session(int(user["id"]))
-    return {"user": user, **session}
-
-
-@app.post("/api/auth/login")
-def login_user(payload: UserLogin) -> Dict[str, Any]:
-    user = storage.authenticate_user(payload.email, payload.password)
-    if user is None:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    session = storage.create_auth_session(int(user["id"]))
-    return {"user": user, **session}
-
-
-@app.get("/api/users/me")
-def get_current_user(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    return user
-
-
-@app.post("/api/v1/identity/register")
-def v1_register_user(payload: UserRegister) -> Dict[str, Any]:
-    return register_user(payload)
-
-
-@app.post("/api/v1/identity/login")
-def v1_login_user(payload: UserLogin) -> Dict[str, Any]:
-    return login_user(payload)
-
-
-@app.get("/api/v1/identity/me")
-def v1_current_user(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    return user
-
-
-@app.post("/api/families")
-def create_family(payload: FamilyCreate, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    try:
-        return storage.create_family(payload.name, int(user["id"]))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/api/families/mine")
-def list_my_families(user: Dict[str, Any] = Depends(current_user)) -> list[Dict[str, Any]]:
-    return storage.list_user_families(int(user["id"]))
-
-
-@app.post("/api/v1/households")
-def v1_create_household(payload: FamilyCreate, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    return create_family(payload, user)
-
-
-@app.get("/api/v1/households/mine")
-def v1_list_households(user: Dict[str, Any] = Depends(current_user)) -> list[Dict[str, Any]]:
-    return list_my_families(user)
-
-
-@app.get("/api/v1/families/{family_id}/elders/{elder_id}/profile")
-def v1_get_elder_profile(
-    family_id: int,
-    elder_id: str,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    require_family_access(user, family_id)
-    profile = storage.get_elder_profile(family_id=family_id, elder_id=elder_id)
-    if profile is None:
-        raise HTTPException(status_code=404, detail="Elder profile not found")
-    return profile
-
-
-@app.put("/api/v1/families/{family_id}/elders/{elder_id}/profile")
-def v1_upsert_elder_profile(
-    family_id: int,
-    elder_id: str,
-    payload: ElderProfileUpsert,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    require_family_access(user, family_id)
-    try:
-        return storage.upsert_elder_profile(family_id=family_id, elder_id=elder_id, payload=model_dump(payload))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/api/v1/families/{family_id}/calendar-events")
-def v1_list_calendar_events(
-    family_id: int,
-    elder_id: str = Query(default=""),
-    user: Dict[str, Any] = Depends(current_user),
-) -> list[Dict[str, Any]]:
-    require_family_access(user, family_id)
-    return storage.list_calendar_events(family_id=family_id, elder_id=elder_id)
-
-
-@app.post("/api/v1/families/{family_id}/calendar-events")
-def v1_create_calendar_event(
-    family_id: int,
-    payload: CalendarEventCreate,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    require_family_access(user, family_id)
-    return storage.create_calendar_event(family_id=family_id, payload=model_dump(payload))
-
-
-@app.get("/api/v1/families/{family_id}/weather-signals")
-def v1_list_weather_signals(
-    family_id: int,
-    elder_id: str = Query(default="elder_primary"),
-    city: str = Query(default=""),
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    require_family_access(user, family_id)
-    resolved_city = city.strip()
-    if not resolved_city:
-        profile = storage.get_elder_profile(family_id=family_id, elder_id=elder_id)
-        resolved_city = str((profile or {}).get("city") or "").strip()
-    return build_mock_weather_signal(resolved_city)
-
-
-@app.post("/api/v1/internal/messages/generate")
-def v1_generate_messages(
-    payload: MessageGenerateRequest,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    family_id = resolve_user_family_id(user, payload.family_id)
-    elder_id = str(payload.elder_id or "elder_primary").strip() or "elder_primary"
-    elder_profile = storage.get_elder_profile(family_id=family_id, elder_id=elder_id)
-    calendar_events = storage.list_calendar_events(family_id=family_id, elder_id=elder_id)
-    weather_signal = build_mock_weather_signal(str((elder_profile or {}).get("city") or "").strip())
-    if payload.clear_existing:
-        storage.clear_message_candidates(family_id=family_id, elder_id=elder_id)
-    generated_messages = []
-    for message in build_message_candidate_payloads(
-        family_id=family_id,
-        elder_id=elder_id,
-        device_id=current_device_id(),
-        elder_profile=elder_profile,
-        calendar_events=calendar_events,
-        weather_signal=weather_signal,
-        scenario_types=payload.scenario_types,
-    ):
-        generated_messages.append(storage.create_message_candidate(message))
-    return {
-        "family_id": family_id,
-        "elder_id": elder_id,
-        "weather_signal": weather_signal,
-        "messages": generated_messages,
-    }
-
-
-@app.get("/api/v1/app/messages")
-def v1_list_app_messages(
-    family_id: int | None = Query(default=None),
-    limit: int = 20,
-    status: str = Query(default=""),
-    user: Dict[str, Any] = Depends(current_user),
-) -> list[Dict[str, Any]]:
-    resolved_family_id = resolve_user_family_id(user, family_id)
-    return storage.list_message_candidates(
-        family_id=resolved_family_id,
-        limit=max(1, min(limit, 100)),
-        status=status or None,
-    )
-
-
-@app.get("/api/v1/app/messages/{message_id}")
-def v1_get_app_message(
-    message_id: str,
-    family_id: int | None = Query(default=None),
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    resolved_family_id = resolve_user_family_id(user, family_id)
-    message = storage.get_message_candidate(family_id=resolved_family_id, message_id=message_id)
-    if message is None:
-        raise HTTPException(status_code=404, detail="Message not found")
-    return message
-
-
-@app.patch("/api/v1/app/messages/{message_id}")
-def v1_update_app_message(
-    message_id: str,
-    patch: MessageStatusUpdate,
-    family_id: int | None = Query(default=None),
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    resolved_family_id = resolve_user_family_id(user, family_id)
-    message = storage.update_message_candidate_status(
-        family_id=resolved_family_id,
-        message_id=message_id,
-        status=patch.status,
-    )
-    if message is None:
-        raise HTTPException(status_code=404, detail="Message not found")
-    return message
 
 
 @app.post("/api/device-bindings")

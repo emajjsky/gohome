@@ -125,6 +125,22 @@ def main() -> None:
 
     routes = decorated_routes(APP_DIR / "main.py")
     retired_routes = {
+        "/api/auth/register",
+        "/api/auth/login",
+        "/api/users/me",
+        "/api/v1/identity/register",
+        "/api/v1/identity/login",
+        "/api/v1/identity/me",
+        "/api/families",
+        "/api/families/mine",
+        "/api/v1/households",
+        "/api/v1/households/mine",
+        "/api/v1/families/{family_id}/elders/{elder_id}/profile",
+        "/api/v1/families/{family_id}/calendar-events",
+        "/api/v1/families/{family_id}/weather-signals",
+        "/api/v1/internal/messages/generate",
+        "/api/v1/app/messages",
+        "/api/v1/app/messages/{message_id}",
         "/api/v1/runtime/edge-service",
         "/api/v1/runtime/edge-service/install",
         "/api/v1/runtime/edge-service/reload",

@@ -79,61 +79,6 @@ class EventUpdate(BaseModel):
     resolution: Optional[str] = Field(None, max_length=40)
 
 
-class UserRegister(BaseModel):
-    email: str = Field(..., min_length=3, max_length=120)
-    password: str = Field(..., min_length=6, max_length=128)
-    display_name: str = Field(..., min_length=1, max_length=40)
-
-
-class UserLogin(BaseModel):
-    email: str = Field(..., min_length=3, max_length=120)
-    password: str = Field(..., min_length=6, max_length=128)
-
-
-class FamilyCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=60)
-
-
-class ElderProfileUpsert(BaseModel):
-    display_name: str = Field(..., min_length=1, max_length=40)
-    relationship: str = Field(default="", max_length=40)
-    city: str = Field(default="", max_length=80)
-    birthday: str = Field(default="", max_length=40)
-    lunar_birthday: str = Field(default="", max_length=40)
-    living_status: str = Field(default="", max_length=40)
-    primary_room: str = Field(default="", max_length=80)
-    likes: list[str] = Field(default_factory=list)
-    dislikes: list[str] = Field(default_factory=list)
-    diet_notes: list[str] = Field(default_factory=list)
-    health_conditions: list[str] = Field(default_factory=list)
-    medication_notes: str = Field(default="", max_length=200)
-    routine: Dict[str, Any] = Field(default_factory=dict)
-    emergency_contacts: list[str] = Field(default_factory=list)
-    home_area: str = Field(default="", max_length=120)
-    privacy_level: str = Field(default="family_only", max_length=40)
-
-
-class CalendarEventCreate(BaseModel):
-    elder_id: str = Field(default="elder_primary", min_length=1, max_length=80)
-    type: str = Field(..., min_length=1, max_length=40)
-    title: str = Field(..., min_length=1, max_length=80)
-    start_at: str = Field(..., min_length=4, max_length=40)
-    remind_before_days: list[int] = Field(default_factory=list)
-    source: str = Field(default="manual", max_length=40)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class MessageGenerateRequest(BaseModel):
-    family_id: Optional[int] = Field(default=None, ge=1)
-    elder_id: Optional[str] = Field(default=None, min_length=1, max_length=80)
-    scenario_types: list[str] = Field(default_factory=list)
-    clear_existing: bool = True
-
-
-class MessageStatusUpdate(BaseModel):
-    status: str = Field(..., pattern="^(open|read|done|dismissed)$")
-
-
 class DeviceBindingCreate(BaseModel):
     family_id: int
     device_id: Optional[str] = Field(None, min_length=1, max_length=120)
