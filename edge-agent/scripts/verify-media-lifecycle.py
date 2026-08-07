@@ -68,6 +68,34 @@ def insert_media_asset(
         ).lastrowid)
 
 
+def insert_lifecycle_family(storage: Storage) -> int:
+    timestamp = now_iso()
+    with storage.connect() as conn:
+        user_id = int(conn.execute(
+            """
+            INSERT INTO users (
+                email, password_salt, password_hash, display_name, created_at, updated_at
+            ) VALUES ('lifecycle@gohome.test', 'fixture-salt', 'fixture-hash', 'Lifecycle', ?, ?)
+            """,
+            (timestamp, timestamp),
+        ).lastrowid)
+        family_id = int(conn.execute(
+            """
+            INSERT INTO families (name, created_by, created_at, updated_at)
+            VALUES ('Lifecycle family', ?, ?, ?)
+            """,
+            (user_id, timestamp, timestamp),
+        ).lastrowid)
+        conn.execute(
+            """
+            INSERT INTO family_members (family_id, user_id, role, status, created_at, updated_at)
+            VALUES (?, ?, 'owner', 'active', ?, ?)
+            """,
+            (family_id, user_id, timestamp, timestamp),
+        )
+    return family_id
+
+
 def main() -> None:
     with TemporaryDirectory() as temp_dir:
         data_dir = Path(temp_dir)
@@ -116,9 +144,7 @@ def main() -> None:
             }
         if lifecycle_foreign_keys != {"asset_id": "SET NULL", "snapshot_id": "SET NULL"}:
             raise SystemExit(f"media lifecycle foreign key migration failed: {lifecycle_foreign_keys}")
-        user = storage.create_user("lifecycle@gohome.test", "retention-test", "Lifecycle")
-        family = storage.create_family("Lifecycle family", int(user["id"]))
-        family_id = int(family["id"])
+        family_id = insert_lifecycle_family(storage)
         camera = storage.create_camera({
             "name": "客厅",
             "room": "客厅",
