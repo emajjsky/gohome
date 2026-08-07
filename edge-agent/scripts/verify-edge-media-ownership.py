@@ -46,8 +46,10 @@ def main() -> None:
             raise SystemExit(f"retired edge media implementation remains: {symbol}")
 
     package_routes = (ROOT / "app" / "package_artifact_service.py").read_text(encoding="utf-8")
-    if "/api/v1/package-artifacts/uploads" not in package_routes:
-        raise SystemExit("signed package artifact upload route is missing")
+    if any(marker in package_routes for marker in ("APIRouter", "package-artifacts/uploads", "public_package_artifact_path")):
+        raise SystemExit("edge still owns package artifact upload or public download routes")
+    if "def asset_file_path" not in package_routes or "retention_class" not in package_routes:
+        raise SystemExit("edge package installer lost read-only artifact validation")
     upload_agent = (ROOT / "app" / "upload_agent.py").read_text(encoding="utf-8")
     if "source.read_bytes()" in upload_agent:
         raise SystemExit("edge evidence upload still reads the complete file into memory")

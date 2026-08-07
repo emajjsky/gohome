@@ -99,24 +99,6 @@ class V1DeviceEventIngest(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 
-class V1PackageArtifactUploadCreate(BaseModel):
-    family_id: int
-    file_name: str = Field(..., min_length=1, max_length=200)
-    content_type: str = Field(default="application/octet-stream", max_length=120)
-    byte_size: int = Field(..., ge=1, le=52428800)
-    device_id: str = Field(default="", max_length=120)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class V1PackageArtifactUploadComplete(BaseModel):
-    content_type: str = Field(default="", max_length=120)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class V1PackageArtifactPublicLinkCreate(BaseModel):
-    expires_in_seconds: int = Field(default=900, ge=60, le=86400)
-
-
 class V1DeviceUpgradeRun(BaseModel):
     package_types: list[str] = Field(default_factory=list)
 
