@@ -13391,3 +13391,27 @@ P4 风险升频边界：
 ### 未关闭条件
 
 - 这项修复只解决重连链路不应重启发布线程的问题，不会凭空知道摄像头的绝对云台角度。支持用户控制云台仍需真实摄像头的 ONVIF/PTZ 能力确认；在没有 PTZ 位置反馈时，继续使用已确认机位的画面匹配和未知机位空房确认边界。
+## 212. 2026-08-07 摄像头源生命周期失败边界收口
+
+### 根因
+
+- 旧 `reconcile_managed_streams()` 调用 reader `stop()` 后不检查线程是否真的退出；当 RTSP/OpenCV 的阻塞读取超过关停等待时间时，代码仍会移除旧托管记录、清缓存并创建新 reader。结果是数据库同步成功，但旧线程可能继续读取，形成源生命周期分裂和重复采集。
+- 配置记录进入 `setup_required` 时只更新旧摄像头的状态，没有禁用旧连接；云端认为该摄像头等待本地配置，盒子却仍可能继续使用上一次的 URL。
+
+### 实现
+
+- `_SharedStreamReader.stop()` 现在返回线程是否在固定期限内退出；`CameraAgent` 只有在停止成功后才清理共享注册、托管记录和旧缓存。
+- 停止失败时保留旧 reader 的共享所有权，标记为退出中；配置切换抛出明确 `CameraError`，新的 `capture_frame()` 和 `raw_frames()` 禁止旁路打开第二个源，下一次配置同步继续重试。
+- 最后一个订阅者退出时也保留未能停止的 reader，直到线程真实退出后才从共享注册移除，避免普通预览退出产生后台泄漏或重复 reader。
+- `ConfigSyncAgent` 遇到云端 `setup_required` 会禁用旧本地摄像头并保留本地 ID/映射；收到完整 URL、凭据和启用状态后按原 ID 原位更新，再由统一 reconcile 启动新源。
+
+### 自动验证
+
+- `verify-camera-shared-stream.py`：停止失败不得创建替代 reader、不得丢失仍活跃的共享所有权，新的抓帧请求不得打开旁路采集；正常地址变更仍确认旧 reader 退出、旧缓存不可读、新 source key/stream generation 生效。
+- `verify-config-sync-agent.py`：`setup_required` 会使旧源禁用且 reconcile 集合为空，完整连接配置到达后同一摄像头 ID 恢复。
+- `verify-camera-stream-resilience.py`、`verify-live-relay-upload-pipeline.py`、Python compileall、`git diff --check` 均通过。
+
+### 未关闭条件
+
+- 本轮没有触碰盒子真实数据、校准文件、ONVIF/PTZ 状态或运行中的服务；还没有把本项代码部署到 Pi。
+- 需要在现场执行 DHCP/RTSP 地址变化、旧摄像头拔插恢复、两路隔离、管理端/云端/App 状态同步和纯骨架隐私复验。完成这些实机证据前 GH-022 保持“待实机验收”。

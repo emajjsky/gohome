@@ -225,6 +225,48 @@ def main() -> None:
     if agent.managed_stream_status().get("managed_stream_count") != 0:
         raise SystemExit("removed camera retained a managed stream reader")
 
+    class StuckReader:
+        is_stopped = False
+
+        def stop(self):
+            return False
+
+    blocked_agent = CameraAgent(Path("/tmp/gohome-source-transition-stop-test"))
+    blocked_camera = {"id": 12, "stream_url": "rtsp://example.invalid/old"}
+    replacement_camera = {"id": 12, "stream_url": "rtsp://example.invalid/new"}
+    stuck_reader = StuckReader()
+    blocked_agent._managed_streams[12] = (blocked_camera, stuck_reader)  # type: ignore[assignment]
+    blocked_agent._shared_streams[blocked_agent._frame_cache_key(blocked_camera)] = stuck_reader  # type: ignore[assignment]
+    replacement_attempted = {"value": False}
+
+    def forbidden_replacement(*_args, **_kwargs):
+        replacement_attempted["value"] = True
+        raise AssertionError("source transition started a replacement before old reader stopped")
+
+    blocked_agent._acquire_shared_stream = forbidden_replacement  # type: ignore[method-assign]
+    try:
+        blocked_agent.reconcile_managed_streams([replacement_camera])
+    except CameraError as exc:
+        if "did not stop" not in str(exc):
+            raise SystemExit(f"reader stop failure lost its root cause: {exc}")
+    except Exception as exc:
+        raise SystemExit(f"source transition did not fail at the stop boundary: {exc}") from exc
+    else:
+        raise SystemExit("source transition reported success while the old reader was still active")
+    if replacement_attempted["value"]:
+        raise SystemExit("source transition created a replacement reader after stop failure")
+    if blocked_agent._managed_streams.get(12, (None, None))[1] is not stuck_reader:
+        raise SystemExit("failed source transition lost the still-active reader ownership")
+    if blocked_agent._shared_streams.get(blocked_agent._frame_cache_key(blocked_camera)) is not stuck_reader:
+        raise SystemExit("failed source transition removed the active reader from the shared registry")
+    try:
+        blocked_agent.capture_frame(replacement_camera)
+    except CameraError as exc:
+        if "still waiting" not in str(exc):
+            raise SystemExit(f"pending source transition was not exposed to capture consumers: {exc}")
+    else:
+        raise SystemExit("pending source transition opened a fallback capture")
+
     semantic_agent = CameraAgent(Path("/tmp/gohome-frame-semantics-test"))
     semantic_camera = {"id": 11, "stream_url": "rtsp://example.invalid/semantics"}
     semantic_frame = np.full((48, 64, 3), 126, dtype=np.uint8)

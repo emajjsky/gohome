@@ -590,13 +590,16 @@ class ConfigSyncAgent:
         if not stream_url or bool(camera_config.get("setup_required")):
             local_id = camera_map.get(remote_id)
             if local_id:
+                # A setup-pending cloud record must not leave its previous source active.
+                # The next complete connection config re-enables the same local camera ID.
+                self.storage.update_camera(int(local_id), {"enabled": False})
                 self._update_local_camera_status(local_id, "setup_required", "stream_url_missing")
             return {
                 "camera_id": remote_id,
                 "local_camera_id": local_id or None,
                 "status": "setup_required",
                 "sync_status": "pending_local_setup",
-                "enabled": enabled,
+                "enabled": False,
                 "last_error": "stream_url_missing",
             }
 

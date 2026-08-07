@@ -35,6 +35,7 @@ def main() -> None:
             capture_frame=lambda *_args, **_kwargs: {"width": 640, "height": 360},
             reconcile_managed_streams=lambda cameras: reconciled_camera_sets.append([
                 dict(camera) for camera in cameras
+                if camera.get("enabled", True)
             ]),
             managed_camera_status=lambda camera: {
                 "camera_id": int(camera["id"]),
@@ -141,6 +142,65 @@ def main() -> None:
         local_camera_id = int(cameras[0]["id"])
         if agent.remote_camera_id_for_local_camera(local_camera_id) != "101":
             raise SystemExit("remote camera resolver did not publish the committed camera map")
+
+        config_holder["payload"] = {
+            "ok": True,
+            "device_id": "edge-test",
+            "config_version": "camera-config-setup-required",
+            "cameras": [
+                {
+                    "id": 101,
+                    "camera_id": 101,
+                    "name": "客厅主视",
+                    "room": "客厅",
+                    "stream_url": "",
+                    "enabled": True,
+                    "setup_required": True,
+                }
+            ],
+        }
+        setup_required = agent.process_once()
+        setup_camera = storage.get_camera(local_camera_id, include_secret=True)
+        if (
+            setup_required["ok"] is not True
+            or not setup_camera
+            or setup_camera.get("enabled")
+            or setup_camera.get("status") != "setup_required"
+            or not reconciled_camera_sets
+            or reconciled_camera_sets[-1]
+        ):
+            raise SystemExit(
+                "setup-required cloud camera left the previous local source active: "
+                f"result={setup_required} camera={setup_camera} reconcile={reconciled_camera_sets[-1:] }"
+            )
+
+        config_holder["payload"] = {
+            **config_holder["payload"],
+            "config_version": "camera-config-test-1",
+            "cameras": [
+                {
+                    "id": 101,
+                    "camera_id": 101,
+                    "name": "客厅主视",
+                    "room": "客厅",
+                    "stream_url": "demo:living_room",
+                    "enabled": True,
+                }
+            ],
+        }
+        restored = agent.process_once()
+        restored_camera = storage.get_camera(local_camera_id, include_secret=True)
+        if (
+            restored["ok"] is not True
+            or not restored_camera
+            or not restored_camera.get("enabled")
+            or restored_camera.get("stream_url") != "demo:living_room"
+            or not reconciled_camera_sets[-1]
+        ):
+            raise SystemExit(
+                "complete connection config did not re-enable the existing camera: "
+                f"result={restored} camera={restored_camera} reconcile={reconciled_camera_sets[-1:] }"
+            )
         state_path = root / "runtime" / "config-sync-state.json"
         state_path.write_text('{"camera_map":', encoding="utf-8")
         if agent.remote_camera_id_for_local_camera(local_camera_id) != "101":

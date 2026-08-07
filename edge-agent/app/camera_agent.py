@@ -26,6 +26,7 @@ STREAM_RECONNECT_MAX_SECONDS = 8.0
 STREAM_FROZEN_RECONNECT_SECONDS = 3.0
 STREAM_NEAR_BLACK_RECONNECT_SECONDS = 0.75
 STREAM_NEAR_BLACK_CONFIRM_FRAMES = 5
+SHARED_READER_STOP_TIMEOUT_SECONDS = 2.0
 
 
 class CameraError(RuntimeError):
@@ -126,15 +127,20 @@ class _SharedStreamReader:
     def is_stopped(self) -> bool:
         return self._stop.is_set()
 
+    @property
+    def is_running(self) -> bool:
+        return self._thread.is_alive()
+
     def start(self) -> None:
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self) -> bool:
         self._stop.set()
         self._reconnect.set()
         with self._condition:
             self._condition.notify_all()
-        self._thread.join(timeout=2)
+        self._thread.join(timeout=SHARED_READER_STOP_TIMEOUT_SECONDS)
+        return not self._thread.is_alive()
 
     def request_reconnect(self) -> None:
         self._reconnect.set()
@@ -499,6 +505,7 @@ class CameraAgent:
         self._shared_stream_lock = Lock()
         self._reconcile_lock = Lock()
         self._shared_streams: Dict[str, _SharedStreamReader] = {}
+        self._retiring_shared_streams: set[int] = set()
         self._managed_streams: Dict[int, tuple[Dict[str, Any], _SharedStreamReader]] = {}
         self._stream_generations: Dict[int, int] = {}
         self._source_change_listeners: list[Callable[[Dict[str, Any]], Any]] = []
@@ -537,9 +544,14 @@ class CameraAgent:
                 current = desired.get(camera_id)
                 if current is not None and self._camera_signature(previous) == self._camera_signature(current):
                     continue
+                if not self._retire_shared_stream(reader):
+                    raise CameraError(
+                        f"camera {camera_id} source transition blocked: "
+                        "old shared reader did not stop within the shutdown deadline"
+                    )
                 with self._shared_stream_lock:
-                    self._managed_streams.pop(camera_id, None)
-                self._retire_shared_stream(reader)
+                    if self._managed_streams.get(camera_id, (None, None))[1] is reader:
+                        self._managed_streams.pop(camera_id, None)
                 self._clear_camera_cache(camera_id)
                 transitions.append({
                     "camera_id": camera_id,
@@ -999,9 +1011,17 @@ class CameraAgent:
         camera_id = int(camera.get("id") or 0)
         with self._shared_stream_lock:
             managed = self._managed_streams.get(camera_id)
-            if managed is None or self._camera_signature(managed[0]) != self._camera_signature(camera):
+            if managed is None:
                 return None
-            return managed[1]
+            reader = managed[1]
+            if (
+                id(reader) in self._retiring_shared_streams
+                or self._camera_signature(managed[0]) != self._camera_signature(camera)
+            ):
+                raise CameraError(
+                    f"camera {camera_id} source transition is still waiting for the old reader"
+                )
+            return reader
 
     def _is_demo_source(self, source: Any) -> bool:
         return isinstance(source, str) and source.strip().lower().startswith(DEMO_STREAM_PREFIXES)
@@ -1233,9 +1253,27 @@ class CameraAgent:
     ) -> _SharedStreamReader:
         key = self._frame_cache_key(camera)
         with self._shared_stream_lock:
+            camera_id = int(camera.get("id") or 0)
+            managed = self._managed_streams.get(camera_id)
+            if managed is not None:
+                managed_camera, managed_reader = managed
+                if (
+                    id(managed_reader) in self._retiring_shared_streams
+                    or self._camera_signature(managed_camera) != self._camera_signature(camera)
+                ):
+                    raise CameraError(
+                        f"camera {camera_id} source transition is still waiting for the old reader"
+                    )
             reader = self._shared_streams.get(key)
+            if reader is not None and reader.is_stopped:
+                if reader.is_running:
+                    raise CameraError(
+                        f"camera {camera_id} shared reader is stopping; retry after it exits"
+                    )
+                self._shared_streams.pop(key, None)
+                self._retiring_shared_streams.discard(id(reader))
+                reader = None
             if reader is None:
-                camera_id = int(camera.get("id") or 0)
                 generation = self._stream_generations.get(camera_id, 0) + 1
                 self._stream_generations[camera_id] = generation
                 reader = _SharedStreamReader(
@@ -1253,27 +1291,38 @@ class CameraAgent:
             reader.subscribers += 1
             return reader
 
-    def _release_shared_stream(self, camera: Dict[str, Any], reader: _SharedStreamReader) -> None:
+    def _release_shared_stream(self, camera: Dict[str, Any], reader: _SharedStreamReader) -> bool:
         key = self._frame_cache_key(camera)
         should_stop = False
         with self._shared_stream_lock:
             current = self._shared_streams.get(key)
             if current is not reader:
-                return
+                return True
             reader.subscribers = max(0, reader.subscribers - 1)
             if reader.subscribers == 0:
-                self._shared_streams.pop(key, None)
+                self._retiring_shared_streams.add(id(reader))
                 should_stop = True
         if should_stop:
-            reader.stop()
-
-    def _retire_shared_stream(self, reader: _SharedStreamReader) -> None:
-        with self._shared_stream_lock:
-            for key, current in list(self._shared_streams.items()):
-                if current is reader:
+            stopped = reader.stop()
+            with self._shared_stream_lock:
+                if stopped and self._shared_streams.get(key) is reader:
                     self._shared_streams.pop(key, None)
+                    self._retiring_shared_streams.discard(id(reader))
+            return stopped
+        return True
+
+    def _retire_shared_stream(self, reader: _SharedStreamReader) -> bool:
+        with self._shared_stream_lock:
+            self._retiring_shared_streams.add(id(reader))
             reader.subscribers = 0
-        reader.stop()
+        stopped = reader.stop()
+        if stopped:
+            with self._shared_stream_lock:
+                for key, current in list(self._shared_streams.items()):
+                    if current is reader:
+                        self._shared_streams.pop(key, None)
+                self._retiring_shared_streams.discard(id(reader))
+        return stopped
 
     def _open_stream_capture(self, cv2: Any, source: Any, is_local_source: bool) -> Any:
         if is_local_source:
