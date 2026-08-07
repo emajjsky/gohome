@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import json
 import sqlite3
 import sys
 
@@ -11,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.storage import Storage
+from app.storage import Storage, now_iso
 
 
 def old_iso(*, hours: int = 48) -> str:
@@ -28,6 +29,42 @@ def insert_snapshot(storage: Storage, camera_id: int, image_path: str, captured_
             ) VALUES (?, ?, ?, 640, 360, 80, 0, 0, '[]', '{}')
             """,
             (camera_id, image_path, captured_at),
+        ).lastrowid)
+
+
+def insert_media_asset(
+    storage: Storage,
+    *,
+    family_id: int,
+    device_id: str,
+    source_snapshot_path: str,
+    object_key: str,
+    byte_size: int,
+    retention_class: str,
+    metadata: dict | None = None,
+) -> int:
+    timestamp = now_iso()
+    with storage.connect() as conn:
+        return int(conn.execute(
+            """
+            INSERT INTO media_assets (
+                family_id, device_id, source_snapshot_path, object_key,
+                byte_size, retention_class, retention_status, metadata_json,
+                created_at, uploaded_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+            """,
+            (
+                family_id,
+                device_id,
+                source_snapshot_path,
+                object_key,
+                byte_size,
+                retention_class,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                timestamp,
+                timestamp,
+                timestamp,
+            ),
         ).lastrowid)
 
 
@@ -116,10 +153,10 @@ def main() -> None:
         event_asset_path = object_dir / f"family_{family_id}" / "event.jpg"
         event_asset_path.parent.mkdir(parents=True, exist_ok=True)
         event_asset_path.write_bytes(b"event-evidence")
-        event_asset = storage.create_media_asset(
+        event_asset_id = insert_media_asset(
+            storage,
             family_id=family_id,
             device_id="box-1",
-            snapshot_id=None,
             source_snapshot_path="event/evidence.jpg",
             object_key=f"family_{family_id}/event.jpg",
             retention_class="event_evidence",
@@ -128,10 +165,10 @@ def main() -> None:
 
         protected_asset_path = object_dir / f"family_{family_id}" / "memory.jpg"
         protected_asset_path.write_bytes(b"family-memory")
-        protected_asset = storage.create_media_asset(
+        protected_asset_id = insert_media_asset(
+            storage,
             family_id=family_id,
             device_id="box-1",
-            snapshot_id=None,
             source_snapshot_path="memory/photo.jpg",
             object_key=f"family_{family_id}/memory.jpg",
             retention_class="user_upload",
@@ -142,7 +179,7 @@ def main() -> None:
             timestamp = old_iso(hours=24 * 10)
             conn.execute(
                 "UPDATE media_assets SET created_at = ?, uploaded_at = ?, updated_at = ? WHERE id IN (?, ?)",
-                (timestamp, timestamp, timestamp, int(event_asset["id"]), int(protected_asset["id"])),
+                (timestamp, timestamp, timestamp, event_asset_id, protected_asset_id),
             )
 
         first = storage.prune_runtime_history(
@@ -163,7 +200,7 @@ def main() -> None:
             raise SystemExit(f"failed deletion was not recorded: {first}")
         if event_asset_path.exists():
             raise SystemExit("expired event asset bytes were not deleted")
-        deleted_asset = storage.get_media_asset(int(event_asset["id"]))
+        deleted_asset = storage.get_media_asset(event_asset_id)
         if deleted_asset is None or deleted_asset.get("retention_status") != "deleted":
             raise SystemExit("expired event asset did not retain a deletion tombstone")
         if not protected_asset_path.exists():
@@ -264,7 +301,7 @@ def main() -> None:
             "forced_snapshot_id": forced_snapshot_id,
             "latest_snapshot_id": latest_snapshot_id,
             "retried_snapshot_id": failed_snapshot_id,
-            "protected_asset_id": int(protected_asset["id"]),
+            "protected_asset_id": protected_asset_id,
             "archived_camera_id": archived_id,
             "restored_camera_id": legacy_id,
         })

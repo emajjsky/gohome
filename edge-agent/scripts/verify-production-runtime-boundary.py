@@ -219,6 +219,17 @@ def main() -> None:
         "create_package_release",
         "list_package_releases",
         "list_package_executions",
+        "get_media_asset_by_snapshot",
+        "get_media_asset_by_event",
+        "get_media_asset_by_source_path",
+        "get_media_asset_by_object_key",
+        "attach_media_asset_to_event",
+        "create_media_asset",
+        "create_media_upload_session",
+        "get_media_upload_session",
+        "get_media_upload_session_by_token_hash",
+        "mark_media_upload_session_uploaded",
+        "complete_media_upload_session",
     }
     storage_methods = {
         node.name
