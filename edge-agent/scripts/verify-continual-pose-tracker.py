@@ -492,8 +492,8 @@ def main() -> None:
             raise SystemExit(f"production continual pose loop is missing: {contract}")
     deploy_source = (ROOT / "scripts" / "deploy-to-pi.sh").read_text(encoding="utf-8")
     if (
-        "--include 'scripts/verify-vision-runtime.py'" not in deploy_source
-        or "--exclude 'scripts/verify-*.py'" not in deploy_source
+        "--include '/scripts/verify-vision-runtime.py'" not in deploy_source
+        or "--exclude '/scripts/verify-*.py'" not in deploy_source
     ):
         raise SystemExit("production deployment does not enforce the single runtime-check whitelist")
 

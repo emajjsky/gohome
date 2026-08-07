@@ -147,6 +147,25 @@ def main() -> None:
         "/api/device/heartbeat",
         "/api/device/heartbeat/self",
         "/api/device/auth-status",
+        "/api/v1/devices/current",
+        "/api/v1/devices/current/sync-state",
+        "/api/v1/devices/current/sync-target",
+        "/api/v1/devices",
+        "/api/v1/package-releases",
+        "/api/v1/package-releases/{release_id}",
+        "/api/v1/package-releases/{release_id}/download-links",
+        "/api/v1/package-executions",
+        "/api/v1/devices/current/upgrade-run",
+        "/api/v1/runtime/app-status",
+        "/api/v1/runtime/app/restart",
+        "/api/v1/runtime/app/stop",
+        "/api/v1/device-rollouts",
+        "/api/v1/device-rollouts/{rollout_id}",
+        "/api/v1/device-rollouts/{rollout_id}/promote",
+        "/api/v1/device-rollouts/{rollout_id}/rollback",
+        "/api/v1/events",
+        "/api/v1/events/{event_id}",
+        "/api/v1/summary/today",
         "/api/v1/runtime/edge-service",
         "/api/v1/runtime/edge-service/install",
         "/api/v1/runtime/edge-service/reload",
@@ -178,6 +197,9 @@ def main() -> None:
     }
     if "/ui" in mounted_paths:
         raise SystemExit("retired Web pilot remains mounted at /ui")
+
+    if "build_package_artifact_router" in (APP_DIR / "main.py").read_text(encoding="utf-8"):
+        raise SystemExit("edge runtime still mounts user-facing package artifact routes")
 
     main_source = (APP_DIR / "main.py").read_text(encoding="utf-8")
     if '"pose_inference_service": vision_status.get("pose_inference_service") or {}' not in main_source:

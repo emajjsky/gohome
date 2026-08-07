@@ -1049,11 +1049,7 @@
         },
         v1CurrentUser: () => request("/api/v1/identity/me"),
         currentUser: () => request("/api/users/me", { cacheTtlMs: 300_000 }),
-        v1CurrentDevice: () => request("/api/v1/devices/current"),
         v1VideoProfiles: () => request("/api/v1/video/profiles"),
-        v1Devices: (familyId) => request(`/api/v1/devices?family_id=${encodeURIComponent(familyId)}`),
-        v1CurrentDeviceSyncState: () => request("/api/v1/devices/current/sync-state"),
-        cleanupCurrentDevice: () => request("/api/v1/devices/current/cleanup", { method: "POST" }),
         appDevice: () => withDeviceAccessFallback(
             () => request("/api/app/device", { cacheTtlMs: 10_000 }),
             () => request("/api/device", { cacheTtlMs: 10_000 })
@@ -1202,29 +1198,6 @@
             method: "POST",
             body: JSON.stringify(payload),
         }),
-        v1PackageReleases: (familyId, packageType = "", limit = 20) => {
-            const query = new URLSearchParams({ family_id: String(familyId), limit: String(limit) });
-            if (packageType) query.set("package_type", packageType);
-            return request(`/api/v1/package-releases?${query.toString()}`);
-        },
-        v1CreatePackageRelease: (payload) => request("/api/v1/package-releases", {
-            method: "POST",
-            body: JSON.stringify(payload),
-        }),
-        v1PackageRelease: (releaseId) => request(`/api/v1/package-releases/${encodeURIComponent(releaseId)}`),
-        v1CreatePackageDownloadLink: (releaseId, payload = {}) => request(`/api/v1/package-releases/${encodeURIComponent(releaseId)}/download-links`, {
-            method: "POST",
-            body: JSON.stringify(payload),
-        }),
-        v1PackageExecutions: (familyId, deviceId = "", limit = 20) => {
-            const query = new URLSearchParams({ family_id: String(familyId), limit: String(limit) });
-            if (deviceId) query.set("device_id", deviceId);
-            return request(`/api/v1/package-executions?${query.toString()}`);
-        },
-        v1RunCurrentDeviceUpgrade: (payload = {}) => request("/api/v1/devices/current/upgrade-run", {
-            method: "POST",
-            body: JSON.stringify(payload),
-        }),
         v1RunDeviceUpgrade: (payload = {}, token = "") => request("/api/v1/device/upgrade-run", {
             method: "POST",
             headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1245,25 +1218,6 @@
         }),
         v1AppPushTest: (payload) => request("/api/v1/app/push-test", {
             method: "POST",
-            body: JSON.stringify(payload),
-        }),
-        v1DeviceRollouts: (familyId, limit = 20) =>
-            request(`/api/v1/device-rollouts?family_id=${encodeURIComponent(familyId)}&limit=${encodeURIComponent(limit)}`),
-        v1CreateDeviceRollout: (payload) => request("/api/v1/device-rollouts", {
-            method: "POST",
-            body: JSON.stringify(payload),
-        }),
-        v1DeviceRollout: (rolloutId) => request(`/api/v1/device-rollouts/${encodeURIComponent(rolloutId)}`),
-        v1PromoteDeviceRollout: (rolloutId, payload = {}) => request(`/api/v1/device-rollouts/${encodeURIComponent(rolloutId)}/promote`, {
-            method: "POST",
-            body: JSON.stringify(payload),
-        }),
-        v1RollbackDeviceRollout: (rolloutId, payload = {}) => request(`/api/v1/device-rollouts/${encodeURIComponent(rolloutId)}/rollback`, {
-            method: "POST",
-            body: JSON.stringify(payload),
-        }),
-        v1UpdateDeviceSyncTarget: (payload) => request("/api/v1/devices/current/sync-target", {
-            method: "PATCH",
             body: JSON.stringify(payload),
         }),
         v1DeviceSync: (payload, token) => request("/api/v1/device/sync", {
@@ -1312,18 +1266,12 @@
             () => request(`/api/app/events?${params}`, { cacheTtlMs: 3_000 }),
             () => request(`/api/events?${params}`, { cacheTtlMs: 3_000 })
         ),
-        v1Events: (params = "limit=30") => request(`/api/v1/events?${params}`),
         events: (params = "limit=30") => request(`/api/events?${params}`),
-        v1Event: (eventId) => request(`/api/v1/events/${eventId}`),
         appEvent: (eventId) => withDeviceAccessFallback(
             () => request(`/api/app/events/${eventId}`),
             () => request(`/api/events/${eventId}`)
         ),
         event: (eventId) => request(`/api/events/${eventId}`),
-        v1UpdateEvent: (eventId, patch) => request(`/api/v1/events/${eventId}`, {
-            method: "PATCH",
-            body: JSON.stringify(patch),
-        }),
         appUpdateEvent: (eventId, patch) => withDeviceAccessFallback(
             () => request(`/api/app/events/${eventId}`, {
                 method: "PATCH",
@@ -1344,7 +1292,6 @@
             method: "PUT",
             body: JSON.stringify(rules),
         }),
-        v1Summary: () => request("/api/v1/summary/today"),
         appSummary: () => withDeviceAccessFallback(
             () => request("/api/app/summary/today"),
             () => request("/api/summary/today")

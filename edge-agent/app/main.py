@@ -34,7 +34,7 @@ from .detect_agent import DetectAgent
 from .device_binding_state import DeviceBindingState
 from .event_agent import EventAgent
 from .live_relay_agent import LiveRelayAgent
-from .package_artifact_service import PackageArtifactService, build_package_artifact_router
+from .package_artifact_service import PackageArtifactService
 from .package_service import PackageService
 from .pairing_window import PairingWindow
 from .resource_monitor import SystemResourceMonitor
@@ -48,14 +48,8 @@ from .schemas import (
     V1DeviceUpgradeRun,
     RulesUpdate,
     WifiConnectRequest,
-    V1PackageDownloadLinkCreate,
-    V1PackageReleaseCreate,
-    V1DeviceRolloutCreate,
-    V1DeviceRolloutPromote,
-    V1DeviceRolloutRollback,
     V1DeviceEventIngest,
     V1DeviceSyncReport,
-    V1DeviceSyncTargetUpdate,
     VideoPrivacyUpdate,
 )
 from .settings import settings
@@ -315,15 +309,6 @@ def discover_lan_cameras(limit: int = 24) -> list[Dict[str, Any]]:
     return results[:limit]
 
 
-def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)) -> Dict[str, Any]:
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Authentication required")
-    user = storage.get_user_by_session_token(credentials.credentials)
-    if user is None:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return user
-
-
 def current_device_id() -> str:
     return str(local_device_identity()["device_id"])
 
@@ -414,15 +399,6 @@ def cloud_pair_device(code: str) -> Dict[str, Any]:
     return result
 
 
-def require_device_access(user: Dict[str, Any]) -> str:
-    device_id = current_device_id()
-    if not storage.list_device_bound_family_ids(device_id):
-        raise HTTPException(status_code=403, detail="Current device is not bound to any family")
-    if not storage.user_has_device_access(int(user["id"]), device_id):
-        raise HTTPException(status_code=403, detail="You do not have access to this device")
-    return device_id
-
-
 def current_camera_config_authority() -> Dict[str, Any]:
     return camera_config_authority(
         settings,
@@ -480,26 +456,6 @@ def current_v1_device_session(
     return session
 
 
-def v1_device_summary() -> Dict[str, Any]:
-    identity = local_device_identity()
-    token = storage.get_active_device_token_by_device(identity["device_id"])
-    return {
-        "device_id": identity["device_id"],
-        "device_name": identity["device_name"],
-        "device_type": identity["device_type"],
-        "lan_ip": identity["lan_ip"],
-        "api_port": identity["api_port"],
-        "worker_running": worker.is_running,
-        "app_version": package_service.current_app_version(default_version=APP_VERSION),
-        "model_version": current_model_version(),
-        "detector_backend": settings.detector_backend,
-        "upload_agent": upload_agent.status(),
-        "config_sync_agent": config_sync_agent.status(),
-        "camera_config_authority": current_camera_config_authority(),
-        "token": token,
-    }
-
-
 def v1_event_summary(event: Dict[str, Any]) -> Dict[str, Any]:
     data = event_for_v1(event)
     payload = data.get("payload") or {}
@@ -549,15 +505,6 @@ def event_server_payload(event: Dict[str, Any]) -> Dict[str, Any]:
 def current_model_version() -> str:
     default_version = str(settings.yolo_model or "") if settings.detector_backend == "yolo" else str(settings.detector_backend or "")
     return package_service.current_model_version(default_version=default_version)
-
-
-def resolve_accessible_family_id(user: Dict[str, Any], device_id: str) -> int:
-    bound_family_ids = storage.list_device_bound_family_ids(device_id)
-    user_family_ids = storage.list_user_family_ids(int(user["id"]))
-    accessible_family_ids = sorted(set(bound_family_ids) & set(user_family_ids))
-    if not accessible_family_ids:
-        raise HTTPException(status_code=403, detail="You do not have access to this device")
-    return int(accessible_family_ids[0])
 
 
 def build_device_sync_view(device_id: str, family_id: int) -> Dict[str, Any]:
@@ -610,210 +557,6 @@ def build_device_sync_view(device_id: str, family_id: int) -> Dict[str, Any]:
             },
         },
     }
-
-
-def sync_target_snapshot(state: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "desired_app_version": str(state.get("desired_app_version") or ""),
-        "desired_model_version": str(state.get("desired_model_version") or ""),
-        "desired_rules": dict(state.get("desired_rules") or {}),
-        "desired_rule_version": str(state.get("desired_rule_version") or ""),
-        "desired_config": dict(state.get("desired_config") or {}),
-        "desired_config_version": str(state.get("desired_config_version") or ""),
-    }
-
-
-def normalize_device_ids(values: list[str] | None) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values or []:
-        clean = str(value or "").strip()
-        if clean and clean not in seen:
-            seen.add(clean)
-            result.append(clean)
-    return result
-
-
-def build_family_device_view(binding: Dict[str, Any], family_id: int) -> Dict[str, Any]:
-    device_id = str(binding["device_id"])
-    state = storage.ensure_device_sync_state(device_id, family_id)
-    token = storage.get_active_device_token_by_device(device_id)
-    return {
-        "device_id": device_id,
-        "device_name": binding.get("device_name") or device_id,
-        "device_type": binding.get("device_type") or "edge-agent",
-        "status": binding.get("status") or "unknown",
-        "note": binding.get("note") or "",
-        "bound_at": binding.get("bound_at"),
-        "is_current_device": device_id == current_device_id(),
-        "token": {
-            "status": token.get("status") if token else "missing",
-            "token_prefix": token.get("token_prefix") if token else "",
-            "last_seen_at": token.get("last_seen_at") if token else None,
-            "last_heartbeat_at": token.get("last_heartbeat_at") if token else None,
-        },
-        "sync": {
-            "target": {
-                "app_version": state.get("desired_app_version", ""),
-                "model_version": state.get("desired_model_version", ""),
-                "rules": state.get("desired_rules") or {},
-                "rule_version": state.get("desired_rule_version", ""),
-                "config": state.get("desired_config") or {},
-                "config_version": state.get("desired_config_version", ""),
-            },
-            "reported": {
-                "app_version": state.get("reported_app_version", ""),
-                "model_version": state.get("reported_model_version", ""),
-                "applied_rule_version": state.get("applied_rule_version", ""),
-                "status": state.get("reported_status") or {},
-                "last_seen_at": state.get("last_seen_at"),
-                "last_sync_at": state.get("last_sync_at"),
-                "last_applied_at": state.get("last_applied_at"),
-            },
-        },
-    }
-
-
-def list_family_devices_view(family_id: int, device_ids: list[str] | None = None) -> list[Dict[str, Any]]:
-    allowed = set(normalize_device_ids(device_ids))
-    devices: list[Dict[str, Any]] = []
-    for binding in storage.list_family_device_bindings(family_id):
-        device_id = str(binding["device_id"])
-        if allowed and device_id not in allowed:
-            continue
-        devices.append(build_family_device_view(binding, family_id))
-    return devices
-
-
-def validate_rollout_patch(
-    *,
-    desired_app_version: str,
-    desired_model_version: str,
-    rules_patch: Dict[str, Any],
-    config_patch: Dict[str, Any],
-) -> None:
-    if desired_app_version.strip() or desired_model_version.strip() or rules_patch or config_patch:
-        return
-    raise HTTPException(status_code=400, detail="Rollout target is empty")
-
-
-def apply_rollout_to_devices(
-    *,
-    family_id: int,
-    device_ids: list[str],
-    rollout: Dict[str, Any],
-    rollout_version: str,
-) -> None:
-    rules_patch = dict(rollout.get("rules_patch") or {})
-    config_patch = dict(rollout.get("config_patch") or {})
-    previous_targets = rollout.get("previous_targets") or {}
-    for device_id in normalize_device_ids(device_ids):
-        previous_target = dict(previous_targets.get(device_id) or sync_target_snapshot(storage.ensure_device_sync_state(device_id, family_id)))
-        desired_rules = dict(previous_target.get("desired_rules") or {})
-        desired_rule_version = str(previous_target.get("desired_rule_version") or "")
-        if rules_patch:
-            desired_rules = storage.merge_rules_patch(rules_patch, base=desired_rules or storage.get_rules())
-            desired_rule_version = rollout_version
-        desired_config = dict(previous_target.get("desired_config") or {})
-        desired_config_version = str(previous_target.get("desired_config_version") or "")
-        if config_patch:
-            desired_config.update({key: value for key, value in config_patch.items() if value is not None})
-            desired_config_version = rollout_version
-        storage.set_device_sync_target(
-            device_id=device_id,
-            family_id=family_id,
-            desired_app_version=str(rollout.get("target_app_version") or previous_target.get("desired_app_version") or ""),
-            desired_model_version=str(rollout.get("target_model_version") or previous_target.get("desired_model_version") or ""),
-            desired_rules=desired_rules,
-            desired_rule_version=desired_rule_version,
-            desired_config=desired_config,
-            desired_config_version=desired_config_version,
-        )
-
-
-def rollback_rollout_devices(
-    *,
-    family_id: int,
-    device_ids: list[str],
-    rollout: Dict[str, Any],
-) -> None:
-    previous_targets = rollout.get("previous_targets") or {}
-    for device_id in normalize_device_ids(device_ids):
-        previous_target = dict(previous_targets.get(device_id) or {})
-        if not previous_target:
-            continue
-        storage.set_device_sync_target(
-            device_id=device_id,
-            family_id=family_id,
-            desired_app_version=str(previous_target.get("desired_app_version") or ""),
-            desired_model_version=str(previous_target.get("desired_model_version") or ""),
-            desired_rules=dict(previous_target.get("desired_rules") or {}),
-            desired_rule_version=str(previous_target.get("desired_rule_version") or ""),
-            desired_config=dict(previous_target.get("desired_config") or {}),
-            desired_config_version=str(previous_target.get("desired_config_version") or ""),
-        )
-
-
-def device_rollout_for_api(rollout: Dict[str, Any]) -> Dict[str, Any]:
-    family_id = int(rollout["family_id"])
-    scope_device_ids = normalize_device_ids(rollout.get("scope_device_ids") or [])
-    canary_device_ids = set(normalize_device_ids(rollout.get("canary_device_ids") or []))
-    applied_device_ids = set(normalize_device_ids(rollout.get("applied_device_ids") or []))
-    rolled_back_device_ids = set(normalize_device_ids(rollout.get("rolled_back_device_ids") or []))
-    devices = list_family_devices_view(family_id, scope_device_ids)
-    for device in devices:
-        device_id = str(device["device_id"])
-        if device_id in rolled_back_device_ids:
-            rollout_status = "rolled_back"
-        elif device_id in applied_device_ids:
-            rollout_status = "applied"
-        else:
-            rollout_status = "pending"
-        rollout_phase = "canary" if device_id in canary_device_ids else "remaining"
-        if rollout_status == "applied" and rollout_phase != "canary":
-            rollout_phase = "promoted"
-        device["rollout"] = {
-            "status": rollout_status,
-            "phase": rollout_phase,
-        }
-    return {
-        "id": int(rollout["id"]),
-        "family_id": family_id,
-        "title": rollout.get("title") or "",
-        "rollout_mode": rollout.get("rollout_mode") or "canary",
-        "status": rollout.get("status") or "draft",
-        "patch": {
-            "app_version": rollout.get("target_app_version") or "",
-            "model_version": rollout.get("target_model_version") or "",
-            "rules": rollout.get("rules_patch") or {},
-            "config": rollout.get("config_patch") or {},
-        },
-        "scope_device_ids": scope_device_ids,
-        "canary_device_ids": sorted(canary_device_ids),
-        "applied_device_ids": sorted(applied_device_ids),
-        "rolled_back_device_ids": sorted(rolled_back_device_ids),
-        "summary": {
-            "scope_count": len(scope_device_ids),
-            "applied_count": len(applied_device_ids),
-            "rolled_back_count": len(rolled_back_device_ids),
-            "remaining_count": len([device_id for device_id in scope_device_ids if device_id not in applied_device_ids]),
-        },
-        "devices": devices,
-        "created_by_user_id": int(rollout["created_by_user_id"]),
-        "created_at": rollout.get("created_at"),
-        "updated_at": rollout.get("updated_at"),
-        "promoted_at": rollout.get("promoted_at"),
-        "rolled_back_at": rollout.get("rolled_back_at"),
-    }
-
-
-def get_rollout_for_user(rollout_id: int, user: Dict[str, Any]) -> Dict[str, Any]:
-    rollout = storage.get_device_rollout(rollout_id)
-    if rollout is None:
-        raise HTTPException(status_code=404, detail="Device rollout not found")
-    if not storage.is_family_member(int(rollout["family_id"]), int(user["id"])):
-        raise HTTPException(status_code=403, detail="You are not a member of this family")
-    return rollout
 
 
 settings.ensure_dirs()
@@ -1094,12 +837,6 @@ async def enforce_admin_session(request: Request, call_next: Any) -> Response:
     return response
 
 
-app.include_router(
-    build_package_artifact_router(
-        package_artifact_service,
-        current_user_dep=current_user,
-    )
-)
 app.mount("/snapshots", StaticFiles(directory=str(settings.snapshot_dir)), name="snapshots")
 app.mount("/setup", StaticFiles(directory=str(settings.setup_dir), html=True), name="setup")
 app.mount("/admin", StaticFiles(directory=str(settings.admin_dir), html=True), name="admin")
@@ -1741,118 +1478,6 @@ def pair_from_lan(code: str = Query(..., min_length=4, max_length=20), return_ur
     return RedirectResponse(f"{target}{separator}{query}", status_code=303)
 
 
-@app.get("/api/v1/devices/current")
-def v1_current_device(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    device_id = require_device_access(user)
-    summary = v1_device_summary()
-    summary["accessible_family_ids"] = sorted(
-        set(storage.list_device_bound_family_ids(device_id)) & set(storage.list_user_family_ids(int(user["id"])))
-    )
-    return summary
-
-
-@app.get("/api/v1/devices/current/sync-state")
-def v1_current_device_sync_state(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    device_id = require_device_access(user)
-    family_id = resolve_accessible_family_id(user, device_id)
-    return build_device_sync_view(device_id, family_id)
-
-
-@app.patch("/api/v1/devices/current/sync-target")
-def v1_update_current_device_sync_target(
-    payload: V1DeviceSyncTargetUpdate,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    device_id = require_device_access(user)
-    family_id = resolve_accessible_family_id(user, device_id)
-    storage.update_device_sync_target(
-        device_id=device_id,
-        family_id=family_id,
-        desired_app_version=payload.desired_app_version,
-        desired_model_version=payload.desired_model_version,
-        rules_patch=model_dump(payload.rules) if payload.rules is not None else None,
-        config_patch=payload.config,
-    )
-    return build_device_sync_view(device_id, family_id)
-
-
-@app.get("/api/v1/devices")
-def v1_list_devices(family_id: int, user: Dict[str, Any] = Depends(current_user)) -> list[Dict[str, Any]]:
-    if not storage.is_family_member(family_id, int(user["id"])):
-        raise HTTPException(status_code=403, detail="You are not a member of this family")
-    return list_family_devices_view(family_id)
-
-
-@app.get("/api/v1/package-releases")
-def v1_list_package_releases(
-    family_id: int,
-    package_type: str = "",
-    limit: int = 20,
-    user: Dict[str, Any] = Depends(current_user),
-) -> list[Dict[str, Any]]:
-    return package_service.list_releases(
-        family_id=family_id,
-        package_type=package_type,
-        limit=max(1, min(limit, 100)),
-        user=user,
-    )
-
-
-@app.post("/api/v1/package-releases")
-def v1_create_package_release(
-    payload: V1PackageReleaseCreate,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    return package_service.create_release(payload, user=user)
-
-
-@app.get("/api/v1/package-releases/{release_id}")
-def v1_get_package_release(release_id: int, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    return package_service.package_release_for_api(package_service.get_release_for_user(release_id, user))
-
-
-@app.post("/api/v1/package-releases/{release_id}/download-links")
-def v1_create_package_download_link(
-    release_id: int,
-    payload: V1PackageDownloadLinkCreate,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    return package_service.create_download_link(release_id, user=user, expires_in_seconds=payload.expires_in_seconds)
-
-
-@app.get("/api/v1/package-executions")
-def v1_list_package_executions(
-    family_id: int,
-    device_id: str = "",
-    limit: int = 20,
-    user: Dict[str, Any] = Depends(current_user),
-) -> list[Dict[str, Any]]:
-    return package_service.list_executions(
-        family_id=family_id,
-        device_id=device_id,
-        limit=max(1, min(limit, 100)),
-        user=user,
-    )
-
-
-@app.post("/api/v1/devices/current/upgrade-run")
-def v1_run_current_device_upgrade(
-    payload: V1DeviceUpgradeRun,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    device_id = require_device_access(user)
-    family_id = resolve_accessible_family_id(user, device_id)
-    result = package_service.run_pending_upgrades(
-        family_id=family_id,
-        device_id=device_id,
-        target=build_device_sync_view(device_id, family_id)["target"],
-        package_types=payload.package_types,
-    )
-    record_local_package_execution(device_id, family_id)
-    result["sync"] = build_device_sync_view(device_id, family_id)
-    return result
-
-
 @app.post("/api/v1/device/upgrade-run")
 def v1_device_upgrade_run(
     payload: V1DeviceUpgradeRun,
@@ -1869,164 +1494,6 @@ def v1_device_upgrade_run(
     record_local_package_execution(device_id, family_id)
     result["sync"] = build_device_sync_view(device_id, family_id)
     return result
-
-
-@app.get("/api/v1/runtime/app-status")
-def v1_runtime_app_status(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    return app_runtime_guard.status()
-
-
-@app.post("/api/v1/runtime/app/restart")
-def v1_runtime_app_restart(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    try:
-        return app_runtime_guard.restart_current()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/api/v1/runtime/app/stop")
-def v1_runtime_app_stop(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    return app_runtime_guard.stop_runtime(clear_should_run=True)
-
-
-@app.get("/api/v1/device-rollouts")
-def v1_list_device_rollouts(
-    family_id: int,
-    limit: int = 20,
-    user: Dict[str, Any] = Depends(current_user),
-) -> list[Dict[str, Any]]:
-    if not storage.is_family_member(family_id, int(user["id"])):
-        raise HTTPException(status_code=403, detail="You are not a member of this family")
-    return [device_rollout_for_api(rollout) for rollout in storage.list_device_rollouts(family_id, limit=max(1, min(limit, 100)))]
-
-
-@app.post("/api/v1/device-rollouts")
-def v1_create_device_rollout(
-    payload: V1DeviceRolloutCreate,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    family_id = int(payload.family_id)
-    if not storage.is_family_member(family_id, int(user["id"])):
-        raise HTTPException(status_code=403, detail="You are not a member of this family")
-    rules_patch = model_dump(payload.rules) if payload.rules is not None else {}
-    config_patch = dict(payload.config or {})
-    validate_rollout_patch(
-        desired_app_version=payload.desired_app_version,
-        desired_model_version=payload.desired_model_version,
-        rules_patch=rules_patch,
-        config_patch=config_patch,
-    )
-    family_bindings = storage.list_family_device_bindings(family_id)
-    family_device_ids = [str(binding["device_id"]) for binding in family_bindings]
-    scope_device_ids = normalize_device_ids(payload.device_ids) or family_device_ids
-    if not scope_device_ids:
-        raise HTTPException(status_code=400, detail="No devices available for rollout")
-    invalid_scope_ids = [device_id for device_id in scope_device_ids if device_id not in family_device_ids]
-    if invalid_scope_ids:
-        raise HTTPException(status_code=400, detail=f"Unknown rollout devices: {', '.join(invalid_scope_ids)}")
-    if payload.rollout_mode == "full":
-        canary_device_ids = list(scope_device_ids)
-    else:
-        canary_device_ids = normalize_device_ids(payload.canary_device_ids) or [scope_device_ids[0]]
-    invalid_canary_ids = [device_id for device_id in canary_device_ids if device_id not in scope_device_ids]
-    if invalid_canary_ids:
-        raise HTTPException(status_code=400, detail=f"Unknown canary devices: {', '.join(invalid_canary_ids)}")
-    previous_targets = {
-        device_id: sync_target_snapshot(storage.ensure_device_sync_state(device_id, family_id))
-        for device_id in scope_device_ids
-    }
-    initial_applied_device_ids = list(canary_device_ids)
-    rollout = storage.create_device_rollout(
-        family_id=family_id,
-        title=payload.title,
-        rollout_mode=payload.rollout_mode,
-        status="completed" if len(initial_applied_device_ids) == len(scope_device_ids) else "canary",
-        target_app_version=payload.desired_app_version,
-        target_model_version=payload.desired_model_version,
-        rules_patch=rules_patch,
-        config_patch=config_patch,
-        scope_device_ids=scope_device_ids,
-        canary_device_ids=canary_device_ids,
-        applied_device_ids=initial_applied_device_ids,
-        rolled_back_device_ids=[],
-        previous_targets=previous_targets,
-        created_by_user_id=int(user["id"]),
-    )
-    apply_rollout_to_devices(
-        family_id=family_id,
-        device_ids=initial_applied_device_ids,
-        rollout=rollout,
-        rollout_version=str(rollout.get("created_at") or datetime.now(timezone.utc).isoformat()),
-    )
-    return device_rollout_for_api(rollout)
-
-
-@app.get("/api/v1/device-rollouts/{rollout_id}")
-def v1_get_device_rollout(rollout_id: int, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    return device_rollout_for_api(get_rollout_for_user(rollout_id, user))
-
-
-@app.post("/api/v1/device-rollouts/{rollout_id}/promote")
-def v1_promote_device_rollout(
-    rollout_id: int,
-    payload: V1DeviceRolloutPromote,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    rollout = get_rollout_for_user(rollout_id, user)
-    scope_device_ids = normalize_device_ids(rollout.get("scope_device_ids") or [])
-    applied_device_ids = normalize_device_ids(rollout.get("applied_device_ids") or [])
-    remaining_device_ids = [device_id for device_id in scope_device_ids if device_id not in set(applied_device_ids)]
-    target_device_ids = normalize_device_ids(payload.device_ids) or remaining_device_ids
-    invalid_target_ids = [device_id for device_id in target_device_ids if device_id not in remaining_device_ids]
-    if invalid_target_ids:
-        raise HTTPException(status_code=400, detail=f"Devices are not promotable: {', '.join(invalid_target_ids)}")
-    if not target_device_ids:
-        raise HTTPException(status_code=400, detail="No devices left to promote")
-    apply_rollout_to_devices(
-        family_id=int(rollout["family_id"]),
-        device_ids=target_device_ids,
-        rollout=rollout,
-        rollout_version=datetime.now(timezone.utc).isoformat(),
-    )
-    merged_applied_device_ids = normalize_device_ids(applied_device_ids + target_device_ids)
-    updated_rollout = storage.update_device_rollout_state(
-        rollout_id,
-        status="completed" if len(merged_applied_device_ids) == len(scope_device_ids) else "promoting",
-        applied_device_ids=merged_applied_device_ids,
-        promoted_at=datetime.now(timezone.utc).isoformat(),
-    )
-    return device_rollout_for_api(updated_rollout)
-
-
-@app.post("/api/v1/device-rollouts/{rollout_id}/rollback")
-def v1_rollback_device_rollout(
-    rollout_id: int,
-    payload: V1DeviceRolloutRollback,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    rollout = get_rollout_for_user(rollout_id, user)
-    applied_device_ids = normalize_device_ids(rollout.get("applied_device_ids") or [])
-    target_device_ids = normalize_device_ids(payload.device_ids) or applied_device_ids
-    invalid_target_ids = [device_id for device_id in target_device_ids if device_id not in applied_device_ids]
-    if invalid_target_ids:
-        raise HTTPException(status_code=400, detail=f"Devices are not rollback targets: {', '.join(invalid_target_ids)}")
-    if not target_device_ids:
-        raise HTTPException(status_code=400, detail="No devices available to rollback")
-    rollback_rollout_devices(
-        family_id=int(rollout["family_id"]),
-        device_ids=target_device_ids,
-        rollout=rollout,
-    )
-    updated_rollout = storage.update_device_rollout_state(
-        rollout_id,
-        status="rolled_back" if len(target_device_ids) == len(applied_device_ids) else "partially_rolled_back",
-        rolled_back_device_ids=normalize_device_ids((rollout.get("rolled_back_device_ids") or []) + target_device_ids),
-        rolled_back_at=datetime.now(timezone.utc).isoformat(),
-    )
-    return device_rollout_for_api(updated_rollout)
 
 
 @app.post("/api/v1/device/heartbeat")
@@ -2148,45 +1615,6 @@ def v1_ingest_device_event(
         "idempotency_key": payload.idempotency_key,
         "event": v1_event_summary(event),
     }
-
-
-@app.get("/api/v1/events")
-def v1_list_events(
-    limit: int = 50,
-    acknowledged: bool | None = None,
-    user: Dict[str, Any] = Depends(current_user),
-) -> list[Dict[str, Any]]:
-    require_device_access(user)
-    events = storage.list_events(limit=max(1, min(limit, 200)), acknowledged=acknowledged)
-    return [v1_event_summary(event) for event in events]
-
-
-@app.get("/api/v1/events/{event_id}")
-def v1_get_event(event_id: int, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    event = storage.get_event(event_id)
-    if event is None:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return v1_event_summary(event)
-
-
-@app.patch("/api/v1/events/{event_id}")
-def v1_update_event(
-    event_id: int,
-    patch: EventUpdate,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    require_device_access(user)
-    event = storage.update_event(event_id, model_dump(patch))
-    if event is None:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return v1_event_summary(event)
-
-
-@app.get("/api/v1/summary/today")
-def v1_today_summary(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    require_device_access(user)
-    return storage.daily_summary()
 
 
 @app.get("/api/cameras")
