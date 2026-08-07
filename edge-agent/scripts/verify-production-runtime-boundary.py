@@ -216,6 +216,8 @@ def main() -> None:
         "get_device_rollout",
         "list_device_rollouts",
         "update_device_rollout_state",
+        "create_package_release",
+        "list_package_releases",
     }
     storage_methods = {
         node.name

@@ -4038,49 +4038,6 @@ class Storage:
             raise RuntimeError("Media upload session missing after completion")
         return session
 
-    def create_package_release(
-        self,
-        *,
-        family_id: int,
-        package_type: str,
-        version: str,
-        asset_id: int,
-        install_strategy: str = "file",
-        entry_path: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
-        created_by_user_id: int,
-        status: str = "active",
-    ) -> Dict[str, Any]:
-        timestamp = now_iso()
-        with self.connect() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO package_releases (
-                    family_id, package_type, version, asset_id, install_strategy,
-                    entry_path, metadata_json, status, created_by_user_id, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    int(family_id),
-                    str(package_type or "").strip(),
-                    str(version or "").strip(),
-                    int(asset_id),
-                    str(install_strategy or "file").strip() or "file",
-                    str(entry_path or "").strip(),
-                    json.dumps(metadata or {}, ensure_ascii=False),
-                    str(status or "active").strip() or "active",
-                    int(created_by_user_id),
-                    timestamp,
-                    timestamp,
-                ),
-            )
-            release_id = int(cursor.lastrowid)
-        release = self.get_package_release(release_id)
-        if release is None:
-            raise RuntimeError("Package release was not persisted")
-        return release
-
     def get_package_release(self, release_id: int) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
             row = conn.execute(
@@ -4101,28 +4058,6 @@ class Storage:
                 (int(family_id), str(package_type or "").strip(), str(version or "").strip()),
             ).fetchone()
         return self._package_release_to_dict(row)
-
-    def list_package_releases(
-        self,
-        family_id: int,
-        package_type: str = "",
-        limit: int = 20,
-    ) -> list[Dict[str, Any]]:
-        query = """
-            SELECT *
-            FROM package_releases
-            WHERE family_id = ?
-        """
-        params: list[Any] = [int(family_id)]
-        clean_type = str(package_type or "").strip()
-        if clean_type:
-            query += " AND package_type = ?"
-            params.append(clean_type)
-        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
-        params.append(max(1, min(int(limit), 100)))
-        with self.connect() as conn:
-            rows = conn.execute(query, tuple(params)).fetchall()
-        return [release for row in rows if (release := self._package_release_to_dict(row)) is not None]
 
     def create_package_execution(
         self,
