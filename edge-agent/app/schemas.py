@@ -79,30 +79,6 @@ class EventUpdate(BaseModel):
     resolution: Optional[str] = Field(None, max_length=40)
 
 
-class DeviceBindingCreate(BaseModel):
-    family_id: int
-    device_id: Optional[str] = Field(None, min_length=1, max_length=120)
-    device_name: Optional[str] = Field(None, min_length=1, max_length=80)
-    device_type: str = Field(default="edge-agent", min_length=1, max_length=40)
-    note: str = Field(default="", max_length=120)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class DeviceBindingCodeCreate(BaseModel):
-    family_id: int
-    expires_in_minutes: int = Field(default=10, ge=1, le=60)
-    note: str = Field(default="", max_length=120)
-
-
-class DeviceTokenExchange(BaseModel):
-    code: str = Field(..., min_length=4, max_length=20)
-    device_id: Optional[str] = Field(None, min_length=1, max_length=120)
-    device_name: Optional[str] = Field(None, min_length=1, max_length=80)
-    device_type: str = Field(default="edge-agent", min_length=1, max_length=40)
-    note: str = Field(default="", max_length=120)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
 class DeviceHeartbeatIn(BaseModel):
     status: str = Field(default="online", min_length=1, max_length=40)
     app_version: str = Field(default="", max_length=40)

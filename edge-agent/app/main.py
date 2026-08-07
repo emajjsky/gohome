@@ -43,10 +43,7 @@ from .schemas import (
     AdminPasswordChange,
     CameraCreate,
     CameraUpdate,
-    DeviceBindingCodeCreate,
-    DeviceBindingCreate,
     DeviceHeartbeatIn,
-    DeviceTokenExchange,
     EventUpdate,
     V1DeviceUpgradeRun,
     RulesUpdate,
@@ -466,17 +463,6 @@ def record_local_package_execution(device_id: str, family_id: int) -> None:
 
 def event_for_v1(event: Dict[str, Any]) -> Dict[str, Any]:
     return dict(event)
-
-
-def current_device_session(
-    x_device_token: str | None = Header(default=None, alias="X-GoHome-Device-Token"),
-) -> Dict[str, Any]:
-    if not x_device_token:
-        raise HTTPException(status_code=401, detail="Device token required")
-    session = storage.get_device_token_by_raw_token(x_device_token)
-    if session is None:
-        raise HTTPException(status_code=401, detail="Invalid device token")
-    return session
 
 
 def current_v1_device_session(
@@ -1702,180 +1688,6 @@ async def discover_cameras(limit: int = 24) -> Dict[str, Any]:
     bounded_limit = max(1, min(int(limit), 48))
     cameras = await run_in_threadpool(discover_lan_cameras, bounded_limit)
     return {"cameras": cameras, "count": len(cameras), "subnet": ".".join(local_ip().split(".")[:3]) + ".0/24"}
-
-
-@app.post("/api/device-bindings")
-def bind_device(
-    payload: DeviceBindingCreate,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    device_identity = local_device_identity()
-    device_id = (payload.device_id or device_identity["device_id"]).strip()
-    device_name = (payload.device_name or device_identity["device_name"]).strip()
-    metadata = {
-        **device_identity,
-        **payload.metadata,
-    }
-    try:
-        return storage.create_device_binding(
-            family_id=payload.family_id,
-            bound_by_user_id=int(user["id"]),
-            device_id=device_id,
-            device_name=device_name,
-            device_type=payload.device_type,
-            note=payload.note,
-            metadata=metadata,
-        )
-    except ValueError as exc:
-        detail = str(exc)
-        status_code = 403 if "not a member" in detail else 409 if "already bound" in detail else 400
-        raise HTTPException(status_code=status_code, detail=detail) from exc
-
-
-@app.get("/api/device-bindings")
-def list_device_bindings(family_id: int, user: Dict[str, Any] = Depends(current_user)) -> list[Dict[str, Any]]:
-    if not storage.is_family_member(family_id, int(user["id"])):
-        raise HTTPException(status_code=403, detail="You are not a member of this family")
-    return storage.list_family_device_bindings(family_id)
-
-
-@app.post("/api/device/binding-codes")
-def create_device_binding_code(
-    payload: DeviceBindingCodeCreate,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    try:
-        return storage.create_device_binding_code(
-            family_id=payload.family_id,
-            issued_by_user_id=int(user["id"]),
-            expires_in_minutes=payload.expires_in_minutes,
-            metadata={"note": payload.note},
-        )
-    except ValueError as exc:
-        detail = str(exc)
-        status_code = 403 if "not a member" in detail else 400
-        raise HTTPException(status_code=status_code, detail=detail) from exc
-
-
-@app.get("/api/device/binding-codes")
-def list_device_binding_codes(
-    family_id: int,
-    user: Dict[str, Any] = Depends(current_user),
-) -> list[Dict[str, Any]]:
-    if not storage.is_family_member(family_id, int(user["id"])):
-        raise HTTPException(status_code=403, detail="You are not a member of this family")
-    return storage.list_device_binding_codes(family_id)
-
-
-@app.post("/api/device/token/exchange")
-def exchange_device_token(payload: DeviceTokenExchange) -> Dict[str, Any]:
-    device_identity = local_device_identity()
-    device_id = (payload.device_id or device_identity["device_id"]).strip()
-    device_name = (payload.device_name or device_identity["device_name"]).strip()
-    device_type = payload.device_type.strip() or device_identity["device_type"]
-    try:
-        binding_code = storage.consume_device_binding_code(payload.code, device_id=device_id)
-        family_id = int(binding_code["family_id"])
-        if storage.get_device_binding(family_id, device_id) is None:
-            storage.create_device_binding(
-                family_id=family_id,
-                bound_by_user_id=int(binding_code["issued_by_user_id"]),
-                device_id=device_id,
-                device_name=device_name,
-                device_type=device_type,
-                note=payload.note or binding_code.get("metadata", {}).get("note", ""),
-                metadata={
-                    **device_identity,
-                    **payload.metadata,
-                },
-            )
-        token = storage.issue_device_token(
-            family_id=family_id,
-            device_id=device_id,
-            device_name=device_name,
-            device_type=device_type,
-            issued_by_code_id=int(binding_code["id"]),
-            metadata={
-                **device_identity,
-                **payload.metadata,
-            },
-        )
-    except ValueError as exc:
-        detail = str(exc)
-        status_code = 409 if "already bound" in detail else 400
-        raise HTTPException(status_code=status_code, detail=detail) from exc
-
-    if device_id == current_device_id():
-        write_local_device_token(str(token["device_token"]))
-
-    return {
-        "family_id": family_id,
-        "device_id": device_id,
-        "device_name": device_name,
-        **token,
-    }
-
-
-@app.post("/api/device/heartbeat")
-def device_heartbeat(
-    payload: DeviceHeartbeatIn,
-    request: Request,
-    device_session: Dict[str, Any] = Depends(current_device_session),
-) -> Dict[str, Any]:
-    heartbeat = storage.record_device_heartbeat(
-        token_id=int(device_session["id"]),
-        heartbeat=model_dump(payload),
-        remote_ip=request.client.host if request.client else None,
-    )
-    return {
-        "ok": True,
-        "device_id": heartbeat["device_id"],
-        "family_id": heartbeat["family_id"],
-        "last_heartbeat_at": heartbeat["last_heartbeat_at"],
-    }
-
-
-@app.post("/api/device/heartbeat/self")
-def self_device_heartbeat(
-    payload: DeviceHeartbeatIn,
-    request: Request,
-    user: Dict[str, Any] = Depends(current_user),
-) -> Dict[str, Any]:
-    require_device_access(user)
-    local_token = read_local_device_token()
-    if not local_token:
-        raise HTTPException(status_code=400, detail="Current device has no local device token")
-    session = storage.get_device_token_by_raw_token(local_token)
-    if session is None:
-        raise HTTPException(status_code=401, detail="Local device token is invalid")
-    heartbeat = storage.record_device_heartbeat(
-        token_id=int(session["id"]),
-        heartbeat=model_dump(payload),
-        remote_ip=request.client.host if request.client else None,
-    )
-    return {
-        "ok": True,
-        "device_id": heartbeat["device_id"],
-        "family_id": heartbeat["family_id"],
-        "last_heartbeat_at": heartbeat["last_heartbeat_at"],
-    }
-
-
-@app.get("/api/device/auth-status")
-def device_auth_status(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    device_id = current_device_id()
-    token = storage.get_active_device_token_by_device(device_id)
-    bound_family_ids = storage.list_device_bound_family_ids(device_id)
-    user_family_ids = storage.list_user_family_ids(int(user["id"]))
-    accessible_family_ids = sorted(set(bound_family_ids) & set(user_family_ids))
-    return {
-        "device_id": device_id,
-        "device_name": local_device_identity()["device_name"],
-        "bound_family_ids": bound_family_ids,
-        "accessible_family_ids": accessible_family_ids,
-        "local_token_saved": bool(read_local_device_token()),
-        "token": token,
-    }
 
 
 @app.get("/api/lan/discovery")
