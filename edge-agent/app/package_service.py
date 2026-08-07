@@ -15,7 +15,6 @@ from .package_trust import (
     atomic_write_json,
     read_json_object,
 )
-from .schemas import V1PackageReleaseCreate
 from .storage import Storage
 
 
@@ -40,10 +39,6 @@ class PackageService:
         self.artifact_store = artifact_store
         self.runtime_guard = runtime_guard
         self.trust_store = PackageTrustStore(settings)
-
-    def require_family_access(self, user: Dict[str, Any], family_id: int) -> None:
-        if int(family_id) not in set(self.storage.list_user_family_ids(int(user["id"]))):
-            raise HTTPException(status_code=403, detail="You do not have access to this family")
 
     def package_root(self, package_type: str) -> Path:
         try:
@@ -102,111 +97,12 @@ class PackageService:
         signed = dict(manifest.get("signed_manifest") or {})
         return str(signed.get("version") or default_version or "")
 
-    def release_file_name(self, asset: Dict[str, Any]) -> str:
-        metadata = asset.get("metadata") or {}
-        value = str(metadata.get("file_name") or Path(str(asset.get("object_key") or "")).name or "").strip()
-        return Path(value).name
-
-    def signed_manifest_from_payload(self, payload: V1PackageReleaseCreate, *, file_name: str) -> Dict[str, Any]:
-        return {
-            "manifest_version": int(payload.manifest_version),
-            "package_type": payload.package_type,
-            "version": payload.version,
-            "family_id": int(payload.family_id),
-            "device_scope": payload.device_scope,
-            "device_id": payload.device_id,
-            "byte_size": int(payload.byte_size),
-            "sha256": payload.sha256,
-            "signature_key_id": payload.signature_key_id,
-            "file_name": file_name,
-            "entry_type": payload.entry_type,
-            "entry_path": payload.entry_path,
-            "install_strategy": payload.install_strategy,
-            "signature": payload.signature,
-        }
-
-    def create_release(self, payload: V1PackageReleaseCreate, *, user: Dict[str, Any]) -> Dict[str, Any]:
-        self.require_family_access(user, int(payload.family_id))
-        asset = self.storage.get_media_asset(int(payload.asset_id))
-        if asset is None:
-            raise HTTPException(status_code=404, detail="Media asset not found")
-        if int(asset["family_id"]) != int(payload.family_id):
-            raise HTTPException(status_code=400, detail="Asset family mismatch")
-        file_name = self.release_file_name(asset)
-        signed_manifest = self.signed_manifest_from_payload(payload, file_name=file_name)
-        try:
-            normalized = self.trust_store.verify_signature(signed_manifest)
-            self.trust_store.verify_artifact(self.artifact_store.asset_file_path(asset), normalized)
-        except PackageTrustError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        try:
-            release = self.storage.create_package_release(
-                family_id=int(payload.family_id),
-                package_type=payload.package_type,
-                version=payload.version,
-                asset_id=int(payload.asset_id),
-                install_strategy=payload.install_strategy,
-                entry_path=payload.entry_path,
-                metadata={
-                    **payload.metadata,
-                    "content_type": asset.get("content_type"),
-                    "signed_manifest": normalized,
-                },
-                created_by_user_id=int(user["id"]),
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return self.package_release_for_api(release)
-
     def package_release_for_api(self, release: Dict[str, Any]) -> Dict[str, Any]:
         data = dict(release)
         asset = self.storage.get_media_asset(int(release["asset_id"]))
         if asset:
             data["asset"] = self.artifact_store.artifact_for_api(asset)
         return data
-
-    def list_releases(
-        self,
-        *,
-        family_id: int,
-        package_type: str = "",
-        user: Dict[str, Any],
-        limit: int = 20,
-    ) -> list[Dict[str, Any]]:
-        self.require_family_access(user, int(family_id))
-        return [
-            self.package_release_for_api(release)
-            for release in self.storage.list_package_releases(
-                family_id=int(family_id), package_type=package_type, limit=limit
-            )
-        ]
-
-    def get_release_for_user(self, release_id: int, user: Dict[str, Any]) -> Dict[str, Any]:
-        release = self.storage.get_package_release(int(release_id))
-        if release is None:
-            raise HTTPException(status_code=404, detail="Package release not found")
-        self.require_family_access(user, int(release["family_id"]))
-        return release
-
-    def create_download_link(
-        self,
-        release_id: int,
-        *,
-        user: Dict[str, Any],
-        expires_in_seconds: int,
-    ) -> Dict[str, Any]:
-        release = self.get_release_for_user(release_id, user)
-        link = self.artifact_store.create_public_link(
-            int(release["asset_id"]),
-            user=user,
-            expires_in_seconds=expires_in_seconds,
-        )
-        return {
-            "release_id": int(release["id"]),
-            "package_type": release["package_type"],
-            "version": release["version"],
-            **link,
-        }
 
     def execution_for_api(self, execution: Dict[str, Any]) -> Dict[str, Any]:
         data = dict(execution)
@@ -215,22 +111,6 @@ class PackageService:
             if release is not None:
                 data["release"] = self.package_release_for_api(release)
         return data
-
-    def list_executions(
-        self,
-        *,
-        family_id: int,
-        device_id: str = "",
-        user: Dict[str, Any],
-        limit: int = 20,
-    ) -> list[Dict[str, Any]]:
-        self.require_family_access(user, int(family_id))
-        return [
-            self.execution_for_api(execution)
-            for execution in self.storage.list_package_executions(
-                family_id=int(family_id), device_id=device_id, limit=limit
-            )
-        ]
 
     def _record_failure(self, execution_id: int, exc: Exception) -> None:
         self.storage.update_package_execution(

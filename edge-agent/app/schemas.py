@@ -117,37 +117,8 @@ class V1PackageArtifactPublicLinkCreate(BaseModel):
     expires_in_seconds: int = Field(default=900, ge=60, le=86400)
 
 
-class V1PackageReleaseCreate(BaseModel):
-    family_id: int
-    asset_id: int = Field(..., ge=1)
-    manifest_version: int = Field(default=1, ge=1, le=1)
-    package_type: str = Field(..., pattern="^(app|model)$")
-    version: str = Field(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
-    device_scope: str = Field(default="family", pattern="^(family|device)$")
-    device_id: str = Field(default="", max_length=120)
-    byte_size: int = Field(..., ge=1, le=52428800)
-    sha256: str = Field(..., pattern=r"^[0-9a-fA-F]{64}$")
-    signature_key_id: str = Field(..., pattern=r"^[0-9a-fA-F]{16}$")
-    signature: str = Field(..., min_length=80, max_length=128)
-    install_strategy: str = Field(..., pattern="^(file|archive)$")
-    entry_type: str = Field(..., pattern="^(python|shell|executable|data)$")
-    entry_path: str = Field(..., min_length=1, max_length=300)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class V1PackageDownloadLinkCreate(BaseModel):
-    expires_in_seconds: int = Field(default=900, ge=60, le=86400)
-
-
 class V1DeviceUpgradeRun(BaseModel):
     package_types: list[str] = Field(default_factory=list)
-
-
-class V1DeviceSyncTargetUpdate(BaseModel):
-    desired_app_version: str = Field(default="", max_length=40)
-    desired_model_version: str = Field(default="", max_length=80)
-    rules: Optional[RulesUpdate] = None
-    config: Dict[str, Any] = Field(default_factory=dict)
 
 
 class V1DeviceSyncReport(BaseModel):
@@ -157,23 +128,3 @@ class V1DeviceSyncReport(BaseModel):
     worker_running: Optional[bool] = None
     runtime: Dict[str, Any] = Field(default_factory=dict)
     status: Dict[str, Any] = Field(default_factory=dict)
-
-
-class V1DeviceRolloutCreate(BaseModel):
-    family_id: int
-    title: str = Field(default="", max_length=80)
-    rollout_mode: str = Field(default="canary", pattern="^(canary|full)$")
-    device_ids: list[str] = Field(default_factory=list)
-    canary_device_ids: list[str] = Field(default_factory=list)
-    desired_app_version: str = Field(default="", max_length=40)
-    desired_model_version: str = Field(default="", max_length=80)
-    rules: Optional[RulesUpdate] = None
-    config: Dict[str, Any] = Field(default_factory=dict)
-
-
-class V1DeviceRolloutPromote(BaseModel):
-    device_ids: list[str] = Field(default_factory=list)
-
-
-class V1DeviceRolloutRollback(BaseModel):
-    device_ids: list[str] = Field(default_factory=list)

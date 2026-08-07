@@ -783,3 +783,11 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 **处理**：删除盒子用户查询型 v1 事件和汇总路由及无消费者的 `current_user`；保留盒子本地管理端 `/api/events*`，以及设备令牌保护的 `/api/v1/device/events` 上行和事件响应摘要。同步从共享 `assets/scripts/edge-client.js` 删除无消费者的设备查询、用户侧包发布、rollout、同步目标和 v1 事件查询方法；保留设备同步与设备升级执行方法。
 
 **验收要求**：生产边界门禁必须确认退休路由不存在；管理端事件列表仍从本地 `/api/events` 获取；设备事件上行仍可幂等接收；正式 iOS 不得重新依赖盒子用户查询接口。云端正式包发布与 rollout 仍属于 GH-034/GH-038 缺口，本次不伪造完成。
+
+### 2026-08-07 包发布协议模型残留
+
+**发现**：盒子用户侧包发布、下载链接、执行列表、rollout 和同步目标路由已经退休，但 `schemas.py` 和 `PackageService` 仍保留只服务这些路由的请求模型与家庭权限方法，增加了错误的“盒子可以发布包”的表面能力。
+
+**处理**：删除无消费者的 `V1PackageReleaseCreate`、`V1PackageDownloadLinkCreate`、`V1DeviceSyncTargetUpdate` 和 rollout 请求模型；删除 `PackageService` 中包创建、用户查询、下载链接和用户执行列表方法。保留设备命令触发的 `run_pending_upgrades`、签名安装、原子切换、运行时回滚、执行记录和状态回报；不删除历史 SQLite 表及其读取方法。
+
+**验收要求**：设备升级执行专项、签名供应链专项和配置同步专项必须继续通过；生产边界不得重新挂载用户侧包管理接口。正式云端包发布与 rollout 仍需在 GH-034/GH-038 中由云端实现后，再补齐设备命令闭环。
