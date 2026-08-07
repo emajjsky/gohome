@@ -150,7 +150,6 @@ class Settings:
         self.hailo_object_interval_seconds = float(os.getenv("GOHOME_HAILO_OBJECT_INTERVAL_SECONDS", "1.0"))
         self.hailo_retry_seconds = float(os.getenv("GOHOME_HAILO_RETRY_SECONDS", "30"))
         self.context_detection_interval_seconds = float(os.getenv("GOHOME_CONTEXT_DETECTION_INTERVAL_SECONDS", "3"))
-        self.enable_demo_camera = os.getenv("GOHOME_ENABLE_DEMO_CAMERA", "0") == "1"
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

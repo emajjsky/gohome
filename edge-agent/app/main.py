@@ -325,30 +325,6 @@ def discover_lan_cameras(limit: int = 24) -> list[Dict[str, Any]]:
     return results[:limit]
 
 
-def ensure_demo_camera_if_empty() -> None:
-    if not settings.enable_demo_camera:
-        cleanup_demo_cameras()
-        return
-    if storage.list_cameras():
-        return
-    storage.create_camera(
-        {
-            "name": "客厅演示摄像头",
-            "room": "客厅",
-            "stream_url": "demo:living_room",
-            "username": None,
-            "password": None,
-            "enabled": True,
-        }
-    )
-
-
-def cleanup_demo_cameras() -> None:
-    for camera in storage.list_cameras():
-        if str(camera.get("stream_url", "")).strip().lower() == "demo:living_room":
-            storage.delete_camera(int(camera["id"]))
-
-
 def current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme)) -> Dict[str, Any]:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -1431,7 +1407,6 @@ def windows_captive_portal(request: Request) -> Response:
 @app.on_event("startup")
 def on_startup() -> None:
     storage.init_schema()
-    ensure_demo_camera_if_empty()
     if not settings.disable_worker:
         worker.start()
     upload_agent.start()

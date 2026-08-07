@@ -222,6 +222,15 @@ def main() -> None:
     if "launchctl" in deployment or "LaunchAgent" in deployment:
         raise SystemExit("macOS LaunchAgent logic remains in production edge installer")
 
+    main_source = (APP_DIR / "main.py").read_text(encoding="utf-8")
+    settings_source = (APP_DIR / "settings.py").read_text(encoding="utf-8")
+    env_source = (EDGE_ROOT / ".env.example").read_text(encoding="utf-8")
+    if any(
+        marker in main_source or marker in settings_source or marker in env_source
+        for marker in ("ensure_demo_camera_if_empty", "GOHOME_ENABLE_DEMO_CAMERA", "demo:living_room")
+    ):
+        raise SystemExit("demo camera injection remains in the production edge runtime")
+
     pi_deployment = (EDGE_ROOT / "scripts" / "deploy-to-pi.sh").read_text(encoding="utf-8")
     required_pi_contract = (
         "--delete-delay",
