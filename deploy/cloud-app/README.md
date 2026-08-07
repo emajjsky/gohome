@@ -16,6 +16,11 @@ The archive contains only the cloud runtime, PostgreSQL migrations, the retained
 Web interface and their assets. Tests, iOS, edge code, research files,
 AppleDouble files and backups are rejected.
 
+The build also emits `<archive>.files.sha256`. It is the exact committed-file
+manifest used to create the archive; review it together with the archive
+checksum before uploading. The manifest is an audit artifact, not a runtime
+dependency.
+
 ## Install
 
 Upload the archive, its SHA-256 value, `install-release.sh`, and
