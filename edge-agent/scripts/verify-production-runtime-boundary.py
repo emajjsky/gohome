@@ -229,6 +229,7 @@ def main() -> None:
         "--exclude '/logs/'",
         "--exclude '/.env'",
         "sudo systemctl restart '$PI_SERVICE'",
+        "PYTHONDONTWRITEBYTECODE=1 .venv-pi/bin/python scripts/verify-vision-runtime.py",
         "http://127.0.0.1:8711/health",
     )
     missing_pi = [item for item in required_pi_contract if item not in pi_deployment]

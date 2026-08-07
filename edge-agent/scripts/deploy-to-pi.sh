@@ -54,8 +54,8 @@ rsync -az \
 
 ssh "$PI_SSH" "cd '$PI_ROOT' && sudo rm -rf backups"
 
-ssh "$PI_SSH" "cd '$PI_ROOT' && .venv-pi/bin/python -m pip install --requirement requirements-security.txt"
-ssh "$PI_SSH" "cd '$PI_ROOT' && .venv-pi/bin/python scripts/verify-vision-runtime.py --require-yolo --require-pose --require-hailo"
+ssh "$PI_SSH" "cd '$PI_ROOT' && PYTHONDONTWRITEBYTECODE=1 .venv-pi/bin/python -m pip install --requirement requirements-security.txt"
+ssh "$PI_SSH" "cd '$PI_ROOT' && PYTHONDONTWRITEBYTECODE=1 .venv-pi/bin/python scripts/verify-vision-runtime.py --require-yolo --require-pose --require-hailo"
 ssh "$PI_SSH" "sudo systemctl restart '$PI_SERVICE'"
 
 healthy=false

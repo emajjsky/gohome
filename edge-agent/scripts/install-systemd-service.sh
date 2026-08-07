@@ -37,7 +37,7 @@ PYTHON_BIN="$(select_python_bin)" || {
 VISION_PREFLIGHT="$SCRIPT_DIR/verify-vision-runtime.py"
 if [[ -f "$VISION_PREFLIGHT" ]]; then
   USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
-  HOME="${USER_HOME:-/home/$USER_NAME}" "$PYTHON_BIN" "$VISION_PREFLIGHT" --require-yolo --require-pose
+  HOME="${USER_HOME:-/home/$USER_NAME}" PYTHONDONTWRITEBYTECODE=1 "$PYTHON_BIN" "$VISION_PREFLIGHT" --require-yolo --require-pose
 fi
 
 if [[ "${EUID}" -ne 0 ]]; then
