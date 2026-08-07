@@ -1969,18 +1969,6 @@ class Storage:
         data["output"] = json.loads(data.pop("output_json", "{}") or "{}")
         return data
 
-    def _elder_profile_to_dict(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
-        if row is None:
-            return None
-        data = dict(row)
-        data["likes"] = json.loads(data.pop("likes_json", "[]") or "[]")
-        data["dislikes"] = json.loads(data.pop("dislikes_json", "[]") or "[]")
-        data["diet_notes"] = json.loads(data.pop("diet_notes_json", "[]") or "[]")
-        data["health_conditions"] = json.loads(data.pop("health_conditions_json", "[]") or "[]")
-        data["routine"] = json.loads(data.pop("routine_json", "{}") or "{}")
-        data["emergency_contacts"] = json.loads(data.pop("emergency_contacts_json", "[]") or "[]")
-        return data
-
     def _user_to_dict(self, row: sqlite3.Row, include_secret: bool = False) -> Dict[str, Any]:
         data = dict(row)
         if not include_secret:
@@ -2090,96 +2078,6 @@ class Storage:
         if family is None:
             raise RuntimeError("Family was not persisted")
         return family
-
-    def get_elder_profile(self, family_id: int, elder_id: str) -> Optional[Dict[str, Any]]:
-        with self.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT *
-                FROM elder_profiles
-                WHERE family_id = ? AND elder_id = ?
-                LIMIT 1
-                """,
-                (int(family_id), str(elder_id or "").strip()),
-            ).fetchone()
-        return self._elder_profile_to_dict(row)
-
-    def upsert_elder_profile(self, family_id: int, elder_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        timestamp = now_iso()
-        clean_elder_id = str(elder_id or "").strip()
-        if not clean_elder_id:
-            raise ValueError("elder_id is required")
-        with self.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT id
-                FROM elder_profiles
-                WHERE family_id = ? AND elder_id = ?
-                LIMIT 1
-                """,
-                (int(family_id), clean_elder_id),
-            ).fetchone()
-            params = (
-                str(payload.get("display_name") or "").strip(),
-                str(payload.get("relationship") or "").strip(),
-                str(payload.get("city") or "").strip(),
-                str(payload.get("birthday") or "").strip(),
-                str(payload.get("lunar_birthday") or "").strip(),
-                str(payload.get("living_status") or "").strip(),
-                str(payload.get("primary_room") or "").strip(),
-                json.dumps(payload.get("likes") or [], ensure_ascii=False),
-                json.dumps(payload.get("dislikes") or [], ensure_ascii=False),
-                json.dumps(payload.get("diet_notes") or [], ensure_ascii=False),
-                json.dumps(payload.get("health_conditions") or [], ensure_ascii=False),
-                str(payload.get("medication_notes") or "").strip(),
-                json.dumps(payload.get("routine") or {}, ensure_ascii=False),
-                json.dumps(payload.get("emergency_contacts") or [], ensure_ascii=False),
-                str(payload.get("home_area") or "").strip(),
-                str(payload.get("privacy_level") or "family_only").strip() or "family_only",
-            )
-            if row is None:
-                conn.execute(
-                    """
-                    INSERT INTO elder_profiles (
-                        family_id, elder_id, display_name, relationship, city, birthday,
-                        lunar_birthday, living_status, primary_room, likes_json, dislikes_json,
-                        diet_notes_json, health_conditions_json, medication_notes, routine_json,
-                        emergency_contacts_json, home_area, privacy_level, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (int(family_id), clean_elder_id, *params, timestamp, timestamp),
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE elder_profiles
-                    SET
-                        display_name = ?,
-                        relationship = ?,
-                        city = ?,
-                        birthday = ?,
-                        lunar_birthday = ?,
-                        living_status = ?,
-                        primary_room = ?,
-                        likes_json = ?,
-                        dislikes_json = ?,
-                        diet_notes_json = ?,
-                        health_conditions_json = ?,
-                        medication_notes = ?,
-                        routine_json = ?,
-                        emergency_contacts_json = ?,
-                        home_area = ?,
-                        privacy_level = ?,
-                        updated_at = ?
-                    WHERE family_id = ? AND elder_id = ?
-                    """,
-                    (*params, timestamp, int(family_id), clean_elder_id),
-                )
-        profile = self.get_elder_profile(family_id=int(family_id), elder_id=clean_elder_id)
-        if profile is None:
-            raise RuntimeError("Elder profile was not persisted")
-        return profile
 
     def is_family_member(self, family_id: int, user_id: int) -> bool:
         with self.connect() as conn:

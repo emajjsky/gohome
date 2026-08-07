@@ -210,6 +210,8 @@ def main() -> None:
         "clear_message_candidates",
         "create_message_candidate",
         "update_message_candidate_status",
+        "get_elder_profile",
+        "upsert_elder_profile",
     }
     storage_methods = {
         node.name
