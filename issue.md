@@ -845,3 +845,5 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 **继续收口（2026-08-07）**：盒子已无 rollout 创建、查询或状态推进路由，`Storage` 中的 `create/get/list/update_device_rollout*` 只在内部互相调用，没有生产消费者。删除 rollout 编排 CRUD 和专用转换器，保留 `device_rollouts` 历史表及迁移；设备端签名包查找、校验、安装、原子激活、失败回滚和 `package_executions` 记录继续保留。生产边界门禁禁止盒子重新拥有 rollout 编排方法。
 
 **本项验收要求**：签名包供应链、设备升级执行、配置同步、历史数据库迁移和完整边缘回归全部通过；不得因为删除 rollout 编排而削弱设备端安装验证或回滚能力。
+
+**部署证据**：提交 `6709c13` 已通过完整边缘回归 `59/59` 并部署到 Pi；远端 `.release-commit` 为 `6709c13ec56e9e1caddb27b0bdbb9bf2058b771a`。两路源解码和直播投递约 `15.07 / 14.97 FPS`，H.264 编码输入约 `14.44 / 14.26 FPS`，隐私状态和发布状态均为 `ready`，进程失败、读取失败、重连及 Pose/Object/分割失败均为 `0`；服务 `NRestarts=0`，最近十分钟 warning 为空。设备升级执行和签名验证专项保持通过，历史 rollout 表未删除。
