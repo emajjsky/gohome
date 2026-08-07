@@ -201,6 +201,25 @@ def main() -> None:
     if "build_package_artifact_router" in (APP_DIR / "main.py").read_text(encoding="utf-8"):
         raise SystemExit("edge runtime still mounts user-facing package artifact routes")
 
+    storage_tree = ast.parse((APP_DIR / "storage.py").read_text(encoding="utf-8"))
+    retired_storage_methods = {
+        "list_calendar_events",
+        "create_calendar_event",
+        "list_message_candidates",
+        "get_message_candidate",
+        "clear_message_candidates",
+        "create_message_candidate",
+        "update_message_candidate_status",
+    }
+    storage_methods = {
+        node.name
+        for node in ast.walk(storage_tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    leaked_storage_methods = sorted(retired_storage_methods & storage_methods)
+    if leaked_storage_methods:
+        raise SystemExit(f"retired cloud business methods remain in edge storage: {leaked_storage_methods}")
+
     if "CORSMiddleware" in (APP_DIR / "main.py").read_text(encoding="utf-8"):
         raise SystemExit("edge runtime still exposes a wildcard browser CORS policy")
 
