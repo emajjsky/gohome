@@ -99,8 +99,7 @@ struct AccountProfileEditor: View {
                 AccountAvatar(
                     profile: model.accountProfile,
                     apiClient: apiClient,
-                    size: 92,
-                    fallback: String((normalized(displayName) ?? "回").prefix(1))
+                    size: 92
                 )
             }
             Image(systemName: "camera.fill")
@@ -192,7 +191,6 @@ struct AccountAvatar: View {
     let profile: AccountProfile
     let apiClient: APIClient?
     let size: CGFloat
-    let fallback: String
     @State private var image: UIImage?
 
     var body: some View {
@@ -201,9 +199,9 @@ struct AccountAvatar: View {
             if let image {
                 Image(uiImage: image).resizable().scaledToFill()
             } else {
-                Text(fallback)
-                    .font(.system(size: size * 0.36, weight: .bold, design: .rounded))
-                    .foregroundStyle(GoHomeTheme.ginger)
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.38, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.paleGinger)
             }
         }
         .frame(width: size, height: size)

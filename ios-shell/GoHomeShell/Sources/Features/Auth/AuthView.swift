@@ -20,14 +20,14 @@ struct AuthView: View {
 
                 Image(systemName: "arrow.turn.down.right")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Color.black)
+                    .foregroundStyle(GoHomeTheme.ink)
                     .frame(width: 44, height: 44)
-                    .background(Color.yellow.opacity(0.82), in: Circle())
+                    .background(GoHomeTheme.paleGinger, in: Circle())
                     .accessibilityHidden(true)
 
                 Text("回家")
                     .font(.system(size: 38, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.black)
+                    .foregroundStyle(GoHomeTheme.ink)
                     .padding(.top, 24)
 
                 Text("让关心变成有回应的日常")
@@ -75,9 +75,9 @@ struct AuthView: View {
                             viewModel.requestCode()
                         }
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.black)
+                        .foregroundStyle(GoHomeTheme.ink)
                         .frame(width: 104, height: 52)
-                        .background(Color.yellow.opacity(0.82), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .background(GoHomeTheme.paleGinger, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         .disabled(!viewModel.canRequestCode)
                         .accessibilityIdentifier("request-code-button")
                     }

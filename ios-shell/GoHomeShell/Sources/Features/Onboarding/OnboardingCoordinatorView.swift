@@ -45,7 +45,7 @@ struct OnboardingPage<Content: View>: View {
                 HStack(spacing: 6) {
                     ForEach(1...4, id: \.self) { step in
                         Capsule()
-                            .fill(step <= index ? Color.yellow.opacity(0.9) : Color.black.opacity(0.08))
+                            .fill(step <= index ? GoHomeTheme.ginger : GoHomeTheme.softLine)
                             .frame(height: 4)
                     }
                 }

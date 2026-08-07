@@ -26,6 +26,7 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                welcomeHero
                 if let alert = HomePresentation.activeAlert(model.state.value?.criticalAlert) {
                     CriticalAlertStrip(alert: alert) { onOpenAlert(alert.id) }
                 }
@@ -63,7 +64,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 7) {
                 Text(dateText)
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(GoHomeTheme.ginger)
+                    .foregroundStyle(GoHomeTheme.leaf)
                 Text("今天")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .foregroundStyle(GoHomeTheme.ink)
@@ -75,6 +76,37 @@ struct HomeView: View {
             }
             Spacer()
         }
+    }
+
+    private var welcomeHero: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .bottomLeading) {
+                GoHomeLocalImage(name: "grandma-reading")
+                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+                    .clipped()
+                Rectangle()
+                    .fill(Color.black.opacity(0.30))
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                VStack(alignment: .leading, spacing: 5) {
+                    Label("家庭状态", systemImage: "house.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.86))
+                    Text("今天，也有人在牵挂")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                    Text("看看家里的近况，留一点时间给彼此")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.86))
+                }
+                .padding(16)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottomLeading)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 220)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("家庭状态，今天也有人在牵挂")
     }
 
     private var dateText: String {

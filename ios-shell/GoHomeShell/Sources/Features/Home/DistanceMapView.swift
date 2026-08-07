@@ -13,7 +13,7 @@ struct DistanceMapView: View {
                     Button(action: onSetHomeLocation) {
                         Label("更改", systemImage: "location.fill")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(GoHomeTheme.ink)
+                            .foregroundStyle(GoHomeTheme.leaf)
                             .frame(minHeight: 44)
                     }
                     .buttonStyle(.plain)
@@ -82,14 +82,14 @@ private struct RouteBand: View {
     var body: some View {
         HStack(spacing: 14) {
             Image(systemName: "location.fill")
-                .foregroundStyle(GoHomeTheme.ginger)
+                .foregroundStyle(GoHomeTheme.leaf)
             Rectangle()
                 .fill(GoHomeTheme.line)
                 .frame(height: 1)
                 .overlay {
                     HStack(spacing: 5) {
                         ForEach(0..<7, id: \.self) { _ in
-                            Circle().fill(GoHomeTheme.ginger.opacity(0.65)).frame(width: 3, height: 3)
+                            Circle().fill(GoHomeTheme.leaf.opacity(0.65)).frame(width: 3, height: 3)
                         }
                     }
                 }
@@ -98,7 +98,7 @@ private struct RouteBand: View {
         }
         .padding(.horizontal, 18)
         .frame(height: 58)
-        .background(GoHomeTheme.paleGinger.opacity(0.55), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+        .background(GoHomeTheme.paleLeaf.opacity(0.8), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
     }
 }
 
@@ -125,7 +125,7 @@ private struct HomeRouteMap: View {
         )
         _region = State(initialValue: MKCoordinateRegion(center: center, span: span))
         points = [
-            Point(id: "user", coordinate: userCoordinate, color: GoHomeTheme.ginger),
+            Point(id: "user", coordinate: userCoordinate, color: GoHomeTheme.leaf),
             Point(id: "home", coordinate: homeCoordinate, color: GoHomeTheme.ink),
         ]
     }

@@ -89,9 +89,9 @@ struct CommunityView: View {
             HStack(spacing: 12) {
                 Image(systemName: service.symbol)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(service.isEmergency ? Color.red : GoHomeTheme.ink)
+                    .foregroundStyle(service.isEmergency ? GoHomeTheme.danger : GoHomeTheme.leaf)
                     .frame(width: 32, height: 32)
-                    .background(service.isEmergency ? Color.red.opacity(0.08) : GoHomeTheme.paleGinger.opacity(0.7), in: Circle())
+                    .background(service.isEmergency ? GoHomeTheme.danger.opacity(0.10) : GoHomeTheme.paleLeaf, in: Circle())
                 VStack(alignment: .leading, spacing: 3) {
                     Text(service.title)
                         .font(.system(size: 14, weight: .bold))
@@ -106,10 +106,10 @@ struct CommunityView: View {
             }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 72)
-            .background(service.isEmergency ? Color.red.opacity(0.045) : Color.black.opacity(0.028), in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+            .background(service.isEmergency ? GoHomeTheme.danger.opacity(0.045) : GoHomeTheme.surface, in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous)
-                    .stroke(service.isEmergency ? Color.red.opacity(0.12) : GoHomeTheme.softLine, lineWidth: 0.5)
+                    .stroke(service.isEmergency ? GoHomeTheme.danger.opacity(0.12) : GoHomeTheme.softLine, lineWidth: 0.5)
             }
         }
         .buttonStyle(.plain)

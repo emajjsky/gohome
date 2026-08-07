@@ -162,23 +162,7 @@ private struct ProductRecommendationCard: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
-            AsyncImage(url: proxiedContentImageURL(product.imageURL, baseURL: apiBaseURL)) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                default:
-                    Rectangle()
-                        .fill(Color.black.opacity(0.045))
-                        .overlay {
-                            Image(systemName: "photo")
-                                .foregroundStyle(GoHomeTheme.mutedInk)
-                        }
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .aspectRatio(1, contentMode: .fit)
-            .clipped()
-            .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+            ProductRecommendationImage(product: product, apiBaseURL: apiBaseURL, aspectRatio: 1)
 
             Text(product.category)
                 .font(.system(size: 11, weight: .bold))
@@ -216,23 +200,7 @@ private struct ProductRecommendationDetail: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    AsyncImage(url: proxiedContentImageURL(product.imageURL, baseURL: apiBaseURL)) { phase in
-                        if case let .success(image) = phase {
-                            image.resizable().scaledToFill()
-                        } else {
-                            Rectangle()
-                                .fill(GoHomeTheme.paleGinger)
-                                .overlay {
-                                    Image(systemName: "shippingbox")
-                                        .font(.system(size: 34, weight: .light))
-                                        .foregroundStyle(GoHomeTheme.ink.opacity(0.72))
-                                }
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(4 / 3, contentMode: .fit)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+                    ProductRecommendationImage(product: product, apiBaseURL: apiBaseURL, aspectRatio: 4 / 3)
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text(product.category)
@@ -317,5 +285,50 @@ private struct ProductRecommendationDetail: View {
         displayFormatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
         displayFormatter.dateFormat = "yyyy年M月d日"
         return displayFormatter.string(from: date)
+    }
+}
+
+private struct ProductRecommendationImage: View {
+    let product: ProductRecommendation
+    let apiBaseURL: URL?
+    let aspectRatio: CGFloat
+
+    var body: some View {
+        AsyncImage(url: proxiedContentImageURL(product.imageURL, baseURL: apiBaseURL)) { phase in
+            if case let .success(image) = phase {
+                image
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                unavailableState
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(aspectRatio, contentMode: .fit)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+    }
+
+    private var unavailableState: some View {
+        ZStack {
+            GoHomeTheme.sky
+            VStack(spacing: 8) {
+                Image(systemName: categorySymbol)
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundStyle(GoHomeTheme.leaf)
+                Text("图片暂不可用")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            }
+        }
+        .accessibilityLabel("推荐图片暂不可用")
+    }
+
+    private var categorySymbol: String {
+        let value = product.category.lowercased()
+        if value.contains("照明") { return "lightbulb.fill" }
+        if value.contains("收纳") { return "shippingbox.fill" }
+        if value.contains("安全") || value.contains("防滑") { return "figure.walk" }
+        return "square.grid.2x2"
     }
 }

@@ -64,7 +64,7 @@ struct DeviceBindingView: View {
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(Color.black)
                         .frame(width: 42, height: 42)
-                        .background(Color.yellow.opacity(0.82), in: Circle())
+                        .background(GoHomeTheme.paleGinger, in: Circle())
                     VStack(alignment: .leading, spacing: 3) {
                         Text(discovery.isSearching ? "正在搜索附近设备" : "搜索已暂停")
                             .font(.system(size: 15, weight: .semibold))
@@ -135,7 +135,7 @@ struct DeviceBindingView: View {
                 .foregroundStyle(.black)
                 .frame(maxWidth: .infinity)
                 .frame(height: 48)
-                .background(Color.yellow.opacity(0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(GoHomeTheme.paleGinger, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .disabled(isBinding)
 
                 OnboardingError(message: errorMessage)

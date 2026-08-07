@@ -35,7 +35,7 @@ struct ProfileView: View {
                 NavigationLink {
                     AccountProfileEditor(model: model, apiClient: apiClient)
                 } label: {
-                    identity
+                    profileHero
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("profile-account-entry")
@@ -131,7 +131,7 @@ struct ProfileView: View {
                                 .font(.system(size: 15, weight: .semibold))
                             Spacer()
                         }
-                        .foregroundStyle(Color.red)
+                        .foregroundStyle(GoHomeTheme.danger)
                         .padding(.vertical, 15)
                     }
                     .buttonStyle(.plain)
@@ -153,34 +153,38 @@ struct ProfileView: View {
         .task { model.start() }
     }
 
-    private var identity: some View {
-        HStack(spacing: 14) {
-            AccountAvatar(
-                profile: model.accountProfile,
-                apiClient: apiClient,
-                size: 54,
-                fallback: identityInitial
-            )
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(model.accountProfile.displayName.nonEmpty ?? "回家用户")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundStyle(GoHomeTheme.ink)
-                Text(accountSubtitle)
-                    .font(.system(size: 13, weight: .medium))
+    private var profileHero: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 14) {
+                AccountAvatar(
+                    profile: model.accountProfile,
+                    apiClient: apiClient,
+                    size: 66
+                )
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("我的家庭")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(GoHomeTheme.leaf)
+                    Text(model.accountProfile.displayName.nonEmpty ?? "回家用户")
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .foregroundStyle(GoHomeTheme.ink)
+                    Text(accountSubtitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(GoHomeTheme.mutedInk)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(GoHomeTheme.mutedInk)
             }
-            Spacer()
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(GoHomeTheme.mutedInk)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 5)
-        .contentShape(Rectangle())
-    }
-
-    private var identityInitial: String {
-        String((model.accountProfile.displayName.nonEmpty ?? model.accountProfile.phone.nonEmpty ?? "回").prefix(1))
+        .padding(16)
+        .background(GoHomeTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(GoHomeTheme.line, lineWidth: 0.7)
+        }
     }
 
     private var maskedPhone: String {
@@ -451,11 +455,11 @@ struct ProfileSection<Content: View>: View {
             VStack(spacing: 0) {
                 content()
             }
-            .overlay(alignment: .top) {
-                Rectangle().fill(GoHomeTheme.line).frame(height: 1)
-            }
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(GoHomeTheme.line).frame(height: 1)
+            .padding(.horizontal, 14)
+            .background(GoHomeTheme.surface, in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous)
+                    .stroke(GoHomeTheme.line, lineWidth: 0.7)
             }
         }
     }
@@ -470,8 +474,9 @@ struct ProfileNavigationRow: View {
         HStack(spacing: 12) {
             Image(systemName: symbol)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(GoHomeTheme.ink)
-                .frame(width: 24)
+                .foregroundStyle(GoHomeTheme.leaf)
+                .frame(width: 30, height: 30)
+                .background(GoHomeTheme.paleLeaf, in: Circle())
             Text(title)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(GoHomeTheme.ink)

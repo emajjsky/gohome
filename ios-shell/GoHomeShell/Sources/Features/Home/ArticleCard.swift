@@ -108,20 +108,37 @@ struct ArticleImage: View {
                     case let .success(image):
                         image.resizable().scaledToFill()
                     default:
-                        ArticleImageFallback(category: article.category, compact: aspectRatio > 2)
+                        localFallback
                     }
                 }
             } else {
-                ArticleImageFallback(category: article.category, compact: aspectRatio > 2)
+                localFallback
             }
         }
         .frame(maxWidth: .infinity)
         .aspectRatio(aspectRatio, contentMode: .fit)
         .clipped()
     }
+
+    private var localFallback: some View {
+        GoHomeLocalImage(name: article.localImageName)
+            .overlay(alignment: .bottomLeading) {
+                if aspectRatio > 2 {
+                    Color.black.opacity(0.22)
+                }
+            }
+    }
 }
 
 private extension HomeArticle {
+    var localImageName: String {
+        let value = category.lowercased()
+        if value.contains("健康") || value.contains("养生") { return "grandma-reading" }
+        if value.contains("本地") || value.contains("热点") { return "memory-garden-sun" }
+        if value.contains("文娱") || value.contains("文化") { return "memory-generations" }
+        return "memory-relax-chat"
+    }
+
     var articleMetadataText: String {
         guard let publishedAt else { return sourceName }
         let formatter = ISO8601DateFormatter()
@@ -139,43 +156,4 @@ func proxiedContentImageURL(_ rawURL: String, baseURL: URL?) -> URL? {
     )
     components?.queryItems = [URLQueryItem(name: "url", value: source.absoluteString)]
     return components?.url
-}
-
-private struct ArticleImageFallback: View {
-    let category: String
-    let compact: Bool
-
-    var body: some View {
-        ZStack {
-            fallbackColor
-            if compact {
-                VStack(spacing: 0) {
-                    Image(systemName: ArticleCategory.icon(for: category))
-                        .font(.system(size: 30, weight: .light))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    Color.clear.frame(height: 92)
-                }
-                .foregroundStyle(GoHomeTheme.ink.opacity(0.7))
-            } else {
-                VStack(spacing: 10) {
-                    Image(systemName: ArticleCategory.icon(for: category))
-                        .font(.system(size: 34, weight: .light))
-                    Rectangle()
-                        .fill(GoHomeTheme.ink.opacity(0.2))
-                        .frame(width: 34, height: 1)
-                    Text(category)
-                        .font(.system(size: 11, weight: .bold))
-                }
-                .foregroundStyle(GoHomeTheme.ink.opacity(0.7))
-            }
-        }
-    }
-
-    private var fallbackColor: Color {
-        let value = category.lowercased()
-        if value.contains("健康") || value.contains("养生") { return Color(red: 0.88, green: 0.93, blue: 0.88) }
-        if value.contains("文娱") || value.contains("文化") { return Color(red: 0.91, green: 0.90, blue: 0.95) }
-        if value.contains("兴趣") || value.contains("生活") { return Color(red: 0.91, green: 0.94, blue: 0.95) }
-        return GoHomeTheme.paleGinger.opacity(0.72)
-    }
 }

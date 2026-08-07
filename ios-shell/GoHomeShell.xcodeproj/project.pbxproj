@@ -37,7 +37,10 @@
 		51FBE67F5F279B4917217D2E /* AppSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBD54AB746D00CA01186A345 /* AppSmokeTests.swift */; };
 		52BDFD1047914540E6EED552 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 745FA5F9F7623CBCEAB2CECA /* PrivacyInfo.xcprivacy */; };
 		534644623660DEA287B580EA /* LocationResolutionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF9313BF5A1F7F97EF5C4E54 /* LocationResolutionTests.swift */; };
+		540E3A87C5E44E91FF84966B /* memory-garden-sun.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 6BA6F5F9CB85610C58254181 /* memory-garden-sun.jpg */; };
+		5ACB9339254590FC58DFCDEA /* memory-relax-chat.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 92B623DF7339D98F4FD02613 /* memory-relax-chat.jpg */; };
 		5D928E7C69CD6E019C8A0887 /* MemoryViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B58D029742116912B1429B4 /* MemoryViewModelTests.swift */; };
+		5FDA7676C580B1EA156F2A4D /* memory-generations.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 7589D97DAB7D45313674B50C /* memory-generations.jpg */; };
 		5FF590BFEDBB2BCCA3398400 /* AppRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3334DDE3CC653FD1541523C /* AppRepository.swift */; };
 		64FB36378AB763E0006F2DC3 /* NativeWebRTCPeer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC9741F665C75AB657E6233F /* NativeWebRTCPeer.swift */; };
 		66DBFC376E46F1B98BEAC2FB /* CareMessageCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBBA32F7917F6F0495B49EF /* CareMessageCard.swift */; };
@@ -78,6 +81,7 @@
 		AC7AEAD46918E7C0BCDEB922 /* EditorialFeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C4AD0211D3A382551135621 /* EditorialFeedTests.swift */; };
 		AEB7F31BA57C363B533079F4 /* PrivacyDataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B1A5BF755C44C2A26915A2 /* PrivacyDataTests.swift */; };
 		B1F27F31EC4AE33898907C89 /* BoxDiscoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C7B4F227DC854C64746106C /* BoxDiscoveryService.swift */; };
+		B7495B105A972BD390611FAD /* grandma-reading.jpg in Resources */ = {isa = PBXBuildFile; fileRef = B4E95E00BEFBC01939A6C21A /* grandma-reading.jpg */; };
 		BB93EEC11571A3993186E568 /* Endpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748C4BBD1C9C334B3C126EDA /* Endpoint.swift */; };
 		BE8D1DAFCC41C5A73DB0D7A3 /* CameraThumbnailStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = F39487C3C9C1738C8D3B6951 /* CameraThumbnailStrip.swift */; };
 		BF9D8ED3655FAF99B5762883 /* MemoryLocationProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF1852331ED6E508981328DF /* MemoryLocationProvider.swift */; };
@@ -185,6 +189,7 @@
 		59D12CB7FEAF0CA9FD233E16 /* AccountDataModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDataModels.swift; sourceTree = "<group>"; };
 		5B9993B818E230FA09B15F87 /* ProfileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileModels.swift; sourceTree = "<group>"; };
 		5C4AD0211D3A382551135621 /* EditorialFeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorialFeedTests.swift; sourceTree = "<group>"; };
+		6BA6F5F9CB85610C58254181 /* memory-garden-sun.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "memory-garden-sun.jpg"; sourceTree = "<group>"; };
 		6E2484C2E61F757B95DDFA59 /* DistanceMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DistanceMapView.swift; sourceTree = "<group>"; };
 		70A83566580A0F78EDC30D76 /* DeviceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSettingsView.swift; sourceTree = "<group>"; };
 		72AB06FBD1E27C2FC881CC7E /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
@@ -192,6 +197,7 @@
 		745FA5F9F7623CBCEAB2CECA /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		748C4BBD1C9C334B3C126EDA /* Endpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Endpoint.swift; sourceTree = "<group>"; };
 		748FA19F9C6A88D3512B1119 /* CameraStreamClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraStreamClient.swift; sourceTree = "<group>"; };
+		7589D97DAB7D45313674B50C /* memory-generations.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "memory-generations.jpg"; sourceTree = "<group>"; };
 		77CFCDAA5CFFC8B26D1B9F25 /* ArticleCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArticleCard.swift; sourceTree = "<group>"; };
 		79B96D514BE47AD7DD320EE8 /* VideoPrivacy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPrivacy.swift; sourceTree = "<group>"; };
 		7C4D2264E987CE267AEA75DE /* AccountProfileEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountProfileEditor.swift; sourceTree = "<group>"; };
@@ -202,6 +208,7 @@
 		8DBBA32F7917F6F0495B49EF /* CareMessageCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareMessageCard.swift; sourceTree = "<group>"; };
 		8ED0A30A15762CD0C8DE58BA /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
 		8FC781823FDC35BF91DF1803 /* CameraConfigurationForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraConfigurationForm.swift; sourceTree = "<group>"; };
+		92B623DF7339D98F4FD02613 /* memory-relax-chat.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "memory-relax-chat.jpg"; sourceTree = "<group>"; };
 		930B8EAC49AC96E7F4AF14E1 /* GoHomeShell.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GoHomeShell.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		96FD654314F93143EC2FD572 /* ProfilePermissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilePermissionTests.swift; sourceTree = "<group>"; };
 		97FAD81D9CB3895DD306A81D /* AppSurfaceAuditTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSurfaceAuditTests.swift; sourceTree = "<group>"; };
@@ -219,6 +226,7 @@
 		AC18C86B265D5E9C147D9F6B /* AppModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModels.swift; sourceTree = "<group>"; };
 		B027CDDB2165FD2C73F0FD2F /* MemoryVideoPlaybackStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryVideoPlaybackStoreTests.swift; sourceTree = "<group>"; };
 		B0B1A5BF755C44C2A26915A2 /* PrivacyDataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyDataTests.swift; sourceTree = "<group>"; };
+		B4E95E00BEFBC01939A6C21A /* grandma-reading.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "grandma-reading.jpg"; sourceTree = "<group>"; };
 		B5A5A2D38A5BF6057F7B71D0 /* ProfileFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileFlowTests.swift; sourceTree = "<group>"; };
 		B5B93473F4F02FF55CBFF3B8 /* MemoryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryViewModel.swift; sourceTree = "<group>"; };
 		BA91D5DB50293F3C81AA77D6 /* EventsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventsViewModel.swift; sourceTree = "<group>"; };
@@ -460,6 +468,18 @@
 			path = Events;
 			sourceTree = "<group>";
 		};
+		8DA5632B32E9F4008862B7E7 /* images */ = {
+			isa = PBXGroup;
+			children = (
+				B4E95E00BEFBC01939A6C21A /* grandma-reading.jpg */,
+				6BA6F5F9CB85610C58254181 /* memory-garden-sun.jpg */,
+				7589D97DAB7D45313674B50C /* memory-generations.jpg */,
+				92B623DF7339D98F4FD02613 /* memory-relax-chat.jpg */,
+			);
+			name = images;
+			path = ../assets/images;
+			sourceTree = "<group>";
+		};
 		96169D5FD56A949069CD5262 /* Networking */ = {
 			isa = PBXGroup;
 			children = (
@@ -537,6 +557,7 @@
 			children = (
 				850682500EFF110998043564 /* GoHomeShellTests */,
 				A97453064E4ED1A5CAF99D8F /* GoHomeShellUITests */,
+				8DA5632B32E9F4008862B7E7 /* images */,
 				0262D45E32113540B06ADB48 /* Resources */,
 				7DACC599CA3CBAA0498621E7 /* Sources */,
 				F4405CF78F3AA284C69204B2 /* Products */,
@@ -681,6 +702,10 @@
 			files = (
 				EDE3ACD9BB7551960C0EAB04 /* Assets.xcassets in Resources */,
 				52BDFD1047914540E6EED552 /* PrivacyInfo.xcprivacy in Resources */,
+				B7495B105A972BD390611FAD /* grandma-reading.jpg in Resources */,
+				540E3A87C5E44E91FF84966B /* memory-garden-sun.jpg in Resources */,
+				5FDA7676C580B1EA156F2A4D /* memory-generations.jpg in Resources */,
+				5ACB9339254590FC58DFCDEA /* memory-relax-chat.jpg in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

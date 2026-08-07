@@ -31,9 +31,13 @@ struct CameraThumbnailStrip: View {
                             }
                             .padding(8)
                             .background(
-                                selectedID == camera.id ? GoHomeTheme.paleGinger : GoHomeTheme.softLine,
+                                selectedID == camera.id ? GoHomeTheme.paleLeaf : GoHomeTheme.surface,
                                 in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous)
                             )
+                            .overlay {
+                                RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous)
+                                    .stroke(selectedID == camera.id ? GoHomeTheme.leaf.opacity(0.45) : GoHomeTheme.line, lineWidth: 0.7)
+                            }
                         }
                         .buttonStyle(.plain)
                     }

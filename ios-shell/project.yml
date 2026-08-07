@@ -28,6 +28,14 @@ targets:
       - path: GoHomeShell/Sources
       - path: GoHomeShell/Resources
         buildPhase: resources
+      - path: ../assets/images/grandma-reading.jpg
+        buildPhase: resources
+      - path: ../assets/images/memory-garden-sun.jpg
+        buildPhase: resources
+      - path: ../assets/images/memory-generations.jpg
+        buildPhase: resources
+      - path: ../assets/images/memory-relax-chat.jpg
+        buildPhase: resources
     settings:
       base:
         PRODUCT_NAME: GoHomeShell
