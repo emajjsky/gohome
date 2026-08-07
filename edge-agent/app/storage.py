@@ -4162,28 +4162,6 @@ class Storage:
             ).fetchone()
         return self._package_execution_to_dict(row)
 
-    def list_package_executions(
-        self,
-        family_id: int,
-        device_id: str = "",
-        limit: int = 20,
-    ) -> list[Dict[str, Any]]:
-        query = """
-            SELECT *
-            FROM package_executions
-            WHERE family_id = ?
-        """
-        params: list[Any] = [int(family_id)]
-        clean_device_id = str(device_id or "").strip()
-        if clean_device_id:
-            query += " AND device_id = ?"
-            params.append(clean_device_id)
-        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
-        params.append(max(1, min(int(limit), 100)))
-        with self.connect() as conn:
-            rows = conn.execute(query, tuple(params)).fetchall()
-        return [execution for row in rows if (execution := self._package_execution_to_dict(row)) is not None]
-
     def get_latest_package_execution(
         self,
         *,
