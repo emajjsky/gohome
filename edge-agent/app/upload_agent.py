@@ -10,7 +10,6 @@ from urllib.request import Request, urlopen
 import json
 import secrets
 import sqlite3
-import time
 
 
 TERMINAL_UPLOAD_HTTP_STATUS_CODES = {400, 405, 410, 413, 415, 422}
