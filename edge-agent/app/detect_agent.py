@@ -127,6 +127,36 @@ class DetectAgent:
                 pose_accelerated_provided=True,
             )
 
+    def analyze_frame_quality(
+        self,
+        frame: Any,
+        previous_frame: Optional[Any] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Validate a frame without entering the detection or event pipeline."""
+        with self._inference_lock:
+            runtime_config = {**self.pipeline.default_config, **(config or {})}
+            quality = self.pipeline.quality.analyze(frame, previous_frame, runtime_config)
+        return {
+            "analysis_mode": "quality_only",
+            "image_width": int(frame.shape[1]),
+            "image_height": int(frame.shape[0]),
+            "brightness": quality["brightness"],
+            "contrast": quality["contrast"],
+            "black_screen": quality["black_screen"],
+            "motion_score": quality["motion_score"],
+            "motion_detected": quality["motion_detected"],
+            "thresholds": quality["result"].data.get("thresholds", {}),
+            "person_count": None,
+            "people": [],
+            "pet_count": 0,
+            "pets": [],
+            "pose_count": 0,
+            "poses": [],
+            "tags": list(quality["tags"]),
+            "algorithm_results": {"quality": quality["result"].to_dict()},
+        }
+
     def runtime_status(self) -> Dict[str, Any]:
         return self.pipeline.runtime_status()
 

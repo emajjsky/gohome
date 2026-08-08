@@ -1624,12 +1624,11 @@ def create_camera(camera: CameraCreate) -> Dict[str, Any]:
 
 def capture_preview(camera_payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
-        rules = storage.get_rules()
-        analysis_config = {
-            **rules,
-        }
         capture = camera_agent.capture_frame(camera_payload, prefer_cache=False)
-        analysis = detect_agent.analyze_frame_with_config(capture["frame"], config=analysis_config)
+        analysis = detect_agent.analyze_frame_quality(
+            capture["frame"],
+            config=storage.get_rules(),
+        )
         relative_path = f"preview/{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
         camera_agent.save_frame(capture["frame"], relative_path)
         return {
@@ -1647,6 +1646,46 @@ def capture_preview(camera_payload: Dict[str, Any]) -> Dict[str, Any]:
             "analysis": analysis,
         }
     except CameraError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def capture_camera_quality(camera_id: int) -> Dict[str, Any]:
+    camera = storage.get_camera(camera_id, include_secret=True)
+    if camera is None:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    try:
+        capture = camera_agent.capture_frame(camera, prefer_cache=True, max_cache_age_seconds=2.0)
+        analysis = detect_agent.analyze_frame_quality(
+            capture["frame"],
+            config=storage.get_rules(),
+        )
+        snapshot = {
+            "id": None,
+            "camera_id": camera_id,
+            "image_url": camera_agent.frame_data_url(capture["frame"]),
+            "frame_id": str(capture.get("frame_id") or ""),
+            "width": capture["width"],
+            "height": capture["height"],
+            "person_count": None,
+            "analysis": analysis,
+            "captured_at": str(capture.get("captured_at") or ""),
+            "created_at": str(capture.get("captured_at") or ""),
+        }
+        storage.update_camera_status(camera_id, "online")
+        return {
+            "ok": True,
+            "camera_id": camera_id,
+            "width": capture["width"],
+            "height": capture["height"],
+            "elapsed_ms": capture["elapsed_ms"],
+            "source": capture["source"],
+            "frame_id": str(capture.get("frame_id") or ""),
+            "captured_at": str(capture.get("captured_at") or ""),
+            "snapshot": snapshot,
+            "analysis": analysis,
+        }
+    except CameraError as exc:
+        storage.update_camera_status(camera_id, "offline", str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -1681,124 +1720,6 @@ def delete_camera(camera_id: int) -> Dict[str, Any]:
     return {"deleted": True, "camera_id": camera_id}
 
 
-def capture_and_store(
-    camera_id: int,
-    persist_detection: bool = False,
-    *,
-    store_snapshot: bool = True,
-    prefer_cache: bool = True,
-    cache_only: bool = False,
-    max_cache_age_seconds: float = 6.0,
-    analysis_overrides: Dict[str, Any] | None = None,
-    include_frame_data: bool = False,
-) -> Dict[str, Any]:
-    with worker.camera_analysis_guard(camera_id):
-        return _capture_and_store_serialized(
-            camera_id,
-            persist_detection,
-            store_snapshot=store_snapshot,
-            prefer_cache=prefer_cache,
-            cache_only=cache_only,
-            max_cache_age_seconds=max_cache_age_seconds,
-            analysis_overrides=analysis_overrides,
-            include_frame_data=include_frame_data,
-        )
-
-
-def _capture_and_store_serialized(
-    camera_id: int,
-    persist_detection: bool = False,
-    *,
-    store_snapshot: bool = True,
-    prefer_cache: bool = True,
-    cache_only: bool = False,
-    max_cache_age_seconds: float = 6.0,
-    analysis_overrides: Dict[str, Any] | None = None,
-    include_frame_data: bool = False,
-) -> Dict[str, Any]:
-    camera = storage.get_camera(camera_id, include_secret=True)
-    if camera is None:
-        raise HTTPException(status_code=404, detail="Camera not found")
-
-    try:
-        started_at = datetime.now(timezone.utc)
-        rules = storage.get_rules()
-        analysis_config = {
-            **rules,
-            "camera_id": camera_id,
-            **(analysis_overrides or {}),
-        }
-        if cache_only:
-            capture = camera_agent.latest_cached_frame(camera, max_age_seconds=max_cache_age_seconds)
-            if capture is None:
-                raise CameraError("实时视频缓存未就绪，请先保持当前页面视频流打开。")
-        else:
-            capture = camera_agent.capture_frame(
-                camera,
-                prefer_cache=prefer_cache,
-                max_cache_age_seconds=max_cache_age_seconds,
-            )
-        analysis = detect_agent.analyze_frame_with_config(capture["frame"], config=analysis_config)
-        if store_snapshot:
-            relative_path = camera_agent.snapshot_relative_path(camera_id)
-            camera_agent.save_frame(capture["frame"], relative_path)
-            snapshot = storage.create_snapshot(
-                camera_id=camera_id,
-                image_path=relative_path,
-                width=capture["width"],
-                height=capture["height"],
-                brightness=analysis["brightness"],
-                motion_score=analysis["motion_score"],
-                tags=analysis["tags"],
-                person_count=analysis.get("person_count"),
-                analysis=analysis,
-            )
-        else:
-            captured_at = str(capture.get("captured_at") or started_at.isoformat())
-            snapshot = {
-                "id": None,
-                "camera_id": camera_id,
-                "image_path": "",
-                "image_url": camera_agent.frame_data_url(capture["frame"]) if include_frame_data else "",
-                "frame_id": str(capture.get("frame_id") or ""),
-                "width": capture["width"],
-                "height": capture["height"],
-                "brightness": analysis["brightness"],
-                "motion_score": analysis["motion_score"],
-                "tags": analysis["tags"],
-                "person_count": analysis.get("person_count"),
-                "analysis": analysis,
-                "captured_at": captured_at,
-                "created_at": captured_at,
-            }
-        detection_result = None
-        if persist_detection and snapshot.get("id"):
-            detection_result = storage.create_detection_result(
-                camera_id=camera_id,
-                snapshot_id=int(snapshot["id"]),
-                captured_at=snapshot["captured_at"],
-                width=capture["width"],
-                height=capture["height"],
-                analysis=analysis,
-            )
-        storage.update_camera_status(camera_id, "online")
-        return {
-            "ok": True,
-            "camera_id": camera_id,
-            "width": capture["width"],
-            "height": capture["height"],
-            "elapsed_ms": capture["elapsed_ms"],
-            "analysis_elapsed_ms": int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000),
-            "source": capture["source"],
-            "frame_id": str(capture.get("frame_id") or snapshot.get("frame_id") or ""),
-            "captured_at": str(capture.get("captured_at") or snapshot.get("captured_at") or ""),
-            "snapshot": snapshot,
-            "analysis": analysis,
-            "detection_result": detection_result,
-        }
-    except CameraError as exc:
-        storage.update_camera_status(camera_id, "offline", str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def capture_with_pipeline(camera_id: int) -> Dict[str, Any]:
@@ -1822,36 +1743,12 @@ def capture_with_pipeline(camera_id: int) -> Dict[str, Any]:
 
 @app.post("/api/cameras/{camera_id}/test")
 async def test_camera(camera_id: int) -> Dict[str, Any]:
-    return await run_in_threadpool(capture_and_store, camera_id, False, prefer_cache=False)
+    return await run_in_threadpool(capture_camera_quality, camera_id)
 
 
 @app.post("/api/cameras/{camera_id}/capture")
 async def capture_camera(camera_id: int) -> Dict[str, Any]:
     return await run_in_threadpool(capture_with_pipeline, camera_id)
-
-
-@app.post("/api/cameras/{camera_id}/analysis/live")
-async def live_camera_analysis(camera_id: int, algorithm: str = Query(default="person")) -> Dict[str, Any]:
-    normalized_algorithm = str(algorithm or "person").strip().lower()
-    pose_enabled = normalized_algorithm in {"unified", "person", "fall", "meal", "stillness"}
-    result = await run_in_threadpool(
-        capture_and_store,
-        camera_id,
-        False,
-        store_snapshot=False,
-        prefer_cache=True,
-        cache_only=True,
-        max_cache_age_seconds=1.5,
-        include_frame_data=True,
-        analysis_overrides={
-            "preview_algorithm": normalized_algorithm,
-            "pose_detection_enabled": pose_enabled,
-            "pose_reuse_cache_only": False,
-            "pose_cache_seconds": 0.0,
-        },
-    )
-    result["algorithm"] = normalized_algorithm
-    return result
 
 
 def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) -> Dict[str, Any]:

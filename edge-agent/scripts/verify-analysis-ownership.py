@@ -56,11 +56,11 @@ def main() -> None:
         raise SystemExit(f"same-camera analysis overlapped: maximum={maximum_active}, calls={calls}")
 
     source = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
-    function_start = source.index("def capture_and_store(")
-    function_end = source.index("def _capture_and_store_serialized(", function_start)
-    wrapper = source[function_start:function_end]
-    if "worker.camera_analysis_guard(camera_id)" not in wrapper:
-        raise SystemExit("admin analysis entry does not use the worker ownership guard")
+    worker_source = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
+    if "with self.camera_analysis_guard(int(camera[\"id\"]))" not in worker_source:
+        raise SystemExit("formal worker analysis does not use the camera ownership guard")
+    if "run_in_threadpool(capture_with_pipeline, camera_id)" not in source:
+        raise SystemExit("admin capture does not use the formal worker pipeline")
 
     print({
         "ok": True,
