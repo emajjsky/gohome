@@ -1,5 +1,20 @@
 import SwiftUI
 
+enum MainShellResolution: Equatable {
+    case live(bootstrap: BootstrapResponse, family: AppFamily)
+    case uiTestPreview
+    case unavailable
+
+    static func resolve(bootstrap: BootstrapResponse?, allowsUITestPreview: Bool) -> Self {
+        if let bootstrap,
+           let familyID = bootstrap.activeFamilyID,
+           let family = bootstrap.families.first(where: { $0.id == familyID }) {
+            return .live(bootstrap: bootstrap, family: family)
+        }
+        return allowsUITestPreview ? .uiTestPreview : .unavailable
+    }
+}
+
 struct AppRootView: View {
     @StateObject private var model: AppModel
     private let environment: AppEnvironment
@@ -31,15 +46,19 @@ struct AppRootView: View {
                     onComplete: { model.reloadAfterOnboardingStep() }
                 )
             case .main:
-                if let bootstrap = model.bootstrap.value, let familyID = bootstrap.activeFamilyID {
+                switch MainShellResolution.resolve(
+                    bootstrap: model.bootstrap.value,
+                    allowsUITestPreview: ProcessInfo.processInfo.arguments.contains("-uiTestState")
+                ) {
+                case let .live(bootstrap, family):
+                    let familyID = family.id
                     let scope = CacheScope(userID: bootstrap.user.id, familyID: familyID)
                     MainTabView(
                         repository: environment.repository,
                         scope: scope,
                         apiClient: environment.apiClient,
                         user: bootstrap.user,
-                        family: bootstrap.families.first(where: { $0.id == familyID })
-                            ?? AppFamily(id: familyID, name: "我的家庭", role: nil),
+                        family: family,
                         pushNotifications: environment.pushNotifications,
                         onSignOut: {
                             model.signOut()
@@ -62,8 +81,12 @@ struct AppRootView: View {
                             model.accountProfileChanged(profile)
                         }
                     )
-                } else {
+                case .uiTestPreview:
                     MainTabView.preview
+                case .unavailable:
+                    MainDataUnavailableView {
+                        model.reloadAfterFamilyChange()
+                    }
                 }
             }
         }
@@ -75,6 +98,29 @@ struct AppRootView: View {
             guard let familyID = model.pushFamilyID else { return }
             await environment.pushNotifications.activate(familyID: familyID)
         }
+    }
+}
+
+private struct MainDataUnavailableView: View {
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.icloud")
+                .font(.system(size: 30, weight: .medium))
+                .foregroundStyle(GoHomeTheme.mutedInk)
+            Text("家庭数据暂时无法读取")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(GoHomeTheme.ink)
+            Button("重新加载", action: retry)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(minWidth: 120, minHeight: 46)
+                .background(GoHomeTheme.ink, in: RoundedRectangle(cornerRadius: GoHomeTheme.controlRadius, style: .continuous))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(GoHomeTheme.paper.ignoresSafeArea())
+        .accessibilityIdentifier("main-data-unavailable")
     }
 }
 

@@ -2,6 +2,33 @@ import XCTest
 @testable import GoHomeShell
 
 final class AppSmokeTests: XCTestCase {
+    func testMainShellRequiresAnExactLiveFamilyOutsideUITests() {
+        let family = AppFamily(id: "family-1", name: "杭州的家", role: "owner")
+        let valid = bootstrap(activeFamilyID: family.id, families: [family])
+        let missingID = bootstrap(activeFamilyID: nil, families: [family])
+        let mismatched = bootstrap(
+            activeFamilyID: "family-missing",
+            families: [family]
+        )
+
+        XCTAssertEqual(
+            MainShellResolution.resolve(bootstrap: valid, allowsUITestPreview: false),
+            .live(bootstrap: valid, family: family)
+        )
+        XCTAssertEqual(
+            MainShellResolution.resolve(bootstrap: missingID, allowsUITestPreview: false),
+            .unavailable
+        )
+        XCTAssertEqual(
+            MainShellResolution.resolve(bootstrap: mismatched, allowsUITestPreview: false),
+            .unavailable
+        )
+        XCTAssertEqual(
+            MainShellResolution.resolve(bootstrap: nil, allowsUITestPreview: true),
+            .uiTestPreview
+        )
+    }
+
     func testBundledProductImagesResolveAsJPEGResources() {
         let imageNames = [
             "avatar",
@@ -44,4 +71,15 @@ final class AppSmokeTests: XCTestCase {
 
         XCTAssertEqual(model.route, .launching)
     }
+}
+
+private func bootstrap(activeFamilyID: String?, families: [AppFamily]) -> BootstrapResponse {
+    BootstrapResponse(
+        user: AppUser(id: "user-1", phone: "13800138000", displayName: "测试用户"),
+        families: families,
+        activeFamilyID: activeFamilyID,
+        onboarding: OnboardingState(nextStep: .complete, complete: true),
+        unreadCount: 0,
+        revision: "test-r1"
+    )
 }
