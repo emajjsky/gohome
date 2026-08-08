@@ -2,6 +2,33 @@ import XCTest
 @testable import GoHomeShell
 
 final class OnboardingModelTests: XCTestCase {
+    func testDeviceBindingRetriesWhenHomeLocationProfileCannotBeRead() {
+        let decision = DeviceBindingHomeLocationDecision.resolve(.failure(APIError.invalidResponse))
+
+        guard case .retry = decision else {
+            return XCTFail("A failed profile request must not complete device onboarding")
+        }
+    }
+
+    func testDeviceBindingCompletesWhenHomeLocationAlreadyExists() throws {
+        let profile = try homeLocationProfile(latitude: 30.2146, longitude: 120.1573)
+        let decision = DeviceBindingHomeLocationDecision.resolve(.success(profile))
+
+        guard case .complete = decision else {
+            return XCTFail("An existing fixed home location must not be requested again")
+        }
+    }
+
+    func testDeviceBindingRequestsConfirmationWhenHomeLocationIsMissing() throws {
+        let profile = try homeLocationProfile(latitude: nil, longitude: nil)
+        let decision = DeviceBindingHomeLocationDecision.resolve(.success(profile))
+
+        guard case let .confirm(candidate) = decision else {
+            return XCTFail("A missing fixed home location must enter explicit confirmation")
+        }
+        XCTAssertEqual(candidate.elderID, profile.elderID)
+    }
+
     func testBootstrapAcceptsNumericCloudIdentifiers() throws {
         let data = Data(#"""
         {
@@ -117,4 +144,22 @@ final class OnboardingModelTests: XCTestCase {
     private func jsonObject<Value: Encodable>(_ value: Value) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
     }
+}
+
+private func homeLocationProfile(latitude: Double?, longitude: Double?) throws -> ElderProfile {
+    let latitudeValue = latitude.map { String($0) } ?? "null"
+    let longitudeValue = longitude.map { String($0) } ?? "null"
+    return try JSONDecoder().decode(ElderProfile.self, from: Data(#"""
+    {
+      "id":"profile-1",
+      "elder_id":"elder-primary",
+      "display_name":"妈妈",
+      "relationship":"母亲",
+      "city":"杭州市",
+      "district":"西湖区",
+      "home_latitude":\#(latitudeValue),
+      "home_longitude":\#(longitudeValue),
+      "home_location_label":"西湖区 · 杭州市"
+    }
+    """#.utf8))
 }

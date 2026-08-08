@@ -5,6 +5,18 @@ enum DeviceBindingPresentation {
     case management
 }
 
+enum DeviceBindingHomeLocationDecision {
+    case complete
+    case confirm(ElderProfile)
+    case retry
+
+    static func resolve(_ result: Result<ElderProfile, Error>) -> Self {
+        guard case let .success(profile) = result else { return .retry }
+        guard profile.homeLatitude == nil || profile.homeLongitude == nil else { return .complete }
+        return .confirm(profile)
+    }
+}
+
 struct DeviceBindingView: View {
     let familyID: String?
     let service: OnboardingService
@@ -21,6 +33,7 @@ struct DeviceBindingView: View {
     @State private var showsHomeLocationConfirmation = false
     @State private var isSavingHomeLocation = false
     @State private var homeLocationError: String?
+    @State private var homeLocationRetryFamilyID: String?
 
     var body: some View {
         Group {
@@ -139,6 +152,17 @@ struct DeviceBindingView: View {
                 .disabled(isBinding)
 
                 OnboardingError(message: errorMessage)
+                if let familyID = homeLocationRetryFamilyID {
+                    Button("重新读取家庭位置") {
+                        Task { await offerHomeLocation(for: familyID) }
+                    }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.ink)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(GoHomeTheme.paleGinger, in: RoundedRectangle(cornerRadius: GoHomeTheme.controlRadius, style: .continuous))
+                    .disabled(isBinding)
+                    .accessibilityIdentifier("home-location-retry")
+                }
         }
     }
 
@@ -186,17 +210,26 @@ struct DeviceBindingView: View {
     private func offerHomeLocation(for familyID: String) async {
         bindingDeviceID = nil
         isBinding = false
-        guard let profile = try? await service.profile(familyID: familyID) else {
-            onComplete()
-            return
+        homeLocationRetryFamilyID = nil
+        let result: Result<ElderProfile, Error>
+        do {
+            result = .success(try await service.profile(familyID: familyID))
+        } catch {
+            result = .failure(error)
         }
-        guard profile.homeLatitude == nil || profile.homeLongitude == nil else {
+        switch DeviceBindingHomeLocationDecision.resolve(result) {
+        case .retry:
+            errorMessage = "盒子已绑定，但家庭位置读取失败，请重试"
+            homeLocationRetryFamilyID = familyID
+        case .complete:
+            errorMessage = nil
             onComplete()
-            return
+        case let .confirm(profile):
+            errorMessage = nil
+            pendingProfile = profile
+            homeLocationError = nil
+            showsHomeLocationConfirmation = true
         }
-        pendingProfile = profile
-        homeLocationError = nil
-        showsHomeLocationConfirmation = true
     }
 
     private func saveHomeLocation() {
@@ -296,7 +329,7 @@ private struct HomeLocationConfirmationView: View {
             .task { provider.requestLocation() }
         }
         .presentationDetents([.medium])
-        .interactiveDismissDisabled(isSaving)
+        .interactiveDismissDisabled(true)
     }
 
     private var locationText: String {
