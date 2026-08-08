@@ -178,14 +178,19 @@ private struct LANHTTPResponse: Sendable {
 
 private enum LANHTTPClient {
     static func get(endpoint: NWEndpoint, path: String) async throws -> LANHTTPResponse {
-        try await request(method: "GET", endpoint: endpoint, path: path)
+        try await request(method: "GET", endpoint: endpoint, path: path, timeout: 8)
     }
 
     static func post(endpoint: NWEndpoint, path: String) async throws -> LANHTTPResponse {
-        try await request(method: "POST", endpoint: endpoint, path: path)
+        try await request(method: "POST", endpoint: endpoint, path: path, timeout: 2)
     }
 
-    private static func request(method: String, endpoint: NWEndpoint, path: String) async throws -> LANHTTPResponse {
+    private static func request(
+        method: String,
+        endpoint: NWEndpoint,
+        path: String,
+        timeout: TimeInterval
+    ) async throws -> LANHTTPResponse {
         try await withCheckedThrowingContinuation { continuation in
             let connection = NWConnection(to: endpoint, using: .tcp)
             let request = LANRequestState(connection: connection, continuation: continuation)
@@ -205,7 +210,7 @@ private enum LANHTTPClient {
                 }
             }
             connection.start(queue: .global(qos: .userInitiated))
-            DispatchQueue.global().asyncAfter(deadline: .now() + 8) {
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                 request.finish(.failure(BoxDiscoveryError.timeout))
             }
         }

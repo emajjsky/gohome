@@ -11,7 +11,11 @@ struct CameraSetupView: View {
         OnboardingPage(index: 4, title: "添加第一路画面", subtitle: "App 保存配置，盒子负责在家中接入摄像头。") {
             Group {
                 if let binding {
-                    CameraConfigurationForm(binding: binding, onSave: save)
+                    CameraConfigurationForm(
+                        binding: binding,
+                        onSave: save,
+                        onComplete: onComplete
+                    )
                 } else {
                     ProfileEmptyRow(symbol: "shippingbox", title: errorMessage ?? "正在确认家庭盒子")
                 }
@@ -54,7 +58,6 @@ struct CameraSetupView: View {
                 username: values.username,
                 password: values.password
             )
-            onComplete()
             return true
         } catch {
             errorMessage = error.localizedDescription

@@ -2,6 +2,44 @@ import XCTest
 @testable import GoHomeShell
 
 final class OnboardingModelTests: XCTestCase {
+    @MainActor
+    func testCameraConfigurationCommitsCloudThenWakesBoxThenCompletes() async {
+        var stages: [String] = []
+        let values = cameraConnectionValues()
+
+        let success = await CameraConfigurationTransaction.commit(
+            values: values,
+            persist: { received in
+                XCTAssertEqual(received, values)
+                stages.append("persist")
+                return true
+            },
+            requestBoxSync: { stages.append("wake") },
+            complete: { stages.append("complete") }
+        )
+
+        XCTAssertTrue(success)
+        XCTAssertEqual(stages, ["persist", "wake", "complete"])
+    }
+
+    @MainActor
+    func testCameraConfigurationDoesNotWakeOrCompleteWhenCloudSaveFails() async {
+        var stages: [String] = []
+
+        let success = await CameraConfigurationTransaction.commit(
+            values: cameraConnectionValues(),
+            persist: { _ in
+                stages.append("persist")
+                return false
+            },
+            requestBoxSync: { stages.append("wake") },
+            complete: { stages.append("complete") }
+        )
+
+        XCTAssertFalse(success)
+        XCTAssertEqual(stages, ["persist"])
+    }
+
     func testDeviceBindingRetriesWhenHomeLocationProfileCannotBeRead() {
         let decision = DeviceBindingHomeLocationDecision.resolve(.failure(APIError.invalidResponse))
 
@@ -144,6 +182,17 @@ final class OnboardingModelTests: XCTestCase {
     private func jsonObject<Value: Encodable>(_ value: Value) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
     }
+}
+
+private func cameraConnectionValues() -> CameraConnectionValues {
+    CameraConnectionValues(
+        name: "客厅主视",
+        room: "客厅",
+        streamURL: "rtsp://192.168.1.20:554/1/2",
+        username: "admin",
+        password: "secret",
+        enabled: true
+    )
 }
 
 private func homeLocationProfile(latitude: Double?, longitude: Double?) throws -> ElderProfile {

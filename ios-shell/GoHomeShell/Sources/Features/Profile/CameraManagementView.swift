@@ -11,7 +11,12 @@ struct CameraManagementView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                CameraConfigurationForm(binding: binding, existing: camera, onSave: save)
+                CameraConfigurationForm(
+                    binding: binding,
+                    existing: camera,
+                    onSave: save,
+                    onComplete: { dismiss() }
+                )
                 if camera != nil {
                     Button(role: .destructive) { confirmingDelete = true } label: {
                         HStack(spacing: 8) {
@@ -63,7 +68,6 @@ struct CameraManagementView: View {
                 password: values.password
             )
         }
-        if success { dismiss() }
         return success
     }
 

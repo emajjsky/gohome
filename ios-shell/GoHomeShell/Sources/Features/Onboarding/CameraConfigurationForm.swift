@@ -9,10 +9,26 @@ struct CameraConnectionValues: Equatable, Sendable {
     let enabled: Bool
 }
 
+enum CameraConfigurationTransaction {
+    @MainActor
+    static func commit(
+        values: CameraConnectionValues,
+        persist: @MainActor (CameraConnectionValues) async -> Bool,
+        requestBoxSync: @MainActor () async -> Void,
+        complete: @MainActor () -> Void
+    ) async -> Bool {
+        guard await persist(values) else { return false }
+        await requestBoxSync()
+        complete()
+        return true
+    }
+}
+
 struct CameraConfigurationForm: View {
     let binding: DeviceBinding
     let existing: CameraConfig?
     let onSave: @MainActor (CameraConnectionValues) async -> Bool
+    let onComplete: @MainActor () -> Void
 
     @StateObject private var discovery = BoxDiscoveryService()
     @State private var name: String
@@ -38,11 +54,13 @@ struct CameraConfigurationForm: View {
     init(
         binding: DeviceBinding,
         existing: CameraConfig? = nil,
-        onSave: @escaping @MainActor (CameraConnectionValues) async -> Bool
+        onSave: @escaping @MainActor (CameraConnectionValues) async -> Bool,
+        onComplete: @escaping @MainActor () -> Void
     ) {
         self.binding = binding
         self.existing = existing
         self.onSave = onSave
+        self.onComplete = onComplete
         let existingRoom = existing?.room.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let existingName = existing?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let initialRoom = existingRoom.isEmpty ? "客厅" : existingRoom
@@ -271,17 +289,23 @@ struct CameraConfigurationForm: View {
         isSaving = true
         errorMessage = nil
         Task {
-            let success = await onSave(CameraConnectionValues(
+            let values = CameraConnectionValues(
                 name: cleanName,
                 room: room,
                 streamURL: streamURL,
                 username: username.trimmingCharacters(in: .whitespacesAndNewlines),
                 password: password,
                 enabled: enabled
-            ))
-            if success, let activeBox {
-                try? await discovery.wakeConfigSync(box: activeBox)
-            }
+            )
+            let success = await CameraConfigurationTransaction.commit(
+                values: values,
+                persist: onSave,
+                requestBoxSync: {
+                    guard let activeBox else { return }
+                    try? await discovery.wakeConfigSync(box: activeBox)
+                },
+                complete: onComplete
+            )
             if !success { errorMessage = "配置未能保存，请检查网络后重试。" }
             isSaving = false
         }
