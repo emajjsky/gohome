@@ -199,16 +199,19 @@ actor AppRepository {
         try? await cache.write(value, key: "bootstrap", scope: scope, ttl: 24 * 60 * 60)
     }
 
-    func bootstrap(scope: CacheScope, onUpdate: @escaping BootstrapUpdate) async {
+    func bootstrap(scope: CacheScope, onUpdate: @escaping BootstrapUpdate) async throws {
         let cached = try? await cache.read(BootstrapResponse.self, key: "bootstrap", scope: scope)
         await onUpdate(Loadable(value: cached, isRefreshing: true, staleReason: nil))
 
         do {
             let refreshed = try await refreshBootstrap(scope: scope)
+            try Task.checkCancellation()
             try await cache.write(refreshed, key: "bootstrap", scope: scope, ttl: 24 * 60 * 60)
             await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
         } catch is CancellationError {
-            await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
+            throw CancellationError()
+        } catch APIError.unauthorized {
+            throw APIError.unauthorized
         } catch {
             await onUpdate(Loadable(
                 value: cached,

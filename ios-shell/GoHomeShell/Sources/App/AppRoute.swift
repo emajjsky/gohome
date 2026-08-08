@@ -3,6 +3,7 @@ import Foundation
 enum AppRoute: Equatable {
     case launching
     case signedOut
+    case sessionUnavailable
     case onboarding(OnboardingStep)
     case main
 }

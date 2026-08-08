@@ -38,6 +38,13 @@ struct AppRootView: View {
                     authStore: environment.authStore,
                     onAuthenticated: { model.authenticated() }
                 ))
+            case .sessionUnavailable:
+                AppRecoveryView(
+                    title: "暂时无法连接服务",
+                    message: model.bootstrap.staleReason ?? "请检查网络后重新加载。",
+                    accessibilityIdentifier: "session-unavailable",
+                    retry: { model.retryAuthenticatedState() }
+                )
             case let .onboarding(step):
                 OnboardingCoordinatorView(
                     step: step,
@@ -105,22 +112,43 @@ private struct MainDataUnavailableView: View {
     let retry: () -> Void
 
     var body: some View {
+        AppRecoveryView(
+            title: "家庭数据暂时无法读取",
+            message: "请重新加载家庭数据。",
+            accessibilityIdentifier: "main-data-unavailable",
+            retry: retry
+        )
+    }
+}
+
+private struct AppRecoveryView: View {
+    let title: String
+    let message: String
+    let accessibilityIdentifier: String
+    let retry: () -> Void
+
+    var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.icloud")
                 .font(.system(size: 30, weight: .medium))
                 .foregroundStyle(GoHomeTheme.mutedInk)
-            Text("家庭数据暂时无法读取")
+            Text(title)
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(GoHomeTheme.ink)
+            Text(message)
+                .font(.system(size: 14))
+                .foregroundStyle(GoHomeTheme.mutedInk)
+                .multilineTextAlignment(.center)
             Button("重新加载", action: retry)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(minWidth: 120, minHeight: 46)
                 .background(GoHomeTheme.ink, in: RoundedRectangle(cornerRadius: GoHomeTheme.controlRadius, style: .continuous))
         }
+        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(GoHomeTheme.paper.ignoresSafeArea())
-        .accessibilityIdentifier("main-data-unavailable")
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
 

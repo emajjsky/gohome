@@ -25,7 +25,10 @@ final class AppModel: ObservableObject {
         hasStarted = true
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("-uiTestState") {
-            if let rawStep = arguments.first(where: { $0.hasPrefix("-uiTestOnboardingStep=") })?
+            if arguments.contains("-uiTestSessionUnavailable") {
+                bootstrap.staleReason = "连接服务器超时，请重新加载。"
+                route = .sessionUnavailable
+            } else if let rawStep = arguments.first(where: { $0.hasPrefix("-uiTestOnboardingStep=") })?
                 .split(separator: "=", maxSplits: 1).last,
                let step = OnboardingStep(rawValue: String(rawStep)) {
                 route = .onboarding(step)
@@ -36,37 +39,62 @@ final class AppModel: ObservableObject {
             }
             return
         }
-        Task { [weak self] in
+        beginSessionResolution(authStore: authStore)
+    }
+
+    func retryAuthenticatedState() {
+        route = .launching
+        bootstrapTask?.cancel()
+        bootstrapTask = Task { [weak self] in
+            guard let self else { return }
+            if let scope = await sessionContextStore.scope() {
+                await loadRestoredState(scope: scope)
+            } else {
+                await loadAuthenticatedState()
+            }
+        }
+    }
+
+    private func beginSessionResolution(authStore: KeychainAuthStore) {
+        route = .launching
+        bootstrapTask?.cancel()
+        bootstrapTask = Task { [weak self] in
+            guard let self else { return }
             do {
                 guard let token = try await authStore.token(), !token.isEmpty else {
-                    self?.route = .signedOut
+                    route = .signedOut
                     return
                 }
-                if let scope = await self?.sessionContextStore.scope() {
-                    self?.restore(scope: scope)
+                try Task.checkCancellation()
+                if let scope = await sessionContextStore.scope() {
+                    await loadRestoredState(scope: scope)
                 } else {
-                    await self?.loadAuthenticatedState()
+                    await loadAuthenticatedState()
                 }
+            } catch is CancellationError {
+                return
             } catch {
-                self?.route = .signedOut
+                showSessionUnavailable(error)
             }
         }
     }
 
     func authenticated() {
-        route = .launching
-        bootstrapTask?.cancel()
-        Task { [weak self] in await self?.loadAuthenticatedState() }
+        beginFreshBootstrap()
     }
 
     func reloadAfterOnboardingStep() {
-        Task { [weak self] in await self?.loadAuthenticatedState() }
+        beginFreshBootstrap()
     }
 
     func reloadAfterFamilyChange() {
+        beginFreshBootstrap()
+    }
+
+    private func beginFreshBootstrap() {
         route = .launching
         bootstrapTask?.cancel()
-        Task { [weak self] in await self?.loadAuthenticatedState() }
+        bootstrapTask = Task { [weak self] in await self?.loadAuthenticatedState() }
     }
 
     func accountProfileChanged(_ profile: AccountProfile) {
@@ -84,11 +112,10 @@ final class AppModel: ObservableObject {
     }
 
     func restore(scope: CacheScope) {
+        route = .launching
         bootstrapTask?.cancel()
-        bootstrapTask = Task { [repository] in
-            await repository.bootstrap(scope: scope) { state in
-                await self.applyBootstrap(state)
-            }
+        bootstrapTask = Task { [weak self] in
+            await self?.loadRestoredState(scope: scope)
         }
     }
 
@@ -102,7 +129,7 @@ final class AppModel: ObservableObject {
     private func applyBootstrap(_ state: Loadable<BootstrapResponse>) {
         bootstrap = state
         guard let value = state.value else {
-            if !state.isRefreshing { route = .signedOut }
+            if !state.isRefreshing { route = .sessionUnavailable }
             return
         }
         persistContext(for: value)
@@ -112,6 +139,7 @@ final class AppModel: ObservableObject {
     private func loadAuthenticatedState() async {
         do {
             let value = try await repository.fetchBootstrap()
+            try Task.checkCancellation()
             bootstrap = Loadable(value: value, isRefreshing: false, staleReason: nil)
             persistContext(for: value)
             if value.onboarding.complete {
@@ -119,9 +147,56 @@ final class AppModel: ObservableObject {
             } else {
                 route = .onboarding(value.onboarding.nextStep)
             }
+        } catch is CancellationError {
+            return
+        } catch APIError.unauthorized {
+            await invalidateSession()
         } catch {
-            route = .signedOut
+            showSessionUnavailable(error)
         }
+    }
+
+    private func loadRestoredState(scope: CacheScope) async {
+        do {
+            try await repository.bootstrap(scope: scope) { state in
+                await self.applyBootstrap(state)
+            }
+        } catch is CancellationError {
+            return
+        } catch APIError.unauthorized {
+            await invalidateSession()
+        } catch {
+            showSessionUnavailable(error)
+        }
+    }
+
+    private func showSessionUnavailable(_ error: Error) {
+        bootstrap = Loadable(value: nil, isRefreshing: false, staleReason: sessionUnavailableMessage(for: error))
+        route = .sessionUnavailable
+    }
+
+    private func invalidateSession() async {
+        route = .launching
+        bootstrap = Loadable()
+        await sessionContextStore.clear()
+        route = .signedOut
+    }
+
+    private func sessionUnavailableMessage(for error: Error) -> String {
+        if let apiError = error as? APIError {
+            return apiError.errorDescription ?? "暂时无法连接服务，请重新加载。"
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:
+                return "连接服务器超时，请重新加载。"
+            case .notConnectedToInternet, .networkConnectionLost:
+                return "当前网络不可用，请检查网络后重新加载。"
+            default:
+                return "暂时无法连接服务，请重新加载。"
+            }
+        }
+        return "暂时无法连接服务，请重新加载。"
     }
 
     private func persistContext(for value: BootstrapResponse) {

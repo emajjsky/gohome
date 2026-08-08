@@ -9,7 +9,7 @@ final class AppRepositoryTests: XCTestCase {
         let repository = AppRepository(cache: fixture.cache) { try await loader.load() }
         let recorder = StateRecorder()
 
-        await repository.bootstrap(scope: fixture.scope) { await recorder.append($0) }
+        try await repository.bootstrap(scope: fixture.scope) { await recorder.append($0) }
 
         let states = await recorder.values
         XCTAssertEqual(states.count, 2)
@@ -24,7 +24,7 @@ final class AppRepositoryTests: XCTestCase {
         let repository = AppRepository(cache: fixture.cache) { try await loader.load() }
         let recorder = StateRecorder()
 
-        await repository.bootstrap(scope: fixture.scope) { await recorder.append($0) }
+        try await repository.bootstrap(scope: fixture.scope) { await recorder.append($0) }
 
         let recordedStates = await recorder.values
         let state = try XCTUnwrap(recordedStates.last)
@@ -42,7 +42,7 @@ final class AppRepositoryTests: XCTestCase {
 
         async let firstCall: Void = repository.bootstrap(scope: fixture.scope) { await first.append($0) }
         async let secondCall: Void = repository.bootstrap(scope: fixture.scope) { await second.append($0) }
-        _ = await (firstCall, secondCall)
+        _ = try await (firstCall, secondCall)
 
         let callCount = await loader.callCount
         let firstStates = await first.values
@@ -50,6 +50,23 @@ final class AppRepositoryTests: XCTestCase {
         XCTAssertEqual(callCount, 1)
         XCTAssertEqual(firstStates.last?.value, fixture.fresh)
         XCTAssertEqual(secondStates.last?.value, fixture.fresh)
+    }
+
+    func testUnauthorizedRefreshIsPropagatedInsteadOfPresentedAsStaleContent() async throws {
+        let fixture = try Fixture()
+        try await fixture.cache.write(fixture.cached, key: "bootstrap", scope: fixture.scope)
+        let repository = AppRepository(cache: fixture.cache) { throw APIError.unauthorized }
+        let recorder = StateRecorder()
+
+        do {
+            try await repository.bootstrap(scope: fixture.scope) { await recorder.append($0) }
+            XCTFail("Expected unauthorized refresh to fail")
+        } catch {
+            XCTAssertEqual(error as? APIError, .unauthorized)
+        }
+
+        let states = await recorder.values
+        XCTAssertEqual(states, [Loadable(value: fixture.cached, isRefreshing: true, staleReason: nil)])
     }
 }
 
