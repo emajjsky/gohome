@@ -1629,8 +1629,6 @@ def capture_preview(camera_payload: Dict[str, Any]) -> Dict[str, Any]:
             capture["frame"],
             config=storage.get_rules(),
         )
-        relative_path = f"preview/{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
-        camera_agent.save_frame(capture["frame"], relative_path)
         return {
             "ok": True,
             "width": capture["width"],
@@ -1638,8 +1636,8 @@ def capture_preview(camera_payload: Dict[str, Any]) -> Dict[str, Any]:
             "elapsed_ms": capture["elapsed_ms"],
             "source": capture["source"],
             "snapshot": {
-                "image_path": relative_path,
-                "image_url": f"/snapshots/{relative_path}",
+                "image_path": "",
+                "image_url": camera_agent.frame_data_url(capture["frame"], jpeg_quality=72, max_width=1280),
                 "person_count": analysis.get("person_count"),
                 "captured_at": datetime.now().isoformat(),
             },

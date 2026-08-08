@@ -62,12 +62,19 @@ def main() -> None:
         raise SystemExit("retired direct live-analysis route is still present")
     if "def capture_and_store" in main_source or "_capture_and_store_serialized" in main_source:
         raise SystemExit("retired direct analysis helper is still present")
+    preview_start = main_source.index("def capture_preview(")
+    preview_end = main_source.index("def capture_camera_quality(", preview_start)
+    if "save_frame" in main_source[preview_start:preview_end]:
+        raise SystemExit("connection preview still writes an unmanaged JPEG file")
+    if "frame_data_url" not in main_source[preview_start:preview_end]:
+        raise SystemExit("connection preview does not return an in-memory image")
 
     print({
         "ok": True,
         "quality_only": True,
         "full_pipeline_not_called": True,
         "direct_live_analysis_removed": True,
+        "preview_disk_write_removed": True,
     })
 
 
