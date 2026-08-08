@@ -15,7 +15,15 @@ final class GuardViewModelTests: XCTestCase {
         XCTAssertEqual(meter.record(at: 20), 0)
     }
 
-    func testSkeletonRateLabelUsesDecodedVideoFPS() {
+    func testFrameRateMeterDecaysWithoutNewPresentedFrames() {
+        var meter = FrameRateMeter(windowSeconds: 2)
+
+        XCTAssertEqual(meter.record(at: 10), 0)
+        XCTAssertEqual(meter.record(at: 10.1), 10, accuracy: 0.001)
+        XCTAssertEqual(meter.current(at: 12.2), 0)
+    }
+
+    func testSkeletonRateLabelUsesPresentedVideoFPS() {
         let stage = CameraStageView(
             surface: nil,
             state: .playing,
@@ -27,7 +35,7 @@ final class GuardViewModelTests: XCTestCase {
         XCTAssertEqual(stage.rateText, "12.4 FPS")
     }
 
-    func testSkeletonRateLabelUsesDecodedFPSImmediately() {
+    func testSkeletonRateLabelUsesPresentedFPSImmediately() {
         let stage = CameraStageView(
             surface: nil,
             state: .playing,
@@ -157,6 +165,27 @@ final class GuardViewModelTests: XCTestCase {
 
         XCTAssertEqual(model.selectedCameraID, "camera-a")
         XCTAssertEqual(model.streamState, .connecting)
+    }
+
+    @MainActor
+    func testStreamFailureClearsPresentedFPSBeforeReconnect() async throws {
+        let client = RecordingStreamClient()
+        let model = GuardViewModel(
+            streamClient: client,
+            reconnectDelayNanoseconds: 50_000_000
+        )
+
+        model.select(cameraID: "camera-a")
+        try await waitUntil { await client.hasStarted(cameraID: "camera-a") }
+        let now = ProcessInfo.processInfo.systemUptime
+        await client.yield(timestamp: now, cameraID: "camera-a")
+        await client.yield(timestamp: now + 0.1, cameraID: "camera-a")
+        try await waitUntil { await MainActor.run { model.displayFPS > 0 } }
+
+        await client.fail(cameraID: "camera-a")
+        try await waitUntil {
+            await MainActor.run { model.streamState == .connecting && model.displayFPS == 0 }
+        }
     }
 
     @MainActor

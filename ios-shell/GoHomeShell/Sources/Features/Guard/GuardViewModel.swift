@@ -18,6 +18,10 @@ struct FrameRateMeter: Sendable {
 
     mutating func record(at timestamp: TimeInterval) -> Double {
         samples.append(timestamp)
+        return current(at: timestamp)
+    }
+
+    mutating func current(at timestamp: TimeInterval) -> Double {
         let cutoff = timestamp - windowSeconds
         samples.removeAll { $0 < cutoff }
         guard let first = samples.first, let last = samples.last, samples.count > 1, last > first else {
@@ -124,6 +128,8 @@ final class GuardViewModel: ObservableObject {
                         failedAttempts = 0
                     }
                     failedAttempts += 1
+                    self.frameRateMeter.reset()
+                    self.displayFPS = 0
                     let immediateRetry = failedAttempts <= self.maxReconnectAttempts
                     self.videoSurface = nil
                     self.streamState = self.recoveryState(for: error)
@@ -163,6 +169,8 @@ final class GuardViewModel: ObservableObject {
         generation: Int
     ) async throws {
         currentSessionReceivedFrame = false
+        frameRateMeter.reset()
+        displayFPS = 0
         let streams = try await streamClient.streams(
             cameraID: cameraID,
             profile: profile,
@@ -170,15 +178,17 @@ final class GuardViewModel: ObservableObject {
         )
         videoSurface = streams.surface
         lastFrameAt = Date()
+        let meterRefreshNanoseconds = min(frameTimeoutNanoseconds, 500_000_000)
         let watchdog = Task { [weak self, streamClient] in
             guard let self else { return }
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(nanoseconds: self.frameTimeoutNanoseconds)
+                    try await Task.sleep(nanoseconds: meterRefreshNanoseconds)
                 } catch {
                     return
                 }
                 guard generation == self.selectionGeneration else { return }
+                self.displayFPS = self.frameRateMeter.current(at: ProcessInfo.processInfo.systemUptime)
                 let timeout = TimeInterval(self.frameTimeoutNanoseconds) / 1_000_000_000
                 if Date().timeIntervalSince(self.lastFrameAt) >= timeout {
                     await streamClient.stop()
