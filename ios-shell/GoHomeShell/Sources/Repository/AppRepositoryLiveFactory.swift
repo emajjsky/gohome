@@ -161,15 +161,6 @@ enum AppRepositoryLiveFactory {
                         queryItems: [URLQueryItem(name: "family_id", value: familyID)]
                     ))
                 },
-                memoryMediaUploader: { familyID, data, contentType in
-                    try await client.upload(
-                        path: "/api/v2/memory-media",
-                        queryItems: [URLQueryItem(name: "family_id", value: familyID)],
-                        data: data,
-                        contentType: contentType,
-                        response: MemoryMediaUploadResponse.self
-                    )
-                },
                 memoryMediaBatchUploader: { familyID, media in
                     try await MemoryMediaUploadTransaction.execute(
                         client: client,

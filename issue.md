@@ -1009,6 +1009,20 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **状态**：已完成，待下一次统一 TestFlight 构建真机复核发布中取消及弱网清理。
 
+### GH-090 iOS 仍保留第二套记忆媒体上传管线
+
+**发现**：正式 App 已使用 COS 上传意图事务，但 `AppRepository` 仍保留旧单文件上传依赖和公开方法；批量依赖缺失时还会自动退回逐张调用旧接口。对应的 Base64 批量请求模型也没有任何调用者。这使同一产品存在两套上传契约、限额、持久化和取消行为。
+
+**根因**：COS 直传上线后只新增了正式路径，没有删除原型期本地上传模型和兼容降级，仓库构造器继续隐藏第二条执行路径。
+
+**处理**：iOS 仓库只保留必需的批量上传事务依赖；删除单文件上传类型、属性、构造参数、公开方法、LiveFactory 旧接口调用及无调用者的 Base64 请求模型。测试依赖未注入时明确返回无效响应，不再静默切换传输方案。
+
+**验收要求**：从正式 `AppRepositoryLiveFactory` 发起成功上传，网络请求必须且只能按 intent、签名 PUT、complete 顺序执行并返回资产；上传事务专项与完整 iOS 单元测试、`git diff --check` 通过。不得访问生产 COS、云端记忆或用户资料。服务端旧入口另立独立问题删除。
+
+**验证**：`MemoryMediaUploadTransactionTests` 3/3 通过；完整 `GoHomeShellTests` 152/152 通过；正式仓库成功链路严格为 intent、签名 PUT、complete，`git diff --check` 通过。
+
+**状态**：已完成，待下一次统一 TestFlight 构建真机复核唯一上传链路。
+
 ### GH-078 正式 App 默认头像资源未进入用户资料页面
 
 **发现**：正式仓库已有 `assets/images/avatar.jpg`，但 `ios-shell/project.yml` 没有把它加入 App Bundle；`AccountAvatar` 在没有远程头像时只显示 SF Symbol，首页“我的”入口和个人资料编辑页因此没有产品默认头像。

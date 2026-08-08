@@ -576,10 +576,6 @@ struct MemoryCommentRequest: Encodable, Equatable, Sendable {
     let body: String
 }
 
-struct MemoryMediaUploadResponse: Decodable, Equatable, Sendable {
-    let asset: MemoryUploadedAsset
-}
-
 struct MemoryMediaBatchUploadResponse: Decodable, Equatable, Sendable {
     let assets: [MemoryUploadedAsset]
 }
@@ -592,24 +588,6 @@ struct MemoryUploadAsset: Equatable, Sendable {
     let durationSeconds: Double?
 
     var isVideo: Bool { contentType.hasPrefix("video/") }
-}
-
-struct MemoryMediaBatchRequest: Encodable, Equatable, Sendable {
-    let images: [MemoryMediaBatchItemRequest]
-}
-
-struct MemoryMediaBatchItemRequest: Encodable, Equatable, Sendable {
-    let data: Data
-    let contentType: String
-    let pixelWidth: Int
-    let pixelHeight: Int
-
-    enum CodingKeys: String, CodingKey {
-        case data
-        case contentType = "content_type"
-        case pixelWidth = "pixel_width"
-        case pixelHeight = "pixel_height"
-    }
 }
 
 struct MemoryMediaUploadIntentRequest: Encodable, Equatable, Sendable {

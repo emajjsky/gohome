@@ -21,7 +21,6 @@ actor AppRepository {
     typealias MemoryCommentCreator = @Sendable (String, String, MemoryCommentRequest) async throws -> FamilyMemoryEnvelope
     typealias MemoryFavoriteUpdater = @Sendable (String, String, Bool) async throws -> FamilyMemoryEnvelope
     typealias MemoryDeleter = @Sendable (String, String) async throws -> MemoryDeleteResponse
-    typealias MemoryMediaUploader = @Sendable (String, Data, String) async throws -> MemoryMediaUploadResponse
     typealias MemoryMediaBatchUploader = @Sendable (String, [MemoryUploadAsset]) async throws -> MemoryMediaBatchUploadResponse
     typealias ActivityTimelineLoader = @Sendable (String, String) async throws -> ActivityTimelineResponse
     typealias ActivityOverviewLoader = @Sendable (String, String) async throws -> ActivityOverviewResponse
@@ -62,7 +61,6 @@ actor AppRepository {
     private let memoryCommentCreator: MemoryCommentCreator
     private let memoryFavoriteUpdater: MemoryFavoriteUpdater
     private let memoryDeleter: MemoryDeleter
-    private let memoryMediaUploader: MemoryMediaUploader
     private let memoryMediaBatchUploader: MemoryMediaBatchUploader
     private let activityTimelineLoader: ActivityTimelineLoader
     private let activityOverviewLoader: ActivityOverviewLoader
@@ -113,8 +111,7 @@ actor AppRepository {
         memoryCommentCreator: @escaping MemoryCommentCreator = { _, _, _ in throw APIError.invalidResponse },
         memoryFavoriteUpdater: @escaping MemoryFavoriteUpdater = { _, _, _ in throw APIError.invalidResponse },
         memoryDeleter: @escaping MemoryDeleter = { _, _ in throw APIError.invalidResponse },
-        memoryMediaUploader: @escaping MemoryMediaUploader = { _, _, _ in throw APIError.invalidResponse },
-        memoryMediaBatchUploader: MemoryMediaBatchUploader? = nil,
+        memoryMediaBatchUploader: @escaping MemoryMediaBatchUploader = { _, _ in throw APIError.invalidResponse },
         activityTimelineLoader: @escaping ActivityTimelineLoader = { _, _ in throw APIError.invalidResponse },
         activityOverviewLoader: @escaping ActivityOverviewLoader = { _, _ in throw APIError.invalidResponse },
         activityHistoryDeleter: @escaping ActivityHistoryDeleter = { _ in throw APIError.invalidResponse },
@@ -154,14 +151,7 @@ actor AppRepository {
         self.memoryCommentCreator = memoryCommentCreator
         self.memoryFavoriteUpdater = memoryFavoriteUpdater
         self.memoryDeleter = memoryDeleter
-        self.memoryMediaUploader = memoryMediaUploader
-        self.memoryMediaBatchUploader = memoryMediaBatchUploader ?? { familyID, images in
-            var assets: [MemoryUploadedAsset] = []
-            for image in images {
-                assets.append(try await memoryMediaUploader(familyID, image.data, image.contentType).asset)
-            }
-            return MemoryMediaBatchUploadResponse(assets: assets)
-        }
+        self.memoryMediaBatchUploader = memoryMediaBatchUploader
         self.activityTimelineLoader = activityTimelineLoader
         self.activityOverviewLoader = activityOverviewLoader
         self.activityHistoryDeleter = activityHistoryDeleter
@@ -379,10 +369,6 @@ actor AppRepository {
 
     func deleteMemory(familyID: String, memoryID: String) async throws {
         _ = try await memoryDeleter(familyID, memoryID)
-    }
-
-    func uploadMemoryMedia(familyID: String, data: Data, contentType: String) async throws -> MemoryUploadedAsset {
-        try await memoryMediaUploader(familyID, data, contentType).asset
     }
 
     func uploadMemoryMediaBatch(familyID: String, media: [MemoryUploadAsset]) async throws -> [MemoryUploadedAsset] {

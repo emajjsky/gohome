@@ -95,6 +95,51 @@ final class MemoryMediaUploadTransactionTests: XCTestCase {
         XCTAssertEqual(requests.last?.bodyItems, ["asset-1", "asset-2"])
     }
 
+    func testLiveRepositoryUsesTheSingleIntentUploadPipeline() async throws {
+        let recorder = MemoryUploadRequestRecorder()
+        MemoryUploadURLProtocolStub.handler = { request in
+            await recorder.record(request)
+            switch (request.httpMethod, request.url?.path) {
+            case ("POST", "/api/v2/memory-media-upload-intents"):
+                return Self.response(
+                    request,
+                    statusCode: 201,
+                    body: #"{"uploads":[{"asset_id":"asset-1","upload_url":"https://example.com/cos/object-1","upload_token":"token-1","content_type":"image/jpeg","expires_at":"2026-08-08T22:00:00Z"}]}"#
+                )
+            case ("PUT", "/cos/object-1"):
+                return Self.response(request, statusCode: 200, body: "")
+            case ("POST", "/api/v2/memory-media-upload-complete"):
+                return Self.response(
+                    request,
+                    statusCode: 201,
+                    body: #"{"assets":[{"id":"asset-1","content_type":"image/jpeg","image_url":"/api/v1/video/assets/asset-1","size_bytes":3}]}"#
+                )
+            default:
+                throw URLError(.badServerResponse)
+            }
+        }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MemoryMediaUploadTransactionTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = AppRepositoryLiveFactory.make(
+            client: makeClient(),
+            cache: try DiskCache(rootURL: root)
+        )
+
+        let assets = try await repository.uploadMemoryMediaBatch(
+            familyID: "family-1",
+            media: [makeUpload()]
+        )
+
+        XCTAssertEqual(assets.map(\.id), ["asset-1"])
+        let requests = await recorder.requests
+        XCTAssertEqual(requests.map(\.path), [
+            "/api/v2/memory-media-upload-intents",
+            "/cos/object-1",
+            "/api/v2/memory-media-upload-complete",
+        ])
+    }
+
     private func makeClient() -> APIClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MemoryUploadURLProtocolStub.self]
