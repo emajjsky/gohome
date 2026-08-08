@@ -26,7 +26,7 @@ struct GoHomeLocalImage: View {
 
     var body: some View {
         Group {
-            if let image = loadImage() {
+            if let image = GoHomeImageResource.loadJPEG(named: name) {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
@@ -35,9 +35,12 @@ struct GoHomeLocalImage: View {
             }
         }
     }
+}
 
-    private func loadImage() -> UIImage? {
-        UIImage(named: name, in: .main, compatibleWith: nil)
+enum GoHomeImageResource {
+    static func loadJPEG(named name: String, bundle: Bundle = .main) -> UIImage? {
+        guard let url = bundle.url(forResource: name, withExtension: "jpg") else { return nil }
+        return UIImage(contentsOfFile: url.path)
     }
 }
 

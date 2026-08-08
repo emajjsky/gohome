@@ -2,6 +2,19 @@ import XCTest
 @testable import GoHomeShell
 
 final class AppSmokeTests: XCTestCase {
+    func testBundledEditorialImagesResolveAsJPEGResources() {
+        let imageNames = [
+            "grandma-reading",
+            "memory-garden-sun",
+            "memory-generations",
+            "memory-relax-chat",
+        ]
+
+        for name in imageNames {
+            XCTAssertNotNil(GoHomeImageResource.loadJPEG(named: name), "Missing bundled image: \(name).jpg")
+        }
+    }
+
     func testNativeRouteSupportsSignedOutAndOnboardingStates() {
         XCTAssertEqual(AppRoute.signedOut, .signedOut)
         XCTAssertEqual(AppRoute.onboarding(.camera), .onboarding(.camera))
