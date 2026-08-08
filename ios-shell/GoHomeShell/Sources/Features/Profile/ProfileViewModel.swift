@@ -42,6 +42,7 @@ final class ProfileViewModel: ObservableObject {
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
     private var deviceReconciliationTask: Task<Void, Never>?
+    private var deviceProgressDismissTask: Task<Void, Never>?
     private var hasStarted = false
     private let onFamilyChanged: () -> Void
     private let onAccountProfileChanged: (AccountProfile) -> Void
@@ -380,9 +381,7 @@ final class ProfileViewModel: ObservableObject {
         password: String
     ) async -> Bool {
         guard canManageDevices, deviceActionID == nil, let repository, let scope else { return false }
-        deviceActionID = "camera-new"
-        deviceProgress = .saving("正在保存摄像头")
-        inlineError = nil
+        beginDeviceOperation(id: "camera-new", message: "正在保存摄像头")
         defer { deviceActionID = nil }
         do {
             let camera = try await repository.createCamera(CameraCreateRequest(
@@ -417,9 +416,7 @@ final class ProfileViewModel: ObservableObject {
         enabled: Bool
     ) async -> Bool {
         guard canManageDevices, deviceActionID == nil, let repository else { return false }
-        deviceActionID = "camera-\(camera.id)"
-        deviceProgress = .saving("正在保存摄像头设置")
-        inlineError = nil
+        beginDeviceOperation(id: "camera-\(camera.id)", message: "正在保存摄像头设置")
         defer { deviceActionID = nil }
         do {
             let updated = try await repository.updateCamera(
@@ -447,9 +444,7 @@ final class ProfileViewModel: ObservableObject {
 
     func deleteCamera(_ camera: CameraConfig) async -> Bool {
         guard canManageDevices, deviceActionID == nil, let repository else { return false }
-        deviceActionID = "camera-\(camera.id)"
-        deviceProgress = .saving("正在删除摄像头")
-        inlineError = nil
+        beginDeviceOperation(id: "camera-\(camera.id)", message: "正在删除摄像头")
         defer { deviceActionID = nil }
         do {
             try await repository.deleteCamera(id: camera.id)
@@ -469,9 +464,7 @@ final class ProfileViewModel: ObservableObject {
 
     func unbindDevice(_ binding: DeviceBinding) async -> Bool {
         guard canManageDevices, deviceActionID == nil, let repository else { return false }
-        deviceActionID = "binding-\(binding.id)"
-        deviceProgress = .saving("正在解除盒子绑定")
-        inlineError = nil
+        beginDeviceOperation(id: "binding-\(binding.id)", message: "正在解除盒子绑定")
         defer { deviceActionID = nil }
         do {
             _ = try await repository.unbindDevice(bindingID: binding.id)
@@ -518,6 +511,16 @@ final class ProfileViewModel: ObservableObject {
         state.value = value
     }
 
+    private func beginDeviceOperation(id: String, message: String) {
+        deviceReconciliationTask?.cancel()
+        deviceReconciliationTask = nil
+        deviceProgressDismissTask?.cancel()
+        deviceProgressDismissTask = nil
+        deviceActionID = id
+        deviceProgress = .saving(message)
+        inlineError = nil
+    }
+
     private func reconcileDeviceConfiguration(cameraID: String?, expectedToExist: Bool) {
         guard let repository, let scope else {
             deviceProgress = nil
@@ -562,11 +565,17 @@ final class ProfileViewModel: ObservableObject {
     }
 
     private func finishDeviceReconciliation(_ message: String) {
+        deviceProgressDismissTask?.cancel()
         deviceProgress = .ready(message)
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            guard !Task.isCancelled else { return }
-            self?.deviceProgress = nil
+        deviceProgressDismissTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 1_500_000_000)
+            } catch {
+                return
+            }
+            guard let self, self.deviceProgress == .ready(message) else { return }
+            self.deviceProgress = nil
+            self.deviceProgressDismissTask = nil
         }
     }
 
@@ -578,6 +587,7 @@ final class ProfileViewModel: ObservableObject {
     deinit {
         loadTask?.cancel()
         deviceReconciliationTask?.cancel()
+        deviceProgressDismissTask?.cancel()
     }
 }
 

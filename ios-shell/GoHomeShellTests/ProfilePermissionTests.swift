@@ -199,6 +199,129 @@ final class ProfilePermissionTests: XCTestCase {
     }
 
     @MainActor
+    func testNewDeviceOperationKeepsItsProgressAfterPreviousSuccessMessageExpires() async throws {
+        let binding = fixtureBinding()
+        let created = fixtureCamera(id: "camera-new", status: "pending_edge_sync")
+        let ready = fixtureCamera(id: created.id, status: "online")
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            profileLoader: { _ in
+                fixtureProfile(canEdit: true, bindings: [binding], cameras: [ready])
+            },
+            cameraCreator: { _ in created },
+            cameraUpdater: { _, _ in
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+                return ready
+            }
+        )
+        let model = ProfileViewModel(
+            user: AppUser(id: "user-1", phone: "13800138000", displayName: "测试用户"),
+            family: AppFamily(id: "family-1", name: "测试家庭", role: "owner"),
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: fixtureProfile(canEdit: true, bindings: [binding])
+        )
+
+        let didCreate = await model.createCamera(
+            binding: binding,
+            name: created.name,
+            room: created.room,
+            streamURL: "rtsp://192.168.1.20:554/1/2",
+            username: "admin",
+            password: "secret"
+        )
+        XCTAssertTrue(didCreate)
+        for _ in 0..<100 where model.deviceProgress != .ready("摄像头已在线") {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(model.deviceProgress, .ready("摄像头已在线"))
+
+        let updateTask = Task { @MainActor in
+            await model.updateCamera(
+                ready,
+                name: "更新后的摄像头",
+                room: ready.room,
+                streamURL: "rtsp://192.168.1.7:554/1/2",
+                username: "",
+                password: "",
+                enabled: true
+            )
+        }
+        for _ in 0..<100 where model.deviceProgress != .saving("正在保存摄像头设置") {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(model.deviceProgress, .saving("正在保存摄像头设置"))
+        try await Task.sleep(nanoseconds: 1_600_000_000)
+        XCTAssertEqual(model.deviceProgress, .saving("正在保存摄像头设置"))
+        _ = await updateTask.value
+    }
+
+    @MainActor
+    func testNewDeviceOperationCancelsPreviousReconciliation() async throws {
+        let binding = fixtureBinding()
+        let pending = fixtureCamera(id: "camera-new", status: "pending_edge_sync")
+        let ready = fixtureCamera(id: pending.id, status: "online")
+        let profiles = ProfileLoadSequence(profiles: [
+            fixtureProfile(canEdit: true, bindings: [binding], cameras: [pending]),
+            fixtureProfile(canEdit: true, bindings: [binding], cameras: [ready]),
+        ])
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            profileLoader: { _ in await profiles.next() },
+            cameraCreator: { _ in pending },
+            cameraUpdater: { _, _ in
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+                return ready
+            }
+        )
+        let model = ProfileViewModel(
+            user: AppUser(id: "user-1", phone: "13800138000", displayName: "测试用户"),
+            family: AppFamily(id: "family-1", name: "测试家庭", role: "owner"),
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: fixtureProfile(canEdit: true, bindings: [binding])
+        )
+
+        let didCreate = await model.createCamera(
+            binding: binding,
+            name: pending.name,
+            room: pending.room,
+            streamURL: "rtsp://192.168.1.20:554/1/2",
+            username: "admin",
+            password: "secret"
+        )
+        XCTAssertTrue(didCreate)
+        for _ in 0..<100 {
+            if await profiles.loadCount > 0 { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let initialLoadCount = await profiles.loadCount
+        XCTAssertEqual(initialLoadCount, 1)
+
+        let updateTask = Task { @MainActor in
+            await model.updateCamera(
+                pending,
+                name: "更新后的摄像头",
+                room: pending.room,
+                streamURL: "rtsp://192.168.1.7:554/1/2",
+                username: "",
+                password: "",
+                enabled: true
+            )
+        }
+        for _ in 0..<100 where model.deviceProgress != .saving("正在保存摄像头设置") {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        XCTAssertEqual(model.deviceProgress, .saving("正在保存摄像头设置"))
+        let loadCountAfterCancellation = await profiles.loadCount
+        XCTAssertEqual(loadCountAfterCancellation, 1)
+        _ = await updateTask.value
+    }
+
+    @MainActor
     func testFamilyManagementHonorsRolesAndRefreshesAfterOwnershipTransfer() async throws {
         let recorder = FamilyMutationRecorder()
         let member = FamilyMember(
@@ -467,6 +590,21 @@ private actor RuleUpdateRecorder {
 private actor DeviceMutationRecorder {
     private(set) var actions: [String] = []
     func record(_ action: String) { actions.append(action) }
+}
+
+private actor ProfileLoadSequence {
+    private let profiles: [ProfileData]
+    private(set) var loadCount = 0
+
+    init(profiles: [ProfileData]) {
+        self.profiles = profiles
+    }
+
+    func next() -> ProfileData {
+        let profile = profiles[min(loadCount, profiles.count - 1)]
+        loadCount += 1
+        return profile
+    }
 }
 
 private actor FamilyMutationRecorder {
