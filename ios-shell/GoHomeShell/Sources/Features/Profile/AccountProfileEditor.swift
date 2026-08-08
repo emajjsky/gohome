@@ -14,6 +14,7 @@ struct AccountProfileEditor: View {
     @State private var avatarImage: UIImage?
     @State private var avatarJPEG: Data?
     @State private var showsCityPicker = false
+    @State private var saveTask: Task<Void, Never>?
 
     init(model: ProfileViewModel, apiClient: APIClient?) {
         self.model = model
@@ -85,6 +86,7 @@ struct AccountProfileEditor: View {
             district = value.district
         }
         .onAppear { model.clearError() }
+        .onDisappear { saveTask?.cancel() }
     }
 
     private var avatarPicker: some View {
@@ -166,7 +168,9 @@ struct AccountProfileEditor: View {
     }
 
     private func save() {
-        Task {
+        guard saveTask == nil else { return }
+        saveTask = Task { @MainActor in
+            defer { saveTask = nil }
             if await model.saveAccountProfile(
                 displayName: displayName,
                 city: city,

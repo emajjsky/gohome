@@ -562,6 +562,69 @@ final class ProfilePermissionTests: XCTestCase {
         XCTAssertFalse(model.savingAccountProfile)
     }
 
+    @MainActor
+    func testCancelledAvatarUploadCannotUpdateProfileOrShowFailure() async throws {
+        let scope = CacheScope(userID: "user-1", familyID: "family-1")
+        let recorder = CancelledAccountProfileRecorder()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoryMediaBatchUploader: { _, media in
+                await recorder.recordUploadStarted()
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                return MemoryMediaBatchUploadResponse(assets: [
+                    MemoryUploadedAsset(
+                        id: "asset-late",
+                        contentType: media[0].contentType,
+                        imageURL: "/assets/late",
+                        mediaURL: nil,
+                        mediaType: "image",
+                        sizeBytes: media[0].data.count
+                    )
+                ])
+            },
+            accountProfileUpdater: { patch in
+                await recorder.recordPatch(patch)
+                return AccountProfileEnvelope(profile: try accountProfileFixture(
+                    displayName: patch.displayName,
+                    city: patch.city,
+                    district: patch.district,
+                    avatarAssetID: patch.avatarAssetID
+                ))
+            }
+        )
+        let model = ProfileViewModel(
+            user: AppUser(id: scope.userID, phone: "13800138000", displayName: "当前昵称"),
+            family: AppFamily(id: scope.familyID, name: "测试家庭", role: "owner"),
+            repository: repository,
+            scope: scope,
+            seed: fixtureProfile(canEdit: true)
+        )
+        let original = model.accountProfile
+        let saveTask = Task { @MainActor in
+            await model.saveAccountProfile(
+                displayName: "不应保存",
+                city: "上海市",
+                district: "徐汇区",
+                avatarJPEG: Data([1, 2, 3])
+            )
+        }
+        for _ in 0..<100 {
+            if await recorder.uploadStarted { break }
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+
+        saveTask.cancel()
+        let saved = await saveTask.value
+
+        XCTAssertFalse(saved)
+        XCTAssertEqual(model.accountProfile, original)
+        XCTAssertFalse(model.savingAccountProfile)
+        XCTAssertNil(model.inlineError)
+        let patchCount = await recorder.patchCount
+        XCTAssertEqual(patchCount, 0)
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("ProfilePermissionTests-\(UUID().uuidString)", isDirectory: true)
@@ -630,6 +693,14 @@ private actor AccountProfileMutationRecorder {
     func snapshot() -> (uploadFamilyID: String?, uploadCount: Int, patch: AccountProfilePatch?) {
         (uploadFamilyID, uploadCount, patch)
     }
+}
+
+private actor CancelledAccountProfileRecorder {
+    private(set) var uploadStarted = false
+    private(set) var patchCount = 0
+
+    func recordUploadStarted() { uploadStarted = true }
+    func recordPatch(_ patch: AccountProfilePatch) { patchCount += 1 }
 }
 
 private func fixtureProfile(

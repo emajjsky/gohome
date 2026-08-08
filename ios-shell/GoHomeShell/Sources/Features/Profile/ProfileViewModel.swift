@@ -135,6 +135,7 @@ final class ProfileViewModel: ObservableObject {
                     )]
                 ).first?.id ?? original.avatarAssetID
             }
+            try Task.checkCancellation()
             let updated = try await repository.updateAccountProfile(AccountProfilePatch(
                 displayName: trimmedName,
                 city: city.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -144,6 +145,9 @@ final class ProfileViewModel: ObservableObject {
             accountProfile = updated
             onAccountProfileChanged(updated)
             return true
+        } catch is CancellationError {
+            accountProfile = original
+            return false
         } catch {
             accountProfile = original
             inlineError = "账户资料未能保存，请重试"
