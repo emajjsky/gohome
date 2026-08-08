@@ -1,5 +1,11 @@
 import SwiftUI
 
+enum CameraBindingResolver {
+    static func exactBinding(for camera: CameraConfig, bindings: [DeviceBinding]) -> DeviceBinding? {
+        bindings.first(where: { $0.deviceID == camera.deviceID })
+    }
+}
+
 struct DeviceSettingsView: View {
     @ObservedObject var model: ProfileViewModel
     let onboardingService: OnboardingService?
@@ -175,15 +181,20 @@ struct DeviceSettingsView: View {
             if let cameras = model.state.value?.cameras, !cameras.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(Array(cameras.enumerated()), id: \.element.id) { index, camera in
-                        if model.canManageDevices, let binding = binding(for: camera) {
+                        let cameraBinding = binding(for: camera)
+                        if model.canManageDevices, let binding = cameraBinding {
                             NavigationLink {
                                 CameraManagementView(model: model, binding: binding, camera: camera)
                             } label: {
-                                cameraRow(camera, showsDisclosure: true)
+                                cameraRow(camera, showsDisclosure: true, statusOverride: nil)
                             }
                             .buttonStyle(.plain)
                         } else {
-                            cameraRow(camera, showsDisclosure: false)
+                            cameraRow(
+                                camera,
+                                showsDisclosure: false,
+                                statusOverride: cameraBinding == nil ? "盒子未绑定" : nil
+                            )
                         }
                         if index < cameras.count - 1 {
                             Rectangle().fill(GoHomeTheme.softLine).frame(height: 1)
@@ -199,7 +210,7 @@ struct DeviceSettingsView: View {
         }
     }
 
-    private func cameraRow(_ camera: CameraConfig, showsDisclosure: Bool) -> some View {
+    private func cameraRow(_ camera: CameraConfig, showsDisclosure: Bool, statusOverride: String?) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "video.fill")
                 .font(.system(size: 14, weight: .semibold))
@@ -219,9 +230,9 @@ struct DeviceSettingsView: View {
                 if case let .syncing(cameraID, _) = model.deviceProgress, cameraID == camera.id {
                     ProgressView().controlSize(.small)
                 }
-                Text(cameraStatus(camera))
+                Text(statusOverride ?? cameraStatus(camera))
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(camera.isReadyForLiveView ? Color.green : GoHomeTheme.mutedInk)
+                    .foregroundStyle(statusOverride == nil && camera.isReadyForLiveView ? Color.green : GoHomeTheme.mutedInk)
             }
             if showsDisclosure {
                 Image(systemName: "chevron.right")
@@ -259,8 +270,7 @@ struct DeviceSettingsView: View {
     }
 
     private func binding(for camera: CameraConfig) -> DeviceBinding? {
-        let bindings = model.state.value?.bindings ?? []
-        return bindings.first(where: { $0.deviceID == camera.deviceID }) ?? bindings.first
+        CameraBindingResolver.exactBinding(for: camera, bindings: model.state.value?.bindings ?? [])
     }
 
     private func unbind(_ binding: DeviceBinding) {

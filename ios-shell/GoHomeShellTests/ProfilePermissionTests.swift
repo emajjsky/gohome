@@ -2,6 +2,20 @@ import XCTest
 @testable import GoHomeShell
 
 final class ProfilePermissionTests: XCTestCase {
+    func testCameraBindingResolutionNeverFallsBackToAnotherBox() {
+        let first = DeviceBinding(
+            id: "binding-1", familyID: "family-1", deviceID: "edge-1", deviceName: "客厅盒子", status: "online"
+        )
+        let second = DeviceBinding(
+            id: "binding-2", familyID: "family-1", deviceID: "edge-2", deviceName: "卧室盒子", status: "online"
+        )
+        let camera = fixtureCamera(deviceID: "edge-2")
+        let orphan = fixtureCamera(id: "camera-orphan", deviceID: "edge-unknown")
+
+        XCTAssertEqual(CameraBindingResolver.exactBinding(for: camera, bindings: [first, second]), second)
+        XCTAssertNil(CameraBindingResolver.exactBinding(for: orphan, bindings: [first, second]))
+    }
+
     func testFamilyRoleUsesOnlyCreatorAndMemberProductLabels() {
         XCTAssertEqual(FamilyRole.resolve(familyRole: "owner", canEdit: false), .creator)
         XCTAssertEqual(FamilyRole.resolve(familyRole: "member", canEdit: false), .member)
@@ -517,6 +531,7 @@ private func fixtureBinding() -> DeviceBinding {
 
 private func fixtureCamera(
     id: String = "camera-1",
+    deviceID: String = "edge-1",
     name: String = "客厅主视",
     status: String = "online",
     enabled: Bool = true
@@ -524,7 +539,7 @@ private func fixtureCamera(
     CameraConfig(
         id: id,
         familyID: "family-1",
-        deviceID: "edge-1",
+        deviceID: deviceID,
         name: name,
         room: "客厅",
         status: status,
