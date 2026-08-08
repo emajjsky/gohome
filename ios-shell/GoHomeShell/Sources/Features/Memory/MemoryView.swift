@@ -890,6 +890,7 @@ private struct MemoryComposer: View {
     @State private var mediaPreparationError: String?
     @State private var imageSelectionGeneration = UUID()
     @State private var didPrepareSeed = false
+    @State private var publishTask: Task<Void, Never>?
     @StateObject private var locationProvider = MemoryLocationProvider()
 
     init(
@@ -964,7 +965,7 @@ private struct MemoryComposer: View {
             .navigationTitle(memory == nil ? "发布记忆" : "编辑记忆")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消") { isPresented = false } }
+                ToolbarItem(placement: .cancellationAction) { Button("取消", action: cancel) }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(model.isPublishing ? model.publishPhase.toolbarTitle : "发布") { publish() }
                         .fontWeight(.bold)
@@ -996,6 +997,7 @@ private struct MemoryComposer: View {
                 locationName = placeName
             }
             .onDisappear {
+                publishTask?.cancel()
                 cleanupSeedFiles()
             }
         }
@@ -1059,7 +1061,9 @@ private struct MemoryComposer: View {
     }
 
     private func publish() {
-        Task {
+        guard publishTask == nil else { return }
+        publishTask = Task { @MainActor in
+            defer { publishTask = nil }
             let uploads = newVideo.map { [$0.upload] } ?? newImages.compactMap(\.upload)
             let outcome = await model.save(
                 existing: memory,
@@ -1086,6 +1090,12 @@ private struct MemoryComposer: View {
                 isPresented = false
             }
         }
+    }
+
+    private func cancel() {
+        publishTask?.cancel()
+        publishTask = nil
+        isPresented = false
     }
 }
 

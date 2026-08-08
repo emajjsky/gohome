@@ -346,6 +346,62 @@ final class MemoryViewModelTests: XCTestCase {
         XCTAssertEqual(request?.assetIDs.suffix(2), ["asset-8", "asset-9"])
     }
 
+    @MainActor
+    func testCancelledMemoryUploadCannotCreateMemoryOrShowFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scope = CacheScope(userID: "user-1", familyID: "family-1")
+        let recorder = CancelledMemoryPublishRecorder()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoryCreator: { _, request in
+                await recorder.recordCreation(request)
+                return FamilyMemoryEnvelope(memory: self.makeMemory(id: "unexpected", body: request.body))
+            },
+            memoryMediaBatchUploader: { _, media in
+                await recorder.recordUploadStarted()
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                return MemoryMediaBatchUploadResponse(assets: media.map { item in
+                    MemoryUploadedAsset(
+                        id: "asset-late",
+                        contentType: item.contentType,
+                        imageURL: "/assets/late",
+                        mediaURL: nil,
+                        mediaType: "image",
+                        sizeBytes: item.data.count
+                    )
+                })
+            }
+        )
+        let model = MemoryViewModel(repository: repository, scope: scope)
+        let saveTask = Task { @MainActor in
+            await model.save(
+                existing: nil,
+                body: "不应发布",
+                happenedAt: Date(),
+                locationName: "",
+                people: [],
+                retainedMediaIDs: [],
+                newMedia: [memoryUpload(1)]
+            )
+        }
+        for _ in 0..<100 {
+            if await recorder.uploadStarted { break }
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+
+        saveTask.cancel()
+        let outcome = await saveTask.value
+
+        XCTAssertNil(outcome)
+        XCTAssertFalse(model.isPublishing)
+        XCTAssertEqual(model.publishPhase, .idle)
+        XCTAssertNil(model.errorMessage)
+        let creationCount = await recorder.creationCount
+        XCTAssertEqual(creationCount, 0)
+    }
+
     private func memoryUpload(_ value: Int) -> MemoryUploadAsset {
         MemoryUploadAsset(
             data: Data([UInt8(value)]),
@@ -412,4 +468,12 @@ private actor MemoryWriteRecorder {
 private actor MemoryRequestRecorder {
     private(set) var value: MemoryDraftRequest?
     func record(_ request: MemoryDraftRequest) { value = request }
+}
+
+private actor CancelledMemoryPublishRecorder {
+    private(set) var uploadStarted = false
+    private(set) var creationCount = 0
+
+    func recordUploadStarted() { uploadStarted = true }
+    func recordCreation(_ request: MemoryDraftRequest) { creationCount += 1 }
 }

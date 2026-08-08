@@ -95,6 +95,7 @@ final class MemoryViewModel: ObservableObject {
                     media: uploadCandidates
                 )
             }
+            try Task.checkCancellation()
             publishPhase = .saving
             let assetIDs = retainedIDs + uploadedAssets.map(\.id)
             let request = MemoryDraftRequest(
@@ -112,6 +113,8 @@ final class MemoryViewModel: ObservableObject {
             replace(saved, prependIfMissing: existing == nil)
             await persist()
             return SaveOutcome(memory: saved, uploadedAssets: uploadedAssets)
+        } catch is CancellationError {
+            return nil
         } catch {
             errorMessage = "这条记忆没有保存，请检查网络后重试"
             return nil
