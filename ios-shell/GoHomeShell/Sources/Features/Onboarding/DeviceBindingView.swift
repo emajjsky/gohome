@@ -17,6 +17,25 @@ enum DeviceBindingHomeLocationDecision {
     }
 }
 
+struct CloudDeviceLoadState {
+    private(set) var devices: [ClaimableDevice] = []
+    private(set) var errorMessage: String?
+
+    mutating func beginLoading() {
+        errorMessage = nil
+    }
+
+    mutating func resolve(_ result: Result<[ClaimableDevice], Error>) {
+        switch result {
+        case let .success(devices):
+            self.devices = devices
+            errorMessage = nil
+        case .failure:
+            errorMessage = "云端设备列表暂时无法更新，可继续使用局域网发现或重试。"
+        }
+    }
+}
+
 struct DeviceBindingView: View {
     let familyID: String?
     let service: OnboardingService
@@ -24,7 +43,7 @@ struct DeviceBindingView: View {
     var presentation: DeviceBindingPresentation = .onboarding
     @StateObject private var discovery = BoxDiscoveryService()
     @StateObject private var homeLocationProvider = MemoryLocationProvider()
-    @State private var cloudDevices: [ClaimableDevice] = []
+    @State private var cloudDeviceState = CloudDeviceLoadState()
     @State private var isLoadingCloud = false
     @State private var isBinding = false
     @State private var bindingDeviceID: String?
@@ -93,9 +112,9 @@ struct DeviceBindingView: View {
                         Image(systemName: "shippingbox")
                             .font(.system(size: 28))
                             .foregroundStyle(.secondary)
-                        Text("没有发现设备")
+                        Text(cloudDeviceState.errorMessage == nil ? "没有发现设备" : "设备列表未能更新")
                             .font(.system(size: 15, weight: .semibold))
-                        Text("确认盒子已通电，并与手机连接同一 Wi-Fi")
+                        Text(cloudDeviceState.errorMessage == nil ? "确认盒子已通电，并与手机连接同一 Wi-Fi" : "请检查网络后重新搜索")
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                     }
@@ -151,7 +170,7 @@ struct DeviceBindingView: View {
                 .background(GoHomeTheme.paleGinger, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .disabled(isBinding)
 
-                OnboardingError(message: errorMessage)
+                OnboardingError(message: errorMessage ?? cloudDeviceState.errorMessage)
                 if let familyID = homeLocationRetryFamilyID {
                     Button("重新读取家庭位置") {
                         Task { await offerHomeLocation(for: familyID) }
@@ -169,7 +188,7 @@ struct DeviceBindingView: View {
     private var allDevices: [DiscoveredBox] {
         var result = discovery.boxes
         let localIDs = Set(result.map(\.deviceID))
-        result += cloudDevices
+        result += cloudDeviceState.devices
             .filter { !localIDs.contains($0.deviceID) }
             .map { DiscoveredBox(id: $0.deviceID, name: $0.name, deviceID: $0.deviceID, serialNumber: $0.serialNumber) }
         return result
@@ -178,9 +197,14 @@ struct DeviceBindingView: View {
     private func loadCloudDevices() {
         guard let familyID, !isLoadingCloud else { return }
         isLoadingCloud = true
+        cloudDeviceState.beginLoading()
         Task {
             defer { isLoadingCloud = false }
-            cloudDevices = (try? await service.availableDevices(familyID: familyID)) ?? []
+            do {
+                cloudDeviceState.resolve(.success(try await service.availableDevices(familyID: familyID)))
+            } catch {
+                cloudDeviceState.resolve(.failure(error))
+            }
         }
     }
 

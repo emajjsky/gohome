@@ -2,6 +2,23 @@ import XCTest
 @testable import GoHomeShell
 
 final class OnboardingModelTests: XCTestCase {
+    func testCloudDeviceLoadFailurePreservesLastSuccessfulListAndExplainsFailure() throws {
+        let device = try claimableDevice()
+        var state = CloudDeviceLoadState()
+
+        state.resolve(.success([device]))
+        XCTAssertEqual(state.devices, [device])
+        XCTAssertNil(state.errorMessage)
+
+        state.resolve(.failure(APIError.invalidResponse))
+        XCTAssertEqual(state.devices, [device])
+        XCTAssertEqual(state.errorMessage, "云端设备列表暂时无法更新，可继续使用局域网发现或重试。")
+
+        state.beginLoading()
+        XCTAssertEqual(state.devices, [device])
+        XCTAssertNil(state.errorMessage)
+    }
+
     @MainActor
     func testCameraConfigurationCommitsCloudThenWakesBoxThenCompletes() async {
         var stages: [String] = []
@@ -193,6 +210,18 @@ private func cameraConnectionValues() -> CameraConnectionValues {
         password: "secret",
         enabled: true
     )
+}
+
+private func claimableDevice() throws -> ClaimableDevice {
+    try JSONDecoder().decode(ClaimableDevice.self, from: Data(#"""
+    {
+      "device_id":"edge-1",
+      "serial_number":"GH-EDGE-1",
+      "name":"客厅盒子",
+      "status":"online",
+      "last_seen_at":"2026-08-08T12:00:00Z"
+    }
+    """#.utf8))
 }
 
 private func homeLocationProfile(latitude: Double?, longitude: Double?) throws -> ElderProfile {
