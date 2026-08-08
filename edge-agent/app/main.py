@@ -1749,6 +1749,45 @@ async def capture_camera(camera_id: int) -> Dict[str, Any]:
     return await run_in_threadpool(capture_with_pipeline, camera_id)
 
 
+def continual_pose_display_analysis(
+    tracking: Dict[str, Any],
+    analysis: Dict[str, Any],
+    *,
+    width: int,
+    height: int,
+) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
+    display_poses = (
+        list(tracking.get("poses") or [])
+        if tracking.get("state") in {"observed", "tracked"}
+        and not bool(tracking.get("display_only_stale"))
+        else []
+    )
+    display_people = [
+        {
+            "bbox": pose.get("bbox") or [],
+            "confidence": pose.get("confidence"),
+            "track_id": pose.get("track_id"),
+            "source": "continual_pose",
+            "pose_tracking_state": tracking.get("state"),
+            "display_only": tracking.get("state") != "observed",
+        }
+        for pose in display_poses
+        if pose.get("bbox")
+    ]
+    display_analysis = {
+        **analysis,
+        "image_width": int(width),
+        "image_height": int(height),
+        "people": display_people,
+        "person_count": len(display_people),
+        "poses": display_poses,
+        "pose_count": len(display_poses),
+        "pose_tracking_state": tracking.get("state"),
+        "continual_pose": tracking,
+    }
+    return display_analysis, display_people
+
+
 def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) -> Dict[str, Any]:
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
@@ -1768,37 +1807,15 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
             "quality": {},
             "formal_evidence_eligible": False,
         }
-        display_poses = (
-            list(tracking.get("poses") or [])
-            if tracking.get("state") in {"observed", "tracked"}
-            and not bool(tracking.get("display_only_stale"))
-            else []
-        )
-        display_people = [
-            {
-                "bbox": pose.get("bbox") or [],
-                "confidence": pose.get("confidence"),
-                "track_id": pose.get("track_id"),
-                "source": "continual_pose",
-                "pose_tracking_state": tracking.get("state"),
-                "display_only": tracking.get("state") != "observed",
-            }
-            for pose in display_poses
-            if pose.get("bbox")
-        ]
         width = int(metadata.get("image_width") or 0)
         height = int(metadata.get("image_height") or 0)
-        analysis = dict(metadata.get("analysis_context") or {})
-        analysis.update({
-            "image_width": width,
-            "image_height": height,
-            "people": display_people,
-            "person_count": len(display_people),
-            "poses": display_poses,
-            "pose_count": len(display_poses),
-            "pose_tracking_state": tracking.get("state"),
-            "continual_pose": tracking,
-        })
+        analysis, display_people = continual_pose_display_analysis(
+            tracking,
+            dict(metadata.get("analysis_context") or {}),
+            width=width,
+            height=height,
+        )
+        display_poses = list(analysis["poses"])
         pose_display_available = bool(display_poses)
         captured_at = str(tracking.get("captured_at") or "")
         snapshot = {
@@ -1869,34 +1886,12 @@ def continual_pose_live_snapshot(camera_id: int, *, include_frame: bool = True) 
         analysis = {}
 
     height, width = frame.shape[:2]
-    display_poses = (
-        list(tracking.get("poses") or [])
-        if tracking.get("state") in {"observed", "tracked"}
-        and not bool(tracking.get("display_only_stale"))
-        else []
+    analysis, display_people = continual_pose_display_analysis(
+        tracking,
+        analysis,
+        width=width,
+        height=height,
     )
-    display_people = [
-        {
-            "bbox": pose.get("bbox") or [],
-            "confidence": pose.get("confidence"),
-            "track_id": pose.get("track_id"),
-            "source": "continual_pose",
-            "pose_tracking_state": tracking.get("state"),
-            "display_only": tracking.get("state") != "observed",
-        }
-        for pose in display_poses
-        if pose.get("bbox")
-    ]
-    analysis.update({
-        "image_width": width,
-        "image_height": height,
-        "people": display_people,
-        "person_count": len(display_people),
-        "poses": display_poses,
-        "pose_count": len(display_poses),
-        "pose_tracking_state": tracking.get("state"),
-        "continual_pose": tracking,
-    })
     snapshot = {
         "id": None,
         "camera_id": camera_id,
