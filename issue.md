@@ -953,6 +953,20 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **状态**：已完成，待下一次统一 TestFlight 构建真机确认断网、超时和会话过期三种启动路径。
 
+### GH-086 单文件上传取消被当作业务失败
+
+**发现**：网络客户端的 JSON 请求、二进制下载和 COS 直传都会把 `URLError.cancelled` 统一转换为 Swift `CancellationError`，但单文件上传入口直接调用 `URLSession.data(for:)`，漏掉了同一取消契约。头像或兼容单文件媒体上传随页面生命周期取消时，上层因此会显示“保存失败”，而不是安静结束已经取消的任务。
+
+**根因**：四种 HTTP 方法分别维护底层传输调用，取消映射复制在三处，遗漏的上传分支没有共享统一传输边界。
+
+**处理**：提取唯一 `perform` 传输入口，统一四种请求的 Swift 任务取消和 `URLError.cancelled` 映射；HTTP 状态、鉴权、解码和 COS 直传契约保持各自边界，不增加重试、兜底或第二上传管线。
+
+**验收要求**：网络专项覆盖普通 JSON 请求和单文件上传取消；完整 iOS 单元测试通过，`git diff --check` 通过。不得修改媒体数据、COS 资产、用户头像、Bundle ID、盒子配置或云端业务数据。
+
+**验证（2026-08-08）**：`APIClientTests` `7/7` 通过，普通 JSON 请求与单文件上传取消均保持为 `CancellationError`；正式 iOS 单元测试 `147/147`、`git diff --check` 全部通过。未修改媒体数据、COS 资产、用户头像、Bundle ID、盒子配置或云端业务数据。
+
+**状态**：已完成，待下一次统一 TestFlight 构建随头像和记忆发布流程真机复核。
+
 ### GH-078 正式 App 默认头像资源未进入用户资料页面
 
 **发现**：正式仓库已有 `assets/images/avatar.jpg`，但 `ios-shell/project.yml` 没有把它加入 App Bundle；`AccountAvatar` 在没有远程头像时只显示 SF Symbol，首页“我的”入口和个人资料编辑页因此没有产品默认头像。

@@ -19,28 +19,22 @@ actor APIClient {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
+        let (data, response) = try await perform(request)
+        guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        if httpResponse.statusCode == 304 {
+            throw APIError.notModified(etag: httpResponse.value(forHTTPHeaderField: "ETag"))
+        }
+        if httpResponse.statusCode == 401 { throw APIError.unauthorized }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw APIError.server(
+                statusCode: httpResponse.statusCode,
+                detail: Self.serverDetail(from: data, fallback: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode))
+            )
+        }
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-            if httpResponse.statusCode == 304 {
-                throw APIError.notModified(etag: httpResponse.value(forHTTPHeaderField: "ETag"))
-            }
-            if httpResponse.statusCode == 401 { throw APIError.unauthorized }
-            guard (200..<300).contains(httpResponse.statusCode) else {
-                throw APIError.server(
-                    statusCode: httpResponse.statusCode,
-                    detail: Self.serverDetail(from: data, fallback: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode))
-                )
-            }
-            do {
-                return try endpoint.decoder.decode(Response.self, from: data)
-            } catch {
-                throw APIError.decoding(error.localizedDescription)
-            }
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let error as URLError where error.code == .cancelled {
-            throw CancellationError()
+            return try endpoint.decoder.decode(Response.self, from: data)
+        } catch {
+            throw APIError.decoding(error.localizedDescription)
         }
     }
 
@@ -50,22 +44,16 @@ actor APIClient {
         if let token = await tokenProvider(), !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-            if httpResponse.statusCode == 401 { throw APIError.unauthorized }
-            guard (200..<300).contains(httpResponse.statusCode) else {
-                throw APIError.server(
-                    statusCode: httpResponse.statusCode,
-                    detail: Self.serverDetail(from: data, fallback: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode))
-                )
-            }
-            return data
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let error as URLError where error.code == .cancelled {
-            throw CancellationError()
+        let (data, response) = try await perform(request)
+        guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        if httpResponse.statusCode == 401 { throw APIError.unauthorized }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw APIError.server(
+                statusCode: httpResponse.statusCode,
+                detail: Self.serverDetail(from: data, fallback: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode))
+            )
         }
+        return data
     }
 
     func upload<Response: Decodable>(
@@ -85,7 +73,7 @@ actor APIClient {
         if let token = await tokenProvider(), !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        let (responseData, urlResponse) = try await session.data(for: request)
+        let (responseData, urlResponse) = try await perform(request)
         guard let httpResponse = urlResponse as? HTTPURLResponse else { throw APIError.invalidResponse }
         if httpResponse.statusCode == 401 { throw APIError.unauthorized }
         guard (200..<300).contains(httpResponse.statusCode) else {
@@ -107,18 +95,22 @@ actor APIClient {
         request.httpMethod = "PUT"
         request.httpBody = data
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        do {
-            let (responseData, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-            guard (200..<300).contains(httpResponse.statusCode) else {
-                throw APIError.server(
-                    statusCode: httpResponse.statusCode,
-                    detail: Self.serverDetail(
-                        from: responseData,
-                        fallback: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-                    )
+        let (responseData, response) = try await perform(request)
+        guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw APIError.server(
+                statusCode: httpResponse.statusCode,
+                detail: Self.serverDetail(
+                    from: responseData,
+                    fallback: HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
                 )
-            }
+            )
+        }
+    }
+
+    private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            return try await session.data(for: request)
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as URLError where error.code == .cancelled {

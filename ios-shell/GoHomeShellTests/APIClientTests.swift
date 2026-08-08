@@ -100,6 +100,29 @@ final class APIClientTests: XCTestCase {
         }
     }
 
+    func testUploadCancellationIsPreserved() async {
+        URLProtocolStub.handler = { _ in
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            throw URLError(.timedOut)
+        }
+        let task = Task {
+            try await makeClient().upload(
+                path: "/upload",
+                queryItems: [],
+                data: Data([1, 2, 3]),
+                contentType: "image/jpeg",
+                response: Response.self
+            )
+        }
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+    }
+
     private func makeClient(token: String? = nil) -> APIClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [URLProtocolStub.self]
