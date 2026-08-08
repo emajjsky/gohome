@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from threading import Event, RLock, Thread, current_thread
+from contextlib import contextmanager
+from threading import Event, Lock, RLock, Thread, current_thread
 from typing import Any, Callable, Dict
 import time
 from datetime import datetime, timezone
@@ -114,6 +115,8 @@ class EdgeWorker:
         self._tracking_camera_threads: Dict[int, Thread] = {}
         self._tracking_camera_stops: Dict[int, Event] = {}
         self._tracking_threads_lock = RLock()
+        self._camera_analysis_locks: Dict[int, RLock] = {}
+        self._camera_analysis_locks_guard = Lock()
         self.previous_frames: Dict[int, Any] = {}
         self.rule_engine = RuleEngine()
         self.latest_evaluations: Dict[int, Dict[str, Any]] = {}
@@ -180,6 +183,17 @@ class EdgeWorker:
             self.camera_agent.reconcile_managed_streams([])
         if self.detect_agent is not None and hasattr(self.detect_agent, "close"):
             self.detect_agent.close()
+
+    @contextmanager
+    def camera_analysis_guard(self, camera_id: int):
+        """Serialize all stateful analysis for one camera across worker and admin calls."""
+        resolved_camera_id = int(camera_id)
+        if resolved_camera_id <= 0:
+            raise ValueError("camera_id must be positive")
+        with self._camera_analysis_locks_guard:
+            lock = self._camera_analysis_locks.setdefault(resolved_camera_id, RLock())
+        with lock:
+            yield
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -814,6 +828,16 @@ class EdgeWorker:
             }
 
     def process_camera(
+        self,
+        camera: Dict[str, Any],
+        rules: Dict[str, Any],
+        *,
+        adaptive_pose: bool = False,
+    ) -> Dict[str, Any]:
+        with self.camera_analysis_guard(int(camera["id"])):
+            return self._process_camera_serialized(camera, rules, adaptive_pose=adaptive_pose)
+
+    def _process_camera_serialized(
         self,
         camera: Dict[str, Any],
         rules: Dict[str, Any],

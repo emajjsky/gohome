@@ -1692,6 +1692,30 @@ def capture_and_store(
     analysis_overrides: Dict[str, Any] | None = None,
     include_frame_data: bool = False,
 ) -> Dict[str, Any]:
+    with worker.camera_analysis_guard(camera_id):
+        return _capture_and_store_serialized(
+            camera_id,
+            persist_detection,
+            store_snapshot=store_snapshot,
+            prefer_cache=prefer_cache,
+            cache_only=cache_only,
+            max_cache_age_seconds=max_cache_age_seconds,
+            analysis_overrides=analysis_overrides,
+            include_frame_data=include_frame_data,
+        )
+
+
+def _capture_and_store_serialized(
+    camera_id: int,
+    persist_detection: bool = False,
+    *,
+    store_snapshot: bool = True,
+    prefer_cache: bool = True,
+    cache_only: bool = False,
+    max_cache_age_seconds: float = 6.0,
+    analysis_overrides: Dict[str, Any] | None = None,
+    include_frame_data: bool = False,
+) -> Dict[str, Any]:
     camera = storage.get_camera(camera_id, include_secret=True)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
