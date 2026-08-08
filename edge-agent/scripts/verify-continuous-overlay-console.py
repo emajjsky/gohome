@@ -122,7 +122,7 @@ def main() -> None:
     for token in (
         'pageName === "algorithms"',
         "算法诊断画面",
-        "原画 + 黄色骨架",
+        "原画 + 蓝色骨架",
         '["home", "cameras"].includes(pageName)',
         "App / 首页画面",
         "纯骨架",
@@ -140,7 +140,7 @@ def main() -> None:
         'pageName === "home" && state.videoPrivacyMode === "skeleton"',
         'stream.removeAttribute("src")',
         "纯骨架画面等待空房校准",
-        "算法诊断 · 原画 + 黄色骨架",
+        "算法诊断 · 原画 + 蓝色骨架",
     ):
         if token not in render_stream:
             raise SystemExit(f"stream mode contract is missing: {token}")

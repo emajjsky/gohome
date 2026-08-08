@@ -10,17 +10,22 @@ import numpy as np
 from ..camera_agent import _load_cv2
 from ..video_privacy import normalize_privacy_mode, stricter_privacy_mode
 from .privacy_background import PrivacyBackgroundReconstructor, PrivacyCalibrationRequired
-from .synchronized_pose_stream import DEFAULT_SKELETON_EDGES
-
-
-SKELETON_LINE_BGR = (219, 209, 33)
-SKELETON_JOINT_BGR = (255, 255, 255)
+from .skeleton_style import (
+    DEFAULT_SKELETON_EDGES,
+    SKELETON_JOINT_BGR,
+    SKELETON_JOINT_RADIUS,
+    SKELETON_JOINT_OUTLINE_RADIUS,
+    SKELETON_LINE_BGR,
+    SKELETON_LINE_WIDTH,
+    SKELETON_OUTLINE_BGR,
+    SKELETON_OUTLINE_WIDTH,
+)
 
 
 class PrivacyFrameRenderer:
     """Render privacy-safe relay frames without changing safety inference inputs."""
 
-    version = "privacy-frame-renderer-v22"
+    version = "privacy-frame-renderer-v23"
     maximum_pose_wait_seconds = 0.055
 
     def __init__(
@@ -971,12 +976,12 @@ class PrivacyFrameRenderer:
                     continue
                 p1 = self._point(start, scale_x, scale_y, width, height)
                 p2 = self._point(end, scale_x, scale_y, width, height)
-                cv2.line(canvas, p1, p2, (8, 8, 8), 6, cv2.LINE_AA)
-                cv2.line(canvas, p1, p2, line_color, 3, cv2.LINE_AA)
+                cv2.line(canvas, p1, p2, SKELETON_OUTLINE_BGR, SKELETON_OUTLINE_WIDTH, cv2.LINE_AA)
+                cv2.line(canvas, p1, p2, line_color, SKELETON_LINE_WIDTH, cv2.LINE_AA)
             for point in points.values():
                 center = self._point(point, scale_x, scale_y, width, height)
-                cv2.circle(canvas, center, 5, (8, 8, 8), -1, cv2.LINE_AA)
-                cv2.circle(canvas, center, 3, joint_color, -1, cv2.LINE_AA)
+                cv2.circle(canvas, center, SKELETON_JOINT_OUTLINE_RADIUS, SKELETON_OUTLINE_BGR, -1, cv2.LINE_AA)
+                cv2.circle(canvas, center, SKELETON_JOINT_RADIUS, joint_color, -1, cv2.LINE_AA)
             self._draw_head(cv2, canvas, points, scale_x, scale_y, width, height, line_color)
         self._record_stage_latency(
             int(camera_id),

@@ -140,7 +140,7 @@ function ensureVideoPrivacyControl() {
       </div>
       <div class="privacy-calibration-list">
         <div class="privacy-calibration-row">
-          <span><strong>原画 + 黄色骨架</strong><small>当前帧模型诊断</small></span>
+          <span><strong>原画 + 蓝色骨架</strong><small>当前帧模型诊断</small></span>
           <i class="status-dot ok" aria-hidden="true"></i>
         </div>
         <div class="privacy-calibration-row">
@@ -1096,7 +1096,7 @@ function renderStream({ retry = false } = {}) {
     setText("streamStatus", "实时视频已连接");
   };
   const streamProfile = pageName === "algorithms"
-    ? { fps: 15, width: 960, height: 540, quality: 70, label: "算法诊断 · 原画 + 黄色骨架" }
+    ? { fps: 15, width: 960, height: 540, quality: 70, label: "算法诊断 · 原画 + 蓝色骨架" }
     : { fps: 15, width: 1280, height: 720, quality: 64, label: "720p 低延迟视频" };
   const streamPath = pageName === "algorithms"
     ? `/api/cameras/${camera.id}/continual-pose/stream.mjpg`

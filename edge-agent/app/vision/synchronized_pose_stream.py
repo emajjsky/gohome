@@ -5,28 +5,24 @@ import time
 from typing import Any, Dict, Generator
 
 from ..camera_agent import _load_cv2, bounded_stream_fps, next_stream_frame_delay
-
-
-DEFAULT_SKELETON_EDGES = (
-    ("left_shoulder", "right_shoulder"),
-    ("left_shoulder", "left_elbow"),
-    ("left_elbow", "left_wrist"),
-    ("right_shoulder", "right_elbow"),
-    ("right_elbow", "right_wrist"),
-    ("left_shoulder", "left_hip"),
-    ("right_shoulder", "right_hip"),
-    ("left_hip", "right_hip"),
-    ("left_hip", "left_knee"),
-    ("left_knee", "left_ankle"),
-    ("right_hip", "right_knee"),
-    ("right_knee", "right_ankle"),
+from .skeleton_style import (
+    DEFAULT_SKELETON_EDGES,
+    SKELETON_BOX_BGR,
+    SKELETON_BOX_WIDTH,
+    SKELETON_JOINT_BGR,
+    SKELETON_JOINT_RADIUS,
+    SKELETON_JOINT_OUTLINE_RADIUS,
+    SKELETON_LINE_BGR,
+    SKELETON_LINE_WIDTH,
+    SKELETON_OUTLINE_BGR,
+    SKELETON_OUTLINE_WIDTH,
 )
 
 
 class SynchronizedPoseStream:
     """Overlay exact-frame pose metadata on the current camera diagnostic frame."""
 
-    version = "eacp-synchronized-pose-stream-v2"
+    version = "eacp-synchronized-pose-stream-v3"
     metadata_wait_seconds = 0.06
 
     def __init__(self, camera_agent: Any, tracker: Any) -> None:
@@ -154,10 +150,9 @@ class SynchronizedPoseStream:
         edges = context.get("pose_skeleton_edges")
         if not isinstance(edges, list) or not edges:
             edges = DEFAULT_SKELETON_EDGES
-        risk = bool(context.get("fall_candidate") or context.get("fire_event_candidate"))
-        line_color = (68, 68, 230) if risk else (36, 177, 236)
-        joint_color = (245, 245, 242)
-        box_color = (68, 68, 230) if risk else (214, 214, 208)
+        line_color = SKELETON_LINE_BGR
+        joint_color = SKELETON_JOINT_BGR
+        box_color = SKELETON_BOX_BGR
 
         for pose in poses:
             if not isinstance(pose, dict):
@@ -189,12 +184,12 @@ class SynchronizedPoseStream:
                     continue
                 p1 = self._point(start, width, height)
                 p2 = self._point(end, width, height)
-                cv2.line(layer, p1, p2, (24, 24, 24), 5, cv2.LINE_AA)
-                cv2.line(layer, p1, p2, line_color, 2, cv2.LINE_AA)
+                cv2.line(layer, p1, p2, SKELETON_OUTLINE_BGR, SKELETON_OUTLINE_WIDTH, cv2.LINE_AA)
+                cv2.line(layer, p1, p2, line_color, SKELETON_LINE_WIDTH, cv2.LINE_AA)
             for point in points.values():
                 center = self._point(point, width, height)
-                cv2.circle(layer, center, 4, (24, 24, 24), -1, cv2.LINE_AA)
-                cv2.circle(layer, center, 2, joint_color, -1, cv2.LINE_AA)
+                cv2.circle(layer, center, SKELETON_JOINT_OUTLINE_RADIUS, SKELETON_OUTLINE_BGR, -1, cv2.LINE_AA)
+                cv2.circle(layer, center, SKELETON_JOINT_RADIUS, joint_color, -1, cv2.LINE_AA)
 
         return layer
 
@@ -219,8 +214,8 @@ class SynchronizedPoseStream:
             ((x2, y2), (x2 - length, y2)),
             ((x2, y2), (x2, y2 - length)),
         ):
-            cv2.line(frame, start, end, (24, 24, 24), 4, cv2.LINE_AA)
-            cv2.line(frame, start, end, color, 2, cv2.LINE_AA)
+            cv2.line(frame, start, end, SKELETON_OUTLINE_BGR, SKELETON_OUTLINE_WIDTH, cv2.LINE_AA)
+            cv2.line(frame, start, end, color, SKELETON_BOX_WIDTH, cv2.LINE_AA)
 
     def _resize(self, cv2: Any, frame: Any, *, max_width: int, max_height: int) -> Any:
         height, width = frame.shape[:2]
