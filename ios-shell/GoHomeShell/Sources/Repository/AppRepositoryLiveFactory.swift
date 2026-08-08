@@ -171,62 +171,11 @@ enum AppRepositoryLiveFactory {
                     )
                 },
                 memoryMediaBatchUploader: { familyID, media in
-                    let intentRequest = MemoryMediaUploadIntentRequest(items: media.map {
-                        MemoryMediaUploadIntentItemRequest(
-                            contentType: $0.contentType,
-                            sizeBytes: $0.data.count,
-                            pixelWidth: $0.pixelWidth,
-                            pixelHeight: $0.pixelHeight,
-                            durationSeconds: $0.durationSeconds
-                        )
-                    })
-                    let intentEndpoint: Endpoint<MemoryMediaUploadIntentResponse> = try .jsonBody(
-                        method: .post,
-                        path: "/api/v2/memory-media-upload-intents",
-                        body: intentRequest,
-                        queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                    try await MemoryMediaUploadTransaction.execute(
+                        client: client,
+                        familyID: familyID,
+                        media: media
                     )
-                    let intentResponse = try await client.send(intentEndpoint)
-                    guard intentResponse.uploads.count == media.count else { throw APIError.invalidResponse }
-
-                    do {
-                        try await withThrowingTaskGroup(of: Void.self) { group in
-                            for (intent, item) in zip(intentResponse.uploads, media) {
-                                group.addTask {
-                                    try await client.uploadDirectly(
-                                        to: intent.uploadURL,
-                                        data: item.data,
-                                        contentType: intent.contentType
-                                    )
-                                }
-                            }
-                            try await group.waitForAll()
-                        }
-
-                        let completeRequest = MemoryMediaUploadCompleteRequest(items: intentResponse.uploads.map {
-                            MemoryMediaUploadCompleteItemRequest(assetID: $0.assetID, uploadToken: $0.uploadToken)
-                        })
-                        let completeEndpoint: Endpoint<MemoryMediaBatchUploadResponse> = try .jsonBody(
-                            method: .post,
-                            path: "/api/v2/memory-media-upload-complete",
-                            body: completeRequest,
-                            queryItems: [URLQueryItem(name: "family_id", value: familyID)]
-                        )
-                        return try await client.send(completeEndpoint)
-                    } catch {
-                        let abortRequest = MemoryMediaUploadCompleteRequest(items: intentResponse.uploads.map {
-                            MemoryMediaUploadCompleteItemRequest(assetID: $0.assetID, uploadToken: $0.uploadToken)
-                        })
-                        if let abortEndpoint: Endpoint<MemoryMediaUploadAbortResponse> = try? .jsonBody(
-                            method: .post,
-                            path: "/api/v2/memory-media-upload-abort",
-                            body: abortRequest,
-                            queryItems: [URLQueryItem(name: "family_id", value: familyID)]
-                        ) {
-                            _ = try? await client.send(abortEndpoint)
-                        }
-                        throw error
-                    }
                 },
                 activityTimelineLoader: { familyID, date in
                     try await client.send(Endpoint(
