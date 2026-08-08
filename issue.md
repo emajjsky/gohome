@@ -939,6 +939,18 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **状态**：已完成。不得删除历史表、摄像头配置、校准基线、COS 资产或用户资料。
 
+### GH-078 正式 App 默认头像资源未进入用户资料页面
+
+**发现**：正式仓库已有 `assets/images/avatar.jpg`，但 `ios-shell/project.yml` 没有把它加入 App Bundle；`AccountAvatar` 在没有远程头像时只显示 SF Symbol，首页“我的”入口和个人资料编辑页因此没有产品默认头像。
+
+**根因**：资源清单与头像展示契约不一致。远程头像是用户可选数据，不能替代本地默认头像；本地 JPEG 也不能使用 `UIImage(named:)` 假定 Asset Catalog 查找。
+
+**处理**：将唯一正式工程的 `avatar.jpg` 加入 Copy Bundle Resources；`AccountAvatar` 沿用共享 `GoHomeImageResource.loadJPEG(named:)` 读取默认头像，只有本地资源确实不可用时才显示系统图标。远程头像存在时仍优先显示远程头像，头像上传、保存和服务端资产路径不变；未创建副本、第二资源目录或兼容入口。
+
+**验证**：产品图片资源单元测试 `133/133` 通过，确认 `avatar` 与四张首页/文章图片均能从 App Bundle 解码；资料页 UI 测试 `8/8` 通过，创建者和成员入口均能发现 `profile-account-avatar`；已生成唯一 `GoHomeShell.xcodeproj`，编译日志确认 `avatar.jpg` 被复制进 App。保留下一次 TestFlight 真机查看默认头像和远程头像切换验收。
+
+**状态**：待实机验收。不得修改 Bundle ID、旧 WebView 工程、盒子数据、云端业务数据或用户资料。
+
 ### GH-076 App 客户端显示 FPS 在停帧和重连期间保留旧值
 
 **发现**：正式 iOS 守护页的 FPS 来源是 `RTCVideoRenderer` 实际交付给显示目标的帧回调，口径正确；但滚动窗口只在新帧到达时计算。视频停帧后没有回调触发归零，重连循环也没有重置窗口，因此“连接中”或无新帧期间可能继续显示上一会话的正 FPS。

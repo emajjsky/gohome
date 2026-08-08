@@ -161,6 +161,7 @@ struct ProfileView: View {
                     apiClient: apiClient,
                     size: 66
                 )
+                .accessibilityIdentifier("profile-account-avatar")
                 VStack(alignment: .leading, spacing: 4) {
                     Text("我的家庭")
                         .font(.system(size: 12, weight: .bold))

@@ -198,6 +198,8 @@ struct AccountAvatar: View {
             Circle().fill(GoHomeTheme.ink)
             if let image {
                 Image(uiImage: image).resizable().scaledToFill()
+            } else if let bundledAvatar = GoHomeImageResource.loadJPEG(named: "avatar") {
+                Image(uiImage: bundledAvatar).resizable().scaledToFill()
             } else {
                 Image(systemName: "person.fill")
                     .font(.system(size: size * 0.38, weight: .semibold))

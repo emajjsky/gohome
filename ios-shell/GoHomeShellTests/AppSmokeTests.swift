@@ -2,8 +2,9 @@ import XCTest
 @testable import GoHomeShell
 
 final class AppSmokeTests: XCTestCase {
-    func testBundledEditorialImagesResolveAsJPEGResources() {
+    func testBundledProductImagesResolveAsJPEGResources() {
         let imageNames = [
+            "avatar",
             "grandma-reading",
             "memory-garden-sun",
             "memory-generations",

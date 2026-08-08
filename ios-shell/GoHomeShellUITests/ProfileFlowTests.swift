@@ -9,6 +9,11 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["我的"].waitForExistence(timeout: 5))
         app.tabBars.buttons["我的"].tap()
         XCTAssertTrue(app.staticTexts["账户与家庭"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.images["profile-account-avatar"].exists)
+        let avatarScreenshot = XCTAttachment(screenshot: app.screenshot())
+        avatarScreenshot.name = "Native profile default avatar"
+        avatarScreenshot.lifetime = .keepAlways
+        add(avatarScreenshot)
         XCTAssertFalse(app.staticTexts["创建者"].exists)
         XCTAssertFalse(app.staticTexts["管理员"].exists)
 
@@ -156,6 +161,7 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["我的"].waitForExistence(timeout: 5))
         app.tabBars.buttons["我的"].tap()
         XCTAssertTrue(app.staticTexts["账户与家庭"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.images["profile-account-avatar"].exists)
         return app
     }
 }
