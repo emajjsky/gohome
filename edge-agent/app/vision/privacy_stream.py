@@ -12,13 +12,8 @@ from ..video_privacy import normalize_privacy_mode, stricter_privacy_mode
 from .privacy_background import PrivacyBackgroundReconstructor, PrivacyCalibrationRequired
 from .skeleton_style import (
     DEFAULT_SKELETON_EDGES,
-    SKELETON_JOINT_BGR,
-    SKELETON_JOINT_RADIUS,
-    SKELETON_JOINT_OUTLINE_RADIUS,
+    draw_skeleton_pose,
     SKELETON_LINE_BGR,
-    SKELETON_LINE_WIDTH,
-    SKELETON_OUTLINE_BGR,
-    SKELETON_OUTLINE_WIDTH,
 )
 
 
@@ -953,36 +948,17 @@ class PrivacyFrameRenderer:
         edges = context.get("pose_skeleton_edges")
         if not isinstance(edges, list) or not edges:
             edges = DEFAULT_SKELETON_EDGES
-        line_color = SKELETON_LINE_BGR
-        joint_color = SKELETON_JOINT_BGR
-
         for pose in tracking.get("poses") or []:
             if not isinstance(pose, dict):
                 continue
-            points = {
-                str(point.get("name")): point
-                for point in (pose.get("keypoints") or [])
-                if isinstance(point, dict)
-                and point.get("name")
-                and point.get("visible")
-                and float(point.get("confidence") or 0.0) >= 0.22
-            }
-            for edge in edges:
-                if not isinstance(edge, (list, tuple)) or len(edge) < 2:
-                    continue
-                start = points.get(str(edge[0]))
-                end = points.get(str(edge[1]))
-                if start is None or end is None:
-                    continue
-                p1 = self._point(start, scale_x, scale_y, width, height)
-                p2 = self._point(end, scale_x, scale_y, width, height)
-                cv2.line(canvas, p1, p2, SKELETON_OUTLINE_BGR, SKELETON_OUTLINE_WIDTH, cv2.LINE_AA)
-                cv2.line(canvas, p1, p2, line_color, SKELETON_LINE_WIDTH, cv2.LINE_AA)
-            for point in points.values():
-                center = self._point(point, scale_x, scale_y, width, height)
-                cv2.circle(canvas, center, SKELETON_JOINT_OUTLINE_RADIUS, SKELETON_OUTLINE_BGR, -1, cv2.LINE_AA)
-                cv2.circle(canvas, center, SKELETON_JOINT_RADIUS, joint_color, -1, cv2.LINE_AA)
-            self._draw_head(cv2, canvas, points, scale_x, scale_y, width, height, line_color)
+            points = draw_skeleton_pose(
+                cv2,
+                canvas,
+                pose,
+                edges,
+                lambda point: self._point(point, scale_x, scale_y, width, height),
+            )
+            self._draw_head(cv2, canvas, points, scale_x, scale_y, width, height, SKELETON_LINE_BGR)
         self._record_stage_latency(
             int(camera_id),
             "skeleton_draw",

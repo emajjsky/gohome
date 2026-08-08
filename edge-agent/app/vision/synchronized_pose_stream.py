@@ -7,13 +7,10 @@ from typing import Any, Dict, Generator
 from ..camera_agent import _load_cv2, bounded_stream_fps, next_stream_frame_delay
 from .skeleton_style import (
     DEFAULT_SKELETON_EDGES,
+    draw_skeleton_pose,
     SKELETON_BOX_BGR,
     SKELETON_BOX_WIDTH,
     SKELETON_JOINT_BGR,
-    SKELETON_JOINT_RADIUS,
-    SKELETON_JOINT_OUTLINE_RADIUS,
-    SKELETON_LINE_BGR,
-    SKELETON_LINE_WIDTH,
     SKELETON_OUTLINE_BGR,
     SKELETON_OUTLINE_WIDTH,
 )
@@ -150,8 +147,6 @@ class SynchronizedPoseStream:
         edges = context.get("pose_skeleton_edges")
         if not isinstance(edges, list) or not edges:
             edges = DEFAULT_SKELETON_EDGES
-        line_color = SKELETON_LINE_BGR
-        joint_color = SKELETON_JOINT_BGR
         box_color = SKELETON_BOX_BGR
 
         for pose in poses:
@@ -165,31 +160,15 @@ class SynchronizedPoseStream:
                 if track_label:
                     position = (x1 + 4, max(16, y1 - 7))
                     cv2.putText(layer, track_label, position, cv2.FONT_HERSHEY_SIMPLEX, 0.42, (24, 24, 24), 3, cv2.LINE_AA)
-                    cv2.putText(layer, track_label, position, cv2.FONT_HERSHEY_SIMPLEX, 0.42, joint_color, 1, cv2.LINE_AA)
+                    cv2.putText(layer, track_label, position, cv2.FONT_HERSHEY_SIMPLEX, 0.42, SKELETON_JOINT_BGR, 1, cv2.LINE_AA)
 
-            points = {
-                str(point.get("name")): point
-                for point in (pose.get("keypoints") or [])
-                if isinstance(point, dict)
-                and point.get("name")
-                and point.get("visible")
-                and float(point.get("confidence") or 0.0) >= 0.22
-            }
-            for edge in edges:
-                if not isinstance(edge, (list, tuple)) or len(edge) < 2:
-                    continue
-                start = points.get(str(edge[0]))
-                end = points.get(str(edge[1]))
-                if start is None or end is None:
-                    continue
-                p1 = self._point(start, width, height)
-                p2 = self._point(end, width, height)
-                cv2.line(layer, p1, p2, SKELETON_OUTLINE_BGR, SKELETON_OUTLINE_WIDTH, cv2.LINE_AA)
-                cv2.line(layer, p1, p2, line_color, SKELETON_LINE_WIDTH, cv2.LINE_AA)
-            for point in points.values():
-                center = self._point(point, width, height)
-                cv2.circle(layer, center, SKELETON_JOINT_OUTLINE_RADIUS, SKELETON_OUTLINE_BGR, -1, cv2.LINE_AA)
-                cv2.circle(layer, center, SKELETON_JOINT_RADIUS, joint_color, -1, cv2.LINE_AA)
+            draw_skeleton_pose(
+                cv2,
+                layer,
+                pose,
+                edges,
+                lambda point: self._point(point, width, height),
+            )
 
         return layer
 

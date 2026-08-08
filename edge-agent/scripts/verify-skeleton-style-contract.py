@@ -1,19 +1,9 @@
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def imported_names(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            names.update(alias.asname or alias.name for alias in node.names)
-    return names
 
 
 def main() -> None:
@@ -40,21 +30,14 @@ def main() -> None:
     for path, source in ((diagnostic_path, diagnostic_source), (privacy_path, privacy_source)):
         if "from .skeleton_style import" not in source:
             raise SystemExit(f"{path.name} does not consume shared skeleton style")
+        if "draw_skeleton_pose(" not in source:
+            raise SystemExit(f"{path.name} does not use the shared skeleton geometry renderer")
         if "(36, 177, 236)" in source or "(219, 209, 33)" in source:
             raise SystemExit(f"{path.name} contains a private skeleton color")
     if "黄色骨架" in console_source or "原画 + 蓝色骨架" not in console_source:
         raise SystemExit("admin diagnostic skeleton label is not the blue contract")
-    if "SKELETON_LINE_WIDTH" not in diagnostic_source or "SKELETON_LINE_WIDTH" not in privacy_source:
-        raise SystemExit("diagnostic and privacy renderers do not share line width")
-
-    diagnostic_imports = imported_names(diagnostic_path)
-    privacy_imports = imported_names(privacy_path)
-    shared_render_constants = required_constants - {"SKELETON_BOX_BGR", "SKELETON_BOX_WIDTH"}
-    for name in shared_render_constants:
-        if name not in diagnostic_imports:
-            raise SystemExit(f"diagnostic renderer does not import {name}")
-        if name not in privacy_imports:
-            raise SystemExit(f"privacy renderer does not import {name}")
+    if "SKELETON_LINE_WIDTH" not in style_source or "draw_skeleton_pose(" not in style_source:
+        raise SystemExit("shared geometry renderer does not own the line width")
 
     print({"ok": True, "shared_module": "app/vision/skeleton_style.py", "normal_color": "cyan-blue"})
 
