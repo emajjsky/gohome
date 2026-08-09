@@ -30,9 +30,15 @@ targets:
         buildPhase: resources
       - path: ../assets/images/grandma-reading.jpg
         buildPhase: resources
+      - path: ../assets/images/memory-daughter-walk.jpg
+        buildPhase: resources
+      - path: ../assets/images/memory-family-dinner.jpg
+        buildPhase: resources
       - path: ../assets/images/memory-garden-sun.jpg
         buildPhase: resources
       - path: ../assets/images/memory-generations.jpg
+        buildPhase: resources
+      - path: ../assets/images/memory-outdoor-walk.jpg
         buildPhase: resources
       - path: ../assets/images/memory-relax-chat.jpg
         buildPhase: resources

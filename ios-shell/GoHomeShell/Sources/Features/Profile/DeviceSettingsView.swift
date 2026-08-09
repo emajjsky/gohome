@@ -336,9 +336,6 @@ struct RuleSettingsView: View {
                         ruleToggle("活动变化", symbol: "figure.walk.motion", value: rules.activityDetectionEnabled) {
                             var next = rules; next.activityDetectionEnabled = $0; model.saveRules(next)
                         }
-                        ruleToggle("烟火风险", symbol: "flame.fill", value: rules.fireDetectionEnabled) {
-                            var next = rules; next.fireDetectionEnabled = $0; model.saveRules(next)
-                        }
                     }
 
                     ProfileSection(title: "设备状态") {

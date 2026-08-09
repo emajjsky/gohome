@@ -9,7 +9,7 @@
         refreshSeq: 0,
     };
 
-    const safetyTypes = new Set(["fall_candidate", "prolonged_floor_lying", "fire_candidate", "long_absence"]);
+    const safetyTypes = new Set(["fall_candidate", "prolonged_floor_lying", "long_absence"]);
     const postureLabels = {
         standing: "站立",
         sitting: "坐姿",
@@ -25,7 +25,6 @@
     const eventLabels = {
         fall_candidate: "疑似跌倒",
         prolonged_floor_lying: "长时间倒地",
-        fire_candidate: "疑似烟火",
         long_absence: "长时间未见到老人",
     };
 
@@ -273,7 +272,7 @@
         }
         list.innerHTML = incidents.map((event) => `
             <article class="gohome-incident-row ${event.level === "critical" ? "critical" : ""}">
-                <span class="material-symbols-outlined">${event.event_type === "fire_candidate" ? "local_fire_department" : "warning"}</span>
+                <span class="material-symbols-outlined">warning</span>
                 <div><strong>${escapeHtml(eventLabels[event.event_type] || event.summary || "安全提醒")}</strong><p>${escapeHtml(event.room || event.camera_name || "家里")} · ${relativeTime(event.occurred_at || event.created_at)}</p></div>
                 <span class="app-mini-pill warn">待确认</span>
             </article>`).join("");

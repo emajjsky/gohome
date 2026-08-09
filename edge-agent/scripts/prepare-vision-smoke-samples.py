@@ -56,31 +56,6 @@ def black_frame() -> np.ndarray:
     return np.zeros((480, 640, 3), dtype=np.uint8)
 
 
-def fire_frame(shift: int = 0, *, red_light: bool = False, warm_light: bool = False) -> np.ndarray:
-    import cv2  # type: ignore
-
-    frame = normal_room()
-    if red_light:
-        cv2.circle(frame, (450, 250), 54, (24, 34, 230), -1, cv2.LINE_AA)
-        return frame
-    if warm_light:
-        cv2.circle(frame, (450, 250), 76, (40, 130, 235), -1, cv2.LINE_AA)
-        cv2.circle(frame, (450, 250), 42, (45, 170, 245), -1, cv2.LINE_AA)
-        return frame
-
-    y, x = np.indices((150, 110))
-    pattern = ((x + shift) // 9 + (y + shift * 2) // 11) % 4
-    fire_r = np.choose(pattern, [255, 238, 215, 185]).astype(np.uint8)
-    fire_g = np.choose(pattern, [215, 176, 135, 96]).astype(np.uint8)
-    fire_b = np.choose(pattern, [12, 20, 28, 10]).astype(np.uint8)
-    patch = np.dstack([fire_b, fire_g, fire_r])
-    top = 170 + shift
-    left = 402 + shift
-    frame[top : top + patch.shape[0], left : left + patch.shape[1]] = patch
-    cv2.GaussianBlur(frame[top : top + 150, left : left + 110], (3, 3), 0, frame[top : top + 150, left : left + 110])
-    return frame
-
-
 def fall_negative_scene() -> np.ndarray:
     import cv2  # type: ignore
 
@@ -99,30 +74,6 @@ def prepare_person() -> None:
         [
             {"file": "person_demo.jpg", "person_present": True, "config": {"force_demo_vision": True}},
             {"file": "no_person_black.jpg", "person_present": False, "config": {"force_demo_vision": True}},
-        ],
-    )
-
-
-def prepare_fire() -> None:
-    path = SAMPLES_ROOT / "fire"
-    save_image(path / "fire_static.jpg", fire_frame(0))
-    save_image(path / "fire_prev.jpg", fire_frame(0))
-    save_image(path / "fire_next.jpg", fire_frame(8))
-    save_image(path / "red_light.jpg", fire_frame(red_light=True))
-    save_image(path / "warm_light.jpg", fire_frame(warm_light=True))
-    config = {
-        "fire_score_threshold": 0.02,
-        "fire_event_score_threshold": 0.02,
-        "fire_motion_threshold": 0.001,
-        "fire_temporal_threshold": 0.001,
-    }
-    write_jsonl(
-        path / "manifest.jsonl",
-        [
-            {"file": "fire_static.jpg", "fire": True, "fire_event": False, "config": {"fire_score_threshold": 0.02}},
-            {"file": "fire_next.jpg", "previous_file": "fire_prev.jpg", "fire": True, "fire_event": True, "config": config},
-            {"file": "red_light.jpg", "fire": False, "fire_event": False},
-            {"file": "warm_light.jpg", "fire": False, "fire_event": False},
         ],
     )
 
@@ -155,7 +106,6 @@ def prepare_pose() -> None:
 
 def main() -> None:
     prepare_person()
-    prepare_fire()
     prepare_fall()
     prepare_pose()
     print(
@@ -163,8 +113,8 @@ def main() -> None:
             {
                 "ok": True,
                 "samples_root": str(SAMPLES_ROOT),
-                "tasks": ["person", "fire", "fall", "pose"],
-                "note": "These are synthetic smoke-test samples for tooling validation, not product accuracy benchmarks.",
+                "tasks": ["person", "fall", "pose"],
+                "note": "These are synthetic smoke-test samples for tooling validation, not product accuracy benchmarks. Fire detection samples are intentionally retired.",
             },
             ensure_ascii=False,
             indent=2,

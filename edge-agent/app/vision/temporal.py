@@ -150,7 +150,6 @@ class TemporalObservationEngine:
             "tracks": [self._history_track(item) for item in assigned],
             "motion_score": analysis.get("motion_score"),
             "fall_candidate": bool(analysis.get("fall_candidate")),
-            "fire_candidate": bool(analysis.get("fire_event_candidate") or analysis.get("fire_candidate")),
             "snapshot_id": None,
             "snapshot_path": "",
         }

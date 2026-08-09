@@ -81,7 +81,6 @@ final class GuardViewModelTests: XCTestCase {
                 personDetectionEnabled: true,
                 fallDetectionEnabled: true,
                 activityDetectionEnabled: true,
-                fireDetectionEnabled: true,
                 notificationEnabled: true
             ),
             carePreferences: CarePreferences(familyID: "family-1"),

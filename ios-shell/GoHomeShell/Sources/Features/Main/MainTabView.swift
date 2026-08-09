@@ -574,7 +574,6 @@ struct MainTabView: View {
                 personDetectionEnabled: true,
                 fallDetectionEnabled: true,
                 activityDetectionEnabled: true,
-                fireDetectionEnabled: true,
                 notificationEnabled: true
             ),
             carePreferences: CarePreferences(familyID: familyID, interests: ["天气", "防诈骗"]),

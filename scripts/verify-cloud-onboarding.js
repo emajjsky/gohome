@@ -105,12 +105,11 @@ async function main() {
             "person_detection_enabled",
             "fall_detection_enabled",
             "activity_detection_enabled",
-            "fire_detection_enabled",
             "notification_enabled",
         ];
         assert.equal(ownerRules.can_edit, true);
         assert.ok(ruleKeys.every((key) => ownerRules[key] === true));
-        record("家庭默认规则", "八项全开，创建者可修改");
+        record("家庭默认规则", "七项全开，创建者可修改");
 
         const member = await json("/api/auth/register", {
             method: "POST",
@@ -211,7 +210,6 @@ async function main() {
         assert.equal(changedRules.activity_detection_enabled, false);
         const changedConfig = await json("/api/v1/device/config", { token: exchanged.device_token });
         assert.equal(changedConfig.rules.activity_detection_enabled, false);
-        assert.equal(changedConfig.rules.fire_detection_enabled, true);
         await json(`/api/rules?family_id=${family.id}`, {
             method: "PUT",
             token: owner.token,

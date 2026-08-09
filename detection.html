@@ -99,7 +99,7 @@
             <div class="flex items-center justify-between gap-3">
                 <div>
                     <h2 class="font-display text-[18px] font-bold text-on-surface">本轮感知结果</h2>
-                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">汇总人形、姿态、场景和火灾检测，不代表最终告警结论。</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">汇总人形、姿态和场景检测，不代表最终告警结论。</p>
                 </div>
                 <span id="visionPipelineBadge" class="app-mini-pill muted">分析中</span>
             </div>
@@ -108,8 +108,6 @@
                 <div class="app-kpi"><p>跟踪目标</p><p id="visionTrack">-</p></div>
                 <div class="app-kpi"><p>所在区域</p><p id="visionZone">-</p></div>
                 <div class="app-kpi"><p>姿态持续</p><p id="visionDuration">-</p></div>
-                <div class="app-kpi"><p>烟火状态</p><p id="visionFire">-</p></div>
-                <div class="app-kpi"><p>火灾分数</p><p id="visionFireScore">-</p></div>
             </div>
             <div class="app-capability-row">
                 <div><strong>姿态因子图</strong><span id="visionPoseFactors">等待骨架、人体框、地面关系和时序因子。</span></div>
@@ -146,7 +144,7 @@
             <div class="flex items-center justify-between gap-3">
                 <div>
                     <h2 class="font-display text-[18px] font-bold text-on-surface">云端视觉复核</h2>
-                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">仅在跌倒、长时间倒地或烟火候选出现时异步调用。</p>
+                    <p class="font-sans text-[12px] text-on-surface-variant mt-1">仅在跌倒或长时间倒地候选出现时异步调用。</p>
                 </div>
                 <span id="visionCloudBadge" class="app-mini-pill muted">无需复核</span>
             </div>
@@ -197,13 +195,6 @@
                         <span id="detectionPoseCapability">骨架姿态、区域关系和持续时间共同判断。</span>
                     </div>
                     <em id="detectionPoseBadge" class="app-mini-pill muted not-italic">检测中</em>
-                </div>
-                <div class="app-capability-row">
-                    <div>
-                        <strong>烟火候选</strong>
-                        <span id="detectionFireCapability">颜色、纹理、运动和连续帧共同判断。</span>
-                    </div>
-                    <em id="detectionFireBadge" class="app-mini-pill muted not-italic">检测中</em>
                 </div>
             </div>
         </section>

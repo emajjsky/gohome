@@ -38,12 +38,6 @@
             supportedText: "可用",
             unsupportedText: "盒子未支持",
         },
-        fireDetectionEnabled: {
-            capability: "fire_candidate",
-            badgeId: "fireCapabilityBadge",
-            supportedText: "可用",
-            unsupportedText: "盒子未支持",
-        },
     };
 
     const $ = (id) => document.getElementById(id);
@@ -104,7 +98,6 @@
             no_person_detection: boolValue(raw.no_person_detection),
             fall_candidate: boolValue(raw.fall_candidate),
             activity_candidate: boolValue(raw.activity_candidate, true),
-            fire_candidate: boolValue(raw.fire_candidate, true),
             pose_detection: boolValue(raw.pose_detection),
             backend,
             backend_label: raw.backend_label || labelForBackend(backend),
@@ -171,7 +164,6 @@
             person_detection_enabled: $("personDetectionEnabled").checked,
             fall_detection_enabled: $("fallDetectionEnabled").checked,
             activity_detection_enabled: $("activityDetectionEnabled")?.checked || false,
-            fire_detection_enabled: $("fireDetectionEnabled")?.checked || false,
             notification_enabled: $("notificationEnabled").checked,
         };
     }
@@ -189,7 +181,6 @@
         $("noPersonMirror").checked = Boolean(rules.person_detection_enabled);
         $("fallDetectionEnabled").checked = Boolean(rules.fall_detection_enabled);
         if ($("activityDetectionEnabled")) $("activityDetectionEnabled").checked = Boolean(rules.activity_detection_enabled);
-        if ($("fireDetectionEnabled")) $("fireDetectionEnabled").checked = Boolean(rules.fire_detection_enabled);
         $("notificationEnabled").checked = Boolean(rules.notification_enabled);
         enforceCapabilityChecks();
     }
@@ -215,7 +206,6 @@
         return Boolean(rules.person_detection_enabled && !isCapabilityReady("personDetectionEnabled"))
             || Boolean(rules.fall_detection_enabled && !isCapabilityReady("fallDetectionEnabled"))
             || Boolean(rules.activity_detection_enabled && !isCapabilityReady("activityDetectionEnabled"))
-            || Boolean(rules.fire_detection_enabled && !isCapabilityReady("fireDetectionEnabled"));
     }
 
     function runtimeMatches(expectedUpdatedAt, runtime) {
@@ -296,12 +286,6 @@
             isCapabilityReady("activityDetectionEnabled")
                 ? "用于久坐、长时间低活动等低风险候选，和安全告警分开呈现。"
                 : "可先保存规则；当前盒子未回传活动状态能力时暂不产生命中。"
-        );
-        setText(
-            "fireHint",
-            isCapabilityReady("fireDetectionEnabled")
-                ? "本地连续帧命中后生成候选提醒，减少单帧误报。"
-                : "可先保存规则；当前盒子未回传明火或烟火能力时暂不产生命中。"
         );
         enforceCapabilityChecks();
     }

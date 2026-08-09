@@ -2010,7 +2010,6 @@ function eventTypeLabel(type) {
     no_motion: "长时间无变化",
     no_person: "长时间无人",
     fall_candidate: "疑似跌倒",
-    fire_candidate: "疑似火灾",
     camera_offline: "摄像头离线",
   };
   return labels[type] || type || "提醒";
@@ -2019,7 +2018,6 @@ function eventTypeLabel(type) {
 function eventCategoryLabel(category, type) {
   const value = category || ({
     fall_candidate: "safety_alert",
-    fire_candidate: "safety_alert",
     black_screen: "device_alert",
     camera_offline: "device_alert",
     no_motion: "life_observation",
@@ -2210,11 +2208,6 @@ function evidencePills(candidate) {
     if (Array.isArray(evidenceTypes) && evidenceTypes.length) {
       pushPill(`依据 ${evidenceTypes.slice(0, 2).join(" / ")}`);
     }
-  } else if (candidate.event_type === "fire_candidate") {
-    pushMetric("火灾", metrics.fire_score, 4);
-    pushMetric("变化", metrics.motion_score, 4);
-    pushMetric("动态", metrics.fire_temporal_score ?? observed.temporal_score, 4);
-    pushMetric("连续帧", observed.confirm_frames, 0);
   } else if (candidate.event_type === "no_motion") {
     pushMetric("人数", metrics.person_count, 0);
     pushPill(observed.no_motion_seconds ? `静止 ${fmtDuration(observed.no_motion_seconds)}` : "");

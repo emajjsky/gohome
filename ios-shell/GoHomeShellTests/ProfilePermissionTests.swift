@@ -55,14 +55,14 @@ final class ProfilePermissionTests: XCTestCase {
         )
 
         var changed = try XCTUnwrap(model.state.value?.rules)
-        changed.fireDetectionEnabled = false
+        changed.activityDetectionEnabled = false
         model.saveRules(changed)
         try await Task.sleep(nanoseconds: 50_000_000)
         let updateCount = await recorder.count
 
         XCTAssertFalse(model.canEditRules)
         XCTAssertEqual(updateCount, 0)
-        XCTAssertEqual(model.state.value?.rules.fireDetectionEnabled, true)
+        XCTAssertEqual(model.state.value?.rules.activityDetectionEnabled, true)
     }
 
     @MainActor
@@ -684,7 +684,7 @@ final class ProfilePermissionTests: XCTestCase {
         )
         let model = makeModel(role: "owner", repository: repository, seed: original)
         var changed = original.rules
-        changed.fireDetectionEnabled = false
+        changed.activityDetectionEnabled = false
 
         model.saveRules(changed)
         try await Task.sleep(nanoseconds: 20_000_000)
@@ -1172,7 +1172,6 @@ private func fixtureProfile(
             personDetectionEnabled: true,
             fallDetectionEnabled: true,
             activityDetectionEnabled: true,
-            fireDetectionEnabled: true,
             notificationEnabled: true
         ),
         carePreferences: CarePreferences(familyID: "family-1", interests: ["天气"]),

@@ -413,8 +413,6 @@ class AdaptiveInferenceScheduler:
         return not accelerated and bool(analysis.get("motion_detected"))
 
     def _risk_signal(self, analysis: Dict[str, Any]) -> bool:
-        if bool(analysis.get("fire_event_candidate")):
-            return True
         normal_lying_only = self._normal_lying_only(analysis)
         factor_graph = analysis.get("pose_factor_graph")
         if isinstance(factor_graph, dict):

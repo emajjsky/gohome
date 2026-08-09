@@ -44,7 +44,6 @@
             no_person_detection: boolValue(raw.no_person_detection),
             fall_candidate: boolValue(raw.fall_candidate),
             activity_candidate: boolValue(raw.activity_candidate, true),
-            fire_candidate: boolValue(raw.fire_candidate, true),
             pose_detection: boolValue(raw.pose_detection),
             backend: normalizedBackend,
             backend_label: raw.backend_label || backendLabel(normalizedBackend),
@@ -141,18 +140,6 @@
             evidence.metrics?.duration_seconds,
             evidence.metrics?.posture_duration_seconds,
         ]);
-        const fireScore = firstValue([
-            analysis.fire_score,
-            analysis.fire?.score,
-            evidence.metrics?.fire_score,
-            evidence.fire_score,
-        ]);
-        const fireCandidate = Boolean(
-            analysis.fire_event_candidate
-            || analysis.fire_candidate
-            || candidate?.event_type === "fire_candidate"
-            || candidate?.type === "fire_candidate"
-        );
         const personCount = firstValue([snapshot?.person_count, analysis.person_count], 0);
         const factorCount = [
             factorGraph.pose_confidence,
@@ -166,8 +153,6 @@
         setText("visionTrack", trackId !== null && trackId !== undefined ? `#${trackId}` : (Number(personCount) > 0 ? "跟踪中" : "未见到人"));
         setText("visionZone", zone || "自动识别中");
         setText("visionDuration", duration !== null && duration !== undefined ? fmtDuration(duration) : "待累计");
-        setText("visionFire", fireCandidate ? "发现候选" : "未见异常");
-        setText("visionFireScore", fireScore !== null && fireScore !== undefined ? fmtNumber(fireScore, 3) : "待采样");
         setText("visionPoseFactors", Number(personCount) > 0
             ? `已关联 ${factorCount || "多"} 项姿态与场景因子，持续时长由时序模块累计。`
             : "当前画面未形成稳定人物轨迹，等待下一轮人物观测。");
@@ -437,7 +422,6 @@
         const personReady = state.capabilities.person_detection || state.capabilities.no_person_detection;
         const fallReady = state.capabilities.fall_candidate;
         const poseReady = state.capabilities.pose_detection;
-        const fireReady = state.capabilities.fire_candidate;
         const label = state.capabilities.backend_label || backendLabel(state.detectorBackend);
         setText("detectionStatusBadge", device.worker_running ? "盒子在线" : "盒子暂停");
         setText("detectionBackend", label);
@@ -450,8 +434,6 @@
         $("detectionFallBadge").className = `app-mini-pill ${fallReady ? "good" : "muted"} not-italic`;
         $("detectionPoseBadge").textContent = poseReady ? "可用" : "等待上报";
         $("detectionPoseBadge").className = `app-mini-pill ${poseReady ? "good" : "muted"} not-italic`;
-        $("detectionFireBadge").textContent = fireReady ? "可用" : "未启用";
-        $("detectionFireBadge").className = `app-mini-pill ${fireReady ? "good" : "muted"} not-italic`;
     }
 
     function renderCameraList() {

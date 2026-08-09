@@ -164,7 +164,6 @@ async function main() {
         "person_detection_enabled",
         "fall_detection_enabled",
         "activity_detection_enabled",
-        "fire_detection_enabled",
         "notification_enabled",
     ]) {
         assert.equal(defaultDb.rules[key], true, `${key} must be enabled by default`);
@@ -2133,7 +2132,6 @@ async function main() {
         assert.equal(restoredEventAsset.purpose, "event_evidence");
         assert.equal(restoredDb.device_tokens[0].token_hash.length, 64);
         assert.equal(restoredDb.family_rules[String(family.id)].activity_detection_enabled, false);
-        assert.equal(restoredDb.family_rules[String(family.id)].fire_detection_enabled, true);
         assert.equal(restoredDb.family_rules[String(claimFamily.id)].activity_detection_enabled, true);
         assert.equal(restoredDb.care_preferences[String(family.id)].image_model, "wan2.7-image");
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.delivery_time, "07:45");

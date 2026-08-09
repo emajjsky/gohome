@@ -3693,14 +3693,6 @@ select {
   background: oklch(35% 0.1 245 / .9);
 }
 
-.detection-box.fire {
-  border-color: oklch(62% 0.17 38);
-}
-
-.detection-box.fire span {
-  background: oklch(41% 0.14 38 / .92);
-}
-
 .detection-box.night {
   border-color: oklch(57% 0.12 275);
 }
@@ -5003,20 +4995,12 @@ body.admin-web-page .detection-box.meal {
   border-color: oklch(61% 0.13 68);
 }
 
-body.admin-web-page .detection-box.fire {
-  border-color: oklch(56% 0.18 25);
-}
-
 body.admin-web-page .detection-box.night {
   border-color: oklch(68% 0.1 235);
 }
 
 body.admin-web-page .detection-box.meal span {
   background: oklch(43% 0.11 68 / .9);
-}
-
-body.admin-web-page .detection-box.fire span {
-  background: oklch(42% 0.15 25 / .9);
 }
 
 body.admin-web-page .detection-box.night span {

@@ -8,7 +8,6 @@ struct FamilyRules: Codable, Equatable, Sendable {
     var personDetectionEnabled: Bool
     var fallDetectionEnabled: Bool
     var activityDetectionEnabled: Bool
-    var fireDetectionEnabled: Bool
     var notificationEnabled: Bool
     var captureIntervalSeconds: Int
     var noMotionSeconds: Int
@@ -23,7 +22,6 @@ struct FamilyRules: Codable, Equatable, Sendable {
         case personDetectionEnabled = "person_detection_enabled"
         case fallDetectionEnabled = "fall_detection_enabled"
         case activityDetectionEnabled = "activity_detection_enabled"
-        case fireDetectionEnabled = "fire_detection_enabled"
         case notificationEnabled = "notification_enabled"
         case captureIntervalSeconds = "capture_interval_seconds"
         case noMotionSeconds = "no_motion_seconds"
@@ -39,7 +37,6 @@ struct FamilyRules: Codable, Equatable, Sendable {
         personDetectionEnabled: Bool,
         fallDetectionEnabled: Bool,
         activityDetectionEnabled: Bool,
-        fireDetectionEnabled: Bool,
         notificationEnabled: Bool,
         captureIntervalSeconds: Int = 5,
         noMotionSeconds: Int = 900,
@@ -53,7 +50,6 @@ struct FamilyRules: Codable, Equatable, Sendable {
         self.personDetectionEnabled = personDetectionEnabled
         self.fallDetectionEnabled = fallDetectionEnabled
         self.activityDetectionEnabled = activityDetectionEnabled
-        self.fireDetectionEnabled = fireDetectionEnabled
         self.notificationEnabled = notificationEnabled
         self.captureIntervalSeconds = captureIntervalSeconds
         self.noMotionSeconds = noMotionSeconds
@@ -70,7 +66,6 @@ struct FamilyRules: Codable, Equatable, Sendable {
         personDetectionEnabled = try values.decodeIfPresent(Bool.self, forKey: .personDetectionEnabled) ?? true
         fallDetectionEnabled = try values.decodeIfPresent(Bool.self, forKey: .fallDetectionEnabled) ?? true
         activityDetectionEnabled = try values.decodeIfPresent(Bool.self, forKey: .activityDetectionEnabled) ?? true
-        fireDetectionEnabled = try values.decodeIfPresent(Bool.self, forKey: .fireDetectionEnabled) ?? true
         notificationEnabled = try values.decodeIfPresent(Bool.self, forKey: .notificationEnabled) ?? true
         captureIntervalSeconds = try values.decodeIfPresent(Int.self, forKey: .captureIntervalSeconds) ?? 5
         noMotionSeconds = try values.decodeIfPresent(Int.self, forKey: .noMotionSeconds) ?? 900
@@ -86,7 +81,6 @@ struct FamilyRules: Codable, Equatable, Sendable {
             personDetectionEnabled: personDetectionEnabled,
             fallDetectionEnabled: fallDetectionEnabled,
             activityDetectionEnabled: activityDetectionEnabled,
-            fireDetectionEnabled: fireDetectionEnabled,
             notificationEnabled: notificationEnabled,
             captureIntervalSeconds: captureIntervalSeconds,
             noMotionSeconds: noMotionSeconds,
@@ -102,7 +96,6 @@ struct RulePatch: Encodable, Equatable, Sendable {
     let personDetectionEnabled: Bool
     let fallDetectionEnabled: Bool
     let activityDetectionEnabled: Bool
-    let fireDetectionEnabled: Bool
     let notificationEnabled: Bool
     let captureIntervalSeconds: Int
     let noMotionSeconds: Int
@@ -115,7 +108,6 @@ struct RulePatch: Encodable, Equatable, Sendable {
         case personDetectionEnabled = "person_detection_enabled"
         case fallDetectionEnabled = "fall_detection_enabled"
         case activityDetectionEnabled = "activity_detection_enabled"
-        case fireDetectionEnabled = "fire_detection_enabled"
         case notificationEnabled = "notification_enabled"
         case captureIntervalSeconds = "capture_interval_seconds"
         case noMotionSeconds = "no_motion_seconds"

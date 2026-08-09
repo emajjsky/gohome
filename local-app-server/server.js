@@ -199,11 +199,6 @@ function defaultRules(timestamp = nowIso()) {
         fall_confirm_seconds: 4,
         fall_recover_frames: 2,
         activity_detection_enabled: true,
-        fire_detection_enabled: true,
-        fire_event_score_threshold: 0.62,
-        fire_motion_threshold: 0.12,
-        fire_temporal_threshold: 0.35,
-        fire_confirm_frames: 3,
         notification_enabled: true,
         updated_at: timestamp,
     };
@@ -236,11 +231,6 @@ function normalizeRules(value = {}, base = defaultRules()) {
         fall_confirm_seconds: clampNumber(input.fall_confirm_seconds, base.fall_confirm_seconds, 0, 300),
         fall_recover_frames: clampNumber(input.fall_recover_frames, base.fall_recover_frames, 1, 120),
         activity_detection_enabled: boolFrom("activity_detection_enabled"),
-        fire_detection_enabled: boolFrom("fire_detection_enabled"),
-        fire_event_score_threshold: clampNumber(input.fire_event_score_threshold, base.fire_event_score_threshold, 0, 1),
-        fire_motion_threshold: clampNumber(input.fire_motion_threshold, base.fire_motion_threshold, 0, 1),
-        fire_temporal_threshold: clampNumber(input.fire_temporal_threshold, base.fire_temporal_threshold, 0, 1),
-        fire_confirm_frames: clampNumber(input.fire_confirm_frames, base.fire_confirm_frames, 1, 120),
         notification_enabled: boolFrom("notification_enabled"),
         updated_at: String(input.updated_at || base.updated_at || nowIso()),
     };
@@ -799,7 +789,7 @@ function createLocalAppServer(options = {}) {
         "emergency 是布尔值；只有画面明显支持需要家属立即确认的跌倒、长时间倒地或火灾线索时才为 true。",
         "confidence 是 0 到 1 的数字，表示本次视觉判断把握度。",
         "reason 使用不超过 120 个中文字符描述可见事实，不得编造持续时间、身份、疾病或画面外情况。",
-        "suggested_event_type 只能是 fall_candidate、prolonged_floor_lying、fire_candidate、none、uncertain。",
+        "suggested_event_type 只能是 fall_candidate、prolonged_floor_lying、none、uncertain。",
         "如果图片模糊、遮挡、无人或不足以判断，使用 unknown/uncertain，不能强行确认。",
         "床或沙发上的正常躺卧通常不应判为紧急；持续时长以结构化边缘证据为准，不从单图猜测。",
         "多张证据图按 before、transition、current 的时间顺序输入，必须比较同一人物的高度、身体方向、位移和最终落点。",
@@ -1393,7 +1383,6 @@ function createLocalAppServer(options = {}) {
             health_notes: "",
             care_preferences: {
                 fall_detection: true,
-                fire_detection: true,
                 inactivity_observation: true,
                 daily_weather: true,
                 daily_news: true,
@@ -2120,7 +2109,6 @@ function createLocalAppServer(options = {}) {
             no_person_detection: normalizeBool(reported.no_person_detection) || modelReported,
             fall_candidate: normalizeBool(reported.fall_candidate) || modelReported || poseEnabled,
             activity_candidate: reported.activity_candidate === undefined ? true : normalizeBool(reported.activity_candidate),
-            fire_candidate: reported.fire_candidate === undefined ? true : normalizeBool(reported.fire_candidate),
             pose_detection: poseEnabled,
             backend: backend || "unknown",
             backend_label: backendLabel,
@@ -3363,7 +3351,6 @@ function createLocalAppServer(options = {}) {
     const SAFETY_INCIDENT_TYPES = new Set([
         "fall_candidate",
         "prolonged_floor_lying",
-        "fire_candidate",
         "long_absence",
     ]);
 
@@ -4362,7 +4349,6 @@ function createLocalAppServer(options = {}) {
     const VISION_VERIFICATION_EVENT_TYPES = new Set([
         "fall_candidate",
         "prolonged_floor_lying",
-        "fire_candidate",
     ]);
 
     function sanitizeVisionVerification(value) {
@@ -4375,7 +4361,7 @@ function createLocalAppServer(options = {}) {
         const confidence = Number(value.confidence);
         const postures = new Set(["standing", "sitting", "squatting", "bending", "lying", "fallen", "unknown"]);
         const surfaces = new Set(["floor", "bed", "sofa", "chair", "unknown"]);
-        const eventTypes = new Set(["fall_candidate", "prolonged_floor_lying", "fire_candidate", "none", "uncertain"]);
+        const eventTypes = new Set(["fall_candidate", "prolonged_floor_lying", "none", "uncertain"]);
         const posture = String(value.posture || "").trim();
         const surface = String(value.surface || "").trim();
         const suggestedEventType = String(value.suggested_event_type || "").trim();
@@ -6832,7 +6818,7 @@ function createLocalAppServer(options = {}) {
             evaluated_at: evaluation.evaluated_at || event.occurred_at || event.created_at,
             matched_rules: event.payload?.rule ? [event.payload.rule] : [],
             explanation: event.payload?.rule?.reason || event.summary,
-            score: evidence.metrics?.fall_score ?? evidence.metrics?.fire_score ?? null,
+            score: evidence.metrics?.fall_score ?? null,
             state: {
                 ...(evaluation.state || {}),
                 latest_event_type: event.event_type,

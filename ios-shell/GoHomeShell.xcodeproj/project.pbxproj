@@ -30,6 +30,7 @@
 		38FB3254E094D7CF65EBA079 /* ProductRecommendationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D52364CA4E5CF55BFDA56E /* ProductRecommendationsView.swift */; };
 		44FCCD307E547535444FFAF1 /* APIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A166F07C9E3E29754D62C633 /* APIClientTests.swift */; };
 		473B4CF57C81EC02EA2E02E8 /* EventDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCBC9A488B26D294184EF5C7 /* EventDetailView.swift */; };
+		474F7D720208292937497389 /* memory-daughter-walk.jpg in Resources */ = {isa = PBXBuildFile; fileRef = E67D594F9D3DDD1070E2927D /* memory-daughter-walk.jpg */; };
 		4774CA7CB028FD5569C0BFE9 /* WebRTCVideoSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8898541014984D0ED9B205E8 /* WebRTCVideoSurface.swift */; };
 		47A0EF9D5EDBF9612365C1DD /* ActivityTimelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55209935FDAFCC33486B8949 /* ActivityTimelineTests.swift */; };
 		4C8B25ECE483853D68E4E25D /* PrivacyDataViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0FD43806D9F2114438EA8D5 /* PrivacyDataViewModel.swift */; };
@@ -38,15 +39,13 @@
 		52BDFD1047914540E6EED552 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 745FA5F9F7623CBCEAB2CECA /* PrivacyInfo.xcprivacy */; };
 		534644623660DEA287B580EA /* LocationResolutionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF9313BF5A1F7F97EF5C4E54 /* LocationResolutionTests.swift */; };
 		540E3A87C5E44E91FF84966B /* memory-garden-sun.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 6BA6F5F9CB85610C58254181 /* memory-garden-sun.jpg */; };
-		1A4B5C6D7E8F901122334455 /* memory-daughter-walk.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 1A4B5C6D7E8F901122334466 /* memory-daughter-walk.jpg */; };
-		1A4B5C6D7E8F901122334477 /* memory-family-dinner.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 1A4B5C6D7E8F901122334488 /* memory-family-dinner.jpg */; };
-		1A4B5C6D7E8F901122334499 /* memory-outdoor-walk.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 1A4B5C6D7E8F9011223344AA /* memory-outdoor-walk.jpg */; };
 		5ACB9339254590FC58DFCDEA /* memory-relax-chat.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 92B623DF7339D98F4FD02613 /* memory-relax-chat.jpg */; };
 		5D928E7C69CD6E019C8A0887 /* MemoryViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B58D029742116912B1429B4 /* MemoryViewModelTests.swift */; };
 		5FDA7676C580B1EA156F2A4D /* memory-generations.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 7589D97DAB7D45313674B50C /* memory-generations.jpg */; };
 		5FF590BFEDBB2BCCA3398400 /* AppRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3334DDE3CC653FD1541523C /* AppRepository.swift */; };
 		64FB36378AB763E0006F2DC3 /* NativeWebRTCPeer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC9741F665C75AB657E6233F /* NativeWebRTCPeer.swift */; };
 		66DBFC376E46F1B98BEAC2FB /* CareMessageCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DBBA32F7917F6F0495B49EF /* CareMessageCard.swift */; };
+		66E8652FE8C13515A85A7105 /* memory-family-dinner.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 656D63234C106381E66C39EE /* memory-family-dinner.jpg */; };
 		67041597E06E2008623365F9 /* CameraStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748FA19F9C6A88D3512B1119 /* CameraStreamClient.swift */; };
 		6707311DE7DC983040D8636B /* MemoryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5B93473F4F02FF55CBFF3B8 /* MemoryViewModel.swift */; };
 		6844C9B0BCAAF80D67EBFCE3 /* LocationSamplePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C7DED4C428F543FC91C1624 /* LocationSamplePolicy.swift */; };
@@ -106,6 +105,7 @@
 		E02FC8ECDB02D2A42CBF558B /* GoHomeShellApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FE057158722526CC639E04C /* GoHomeShellApp.swift */; };
 		E0C56BACC90133AC7ACB4016 /* ProfileModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B9993B818E230FA09B15F87 /* ProfileModels.swift */; };
 		E172FE0125998B4E94FE22FA /* ContentPreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57F10EB712D69E2E714CCE59 /* ContentPreferencesView.swift */; };
+		E224C439C206B0583896C14F /* memory-outdoor-walk.jpg in Resources */ = {isa = PBXBuildFile; fileRef = C77F1B64F170C423F5F7BD0C /* memory-outdoor-walk.jpg */; };
 		E507E7DCFE6E71F166F08DFF /* WHEPSignalingClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F60E5BBA51B561FF100BEF80 /* WHEPSignalingClientTests.swift */; };
 		E51DA65A8EAF55CC4345C2C0 /* OnboardingCoordinatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3740C24FC00B2342D30429CD /* OnboardingCoordinatorView.swift */; };
 		E6AAE0F95664D9D86DB433A4 /* DeviceSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70A83566580A0F78EDC30D76 /* DeviceSettingsView.swift */; };
@@ -196,10 +196,8 @@
 		5B9993B818E230FA09B15F87 /* ProfileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileModels.swift; sourceTree = "<group>"; };
 		5C4AD0211D3A382551135621 /* EditorialFeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorialFeedTests.swift; sourceTree = "<group>"; };
 		6435ED7452CDDFEB724B2284 /* AppRepositoryLiveFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRepositoryLiveFactory.swift; sourceTree = "<group>"; };
+		656D63234C106381E66C39EE /* memory-family-dinner.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "memory-family-dinner.jpg"; sourceTree = "<group>"; };
 		6BA6F5F9CB85610C58254181 /* memory-garden-sun.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "memory-garden-sun.jpg"; sourceTree = "<group>"; };
-		1A4B5C6D7E8F901122334466 /* memory-daughter-walk.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "memory-daughter-walk.jpg"; sourceTree = "<group>"; };
-		1A4B5C6D7E8F901122334488 /* memory-family-dinner.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "memory-family-dinner.jpg"; sourceTree = "<group>"; };
-		1A4B5C6D7E8F9011223344AA /* memory-outdoor-walk.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "memory-outdoor-walk.jpg"; sourceTree = "<group>"; };
 		6E2484C2E61F757B95DDFA59 /* DistanceMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DistanceMapView.swift; sourceTree = "<group>"; };
 		70A83566580A0F78EDC30D76 /* DeviceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSettingsView.swift; sourceTree = "<group>"; };
 		72AB06FBD1E27C2FC881CC7E /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
@@ -244,6 +242,7 @@
 		BA91D5DB50293F3C81AA77D6 /* EventsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventsViewModel.swift; sourceTree = "<group>"; };
 		BBD54AB746D00CA01186A345 /* AppSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSmokeTests.swift; sourceTree = "<group>"; };
 		BFD2CF59E07AE70E40FC1C00 /* FamilyMembersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyMembersView.swift; sourceTree = "<group>"; };
+		C77F1B64F170C423F5F7BD0C /* memory-outdoor-walk.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "memory-outdoor-walk.jpg"; sourceTree = "<group>"; };
 		CD5F7C723D896735C87F84E6 /* ProfileSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileSetupView.swift; sourceTree = "<group>"; };
 		CE166B0C27414D0408D563F7 /* LaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
 		CE91B1212BE195D3FC142BA2 /* OnboardingModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingModelTests.swift; sourceTree = "<group>"; };
@@ -258,6 +257,7 @@
 		E5D52364CA4E5CF55BFDA56E /* ProductRecommendationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductRecommendationsView.swift; sourceTree = "<group>"; };
 		E5EC34A06B9B64F2A81E3A18 /* HomeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeViewModel.swift; sourceTree = "<group>"; };
 		E61E6F6BAE7CFEF1E2973E6C /* ActivityDataSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityDataSettingsView.swift; sourceTree = "<group>"; };
+		E67D594F9D3DDD1070E2927D /* memory-daughter-walk.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "memory-daughter-walk.jpg"; sourceTree = "<group>"; };
 		EC9741F665C75AB657E6233F /* NativeWebRTCPeer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeWebRTCPeer.swift; sourceTree = "<group>"; };
 		EF1852331ED6E508981328DF /* MemoryLocationProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryLocationProvider.swift; sourceTree = "<group>"; };
 		EFD074E340C4AFECF2D73FFC /* CameraManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraManagementView.swift; sourceTree = "<group>"; };
@@ -488,11 +488,11 @@
 			children = (
 				B090C3E56155D890943A9038 /* avatar.jpg */,
 				B4E95E00BEFBC01939A6C21A /* grandma-reading.jpg */,
-				1A4B5C6D7E8F901122334466 /* memory-daughter-walk.jpg */,
-				1A4B5C6D7E8F901122334488 /* memory-family-dinner.jpg */,
+				E67D594F9D3DDD1070E2927D /* memory-daughter-walk.jpg */,
+				656D63234C106381E66C39EE /* memory-family-dinner.jpg */,
 				6BA6F5F9CB85610C58254181 /* memory-garden-sun.jpg */,
 				7589D97DAB7D45313674B50C /* memory-generations.jpg */,
-				1A4B5C6D7E8F9011223344AA /* memory-outdoor-walk.jpg */,
+				C77F1B64F170C423F5F7BD0C /* memory-outdoor-walk.jpg */,
 				92B623DF7339D98F4FD02613 /* memory-relax-chat.jpg */,
 			);
 			name = images;
@@ -722,11 +722,11 @@
 				52BDFD1047914540E6EED552 /* PrivacyInfo.xcprivacy in Resources */,
 				AA09E6A039FD375166720604 /* avatar.jpg in Resources */,
 				B7495B105A972BD390611FAD /* grandma-reading.jpg in Resources */,
-				1A4B5C6D7E8F901122334455 /* memory-daughter-walk.jpg in Resources */,
-				1A4B5C6D7E8F901122334477 /* memory-family-dinner.jpg in Resources */,
+				474F7D720208292937497389 /* memory-daughter-walk.jpg in Resources */,
+				66E8652FE8C13515A85A7105 /* memory-family-dinner.jpg in Resources */,
 				540E3A87C5E44E91FF84966B /* memory-garden-sun.jpg in Resources */,
 				5FDA7676C580B1EA156F2A4D /* memory-generations.jpg in Resources */,
-				1A4B5C6D7E8F901122334499 /* memory-outdoor-walk.jpg in Resources */,
+				E224C439C206B0583896C14F /* memory-outdoor-walk.jpg in Resources */,
 				5ACB9339254590FC58DFCDEA /* memory-relax-chat.jpg in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
