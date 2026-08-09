@@ -107,6 +107,19 @@ final class TabStateTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["设置家庭位置"].waitForExistence(timeout: 2))
     }
 
+    func testCommunityUsesFixedProfileLocationWithoutOpeningHome() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-uiTestState", "-uiTestMain", "-uiTestProfile", "-uiTestFixedHomeLocation",
+        ]
+        app.launch()
+
+        app.tabBars.buttons["社区"].tap()
+
+        XCTAssertTrue(app.buttons["community-home-location-edit"].waitForExistence(timeout: 2))
+        XCTAssertFalse(app.buttons["community-home-location-setup"].exists)
+    }
+
     func testGuardCombinesLiveTimelineAndEventsWithoutKeepingVideoMounted() {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTestState", "-uiTestMain"]

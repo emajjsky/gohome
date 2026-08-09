@@ -36,6 +36,7 @@ final class ProductRecommendationsViewModel: ObservableObject {
     private let repository: AppRepository?
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
+    private var loadGeneration = 0
     private var hasStarted = false
 
     init(repository: AppRepository?, scope: CacheScope?, seed: ProductRecommendationsResponse? = nil) {
@@ -45,13 +46,44 @@ final class ProductRecommendationsViewModel: ObservableObject {
     }
 
     func start() {
-        guard !hasStarted, let repository, let scope else { return }
-        hasStarted = true
-        loadTask = Task { [repository, scope] in
-            await repository.products(scope: scope) { next in
-                await MainActor.run { self.state = next }
-            }
+        guard let repository, let scope else { return }
+        if hasStarted {
+            guard loadTask == nil else { return }
+        } else {
+            hasStarted = true
         }
+        refresh(repository: repository, scope: scope)
+    }
+
+    private func refresh(repository: AppRepository, scope: CacheScope) {
+        loadTask?.cancel()
+        loadGeneration += 1
+        let generation = loadGeneration
+        let task = Task { @MainActor [weak self, repository, scope, generation] in
+            await repository.products(scope: scope) { [weak self] next in
+                guard !Task.isCancelled else { return }
+                await self?.applyLoadedState(next, generation: generation)
+            }
+            guard let self, self.loadGeneration == generation else { return }
+            self.loadTask = nil
+        }
+        loadTask = task
+    }
+
+    private func applyLoadedState(_ next: Loadable<ProductRecommendationsResponse>, generation: Int) {
+        guard loadGeneration == generation else { return }
+        var nextState = next
+        if nextState.value == nil, let currentValue = state.value {
+            nextState.value = currentValue
+        }
+        state = nextState
+    }
+
+    func cancelInFlightLoad() {
+        loadGeneration += 1
+        loadTask?.cancel()
+        loadTask = nil
+        state.isRefreshing = false
     }
 
     deinit { loadTask?.cancel() }

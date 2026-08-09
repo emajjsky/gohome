@@ -150,9 +150,7 @@ struct ProfileView: View {
             .padding(.bottom, 28)
         }
         .background(GoHomeTheme.paper)
-        .task { model.start() }
         .onDisappear {
-            model.cancelInFlightProfileLoad()
             model.cancelInFlightPreferenceSaves()
             model.cancelInFlightAccountProfileRefresh()
         }

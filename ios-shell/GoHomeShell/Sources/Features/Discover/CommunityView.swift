@@ -31,6 +31,8 @@ struct CommunityView: View {
         .background(GoHomeTheme.paper)
         .accessibilityIdentifier("product-recommendations-content")
         .accessibilityElement(children: .contain)
+        .task { model.start() }
+        .onDisappear { model.cancelInFlightLoad() }
     }
 
     private var header: some View {
@@ -132,6 +134,35 @@ struct CommunityView: View {
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
         return fallback.isEmpty ? "家庭位置" : fallback
+    }
+}
+
+enum CommunityHomeLocation {
+    static func resolve(elder: ElderProfile?) -> HomeLocation? {
+        guard
+            let elder,
+            let latitude = elder.homeLatitude,
+            let longitude = elder.homeLongitude,
+            latitude.isFinite,
+            longitude.isFinite,
+            (-90...90).contains(latitude),
+            (-180...180).contains(longitude)
+        else { return nil }
+
+        let configuredLabel = elder.homeLocationLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let areaLabel = [elder.district, elder.city]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+        return HomeLocation(
+            latitude: latitude,
+            longitude: longitude,
+            label: configuredLabel.isEmpty ? (areaLabel.isEmpty ? "家庭位置" : areaLabel) : configuredLabel,
+            city: elder.city,
+            district: elder.district,
+            source: "profile",
+            updatedAt: nil
+        )
     }
 }
 

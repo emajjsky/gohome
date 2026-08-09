@@ -112,7 +112,11 @@ struct MainTabView: View {
             seed: hasSurfaceFixture ? Self.uiTestProducts : nil
         ))
         let seedProfile = ProcessInfo.processInfo.arguments.contains("-uiTestProfile")
-            ? Self.uiTestProfile(familyID: family.id, canEdit: family.role != "member")
+            ? Self.uiTestProfile(
+                familyID: family.id,
+                canEdit: family.role != "member",
+                hasFixedHomeLocation: hasFixedHomeLocation
+            )
             : nil
         _profileModel = StateObject(wrappedValue: ProfileViewModel(
             user: user,
@@ -157,7 +161,7 @@ struct MainTabView: View {
                 CommunityView(
                     model: recommendationsModel,
                     apiBaseURL: apiClient?.baseURL,
-                    homeLocation: homeModel.state.value?.homeLocation,
+                    homeLocation: CommunityHomeLocation.resolve(elder: profileModel.state.value?.elder),
                     onSetHomeLocation: homeLocationSetupAction
                 )
             }
@@ -178,7 +182,6 @@ struct MainTabView: View {
         .accessibilityIdentifier("main-tab-shell")
         .task {
             profileModel.start()
-            recommendationsModel.start()
         }
         .onChange(of: profileModel.deviceConfigurationRevision) { _ in
             homeModel.reconcileDeviceConfiguration()
@@ -485,9 +488,13 @@ struct MainTabView: View {
         ], revision: "ui-test-product-r1")
     }
 
-    private static func uiTestProfile(familyID: String, canEdit: Bool) -> ProfileData {
+    private static func uiTestProfile(
+        familyID: String,
+        canEdit: Bool,
+        hasFixedHomeLocation: Bool
+    ) -> ProfileData {
         ProfileData(
-            elder: nil,
+            elder: hasFixedHomeLocation ? uiTestElder : nil,
             bindings: [DeviceBinding(
                 id: "ui-test-binding",
                 familyID: familyID,
@@ -523,5 +530,13 @@ struct MainTabView: View {
             carePreferences: CarePreferences(familyID: familyID, interests: ["天气", "防诈骗"]),
             productPreferences: ProductPreferences(categories: ["照明与视野"], needs: ["夜间照明"])
         )
+    }
+
+    private static var uiTestElder: ElderProfile {
+        let data = Data(#"{"id":"ui-test-elder-profile","elder_id":"ui-test-elder","display_name":"家人","relationship":"父亲","city":"杭州市","district":"西湖区","home_latitude":30.2146,"home_longitude":120.1573,"home_location_label":"西湖区 · 杭州市"}"#.utf8)
+        guard let elder = try? JSONDecoder().decode(ElderProfile.self, from: data) else {
+            preconditionFailure("Invalid fixed home location UI test fixture")
+        }
+        return elder
     }
 }

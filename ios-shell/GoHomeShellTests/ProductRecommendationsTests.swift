@@ -54,6 +54,97 @@ final class ProductRecommendationsTests: XCTestCase {
         XCTAssertNil(CommunityService.meals.destinationURL(homeLocation: nil))
     }
 
+    @MainActor
+    func testCancelledRecommendationLoadCannotPublishLateResponse() async throws {
+        let original = response(id: "original")
+        let late = response(id: "late")
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            productsLoader: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return late
+            }
+        )
+        let model = ProductRecommendationsViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: original
+        )
+
+        model.start()
+        try await waitUntil { model.state.isRefreshing }
+        model.cancelInFlightLoad()
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(model.state.value, original)
+        XCTAssertFalse(model.state.isRefreshing)
+        XCTAssertNil(model.state.staleReason)
+    }
+
+    @MainActor
+    func testRecommendationLoadRestartsAfterLifecycleCancellation() async throws {
+        let fresh = response(id: "fresh")
+        let cancelled = response(id: "cancelled")
+        let calls = ProductLoadCounter()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            productsLoader: { _ in
+                let count = await calls.increment()
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                return count == 1 ? cancelled : fresh
+            }
+        )
+        let model = ProductRecommendationsViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1")
+        )
+
+        model.start()
+        try await waitUntil { model.state.isRefreshing }
+        model.cancelInFlightLoad()
+        try await Task.sleep(nanoseconds: 120_000_000)
+        model.start()
+        try await waitUntil { model.state.value?.revision == "fresh" }
+
+        let callCount = await calls.value
+        XCTAssertEqual(callCount, 2)
+        XCTAssertEqual(model.state.value, fresh)
+        XCTAssertFalse(model.state.isRefreshing)
+    }
+
+    func testCommunityLocationUsesProfileFixedHomeWithoutHomePageData() throws {
+        let elder = try elderProfile(latitude: 30.2146, longitude: 120.1573)
+
+        let location = try XCTUnwrap(CommunityHomeLocation.resolve(elder: elder))
+
+        XCTAssertEqual(location.latitude, 30.2146)
+        XCTAssertEqual(location.longitude, 120.1573)
+        XCTAssertEqual(location.label, "西湖区 · 杭州市")
+        XCTAssertEqual(location.source, "profile")
+    }
+
+    func testCommunityLookupCannotUsePhoneDistanceCoordinates() throws {
+        let elder = try elderProfile(latitude: 30.2146, longitude: 120.1573)
+        let phoneDistance = HomeDistance(
+            meters: 8_600,
+            travelMinutes: 24,
+            userLatitude: 31.2304,
+            userLongitude: 121.4737,
+            homeLatitude: 30.2146,
+            homeLongitude: 120.1573
+        )
+
+        let location = try XCTUnwrap(CommunityHomeLocation.resolve(elder: elder))
+        let url = try XCTUnwrap(CommunityService.clinic.destinationURL(homeLocation: location))
+        let coordinates = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+            .queryItems?.first(where: { $0.name == "ll" })?.value
+
+        XCTAssertEqual(coordinates, "30.2146,120.1573")
+        XCTAssertNotEqual(coordinates, "\(phoneDistance.userLatitude!),\(phoneDistance.userLongitude!)")
+    }
+
     private func response(id: String) -> ProductRecommendationsResponse {
         ProductRecommendationsResponse(
             products: [ProductRecommendation(
@@ -73,9 +164,41 @@ final class ProductRecommendationsTests: XCTestCase {
             revision: id
         )
     }
+
+    private func elderProfile(latitude: Double, longitude: Double) throws -> ElderProfile {
+        try JSONDecoder().decode(ElderProfile.self, from: Data("""
+        {"id":"elder-profile-1","elder_id":"elder-1","display_name":"家人","relationship":"父亲",
+         "city":"杭州市","district":"西湖区","home_latitude":\(latitude),"home_longitude":\(longitude),
+         "home_location_label":"西湖区 · 杭州市"}
+        """.utf8))
+    }
 }
 
 private actor ProductStateRecorder {
     private(set) var values: [Loadable<ProductRecommendationsResponse>] = []
     func append(_ value: Loadable<ProductRecommendationsResponse>) { values.append(value) }
+}
+
+private actor ProductLoadCounter {
+    private(set) var value = 0
+
+    func increment() -> Int {
+        value += 1
+        return value
+    }
+}
+
+@MainActor
+private func waitUntil(
+    timeoutNanoseconds: UInt64 = 1_000_000_000,
+    condition: @escaping @MainActor () -> Bool
+) async throws {
+    let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+    while !condition() {
+        if DispatchTime.now().uptimeNanoseconds >= deadline {
+            XCTFail("Timed out waiting for product recommendation state")
+            return
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
 }
