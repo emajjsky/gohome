@@ -38,6 +38,7 @@ final class MemoryViewModel: ObservableObject {
     private let repository: AppRepository?
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
+    private var loadGeneration = 0
     private var interactionCancellations: [String: () -> Void] = [:]
     private var interactionContexts: [String: InteractionContext] = [:]
     private var nextInteractionGeneration: UInt64 = 0
@@ -57,13 +58,39 @@ final class MemoryViewModel: ObservableObject {
     var memories: [FamilyMemory] { state.value?.memories ?? [] }
 
     func start() {
-        guard !hasStarted, let repository, let scope else { return }
-        hasStarted = true
-        loadTask = Task { [repository, scope] in
-            await repository.memories(scope: scope) { next in
-                await MainActor.run { self.state = next }
-            }
+        guard let repository, let scope else { return }
+        if hasStarted {
+            guard loadTask == nil else { return }
+        } else {
+            hasStarted = true
         }
+        loadGeneration += 1
+        let generation = loadGeneration
+        let task = Task { @MainActor [weak self, repository, scope, generation] in
+            await repository.memories(scope: scope) { next in
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard !Task.isCancelled,
+                          let self,
+                          self.loadGeneration == generation else { return }
+                    var nextState = next
+                    if nextState.value == nil, let currentValue = self.state.value {
+                        nextState.value = currentValue
+                    }
+                    self.state = nextState
+                }
+            }
+            guard let self, self.loadGeneration == generation else { return }
+            self.loadTask = nil
+        }
+        loadTask = task
+    }
+
+    func cancelInFlightLoad() {
+        loadGeneration += 1
+        loadTask?.cancel()
+        loadTask = nil
+        state.isRefreshing = false
     }
 
     func save(

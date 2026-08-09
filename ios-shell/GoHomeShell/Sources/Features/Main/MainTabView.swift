@@ -178,7 +178,6 @@ struct MainTabView: View {
         .accessibilityIdentifier("main-tab-shell")
         .task {
             profileModel.start()
-            memoryModel.start()
             recommendationsModel.start()
         }
         .onChange(of: profileModel.deviceConfigurationRevision) { _ in

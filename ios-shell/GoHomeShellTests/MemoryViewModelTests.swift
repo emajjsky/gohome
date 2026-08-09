@@ -188,6 +188,58 @@ final class MemoryViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledMemoryLoadCannotPublishLateResponse() async throws {
+        let original = FamilyMemoriesResponse(memories: [makeMemory(id: "memory-original", body: "原始内容")], revision: "original")
+        let late = FamilyMemoriesResponse(memories: [makeMemory(id: "memory-late", body: "迟到内容")], revision: "late")
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoriesLoader: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return late
+            }
+        )
+        let model = MemoryViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: original
+        )
+
+        model.start()
+        await waitUntil { model.state.isRefreshing }
+        XCTAssertEqual(model.state.value, original)
+        model.cancelInFlightLoad()
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(model.state.value, original)
+        XCTAssertFalse(model.state.isRefreshing)
+        XCTAssertNil(model.state.staleReason)
+    }
+
+    @MainActor
+    func testMemoryLoadRestartsAfterLifecycleCancellation() async throws {
+        let fresh = FamilyMemoriesResponse(memories: [makeMemory(id: "memory-fresh", body: "重新进入")], revision: "fresh")
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoriesLoader: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return fresh
+            }
+        )
+        let model = MemoryViewModel(repository: repository, scope: CacheScope(userID: "user-1", familyID: "family-1"))
+
+        model.start()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        model.cancelInFlightLoad()
+        model.start()
+        await waitUntil { model.state.value?.revision == fresh.revision }
+
+        XCTAssertEqual(model.state.value, fresh)
+        XCTAssertFalse(model.state.isRefreshing)
+    }
+
+    @MainActor
     func testMemoryWriteLifecycleUpdatesLocalTimelineWithoutReloading() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
