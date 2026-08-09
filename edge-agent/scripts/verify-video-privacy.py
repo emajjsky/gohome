@@ -602,6 +602,42 @@ def main() -> int:
         assert discovered[0]["ready"] is False
         assert discovered[0]["status"] == "revalidating"
 
+        moved_endpoint = PrivacyFrameRenderer(
+            tracker,
+            PrivacyBackgroundReconstructor(
+                storage_dir=temporary_dir,
+                monotonic_clock=revalidation_clock,
+            ),
+            SyntheticSegmentation({"camera-a-moved": clean_a}),
+            revalidation_interval_seconds=1.0,
+            monotonic_clock=revalidation_clock,
+        )
+        moved_source = "camera-a-moved:g1"
+        moved_discovery = moved_endpoint.discover_calibrations(1, source_key=moved_source)
+        assert len(moved_discovery) == 1
+        assert moved_discovery[0]["baseline_retained"] is True
+        assert moved_discovery[0]["ready"] is False
+        for sequence in range(moved_endpoint.background_reconstructor.revalidation_frames):
+            revalidation_clock.advance(1.0)
+            render(
+                moved_endpoint,
+                tracker,
+                clean_a,
+                camera_id=1,
+                source_key=moved_source,
+                frame_id=f"1-moved-endpoint-revalidate-{sequence}",
+                person=False,
+                mode="original",
+            )
+        moved_status = moved_endpoint.background_reconstructor.inspect(
+            1,
+            source_key=moved_source,
+            width=320,
+            height=180,
+        )
+        assert moved_status["ready"] is True
+        assert moved_status["baseline_retained"] is True
+
         occupied_original = render(
             persisted,
             tracker,

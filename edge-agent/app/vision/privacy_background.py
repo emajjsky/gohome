@@ -456,13 +456,12 @@ class PrivacyBackgroundReconstructor:
             return []
         discovery_key, generation = self._state_key(camera_id, source_key, 1, 1)
         configured_source = discovery_key[1]
-        digest = sha256(configured_source.encode("utf-8")).hexdigest()[:16]
         filename_pattern = re.compile(
-            rf"camera-{int(camera_id)}-{re.escape(digest)}-(\d+)x(\d+)"
+            rf"camera-{int(camera_id)}-(?:[a-f0-9]{{16}}-)?(\d+)x(\d+)"
             rf"(?:-view-[a-f0-9]{{16}})?\.npz"
         )
         dimensions: list[tuple[int, int]] = []
-        for path in self.storage_dir.glob(f"camera-{int(camera_id)}-{digest}-*x*.npz"):
+        for path in self.storage_dir.glob(f"camera-{int(camera_id)}-*.npz"):
             match = filename_pattern.fullmatch(path.name)
             if match is None:
                 continue
@@ -1322,9 +1321,8 @@ class PrivacyBackgroundReconstructor:
     ) -> Path | None:
         if self.storage_dir is None:
             return None
-        digest = sha256(key[1].encode("utf-8")).hexdigest()[:16]
         suffix = "" if view_id == "legacy" else f"-view-{view_id}"
-        return self.storage_dir / f"camera-{key[0]}-{digest}-{key[2]}x{key[3]}{suffix}.npz"
+        return self.storage_dir / f"camera-{key[0]}-{key[2]}x{key[3]}{suffix}.npz"
 
     def _persist(
         self,
@@ -1362,12 +1360,24 @@ class PrivacyBackgroundReconstructor:
         if path is None:
             return []
         candidates = [path]
-        digest = sha256(key[1].encode("utf-8")).hexdigest()[:16]
         candidates.extend(sorted(self.storage_dir.glob(
-            f"camera-{key[0]}-{digest}-{key[2]}x{key[3]}-view-*.npz"
+            f"camera-{key[0]}-{key[2]}x{key[3]}-view-*.npz"
         )))
+        legacy_pattern = re.compile(
+            rf"camera-{key[0]}-[a-f0-9]{{16}}-{key[2]}x{key[3]}"
+            rf"(?:-view-[a-f0-9]{{16}})?\.npz"
+        )
+        legacy_candidates = [
+            candidate
+            for candidate in sorted(self.storage_dir.glob(
+                f"camera-{key[0]}-*-{key[2]}x{key[3]}*.npz"
+            ))
+            if legacy_pattern.fullmatch(candidate.name)
+        ]
+        candidates.extend(legacy_candidates)
         loaded: list[tuple[str, Any]] = []
-        for candidate in candidates:
+        loaded_hashes: set[str] = set()
+        for candidate in dict.fromkeys(candidates):
             if not candidate.exists():
                 continue
             try:
@@ -1375,13 +1385,37 @@ class PrivacyBackgroundReconstructor:
                     background = np.asarray(values["background"], dtype=np.uint8)
                 if background.shape != (key[3], key[2], 3):
                     continue
+                background_hash = self._background_sha256(background)
+                if background_hash in loaded_hashes:
+                    continue
                 view_id = "legacy"
-                if candidate != path:
+                if "-view-" in candidate.stem:
                     view_id = candidate.stem.rsplit("-view-", 1)[-1]
+                elif candidate != path:
+                    view_id = background_hash[:16]
                 if view_id and all(existing != view_id for existing, _ in loaded):
                     loaded.append((view_id, background))
+                    loaded_hashes.add(background_hash)
             except (OSError, ValueError, KeyError):
                 continue
+        if loaded and legacy_candidates:
+            try:
+                if len(loaded) == 1:
+                    self._persist(key, loaded[0][1], view_id="legacy")
+                    loaded = [("legacy", loaded[0][1])]
+                else:
+                    for view_id, background in loaded:
+                        stable_view_id = view_id if view_id != "legacy" else self._view_id(background)
+                        self._persist(key, background, view_id=stable_view_id)
+                    loaded = [
+                        (view_id if view_id != "legacy" else self._view_id(background), background)
+                        for view_id, background in loaded
+                    ]
+            except OSError:
+                pass
+            else:
+                for legacy_path in legacy_candidates:
+                    legacy_path.unlink(missing_ok=True)
         return loaded
 
     def _view_id(self, background: Any) -> str:
