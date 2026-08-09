@@ -69,6 +69,52 @@ final class PrivacyDataTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
 
+    @MainActor
+    func testCancelledPlanRefreshCannotPublishLateResult() async throws {
+        let plan = allowedPlan()
+        let repository = AppRepository(
+            cache: try makeCache(),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            accountDeletionPlanLoader: {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return plan
+            }
+        )
+        let model = PrivacyDataViewModel(repository: repository)
+
+        model.refreshPlan()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        model.cancelInFlightTasks()
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertNil(model.plan)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    @MainActor
+    func testCancelledExportRemovesLateGeneratedFile() async throws {
+        let payload = Data("{\"schema_version\":1}".utf8)
+        let repository = AppRepository(
+            cache: try makeCache(),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            accountExporter: {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return payload
+            }
+        )
+        let model = PrivacyDataViewModel(repository: repository)
+
+        model.exportData()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        model.cancelInFlightTasks()
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertNil(model.exportURL)
+        XCTAssertFalse(model.isExporting)
+        XCTAssertNil(model.errorMessage)
+    }
+
     private func makeCache() throws -> DiskCache {
         try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true))
     }

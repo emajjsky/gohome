@@ -231,6 +231,7 @@ struct PrivacyDataView: View {
     let onAccountDeleted: () -> Void
     @State private var shareItem: ExportShareItem?
     @State private var confirmsDeletion = false
+    @State private var deletionTask: Task<Void, Never>?
 
     init(model: PrivacyDataViewModel, onAccountDeleted: @escaping () -> Void) {
         _model = StateObject(wrappedValue: model)
@@ -318,12 +319,17 @@ struct PrivacyDataView: View {
         .alert("永久删除账号？", isPresented: $confirmsDeletion) {
             Button("取消", role: .cancel) {}
             Button("永久删除", role: .destructive) {
-                Task {
+                deletionTask = Task {
                     if await model.deleteAccount() { onAccountDeleted() }
                 }
             }
         } message: {
             Text(deletionConfirmationMessage)
+        }
+        .onDisappear {
+            deletionTask?.cancel()
+            deletionTask = nil
+            model.cancelInFlightTasks()
         }
     }
 
