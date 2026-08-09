@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from ipaddress import ip_network
 from pathlib import Path
+from threading import Lock
 from typing import Any, Callable, Dict, Iterable
 from urllib.parse import urlsplit, urlunsplit
 import re
 import socket
 import subprocess
+import time
 
 
 MAC_RE = re.compile(r"(?:lladdr|HWaddr)\s+([0-9a-f]{2}(?::[0-9a-f]{2}){5})", re.IGNORECASE)
@@ -102,6 +105,7 @@ class CameraEndpointResolver:
         port_timeout_seconds: float = 0.18,
         minimum_match_score: float = 20.0,
         minimum_match_margin: float = 8.0,
+        discovery_cache_seconds: float = 5.0,
     ) -> None:
         self._local_ip_resolver = local_ip_resolver
         self._probe = probe
@@ -109,6 +113,9 @@ class CameraEndpointResolver:
         self._port_timeout_seconds = max(0.05, float(port_timeout_seconds))
         self._minimum_match_score = max(0.0, float(minimum_match_score))
         self._minimum_match_margin = max(0.0, float(minimum_match_margin))
+        self._discovery_cache_seconds = max(0.0, float(discovery_cache_seconds))
+        self._discovery_lock = Lock()
+        self._discovery_cache: dict[tuple[str, int], tuple[float, list[tuple[str, str]]]] = {}
 
     def observe(self, camera: Dict[str, Any]) -> CameraEndpoint | None:
         parsed = parse_endpoint(str(camera.get("stream_url") or ""))
@@ -135,15 +142,10 @@ class CameraEndpointResolver:
         old_host, port, path = parsed
         expected_identity = normalize_network_identity(network_identity)
         used = {normalize_network_identity(item) for item in (used_identities or set()) if item}
-        hosts = list(local_subnet_hosts(self._local_ip_resolver()))
-        hosts.sort(key=lambda host: (host != old_host, host))
+        discovered = self._discover_hosts(port)
+        discovered.sort(key=lambda item: (item[0] != old_host, item[0]))
         candidates: list[tuple[CameraEndpoint, float]] = []
-        for host in hosts:
-            if not self._port_open(host, port):
-                continue
-            identity = network_identity_for_host(host)
-            if not identity:
-                continue
+        for host, identity in discovered:
             if expected_identity and identity != expected_identity:
                 continue
             if identity and identity in used and identity != expected_identity:
@@ -174,6 +176,33 @@ class CameraEndpointResolver:
         if candidates[0][1] - runner_up < self._minimum_match_margin:
             return None
         return candidates[0][0]
+
+    def _discover_hosts(self, port: int) -> list[tuple[str, str]]:
+        local_ip = str(self._local_ip_resolver() or "").strip()
+        cache_key = (local_ip, int(port))
+        now = time.monotonic()
+        with self._discovery_lock:
+            cached = self._discovery_cache.get(cache_key)
+            if cached is not None and now - cached[0] <= self._discovery_cache_seconds:
+                return list(cached[1])
+
+        hosts = list(local_subnet_hosts(local_ip))
+        if not hosts:
+            return []
+        with ThreadPoolExecutor(max_workers=min(64, len(hosts))) as executor:
+            results = list(executor.map(lambda host: self._inspect_host(host, port), hosts))
+        discovered = [result for result in results if result is not None]
+        with self._discovery_lock:
+            self._discovery_cache = {cache_key: (time.monotonic(), discovered)}
+        return list(discovered)
+
+    def _inspect_host(self, host: str, port: int) -> tuple[str, str] | None:
+        if not self._port_open(host, port):
+            return None
+        identity = network_identity_for_host(host)
+        if not identity:
+            return None
+        return host, identity
 
     def _port_open(self, host: str, port: int) -> bool:
         try:

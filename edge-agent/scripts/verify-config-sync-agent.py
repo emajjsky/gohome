@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.camera_endpoint_resolver import CameraEndpoint
 from app.config_sync_agent import ConfigSyncAgent
 from app.storage import Storage
 
@@ -65,6 +66,43 @@ def main() -> None:
             },
             monotonic_clock=lambda: monotonic_now[0],
         )
+
+        class InitialRecoveryResolver:
+            def __init__(self) -> None:
+                self.resolve_calls: list[dict] = []
+
+            def observe(self, _camera: dict) -> None:
+                return None
+
+            def resolve(self, camera: dict, **kwargs: object) -> CameraEndpoint:
+                self.resolve_calls.append({"camera": dict(camera), **kwargs})
+                return CameraEndpoint("192.168.1.44", 554, "/1/2", "00:11:22:33:44:55")
+
+        initial_recovery_resolver = InitialRecoveryResolver()
+        agent.endpoint_resolver = initial_recovery_resolver  # type: ignore[assignment]
+        binding, connection_update = agent._reconcile_camera_endpoint(
+            camera={
+                "id": 1,
+                "stream_url": "rtsp://192.168.1.11:554/1/2",
+                "enabled": True,
+                "status": "online",
+            },
+            remote_stream_url="rtsp://192.168.1.11:554/1/2",
+            endpoint_binding={},
+            used_endpoint_identities=set(),
+        )
+        if (
+            len(initial_recovery_resolver.resolve_calls) != 1
+            or initial_recovery_resolver.resolve_calls[0].get("network_identity") != ""
+            or binding.get("resolved_stream_url") != "rtsp://192.168.1.44:554/1/2"
+            or not connection_update
+            or connection_update.get("reason") != "dhcp_endpoint_changed"
+        ):
+            raise SystemExit(
+                "an unreachable camera without stored MAC identity did not enter scene-based recovery: "
+                f"calls={initial_recovery_resolver.resolve_calls} binding={binding} update={connection_update}"
+            )
+        agent.endpoint_resolver = None
 
         if not agent.wake() or agent.wake():
             raise SystemExit("config sync wake requests must be coalesced for two seconds")

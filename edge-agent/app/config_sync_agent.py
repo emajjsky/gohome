@@ -716,7 +716,6 @@ class ConfigSyncAgent:
     ) -> tuple[Dict[str, Any], Dict[str, Any] | None]:
         if self.endpoint_resolver is None or not bool(camera.get("enabled", True)):
             return endpoint_binding, self._endpoint_update(remote_stream_url, endpoint_binding)
-        status = str(camera.get("status") or "").strip().lower()
         identity = str(endpoint_binding.get("network_identity") or "").strip().lower()
         observed = self.endpoint_resolver.observe(camera)
         if observed is not None:
@@ -727,10 +726,6 @@ class ConfigSyncAgent:
             }
             used_endpoint_identities.add(observed.network_identity)
             return binding, self._endpoint_update(remote_stream_url, binding)
-        if status not in {"offline", "error", "reconnecting", "configuring"}:
-            return endpoint_binding, self._endpoint_update(remote_stream_url, endpoint_binding)
-        if not identity:
-            return endpoint_binding, None
         replacement = self.endpoint_resolver.resolve(
             camera,
             network_identity=identity,
