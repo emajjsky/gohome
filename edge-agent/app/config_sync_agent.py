@@ -11,6 +11,7 @@ import os
 import tempfile
 import time
 
+from .camera_endpoint_resolver import CameraEndpointResolver
 from .video_privacy import normalize_privacy_mode
 
 
@@ -28,6 +29,7 @@ class ConfigSyncAgent:
         presence_status_resolver: Callable[..., Dict[str, Any]] | None = None,
         binding_summary_writer: Callable[[Dict[str, Any] | None], Any] | None = None,
         event_state_handler: Callable[[Dict[str, Any]], Dict[str, Any]] | None = None,
+        endpoint_resolver: CameraEndpointResolver | None = None,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.storage = storage
@@ -40,6 +42,7 @@ class ConfigSyncAgent:
         self.presence_status_resolver = presence_status_resolver or self.storage.camera_presence_status
         self.binding_summary_writer = binding_summary_writer
         self.event_state_handler = event_state_handler or self._apply_event_state_to_storage
+        self.endpoint_resolver = endpoint_resolver
         self.monotonic_clock = monotonic_clock or time.monotonic
         self._stop = Event()
         self._wake = Event()
@@ -255,6 +258,12 @@ class ConfigSyncAgent:
         state = self._load_state()
         original_state = deepcopy(state)
         camera_map = dict(state.get("camera_map") or {})
+        endpoint_bindings = dict(state.get("camera_endpoints") or {})
+        used_endpoint_identities = {
+            str(item.get("network_identity") or "").strip().lower()
+            for item in endpoint_bindings.values()
+            if isinstance(item, dict) and item.get("network_identity")
+        }
         desired_remote_ids: set[str] = set()
         reports: list[Dict[str, Any]] = []
         applied = 0
@@ -275,7 +284,12 @@ class ConfigSyncAgent:
                 })
                 continue
             desired_remote_ids.add(remote_id)
-            report = self._apply_camera(camera_config, camera_map)
+            report = self._apply_camera(
+                camera_config,
+                camera_map,
+                endpoint_bindings,
+                used_endpoint_identities,
+            )
             reports.append(report)
             if report.get("local_camera_id"):
                 desired_local_ids.add(int(report["local_camera_id"]))
@@ -298,6 +312,7 @@ class ConfigSyncAgent:
                     "enabled": False,
                 })
             camera_map.pop(remote_id, None)
+            endpoint_bindings.pop(remote_id, None)
 
         if authoritative_camera_list:
             for local_camera in self.storage.list_cameras(include_secret=False):
@@ -325,6 +340,7 @@ class ConfigSyncAgent:
         self._refresh_camera_runtime_reports(reports, runtime_cameras)
 
         state["camera_map"] = camera_map
+        state["camera_endpoints"] = endpoint_bindings
         state["config_version"] = str(config.get("config_version") or "")
         self.observe_video_privacy_mode(
             normalize_privacy_mode(
@@ -583,9 +599,25 @@ class ConfigSyncAgent:
                 "error": str(exc),
             }
 
-    def _apply_camera(self, camera_config: Dict[str, Any], camera_map: Dict[str, Any]) -> Dict[str, Any]:
+    def _apply_camera(
+        self,
+        camera_config: Dict[str, Any],
+        camera_map: Dict[str, Any],
+        endpoint_bindings: Dict[str, Any],
+        used_endpoint_identities: set[str],
+    ) -> Dict[str, Any]:
         remote_id = self._remote_camera_id(camera_config)
-        stream_url = str(camera_config.get("stream_url") or "").strip()
+        remote_stream_url = str(camera_config.get("stream_url") or "").strip()
+        endpoint_binding = dict(endpoint_bindings.get(remote_id) or {})
+        recorded_remote_url = str(endpoint_binding.get("remote_stream_url") or "").strip()
+        resolved_stream_url = str(endpoint_binding.get("resolved_stream_url") or "").strip()
+        if recorded_remote_url and remote_stream_url != recorded_remote_url:
+            if remote_stream_url == resolved_stream_url:
+                endpoint_binding["remote_stream_url"] = remote_stream_url
+            else:
+                endpoint_binding = {}
+                resolved_stream_url = ""
+        stream_url = resolved_stream_url or remote_stream_url
         enabled = self._as_bool(camera_config.get("enabled", True))
         if not stream_url or bool(camera_config.get("setup_required")):
             local_id = camera_map.get(remote_id)
@@ -626,6 +658,22 @@ class ConfigSyncAgent:
         local_camera = self.storage.get_camera(int(local_camera["id"]), include_secret=True) or local_camera
         camera_map[remote_id] = int(local_camera["id"])
 
+        endpoint_binding, endpoint_update = self._reconcile_camera_endpoint(
+            camera=local_camera,
+            remote_stream_url=remote_stream_url,
+            endpoint_binding=endpoint_binding,
+            used_endpoint_identities=used_endpoint_identities,
+        )
+        if endpoint_binding:
+            endpoint_bindings[remote_id] = endpoint_binding
+        else:
+            endpoint_bindings.pop(remote_id, None)
+        if endpoint_update and endpoint_update["stream_url"] != str(local_camera.get("stream_url") or ""):
+            local_camera = self.storage.update_camera(
+                int(local_camera["id"]),
+                {"stream_url": endpoint_update["stream_url"]},
+            ) or local_camera
+
         status = str(local_camera.get("status") or "")
         last_error = str(local_camera.get("last_error") or "")
         if not enabled:
@@ -639,7 +687,7 @@ class ConfigSyncAgent:
             status = "configured"
             last_error = ""
 
-        return {
+        report = {
             "camera_id": remote_id,
             "local_camera_id": int(local_camera["id"]),
             "name": payload["name"],
@@ -653,6 +701,65 @@ class ConfigSyncAgent:
                 int(local_camera["id"]),
                 expected_interval_seconds=int(self.storage.get_rules().get("capture_interval_seconds") or 5),
             ),
+        }
+        if endpoint_update:
+            report["connection_update"] = endpoint_update
+        return report
+
+    def _reconcile_camera_endpoint(
+        self,
+        *,
+        camera: Dict[str, Any],
+        remote_stream_url: str,
+        endpoint_binding: Dict[str, Any],
+        used_endpoint_identities: set[str],
+    ) -> tuple[Dict[str, Any], Dict[str, Any] | None]:
+        if self.endpoint_resolver is None or not bool(camera.get("enabled", True)):
+            return endpoint_binding, self._endpoint_update(remote_stream_url, endpoint_binding)
+        status = str(camera.get("status") or "").strip().lower()
+        identity = str(endpoint_binding.get("network_identity") or "").strip().lower()
+        observed = self.endpoint_resolver.observe(camera)
+        if observed is not None:
+            binding = {
+                "remote_stream_url": remote_stream_url,
+                "resolved_stream_url": observed.stream_url,
+                "network_identity": observed.network_identity,
+            }
+            used_endpoint_identities.add(observed.network_identity)
+            return binding, self._endpoint_update(remote_stream_url, binding)
+        if status not in {"offline", "error", "reconnecting", "configuring"}:
+            return endpoint_binding, self._endpoint_update(remote_stream_url, endpoint_binding)
+        if not identity:
+            return endpoint_binding, None
+        replacement = self.endpoint_resolver.resolve(
+            camera,
+            network_identity=identity,
+            used_identities=used_endpoint_identities - {identity},
+        )
+        if replacement is None:
+            return endpoint_binding, self._endpoint_update(remote_stream_url, endpoint_binding)
+        binding = {
+            "remote_stream_url": remote_stream_url,
+            "resolved_stream_url": replacement.stream_url,
+            "network_identity": replacement.network_identity,
+        }
+        used_endpoint_identities.add(replacement.network_identity)
+        return binding, self._endpoint_update(remote_stream_url, binding)
+
+    @staticmethod
+    def _endpoint_update(
+        remote_stream_url: str,
+        endpoint_binding: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        resolved_stream_url = str(endpoint_binding.get("resolved_stream_url") or "").strip()
+        network_identity = str(endpoint_binding.get("network_identity") or "").strip().lower()
+        if not resolved_stream_url or not network_identity or resolved_stream_url == remote_stream_url:
+            return None
+        return {
+            "confirmed": True,
+            "stream_url": resolved_stream_url,
+            "network_identity": network_identity,
+            "reason": "dhcp_endpoint_changed",
         }
 
     def _build_report(self, config: Dict[str, Any], apply_result: Dict[str, Any]) -> Dict[str, Any]:

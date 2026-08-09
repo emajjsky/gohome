@@ -62,6 +62,10 @@ test('native device and camera mutations are creator-only and stay bound to one 
       id: 'binding-device-test', family_id: Number(familyID), device_id: 'edge-device-test',
       device_name: '测试盒子', status: 'active', bound_at: new Date().toISOString(),
     });
+    app.store.db.device_tokens.push({
+      id: 'token-device-test', token: 'edge-device-test-token', device_id: 'edge-device-test',
+      family_id: Number(familyID), status: 'active', created_at: new Date().toISOString(),
+    });
 
     const memberCreate = await request(baseURL, '/api/cameras', {
       method: 'POST', headers: member.headers,
@@ -124,11 +128,39 @@ test('native device and camera mutations are creator-only and stay bound to one 
     assert.equal(connectionUpdated.body.sync_status, 'pending_edge_sync');
     assert.equal(app.store.db.cameras[String(created.body.id)].password, 'camera-secret');
 
+    const endpointReconciled = await request(baseURL, '/api/v1/device/sync', {
+      method: 'POST', headers: { Authorization: 'Bearer edge-device-test-token' },
+      body: JSON.stringify({
+        device_id: 'edge-device-test',
+        cameras: [{
+          camera_id: String(created.body.id),
+          local_camera_id: 31,
+          status: 'online',
+          sync_status: 'synced',
+          connection_update: {
+            confirmed: true,
+            stream_url: 'rtsp://192.168.1.4:554/1/2',
+            network_identity: 'A8-B5-8E-A8-A0-8C',
+            reason: 'dhcp_endpoint_changed',
+          },
+        }],
+      }),
+    });
+    assert.equal(endpointReconciled.response.status, 200);
+    assert.equal(app.store.db.cameras[String(created.body.id)].stream_url, 'rtsp://192.168.1.4:554/1/2');
+    assert.equal(app.store.db.cameras[String(created.body.id)].network_identity, 'a8:b5:8e:a8:a0:8c');
+    assert.equal(app.store.db.cameras[String(created.body.id)].sync_status, 'edge_endpoint_reconciled');
+    const reconciledConfig = await request(baseURL, '/api/v1/device/config', {
+      headers: { Authorization: 'Bearer edge-device-test-token' },
+    });
+    assert.equal(reconciledConfig.body.cameras[0].stream_url, 'rtsp://192.168.1.4:554/1/2');
+    assert.equal(reconciledConfig.body.cameras[0].network_identity, 'a8:b5:8e:a8:a0:8c');
+
     const invalidConnection = await request(baseURL, `/api/cameras/${created.body.id}`, {
       method: 'PATCH', headers: owner.headers, body: JSON.stringify({ stream_url: 'http://192.168.1.7/live' }),
     });
     assert.equal(invalidConnection.response.status, 400);
-    assert.equal(app.store.db.cameras[String(created.body.id)].stream_url, 'rtsp://192.168.1.7:554/1/2');
+    assert.equal(app.store.db.cameras[String(created.body.id)].stream_url, 'rtsp://192.168.1.4:554/1/2');
 
     const unbound = await request(baseURL, '/api/device-bindings/binding-device-test', {
       method: 'DELETE', headers: owner.headers,

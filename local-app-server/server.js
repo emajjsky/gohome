@@ -1857,6 +1857,10 @@ function createLocalAppServer(options = {}) {
             source: String(payload.source || existing.source || "app_server_config"),
             username: payload.username ?? existing.username ?? null,
             password: payload.password !== undefined ? String(payload.password || "") : (existing.password || null),
+            network_identity: String(payload.network_identity || existing.network_identity || "")
+                .trim()
+                .toLowerCase()
+                .replace(/-/g, ":"),
             local_camera_id: payload.local_camera_id ?? existing.local_camera_id ?? null,
             last_error: String(payload.last_error || existing.last_error || ""),
             last_seen_at: existing.last_seen_at || null,
@@ -2049,6 +2053,7 @@ function createLocalAppServer(options = {}) {
                 stream_url: camera.stream_url || "",
                 username: camera.username || "",
                 password: camera.password || "",
+                network_identity: camera.network_identity || "",
                 enabled: Boolean(camera.enabled),
             }))
             .sort()
@@ -2225,6 +2230,7 @@ function createLocalAppServer(options = {}) {
             stream_url: camera.stream_url || "",
             username: camera.username || "",
             password: camera.password || "",
+            network_identity: camera.network_identity || "",
             setup_required: !camera.stream_url,
             updated_at: camera.updated_at || null,
         };
@@ -7992,6 +7998,28 @@ function createLocalAppServer(options = {}) {
                 created_at: existing.created_at || receivedAt,
                 updated_at: existing.updated_at || receivedAt,
             };
+            const connectionUpdate = report.connection_update && typeof report.connection_update === "object"
+                ? report.connection_update
+                : null;
+            const resolvedStreamUrl = String(connectionUpdate?.stream_url || "").trim();
+            const resolvedNetworkIdentity = String(connectionUpdate?.network_identity || "")
+                .trim()
+                .toLowerCase()
+                .replace(/-/g, ":");
+            const validResolvedUrl = /^rtsps?:\/\/[^/\s]+(?:\/[^\s]*)?$/i.test(resolvedStreamUrl);
+            const identityConflict = Boolean(
+                resolvedNetworkIdentity
+                && existing.network_identity
+                && String(existing.network_identity).toLowerCase().replace(/-/g, ":") !== resolvedNetworkIdentity,
+            );
+            if (connectionUpdate?.confirmed === true && validResolvedUrl && resolvedNetworkIdentity && !identityConflict) {
+                camera.stream_url = resolvedStreamUrl;
+                camera.network_identity = resolvedNetworkIdentity;
+                camera.status = "pending_edge_verify";
+                camera.sync_status = "edge_endpoint_reconciled";
+                camera.last_error = "";
+                camera.updated_at = receivedAt;
+            }
             store.db.cameras[targetKey] = camera;
             updatedCameras.push(publicCamera(camera));
         }

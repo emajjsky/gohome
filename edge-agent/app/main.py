@@ -28,6 +28,7 @@ from .app_runtime_guard_service import AppRuntimeGuardService
 from .box_init_service import ADMIN_SESSION_COOKIE, AdminLoginThrottled, BoxInitService
 from .camera_agent import CameraAgent, CameraError, bounded_stream_fps
 from .camera_config_authority import camera_config_authority
+from .camera_endpoint_resolver import CameraEndpointResolver
 from .config_sync_agent import ConfigSyncAgent
 from .detect_agent import DetectAgent
 from .device_binding_state import DeviceBindingState
@@ -114,6 +115,14 @@ def local_ip() -> str:
             return sock.getsockname()[0]
     except OSError:
         return socket.gethostbyname(socket.gethostname())
+
+
+def _probe_camera_endpoint(camera: Dict[str, Any]) -> bool:
+    try:
+        camera_agent.capture_frame(camera, prefer_cache=False)
+    except (CameraError, OSError, RuntimeError):
+        return False
+    return True
 
 
 def local_device_identity() -> Dict[str, Any]:
@@ -645,6 +654,10 @@ worker = EdgeWorker(
 )
 synchronized_pose_stream = SynchronizedPoseStream(camera_agent, worker.continual_pose_tracker)
 package_artifact_service = PackageArtifactService(storage=storage, settings=settings)
+camera_endpoint_resolver = CameraEndpointResolver(
+    local_ip_resolver=local_ip,
+    probe=lambda camera: _probe_camera_endpoint(camera),
+)
 config_sync_agent = ConfigSyncAgent(
     storage=storage,
     settings=settings,
@@ -653,6 +666,7 @@ config_sync_agent = ConfigSyncAgent(
     token_resolver=read_local_device_token,
     binding_summary_writer=binding_state.write,
     event_state_handler=worker.apply_event_state_command,
+    endpoint_resolver=camera_endpoint_resolver,
     runtime_status_resolver=lambda: {
         "worker_running": worker.is_running,
         "lan_url": f"http://{local_ip()}:{settings.port}",
