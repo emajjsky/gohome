@@ -39,7 +39,14 @@ final class MemoryViewModel: ObservableObject {
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
     private var interactionCancellations: [String: () -> Void] = [:]
+    private var interactionContexts: [String: InteractionContext] = [:]
+    private var nextInteractionGeneration: UInt64 = 0
     private var hasStarted = false
+
+    private struct InteractionContext {
+        let generation: UInt64
+        let memory: FamilyMemory
+    }
 
     init(repository: AppRepository?, scope: CacheScope?, seed: FamilyMemoriesResponse? = nil) {
         self.repository = repository
@@ -112,7 +119,7 @@ final class MemoryViewModel: ObservableObject {
                 try await repository.createMemory(familyID: scope.familyID, request: request)
             }
             replace(saved, prependIfMissing: existing == nil)
-            await persist()
+            await persist(currentResponse())
             return SaveOutcome(memory: saved, uploadedAssets: uploadedAssets)
         } catch is CancellationError {
             return nil
@@ -123,50 +130,59 @@ final class MemoryViewModel: ObservableObject {
     }
 
     func toggleFavorite(_ memory: FamilyMemory) async {
-        guard let repository, let scope, !pendingIDs.contains(memory.id) else { return }
+        guard let repository, let scope, let context = beginInteraction(for: memory) else { return }
         let task = Task { @MainActor [weak self, repository, scope] in
             guard let self else { return }
-            defer { self.finishInteraction(memory.id) }
-            await self.performFavorite(memory, repository: repository, scope: scope)
+            defer { self.finishInteraction(memoryID: context.memory.id, generation: context.generation) }
+            await self.performFavorite(context, repository: repository, scope: scope)
         }
-        interactionCancellations[memory.id] = { task.cancel() }
+        interactionCancellations[context.memory.id] = { task.cancel() }
         await task.value
     }
 
     func addComment(_ body: String, to memory: FamilyMemory) async -> Bool {
-        guard let repository, let scope, !pendingIDs.contains(memory.id) else { return false }
+        guard let repository, let scope else { return false }
         let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedBody.isEmpty else { return false }
+        guard let context = beginInteraction(for: memory) else { return false }
         let task = Task { @MainActor [weak self, repository, scope] in
             guard let self else { return false }
-            defer { self.finishInteraction(memory.id) }
-            return await self.performComment(trimmedBody, to: memory, repository: repository, scope: scope)
+            defer { self.finishInteraction(memoryID: context.memory.id, generation: context.generation) }
+            return await self.performComment(trimmedBody, context: context, repository: repository, scope: scope)
         }
-        interactionCancellations[memory.id] = { task.cancel() }
+        interactionCancellations[context.memory.id] = { task.cancel() }
         return await task.value
     }
 
     func delete(_ memory: FamilyMemory) async -> Bool {
-        guard let repository, let scope, !pendingIDs.contains(memory.id) else { return false }
+        guard let repository, let scope, let context = beginInteraction(for: memory) else { return false }
         let task = Task { @MainActor [weak self, repository, scope] in
             guard let self else { return false }
-            defer { self.finishInteraction(memory.id) }
-            return await self.performDelete(memory, repository: repository, scope: scope)
+            defer { self.finishInteraction(memoryID: context.memory.id, generation: context.generation) }
+            return await self.performDelete(context, repository: repository, scope: scope)
         }
-        interactionCancellations[memory.id] = { task.cancel() }
+        interactionCancellations[context.memory.id] = { task.cancel() }
         return await task.value
     }
 
     func cancelInFlightInteractions() {
-        interactionCancellations.values.forEach { $0() }
+        let contexts = interactionContexts
+        for (memoryID, context) in contexts {
+            interactionCancellations[memoryID]?()
+            interactionCancellations[memoryID] = nil
+            interactionContexts[memoryID] = nil
+            pendingIDs.remove(memoryID)
+            replace(context.memory)
+        }
     }
 
     private func performFavorite(
-        _ memory: FamilyMemory,
+        _ context: InteractionContext,
         repository: AppRepository,
         scope: CacheScope
     ) async {
-        pendingIDs.insert(memory.id)
+        guard isCurrentInteraction(context) else { return }
+        let memory = context.memory
         let nextFavorite = !memory.isFavorite
         replace(memory.withInteractions(
             favoriteCount: max(0, memory.favoriteCount + (nextFavorite ? 1 : -1)),
@@ -179,13 +195,17 @@ final class MemoryViewModel: ObservableObject {
                 favorite: nextFavorite
             )
             try Task.checkCancellation()
+            guard isCurrentInteraction(context) else { return }
             replace(updated)
-            await persist()
-            try Task.checkCancellation()
+            await persist(currentResponse())
         } catch is CancellationError {
-            replace(memory)
-            await persist()
+            restoreIfCurrent(context)
         } catch {
+            guard isCurrentInteraction(context) else { return }
+            guard !Task.isCancelled else {
+                restoreIfCurrent(context)
+                return
+            }
             replace(memory)
             errorMessage = "喜欢状态没有保存，请稍后重试"
         }
@@ -193,11 +213,12 @@ final class MemoryViewModel: ObservableObject {
 
     private func performComment(
         _ body: String,
-        to memory: FamilyMemory,
+        context: InteractionContext,
         repository: AppRepository,
         scope: CacheScope
     ) async -> Bool {
-        pendingIDs.insert(memory.id)
+        guard isCurrentInteraction(context) else { return false }
+        let memory = context.memory
         let optimisticComment = MemoryComment(
             id: "local-\(UUID().uuidString)",
             authorUserID: scope.userID,
@@ -212,15 +233,19 @@ final class MemoryViewModel: ObservableObject {
                 body: body
             )
             try Task.checkCancellation()
+            guard isCurrentInteraction(context) else { return false }
             replace(updated)
-            await persist()
-            try Task.checkCancellation()
+            await persist(currentResponse())
             return true
         } catch is CancellationError {
-            replace(memory)
-            await persist()
+            restoreIfCurrent(context)
             return false
         } catch {
+            guard isCurrentInteraction(context) else { return false }
+            guard !Task.isCancelled else {
+                restoreIfCurrent(context)
+                return false
+            }
             replace(memory)
             errorMessage = "评论没有发布，请稍后重试"
             return false
@@ -228,33 +253,58 @@ final class MemoryViewModel: ObservableObject {
     }
 
     private func performDelete(
-        _ memory: FamilyMemory,
+        _ context: InteractionContext,
         repository: AppRepository,
         scope: CacheScope
     ) async -> Bool {
-        pendingIDs.insert(memory.id)
-        let original = currentResponse()
+        guard isCurrentInteraction(context) else { return false }
+        let memory = context.memory
         do {
             try await repository.deleteMemory(familyID: scope.familyID, memoryID: memory.id)
             try Task.checkCancellation()
-            var value = original
+            guard isCurrentInteraction(context) else { return false }
+            var value = currentResponse()
             value = FamilyMemoriesResponse(memories: value.memories.filter { $0.id != memory.id }, revision: UUID().uuidString)
             state.value = value
-            await repository.cacheMemories(value, scope: scope)
-            try Task.checkCancellation()
+            await persist(value)
             return true
         } catch is CancellationError {
-            state.value = original
-            await repository.cacheMemories(original, scope: scope)
+            restoreIfCurrent(context)
             return false
         } catch {
+            guard isCurrentInteraction(context) else { return false }
+            guard !Task.isCancelled else {
+                restoreIfCurrent(context)
+                return false
+            }
             errorMessage = "删除失败，请稍后重试"
             return false
         }
     }
 
-    private func finishInteraction(_ memoryID: String) {
+    private func beginInteraction(for memory: FamilyMemory) -> InteractionContext? {
+        guard !pendingIDs.contains(memory.id),
+              let current = memories.first(where: { $0.id == memory.id }) else { return nil }
+        nextInteractionGeneration += 1
+        let context = InteractionContext(generation: nextInteractionGeneration, memory: current)
+        interactionContexts[memory.id] = context
+        pendingIDs.insert(memory.id)
+        return context
+    }
+
+    private func isCurrentInteraction(_ context: InteractionContext) -> Bool {
+        interactionContexts[context.memory.id]?.generation == context.generation
+    }
+
+    private func restoreIfCurrent(_ context: InteractionContext) {
+        guard isCurrentInteraction(context) else { return }
+        replace(context.memory)
+    }
+
+    private func finishInteraction(memoryID: String, generation: UInt64) {
+        guard interactionContexts[memoryID]?.generation == generation else { return }
         interactionCancellations[memoryID] = nil
+        interactionContexts[memoryID] = nil
         pendingIDs.remove(memoryID)
     }
 
@@ -273,8 +323,8 @@ final class MemoryViewModel: ObservableObject {
         state.value ?? FamilyMemoriesResponse(memories: [], revision: UUID().uuidString)
     }
 
-    private func persist() async {
-        guard let repository, let scope, let value = state.value else { return }
+    private func persist(_ value: FamilyMemoriesResponse) async {
+        guard let repository, let scope else { return }
         await repository.cacheMemories(value, scope: scope)
     }
 

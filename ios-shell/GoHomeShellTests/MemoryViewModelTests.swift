@@ -342,6 +342,114 @@ final class MemoryViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLateFavoriteSuccessCannotOverwriteOrFinishANewerFavorite() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = makeMemory(id: "favorite-late", body: "收藏代次")
+        let favorited = makeMemory(id: original.id, body: original.body, favoriteCount: 1, isFavorite: true)
+        let calls = MemoryInteractionCallCounter()
+        let firstResponse = IgnoringCancellationResponseGate<FamilyMemoryEnvelope>()
+        let secondResponse = IgnoringCancellationResponseGate<FamilyMemoryEnvelope>()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoryFavoriteUpdater: { _, _, _ in
+                if await calls.next() == 0 {
+                    return await firstResponse.wait()
+                }
+                return await secondResponse.wait()
+            }
+        )
+        let model = MemoryViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: FamilyMemoriesResponse(memories: [original], revision: "seed")
+        )
+        let firstAction = Task { @MainActor in await model.toggleFavorite(original) }
+
+        await waitUntil { model.pendingIDs.contains(original.id) }
+        await waitUntilResponse(firstResponse)
+        model.cancelInFlightInteractions()
+        XCTAssertEqual(model.memories.first, original)
+        XCTAssertFalse(model.pendingIDs.contains(original.id))
+
+        let secondAction = Task { @MainActor in await model.toggleFavorite(original) }
+        await waitUntilResponse(secondResponse)
+        await firstResponse.release(FamilyMemoryEnvelope(memory: favorited))
+        await firstAction.value
+
+        XCTAssertTrue(model.pendingIDs.contains(original.id))
+        XCTAssertTrue(model.memories.first?.isFavorite == true)
+        await secondResponse.release(FamilyMemoryEnvelope(memory: favorited))
+        await secondAction.value
+        XCTAssertEqual(model.memories.first, favorited)
+        XCTAssertFalse(model.pendingIDs.contains(original.id))
+        XCTAssertNil(model.errorMessage)
+    }
+
+    @MainActor
+    func testLateCommentSuccessAfterCancellationIsDiscarded() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = makeMemory(id: "comment-late", body: "评论代次")
+        let commented = makeMemory(id: original.id, body: original.body, comments: [
+            MemoryComment(id: "late", authorUserID: "user-1", body: "迟到评论", createdAt: "2026-07-23T08:00:01Z")
+        ])
+        let response = IgnoringCancellationResponseGate<FamilyMemoryEnvelope>()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoryCommentCreator: { _, _, _ in await response.wait() }
+        )
+        let model = MemoryViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: FamilyMemoriesResponse(memories: [original], revision: "seed")
+        )
+        let action = Task { @MainActor in await model.addComment("迟到评论", to: original) }
+
+        await waitUntilResponse(response)
+        model.cancelInFlightInteractions()
+        XCTAssertEqual(model.memories.first, original)
+        XCTAssertFalse(model.pendingIDs.contains(original.id))
+        await response.release(FamilyMemoryEnvelope(memory: commented))
+
+        let didComment = await action.value
+        XCTAssertFalse(didComment)
+        XCTAssertEqual(model.memories.first, original)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    @MainActor
+    func testLateDeleteSuccessAfterCancellationIsDiscarded() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = makeMemory(id: "delete-late", body: "删除代次")
+        let response = IgnoringCancellationResponseGate<MemoryDeleteResponse>()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoryDeleter: { _, memoryID in await response.wait() }
+        )
+        let model = MemoryViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: FamilyMemoriesResponse(memories: [original], revision: "seed")
+        )
+        let action = Task { @MainActor in await model.delete(original) }
+
+        await waitUntilResponse(response)
+        model.cancelInFlightInteractions()
+        await response.release(MemoryDeleteResponse(deleted: true, memoryID: original.id))
+
+        let didDelete = await action.value
+        XCTAssertFalse(didDelete)
+        XCTAssertEqual(model.memories.first, original)
+        XCTAssertFalse(model.pendingIDs.contains(original.id))
+        XCTAssertNil(model.errorMessage)
+    }
+
+    @MainActor
     func testBatchMediaUploadPreservesSelectionOrder() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -563,6 +671,42 @@ private actor CancelledMemoryPublishRecorder {
 
     func recordUploadStarted() { uploadStarted = true }
     func recordCreation(_ request: MemoryDraftRequest) { creationCount += 1 }
+}
+
+private actor MemoryInteractionCallCounter {
+    private var count = 0
+
+    func next() -> Int {
+        defer { count += 1 }
+        return count
+    }
+}
+
+private actor IgnoringCancellationResponseGate<Value: Sendable> {
+    private var continuation: CheckedContinuation<Value, Never>?
+    private(set) var isWaiting = false
+
+    func wait() async -> Value {
+        isWaiting = true
+        return await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release(_ value: Value) {
+        continuation?.resume(returning: value)
+        continuation = nil
+    }
+}
+
+private func waitUntilResponse<Value: Sendable>(
+    _ gate: IgnoringCancellationResponseGate<Value>,
+    timeout: TimeInterval = 1
+) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !(await gate.isWaiting), Date() < deadline {
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    let isWaiting = await gate.isWaiting
+    XCTAssertTrue(isWaiting, "Timed out waiting for memory response")
 }
 
 @MainActor
