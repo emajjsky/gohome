@@ -367,6 +367,7 @@ struct RuleSettingsView: View {
         }
         .background(GoHomeTheme.paper)
         .profileNavigationTitle("守护规则")
+        .onDisappear { model.cancelInFlightPreferenceSaves() }
     }
 
     private func ruleToggle(

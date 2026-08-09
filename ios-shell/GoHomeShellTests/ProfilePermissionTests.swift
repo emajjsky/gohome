@@ -431,6 +431,83 @@ final class ProfilePermissionTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledRuleSaveRollsBackWithoutError() async throws {
+        let original = fixtureProfile(canEdit: true)
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            rulesUpdater: { _, _ in
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                throw APIError.invalidResponse
+            }
+        )
+        let model = makeModel(role: "owner", repository: repository, seed: original)
+        var changed = original.rules
+        changed.fireDetectionEnabled = false
+
+        model.saveRules(changed)
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertTrue(model.savingRules)
+        model.cancelInFlightPreferenceSaves()
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        XCTAssertEqual(model.state.value?.rules, original.rules)
+        XCTAssertFalse(model.savingRules)
+        XCTAssertNil(model.inlineError)
+    }
+
+    @MainActor
+    func testCancelledContentPreferenceSaveRollsBackWithoutError() async throws {
+        let original = fixtureProfile(canEdit: true)
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            carePreferencesUpdater: { _, _ in
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                throw APIError.invalidResponse
+            }
+        )
+        let model = makeModel(role: "owner", repository: repository, seed: original)
+        var changed = original.carePreferences
+        changed.contentSourcesEnabled.toggle()
+
+        model.savePreferences(changed)
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertTrue(model.savingPreferences)
+        model.cancelInFlightPreferenceSaves()
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        XCTAssertEqual(model.state.value?.carePreferences, original.carePreferences)
+        XCTAssertFalse(model.savingPreferences)
+        XCTAssertNil(model.inlineError)
+    }
+
+    @MainActor
+    func testCancelledProductPreferenceSaveRollsBackWithoutError() async throws {
+        let original = fixtureProfile(canEdit: true)
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            productPreferencesUpdater: { _, _ in
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                throw APIError.invalidResponse
+            }
+        )
+        let model = makeModel(role: "owner", repository: repository, seed: original)
+        let changed = ProductPreferences(categories: ["照明与视野"], needs: ["夜间照明"])
+
+        model.saveProductPreferences(changed)
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertTrue(model.savingProductPreferences)
+        model.cancelInFlightPreferenceSaves()
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        XCTAssertEqual(model.state.value?.productPreferences, original.productPreferences)
+        XCTAssertFalse(model.savingProductPreferences)
+        XCTAssertNil(model.inlineError)
+    }
+
+    @MainActor
     func testOnlyCreatorCanSaveCaredForProfile() async throws {
         let updated = try elderProfileFixture()
         let recorder = FamilyMutationRecorder()

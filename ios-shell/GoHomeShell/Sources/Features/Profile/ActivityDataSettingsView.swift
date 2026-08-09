@@ -57,6 +57,7 @@ struct ActivityDataSettingsView: View {
         }
         .background(GoHomeTheme.paper)
         .profileNavigationTitle("活动数据与报告")
+        .onDisappear { model.cancelInFlightPreferenceSaves() }
     }
 
     private func settingToggle(

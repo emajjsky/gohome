@@ -151,6 +151,7 @@ struct ProfileView: View {
         }
         .background(GoHomeTheme.paper)
         .task { model.start() }
+        .onDisappear { model.cancelInFlightPreferenceSaves() }
     }
 
     private var profileHero: some View {

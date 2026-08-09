@@ -167,6 +167,7 @@ struct ContentPreferencesView: View {
                 Task { await pushNotifications.refreshStatus() }
             }
         }
+        .onDisappear { model.cancelInFlightPreferenceSaves() }
         .sheet(item: $editor) { destination in
             switch destination {
             case .quietHours:

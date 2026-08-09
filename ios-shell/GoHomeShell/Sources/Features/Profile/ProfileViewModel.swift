@@ -41,6 +41,9 @@ final class ProfileViewModel: ObservableObject {
     private let repository: AppRepository?
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
+    private var rulesSaveTask: Task<Void, Never>?
+    private var preferencesSaveTask: Task<Void, Never>?
+    private var productPreferencesSaveTask: Task<Void, Never>?
     private var deviceReconciliationTask: Task<Void, Never>?
     private var deviceProgressDismissTask: Task<Void, Never>?
     private var hasStarted = false
@@ -174,17 +177,25 @@ final class ProfileViewModel: ObservableObject {
         inlineError = nil
         replaceRules(rules)
 
-        Task { [repository, scope] in
+        let task = Task { @MainActor [weak self, repository, scope, original] in
+            guard let self else { return }
+            defer {
+                self.rulesSaveTask = nil
+                self.savingRules = false
+            }
             do {
                 let updated = try await repository.updateRules(familyID: scope.familyID, patch: rules.editablePayload)
+                try Task.checkCancellation()
                 replaceRules(updated)
                 await persist()
+            } catch is CancellationError {
+                if let original { self.state.value = original }
             } catch {
                 if let original { state.value = original }
                 inlineError = "守护规则未能保存，请重试"
             }
-            savingRules = false
         }
+        rulesSaveTask = task
     }
 
     func savePreferences(_ preferences: CarePreferences) {
@@ -194,20 +205,28 @@ final class ProfileViewModel: ObservableObject {
         inlineError = nil
         replacePreferences(preferences)
 
-        Task { [repository, scope] in
+        let task = Task { @MainActor [weak self, repository, scope, original] in
+            guard let self else { return }
+            defer {
+                self.preferencesSaveTask = nil
+                self.savingPreferences = false
+            }
             do {
                 let updated = try await repository.updateCarePreferences(
                     familyID: scope.familyID,
                     patch: preferences.editablePayload
                 )
+                try Task.checkCancellation()
                 replacePreferences(updated)
                 await persist()
+            } catch is CancellationError {
+                if let original { self.state.value = original }
             } catch {
                 if let original { state.value = original }
                 inlineError = "内容偏好未能保存，请重试"
             }
-            savingPreferences = false
         }
+        preferencesSaveTask = task
     }
 
     func saveProductPreferences(_ preferences: ProductPreferences) {
@@ -217,20 +236,28 @@ final class ProfileViewModel: ObservableObject {
         inlineError = nil
         replaceProductPreferences(preferences)
 
-        Task { [repository, scope] in
+        let task = Task { @MainActor [weak self, repository, scope, original] in
+            guard let self else { return }
+            defer {
+                self.productPreferencesSaveTask = nil
+                self.savingProductPreferences = false
+            }
             do {
                 let updated = try await repository.updateProductPreferences(
                     familyID: scope.familyID,
                     preferences: preferences
                 )
+                try Task.checkCancellation()
                 replaceProductPreferences(updated)
                 await persist()
+            } catch is CancellationError {
+                if let original { self.state.value = original }
             } catch {
                 if let original { state.value = original }
                 inlineError = "推荐偏好未能保存，请重试"
             }
-            savingProductPreferences = false
         }
+        productPreferencesSaveTask = task
     }
 
     func saveElderProfile(_ payload: ProfilePayload) async -> Bool {
@@ -258,6 +285,12 @@ final class ProfileViewModel: ObservableObject {
 
     func clearError() {
         inlineError = nil
+    }
+
+    func cancelInFlightPreferenceSaves() {
+        rulesSaveTask?.cancel()
+        preferencesSaveTask?.cancel()
+        productPreferencesSaveTask?.cancel()
     }
 
     func refreshFamilyMembers() {
@@ -590,6 +623,9 @@ final class ProfileViewModel: ObservableObject {
 
     deinit {
         loadTask?.cancel()
+        rulesSaveTask?.cancel()
+        preferencesSaveTask?.cancel()
+        productPreferencesSaveTask?.cancel()
         deviceReconciliationTask?.cancel()
         deviceProgressDismissTask?.cancel()
     }
