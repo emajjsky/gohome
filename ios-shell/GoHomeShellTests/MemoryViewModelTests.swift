@@ -649,6 +649,43 @@ final class MemoryViewModelTests: XCTestCase {
         XCTAssertEqual(creationCount, 0)
     }
 
+    @MainActor
+    func testCancelledMemorySaveCannotPublishLateCreateResponse() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let created = makeMemory(id: "late-created", body: "不应落入页面")
+        let response = IgnoringCancellationResponseGate<FamilyMemoryEnvelope>()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoryCreator: { _, _ in await response.wait() },
+            memoryMediaBatchUploader: { _, _ in throw APIError.invalidResponse }
+        )
+        let model = MemoryViewModel(repository: repository, scope: CacheScope(userID: "user-1", familyID: "family-1"))
+        let saveTask = Task { @MainActor in
+            await model.save(
+                existing: nil,
+                body: "不应落入页面",
+                happenedAt: Date(),
+                locationName: "",
+                people: [],
+                retainedMediaIDs: [],
+                newMedia: []
+            )
+        }
+
+        await waitUntilResponse(response)
+        saveTask.cancel()
+        await response.release(FamilyMemoryEnvelope(memory: created))
+        let outcome = await saveTask.value
+
+        XCTAssertNil(outcome)
+        XCTAssertTrue(model.memories.isEmpty)
+        XCTAssertFalse(model.isPublishing)
+        XCTAssertEqual(model.publishPhase, .idle)
+        XCTAssertNil(model.errorMessage)
+    }
+
     private func memoryUpload(_ value: Int) -> MemoryUploadAsset {
         MemoryUploadAsset(
             data: Data([UInt8(value)]),

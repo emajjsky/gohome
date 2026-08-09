@@ -103,6 +103,7 @@ final class MemoryViewModel: ObservableObject {
         newMedia: [MemoryUploadAsset]
     ) async -> SaveOutcome? {
         guard !isPublishing, let repository, let scope else { return nil }
+        let originalResponse = currentResponse()
         isPublishing = true
         publishPhase = .idle
         errorMessage = nil
@@ -145,12 +146,22 @@ final class MemoryViewModel: ObservableObject {
             } else {
                 try await repository.createMemory(familyID: scope.familyID, request: request)
             }
+            try Task.checkCancellation()
             replace(saved, prependIfMissing: existing == nil)
-            await persist(currentResponse())
+            let savedResponse = currentResponse()
+            await persist(savedResponse)
+            try Task.checkCancellation()
             return SaveOutcome(memory: saved, uploadedAssets: uploadedAssets)
         } catch is CancellationError {
+            state.value = originalResponse
+            await persist(originalResponse)
             return nil
         } catch {
+            if Task.isCancelled {
+                state.value = originalResponse
+                await persist(originalResponse)
+                return nil
+            }
             errorMessage = "这条记忆没有保存，请检查网络后重试"
             return nil
         }

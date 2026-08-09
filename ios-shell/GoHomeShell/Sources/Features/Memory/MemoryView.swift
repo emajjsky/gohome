@@ -968,7 +968,10 @@ private struct MemoryComposer: View {
             .navigationTitle(memory == nil ? "发布记忆" : "编辑记忆")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("取消", action: cancel) }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", action: cancel)
+                        .disabled(model.isPublishing)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(model.isPublishing ? model.publishPhase.toolbarTitle : "发布") { publish() }
                         .fontWeight(.bold)
@@ -1003,6 +1006,7 @@ private struct MemoryComposer: View {
                 publishTask?.cancel()
                 cleanupSeedFiles()
             }
+            .interactiveDismissDisabled(model.isPublishing)
         }
     }
 
