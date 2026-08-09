@@ -117,6 +117,7 @@ struct MemoryView: View {
         }
         .onDisappear {
             composerPresentation.discardPending()
+            model.cancelInFlightInteractions()
         }
         .accessibilityIdentifier("memory-content-anchor")
     }

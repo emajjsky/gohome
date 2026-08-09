@@ -38,6 +38,7 @@ final class MemoryViewModel: ObservableObject {
     private let repository: AppRepository?
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
+    private var interactionCancellations: [String: () -> Void] = [:]
     private var hasStarted = false
 
     init(repository: AppRepository?, scope: CacheScope?, seed: FamilyMemoriesResponse? = nil) {
@@ -123,6 +124,48 @@ final class MemoryViewModel: ObservableObject {
 
     func toggleFavorite(_ memory: FamilyMemory) async {
         guard let repository, let scope, !pendingIDs.contains(memory.id) else { return }
+        let task = Task { @MainActor [weak self, repository, scope] in
+            guard let self else { return }
+            defer { self.finishInteraction(memory.id) }
+            await self.performFavorite(memory, repository: repository, scope: scope)
+        }
+        interactionCancellations[memory.id] = { task.cancel() }
+        await task.value
+    }
+
+    func addComment(_ body: String, to memory: FamilyMemory) async -> Bool {
+        guard let repository, let scope, !pendingIDs.contains(memory.id) else { return false }
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBody.isEmpty else { return false }
+        let task = Task { @MainActor [weak self, repository, scope] in
+            guard let self else { return false }
+            defer { self.finishInteraction(memory.id) }
+            return await self.performComment(trimmedBody, to: memory, repository: repository, scope: scope)
+        }
+        interactionCancellations[memory.id] = { task.cancel() }
+        return await task.value
+    }
+
+    func delete(_ memory: FamilyMemory) async -> Bool {
+        guard let repository, let scope, !pendingIDs.contains(memory.id) else { return false }
+        let task = Task { @MainActor [weak self, repository, scope] in
+            guard let self else { return false }
+            defer { self.finishInteraction(memory.id) }
+            return await self.performDelete(memory, repository: repository, scope: scope)
+        }
+        interactionCancellations[memory.id] = { task.cancel() }
+        return await task.value
+    }
+
+    func cancelInFlightInteractions() {
+        interactionCancellations.values.forEach { $0() }
+    }
+
+    private func performFavorite(
+        _ memory: FamilyMemory,
+        repository: AppRepository,
+        scope: CacheScope
+    ) async {
         pendingIDs.insert(memory.id)
         let nextFavorite = !memory.isFavorite
         replace(memory.withInteractions(
@@ -135,25 +178,30 @@ final class MemoryViewModel: ObservableObject {
                 memoryID: memory.id,
                 favorite: nextFavorite
             )
+            try Task.checkCancellation()
             replace(updated)
+            await persist()
+            try Task.checkCancellation()
+        } catch is CancellationError {
+            replace(memory)
             await persist()
         } catch {
             replace(memory)
             errorMessage = "喜欢状态没有保存，请稍后重试"
         }
-        pendingIDs.remove(memory.id)
     }
 
-    func addComment(_ body: String, to memory: FamilyMemory) async -> Bool {
-        guard let repository, let scope, !pendingIDs.contains(memory.id) else { return false }
-        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedBody.isEmpty else { return false }
+    private func performComment(
+        _ body: String,
+        to memory: FamilyMemory,
+        repository: AppRepository,
+        scope: CacheScope
+    ) async -> Bool {
         pendingIDs.insert(memory.id)
-        defer { pendingIDs.remove(memory.id) }
         let optimisticComment = MemoryComment(
             id: "local-\(UUID().uuidString)",
             authorUserID: scope.userID,
-            body: trimmedBody,
+            body: body,
             createdAt: ISO8601DateFormatter().string(from: Date())
         )
         replace(memory.withInteractions(comments: memory.comments + [optimisticComment]))
@@ -161,11 +209,17 @@ final class MemoryViewModel: ObservableObject {
             let updated = try await repository.addMemoryComment(
                 familyID: scope.familyID,
                 memoryID: memory.id,
-                body: trimmedBody
+                body: body
             )
+            try Task.checkCancellation()
             replace(updated)
             await persist()
+            try Task.checkCancellation()
             return true
+        } catch is CancellationError {
+            replace(memory)
+            await persist()
+            return false
         } catch {
             replace(memory)
             errorMessage = "评论没有发布，请稍后重试"
@@ -173,22 +227,35 @@ final class MemoryViewModel: ObservableObject {
         }
     }
 
-    func delete(_ memory: FamilyMemory) async -> Bool {
-        guard let repository, let scope, !pendingIDs.contains(memory.id) else { return false }
+    private func performDelete(
+        _ memory: FamilyMemory,
+        repository: AppRepository,
+        scope: CacheScope
+    ) async -> Bool {
         pendingIDs.insert(memory.id)
+        let original = currentResponse()
         do {
             try await repository.deleteMemory(familyID: scope.familyID, memoryID: memory.id)
-            var value = currentResponse()
+            try Task.checkCancellation()
+            var value = original
             value = FamilyMemoriesResponse(memories: value.memories.filter { $0.id != memory.id }, revision: UUID().uuidString)
             state.value = value
             await repository.cacheMemories(value, scope: scope)
-            pendingIDs.remove(memory.id)
+            try Task.checkCancellation()
             return true
+        } catch is CancellationError {
+            state.value = original
+            await repository.cacheMemories(original, scope: scope)
+            return false
         } catch {
-            pendingIDs.remove(memory.id)
             errorMessage = "删除失败，请稍后重试"
             return false
         }
+    }
+
+    private func finishInteraction(_ memoryID: String) {
+        interactionCancellations[memoryID] = nil
+        pendingIDs.remove(memoryID)
     }
 
     private func replace(_ memory: FamilyMemory, prependIfMissing: Bool = false) {
@@ -211,7 +278,10 @@ final class MemoryViewModel: ObservableObject {
         await repository.cacheMemories(value, scope: scope)
     }
 
-    deinit { loadTask?.cancel() }
+    deinit {
+        loadTask?.cancel()
+        interactionCancellations.values.forEach { $0() }
+    }
 }
 
 private extension FamilyMemory {

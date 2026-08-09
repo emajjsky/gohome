@@ -255,6 +255,93 @@ final class MemoryViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledFavoriteRollsBackWithoutError() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = makeMemory(id: "favorite-cancel", body: "收藏取消")
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoryFavoriteUpdater: { _, _, _ in
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                throw APIError.invalidResponse
+            }
+        )
+        let model = MemoryViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: FamilyMemoriesResponse(memories: [original], revision: "seed")
+        )
+        let action = Task { @MainActor in await model.toggleFavorite(original) }
+
+        await waitUntil { model.pendingIDs.contains(original.id) }
+        model.cancelInFlightInteractions()
+        await action.value
+
+        XCTAssertEqual(model.memories.first, original)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.pendingIDs.contains(original.id))
+    }
+
+    @MainActor
+    func testCancelledCommentRollsBackWithoutError() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = makeMemory(id: "comment-cancel", body: "评论取消")
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoryCommentCreator: { _, _, _ in
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                throw APIError.invalidResponse
+            }
+        )
+        let model = MemoryViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: FamilyMemoriesResponse(memories: [original], revision: "seed")
+        )
+        let action = Task { @MainActor in _ = await model.addComment("取消评论", to: original) }
+
+        await waitUntil { model.pendingIDs.contains(original.id) }
+        model.cancelInFlightInteractions()
+        await action.value
+
+        XCTAssertEqual(model.memories.first, original)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.pendingIDs.contains(original.id))
+    }
+
+    @MainActor
+    func testCancelledDeleteKeepsMemoryWithoutError() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = makeMemory(id: "delete-cancel", body: "删除取消")
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoryDeleter: { _, _ in
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                throw APIError.invalidResponse
+            }
+        )
+        let model = MemoryViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: FamilyMemoriesResponse(memories: [original], revision: "seed")
+        )
+        let action = Task { @MainActor in _ = await model.delete(original) }
+
+        await waitUntil { model.pendingIDs.contains(original.id) }
+        model.cancelInFlightInteractions()
+        await action.value
+
+        XCTAssertEqual(model.memories.first, original)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.pendingIDs.contains(original.id))
+    }
+
+    @MainActor
     func testBatchMediaUploadPreservesSelectionOrder() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -476,4 +563,16 @@ private actor CancelledMemoryPublishRecorder {
 
     func recordUploadStarted() { uploadStarted = true }
     func recordCreation(_ request: MemoryDraftRequest) { creationCount += 1 }
+}
+
+@MainActor
+private func waitUntil(
+    timeout: TimeInterval = 1,
+    condition: @escaping @MainActor () -> Bool
+) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition(), Date() < deadline {
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTAssertTrue(condition(), "Timed out waiting for memory state")
 }
