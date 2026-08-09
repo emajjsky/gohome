@@ -178,7 +178,7 @@ final class ProfileViewModel: ObservableObject {
         let task = Task { @MainActor [weak self, repository, scope, generation] in
             await repository.profile(scope: scope) { [weak self] next in
                 guard !Task.isCancelled else { return }
-                await MainActor.run {
+                await MainActor.run { [weak self] in
                     guard !Task.isCancelled,
                           let self,
                           self.loadGeneration == generation else { return }
