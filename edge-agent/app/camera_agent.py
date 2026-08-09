@@ -757,6 +757,10 @@ class CameraAgent:
             capture.update(frame_identity)
         return capture
 
+    def probe_frame(self, camera: Dict[str, Any]) -> Dict[str, Any]:
+        with self._capture_lock:
+            return self._capture_frame_unlocked(camera)
+
     def latest_cached_frame(self, camera: Dict[str, Any], max_age_seconds: float = 2.0) -> Dict[str, Any] | None:
         key = self._frame_cache_key(camera)
         now = time.monotonic()

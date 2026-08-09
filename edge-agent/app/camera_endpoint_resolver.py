@@ -97,12 +97,18 @@ class CameraEndpointResolver:
         self,
         *,
         local_ip_resolver: Callable[[], str],
-        probe: Callable[[Dict[str, Any]], bool],
+        probe: Callable[[Dict[str, Any]], Any],
+        match_score: Callable[[Dict[str, Any], Any], float] | None = None,
         port_timeout_seconds: float = 0.18,
+        minimum_match_score: float = 20.0,
+        minimum_match_margin: float = 8.0,
     ) -> None:
         self._local_ip_resolver = local_ip_resolver
         self._probe = probe
+        self._match_score = match_score
         self._port_timeout_seconds = max(0.05, float(port_timeout_seconds))
+        self._minimum_match_score = max(0.0, float(minimum_match_score))
+        self._minimum_match_margin = max(0.0, float(minimum_match_margin))
 
     def observe(self, camera: Dict[str, Any]) -> CameraEndpoint | None:
         parsed = parse_endpoint(str(camera.get("stream_url") or ""))
@@ -131,11 +137,13 @@ class CameraEndpointResolver:
         used = {normalize_network_identity(item) for item in (used_identities or set()) if item}
         hosts = list(local_subnet_hosts(self._local_ip_resolver()))
         hosts.sort(key=lambda host: (host != old_host, host))
-        candidates: list[CameraEndpoint] = []
+        candidates: list[tuple[CameraEndpoint, float]] = []
         for host in hosts:
             if not self._port_open(host, port):
                 continue
             identity = network_identity_for_host(host)
+            if not identity:
+                continue
             if expected_identity and identity != expected_identity:
                 continue
             if identity and identity in used and identity != expected_identity:
@@ -144,16 +152,28 @@ class CameraEndpointResolver:
             candidate = dict(camera)
             candidate["stream_url"] = candidate_url
             try:
-                valid = bool(self._probe(candidate))
+                probe_result = self._probe(candidate)
             except Exception:
-                valid = False
-            if valid:
-                candidates.append(CameraEndpoint(host, port, path, identity))
+                probe_result = None
+            if probe_result is not None and probe_result is not False:
+                endpoint = CameraEndpoint(host, port, path, identity)
                 if expected_identity:
-                    return candidates[0]
-        if len(candidates) == 1:
-            return candidates[0]
-        return None
+                    return endpoint
+                score = (
+                    float(self._match_score(camera, probe_result))
+                    if self._match_score is not None
+                    else 0.0
+                )
+                candidates.append((endpoint, score))
+        if self._match_score is None:
+            return candidates[0][0] if len(candidates) == 1 else None
+        candidates.sort(key=lambda item: item[1], reverse=True)
+        if not candidates or candidates[0][1] < self._minimum_match_score:
+            return None
+        runner_up = candidates[1][1] if len(candidates) > 1 else 0.0
+        if candidates[0][1] - runner_up < self._minimum_match_margin:
+            return None
+        return candidates[0][0]
 
     def _port_open(self, host: str, port: int) -> bool:
         try:
@@ -161,3 +181,45 @@ class CameraEndpointResolver:
                 return True
         except OSError:
             return False
+
+
+class CalibrationSceneMatcher:
+    def __init__(self, storage_dir: Path) -> None:
+        self.storage_dir = Path(storage_dir)
+
+    def score(self, camera: Dict[str, Any], probe_result: Any) -> float:
+        frame = probe_result.get("frame") if isinstance(probe_result, dict) else None
+        camera_id = int(camera.get("id") or 0)
+        if frame is None or camera_id <= 0:
+            return 0.0
+        try:
+            import numpy as np  # type: ignore
+
+            from .vision.privacy_scene_geometry import SceneGeometryVerifier
+        except (ImportError, ModuleNotFoundError):
+            return 0.0
+        best = 0.0
+        verifier = SceneGeometryVerifier()
+        for path in self.storage_dir.glob(f"camera-{camera_id}-*.npz"):
+            try:
+                with np.load(path, allow_pickle=False) as payload:
+                    background = payload["background"]
+                assessment = verifier.assess(background, frame, excluded_mask=None)
+            except (OSError, KeyError, ValueError, TypeError):
+                continue
+            good_matches = float(assessment.get("geometry_good_matches") or 0.0)
+            inliers = float(assessment.get("geometry_inliers") or 0.0)
+            inlier_ratio = float(assessment.get("geometry_inlier_ratio") or 0.0)
+            grid_coverage = float(assessment.get("geometry_grid_coverage_ratio") or 0.0)
+            if good_matches < 16.0 or inliers < 10.0 or inlier_ratio < 0.45:
+                continue
+            status_bonus = 20.0 if assessment.get("geometry_status") == "same_view" else 0.0
+            score = (
+                status_bonus
+                + inliers
+                + good_matches * 0.1
+                + inlier_ratio * 10.0
+                + grid_coverage * 5.0
+            )
+            best = max(best, score)
+        return round(best, 4)

@@ -155,6 +155,24 @@ test('native device and camera mutations are creator-only and stay bound to one 
     });
     assert.equal(reconciledConfig.body.cameras[0].stream_url, 'rtsp://192.168.1.4:554/1/2');
     assert.equal(reconciledConfig.body.cameras[0].network_identity, 'a8:b5:8e:a8:a0:8c');
+    await request(baseURL, '/api/v1/device/sync', {
+      method: 'POST', headers: { Authorization: 'Bearer edge-device-test-token' },
+      body: JSON.stringify({
+        device_id: 'edge-device-test',
+        cameras: [{
+          camera_id: String(created.body.id),
+          local_camera_id: 31,
+          status: 'online',
+          connection_update: {
+            confirmed: true,
+            stream_url: 'rtsp://192.168.1.9:554/1/2',
+            network_identity: '00:11:22:33:44:55',
+          },
+        }],
+      }),
+    });
+    assert.equal(app.store.db.cameras[String(created.body.id)].stream_url, 'rtsp://192.168.1.4:554/1/2');
+    assert.equal(app.store.db.cameras[String(created.body.id)].network_identity, 'a8:b5:8e:a8:a0:8c');
 
     const invalidConnection = await request(baseURL, `/api/cameras/${created.body.id}`, {
       method: 'PATCH', headers: owner.headers, body: JSON.stringify({ stream_url: 'http://192.168.1.7/live' }),

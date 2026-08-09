@@ -28,7 +28,7 @@ from .app_runtime_guard_service import AppRuntimeGuardService
 from .box_init_service import ADMIN_SESSION_COOKIE, AdminLoginThrottled, BoxInitService
 from .camera_agent import CameraAgent, CameraError, bounded_stream_fps
 from .camera_config_authority import camera_config_authority
-from .camera_endpoint_resolver import CameraEndpointResolver
+from .camera_endpoint_resolver import CalibrationSceneMatcher, CameraEndpointResolver
 from .config_sync_agent import ConfigSyncAgent
 from .detect_agent import DetectAgent
 from .device_binding_state import DeviceBindingState
@@ -117,12 +117,11 @@ def local_ip() -> str:
         return socket.gethostbyname(socket.gethostname())
 
 
-def _probe_camera_endpoint(camera: Dict[str, Any]) -> bool:
+def _probe_camera_endpoint(camera: Dict[str, Any]) -> Dict[str, Any] | None:
     try:
-        camera_agent.capture_frame(camera, prefer_cache=False)
+        return camera_agent.probe_frame(camera)
     except (CameraError, OSError, RuntimeError):
-        return False
-    return True
+        return None
 
 
 def local_device_identity() -> Dict[str, Any]:
@@ -657,6 +656,9 @@ package_artifact_service = PackageArtifactService(storage=storage, settings=sett
 camera_endpoint_resolver = CameraEndpointResolver(
     local_ip_resolver=local_ip,
     probe=lambda camera: _probe_camera_endpoint(camera),
+    match_score=CalibrationSceneMatcher(
+        settings.data_dir / "privacy-calibrations",
+    ).score,
 )
 config_sync_agent = ConfigSyncAgent(
     storage=storage,
