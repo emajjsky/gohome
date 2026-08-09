@@ -197,6 +197,7 @@ actor AppRepository {
             let refreshed = try await refreshBootstrap(scope: scope)
             try Task.checkCancellation()
             try await cache.write(refreshed, key: "bootstrap", scope: scope, ttl: 24 * 60 * 60)
+            try Task.checkCancellation()
             await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
         } catch is CancellationError {
             throw CancellationError()
@@ -217,7 +218,9 @@ actor AppRepository {
 
         do {
             let refreshed = try await refreshHome(scope: scope)
+            try Task.checkCancellation()
             try await cache.write(refreshed, key: "home", scope: scope, ttl: 6 * 60 * 60)
+            try Task.checkCancellation()
             await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
         } catch is CancellationError {
             await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
@@ -236,7 +239,9 @@ actor AppRepository {
 
         do {
             let refreshed = try await refreshEvents(scope: scope)
+            try Task.checkCancellation()
             try await cache.write(refreshed, key: "events", scope: scope, ttl: 24 * 60 * 60)
+            try Task.checkCancellation()
             await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
         } catch is CancellationError {
             await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
@@ -258,7 +263,9 @@ actor AppRepository {
 
         do {
             let refreshed = try await refreshProducts(scope: scope)
+            try Task.checkCancellation()
             try await cache.write(refreshed, key: "products", scope: scope, ttl: 24 * 60 * 60)
+            try Task.checkCancellation()
             await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
         } catch is CancellationError {
             await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
@@ -294,7 +301,9 @@ actor AppRepository {
 
         do {
             let refreshed = try await refreshProfile(scope: scope)
+            try Task.checkCancellation()
             try await cache.write(refreshed, key: "profile", scope: scope, ttl: 24 * 60 * 60)
+            try Task.checkCancellation()
             await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
         } catch is CancellationError {
             await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
@@ -309,7 +318,9 @@ actor AppRepository {
 
     func freshProfile(scope: CacheScope) async throws -> ProfileData {
         let refreshed = try await refreshProfile(scope: scope)
+        try Task.checkCancellation()
         try await cache.write(refreshed, key: "profile", scope: scope, ttl: 24 * 60 * 60)
+        try Task.checkCancellation()
         return refreshed
     }
 
@@ -342,7 +353,9 @@ actor AppRepository {
         await onUpdate(Loadable(value: cached, isRefreshing: true, staleReason: nil))
         do {
             let refreshed = try await refreshMemories(scope: scope)
+            try Task.checkCancellation()
             try await cache.write(refreshed, key: "memories", scope: scope, ttl: 24 * 60 * 60)
+            try Task.checkCancellation()
             await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
         } catch is CancellationError {
             await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
@@ -402,7 +415,9 @@ actor AppRepository {
                 defer { activityTimelineTasks[taskKey] = nil }
                 refreshed = try await task.value
             }
+            try Task.checkCancellation()
             try await cache.write(refreshed, key: key, scope: scope, ttl: 24 * 60 * 60)
+            try Task.checkCancellation()
             await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
         } catch is CancellationError {
             await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))
@@ -430,7 +445,9 @@ actor AppRepository {
                 defer { activityOverviewTasks[taskKey] = nil }
                 refreshed = try await task.value
             }
+            try Task.checkCancellation()
             try await cache.write(refreshed, key: key, scope: scope, ttl: 24 * 60 * 60)
+            try Task.checkCancellation()
             await onUpdate(Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
         } catch is CancellationError {
             await onUpdate(Loadable(value: cached, isRefreshing: false, staleReason: nil))

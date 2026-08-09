@@ -52,6 +52,40 @@ final class AppRepositoryTests: XCTestCase {
         XCTAssertEqual(secondStates.last?.value, fixture.fresh)
     }
 
+    func testCancelledMemoryRefreshDoesNotCommitFreshCache() async throws {
+        let fixture = try Fixture()
+        let cached = FamilyMemoriesResponse(memories: [], revision: "cached")
+        let fresh = FamilyMemoriesResponse(memories: [], revision: "fresh")
+        try await fixture.cache.write(cached, key: "memories", scope: fixture.scope)
+        let loader = CancellationIgnoringMemoryLoader(result: fresh)
+        let repository = AppRepository(
+            cache: fixture.cache,
+            bootstrapLoader: { throw APIError.invalidResponse },
+            memoriesLoader: { _ in try await loader.load() }
+        )
+        let recorder = MemoryLoadableRecorder()
+        let task = Task {
+            await repository.memories(scope: fixture.scope) { await recorder.append($0) }
+        }
+        for _ in 0..<100 {
+            if await loader.started { break }
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+
+        task.cancel()
+        await task.value
+
+        let cachedAfterCancellation = try await fixture.cache.read(
+            FamilyMemoriesResponse.self,
+            key: "memories",
+            scope: fixture.scope
+        )
+        XCTAssertEqual(cachedAfterCancellation?.revision, "cached")
+        let states = await recorder.values
+        XCTAssertEqual(states.map(\.value?.revision), ["cached", "cached"])
+        XCTAssertEqual(states.map(\.isRefreshing), [true, false])
+    }
+
     func testUnauthorizedRefreshIsPropagatedInsteadOfPresentedAsStaleContent() async throws {
         let fixture = try Fixture()
         try await fixture.cache.write(fixture.cached, key: "bootstrap", scope: fixture.scope)
@@ -117,4 +151,27 @@ private actor CountingLoader {
 private actor StateRecorder {
     private(set) var values: [Loadable<BootstrapResponse>] = []
     func append(_ value: Loadable<BootstrapResponse>) { values.append(value) }
+}
+
+private actor CancellationIgnoringMemoryLoader {
+    let result: FamilyMemoriesResponse
+    private(set) var started = false
+
+    init(result: FamilyMemoriesResponse) {
+        self.result = result
+    }
+
+    func load() async throws -> FamilyMemoriesResponse {
+        started = true
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        return result
+    }
+}
+
+private actor MemoryLoadableRecorder {
+    private(set) var values: [Loadable<FamilyMemoriesResponse>] = []
+
+    func append(_ value: Loadable<FamilyMemoriesResponse>) {
+        values.append(value)
+    }
 }
