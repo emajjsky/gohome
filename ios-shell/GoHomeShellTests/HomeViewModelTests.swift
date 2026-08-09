@@ -84,6 +84,54 @@ final class HomeViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLateCancelledCareActionCannotClearANewerAction() async throws {
+        let scope = CacheScope(userID: "user-1", familyID: "family-1")
+        let home = try decodeHome(careFragment: """
+        ,"care_message":{"message_id":"message-late","message_type":"return_home","title":"聊聊周末","subtitle":"联系建议",
+        "body":"最近天气不错。","facts":[],"actions":[],"status":"open",
+        "metadata":{"trigger_reason":"days_since_last_visit","topics":["周末安排"],"message_variants":[],"snoozed_until":null},
+        "created_at":"2026-07-23T08:00:00Z","updated_at":null}
+        """)
+        let calls = HomeCareActionCallCounter()
+        let firstResponse = HomeCareActionResponseGate()
+        let secondResponse = HomeCareActionResponseGate()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            homeLoader: { _ in home },
+            messageActionLoader: { _, _, _ in
+                if await calls.next() == 0 { return await firstResponse.wait() }
+                return await secondResponse.wait()
+            }
+        )
+        let model = HomeViewModel(repository: repository, scope: scope)
+        model.start()
+        try await waitUntil { model.careMessage != nil }
+        let firstAction = Task { @MainActor in await model.recordCareAction(type: "contacted") }
+
+        try await waitUntil { model.pendingCareAction == "contacted" }
+        await waitUntilHomeCareResponse(firstResponse)
+        model.cancelInFlightCareAction()
+        XCTAssertNil(model.pendingCareAction)
+        XCTAssertEqual(model.careMessage?.messageID, "message-late")
+
+        let secondAction = Task { @MainActor in await model.recordCareAction(type: "shared") }
+        try await waitUntil { model.pendingCareAction == "shared" }
+        await waitUntilHomeCareResponse(secondResponse)
+        await firstResponse.release(Self.careActionResponse(status: "closed", messageID: "message-late"))
+        let firstSucceeded = await firstAction.value
+
+        XCTAssertFalse(firstSucceeded)
+        XCTAssertEqual(model.pendingCareAction, "shared")
+        XCTAssertEqual(model.careMessage?.messageID, "message-late")
+        await secondResponse.release(Self.careActionResponse(status: "open", messageID: "message-late"))
+        let secondSucceeded = await secondAction.value
+        XCTAssertTrue(secondSucceeded)
+        XCTAssertNil(model.pendingCareAction)
+        XCTAssertNil(model.careActionError)
+    }
+
+    @MainActor
     func testRefreshPublishesNewCameraWithoutRecreatingTheViewModel() async throws {
         let cache = try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let scope = CacheScope(userID: "user-1", familyID: "family-1")
@@ -241,6 +289,16 @@ final class HomeViewModelTests: XCTestCase {
         """.utf8)
         return try JSONDecoder().decode(HomeResponse.self, from: data)
     }
+
+    private static func careActionResponse(status: String, messageID: String) -> CareMessageActionResponse {
+        let data = Data("""
+        {"message":{"message_id":"\(messageID)","message_type":"return_home","title":"聊聊周末","subtitle":"联系建议",
+        "body":"最近天气不错。","facts":[],"actions":[],"status":"\(status)",
+        "metadata":{"trigger_reason":"days_since_last_visit","topics":["周末安排"],"message_variants":[],"snoozed_until":null},
+        "created_at":"2026-07-23T08:00:00Z","updated_at":null}}
+        """.utf8)
+        return try! JSONDecoder().decode(CareMessageActionResponse.self, from: data)
+    }
 }
 
 private struct HomeCareFixture {
@@ -289,6 +347,42 @@ private actor HomeLoadCounter {
         value += 1
         return value
     }
+}
+
+private actor HomeCareActionCallCounter {
+    private var count = 0
+
+    func next() -> Int {
+        defer { count += 1 }
+        return count
+    }
+}
+
+private actor HomeCareActionResponseGate {
+    private var continuation: CheckedContinuation<CareMessageActionResponse, Never>?
+    private(set) var isWaiting = false
+
+    func wait() async -> CareMessageActionResponse {
+        isWaiting = true
+        return await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release(_ response: CareMessageActionResponse) {
+        continuation?.resume(returning: response)
+        continuation = nil
+    }
+}
+
+private func waitUntilHomeCareResponse(
+    _ gate: HomeCareActionResponseGate,
+    timeout: TimeInterval = 1
+) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !(await gate.isWaiting), Date() < deadline {
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    let isWaiting = await gate.isWaiting
+    XCTAssertTrue(isWaiting, "Timed out waiting for care action response")
 }
 
 @MainActor

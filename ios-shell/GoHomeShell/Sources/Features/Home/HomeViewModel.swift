@@ -115,6 +115,8 @@ final class HomeViewModel: ObservableObject {
     private var loadGeneration = 0
     private var reconciliationTask: Task<Void, Never>?
     private var careActionCancellation: (() -> Void)?
+    private var careActionGeneration = 0
+    private var activeCareActionGeneration: Int?
     private var hasStarted = false
 
     init(repository: AppRepository?, scope: CacheScope?, seed: HomeResponse? = nil) {
@@ -162,22 +164,22 @@ final class HomeViewModel: ObservableObject {
         let task = Task { @MainActor [weak self, repository, scope, generation] in
             await repository.home(scope: scope) { [weak self] next in
                 guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    guard !Task.isCancelled,
-                          let self,
-                          self.loadGeneration == generation else { return }
-                    var nextState = next
-                    if nextState.value == nil, let currentValue = self.state.value {
-                        nextState.value = currentValue
-                    }
-                    self.state = nextState
-                    if self.pendingCareAction == nil { self.careMessage = nextState.value?.careMessage }
-                }
+                await self?.applyLoadedState(next, generation: generation)
             }
             guard let self, self.loadGeneration == generation else { return }
             self.loadTask = nil
         }
         loadTask = task
+    }
+
+    private func applyLoadedState(_ next: Loadable<HomeResponse>, generation: Int) {
+        guard loadGeneration == generation else { return }
+        var nextState = next
+        if nextState.value == nil, let currentValue = state.value {
+            nextState.value = currentValue
+        }
+        state = nextState
+        if pendingCareAction == nil { careMessage = nextState.value?.careMessage }
     }
 
     func cancelInFlightLoad() {
@@ -191,16 +193,18 @@ final class HomeViewModel: ObservableObject {
         guard pendingCareAction == nil, let repository, let scope, let message = careMessage else { return false }
         pendingCareAction = type
         careActionError = nil
+        careActionGeneration += 1
+        let generation = careActionGeneration
+        activeCareActionGeneration = generation
         let request = CareMessageActionRequest(
             actionType: type,
             payload: payload,
             idempotencyKey: "ios-\(message.messageID)-\(type)-\(UUID().uuidString.lowercased())"
         )
-        let task = Task { @MainActor [weak self, repository, scope, message] in
+        let task = Task { @MainActor [weak self, repository, scope, message, generation] in
             guard let self else { return false }
             defer {
-                self.careActionCancellation = nil
-                self.pendingCareAction = nil
+                self.finishCareAction(generation: generation)
             }
             do {
                 let response = try await repository.recordMessageAction(
@@ -209,6 +213,7 @@ final class HomeViewModel: ObservableObject {
                     request: request
                 )
                 try Task.checkCancellation()
+                guard self.activeCareActionGeneration == generation else { return false }
                 if ["closed", "dismissed"].contains(response.message.status) || type == "snoozed" {
                     self.careMessage = nil
                 } else {
@@ -218,6 +223,7 @@ final class HomeViewModel: ObservableObject {
             } catch is CancellationError {
                 return false
             } catch {
+                guard self.activeCareActionGeneration == generation, !Task.isCancelled else { return false }
                 self.careActionError = "操作没有保存，请稍后重试"
                 return false
             }
@@ -227,11 +233,23 @@ final class HomeViewModel: ObservableObject {
     }
 
     func cancelInFlightCareAction() {
+        guard activeCareActionGeneration != nil else { return }
+        careActionGeneration += 1
+        activeCareActionGeneration = nil
         careActionCancellation?()
+        careActionCancellation = nil
+        pendingCareAction = nil
     }
 
     func clearCareActionError() {
         careActionError = nil
+    }
+
+    private func finishCareAction(generation: Int) {
+        guard activeCareActionGeneration == generation else { return }
+        activeCareActionGeneration = nil
+        careActionCancellation = nil
+        pendingCareAction = nil
     }
 
     deinit {
