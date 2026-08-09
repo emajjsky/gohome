@@ -18,7 +18,9 @@ enum CameraConfigurationTransaction {
         complete: @MainActor () -> Void
     ) async -> Bool {
         guard await persist(values) else { return false }
+        guard !Task.isCancelled else { return false }
         await requestBoxSync()
+        guard !Task.isCancelled else { return false }
         complete()
         return true
     }
@@ -48,6 +50,8 @@ struct CameraConfigurationForm: View {
     @State private var showManualEntry: Bool
     @State private var errorMessage: String?
     @State private var attemptedAutomaticSearch = false
+    @State private var searchTask: Task<Void, Never>?
+    @State private var saveTask: Task<Void, Never>?
 
     private let commonRooms = ["客厅", "卧室", "厨房", "餐厅", "走廊", "玄关"]
 
@@ -130,7 +134,11 @@ struct CameraConfigurationForm: View {
             .accessibilityIdentifier("camera-save")
         }
         .onAppear { discovery.start() }
-        .onDisappear { discovery.stop() }
+        .onDisappear {
+            searchTask?.cancel()
+            saveTask?.cancel()
+            discovery.stop()
+        }
         .onChange(of: discovery.boxes) { boxes in
             guard existing == nil,
                   !attemptedAutomaticSearch,
@@ -254,7 +262,7 @@ struct CameraConfigurationForm: View {
             return
         }
         isSearching = true
-        Task {
+        searchTask = Task { @MainActor in
             defer { isSearching = false }
             do {
                 candidates = try await discovery.discoverCameras(box: box)
@@ -288,7 +296,8 @@ struct CameraConfigurationForm: View {
         }
         isSaving = true
         errorMessage = nil
-        Task {
+        saveTask = Task { @MainActor in
+            defer { saveTask = nil }
             let values = CameraConnectionValues(
                 name: cleanName,
                 room: room,

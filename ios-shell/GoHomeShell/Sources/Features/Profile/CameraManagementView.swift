@@ -7,6 +7,7 @@ struct CameraManagementView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingDelete = false
+    @State private var deleteTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -38,6 +39,7 @@ struct CameraManagementView: View {
         }
         .background(GoHomeTheme.paper)
         .profileNavigationTitle(camera == nil ? "添加摄像头" : "编辑摄像头")
+        .onDisappear { deleteTask?.cancel() }
         .confirmationDialog("删除这路摄像头？", isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button("删除摄像头", role: .destructive) { deleteCamera() }
             Button("取消", role: .cancel) {}
@@ -73,7 +75,8 @@ struct CameraManagementView: View {
 
     private func deleteCamera() {
         guard let camera else { return }
-        Task {
+        deleteTask = Task { @MainActor in
+            defer { deleteTask = nil }
             if await model.deleteCamera(camera) { dismiss() }
         }
     }

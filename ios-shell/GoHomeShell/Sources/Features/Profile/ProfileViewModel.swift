@@ -481,11 +481,15 @@ final class ProfileViewModel: ObservableObject {
                 password: password,
                 enabled: true
             ))
+            try Task.checkCancellation()
             replaceCamera(camera)
             await persist()
             deviceConfigurationRevision += 1
             reconcileDeviceConfiguration(cameraID: camera.id, expectedToExist: true)
             return true
+        } catch is CancellationError {
+            deviceProgress = nil
+            return false
         } catch {
             deviceProgress = nil
             inlineError = error.localizedDescription
@@ -517,11 +521,15 @@ final class ProfileViewModel: ObservableObject {
                     enabled: enabled
                 )
             )
+            try Task.checkCancellation()
             replaceCamera(updated)
             await persist()
             deviceConfigurationRevision += 1
             reconcileDeviceConfiguration(cameraID: camera.id, expectedToExist: true)
             return true
+        } catch is CancellationError {
+            deviceProgress = nil
+            return false
         } catch {
             deviceProgress = nil
             inlineError = error.localizedDescription
@@ -535,6 +543,7 @@ final class ProfileViewModel: ObservableObject {
         defer { deviceActionID = nil }
         do {
             try await repository.deleteCamera(id: camera.id)
+            try Task.checkCancellation()
             guard var value = state.value else { return true }
             value.cameras.removeAll { $0.id == camera.id }
             state.value = value
@@ -542,6 +551,9 @@ final class ProfileViewModel: ObservableObject {
             deviceConfigurationRevision += 1
             reconcileDeviceConfiguration(cameraID: camera.id, expectedToExist: false)
             return true
+        } catch is CancellationError {
+            deviceProgress = nil
+            return false
         } catch {
             deviceProgress = nil
             inlineError = error.localizedDescription
@@ -555,6 +567,7 @@ final class ProfileViewModel: ObservableObject {
         defer { deviceActionID = nil }
         do {
             _ = try await repository.unbindDevice(bindingID: binding.id)
+            try Task.checkCancellation()
             guard var value = state.value else { return true }
             value.bindings.removeAll { $0.id == binding.id }
             value.cameras.removeAll { $0.deviceID == binding.deviceID }
@@ -563,6 +576,9 @@ final class ProfileViewModel: ObservableObject {
             deviceConfigurationRevision += 1
             reconcileDeviceConfiguration(cameraID: nil, expectedToExist: false)
             return true
+        } catch is CancellationError {
+            deviceProgress = nil
+            return false
         } catch {
             deviceProgress = nil
             inlineError = error.localizedDescription

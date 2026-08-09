@@ -199,6 +199,88 @@ final class ProfilePermissionTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledDeviceMutationsDoNotPublishReturnedState() async throws {
+        let binding = fixtureBinding()
+        let existing = fixtureCamera()
+        let created = fixtureCamera(id: "camera-new", name: "新摄像头")
+        let updated = fixtureCamera(id: existing.id, name: "不应更新")
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            cameraCreator: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return created
+            },
+            cameraUpdater: { _, _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return updated
+            },
+            cameraDeleter: { id in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return try cameraDeleteResponse(id: id)
+            },
+            deviceUnbinder: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return DeviceUnbindResponse(ok: true, binding: binding, removedCameraCount: 1, next: "device_claim")
+            }
+        )
+        let model = makeModel(
+            role: "owner",
+            repository: repository,
+            seed: fixtureProfile(canEdit: true, bindings: [binding], cameras: [existing])
+        )
+
+        let createTask = Task { @MainActor in
+            await model.createCamera(
+                binding: binding,
+                name: created.name,
+                room: created.room,
+                streamURL: "rtsp://192.168.1.20:554/1/2",
+                username: "admin",
+                password: "secret"
+            )
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        createTask.cancel()
+        let createdResult = await createTask.value
+        XCTAssertFalse(createdResult)
+
+        let updateTask = Task { @MainActor in
+            await model.updateCamera(
+                existing,
+                name: updated.name,
+                room: updated.room,
+                streamURL: "rtsp://192.168.1.7:554/1/2",
+                username: "",
+                password: "",
+                enabled: true
+            )
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        updateTask.cancel()
+        let updatedResult = await updateTask.value
+        XCTAssertFalse(updatedResult)
+
+        let deleteTask = Task { @MainActor in await model.deleteCamera(existing) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        deleteTask.cancel()
+        let deletedResult = await deleteTask.value
+        XCTAssertFalse(deletedResult)
+
+        let unbindTask = Task { @MainActor in await model.unbindDevice(binding) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        unbindTask.cancel()
+        let unboundResult = await unbindTask.value
+        XCTAssertFalse(unboundResult)
+
+        XCTAssertEqual(model.state.value?.cameras, [existing])
+        XCTAssertEqual(model.state.value?.bindings, [binding])
+        XCTAssertNil(model.inlineError)
+        XCTAssertNil(model.deviceActionID)
+        XCTAssertNil(model.deviceProgress)
+    }
+
+    @MainActor
     func testNewDeviceOperationKeepsItsProgressAfterPreviousSuccessMessageExpires() async throws {
         let binding = fixtureBinding()
         let created = fixtureCamera(id: "camera-new", status: "pending_edge_sync")

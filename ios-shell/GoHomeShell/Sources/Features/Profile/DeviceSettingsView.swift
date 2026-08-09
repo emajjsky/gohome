@@ -14,6 +14,7 @@ struct DeviceSettingsView: View {
     @State private var bindingToRemove: DeviceBinding?
     @State private var cameraBindingToAdd: DeviceBinding?
     @State private var choosingCameraBox = false
+    @State private var unbindTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -50,6 +51,7 @@ struct DeviceSettingsView: View {
         }
         .background(GoHomeTheme.paper)
         .profileNavigationTitle("设备与守护")
+        .onDisappear { unbindTask?.cancel() }
         .sheet(isPresented: $showingBoxBinding) {
             if let onboardingService {
                 NavigationStack {
@@ -274,7 +276,7 @@ struct DeviceSettingsView: View {
     }
 
     private func unbind(_ binding: DeviceBinding) {
-        Task { _ = await model.unbindDevice(binding) }
+        unbindTask = Task { _ = await model.unbindDevice(binding) }
     }
 
     private func addCamera() {

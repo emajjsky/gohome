@@ -57,6 +57,30 @@ final class OnboardingModelTests: XCTestCase {
         XCTAssertEqual(stages, ["persist"])
     }
 
+    @MainActor
+    func testCancelledCameraConfigurationDoesNotWakeOrComplete() async {
+        var stages: [String] = []
+        let task = Task { @MainActor in
+            await CameraConfigurationTransaction.commit(
+                values: cameraConnectionValues(),
+                persist: { _ in
+                    stages.append("persist")
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    return true
+                },
+                requestBoxSync: { stages.append("wake") },
+                complete: { stages.append("complete") }
+            )
+        }
+
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        task.cancel()
+        let success = await task.value
+
+        XCTAssertFalse(success)
+        XCTAssertEqual(stages, ["persist"])
+    }
+
     func testDeviceBindingRetriesWhenHomeLocationProfileCannotBeRead() {
         let decision = DeviceBindingHomeLocationDecision.resolve(.failure(APIError.invalidResponse))
 
