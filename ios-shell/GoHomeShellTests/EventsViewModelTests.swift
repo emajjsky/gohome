@@ -60,6 +60,53 @@ final class EventsViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLateSuccessfulEventActionCannotCommitAfterCancellation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = fixtureEvent()
+        let updated = AppEvent(
+            id: original.id,
+            type: original.type,
+            level: original.level,
+            summary: original.summary,
+            room: original.room,
+            cameraID: original.cameraID,
+            cameraName: original.cameraName,
+            occurredAt: original.occurredAt,
+            createdAt: original.createdAt,
+            updatedAt: "2026-07-22T09:31:00+08:00",
+            acknowledged: true,
+            resolution: "handled",
+            snapshotURL: original.snapshotURL,
+            mediaAssetID: original.mediaAssetID,
+            evidenceMedia: original.evidenceMedia,
+            payload: original.payload
+        )
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            eventActionLoader: { _, _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return updated
+            }
+        )
+        let model = EventsViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user", familyID: "family"),
+            seedEvents: [original]
+        )
+
+        model.resolve(original.id, as: "handled")
+        try await waitUntil { model.pendingActions.contains(original.id) }
+        model.cancelInFlightActions()
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(model.state.value?.first, original)
+        XCTAssertFalse(model.pendingActions.contains(original.id))
+        XCTAssertNil(model.actionErrors[original.id])
+    }
+
+    @MainActor
     func testPrepareEventLoadsAnEventOutsideTheCachedSummary() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }

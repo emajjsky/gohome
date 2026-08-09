@@ -13,6 +13,8 @@ final class EventsViewModel: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var detailTasks: [String: Task<Void, Never>] = [:]
     private var actionTasks: [String: Task<Void, Never>] = [:]
+    private var actionOriginals: [String: AppEvent] = [:]
+    private var actionGenerations: [String: Int] = [:]
     private var hasStarted = false
 
     init(repository: AppRepository?, scope: CacheScope?, seedEvents: [AppEvent] = []) {
@@ -90,7 +92,11 @@ final class EventsViewModel: ObservableObject {
         guard !pendingActions.contains(eventID) else { return }
         guard let original = event(id: eventID) else { return }
         if original.acknowledged && original.resolution == resolution { return }
+        guard let repository else { return }
 
+        let generation = (actionGenerations[eventID] ?? 0) + 1
+        actionGenerations[eventID] = generation
+        actionOriginals[eventID] = original
         let optimistic = resolvedCopy(original, resolution: resolution)
         pendingActions.insert(eventID)
         actionErrors[eventID] = nil
@@ -98,34 +104,47 @@ final class EventsViewModel: ObservableObject {
         details[eventID] = optimistic
         persistCurrentEvents()
 
-        guard let repository else {
-            pendingActions.remove(eventID)
-            return
-        }
-        let task = Task { @MainActor [weak self, repository] in
+        let task = Task { @MainActor [weak self, repository, generation] in
             guard let self else { return }
-            defer { actionTasks[eventID] = nil }
+            defer { self.finishAction(eventID, generation: generation) }
             do {
                 let updated = try await repository.updateEvent(original, resolution: resolution)
+                try Task.checkCancellation()
+                guard self.actionGenerations[eventID] == generation else { return }
                 replace(updated)
                 details[eventID] = updated
                 persistCurrentEvents()
             } catch is CancellationError {
+                guard self.actionGenerations[eventID] == generation else { return }
                 replace(original)
                 details[eventID] = original
+                persistCurrentEvents()
             } catch {
+                guard self.actionGenerations[eventID] == generation else { return }
                 replace(original)
                 details[eventID] = original
                 actionErrors[eventID] = "未能保存处理结果，请重试"
                 persistCurrentEvents()
             }
-            pendingActions.remove(eventID)
         }
         actionTasks[eventID] = task
     }
 
     func cancelInFlightActions() {
+        let eventIDs = Array(actionTasks.keys)
         actionTasks.values.forEach { $0.cancel() }
+        for eventID in eventIDs {
+            actionGenerations[eventID, default: 0] += 1
+            if let original = actionOriginals[eventID] {
+                replace(original)
+                details[eventID] = original
+            }
+            actionErrors[eventID] = nil
+            pendingActions.remove(eventID)
+        }
+        actionTasks.removeAll()
+        actionOriginals.removeAll()
+        if !eventIDs.isEmpty { persistCurrentEvents() }
     }
 
     func clearError(for eventID: String) {
@@ -149,6 +168,13 @@ final class EventsViewModel: ObservableObject {
     private func persistCurrentEvents() {
         guard let repository, let scope, let events = state.value else { return }
         Task { await repository.cacheEvents(events, scope: scope) }
+    }
+
+    private func finishAction(_ eventID: String, generation: Int) {
+        guard actionGenerations[eventID] == generation else { return }
+        actionTasks[eventID] = nil
+        actionOriginals[eventID] = nil
+        pendingActions.remove(eventID)
     }
 
     private func mergingPendingActions(into next: Loadable<[AppEvent]>) -> Loadable<[AppEvent]> {
