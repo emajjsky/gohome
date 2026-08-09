@@ -702,6 +702,85 @@ final class ProfilePermissionTests: XCTestCase {
         XCTAssertEqual(patchCount, 0)
     }
 
+    @MainActor
+    func testCancelledAccountProfileRefreshCannotOverwriteCurrentProfile() async throws {
+        let user = AppUser(id: "user-1", phone: "13800138000", displayName: "当前昵称")
+        let current = AccountProfile(user: user)
+        let late = try accountProfileFixture(
+            displayName: "迟到的资料",
+            city: "上海市",
+            district: "徐汇区",
+            avatarAssetID: "asset-late"
+        )
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            accountProfileLoader: {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return AccountProfileEnvelope(profile: late)
+            }
+        )
+        let model = ProfileViewModel(
+            user: user,
+            family: AppFamily(id: "family-1", name: "测试家庭", role: "owner"),
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: fixtureProfile(canEdit: true)
+        )
+
+        model.refreshAccountProfile()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        model.cancelInFlightAccountProfileRefresh()
+        try await Task.sleep(nanoseconds: 140_000_000)
+
+        XCTAssertEqual(model.accountProfile, current)
+        XCTAssertNil(model.inlineError)
+    }
+
+    @MainActor
+    func testCancelledAccountProfileSaveCannotPublishReturnedServerState() async throws {
+        let user = AppUser(id: "user-1", phone: "13800138000", displayName: "当前昵称")
+        let original = AccountProfile(user: user)
+        let updated = try accountProfileFixture(
+            displayName: "不应发布",
+            city: "上海市",
+            district: "徐汇区",
+            avatarAssetID: "asset-new"
+        )
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            accountProfileUpdater: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return AccountProfileEnvelope(profile: updated)
+            }
+        )
+        let model = ProfileViewModel(
+            user: user,
+            family: AppFamily(id: "family-1", name: "测试家庭", role: "owner"),
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: fixtureProfile(canEdit: true)
+        )
+        let saveTask = Task { @MainActor in
+            await model.saveAccountProfile(
+                displayName: "新昵称",
+                city: "上海市",
+                district: "徐汇区",
+                avatarJPEG: nil
+            )
+        }
+
+        try await Task.sleep(nanoseconds: 20_000_000)
+        saveTask.cancel()
+        let saved = await saveTask.value
+
+        XCTAssertFalse(saved)
+        XCTAssertEqual(model.accountProfile, original)
+        XCTAssertFalse(model.savingAccountProfile)
+        XCTAssertNil(model.inlineError)
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("ProfilePermissionTests-\(UUID().uuidString)", isDirectory: true)

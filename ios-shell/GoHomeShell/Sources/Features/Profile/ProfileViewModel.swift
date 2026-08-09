@@ -41,6 +41,7 @@ final class ProfileViewModel: ObservableObject {
     private let repository: AppRepository?
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
+    private var accountProfileRefreshTask: Task<Void, Never>?
     private var rulesSaveTask: Task<Void, Never>?
     private var preferencesSaveTask: Task<Void, Never>?
     private var productPreferencesSaveTask: Task<Void, Never>?
@@ -97,15 +98,22 @@ final class ProfileViewModel: ObservableObject {
 
     func refreshAccountProfile() {
         guard let repository else { return }
-        Task { [repository] in
+        accountProfileRefreshTask?.cancel()
+        let task = Task { @MainActor [weak self, repository] in
             do {
                 let profile = try await repository.accountProfile()
-                accountProfile = profile
-                onAccountProfileChanged(profile)
+                try Task.checkCancellation()
+                guard let self else { return }
+                self.accountProfile = profile
+                self.onAccountProfileChanged(profile)
+            } catch is CancellationError {
+                return
             } catch {
-                if accountProfile.displayName.isEmpty { inlineError = "账户资料暂时无法更新" }
+                guard let self else { return }
+                if self.accountProfile.displayName.isEmpty { self.inlineError = "账户资料暂时无法更新" }
             }
         }
+        accountProfileRefreshTask = task
     }
 
     func saveAccountProfile(
@@ -145,6 +153,7 @@ final class ProfileViewModel: ObservableObject {
                 district: district.trimmingCharacters(in: .whitespacesAndNewlines),
                 avatarAssetID: avatarAssetID
             ))
+            try Task.checkCancellation()
             accountProfile = updated
             onAccountProfileChanged(updated)
             return true
@@ -291,6 +300,11 @@ final class ProfileViewModel: ObservableObject {
         rulesSaveTask?.cancel()
         preferencesSaveTask?.cancel()
         productPreferencesSaveTask?.cancel()
+    }
+
+    func cancelInFlightAccountProfileRefresh() {
+        accountProfileRefreshTask?.cancel()
+        accountProfileRefreshTask = nil
     }
 
     func refreshFamilyMembers() {
@@ -623,6 +637,7 @@ final class ProfileViewModel: ObservableObject {
 
     deinit {
         loadTask?.cancel()
+        accountProfileRefreshTask?.cancel()
         rulesSaveTask?.cancel()
         preferencesSaveTask?.cancel()
         productPreferencesSaveTask?.cancel()

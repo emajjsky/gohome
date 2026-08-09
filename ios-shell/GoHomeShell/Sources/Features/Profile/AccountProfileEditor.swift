@@ -86,7 +86,10 @@ struct AccountProfileEditor: View {
             district = value.district
         }
         .onAppear { model.clearError() }
-        .onDisappear { saveTask?.cancel() }
+        .onDisappear {
+            saveTask?.cancel()
+            model.cancelInFlightAccountProfileRefresh()
+        }
     }
 
     private var avatarPicker: some View {
