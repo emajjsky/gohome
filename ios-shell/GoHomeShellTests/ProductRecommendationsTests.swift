@@ -35,6 +35,58 @@ final class ProductRecommendationsTests: XCTestCase {
         XCTAssertEqual(states[1], Loadable(value: refreshed, isRefreshing: false, staleReason: nil))
     }
 
+    func testRecommendationPresentationSeparatesLoadingEmptyFailureAndContent() {
+        let value = response(id: "content")
+
+        XCTAssertEqual(
+            ProductRecommendationsPresentationState.resolve(Loadable(value: nil, isRefreshing: true, staleReason: nil)),
+            .loading
+        )
+        XCTAssertEqual(
+            ProductRecommendationsPresentationState.resolve(Loadable(value: nil, isRefreshing: false, staleReason: "推荐暂时无法更新")),
+            .failure("推荐暂时无法更新")
+        )
+        XCTAssertEqual(
+            ProductRecommendationsPresentationState.resolve(
+                Loadable(value: ProductRecommendationsResponse(products: [], revision: "empty"), isRefreshing: false, staleReason: nil)
+            ),
+            .empty
+        )
+        XCTAssertEqual(
+            ProductRecommendationsPresentationState.resolve(Loadable(value: value, isRefreshing: true, staleReason: nil)),
+            .content
+        )
+    }
+
+    @MainActor
+    func testFailedRecommendationLoadCanRetryAndPublishFreshContent() async throws {
+        let fresh = response(id: "retry-success")
+        let calls = ProductLoadCounter()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            productsLoader: { _ in
+                if await calls.increment() == 1 { throw APIError.invalidResponse }
+                return fresh
+            }
+        )
+        let model = ProductRecommendationsViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1")
+        )
+
+        model.start()
+        try await waitUntil { model.state.staleReason != nil && !model.state.isRefreshing }
+        XCTAssertEqual(ProductRecommendationsPresentationState.resolve(model.state), .failure("推荐暂时无法更新"))
+
+        model.retry()
+        try await waitUntil { model.state.value?.revision == "retry-success" }
+
+        XCTAssertEqual(ProductRecommendationsPresentationState.resolve(model.state), .content)
+        let callCount = await calls.value
+        XCTAssertEqual(callCount, 2)
+    }
+
     func testCommunityServicesResolveToRealSystemActions() throws {
         let home = HomeLocation(
             latitude: 30.2741,

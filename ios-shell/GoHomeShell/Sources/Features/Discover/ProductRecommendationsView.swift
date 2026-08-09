@@ -5,6 +5,25 @@ struct ProductRecommendationsResponse: Codable, Equatable, Sendable {
     let revision: String
 }
 
+enum ProductRecommendationsPresentationState: Equatable {
+    case loading
+    case failure(String)
+    case empty
+    case content
+
+    static func resolve(_ state: Loadable<ProductRecommendationsResponse>) -> Self {
+        if state.value == nil {
+            if state.isRefreshing { return .loading }
+            if let staleReason = state.staleReason { return .failure(staleReason) }
+            return .empty
+        }
+        if state.value?.products.isEmpty == true, !state.isRefreshing, state.staleReason == nil {
+            return .empty
+        }
+        return .content
+    }
+}
+
 struct ProductRecommendation: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let category: String
@@ -86,6 +105,10 @@ final class ProductRecommendationsViewModel: ObservableObject {
         state.isRefreshing = false
     }
 
+    func retry() {
+        start()
+    }
+
     deinit { loadTask?.cancel() }
 }
 
@@ -104,20 +127,39 @@ struct ProductRecommendationsView: View {
         VStack(alignment: .leading, spacing: 18) {
             GoHomeSectionHeader(title: "适老好物", detail: filteredProducts.isEmpty ? nil : "\(filteredProducts.count) 项")
 
-            if !categories.isEmpty {
-                categoryBar
-            }
-
-            if filteredProducts.isEmpty {
+            switch ProductRecommendationsPresentationState.resolve(model.state) {
+            case .loading:
+                loadingState
+            case let .failure(reason):
+                failureState(reason)
+            case .empty:
                 emptyState
-            } else {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
-                    ForEach(filteredProducts) { product in
-                        ProductRecommendationCard(product: product, apiBaseURL: apiBaseURL) {
-                            selectedProduct = product
+            case .content:
+                if !categories.isEmpty {
+                    categoryBar
+                }
+
+                if filteredProducts.isEmpty {
+                    filteredEmptyState
+                } else {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 22) {
+                        ForEach(filteredProducts) { product in
+                            ProductRecommendationCard(product: product, apiBaseURL: apiBaseURL) {
+                                selectedProduct = product
+                            }
                         }
                     }
                 }
+            }
+
+            if model.state.isRefreshing, model.state.value != nil {
+                HStack(spacing: 7) {
+                    ProgressView().controlSize(.small)
+                    Text("正在更新推荐")
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(GoHomeTheme.mutedInk)
+                .accessibilityIdentifier("product-recommendations-refreshing")
             }
 
             if let staleReason = model.state.staleReason, model.state.value != nil {
@@ -128,6 +170,10 @@ struct ProductRecommendationsView: View {
         }
         .sheet(item: $selectedProduct) { product in
             ProductRecommendationDetail(product: product, apiBaseURL: apiBaseURL)
+        }
+        .onChange(of: categories) { values in
+            guard selectedCategory != "全部", !values.contains(selectedCategory) else { return }
+            selectedCategory = "全部"
         }
     }
 
@@ -176,6 +222,55 @@ struct ProductRecommendationsView: View {
         }
         .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
         .accessibilityIdentifier("product-recommendations-empty")
+    }
+
+    private var loadingState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ProgressView()
+                .tint(GoHomeTheme.ginger)
+            Text("正在加载推荐")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(GoHomeTheme.ink)
+        }
+        .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
+        .accessibilityIdentifier("product-recommendations-loading")
+    }
+
+    private func failureState(_ reason: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(GoHomeTheme.danger)
+            Text("推荐暂时无法更新")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(GoHomeTheme.ink)
+            Text(reason == "推荐暂时无法更新" ? "请检查网络后重试" : reason)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(GoHomeTheme.mutedInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { model.retry() } label: {
+                Label("重新加载", systemImage: "arrow.clockwise")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(GoHomeTheme.ink)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("product-recommendations-retry")
+        }
+        .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
+        .accessibilityIdentifier("product-recommendations-failure")
+    }
+
+    private var filteredEmptyState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(GoHomeTheme.ginger)
+            Text("这个分类暂时没有推荐")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(GoHomeTheme.ink)
+        }
+        .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
+        .accessibilityIdentifier("product-recommendations-filter-empty")
     }
 }
 
