@@ -56,6 +56,7 @@ struct ActivityTimelineView: View {
         } message: {
             Text("安全事件与告警证据不会被删除。")
         }
+        .onDisappear { model.cancelInFlightClear() }
     }
 
     private var hasHistory: Bool {

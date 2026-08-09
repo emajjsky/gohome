@@ -12,6 +12,7 @@ final class ActivityTimelineViewModel: ObservableObject {
     let canManageHistory: Bool
     private var loadTask: Task<Void, Never>?
     private var overviewTask: Task<Void, Never>?
+    private var clearTask: Task<Void, Never>?
     private var hasStarted = false
 
     init(
@@ -56,17 +57,28 @@ final class ActivityTimelineViewModel: ObservableObject {
         clearingHistory = true
         actionError = nil
         let date = Self.todayKey()
-        Task { [repository, scope] in
+        clearTask = Task { @MainActor [weak self, repository, scope] in
+            guard let self else { return }
+            defer {
+                self.clearTask = nil
+                self.clearingHistory = false
+            }
             do {
                 _ = try await repository.deleteActivityHistory(scope: scope, date: date)
+                try Task.checkCancellation()
                 state = Loadable(value: ActivityTimelineResponse(date: date, intervals: [], revision: "cleared"))
                 overviewState = Loadable()
                 refresh()
+            } catch is CancellationError {
+                return
             } catch {
                 actionError = "活动记录未能清空，请重试"
             }
-            clearingHistory = false
         }
+    }
+
+    func cancelInFlightClear() {
+        clearTask?.cancel()
     }
 
     private static func todayKey() -> String {
@@ -81,5 +93,6 @@ final class ActivityTimelineViewModel: ObservableObject {
     deinit {
         loadTask?.cancel()
         overviewTask?.cancel()
+        clearTask?.cancel()
     }
 }

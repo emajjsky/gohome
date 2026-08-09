@@ -102,6 +102,43 @@ final class ActivityTimelineTests: XCTestCase {
         XCTAssertTrue(settings.dailySummaryEnabled)
         XCTAssertTrue(settings.weeklyReportEnabled)
     }
+
+    @MainActor
+    func testCancelledHistoryClearKeepsTimelineWithoutError() async throws {
+        let cache = try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let scope = CacheScope(userID: "user-1", familyID: "family-1")
+        let interval = ActivityInterval(
+            id: "activity-1",
+            cameraID: "camera-1",
+            room: "客厅",
+            startedAt: "2026-07-23T01:00:00Z",
+            endedAt: "2026-07-23T01:08:00Z",
+            personCountMax: 1,
+            postures: ["standing"],
+            confidence: 0.9
+        )
+        let response = ActivityTimelineResponse(date: "2026-07-23", intervals: [interval], revision: "seed")
+        let repository = AppRepository(
+            cache: cache,
+            bootstrapLoader: { throw APIError.invalidResponse },
+            activityHistoryDeleter: { _ in
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                throw APIError.invalidResponse
+            }
+        )
+        let model = ActivityTimelineViewModel(repository: repository, scope: scope, canManageHistory: true, seed: response)
+
+        model.clearHistory()
+        while !model.clearingHistory {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        model.cancelInFlightClear()
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        XCTAssertEqual(model.state.value, response)
+        XCTAssertFalse(model.clearingHistory)
+        XCTAssertNil(model.actionError)
+    }
 }
 
 private actor ActivityTimelineStateRecorder {
