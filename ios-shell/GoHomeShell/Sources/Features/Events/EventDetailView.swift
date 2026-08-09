@@ -48,6 +48,7 @@ struct EventDetailView: View {
         }
         .safeAreaInset(edge: .bottom) { actionBar }
         .task { model.loadDetail(id: eventID) }
+        .onDisappear { model.cancelInFlightActions() }
     }
 
     private var hero: some View {

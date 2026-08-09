@@ -34,6 +34,32 @@ final class EventsViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLeavingEventDetailCancelsActionWithoutError() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = fixtureEvent()
+        let loader = BlockingEventActionLoader()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            eventActionLoader: { _, _ in try await loader.load() }
+        )
+        let model = EventsViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user", familyID: "family"),
+            seedEvents: [original]
+        )
+
+        model.resolve(original.id, as: "handled")
+        try await waitUntil { model.pendingActions.contains(original.id) }
+        model.cancelInFlightActions()
+        try await waitUntil { !model.pendingActions.contains(original.id) }
+
+        XCTAssertEqual(model.state.value?.first, original)
+        XCTAssertNil(model.actionErrors[original.id])
+    }
+
+    @MainActor
     func testPrepareEventLoadsAnEventOutsideTheCachedSummary() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -81,5 +107,12 @@ final class EventsViewModelTests: XCTestCase {
             createdAt: "2026-07-22T09:30:00+08:00",
             updatedAt: "2026-07-22T09:30:00+08:00"
         )
+    }
+}
+
+private actor BlockingEventActionLoader {
+    func load() async throws -> AppEvent {
+        try await Task.sleep(nanoseconds: 5_000_000_000)
+        throw CancellationError()
     }
 }

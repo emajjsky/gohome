@@ -12,6 +12,7 @@ final class EventsViewModel: ObservableObject {
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
     private var detailTasks: [String: Task<Void, Never>] = [:]
+    private var actionTasks: [String: Task<Void, Never>] = [:]
     private var hasStarted = false
 
     init(repository: AppRepository?, scope: CacheScope?, seedEvents: [AppEvent] = []) {
@@ -101,7 +102,9 @@ final class EventsViewModel: ObservableObject {
             pendingActions.remove(eventID)
             return
         }
-        Task { [repository] in
+        let task = Task { @MainActor [weak self, repository] in
+            guard let self else { return }
+            defer { actionTasks[eventID] = nil }
             do {
                 let updated = try await repository.updateEvent(original, resolution: resolution)
                 replace(updated)
@@ -118,6 +121,11 @@ final class EventsViewModel: ObservableObject {
             }
             pendingActions.remove(eventID)
         }
+        actionTasks[eventID] = task
+    }
+
+    func cancelInFlightActions() {
+        actionTasks.values.forEach { $0.cancel() }
     }
 
     func clearError(for eventID: String) {
@@ -179,5 +187,6 @@ final class EventsViewModel: ObservableObject {
     deinit {
         loadTask?.cancel()
         detailTasks.values.forEach { $0.cancel() }
+        actionTasks.values.forEach { $0.cancel() }
     }
 }
