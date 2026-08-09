@@ -38,19 +38,46 @@ final class EditorialFeedTests: XCTestCase {
         XCTAssertNil(HomeArticleComposition.featured([]))
     }
 
+    func testLocalFallbackImagesAreStableAndDistributedAcrossArticles() {
+        let articles = (1...7).map { article(id: "article-\($0)") }
+        let firstPass = articles.map(HomeArticleComposition.localImageName)
+        let secondPass = articles.map(HomeArticleComposition.localImageName)
+        let assignments = HomeArticleComposition.localImageAssignments(Array(articles.prefix(6)))
+
+        XCTAssertEqual(firstPass, secondPass)
+        XCTAssertGreaterThanOrEqual(Set(firstPass).count, 5)
+        XCTAssertEqual(Set(assignments.values).count, 6)
+        XCTAssertFalse(assignments.values.contains("memory-family-dinner"))
+    }
+
+    func testOnlyFirstArticleUsesADuplicatedRemoteImage() {
+        let articles = [
+            article(id: "first", imageURL: "https://images.example.com/shared.jpg"),
+            article(id: "second", imageURL: "https://images.example.com/shared.jpg"),
+            article(id: "third", imageURL: "https://images.example.com/unique.jpg"),
+            article(id: "empty", imageURL: ""),
+        ]
+
+        XCTAssertEqual(
+            HomeArticleComposition.remoteImageArticleIDs(articles),
+            Set(["first", "third"])
+        )
+    }
+
     private func article(
         id: String,
         category: String = "本地",
         title: String = "城市公园本周开放夜游",
         sourceName: String = "城市发布",
-        sourceURL: String = "https://example.com/a"
+        sourceURL: String = "https://example.com/a",
+        imageURL: String = ""
     ) -> HomeArticle {
         HomeArticle(
             id: id,
             category: category,
             title: title,
             summary: "",
-            imageURL: "",
+            imageURL: imageURL,
             sourceName: sourceName,
             sourceURL: sourceURL,
             publishedAt: nil

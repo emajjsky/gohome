@@ -86,7 +86,7 @@ struct HomeView: View {
     private var welcomeHero: some View {
         GeometryReader { proxy in
             ZStack(alignment: .bottomLeading) {
-                GoHomeLocalImage(name: "grandma-reading")
+                GoHomeLocalImage(name: "memory-family-dinner")
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
                     .clipped()
                 Rectangle()

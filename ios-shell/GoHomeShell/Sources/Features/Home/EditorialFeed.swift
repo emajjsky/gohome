@@ -54,6 +54,52 @@ enum HomeArticlePolicy {
 enum HomeArticleComposition {
     static func featured(_ articles: [HomeArticle]) -> HomeArticle? { articles.first }
     static func remaining(_ articles: [HomeArticle]) -> [HomeArticle] { Array(articles.dropFirst()) }
+
+    static func localImageName(for article: HomeArticle) -> String {
+        let catalog = [
+            "memory-daughter-walk",
+            "memory-garden-sun",
+            "memory-generations",
+            "memory-outdoor-walk",
+            "memory-relax-chat",
+            "grandma-reading",
+        ]
+        let seed = article.id.unicodeScalars.reduce(0) { ($0 &* 31) &+ Int($1.value) }
+        return catalog[abs(seed) % catalog.count]
+    }
+
+    static func localImageAssignments(_ articles: [HomeArticle]) -> [String: String] {
+        let catalog = [
+            "memory-daughter-walk",
+            "memory-garden-sun",
+            "memory-generations",
+            "memory-outdoor-walk",
+            "memory-relax-chat",
+            "grandma-reading",
+        ]
+        var used = Set<String>()
+        var assignments: [String: String] = [:]
+        for article in articles {
+            let start = abs(article.id.unicodeScalars.reduce(0) { ($0 &* 31) &+ Int($1.value) }) % catalog.count
+            let name = (0..<catalog.count)
+                .map { catalog[(start + $0) % catalog.count] }
+                .first { used.insert($0).inserted }
+                ?? catalog[start]
+            assignments[article.id] = name
+        }
+        return assignments
+    }
+
+    static func remoteImageArticleIDs(_ articles: [HomeArticle]) -> Set<String> {
+        var seen = Set<String>()
+        var ids = Set<String>()
+        for article in articles {
+            let rawURL = article.imageURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawURL.isEmpty, seen.insert(rawURL).inserted else { continue }
+            ids.insert(article.id)
+        }
+        return ids
+    }
 }
 
 struct EditorialFeed: View {
@@ -68,6 +114,12 @@ struct EditorialFeed: View {
 
     private var featuredArticle: HomeArticle? { HomeArticleComposition.featured(visibleArticles) }
     private var remainingArticles: [HomeArticle] { HomeArticleComposition.remaining(visibleArticles) }
+    private var remoteImageArticleIDs: Set<String> {
+        HomeArticleComposition.remoteImageArticleIDs(visibleArticles)
+    }
+    private var localImageAssignments: [String: String] {
+        HomeArticleComposition.localImageAssignments(visibleArticles)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -98,13 +150,32 @@ struct EditorialFeed: View {
                     .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
             } else {
                 if let featuredArticle {
-                    FeaturedArticleCard(article: featuredArticle, apiBaseURL: apiBaseURL) {
+                    FeaturedArticleCard(
+                        article: featuredArticle,
+                        apiBaseURL: apiBaseURL,
+                        usesRemoteImage: remoteImageArticleIDs.contains(featuredArticle.id),
+                        fallbackImageName: localImageAssignments[featuredArticle.id]
+                    ) {
                         selectedArticle = featuredArticle
                     }
                 }
-                MasonryLayout(spacing: 12) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 12, alignment: .top),
+                        GridItem(.flexible(), spacing: 12, alignment: .top),
+                    ],
+                    alignment: .leading,
+                    spacing: 12
+                ) {
                     ForEach(remainingArticles) { article in
-                        ArticleCard(article: article, apiBaseURL: apiBaseURL) { selectedArticle = article }
+                        ArticleCard(
+                            article: article,
+                            apiBaseURL: apiBaseURL,
+                            usesRemoteImage: remoteImageArticleIDs.contains(article.id),
+                            fallbackImageName: localImageAssignments[article.id]
+                        ) {
+                            selectedArticle = article
+                        }
                     }
                 }
             }

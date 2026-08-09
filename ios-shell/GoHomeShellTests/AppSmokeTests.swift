@@ -33,8 +33,11 @@ final class AppSmokeTests: XCTestCase {
         let imageNames = [
             "avatar",
             "grandma-reading",
+            "memory-daughter-walk",
+            "memory-family-dinner",
             "memory-garden-sun",
             "memory-generations",
+            "memory-outdoor-walk",
             "memory-relax-chat",
         ]
 

@@ -3,12 +3,34 @@ import SwiftUI
 struct FeaturedArticleCard: View {
     let article: HomeArticle
     let apiBaseURL: URL?
+    let usesRemoteImage: Bool
+    let fallbackImageName: String?
     let action: () -> Void
+
+    init(
+        article: HomeArticle,
+        apiBaseURL: URL?,
+        usesRemoteImage: Bool = true,
+        fallbackImageName: String? = nil,
+        action: @escaping () -> Void
+    ) {
+        self.article = article
+        self.apiBaseURL = apiBaseURL
+        self.usesRemoteImage = usesRemoteImage
+        self.fallbackImageName = fallbackImageName
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
             ZStack(alignment: .bottomLeading) {
-                ArticleImage(article: article, apiBaseURL: apiBaseURL, aspectRatio: 2.2)
+                ArticleImage(
+                    article: article,
+                    apiBaseURL: apiBaseURL,
+                    aspectRatio: 2.2,
+                    usesRemoteImage: usesRemoteImage,
+                    fallbackImageName: fallbackImageName
+                )
                 Color.black.opacity(0.68)
                     .frame(maxWidth: .infinity)
                     .frame(height: 92)
@@ -49,12 +71,33 @@ struct FeaturedArticleCard: View {
 struct ArticleCard: View {
     let article: HomeArticle
     let apiBaseURL: URL?
+    let usesRemoteImage: Bool
+    let fallbackImageName: String?
     let action: () -> Void
+
+    init(
+        article: HomeArticle,
+        apiBaseURL: URL?,
+        usesRemoteImage: Bool = true,
+        fallbackImageName: String? = nil,
+        action: @escaping () -> Void
+    ) {
+        self.article = article
+        self.apiBaseURL = apiBaseURL
+        self.usesRemoteImage = usesRemoteImage
+        self.fallbackImageName = fallbackImageName
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 0) {
-                ArticleImage(article: article, apiBaseURL: apiBaseURL)
+                ArticleImage(
+                    article: article,
+                    apiBaseURL: apiBaseURL,
+                    usesRemoteImage: usesRemoteImage,
+                    fallbackImageName: fallbackImageName
+                )
                 VStack(alignment: .leading, spacing: 8) {
                     Text(article.category)
                         .font(.system(size: 10, weight: .bold))
@@ -64,19 +107,20 @@ struct ArticleCard: View {
                         .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundStyle(GoHomeTheme.ink)
                         .multilineTextAlignment(.leading)
-                        .lineLimit(3)
+                        .lineLimit(2)
                     if !article.summary.isEmpty {
                         Text(article.summary)
                             .font(.system(size: 12))
                             .foregroundStyle(GoHomeTheme.mutedInk)
                             .multilineTextAlignment(.leading)
-                            .lineLimit(3)
+                            .lineLimit(2)
                     }
                     Text(article.articleMetadataText)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(GoHomeTheme.mutedInk)
                         .lineLimit(1)
                 }
+                .frame(maxWidth: .infinity, minHeight: 102, alignment: .topLeading)
                 .padding(11)
             }
             .background(GoHomeTheme.paper)
@@ -99,10 +143,12 @@ struct ArticleImage: View {
     let article: HomeArticle
     let apiBaseURL: URL?
     var aspectRatio: CGFloat = 4 / 3
+    var usesRemoteImage = true
+    var fallbackImageName: String?
 
     var body: some View {
         Group {
-            if let url = proxiedContentImageURL(article.imageURL, baseURL: apiBaseURL) {
+            if usesRemoteImage, let url = proxiedContentImageURL(article.imageURL, baseURL: apiBaseURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case let .success(image):
@@ -121,7 +167,7 @@ struct ArticleImage: View {
     }
 
     private var localFallback: some View {
-        GoHomeLocalImage(name: article.localImageName)
+        GoHomeLocalImage(name: fallbackImageName ?? article.localImageName)
             .overlay(alignment: .bottomLeading) {
                 if aspectRatio > 2 {
                     Color.black.opacity(0.22)
@@ -132,11 +178,7 @@ struct ArticleImage: View {
 
 private extension HomeArticle {
     var localImageName: String {
-        let value = category.lowercased()
-        if value.contains("健康") || value.contains("养生") { return "grandma-reading" }
-        if value.contains("本地") || value.contains("热点") { return "memory-garden-sun" }
-        if value.contains("文娱") || value.contains("文化") { return "memory-generations" }
-        return "memory-relax-chat"
+        HomeArticleComposition.localImageName(for: self)
     }
 
     var articleMetadataText: String {
