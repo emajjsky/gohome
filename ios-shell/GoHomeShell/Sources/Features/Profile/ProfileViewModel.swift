@@ -282,11 +282,14 @@ final class ProfileViewModel: ObservableObject {
                 elderID: elderID,
                 payload: payload
             )
+            try Task.checkCancellation()
             guard var value = state.value else { return true }
             value.elder = updated
             state.value = value
             await persist()
             return true
+        } catch is CancellationError {
+            return false
         } catch {
             inlineError = "照护资料未能保存，请重试"
             return false

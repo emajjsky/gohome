@@ -1157,6 +1157,18 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **状态**：已完成，`ProfilePermissionTests` 23/23、全量 `GoHomeShellTests` 168/168，`git diff --check` 通过。
 
+### GH-101 照护资料保存任务未绑定编辑弹层生命周期
+
+**发现**：照护资料编辑弹层通过临时 `Task` 保存，退出弹层后服务端晚返回仍可能写入老人资料；取消请求也可能被当成普通失败提示。
+
+**根因**：编辑弹层没有持有保存任务，ViewModel 在更新照护资料返回后没有检查取消状态。
+
+**处理**：编辑弹层持有并在退出时取消保存任务；ViewModel 在服务端返回后、写入资料前检查取消，取消不更新资料、不显示错误，真实失败继续提示。
+
+**验收要求**：阻塞且忽略取消的照护资料保存，退出编辑弹层后不得写回、不得显示错误，处理中状态必须清除；资料专项与全量 iOS 单测通过。
+
+**状态**：已完成，`ProfilePermissionTests` 24/24、全量 `GoHomeShellTests` 169/169，`git diff --check` 通过。
+
 ### GH-078 正式 App 默认头像资源未进入用户资料页面
 
 **发现**：正式仓库已有 `assets/images/avatar.jpg`，但 `ios-shell/project.yml` 没有把它加入 App Bundle；`AccountAvatar` 在没有远程头像时只显示 SF Symbol，首页“我的”入口和个人资料编辑页因此没有产品默认头像。

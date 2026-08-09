@@ -376,6 +376,7 @@ private struct CaredForProfileEditor: View {
     @State private var homeLongitude: Double?
     @State private var homeLocationLabel: String
     @State private var showsCityPicker = false
+    @State private var saveTask: Task<Void, Never>?
 
     private let relationships = ["母亲", "父亲", "祖父", "祖母", "亲属", "其他"]
 
@@ -505,6 +506,7 @@ private struct CaredForProfileEditor: View {
             district = location.district
             homeLocationLabel = location.displayName
         }
+        .onDisappear { saveTask?.cancel() }
     }
 
     private var normalizedMobilePhone: String { mobilePhone.filter(\.isNumber) }
@@ -546,7 +548,8 @@ private struct CaredForProfileEditor: View {
             homeLongitude: homeLongitude,
             homeLocationLabel: homeLocationLabel.isEmpty ? nil : homeLocationLabel
         )
-        Task {
+        saveTask = Task { @MainActor in
+            defer { saveTask = nil }
             if await model.saveElderProfile(payload) { dismiss() }
         }
     }

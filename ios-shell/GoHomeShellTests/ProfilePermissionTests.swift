@@ -641,6 +641,39 @@ final class ProfilePermissionTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledElderProfileSaveCannotPublishReturnedServerState() async throws {
+        let updated = try elderProfileFixture()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            elderProfileUpdater: { _, _, _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return updated
+            }
+        )
+        let model = makeModel(role: "owner", repository: repository, seed: fixtureProfile(canEdit: true))
+        let payload = ProfilePayload(
+            displayName: "不应保存",
+            relationship: "母亲",
+            city: "杭州",
+            district: "西湖区",
+            phone: "13800138000",
+            mobilePhone: "13800138000",
+            homePhone: ""
+        )
+        let saveTask = Task { @MainActor in await model.saveElderProfile(payload) }
+
+        try await Task.sleep(nanoseconds: 20_000_000)
+        saveTask.cancel()
+        let saved = await saveTask.value
+
+        XCTAssertFalse(saved)
+        XCTAssertNil(model.state.value?.elder)
+        XCTAssertFalse(model.savingElderProfile)
+        XCTAssertNil(model.inlineError)
+    }
+
+    @MainActor
     func testAccountProfileUploadsAvatarAndPublishesSavedServerState() async throws {
         let scope = CacheScope(userID: "user-1", familyID: "family-1")
         let updated = try accountProfileFixture(
