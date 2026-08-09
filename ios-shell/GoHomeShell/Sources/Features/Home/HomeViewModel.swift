@@ -113,6 +113,7 @@ final class HomeViewModel: ObservableObject {
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
     private var reconciliationTask: Task<Void, Never>?
+    private var careActionCancellation: (() -> Void)?
     private var hasStarted = false
 
     init(repository: AppRepository?, scope: CacheScope?, seed: HomeResponse? = nil) {
@@ -170,24 +171,38 @@ final class HomeViewModel: ObservableObject {
             payload: payload,
             idempotencyKey: "ios-\(message.messageID)-\(type)-\(UUID().uuidString.lowercased())"
         )
-        do {
-            let response = try await repository.recordMessageAction(
-                familyID: scope.familyID,
-                messageID: message.messageID,
-                request: request
-            )
-            if ["closed", "dismissed"].contains(response.message.status) || type == "snoozed" {
-                careMessage = nil
-            } else {
-                careMessage = response.message
+        let task = Task { @MainActor [weak self, repository, scope, message] in
+            guard let self else { return false }
+            defer {
+                self.careActionCancellation = nil
+                self.pendingCareAction = nil
             }
-            pendingCareAction = nil
-            return true
-        } catch {
-            pendingCareAction = nil
-            careActionError = "操作没有保存，请稍后重试"
-            return false
+            do {
+                let response = try await repository.recordMessageAction(
+                    familyID: scope.familyID,
+                    messageID: message.messageID,
+                    request: request
+                )
+                try Task.checkCancellation()
+                if ["closed", "dismissed"].contains(response.message.status) || type == "snoozed" {
+                    self.careMessage = nil
+                } else {
+                    self.careMessage = response.message
+                }
+                return true
+            } catch is CancellationError {
+                return false
+            } catch {
+                self.careActionError = "操作没有保存，请稍后重试"
+                return false
+            }
         }
+        careActionCancellation = { task.cancel() }
+        return await task.value
+    }
+
+    func cancelInFlightCareAction() {
+        careActionCancellation?()
     }
 
     func clearCareActionError() {
@@ -197,5 +212,6 @@ final class HomeViewModel: ObservableObject {
     deinit {
         loadTask?.cancel()
         reconciliationTask?.cancel()
+        careActionCancellation?()
     }
 }

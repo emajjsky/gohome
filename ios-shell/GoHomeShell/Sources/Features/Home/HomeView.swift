@@ -57,6 +57,7 @@ struct HomeView: View {
         .onChange(of: model.state.value?.homeLocation) { location in
             distanceProvider.update(home: location)
         }
+        .onDisappear { model.cancelInFlightCareAction() }
     }
 
     private var header: some View {

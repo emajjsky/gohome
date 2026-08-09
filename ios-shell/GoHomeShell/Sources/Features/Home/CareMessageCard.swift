@@ -223,6 +223,7 @@ private struct CareMessageEditor: View {
             }
         }
         .onAppear { model.clearCareActionError() }
+        .onDisappear { model.cancelInFlightCareAction() }
     }
 
     private func actionButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {

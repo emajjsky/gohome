@@ -47,6 +47,43 @@ final class HomeViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledCareActionPreservesMessageWithoutError() async throws {
+        let cache = try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let scope = CacheScope(userID: "user-1", familyID: "family-1")
+        let home = try JSONDecoder().decode(HomeResponse.self, from: Data("""
+        {"family":null,"weather":null,"calendar":[],"distance":null,"critical_alert":null,
+         "care_message":{"message_id":"message-cancel","message_type":"return_home","title":"聊聊周末","subtitle":"联系建议",
+         "body":"最近天气不错。","facts":[],"actions":[],"status":"open",
+         "metadata":{"trigger_reason":"days_since_last_visit","topics":["周末安排"],"message_variants":["周末有空一起吃饭吗？"],"snoozed_until":null},
+         "created_at":"2026-07-23T08:00:00Z","updated_at":null},"articles":[],"cameras":[],"revision":"r1"}
+        """.utf8))
+        let repository = AppRepository(
+            cache: cache,
+            bootstrapLoader: { throw APIError.invalidResponse },
+            homeLoader: { _ in home },
+            messageActionLoader: { _, _, _ in
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                throw APIError.invalidResponse
+            }
+        )
+        let model = HomeViewModel(repository: repository, scope: scope)
+        model.start()
+        try await waitUntil { model.careMessage != nil }
+        let action = Task { @MainActor in
+            await model.recordCareAction(type: "contacted")
+        }
+
+        try await waitUntil { model.pendingCareAction == "contacted" }
+        model.cancelInFlightCareAction()
+        let succeeded = await action.value
+
+        XCTAssertFalse(succeeded)
+        XCTAssertEqual(model.careMessage?.messageID, "message-cancel")
+        XCTAssertNil(model.careActionError)
+        XCTAssertNil(model.pendingCareAction)
+    }
+
+    @MainActor
     func testRefreshPublishesNewCameraWithoutRecreatingTheViewModel() async throws {
         let cache = try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let scope = CacheScope(userID: "user-1", familyID: "family-1")
