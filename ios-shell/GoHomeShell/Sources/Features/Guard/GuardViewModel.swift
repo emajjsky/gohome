@@ -55,6 +55,7 @@ final class GuardViewModel: ObservableObject {
     private let recoveryRetryDelayNanoseconds: UInt64
     private var frameTask: Task<Void, Never>?
     private var privacySyncTask: Task<Void, Never>?
+    private var privacyUpdateTask: Task<Void, Never>?
     private var selectionGeneration = 0
     private var lastFrameAt = Date.distantPast
     private var currentSessionReceivedFrame = false
@@ -214,6 +215,8 @@ final class GuardViewModel: ObservableObject {
     func stop() {
         privacySyncTask?.cancel()
         privacySyncTask = nil
+        privacyUpdateTask?.cancel()
+        privacyUpdateTask = nil
         selectionGeneration += 1
         frameTask?.cancel()
         frameTask = Task { [streamClient] in
@@ -263,19 +266,23 @@ final class GuardViewModel: ObservableObject {
         guard privacyPolicy?.canManage == true, let privacyService, let familyID else { return }
         privacyUpdateInFlight = true
         privacyError = nil
-        Task { [weak self] in
-            do {
-                let policy = try await privacyService.update(familyID: familyID, minimumMode: mode)
-                guard let self else { return }
-                self.applyPrivacyPolicy(policy)
-                self.privacyUpdateInFlight = false
-            } catch is CancellationError {
-                self?.privacyUpdateInFlight = false
-            } catch {
-                self?.privacyError = error.localizedDescription
+        let task = Task { @MainActor [weak self, privacyService, familyID] in
+            defer {
+                self?.privacyUpdateTask = nil
                 self?.privacyUpdateInFlight = false
             }
+            do {
+                let policy = try await privacyService.update(familyID: familyID, minimumMode: mode)
+                try Task.checkCancellation()
+                guard let self else { return }
+                self.applyPrivacyPolicy(policy)
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.privacyError = error.localizedDescription
+            }
         }
+        privacyUpdateTask = task
     }
 
     private func applyPrivacyPolicy(_ policy: VideoPrivacyPolicy) {
@@ -291,6 +298,7 @@ final class GuardViewModel: ObservableObject {
     deinit {
         frameTask?.cancel()
         privacySyncTask?.cancel()
+        privacyUpdateTask?.cancel()
         let streamClient = streamClient
         Task { await streamClient.stop() }
     }

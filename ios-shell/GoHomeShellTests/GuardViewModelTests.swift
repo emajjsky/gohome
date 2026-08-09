@@ -303,6 +303,32 @@ final class GuardViewModelTests: XCTestCase {
         model.stop()
     }
 
+    @MainActor
+    func testLeavingGuardCancelsPrivacyUpdateWithoutError() async throws {
+        let client = RecordingStreamClient()
+        let privacy = BlockingPrivacyService(policy: VideoPrivacyPolicy(
+            familyID: "family-1",
+            minimumMode: .original,
+            canManage: true
+        ))
+        let model = GuardViewModel(
+            streamClient: client,
+            privacyService: privacy,
+            familyID: "family-1"
+        )
+
+        model.startPrivacySync()
+        try await waitUntil { await MainActor.run { model.privacyPolicy != nil } }
+        model.setPrivacyMode(.personBlur)
+        try await waitUntil { await MainActor.run { model.privacyUpdateInFlight } }
+        model.stop()
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        XCTAssertFalse(model.privacyUpdateInFlight)
+        XCTAssertNil(model.privacyError)
+        XCTAssertEqual(model.selectedPrivacyMode, .original)
+    }
+
 }
 
 private actor FailingStreamClient: CameraStreamClient {
@@ -396,6 +422,23 @@ private actor RecordingPrivacyService: VideoPrivacyServicing {
 
     func currentPolicy() -> VideoPrivacyPolicy {
         policy
+    }
+}
+
+private actor BlockingPrivacyService: VideoPrivacyServicing {
+    private let policy: VideoPrivacyPolicy
+
+    init(policy: VideoPrivacyPolicy) {
+        self.policy = policy
+    }
+
+    func fetch(familyID: String) async throws -> VideoPrivacyPolicy {
+        policy
+    }
+
+    func update(familyID: String, minimumMode: VideoPrivacyMode) async throws -> VideoPrivacyPolicy {
+        try await Task.sleep(nanoseconds: 5_000_000_000)
+        throw APIError.invalidResponse
     }
 }
 
