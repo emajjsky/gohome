@@ -406,6 +406,106 @@ final class ProfilePermissionTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledFamilyRefreshCannotOverwriteMembersOrInvitations() async throws {
+        let lateMember = FamilyMember(
+            id: "member-late", userID: "user-late", displayName: "迟到成员", accountHint: "139****0000",
+            role: "member", isCurrentUser: false, joinedAt: nil
+        )
+        let lateInvitation = FamilyInvitation(
+            id: "invitation-late", familyID: "family-1", status: "active", codeHint: "LATE",
+            code: "GH-LATE", expiresAt: nil, createdAt: nil, usedAt: nil, revokedAt: nil
+        )
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            familyMembersLoader: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return FamilyMembersResponse(familyID: "family-1", members: [lateMember], revision: "late")
+            },
+            familyInvitationsLoader: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return FamilyInvitationsResponse(familyID: "family-1", invitations: [lateInvitation], revision: "late")
+            }
+        )
+        let model = makeModel(role: "owner", repository: repository, seed: fixtureProfile(canEdit: true))
+
+        model.refreshFamilyMembers()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        model.cancelInFlightFamilyRefresh()
+        try await Task.sleep(nanoseconds: 140_000_000)
+
+        XCTAssertEqual(model.familyMembers.count, 1)
+        XCTAssertNil(model.activeFamilyInvitation)
+        XCTAssertNil(model.inlineError)
+        XCTAssertNil(model.familyActionID)
+    }
+
+    @MainActor
+    func testCancelledFamilyMemberRemovalKeepsMemberWithoutError() async throws {
+        let member = FamilyMember(
+            id: "member-2", userID: "user-2", displayName: "家庭成员", accountHint: "139****0000",
+            role: "member", isCurrentUser: false, joinedAt: nil
+        )
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            familyMembersLoader: { _ in
+                FamilyMembersResponse(familyID: "family-1", members: [member], revision: "current")
+            },
+            familyMemberRemover: { _, _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return FamilyMemberRemovalResponse(removed: true)
+            },
+            familyInvitationsLoader: { _ in
+                FamilyInvitationsResponse(familyID: "family-1", invitations: [], revision: "current")
+            }
+        )
+        let model = makeModel(role: "owner", repository: repository, seed: fixtureProfile(canEdit: true))
+        model.refreshFamilyMembers()
+        for _ in 0..<50 where !model.familyMembers.contains(member) {
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertTrue(model.familyMembers.contains(member))
+
+        let actionTask = Task { @MainActor in await model.removeFamilyMember(member) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        actionTask.cancel()
+        let removed = await actionTask.value
+
+        XCTAssertFalse(removed)
+        XCTAssertTrue(model.familyMembers.contains(member))
+        XCTAssertNil(model.inlineError)
+        XCTAssertNil(model.familyActionID)
+    }
+
+    @MainActor
+    func testCancelledFamilyInvitationCreationKeepsExistingStateWithoutError() async throws {
+        let late = FamilyInvitation(
+            id: "invitation-late", familyID: "family-1", status: "active", codeHint: "LATE",
+            code: "GH-LATE", expiresAt: nil, createdAt: nil, usedAt: nil, revokedAt: nil
+        )
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            familyInvitationCreator: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return late
+            }
+        )
+        let model = makeModel(role: "owner", repository: repository, seed: fixtureProfile(canEdit: true))
+
+        let actionTask = Task { @MainActor in await model.createFamilyInvitation() }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        actionTask.cancel()
+        let created = await actionTask.value
+
+        XCTAssertFalse(created)
+        XCTAssertEqual(model.familyInvitations, [])
+        XCTAssertNil(model.inlineError)
+        XCTAssertNil(model.invitationActionID)
+    }
+
+    @MainActor
     func testProductPreferencesPersistThroughRepositoryAndCache() async throws {
         let cache = try DiskCache(rootURL: temporaryDirectory())
         let scope = CacheScope(userID: "user-1", familyID: "family-1")

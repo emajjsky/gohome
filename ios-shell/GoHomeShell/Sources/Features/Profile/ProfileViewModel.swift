@@ -45,6 +45,7 @@ final class ProfileViewModel: ObservableObject {
     private var rulesSaveTask: Task<Void, Never>?
     private var preferencesSaveTask: Task<Void, Never>?
     private var productPreferencesSaveTask: Task<Void, Never>?
+    private var familyRefreshTask: Task<Void, Never>?
     private var deviceReconciliationTask: Task<Void, Never>?
     private var deviceProgressDismissTask: Task<Void, Never>?
     private var hasStarted = false
@@ -307,29 +308,46 @@ final class ProfileViewModel: ObservableObject {
         accountProfileRefreshTask = nil
     }
 
+    func cancelInFlightFamilyRefresh() {
+        familyRefreshTask?.cancel()
+        familyRefreshTask = nil
+        if familyActionID == "refresh-members" { familyActionID = nil }
+    }
+
     func refreshFamilyMembers() {
         guard let repository, familyActionID == nil else { return }
+        familyRefreshTask?.cancel()
         familyActionID = "refresh-members"
         inlineError = nil
         let shouldLoadInvitations = canEditRules
-        Task { [repository, familyID = family.id, shouldLoadInvitations] in
-            defer { familyActionID = nil }
+        let task = Task { @MainActor [weak self, repository, familyID = family.id, shouldLoadInvitations] in
+            defer {
+                self?.familyActionID = nil
+                self?.familyRefreshTask = nil
+            }
             do {
                 async let members = repository.familyMembers(familyID: familyID)
                 if shouldLoadInvitations {
                     async let invitations = repository.familyInvitations(familyID: familyID)
                     let (memberResponse, invitationResponse) = try await (members, invitations)
-                    familyMembers = memberResponse.members
-                    familyInvitations = invitationResponse.invitations
+                    try Task.checkCancellation()
+                    guard let self else { return }
+                    self.familyMembers = memberResponse.members
+                    self.familyInvitations = invitationResponse.invitations
                 } else {
                     let memberResponse = try await members
-                    familyMembers = memberResponse.members
-                    familyInvitations = []
+                    try Task.checkCancellation()
+                    guard let self else { return }
+                    self.familyMembers = memberResponse.members
+                    self.familyInvitations = []
                 }
+            } catch is CancellationError {
+                return
             } catch {
-                inlineError = "家庭成员暂时无法更新"
+                self?.inlineError = "家庭成员暂时无法更新"
             }
         }
+        familyRefreshTask = task
     }
 
     func createFamilyInvitation() async -> Bool {
@@ -339,6 +357,7 @@ final class ProfileViewModel: ObservableObject {
         defer { invitationActionID = nil }
         do {
             let invitation = try await repository.createFamilyInvitation(familyID: family.id)
+            try Task.checkCancellation()
             familyInvitations = [invitation] + familyInvitations.map { existing in
                 guard existing.isActive else { return existing }
                 return FamilyInvitation(
@@ -354,6 +373,8 @@ final class ProfileViewModel: ObservableObject {
                 )
             }
             return true
+        } catch is CancellationError {
+            return false
         } catch {
             inlineError = "邀请码暂时无法生成，请重试"
             return false
@@ -370,8 +391,11 @@ final class ProfileViewModel: ObservableObject {
                 familyID: family.id,
                 invitationID: invitation.id
             )
+            try Task.checkCancellation()
             familyInvitations = familyInvitations.map { $0.id == revoked.id ? revoked : $0 }
             return true
+        } catch is CancellationError {
+            return false
         } catch {
             inlineError = "邀请码暂时无法撤销，请重试"
             return false
@@ -385,8 +409,11 @@ final class ProfileViewModel: ObservableObject {
         defer { familyActionID = nil }
         do {
             try await repository.removeFamilyMember(familyID: family.id, memberID: member.id)
+            try Task.checkCancellation()
             familyMembers.removeAll { $0.id == member.id }
             return true
+        } catch is CancellationError {
+            return false
         } catch {
             inlineError = "成员暂时无法移出，请重试"
             return false
@@ -400,8 +427,11 @@ final class ProfileViewModel: ObservableObject {
         defer { familyActionID = nil }
         do {
             try await repository.leaveFamily(familyID: family.id)
+            try Task.checkCancellation()
             onFamilyChanged()
             return true
+        } catch is CancellationError {
+            return false
         } catch {
             inlineError = "暂时无法退出家庭，请重试"
             return false
@@ -415,8 +445,11 @@ final class ProfileViewModel: ObservableObject {
         defer { familyActionID = nil }
         do {
             try await repository.transferFamilyOwnership(familyID: family.id, memberID: member.id)
+            try Task.checkCancellation()
             onFamilyChanged()
             return true
+        } catch is CancellationError {
+            return false
         } catch {
             inlineError = "创建者身份暂时无法转让，请重试"
             return false
@@ -641,6 +674,7 @@ final class ProfileViewModel: ObservableObject {
         rulesSaveTask?.cancel()
         preferencesSaveTask?.cancel()
         productPreferencesSaveTask?.cancel()
+        familyRefreshTask?.cancel()
         deviceReconciliationTask?.cancel()
         deviceProgressDismissTask?.cancel()
     }

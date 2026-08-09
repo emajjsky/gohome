@@ -4,6 +4,8 @@ import UIKit
 struct FamilyMembersView: View {
     @ObservedObject var model: ProfileViewModel
     @State private var pendingAction: PendingFamilyAction?
+    @State private var familyActionTask: Task<Void, Never>?
+    @State private var invitationActionTask: Task<Void, Never>?
 
     private enum PendingFamilyAction: Identifiable {
         case transfer(FamilyMember)
@@ -71,6 +73,11 @@ struct FamilyMembersView: View {
         .background(GoHomeTheme.paper)
         .profileNavigationTitle("家庭")
         .task { model.refreshFamilyMembers() }
+        .onDisappear {
+            familyActionTask?.cancel()
+            invitationActionTask?.cancel()
+            model.cancelInFlightFamilyRefresh()
+        }
         .confirmationDialog(
             confirmationTitle,
             isPresented: Binding(
@@ -82,7 +89,7 @@ struct FamilyMembersView: View {
             if let action = pendingAction {
                 Button(confirmationButtonTitle(action), role: .destructive) {
                     pendingAction = nil
-                    Task { await perform(action) }
+                    familyActionTask = Task { await perform(action) }
                 }
                 Button("取消", role: .cancel) { pendingAction = nil }
             }
@@ -120,7 +127,7 @@ struct FamilyMembersView: View {
                         .accessibilityLabel("分享家庭邀请码")
                     } else {
                         Button {
-                            Task { _ = await model.createFamilyInvitation() }
+                            invitationActionTask = Task { _ = await model.createFamilyInvitation() }
                         } label: {
                             Image(systemName: "arrow.triangle.2.circlepath")
                                 .frame(width: 38, height: 38)
@@ -139,7 +146,7 @@ struct FamilyMembersView: View {
                 }
             } else {
                 Button {
-                    Task { _ = await model.createFamilyInvitation() }
+                    invitationActionTask = Task { _ = await model.createFamilyInvitation() }
                 } label: {
                     HStack(spacing: 9) {
                         if model.invitationActionID == "create-invitation" {
