@@ -523,6 +523,41 @@ final class ProfilePermissionTests: XCTestCase {
     }
 
     @MainActor
+    func testLateCancelledFamilyRefreshCannotClearNewRefreshState() async throws {
+        let first = FamilyMember(
+            id: "member-first", userID: "user-first", displayName: "第一轮", accountHint: "139****0001",
+            role: "member", isCurrentUser: false, joinedAt: nil
+        )
+        let second = FamilyMember(
+            id: "member-second", userID: "user-second", displayName: "第二轮", accountHint: "139****0002",
+            role: "member", isCurrentUser: false, joinedAt: nil
+        )
+        let sequence = FamilyMemberLoadSequence(
+            members: [[first], [second]],
+            delays: [80_000_000, 150_000_000]
+        )
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            familyMembersLoader: { _ in await sequence.next() }
+        )
+        let model = makeModel(role: "member", repository: repository, seed: fixtureProfile(canEdit: false))
+
+        model.refreshFamilyMembers()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        model.cancelInFlightFamilyRefresh()
+        model.refreshFamilyMembers()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(model.familyActionID, "refresh-members")
+        XCTAssertFalse(model.familyMembers.contains(first))
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(model.familyMembers, [second])
+        XCTAssertNil(model.familyActionID)
+    }
+
+    @MainActor
     func testCancelledFamilyMemberRemovalKeepsMemberWithoutError() async throws {
         let member = FamilyMember(
             id: "member-2", userID: "user-2", displayName: "家庭成员", accountHint: "139****0000",
@@ -1038,6 +1073,28 @@ private actor ProfileLoadSequence {
         let profile = profiles[min(loadCount, profiles.count - 1)]
         loadCount += 1
         return profile
+    }
+}
+
+private actor FamilyMemberLoadSequence {
+    private let members: [[FamilyMember]]
+    private let delays: [UInt64]
+    private var index = 0
+
+    init(members: [[FamilyMember]], delays: [UInt64]) {
+        self.members = members
+        self.delays = delays
+    }
+
+    func next() async -> FamilyMembersResponse {
+        let currentIndex = min(index, members.count - 1)
+        index += 1
+        try? await Task.sleep(nanoseconds: delays[min(currentIndex, delays.count - 1)])
+        return FamilyMembersResponse(
+            familyID: "family-1",
+            members: members[currentIndex],
+            revision: "revision-\(currentIndex)"
+        )
     }
 }
 

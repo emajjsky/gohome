@@ -1181,6 +1181,18 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **状态**：已完成，`ProfilePermissionTests` 25/25、`OnboardingModelTests` 13/13、全量 `GoHomeShellTests` 171/171，`git diff --check` 通过。
 
+### GH-103 已取消的家庭刷新可能清除新一轮刷新状态
+
+**发现**：用户取消家庭成员刷新后立即重试，旧任务即使已经取消，仍可能在晚结束的 `defer` 中清空新任务的 `familyActionID` 和任务句柄，造成新刷新仍在运行但页面可重复操作。
+
+**根因**：刷新清理只依赖共享状态，没有区分任务代次；旧任务和新任务写入同一组状态。
+
+**处理**：为家庭刷新增加单调递增代次；结果提交、错误提示和结束清理都必须命中当前代次，取消会立即使旧代次失效。
+
+**验收要求**：第一轮刷新忽略取消并晚结束，第二轮刷新仍保持处理中状态且最终只提交第二轮结果；资料专项和全量 iOS 单测通过。
+
+**状态**：已完成，`ProfilePermissionTests` 26/26、全量 `GoHomeShellTests` 172/172，`git diff --check` 通过。
+
 ### GH-078 正式 App 默认头像资源未进入用户资料页面
 
 **发现**：正式仓库已有 `assets/images/avatar.jpg`，但 `ios-shell/project.yml` 没有把它加入 App Bundle；`AccountAvatar` 在没有远程头像时只显示 SF Symbol，首页“我的”入口和个人资料编辑页因此没有产品默认头像。

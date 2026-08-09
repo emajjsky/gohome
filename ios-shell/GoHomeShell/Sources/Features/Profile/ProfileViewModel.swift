@@ -46,6 +46,7 @@ final class ProfileViewModel: ObservableObject {
     private var preferencesSaveTask: Task<Void, Never>?
     private var productPreferencesSaveTask: Task<Void, Never>?
     private var familyRefreshTask: Task<Void, Never>?
+    private var familyRefreshGeneration = 0
     private var deviceReconciliationTask: Task<Void, Never>?
     private var deviceProgressDismissTask: Task<Void, Never>?
     private var hasStarted = false
@@ -312,6 +313,7 @@ final class ProfileViewModel: ObservableObject {
     }
 
     func cancelInFlightFamilyRefresh() {
+        familyRefreshGeneration += 1
         familyRefreshTask?.cancel()
         familyRefreshTask = nil
         if familyActionID == "refresh-members" { familyActionID = nil }
@@ -320,13 +322,17 @@ final class ProfileViewModel: ObservableObject {
     func refreshFamilyMembers() {
         guard let repository, familyActionID == nil else { return }
         familyRefreshTask?.cancel()
+        familyRefreshGeneration += 1
+        let generation = familyRefreshGeneration
         familyActionID = "refresh-members"
         inlineError = nil
         let shouldLoadInvitations = canEditRules
-        let task = Task { @MainActor [weak self, repository, familyID = family.id, shouldLoadInvitations] in
+        let task = Task { @MainActor [weak self, repository, familyID = family.id, shouldLoadInvitations, generation] in
             defer {
-                self?.familyActionID = nil
-                self?.familyRefreshTask = nil
+                if let self, self.familyRefreshGeneration == generation {
+                    self.familyActionID = nil
+                    self.familyRefreshTask = nil
+                }
             }
             do {
                 async let members = repository.familyMembers(familyID: familyID)
@@ -334,20 +340,21 @@ final class ProfileViewModel: ObservableObject {
                     async let invitations = repository.familyInvitations(familyID: familyID)
                     let (memberResponse, invitationResponse) = try await (members, invitations)
                     try Task.checkCancellation()
-                    guard let self else { return }
+                    guard let self, self.familyRefreshGeneration == generation else { return }
                     self.familyMembers = memberResponse.members
                     self.familyInvitations = invitationResponse.invitations
                 } else {
                     let memberResponse = try await members
                     try Task.checkCancellation()
-                    guard let self else { return }
+                    guard let self, self.familyRefreshGeneration == generation else { return }
                     self.familyMembers = memberResponse.members
                     self.familyInvitations = []
                 }
             } catch is CancellationError {
                 return
             } catch {
-                self?.inlineError = "家庭成员暂时无法更新"
+                guard let self, self.familyRefreshGeneration == generation else { return }
+                self.inlineError = "家庭成员暂时无法更新"
             }
         }
         familyRefreshTask = task
