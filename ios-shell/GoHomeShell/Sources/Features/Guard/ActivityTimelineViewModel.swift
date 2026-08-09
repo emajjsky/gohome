@@ -13,6 +13,7 @@ final class ActivityTimelineViewModel: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var overviewTask: Task<Void, Never>?
     private var clearTask: Task<Void, Never>?
+    private var clearGeneration = 0
     private var hasStarted = false
 
     init(
@@ -54,31 +55,41 @@ final class ActivityTimelineViewModel: ObservableObject {
 
     func clearHistory() {
         guard canManageHistory, !clearingHistory, let repository, let scope else { return }
+        clearGeneration += 1
+        let generation = clearGeneration
         clearingHistory = true
         actionError = nil
         let date = Self.todayKey()
-        clearTask = Task { @MainActor [weak self, repository, scope] in
+        let task = Task { @MainActor [weak self, repository, scope, generation] in
             guard let self else { return }
             defer {
-                self.clearTask = nil
-                self.clearingHistory = false
+                if self.clearGeneration == generation {
+                    self.clearTask = nil
+                    self.clearingHistory = false
+                }
             }
             do {
                 _ = try await repository.deleteActivityHistory(scope: scope, date: date)
                 try Task.checkCancellation()
+                guard self.clearGeneration == generation else { return }
                 state = Loadable(value: ActivityTimelineResponse(date: date, intervals: [], revision: "cleared"))
                 overviewState = Loadable()
                 refresh()
             } catch is CancellationError {
                 return
             } catch {
+                guard self.clearGeneration == generation else { return }
                 actionError = "活动记录未能清空，请重试"
             }
         }
+        clearTask = task
     }
 
     func cancelInFlightClear() {
+        clearGeneration += 1
         clearTask?.cancel()
+        clearTask = nil
+        clearingHistory = false
     }
 
     private static func todayKey() -> String {
