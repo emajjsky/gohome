@@ -21,6 +21,24 @@ async function request(baseURL, pathname, options = {}) {
   return { response, body: text ? JSON.parse(text) : null };
 }
 
+async function completeMemoryUpload({ baseURL, authorization, familyID, descriptor, objects }) {
+  const intentResult = await request(baseURL, `/api/v2/memory-media-upload-intents?family_id=${familyID}`, {
+    method: 'POST', headers: authorization, body: JSON.stringify({ items: [descriptor] }),
+  });
+  assert.equal(intentResult.response.status, 201);
+  const upload = intentResult.body.uploads[0];
+  const objectKey = new URL(upload.upload_url).searchParams.get('key');
+  objects.set(objectKey, { size: descriptor.size_bytes, contentType: descriptor.content_type });
+  const completed = await request(baseURL, `/api/v2/memory-media-upload-complete?family_id=${familyID}`, {
+    method: 'POST', headers: authorization, body: JSON.stringify({ items: [{
+      asset_id: upload.asset_id,
+      upload_token: upload.upload_token,
+    }] }),
+  });
+  assert.equal(completed.response.status, 201);
+  return completed.body.assets[0];
+}
+
 test('native memory media uses private COS upload intents and deletes remote objects', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-native-memory-cos-'));
   const objects = new Map();
@@ -258,50 +276,32 @@ test('native memory media uses private COS upload intents and deletes remote obj
   }
 });
 
-test('native memory media batch persists nine-grid images in one save', async () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-native-memory-batch-'));
-  const app = createLocalAppServer({ rootDir: path.join(__dirname, '..', '..'), dataDir, authMode: 'demo', demoOtp: '246810' });
+test('legacy memory upload routes are retired', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-retired-memory-upload-'));
+  const app = createLocalAppServer({
+    rootDir: path.join(__dirname, '..', '..'),
+    dataDir,
+    authMode: 'demo',
+    demoOtp: '246810',
+  });
   const baseURL = await listen(app.server);
   try {
     const registered = await request(baseURL, '/api/auth/register', {
-      method: 'POST', body: JSON.stringify({ phone: '13800138008', code: '246810', display_name: '批量测试' }),
+      method: 'POST', body: JSON.stringify({ phone: '13800138008', code: '246810', display_name: '旧入口测试' }),
     });
     const authorization = { Authorization: `Bearer ${registered.body.token}` };
     const family = await request(baseURL, '/api/families', {
-      method: 'POST', headers: authorization, body: JSON.stringify({ name: '批量图片家庭' }),
+      method: 'POST', headers: authorization, body: JSON.stringify({ name: '旧入口测试家庭' }),
     });
-    const familyID = String(family.body.id);
-    const originalSave = app.store.save.bind(app.store);
-    let saveCount = 0;
-    app.store.save = async () => {
-      saveCount += 1;
-      return originalSave();
-    };
-    const images = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((value) => ({
-      content_type: 'image/jpeg',
-      data: Buffer.from([0xff, 0xd8, value, 0xff, 0xd9]).toString('base64'),
-      pixel_width: 1280,
-      pixel_height: 960,
-    }));
-
-    const uploaded = await request(baseURL, `/api/v2/memory-media-batch?family_id=${familyID}`, {
-      method: 'POST', headers: authorization, body: JSON.stringify({ images }),
+    const single = await request(baseURL, `/api/v2/memory-media?family_id=${family.body.id}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ data: 'unused' }),
+    });
+    const batch = await request(baseURL, `/api/v2/memory-media-batch?family_id=${family.body.id}`, {
+      method: 'POST', headers: authorization, body: JSON.stringify({ images: [] }),
     });
 
-    assert.equal(uploaded.response.status, 201);
-    assert.equal(uploaded.body.assets.length, 9);
-    assert.equal(saveCount, 1);
-    assert.deepEqual(
-      uploaded.body.assets.map((asset) => asset.size_bytes),
-      images.map((image) => Buffer.from(image.data, 'base64').length),
-    );
-    const persistedAssets = uploaded.body.assets.map((asset) => app.store.db.assets.find((item) => item.id === asset.id));
-    assert.deepEqual(persistedAssets.map((asset) => asset.metadata.pixel_width), images.map(() => 1280));
-    const tooMany = await request(baseURL, `/api/v2/memory-media-batch?family_id=${familyID}`, {
-      method: 'POST', headers: authorization, body: JSON.stringify({ images: [...images, images[0]] }),
-    });
-    assert.equal(tooMany.response.status, 400);
-    assert.equal(saveCount, 1);
+    assert.equal(single.response.status, 404);
+    assert.equal(batch.response.status, 404);
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(dataDir, { recursive: true, force: true });
@@ -310,7 +310,26 @@ test('native memory media batch persists nine-grid images in one save', async ()
 
 test('native memories form a private family timeline with editable durable records', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-native-memories-'));
-  const app = createLocalAppServer({ rootDir: path.join(__dirname, '..', '..'), dataDir, authMode: 'demo', demoOtp: '246810' });
+  const objects = new Map();
+  const cosStorage = {
+    enabled: true,
+    signedPutUrl({ key }) { return `https://cos.test/upload?key=${encodeURIComponent(key)}`; },
+    signedGetUrl({ key }) { return `https://cos.test/read?key=${encodeURIComponent(key)}`; },
+    async headObject({ key }) {
+      const object = objects.get(key);
+      if (!object) throw new Error('not found');
+      return { headers: { 'content-length': String(object.size), 'content-type': object.contentType } };
+    },
+    async deleteObject({ key }) { objects.delete(key); },
+  };
+  const app = createLocalAppServer({
+    rootDir: path.join(__dirname, '..', '..'),
+    dataDir,
+    authMode: 'demo',
+    demoOtp: '246810',
+    cosStorage,
+    mediaUploadCleanupEnabled: false,
+  });
   const baseURL = await listen(app.server);
   try {
     const registered = await request(baseURL, '/api/auth/register', {
@@ -326,13 +345,14 @@ test('native memories form a private family timeline with editable durable recor
     assert.equal(empty.response.status, 200);
     assert.deepEqual(empty.body.memories, []);
 
-    const uploaded = await request(baseURL, `/api/v2/memory-media?family_id=${familyID}`, {
-      method: 'POST',
-      headers: { ...authorization, 'Content-Type': 'image/jpeg' },
-      body: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+    const uploaded = await completeMemoryUpload({
+      baseURL,
+      authorization,
+      familyID,
+      objects,
+      descriptor: { content_type: 'image/jpeg', size_bytes: 4, pixel_width: 1280, pixel_height: 960 },
     });
-    assert.equal(uploaded.response.status, 201);
-    const assetID = uploaded.body.asset.id;
+    const assetID = uploaded.id;
     assert.match(assetID, /^memory-asset-/);
 
     const created = await request(baseURL, `/api/v2/memories?family_id=${familyID}`, {
@@ -352,13 +372,14 @@ test('native memories form a private family timeline with editable durable recor
     assert.equal(created.body.memory.media[0].asset_id, assetID);
     const memoryID = created.body.memory.id;
 
-    const replacementUpload = await request(baseURL, `/api/v2/memory-media?family_id=${familyID}`, {
-      method: 'POST',
-      headers: { ...authorization, 'Content-Type': 'image/jpeg' },
-      body: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0xff, 0xd9]),
+    const replacementUpload = await completeMemoryUpload({
+      baseURL,
+      authorization,
+      familyID,
+      objects,
+      descriptor: { content_type: 'image/jpeg', size_bytes: 6, pixel_width: 1280, pixel_height: 960 },
     });
-    assert.equal(replacementUpload.response.status, 201);
-    const replacementAssetID = replacementUpload.body.asset.id;
+    const replacementAssetID = replacementUpload.id;
 
     const updated = await request(baseURL, `/api/v2/memories/${memoryID}?family_id=${familyID}`, {
       method: 'PATCH', headers: authorization, body: JSON.stringify({
