@@ -30,9 +30,10 @@ struct MainTabView: View {
     static var preview: MainTabView {
         let isMember = ProcessInfo.processInfo.arguments.contains("-uiTestMember")
         let client = APIClient(baseURL: URL(string: "https://example.invalid")!)
+        let hasEventFixture = ProcessInfo.processInfo.arguments.contains("-uiTestEvent")
         return MainTabView(
-            repository: nil,
-            scope: nil,
+            repository: hasEventFixture ? Self.uiTestEventRepository() : nil,
+            scope: hasEventFixture ? CacheScope(userID: "ui-test-preview", familyID: "ui-test-preview") : nil,
             apiClient: ProcessInfo.processInfo.arguments.contains("-uiTestProfile") ? client : nil,
             user: AppUser(id: "preview", phone: "13800138000", displayName: "回家用户"),
             family: AppFamily(id: "preview", name: "我的家庭", role: isMember ? "member" : "owner"),
@@ -45,6 +46,55 @@ struct MainTabView: View {
             onAccountDeleted: {},
             onFamilyChanged: {},
             onAccountProfileChanged: { _ in }
+        )
+    }
+
+    private static func uiTestEventRepository() -> AppRepository {
+        let events = uiTestEvents
+        let cache: DiskCache
+        do {
+            cache = try DiskCache()
+        } catch {
+            fatalError("UI event fixture requires a writable cache: \(error)")
+        }
+
+        return AppRepository(
+            cache: cache,
+            bootstrapLoader: { throw APIError.invalidResponse },
+            eventsLoader: { _ in events },
+            eventLoader: { eventID in
+                guard let event = events.first(where: { $0.id == eventID }) else {
+                    throw APIError.invalidResponse
+                }
+                return event
+            },
+            eventActionLoader: { eventID, resolution in
+                guard let event = events.first(where: { $0.id == eventID }) else {
+                    throw APIError.invalidResponse
+                }
+                return Self.resolvedPreviewEvent(event, resolution: resolution)
+            }
+        )
+    }
+
+    private nonisolated static func resolvedPreviewEvent(_ event: AppEvent, resolution: String) -> AppEvent {
+        AppEvent(
+            id: event.id,
+            type: event.type,
+            level: event.level,
+            summary: event.summary,
+            room: event.room,
+            cameraID: event.cameraID,
+            cameraName: event.cameraName,
+            occurredAt: event.occurredAt,
+            createdAt: event.createdAt,
+            updatedAt: ISO8601DateFormatter().string(from: Date()),
+            acknowledged: true,
+            resolution: resolution,
+            snapshotURL: event.snapshotURL,
+            mediaAssetID: event.mediaAssetID,
+            evidenceMedia: event.evidenceMedia,
+            payload: event.payload
         )
     }
 
