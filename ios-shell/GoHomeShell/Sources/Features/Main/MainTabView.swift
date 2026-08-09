@@ -177,7 +177,6 @@ struct MainTabView: View {
         .background(GoHomeTheme.paper)
         .accessibilityIdentifier("main-tab-shell")
         .task {
-            homeModel.start()
             profileModel.start()
             memoryModel.start()
             recommendationsModel.start()

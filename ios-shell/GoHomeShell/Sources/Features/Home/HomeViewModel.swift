@@ -112,6 +112,7 @@ final class HomeViewModel: ObservableObject {
     private let repository: AppRepository?
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
+    private var loadGeneration = 0
     private var reconciliationTask: Task<Void, Never>?
     private var careActionCancellation: (() -> Void)?
     private var hasStarted = false
@@ -124,8 +125,12 @@ final class HomeViewModel: ObservableObject {
     }
 
     func start() {
-        guard !hasStarted, let repository, let scope else { return }
-        hasStarted = true
+        guard let repository, let scope else { return }
+        if hasStarted {
+            guard loadTask == nil else { return }
+        } else {
+            hasStarted = true
+        }
         refresh(repository: repository, scope: scope)
     }
 
@@ -152,14 +157,34 @@ final class HomeViewModel: ObservableObject {
 
     private func refresh(repository: AppRepository, scope: CacheScope) {
         loadTask?.cancel()
-        loadTask = Task { [repository, scope] in
-            await repository.home(scope: scope) { next in
+        loadGeneration += 1
+        let generation = loadGeneration
+        let task = Task { @MainActor [weak self, repository, scope, generation] in
+            await repository.home(scope: scope) { [weak self] next in
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    self.state = next
-                    if self.pendingCareAction == nil { self.careMessage = next.value?.careMessage }
+                    guard !Task.isCancelled,
+                          let self,
+                          self.loadGeneration == generation else { return }
+                    var nextState = next
+                    if nextState.value == nil, let currentValue = self.state.value {
+                        nextState.value = currentValue
+                    }
+                    self.state = nextState
+                    if self.pendingCareAction == nil { self.careMessage = nextState.value?.careMessage }
                 }
             }
+            guard let self, self.loadGeneration == generation else { return }
+            self.loadTask = nil
         }
+        loadTask = task
+    }
+
+    func cancelInFlightLoad() {
+        loadGeneration += 1
+        loadTask?.cancel()
+        loadTask = nil
+        state.isRefreshing = false
     }
 
     func recordCareAction(type: String, payload: [String: String] = [:]) async -> Bool {

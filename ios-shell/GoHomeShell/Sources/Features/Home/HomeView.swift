@@ -53,11 +53,15 @@ struct HomeView: View {
         }
         .background(GoHomeTheme.paper)
         .accessibilityIdentifier("home-content-anchor")
+        .task { model.start() }
         .onAppear { distanceProvider.update(home: model.state.value?.homeLocation) }
         .onChange(of: model.state.value?.homeLocation) { location in
             distanceProvider.update(home: location)
         }
-        .onDisappear { model.cancelInFlightCareAction() }
+        .onDisappear {
+            model.cancelInFlightLoad()
+            model.cancelInFlightCareAction()
+        }
     }
 
     private var header: some View {

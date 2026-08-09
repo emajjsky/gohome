@@ -111,6 +111,68 @@ final class HomeViewModelTests: XCTestCase {
         XCTAssertEqual(model.state.value?.cameras.first?.id, "camera-1")
     }
 
+    @MainActor
+    func testCancelledHomeRefreshCannotPublishLateState() async throws {
+        let original = try decodeHome()
+        let late = HomeResponse(
+            family: nil,
+            weather: HomeWeather(city: "迟到城市", temperature: 31, condition: "晴"),
+            calendar: [],
+            distance: nil,
+            homeLocation: nil,
+            criticalAlert: nil,
+            careMessage: nil,
+            articles: [],
+            cameras: [HomeCamera(id: "camera-late", name: "迟到画面", status: "online")],
+            revision: "late"
+        )
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            homeLoader: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return late
+            }
+        )
+        let model = HomeViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: original
+        )
+
+        model.refresh()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        model.cancelInFlightLoad()
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(model.state.value, original)
+        XCTAssertFalse(model.state.isRefreshing)
+        XCTAssertNil(model.state.staleReason)
+    }
+
+    @MainActor
+    func testHomeLoadRestartsAfterLifecycleCancellation() async throws {
+        let home = try decodeHome()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            homeLoader: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return home
+            }
+        )
+        let model = HomeViewModel(repository: repository, scope: CacheScope(userID: "user-1", familyID: "family-1"))
+
+        model.start()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        model.cancelInFlightLoad()
+        model.start()
+        try await waitUntil { model.state.value?.revision == home.revision }
+
+        XCTAssertEqual(model.state.value, home)
+        XCTAssertFalse(model.state.isRefreshing)
+    }
+
     func testWeatherFormattingUsesOnlyServerValues() {
         XCTAssertEqual(
             HomePresentation.weatherText(HomeWeather(city: "上海", temperature: 28, condition: "晴")),
