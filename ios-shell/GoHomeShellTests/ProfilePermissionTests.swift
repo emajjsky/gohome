@@ -523,6 +523,30 @@ final class ProfilePermissionTests: XCTestCase {
     }
 
     @MainActor
+    func testLateCancelledProfileRefreshCannotOverwriteCurrentState() async throws {
+        let original = fixtureProfile(canEdit: true, cameras: [fixtureCamera(name: "当前摄像头")])
+        let late = fixtureProfile(canEdit: true, cameras: [fixtureCamera(name: "迟到摄像头")])
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: temporaryDirectory()),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            profileLoader: { _ in
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                return late
+            }
+        )
+        let model = makeModel(role: "owner", repository: repository, seed: original)
+
+        model.refresh()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        model.cancelInFlightProfileLoad()
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(model.state.value, original)
+        XCTAssertFalse(model.state.isRefreshing)
+        XCTAssertNil(model.inlineError)
+    }
+
+    @MainActor
     func testLateCancelledFamilyRefreshCannotClearNewRefreshState() async throws {
         let first = FamilyMember(
             id: "member-first", userID: "user-first", displayName: "第一轮", accountHint: "139****0001",

@@ -1205,6 +1205,18 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **状态**：已完成，`PrivacyDataTests` 5/5、全量 `GoHomeShellTests` 174/174，`git diff --check` 通过。
 
+### GH-105 资料主页面加载取消后仍可能回写旧状态
+
+**发现**：资料主页面离开或重新加载时，旧的 Profile 请求即使已取消，仓储仍会发送一次取消收尾状态；原页面回调没有任务代次校验，旧请求可能覆盖当前资料或刷新标记。
+
+**根因**：Profile 加载任务没有代次；更新回调直接写入 `state`，且页面离开没有取消主资料加载。
+
+**处理**：为 Profile 加载增加单调递增代次；缓存、刷新成功、取消收尾和错误回调都必须命中当前代次；无缓存的刷新状态不再清除已有 seed 资料；页面离开时取消主资料加载并保留当前资料，仅清除刷新标志。
+
+**验收要求**：取消后迟到的 Profile 结果不得覆盖当前资料、不得产生错误提示；专项和全量 iOS 单测通过。
+
+**状态**：已完成，`ProfilePermissionTests` 27/27、全量 `GoHomeShellTests` 175/175，`git diff --check` 通过。
+
 ### GH-078 正式 App 默认头像资源未进入用户资料页面
 
 **发现**：正式仓库已有 `assets/images/avatar.jpg`，但 `ios-shell/project.yml` 没有把它加入 App Bundle；`AccountAvatar` 在没有远程头像时只显示 SF Symbol，首页“我的”入口和个人资料编辑页因此没有产品默认头像。

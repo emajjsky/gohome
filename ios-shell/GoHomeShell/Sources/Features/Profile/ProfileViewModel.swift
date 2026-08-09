@@ -41,6 +41,7 @@ final class ProfileViewModel: ObservableObject {
     private let repository: AppRepository?
     private let scope: CacheScope?
     private var loadTask: Task<Void, Never>?
+    private var loadGeneration = 0
     private var accountProfileRefreshTask: Task<Void, Never>?
     private var rulesSaveTask: Task<Void, Never>?
     private var preferencesSaveTask: Task<Void, Never>?
@@ -172,13 +173,33 @@ final class ProfileViewModel: ObservableObject {
     func refresh() {
         guard let repository, let scope else { return }
         loadTask?.cancel()
-        loadTask = Task { [repository, scope] in
-            await repository.profile(scope: scope) { next in
+        loadGeneration += 1
+        let generation = loadGeneration
+        let task = Task { @MainActor [weak self, repository, scope, generation] in
+            await repository.profile(scope: scope) { [weak self] next in
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    self.state = next
+                    guard !Task.isCancelled,
+                          let self,
+                          self.loadGeneration == generation else { return }
+                    var nextState = next
+                    if nextState.value == nil, let currentValue = self.state.value {
+                        nextState.value = currentValue
+                    }
+                    self.state = nextState
                 }
             }
+            guard let self, self.loadGeneration == generation else { return }
+            self.loadTask = nil
         }
+        loadTask = task
+    }
+
+    func cancelInFlightProfileLoad() {
+        loadGeneration += 1
+        loadTask?.cancel()
+        loadTask = nil
+        state.isRefreshing = false
     }
 
     func saveRules(_ rules: FamilyRules) {
