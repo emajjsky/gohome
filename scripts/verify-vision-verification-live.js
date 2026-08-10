@@ -47,9 +47,12 @@ async function main() {
         app.server.listen(0, "127.0.0.1", resolve);
     });
     const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
+    const opsHeaders = process.env.GOHOME_OPS_TOKEN
+        ? { Authorization: `Bearer ${process.env.GOHOME_OPS_TOKEN}` }
+        : {};
     let media = null;
     try {
-        const capabilities = await requestJson(baseUrl, "/api/v1/ops/service-config");
+        const capabilities = await requestJson(baseUrl, "/api/v1/ops/service-config", { headers: opsHeaders });
         const verificationCapability = capabilities.model_capabilities.find((item) => item.capability_id === "vision-event-verification");
         if (!verificationCapability?.configured) throw new Error("vision verification model is not configured");
         const eventKey = `vision-live-${Date.now()}`;
@@ -101,6 +104,7 @@ async function main() {
                 await requestJson(baseUrl, "/api/v1/internal/vision-verifications/run", {
                     method: "POST",
                     body: JSON.stringify({ force: true, limit: 1 }),
+                    headers: opsHeaders,
                 });
             }
         }
