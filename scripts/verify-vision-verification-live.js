@@ -94,7 +94,7 @@ async function main() {
             await sleep(1500);
             event = app.store.db.events.find((item) => String(item.id) === String(created.event.id));
             const status = event?.payload?.verification?.status;
-            if (["confirmed", "rejected", "uncertain", "failed"].includes(status)) break;
+            if (["confirmed", "suspected", "rejected", "uncertain", "failed"].includes(status)) break;
             if (status === "retrying") {
                 await requestJson(baseUrl, "/api/v1/internal/vision-verifications/run", {
                     method: "POST",
@@ -103,7 +103,7 @@ async function main() {
             }
         }
         const verification = event?.payload?.verification || {};
-        if (!["confirmed", "rejected", "uncertain"].includes(verification.status)) {
+        if (!["confirmed", "suspected", "rejected", "uncertain"].includes(verification.status)) {
             throw new Error(`live verification did not complete: ${JSON.stringify(verification)}`);
         }
         console.log(JSON.stringify({

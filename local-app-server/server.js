@@ -782,22 +782,23 @@ function createLocalAppServer(options = {}) {
     ].join("\n");
 
     const defaultVisionVerificationPrompt = [
-        "你是家庭守护事件的视觉复核模型，只根据输入图片和结构化边缘证据判断当前画面。",
-        "你不能根据单张图片诊断疾病，也不能声称已经确认真实事故；你只负责复核画面是否支持边缘候选。",
-        "必须只输出一个 JSON 对象，不要输出 Markdown、解释前缀或额外字段。",
-        "JSON 必须包含 person_count、posture、surface、emergency、confidence、reason、suggested_event_type。",
-        "person_count 是 0 到 20 的整数。",
-        "posture 只能是 standing、sitting、squatting、bending、lying、fallen、unknown。",
-        "surface 只能是 floor、bed、sofa、chair、unknown。",
-        "emergency 是布尔值；只有画面明显支持需要家属立即确认的跌倒、长时间倒地或火灾线索时才为 true。",
-        "confidence 是 0 到 1 的数字，表示本次视觉判断把握度。",
-        "reason 使用不超过 120 个中文字符描述可见事实，不得编造持续时间、身份、疾病或画面外情况。",
-        "suggested_event_type 只能是 fall_candidate、prolonged_floor_lying、none、uncertain。",
-        "如果图片模糊、遮挡、无人或不足以判断，使用 unknown/uncertain，不能强行确认。",
-        "床或沙发上的正常躺卧通常不应判为紧急；持续时长以结构化边缘证据为准，不从单图猜测。",
-        "多张证据图按 before、transition、current 的时间顺序输入，必须比较同一人物的高度、身体方向、位移和最终落点。",
-        "跌倒应有动作前站立或坐姿、快速下降过程和动作后倒地证据；只有低位静态姿势、近镜头裁切或人物出画不能确认跌倒。",
-        "必须区分人物与猫狗。猫狗不计入 person_count，宠物在地面、床或沙发上不能当作人物躺倒或跌倒证据。",
+        "你是家庭守护事件的视觉时序复核模型。任务是结合按时间排序的证据帧与盒子结构化证据，对同一人物的动作变化给出一个风险等级。",
+        "证据帧依次表示 before、transition、current。比较人物身份连续性、身体高度、下降速度、身体方向、接触表面和最终姿态。",
+        "跌倒 confirmed 的充分条件是：同一人物在动作前处于站立或坐姿，transition 显示快速下降，动作后身体落到地面并呈 lying 或 fallen。",
+        "跌倒 suspected 表示画面支持人物由高位进入地面低位，但快速下降、身份连续性或落地过程有一项证据不完整。",
+        "长时间倒地 confirmed 的充分条件是：结构化边缘证据达到持续时间阈值，且 current 显示同一人物仍在地面 lying 或 fallen。持续时间直接采用结构化证据。",
+        "no_danger 用于连续帧明确显示稳定站立、行走、坐椅、坐沙发、正常躺床或正常躺沙发。",
+        "uncertain 用于证据质量不足以支持 suspected、confirmed 或 no_danger 的情况。",
+        "人物与宠物分别计数；猫狗不计入 person_count。",
+        "result_level 只能是 suspected、confirmed、no_danger、uncertain。",
+        "event_type 只能是 fall、prolonged_floor_lying、none。",
+        "posture_before 和 posture_after 只能是 standing、sitting、squatting、bending、lying、fallen、absent、unknown。",
+        "posture_transition 只能是 stable、walking、rising、bending、descending、rapid_descent、absent、unknown。",
+        "surface 只能是 floor、bed、sofa、chair、standing_area、unknown。",
+        "evidence_quality 只能是 high、medium、low；confidence 是 0 到 1 的数字。",
+        "reason 用不超过 120 个中文字符陈述帧序列中可核验的动作、姿态与表面事实。",
+        "必须只输出一个 JSON 对象，字段严格为 schema_version、result_level、event_type、person_count、posture_before、posture_transition、posture_after、surface、same_person、confidence、evidence_quality、reason。",
+        "schema_version 固定为 gohome-vision-verification-v2，same_person 为布尔值，person_count 为 0 到 20 的整数。",
     ].join("\n");
 
     const defaultCareImagePrompt = [
@@ -3446,7 +3447,7 @@ function createLocalAppServer(options = {}) {
         "long_absence",
     ]);
 
-    const INCIDENT_NOTIFICATION_POLICY = "confirmed-once-v1";
+    const INCIDENT_NOTIFICATION_POLICY = "risk-level-once-v2";
 
     function incidentCorrelationWindowMs() {
         return Math.max(5000, normalizeNumber(process.env.GOHOME_INCIDENT_CORRELATION_WINDOW_SECONDS, 45) * 1000);
@@ -3567,13 +3568,13 @@ function createLocalAppServer(options = {}) {
         const incident = ensureSafetyIncident(primary);
         if (!incident) return null;
         const notification = {
-            policy: INCIDENT_NOTIFICATION_POLICY,
             decision: "record_only",
             reason: "awaiting_verification",
             message_id: "",
             notified_at: "",
             delivery_count: 0,
             ...(incident.notification || {}),
+            policy: INCIDENT_NOTIFICATION_POLICY,
             ...patch,
             updated_at: nowIso(),
         };
@@ -3599,13 +3600,14 @@ function createLocalAppServer(options = {}) {
     }
 
     function createVerificationOutcomeMessage(event, status, verification = {}) {
-        if (status !== "confirmed") return null;
+        if (!["confirmed", "suspected"].includes(status)) return null;
         const primary = incidentPrimaryEvent(event);
         if (isValidationEvent(primary)) return null;
         const incident = ensureSafetyIncident(primary);
         if (!incident || !primary.family_id) return null;
         const result = verification.result || {};
         const messageId = `incident-verification-${incident.incident_id}-${status}`;
+        const confirmed = status === "confirmed";
         return upsertAppMessage({
             message_id: messageId,
             idempotency_key: messageId,
@@ -3613,8 +3615,10 @@ function createLocalAppServer(options = {}) {
             event_id: primary.id,
             message_type: "alert",
             title: primary.summary || "家中异常已经确认",
-            subtitle: `${primary.room || primary.camera_name || "家里"} · 云端复核确认`,
-            body: result.reason || "云端视觉模型支持边缘端异常判断，请尽快查看并联系老人。",
+            subtitle: `${primary.room || primary.camera_name || "家里"} · ${confirmed ? "云端复核确认" : "云端复核疑似"}`,
+            body: result.reason || (confirmed
+                ? "云端视觉模型确认当前证据支持危险事件，请尽快查看并联系家里。"
+                : "云端视觉模型发现危险疑点，请尽快查看事件证据并联系家里。"),
             facts: [primary.event_type, status, result.confidence !== undefined ? `置信度 ${Math.round(Number(result.confidence) * 100)}%` : ""].filter(Boolean),
             actions: [{ key: "open_event", label: "查看事件", event_id: primary.id }],
             source_event_ids: incident.source_event_ids || [primary.id],
@@ -3635,6 +3639,7 @@ function createLocalAppServer(options = {}) {
             .map((item) => String(item.payload?.verification?.status || ""))
             .filter(Boolean);
         if (statuses.includes("confirmed")) return "confirmed";
+        if (statuses.includes("suspected")) return "suspected";
         if (statuses.some((status) => ["uncertain", "failed", "unavailable"].includes(status))) return "uncertain";
         if (statuses.some((status) => ["pending", "verifying", "retrying"].includes(status))) return "verifying";
         if (statuses.length && statuses.every((status) => status === "rejected")) return "rejected";
@@ -3663,7 +3668,9 @@ function createLocalAppServer(options = {}) {
             primary.resolution = "vision_rejected";
             archiveIncidentMessages(primaryIncident.incident_id);
         }
-        const shouldNotify = nextStatus === "confirmed" && !primary.acknowledged;
+        const shouldNotify = ["confirmed", "suspected"].includes(nextStatus)
+            && !primary.acknowledged
+            && currentRules(primary.family_id).notification_enabled;
         const notificationDecision = setIncidentNotificationState(primary, {
             decision: shouldNotify ? "notify_once" : "record_only",
             reason: shouldNotify ? "multimodal_risk_confirmed" : `multimodal_${nextStatus}`,
@@ -4443,32 +4450,76 @@ function createLocalAppServer(options = {}) {
 
     function sanitizeVisionVerification(value) {
         if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-        const required = ["person_count", "posture", "surface", "emergency", "confidence", "reason", "suggested_event_type"];
+        const required = [
+            "schema_version",
+            "result_level",
+            "event_type",
+            "person_count",
+            "posture_before",
+            "posture_transition",
+            "posture_after",
+            "surface",
+            "same_person",
+            "confidence",
+            "evidence_quality",
+            "reason",
+        ];
         const allowed = new Set(required);
         if (required.some((key) => !(key in value))) return null;
         if (Object.keys(value).some((key) => !allowed.has(key))) return null;
         const personCount = Number(value.person_count);
         const confidence = Number(value.confidence);
-        const postures = new Set(["standing", "sitting", "squatting", "bending", "lying", "fallen", "unknown"]);
-        const surfaces = new Set(["floor", "bed", "sofa", "chair", "unknown"]);
-        const eventTypes = new Set(["fall_candidate", "prolonged_floor_lying", "none", "uncertain"]);
-        const posture = String(value.posture || "").trim();
+        const resultLevels = new Set(["suspected", "confirmed", "no_danger", "uncertain"]);
+        const eventTypes = new Set(["fall", "prolonged_floor_lying", "none"]);
+        const postures = new Set(["standing", "sitting", "squatting", "bending", "lying", "fallen", "absent", "unknown"]);
+        const transitions = new Set(["stable", "walking", "rising", "bending", "descending", "rapid_descent", "absent", "unknown"]);
+        const surfaces = new Set(["floor", "bed", "sofa", "chair", "standing_area", "unknown"]);
+        const evidenceQualities = new Set(["high", "medium", "low"]);
+        const schemaVersion = String(value.schema_version || "").trim();
+        const resultLevel = String(value.result_level || "").trim();
+        const eventType = String(value.event_type || "").trim();
+        const postureBefore = String(value.posture_before || "").trim();
+        const postureTransition = String(value.posture_transition || "").trim();
+        const postureAfter = String(value.posture_after || "").trim();
         const surface = String(value.surface || "").trim();
-        const suggestedEventType = String(value.suggested_event_type || "").trim();
+        const evidenceQuality = String(value.evidence_quality || "").trim();
         const reason = String(value.reason || "").replace(/\s+/g, " ").trim();
+        if (schemaVersion !== "gohome-vision-verification-v2") return null;
         if (!Number.isInteger(personCount) || personCount < 0 || personCount > 20) return null;
         if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return null;
-        if (typeof value.emergency !== "boolean") return null;
-        if (!postures.has(posture) || !surfaces.has(surface) || !eventTypes.has(suggestedEventType)) return null;
+        if (typeof value.same_person !== "boolean") return null;
+        if (!resultLevels.has(resultLevel) || !eventTypes.has(eventType)) return null;
+        if (!postures.has(postureBefore) || !transitions.has(postureTransition) || !postures.has(postureAfter)) return null;
+        if (!surfaces.has(surface) || !evidenceQualities.has(evidenceQuality)) return null;
         if (!reason || reason.length > 240) return null;
+        if (resultLevel === "no_danger" && eventType !== "none") return null;
+        if (["suspected", "confirmed"].includes(resultLevel) && eventType === "none") return null;
+        if (resultLevel === "suspected" && confidence < 0.45) return null;
+        if (resultLevel === "confirmed" && confidence < 0.75) return null;
+        if (resultLevel === "confirmed" && eventType === "fall" && (
+            !value.same_person
+            || postureTransition !== "rapid_descent"
+            || !["lying", "fallen"].includes(postureAfter)
+            || surface !== "floor"
+        )) return null;
+        if (resultLevel === "confirmed" && eventType === "prolonged_floor_lying" && (
+            !value.same_person
+            || !["lying", "fallen"].includes(postureAfter)
+            || surface !== "floor"
+        )) return null;
         return {
+            schema_version: schemaVersion,
+            result_level: resultLevel,
+            event_type: eventType,
             person_count: personCount,
-            posture,
+            posture_before: postureBefore,
+            posture_transition: postureTransition,
+            posture_after: postureAfter,
             surface,
-            emergency: value.emergency,
+            same_person: value.same_person,
             confidence: Number(confidence.toFixed(4)),
+            evidence_quality: evidenceQuality,
             reason,
-            suggested_event_type: suggestedEventType,
         };
     }
 
@@ -4512,34 +4563,26 @@ function createLocalAppServer(options = {}) {
         );
     }
 
-    async function readVerificationAsset(asset) {
-        const localPath = verificationAssetPath(asset);
-        if (localPath) {
-            if (!fs.existsSync(localPath)) throw new Error("event evidence image is unavailable");
-            return {
-                bytes: await fs.promises.readFile(localPath),
-                content_type: String(asset.content_type || "image/jpeg").split(";")[0].trim() || "image/jpeg",
-            };
-        }
+    async function verificationAssetModelInput(asset) {
+        const recordedSize = Math.max(0, Number(asset?.size || asset?.size_bytes || 0));
+        if (recordedSize > 8 * 1024 * 1024) throw new Error("event evidence image exceeds 8MB");
         const storageKey = String(asset?.storage_key || "").trim();
-        if (String(asset?.storage_provider || "").toLowerCase() !== "cos" || !storageKey || !cosStorage.enabled) {
-            throw new Error("event evidence image is unavailable");
-        }
-        const signedUrl = cosStorage.signedGetUrl({ key: storageKey, expiresSeconds: 120 });
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), providerRequestTimeoutMs());
-        try {
-            const response = await fetch(signedUrl, { signal: controller.signal });
-            if (!response.ok) throw new Error(`event evidence download failed: ${response.status}`);
-            const bytes = Buffer.from(await response.arrayBuffer());
+        if (String(asset?.storage_provider || "").toLowerCase() === "cos" && storageKey && cosStorage.enabled) {
             return {
-                bytes,
-                content_type: String(asset.content_type || response.headers.get("content-type") || "image/jpeg")
-                    .split(";")[0].trim() || "image/jpeg",
+                url: cosStorage.signedGetUrl({ key: storageKey, expiresSeconds: 180 }),
+                size: recordedSize,
             };
-        } finally {
-            clearTimeout(timeout);
         }
+        const localPath = verificationAssetPath(asset);
+        if (!localPath || !fs.existsSync(localPath)) throw new Error("event evidence image is unavailable");
+        const bytes = await fs.promises.readFile(localPath);
+        if (!bytes.length) throw new Error("event evidence image is empty");
+        if (bytes.length > 8 * 1024 * 1024) throw new Error("event evidence image exceeds 8MB");
+        const contentType = String(asset.content_type || "image/jpeg").split(";")[0].trim() || "image/jpeg";
+        return {
+            url: `data:${contentType};base64,${bytes.toString("base64")}`,
+            size: bytes.length,
+        };
     }
 
     function eventTemporalEvidenceSnapshots(event) {
@@ -4641,17 +4684,8 @@ function createLocalAppServer(options = {}) {
         if (!runtime.base_url || !runtime.api_key || !runtime.model) throw new Error("vision verification model is not configured");
         const evidenceAssets = Array.isArray(assets) ? assets.slice(0, 3) : [assets].filter(Boolean);
         if (!evidenceAssets.length) throw new Error("event evidence image is unavailable");
-        const images = await Promise.all(evidenceAssets.map(async (asset) => {
-            const evidence = await readVerificationAsset(asset);
-            const imageBytes = evidence.bytes;
-            if (!imageBytes.length) throw new Error("event evidence image is empty");
-            if (imageBytes.length > 8 * 1024 * 1024) throw new Error("event evidence image exceeds 8MB");
-            return {
-                bytes: imageBytes,
-                content_type: evidence.content_type,
-            };
-        }));
-        if (images.reduce((total, item) => total + item.bytes.length, 0) > 18 * 1024 * 1024) {
+        const frameInputs = await Promise.all(evidenceAssets.map((asset) => verificationAssetModelInput(asset)));
+        if (frameInputs.reduce((total, item) => total + item.size, 0) > 18 * 1024 * 1024) {
             throw new Error("event evidence sequence exceeds 18MB");
         }
         const context = visionVerificationContext(event);
@@ -4663,17 +4697,17 @@ function createLocalAppServer(options = {}) {
                     role: "user",
                     content: [
                         {
+                            type: "video",
+                            video: frameInputs.map((item) => item.url),
+                        },
+                        {
                             type: "text",
                             text: [
-                                `请按时间顺序复核这条家庭守护事件的 ${images.length} 张证据图。严格按系统约定只输出 JSON。`,
-                                `证据图角色顺序：${assets.map((asset) => String(asset.evidence_frame_role || "evidence")).join(" -> ")}。`,
+                                `请按时间顺序复核这条家庭守护事件的 ${frameInputs.length} 张证据帧。严格按系统约定只输出 JSON。`,
+                                `证据图角色顺序：${evidenceAssets.map((asset) => String(asset.evidence_frame_role || "evidence")).join(" -> ")}。`,
                                 JSON.stringify(context),
                             ].join("\n\n"),
                         },
-                        ...images.map((image) => ({
-                            type: "image_url",
-                            image_url: { url: `data:${image.content_type};base64,${image.bytes.toString("base64")}` },
-                        })),
                     ],
                 },
             ],
@@ -4729,11 +4763,13 @@ function createLocalAppServer(options = {}) {
     }
 
     function verificationDecision(result) {
-        if (result.emergency) return { status: "confirmed", decision: "confirm" };
-        if (result.confidence >= 0.75 && result.suggested_event_type === "none") {
-            return { status: "rejected", decision: "downgrade" };
-        }
-        return { status: "uncertain", decision: "manual_review" };
+        const decisions = {
+            confirmed: { status: "confirmed", decision: "confirm" },
+            suspected: { status: "suspected", decision: "notify_suspected" },
+            no_danger: { status: "rejected", decision: "downgrade" },
+            uncertain: { status: "uncertain", decision: "record_uncertain" },
+        };
+        return decisions[result.result_level] || decisions.uncertain;
     }
 
     function verificationJobForEvent(eventId) {
@@ -4776,7 +4812,7 @@ function createLocalAppServer(options = {}) {
             family_id: event.family_id,
             purpose: "vision_event_verification",
             model: runtime.model,
-            prompt_version: `vision-verification:${runtime.prompt_source}:v1`,
+            prompt_version: `vision-verification:${runtime.prompt_source}:v2`,
             input_hash: sha256(JSON.stringify({ context, asset_ids: assets.map((item) => item.id) })),
             output_status: "pending",
             request_payload: {

@@ -947,53 +947,95 @@ async function main() {
             const userContent = requestPayload.messages[1].content;
             assert.equal(requestPayload.model, "mock-vision-model");
             assert.ok(Array.isArray(userContent));
-            assert.match(userContent[0].text, /pose_factor_graph/);
-            assert.match(userContent[0].text, /evidence_frames/);
-            const imageContent = userContent.filter((item) => item.type === "image_url");
-            assert.ok(imageContent.length >= 1 && imageContent.length <= 3);
-            assert.ok(imageContent.every((item) => /^data:image\/jpeg;base64,/.test(item.image_url.url)));
-            const promptText = userContent[0].text;
+            assert.match(requestPayload.messages[0].content, /result_level/);
+            assert.match(requestPayload.messages[0].content, /confirmed/);
+            assert.match(requestPayload.messages[0].content, /suspected/);
+            assert.doesNotMatch(requestPayload.messages[0].content, /火灾/);
+            const textContent = userContent.find((item) => item.type === "text");
+            assert.ok(textContent);
+            assert.match(textContent.text, /pose_factor_graph/);
+            assert.match(textContent.text, /evidence_frames/);
+            const videoContent = userContent.filter((item) => item.type === "video");
+            assert.equal(videoContent.length, 1);
+            assert.ok(videoContent[0].video.length >= 1 && videoContent[0].video.length <= 3);
+            assert.ok(videoContent[0].video.every((url) => /^data:image\/jpeg;base64,/.test(url)));
+            const promptText = textContent.text;
             let parsed;
             if (promptText.includes("视觉排除测试事件")) {
                 parsed = {
+                    schema_version: "gohome-vision-verification-v2",
+                    result_level: "no_danger",
+                    event_type: "none",
                     person_count: 1,
-                    posture: "sitting",
+                    posture_before: "sitting",
+                    posture_transition: "stable",
+                    posture_after: "sitting",
                     surface: "sofa",
-                    emergency: false,
+                    same_person: true,
                     confidence: 0.94,
-                    reason: "人物稳定坐在沙发上，未看到跌倒或地面倒卧证据。",
-                    suggested_event_type: "none",
+                    evidence_quality: "high",
+                    reason: "同一人物在连续帧中稳定坐在沙发上，姿态与位置保持一致。",
                 };
             } else if (promptText.includes("视觉不确定测试事件")) {
                 parsed = {
+                    schema_version: "gohome-vision-verification-v2",
+                    result_level: "uncertain",
+                    event_type: "fall",
                     person_count: 1,
-                    posture: "unknown",
+                    posture_before: "unknown",
+                    posture_transition: "unknown",
+                    posture_after: "unknown",
                     surface: "unknown",
-                    emergency: false,
+                    same_person: false,
                     confidence: 0.42,
+                    evidence_quality: "low",
                     reason: "人物被遮挡，现有画面不足以判断是否存在危险姿态。",
-                    suggested_event_type: "uncertain",
+                };
+            } else if (promptText.includes("视觉疑似测试事件")) {
+                parsed = {
+                    schema_version: "gohome-vision-verification-v2",
+                    result_level: "suspected",
+                    event_type: "fall",
+                    person_count: 1,
+                    posture_before: "standing",
+                    posture_transition: "unknown",
+                    posture_after: "lying",
+                    surface: "floor",
+                    same_person: true,
+                    confidence: 0.68,
+                    evidence_quality: "medium",
+                    reason: "同一人物由高位进入地面低位，下降过程部分遮挡，具备跌倒疑点。",
                 };
             } else if (verificationRequestCount === 1) {
                 parsed = {
+                    schema_version: "gohome-vision-verification-v2",
+                    result_level: "confirmed",
+                    event_type: "fall",
                     person_count: 1,
-                    posture: "fallen",
+                    posture_before: "standing",
+                    posture_transition: "rapid_descent",
+                    posture_after: "fallen",
                     surface: "floor",
-                    emergency: true,
+                    same_person: true,
                     confidence: 0.93,
-                    reason: "画面中一人位于地面低位。",
-                    suggested_event_type: "fall_candidate",
+                    evidence_quality: "high",
+                    reason: "同一人物从站立快速下降并落到地面。",
                     unexpected: "strict contract must reject this field",
                 };
             } else {
                 parsed = {
+                    schema_version: "gohome-vision-verification-v2",
+                    result_level: "confirmed",
+                    event_type: "fall",
                     person_count: 1,
-                    posture: "fallen",
+                    posture_before: "standing",
+                    posture_transition: "rapid_descent",
+                    posture_after: "fallen",
                     surface: "floor",
-                    emergency: true,
+                    same_person: true,
                     confidence: 0.93,
-                    reason: "画面中一人横卧在地面区域，支持边缘端跌倒候选。",
-                    suggested_event_type: "fall_candidate",
+                    evidence_quality: "high",
+                    reason: "同一人物从站立快速下降并横卧在地面区域。",
                 };
             }
             res.writeHead(200, { "Content-Type": "application/json" });
@@ -1143,7 +1185,9 @@ async function main() {
                 headers: { Authorization: `Bearer ${appSessionToken}` },
             });
             assert.equal(verifiedEvent.payload.verification.status, "confirmed");
-            assert.equal(verifiedEvent.payload.verification.result.posture, "fallen");
+            assert.equal(verifiedEvent.payload.verification.result.result_level, "confirmed");
+            assert.equal(verifiedEvent.payload.verification.result.event_type, "fall");
+            assert.equal(verifiedEvent.payload.verification.result.posture_after, "fallen");
             assert.equal(verifiedEvent.payload.verification.result.surface, "floor");
             assert.equal(verifiedEvent.payload.verification.attempt_count, 2);
             assert.equal(verifiedEvent.payload.incident.status, "confirmed");
@@ -1160,7 +1204,7 @@ async function main() {
             assert.ok(app.store.db.notification_deliveries.some((delivery) => (
                 String(delivery.message_id) === String(verificationOutcomeMessage.message_id)
             )));
-            assert.equal(verifiedEvent.payload.incident.notification.policy, "confirmed-once-v1");
+            assert.equal(verifiedEvent.payload.incident.notification.policy, "risk-level-once-v2");
             assert.equal(verifiedEvent.payload.incident.notification.decision, "notify_once");
             assert.equal(verifiedEvent.payload.incident.notification.message_id, verificationOutcomeMessage.message_id);
             assert.ok(verifiedEvent.payload.incident.notification.notified_at);
@@ -1234,6 +1278,34 @@ async function main() {
             assert.equal(app.store.db.app_messages.length, policyMessageCount);
             assert.equal(app.store.db.notification_deliveries.length, policyDeliveryCount);
 
+            const suspectedProbe = await createVerificationPolicyProbe({
+                edgeEventId: "verification-suspected",
+                summary: "视觉疑似测试事件",
+                occurredAt: "2026-07-05T11:30:00.000Z",
+            });
+            assert.equal(suspectedProbe.message, null);
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            await requestJson(baseUrl, "/api/v1/internal/vision-verifications/run", {
+                method: "POST",
+                body: JSON.stringify({ force: true, limit: 1 }),
+            });
+            const suspectedEvent = await requestJson(baseUrl, `/api/v1/events/${suspectedProbe.event.id}`, {
+                headers: { Authorization: `Bearer ${appSessionToken}` },
+            });
+            assert.equal(suspectedEvent.payload.verification.status, "suspected");
+            assert.equal(suspectedEvent.payload.incident.status, "suspected");
+            assert.equal(suspectedEvent.payload.incident.notification.decision, "notify_once");
+            assert.ok(suspectedEvent.payload.incident.notification.message_id);
+            assert.ok(suspectedEvent.payload.incident.notification.notified_at);
+            assert.equal(app.store.db.app_messages.length, policyMessageCount + 1);
+            assert.equal(app.store.db.notification_deliveries.length, policyDeliveryCount + 1);
+            await requestJson(baseUrl, "/api/v1/internal/vision-verifications/run", {
+                method: "POST",
+                body: JSON.stringify({ force: true, limit: 3 }),
+            });
+            assert.equal(app.store.db.app_messages.length, policyMessageCount + 1);
+            assert.equal(app.store.db.notification_deliveries.length, policyDeliveryCount + 1);
+
             const uncertainProbe = await createVerificationPolicyProbe({
                 edgeEventId: "verification-uncertain",
                 summary: "视觉不确定测试事件",
@@ -1252,8 +1324,8 @@ async function main() {
             assert.equal(uncertainEvent.payload.incident.status, "uncertain");
             assert.equal(uncertainEvent.payload.incident.notification.decision, "record_only");
             assert.equal(uncertainEvent.payload.incident.notification.message_id, "");
-            assert.equal(app.store.db.app_messages.length, policyMessageCount);
-            assert.equal(app.store.db.notification_deliveries.length, policyDeliveryCount);
+            assert.equal(app.store.db.app_messages.length, policyMessageCount + 1);
+            assert.equal(app.store.db.notification_deliveries.length, policyDeliveryCount + 1);
             const verificationJob = app.store.db.model_generation_jobs.find((job) => (
                 job.purpose === "vision_event_verification"
                 && String(job.metadata?.event_id) === String(verificationEvent.event.id)
@@ -1557,9 +1629,10 @@ async function main() {
         const events = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false", {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        assert.equal(events.length, 4);
+        assert.equal(events.length, 5);
         assert.ok(events.every((event) => event.type === "fall_candidate"));
         assert.ok(events.some((event) => event.payload?.incident?.status === "rejected"));
+        assert.ok(events.some((event) => event.payload?.incident?.status === "suspected"));
         assert.ok(events.some((event) => event.payload?.incident?.status === "uncertain"));
         const eventSummaries = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false&view=summary", {
             headers: { Authorization: `Bearer ${appSessionToken}` },
