@@ -8,6 +8,7 @@ const path = require("path");
 process.env.GOHOME_VISION_VERIFICATION_ENABLED = "1";
 
 const { createLocalAppServer } = require("../local-app-server/server");
+const { createCosStorage } = require("../local-app-server/cos-storage");
 
 const DEVICE_TOKEN = "vision-live-probe-device";
 
@@ -46,12 +47,13 @@ async function main() {
         app.server.listen(0, "127.0.0.1", resolve);
     });
     const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
+    let media = null;
     try {
         const capabilities = await requestJson(baseUrl, "/api/v1/ops/service-config");
         const verificationCapability = capabilities.model_capabilities.find((item) => item.capability_id === "vision-event-verification");
         if (!verificationCapability?.configured) throw new Error("vision verification model is not configured");
         const eventKey = `vision-live-${Date.now()}`;
-        const media = await requestJson(
+        media = await requestJson(
             baseUrl,
             `/api/v1/device/media-assets/upload?camera_id=1&local_camera_id=1&edge_event_id=${eventKey}&purpose=event_evidence&snapshot_path=${eventKey}.jpg&content_type=image/jpeg`,
             {
@@ -117,6 +119,9 @@ async function main() {
         }, null, 2));
     } finally {
         await new Promise((resolve) => app.server.close(resolve));
+        if (media?.asset?.storage_provider === "cos" && media.asset.storage_key) {
+            await createCosStorage().deleteObject({ key: media.asset.storage_key });
+        }
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
 }
