@@ -989,6 +989,8 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **自动验证结果**：Node 门禁、服务端专项、Python 编译、iOS 单元测试 `194/194`、iOS UI 测试 `28/28`、`git diff --check` 全部通过。
 
+**TestFlight 发布记录**：正式工程已生成 `build/GoHome-1.0.0-15.xcarchive` 并上传成功。归档核验为显示名 `GoHome`、Bundle ID `com.gohome.family`、版本 `1.0.0 (15)`、团队 `X4M4T6Z4CJ`；App Store Connect 返回上传成功，当前等待 Apple 处理。上传唯一警告是第三方预编译 `WebRTC.framework` 缺少匹配 dSYM，仅影响该依赖的崩溃符号化，不影响安装、运行或本次功能验收。
+
 **尚未关闭的交付边界**：上述代码验证不等同于生产云、真实盒子和 TestFlight 真机验收。Build 15 上传后仍需实机确认首页远端内容、不同屏幕尺寸图片裁切、回家网络切换、社区固定位置、通知和守护实时视频；算法纯骨架双摄、长时稳定性和宠物类别准确率仍按 GH-008、GH-011、GH-016、GH-020 等台账项单独验收。
 
 ### GH-114 UI 事件处理预览无法执行事件操作
