@@ -56,9 +56,21 @@ async function main() {
         const verificationCapability = capabilities.model_capabilities.find((item) => item.capability_id === "vision-event-verification");
         if (!verificationCapability?.configured) throw new Error("vision verification model is not configured");
         const eventKey = `vision-live-${Date.now()}`;
+        const capturedAt = new Date().toISOString();
+        const uploadQuery = new URLSearchParams({
+            camera_id: "1",
+            local_camera_id: "1",
+            edge_event_id: eventKey,
+            purpose: "event_evidence",
+            snapshot_path: `${eventKey}.jpg`,
+            content_type: "image/jpeg",
+            idempotency_key: `event-evidence:${eventKey}:current`,
+            evidence_frame_role: "current",
+            captured_at: capturedAt,
+        });
         media = await requestJson(
             baseUrl,
-            `/api/v1/device/media-assets/upload?camera_id=1&local_camera_id=1&edge_event_id=${eventKey}&purpose=event_evidence&snapshot_path=${eventKey}.jpg&content_type=image/jpeg`,
+            `/api/v1/device/media-assets/upload?${uploadQuery}`,
             {
                 method: "POST",
                 body: fs.readFileSync(imagePath),
