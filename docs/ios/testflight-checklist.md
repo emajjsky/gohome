@@ -2,7 +2,7 @@
 
 Distributed baseline: `1.0.0 (15)`
 
-Candidate under validation: `1.0.0 (16)` (four-frame event evidence and multimodal record-only states)
+Candidate under validation: `1.0.0 (16)` (uploaded; App Store Connect processing)
 
 ## Automated Gates
 
@@ -134,3 +134,13 @@ These are transport measurements, not TestFlight display acceptance. Keep the Gu
 screen open for 10-20 minutes, walk across each camera, background/foreground the App,
 switch tabs and return, then record decoded FPS, POSE Hz, visible lag, privacy leakage,
 temperature and reconnect count before checking the streaming gate.
+
+Build 16 upload checkpoint on 2026-08-11: commit `0af95ed` deployed the four-frame
+visual-event contract and record-only multimodal states to the Pi and production cloud.
+The Pi reported both cameras streaming after restart with no consecutive failures; the
+production HTTPS health endpoint reported PostgreSQL, COS, WHEP/H.264 and APNs configured
+with no queued deliveries. The sole native project archived `GoHome 1.0.0 (16)` from
+commit `99e7a76`; App Store Connect accepted the upload and started processing it. GoHome's
+dSYM is present. The binary WebRTC package did not supply its matching framework dSYM, so
+third-party WebRTC crash frames may remain unsymbolicated. Processing, internal-group
+availability, TestFlight installation and physical event-state acceptance remain open.
