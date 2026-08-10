@@ -1798,7 +1798,10 @@ function createLocalAppServer(options = {}) {
             .filter((camera) => verifyFamilyIds.has(idText(camera.family_id)))
             .map((camera) => idText(camera.id)));
         const validationEventIds = new Set(store.db.events
-            .filter((event) => isValidationEvent(event))
+            .filter((event) => (
+                isValidationEvent(event)
+                || String(event.idempotency_key || "").startsWith("vision-provider-probe-")
+            ))
             .map((event) => idText(event.id)));
         const validationJobIds = new Set(store.db.model_generation_jobs
             .filter((job) => validationEventIds.has(idText(job.metadata?.event_id)))
