@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections import deque
 from contextlib import contextmanager
+from copy import deepcopy
 from threading import Event, Lock, RLock, Thread, current_thread
 from typing import Any, Callable, Dict
 import time
@@ -118,6 +120,7 @@ class EdgeWorker:
         self._camera_analysis_locks: Dict[int, RLock] = {}
         self._camera_analysis_locks_guard = Lock()
         self.previous_frames: Dict[int, Any] = {}
+        self._event_evidence_frames: Dict[int, deque[Dict[str, Any]]] = {}
         self.rule_engine = RuleEngine()
         self.latest_evaluations: Dict[int, Dict[str, Any]] = {}
         self.last_loop_started_at: str | None = None
@@ -407,6 +410,7 @@ class EdgeWorker:
         if self.motion_gate is not None:
             self.motion_gate.reset_camera(camera_id)
         self.previous_frames.pop(camera_id, None)
+        self._event_evidence_frames.pop(camera_id, None)
         self.latest_evaluations.pop(camera_id, None)
         self.last_persisted_analysis_at.pop(camera_id, None)
         self.last_activity_persisted_at.pop(camera_id, None)
@@ -895,7 +899,12 @@ class EdgeWorker:
                 coordinated_pose=coordinated_pose,
             )
             self._attach_continual_identity_hints(camera_id, analysis)
-            temporal = self.temporal_engine.update(camera_id, analysis)
+            temporal = self.temporal_engine.update(
+                camera_id,
+                analysis,
+                observed_at=str(capture.get("captured_at") or "") or None,
+                monotonic_at=capture.get("captured_monotonic"),
+            )
             self.observation_coverage_tracker.observe(
                 camera_id,
                 observed_at=str(capture.get("captured_at") or ""),
@@ -908,6 +917,7 @@ class EdgeWorker:
                 safety_generation = self._safety_state_generation.get(camera_id, 0)
                 self.pose_factor_graph_engine.update(camera_id, analysis, config=rules)
             self._attach_temporal_evidence(camera_id, analysis)
+            self._remember_event_evidence_frame(camera, capture, frame, analysis, temporal)
             persistence_now = self._monotonic_clock()
             persistence_reason = self._analysis_persistence_reason(
                 camera_id,
@@ -967,6 +977,13 @@ class EdgeWorker:
                 should_persist = True
                 persistence_reason = "durable_candidate"
                 self._attach_temporal_evidence(camera_id, analysis)
+                self._attach_snapshot_to_evaluation(evaluation, snapshot, analysis)
+
+            if any(
+                candidate.event_type in {"fall_candidate", "prolonged_floor_lying"}
+                for candidate in evaluation.candidates
+            ):
+                self._materialize_event_evidence_frames(camera, analysis)
                 self._attach_snapshot_to_evaluation(evaluation, snapshot, analysis)
 
             activity_persisted = self._persist_activity_timeline_if_due(
@@ -1285,7 +1302,17 @@ class EdgeWorker:
             ),
             analysis=analysis,
         )
-        self.temporal_engine.attach_snapshot(camera_id, snapshot)
+        self.temporal_engine.attach_snapshot(
+            camera_id,
+            snapshot,
+            observed_at=str(capture.get("captured_at") or "") or None,
+        )
+        self._mark_event_evidence_frame_persisted(
+            camera_id,
+            frame_id=str(capture.get("frame_id") or ""),
+            observed_at=str(capture.get("captured_at") or ""),
+            snapshot_id=int(snapshot["id"]),
+        )
         self._attach_temporal_evidence(camera_id, analysis)
         detection_result = self.storage.create_detection_result(
             camera_id=camera_id,
@@ -1295,7 +1322,10 @@ class EdgeWorker:
             height=capture["height"],
             analysis=analysis,
         )
-        self.last_persisted_analysis_at[camera_id] = float(persisted_at)
+        self.last_persisted_analysis_at[camera_id] = max(
+            float(persisted_at),
+            float(self.last_persisted_analysis_at.get(camera_id) or float("-inf")),
+        )
         self.last_persistence_reason[camera_id] = str(reason or "evidence")
         self.persistence_metrics["image_writes"] += 1
         if reason == "durable_candidate":
@@ -1303,6 +1333,96 @@ class EdgeWorker:
         else:
             self.persistence_metrics["risk_image_writes"] += 1
         return snapshot, detection_result
+
+    def _remember_event_evidence_frame(
+        self,
+        camera: Dict[str, Any],
+        capture: Dict[str, Any],
+        frame: Any,
+        analysis: Dict[str, Any],
+        temporal: Dict[str, Any],
+    ) -> None:
+        camera_id = int(camera["id"])
+        visual_risk = bool(
+            analysis.get("fall_candidate")
+            or analysis.get("pose_fall_candidate")
+            or (analysis.get("pose_factor_graph") or {}).get("fast_fall_candidate")
+            or (analysis.get("pose_factor_graph") or {}).get("prolonged_floor_lying_candidate")
+        )
+        if not temporal.get("person_present") and not visual_risk:
+            return
+        frame_id = str(capture.get("frame_id") or "")
+        observed_at = str(capture.get("captured_at") or "")
+        buffered = self._event_evidence_frames.setdefault(camera_id, deque(maxlen=8))
+        if buffered and frame_id and str(buffered[-1].get("frame_id") or "") == frame_id:
+            return
+        buffered.append({
+            "frame_id": frame_id,
+            "observed_at": observed_at,
+            "captured_monotonic": capture.get("captured_monotonic"),
+            "track_ids": list(temporal.get("current_track_ids") or []),
+            "capture": {
+                key: value
+                for key, value in capture.items()
+                if key != "frame"
+            },
+            "frame": frame.copy(),
+            "analysis": deepcopy(analysis),
+            "temporal": deepcopy(temporal),
+            "snapshot_id": None,
+        })
+
+    def _mark_event_evidence_frame_persisted(
+        self,
+        camera_id: int,
+        *,
+        frame_id: str,
+        observed_at: str,
+        snapshot_id: int,
+    ) -> None:
+        for item in reversed(self._event_evidence_frames.get(int(camera_id), ())):
+            if frame_id and str(item.get("frame_id") or "") == frame_id:
+                item["snapshot_id"] = int(snapshot_id)
+                return
+            if observed_at and str(item.get("observed_at") or "") == observed_at:
+                item["snapshot_id"] = int(snapshot_id)
+                return
+
+    def _materialize_event_evidence_frames(
+        self,
+        camera: Dict[str, Any],
+        analysis: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        camera_id = int(camera["id"])
+        track_id = self._event_evidence_track_id(analysis)
+        selections = self.temporal_engine.evidence_observation_selection(
+            camera_id,
+            track_id=track_id or None,
+            limit=4,
+            max_age_seconds=15,
+        )
+        selected_times = {str(item.get("observed_at") or "") for item in selections}
+        buffered = self._event_evidence_frames.get(camera_id, ())
+        selected_frames = [
+            item for item in buffered
+            if str(item.get("observed_at") or "") in selected_times
+            and (not track_id or track_id in (item.get("track_ids") or []))
+        ]
+        for item in selected_frames:
+            if item.get("snapshot_id"):
+                continue
+            capture = dict(item.get("capture") or {})
+            self._persist_analysis_frame(
+                camera,
+                capture,
+                item["frame"],
+                deepcopy(item.get("analysis") or {}),
+                deepcopy(item.get("temporal") or {}),
+                persisted_at=float(item.get("captured_monotonic") or self._monotonic_clock()),
+                reason="event_sequence",
+            )
+        self._attach_temporal_evidence(camera_id, analysis)
+        return analysis.get("temporal_evidence_bundle") or {}
 
     def _ephemeral_snapshot(
         self,
@@ -1327,6 +1447,15 @@ class EdgeWorker:
         }
 
     def _attach_temporal_evidence(self, camera_id: int, analysis: Dict[str, Any]) -> None:
+        track_id = self._event_evidence_track_id(analysis)
+        analysis["temporal_evidence_bundle"] = self.temporal_engine.evidence_bundle(
+            camera_id,
+            event_type="pose_safety_candidate",
+            track_id=track_id or None,
+            max_age_seconds=15,
+        )
+
+    def _event_evidence_track_id(self, analysis: Dict[str, Any]) -> str:
         factor_graph = analysis.get("pose_factor_graph") if isinstance(analysis.get("pose_factor_graph"), dict) else {}
         evidence_track = factor_graph.get("fast_fall_track")
         if not isinstance(evidence_track, dict):
@@ -1342,12 +1471,7 @@ class EdgeWorker:
                 key=lambda pose: float(pose.get("fall_score") or 0.0),
                 default=None,
             )
-        analysis["temporal_evidence_bundle"] = self.temporal_engine.evidence_bundle(
-            camera_id,
-            event_type="pose_safety_candidate",
-            track_id=str((evidence_track or {}).get("track_id") or "") or None,
-            max_age_seconds=15,
-        )
+        return str((evidence_track or {}).get("track_id") or "")
 
     def _requires_durable_candidate(self, evaluation: RuleEvaluation) -> bool:
         return any(candidate.event_type not in LIFE_OBSERVATION_TYPES for candidate in evaluation.candidates)

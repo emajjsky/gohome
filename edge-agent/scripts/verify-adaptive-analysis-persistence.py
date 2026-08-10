@@ -265,6 +265,84 @@ def main() -> None:
     if not worker._should_persist_analysis(24, risk_analysis, {}, rules(), now=103.0):
         raise SystemExit("risk-frequency analysis did not retain its one-second evidence sample")
 
+    sequence_storage = Storage()
+    sequence_camera_agent = CameraAgent()
+    sequence_worker = EdgeWorker(
+        sequence_storage,
+        sequence_camera_agent,
+        detect_agent,
+        EventAgent(),
+        monotonic_clock=clock,
+    )
+    sequence_camera = {"id": 25, "name": "客厅", "room": "客厅", "stream_url": "rtsp://camera", "enabled": True}
+    sequence_track = ""
+    sequence_samples = [
+        (200.0, "standing", [240, 30, 340, 330]),
+        (200.4, "bending", [230, 100, 360, 335]),
+        (200.8, "low_body", [220, 180, 440, 345]),
+        (201.2, "lying", [210, 220, 520, 350]),
+    ]
+    final_analysis = None
+    for index, (observed_mono, posture, bbox) in enumerate(sequence_samples):
+        captured_at = f"2026-07-17T10:00:0{index}.000000+00:00"
+        sample_analysis = {
+            "pipeline_version": "test",
+            "model_version": "test",
+            "detector_backend": "test",
+            "image_width": 640,
+            "image_height": 360,
+            "brightness": 90.0,
+            "motion_score": 0.1,
+            "person_count": 1,
+            "people": [{
+                "bbox": bbox,
+                "confidence": 0.92,
+                "posture": posture,
+                "posture_confidence": 0.9,
+            }],
+            "poses": [],
+            "tags": ["person_detected"],
+            "fall_candidate": posture == "lying",
+            "pose_fall_candidate": posture in {"low_body", "lying"},
+            "pose_factor_graph": {},
+        }
+        temporal = sequence_worker.temporal_engine.update(
+            25,
+            sample_analysis,
+            observed_at=captured_at,
+            monotonic_at=observed_mono,
+        )
+        sequence_track = str(sample_analysis["people"][0]["track_id"])
+        sequence_worker._remember_event_evidence_frame(
+            sequence_camera,
+            {
+                "frame": Frame(),
+                "width": 640,
+                "height": 360,
+                "frame_id": f"25-{index}",
+                "source_key": "test-source:g1",
+                "captured_at": captured_at,
+                "captured_monotonic": observed_mono,
+            },
+            Frame(),
+            sample_analysis,
+            temporal,
+        )
+        final_analysis = sample_analysis
+    final_analysis["pose_factor_graph"] = {"fast_fall_track": {"track_id": sequence_track}}
+    materialized = sequence_worker._materialize_event_evidence_frames(sequence_camera, final_analysis)
+    materialized_roles = [item.get("role") for item in materialized.get("snapshots") or []]
+    materialized_ids = [item.get("snapshot_id") for item in materialized.get("snapshots") or []]
+    if materialized_roles != ["before", "transition", "evidence", "current"]:
+        raise SystemExit(f"event action window roles are incomplete: {materialized}")
+    if len(materialized_ids) != 4 or len(set(materialized_ids)) != 4:
+        raise SystemExit(f"event action window must persist four distinct snapshots: {materialized}")
+    if sequence_storage.snapshots != 4 or sequence_camera_agent.saved != 4:
+        raise SystemExit("event action window did not materialize exactly four frame files")
+    sequence_worker._materialize_event_evidence_frames(sequence_camera, final_analysis)
+    if sequence_storage.snapshots != 4 or sequence_camera_agent.saved != 4:
+        raise SystemExit("event action window materialization must be idempotent")
+
     presence_snapshot = {
         "id": None,
         "captured_at": datetime.now(timezone.utc).isoformat(),
@@ -346,6 +424,7 @@ def main() -> None:
         "jpeg_writes": camera_agent.saved,
         "risk_persistence_interval_seconds": 0.5,
         "risk_evidence_fps_limit": 2,
+        "event_evidence_frame_count": len(materialized_ids),
         "presence_quality_gate": True,
         "activity_heartbeat_seconds": 600,
         "activity_posture_stability_seconds": 5,

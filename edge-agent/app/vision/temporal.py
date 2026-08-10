@@ -219,12 +219,60 @@ class TemporalObservationEngine:
             "tracks": decisions,
         }
 
-    def attach_snapshot(self, camera_id: int, snapshot: Dict[str, Any]) -> None:
+    def attach_snapshot(
+        self,
+        camera_id: int,
+        snapshot: Dict[str, Any],
+        *,
+        observed_at: str | None = None,
+    ) -> None:
         history = self._histories.get(int(camera_id))
         if not history:
             return
-        history[-1]["snapshot_id"] = snapshot.get("id")
-        history[-1]["snapshot_path"] = str(snapshot.get("image_path") or "")
+        observation = next(
+            (
+                item for item in reversed(history)
+                if observed_at and str(item.get("observed_at") or "") == str(observed_at)
+            ),
+            history[-1] if not observed_at else None,
+        )
+        if observation is None:
+            return
+        observation["snapshot_id"] = snapshot.get("id")
+        observation["snapshot_path"] = str(snapshot.get("image_path") or "")
+
+    def evidence_observation_selection(
+        self,
+        camera_id: int,
+        *,
+        track_id: str | None = None,
+        limit: int = 4,
+        max_age_seconds: float | None = None,
+    ) -> list[Dict[str, Any]]:
+        history = self._evidence_history(
+            camera_id,
+            track_id=track_id,
+            max_age_seconds=max_age_seconds,
+        )
+        candidates = [
+            {
+                **item,
+                "snapshot_id": item.get("snapshot_id") or f"observation:{index}",
+            }
+            for index, item in enumerate(history)
+        ]
+        selected = self._role_aware_evidence_samples(
+            candidates,
+            track_id=track_id,
+            limit=max(1, min(4, int(limit))),
+        )
+        return [
+            {
+                "observed_at": item.get("observed_at"),
+                "role": item.get("_evidence_role") or "evidence",
+            }
+            for item in selected
+        ]
 
     def evidence_bundle(
         self,
@@ -235,22 +283,11 @@ class TemporalObservationEngine:
         limit: int = 4,
         max_age_seconds: float | None = None,
     ) -> Dict[str, Any]:
-        history = list(self._histories.get(int(camera_id), ()))
-        if track_id:
-            history = [item for item in history if str(track_id) in (item.get("track_ids") or [])]
-        if history and max_age_seconds is not None:
-            try:
-                ended_at = datetime.fromisoformat(str(history[-1].get("observed_at") or "").replace("Z", "+00:00"))
-                window_seconds = max(0.0, float(max_age_seconds))
-                history = [
-                    item for item in history
-                    if 0.0 <= (
-                        ended_at
-                        - datetime.fromisoformat(str(item.get("observed_at") or "").replace("Z", "+00:00"))
-                    ).total_seconds() <= window_seconds
-                ]
-            except (TypeError, ValueError):
-                pass
+        history = self._evidence_history(
+            camera_id,
+            track_id=track_id,
+            max_age_seconds=max_age_seconds,
+        )
         evidence_limit = max(1, min(4, int(limit)))
         selected = self._role_aware_evidence_samples(
             history,
@@ -278,6 +315,31 @@ class TemporalObservationEngine:
                 for item in selected
             ],
         }
+
+    def _evidence_history(
+        self,
+        camera_id: int,
+        *,
+        track_id: str | None,
+        max_age_seconds: float | None,
+    ) -> list[Dict[str, Any]]:
+        history = list(self._histories.get(int(camera_id), ()))
+        if track_id:
+            history = [item for item in history if str(track_id) in (item.get("track_ids") or [])]
+        if history and max_age_seconds is not None:
+            try:
+                ended_at = datetime.fromisoformat(str(history[-1].get("observed_at") or "").replace("Z", "+00:00"))
+                window_seconds = max(0.0, float(max_age_seconds))
+                history = [
+                    item for item in history
+                    if 0.0 <= (
+                        ended_at
+                        - datetime.fromisoformat(str(item.get("observed_at") or "").replace("Z", "+00:00"))
+                    ).total_seconds() <= window_seconds
+                ]
+            except (TypeError, ValueError):
+                pass
+        return history
 
     def recent_history(self, camera_id: int, limit: int | None = None) -> list[Dict[str, Any]]:
         items = list(self._histories.get(int(camera_id), ()))
