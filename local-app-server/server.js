@@ -782,24 +782,23 @@ function createLocalAppServer(options = {}) {
     ].join("\n");
 
     const defaultVisionVerificationPrompt = [
-        "你是家庭守护事件的视觉时序复核模型。结合四张按时间排序的证据帧与盒子结构化指标，对画面中同一人物的动作变化给出一个风险等级。",
-        "四帧角色依次为 before、transition、evidence、current：before 表示动作基线，transition 表示姿态开始变化，evidence 表示下降或落地过程，current 表示动作后的最终姿态。",
-        "按以下顺序核验：人物身份连续性、身体重心变化、下降速度、身体方向、接触表面、最终姿态。same_person 表示四帧中的目标人物身份连续。",
-        "跌倒 confirmed 的充分条件是：same_person 为 true；before 为站立或坐姿；transition 与 evidence 共同显示快速下降；current 显示身体落到 floor 并呈 lying 或 fallen。",
-        "跌倒 suspected 的充分条件是：画面支持同一人物由高位进入 floor 低位并最终 lying 或 fallen，同时快速下降、身份连续性或落地过程中的一项证据清晰度有限。",
-        "长时间倒地 confirmed 的充分条件是：盒子结构化证据已达到持续时间阈值；same_person 为 true；current 显示目标人物仍在 floor 呈 lying 或 fallen。持续时间以结构化证据为准。",
-        "no_danger 的充分条件是：四帧形成稳定站立、正常行走、坐在 chair 或 sofa、躺在 bed 或 sofa、主动弯腰后恢复、主动坐下或起身中的一种完整过程。",
-        "uncertain 的充分条件是：遮挡、视野截断、帧间身份变化或关键动作阶段缺失，使现有证据只能描述画面而无法满足其他等级的充分条件。",
-        "person_count 仅统计画面中的人类，宠物单独作为环境对象理解。",
-        "result_level 只能是 suspected、confirmed、no_danger、uncertain。",
-        "event_type 只能是 fall、prolonged_floor_lying、none。",
-        "posture_before 和 posture_after 只能是 standing、sitting、squatting、bending、lying、fallen、absent、unknown。",
-        "posture_transition 只能是 stable、walking、rising、bending、descending、rapid_descent、absent、unknown。",
-        "surface 只能是 floor、bed、sofa、chair、standing_area、unknown。",
-        "evidence_quality 只能是 high、medium、low；confidence 是 0 到 1 的数字。",
-        "reason 使用不超过 120 个中文字符，按时间顺序陈述可核验的人物、动作、姿态与接触表面事实。",
+        "你是家庭守护事件的视觉时序复核模型。请基于四张按时间排序的证据帧和盒子结构化指标，为同一人物的动作过程选择一个风险等级。",
+        "证据帧固定为 before、transition、evidence、current：before 是动作基线，transition 是动作启动，evidence 是下降或接触过程，current 是动作后的最终状态。四帧共同构成一条时间证据链。",
+        "判定顺序固定为：确认目标人物连续性，再确认身体重心变化、下降速度、身体方向、接触表面和最终姿态，最后依据下述充分条件选择等级。same_person=true 表示四帧中的目标人物可连续对应。",
+        "confirmed / fall 的充分条件：same_person=true；before=standing 或 sitting；transition 和 evidence 共同呈现 rapid_descent；current 的 surface=floor 且 posture_after=lying 或 fallen；evidence_quality=high。",
+        "suspected / fall 的充分条件：same_person=true；before=standing 或 sitting；current 的 surface=floor 且 posture_after=lying 或 fallen；时间过程支持 descending 或 rapid_descent；身份连续和最终地面姿态清楚，下降或接触过程存在一处中等清晰度证据。",
+        "confirmed / prolonged_floor_lying 的充分条件：盒子结构化指标已达到持续时间阈值；same_person=true；current 的 surface=floor 且 posture_after=lying 或 fallen；四帧显示目标人物持续处于地面状态。持续时间直接采用结构化指标。",
+        "no_danger / none 的充分条件：四帧共同呈现一条完整、可解释的正常动作过程，例如 stable、walking、rising、bending、主动坐下、主动起身、坐在 chair 或 sofa、躺在 bed 或 sofa。",
+        "uncertain 的充分条件：目标人物身份连续性、动作关键阶段、接触表面或最终姿态中的一项未形成可核验事实。same_person=false 表示身份连续性尚未建立。",
+        "结果等级之间互斥；优先选择已经满足的最高风险等级。模型依据可见帧与结构化指标作事实复核，边缘端提供的风险分数只作为上下文。",
+        "person_count 统计四帧中可见的人类数量，宠物作为环境对象单独理解。",
+        "result_level 使用 suspected、confirmed、no_danger、uncertain 之一；event_type 与等级保持一致：风险等级使用 fall 或 prolonged_floor_lying，正常过程使用 none。",
+        "posture_before 使用 standing、sitting、squatting、bending、lying、fallen、absent、unknown 之一；posture_after 使用同一集合。",
+        "posture_transition 使用 stable、walking、rising、bending、descending、rapid_descent、absent、unknown 之一。surface 使用 floor、bed、sofa、chair、standing_area、unknown 之一。",
+        "evidence_quality 使用 high、medium、low 之一；confidence 是 0 到 1 的数字。",
+        "reason 不超过 120 个中文字符，按 before 到 current 的顺序陈述人物、动作、姿态和接触表面的可核验事实。",
         "输出一个 JSON 对象，字段严格为 schema_version、result_level、event_type、person_count、posture_before、posture_transition、posture_after、surface、same_person、confidence、evidence_quality、reason。",
-        "schema_version 固定为 gohome-vision-verification-v2，same_person 为布尔值，person_count 为 0 到 20 的整数。",
+        "schema_version 固定为 gohome-vision-verification-v2；same_person 是布尔值；person_count 是 0 到 20 的整数。",
     ].join("\n");
 
     const defaultCareImagePrompt = [
@@ -852,13 +851,14 @@ function createLocalAppServer(options = {}) {
         const resolvedApiKeyKeys = provider.startsWith("dashscope")
             ? [apiKeyKeys[0], "DASHSCOPE_API_KEY", ...apiKeyKeys.slice(1)]
             : apiKeyKeys;
+        const promptFromEnvironment = promptKeys.length > 0 && Boolean(process.env[promptKeys[0]]);
         return {
             provider,
             api_key: envFirst(resolvedApiKeyKeys),
             base_url: baseUrl,
             model: envFirst(modelKeys),
-            prompt: envFirst(promptKeys, fallbackPrompt),
-            prompt_source: process.env[promptKeys[0]] ? "env" : "default",
+            prompt: promptKeys.length ? envFirst(promptKeys, fallbackPrompt) : fallbackPrompt,
+            prompt_source: promptFromEnvironment ? "env" : "default",
         };
     }
 
@@ -883,7 +883,8 @@ function createLocalAppServer(options = {}) {
                 apiKeyKeys: ["GOHOME_VISION_MODEL_API_KEY", "GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"],
                 baseUrlKeys: ["GOHOME_VISION_MODEL_BASE_URL", "GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"],
                 modelKeys: ["GOHOME_VISION_MODEL", "GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"],
-                promptKeys: ["GOHOME_VISION_VERIFICATION_PROMPT"],
+                // The safety contract is versioned with the server. Provider credentials remain env-configured.
+                promptKeys: [],
                 fallbackPrompt: defaultVisionVerificationPrompt,
             }),
             capability_id: "vision-event-verification",
@@ -1051,7 +1052,7 @@ function createLocalAppServer(options = {}) {
                 api_key_set: Boolean(verification.api_key),
                 provider: verification.provider,
                 model: verification.model,
-                purpose_label: "跌倒、长时间倒地和火灾事件图片复核",
+                purpose_label: "跌倒与长时间倒地四帧时序复核",
                 prompt: verification.prompt,
                 prompt_source: verification.prompt_source,
                 env_keys: {
@@ -1060,9 +1061,8 @@ function createLocalAppServer(options = {}) {
                     api_key: ["GOHOME_VISION_MODEL_API_KEY", "GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"],
                     model: ["GOHOME_VISION_MODEL", "GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"],
                     enabled: ["GOHOME_VISION_VERIFICATION_ENABLED"],
-                    prompt: ["GOHOME_VISION_VERIFICATION_PROMPT"],
                 },
-                output_contract: "VisionVerification JSON: person_count/posture/surface/emergency/confidence/reason/suggested_event_type",
+                output_contract: "gohome-vision-verification-v2: result_level/event_type/person_count/posture_before/posture_transition/posture_after/surface/same_person/confidence/evidence_quality/reason",
             },
             {
                 capability_id: "care-card-image",
@@ -4499,16 +4499,27 @@ function createLocalAppServer(options = {}) {
         if (["suspected", "confirmed"].includes(resultLevel) && eventType === "none") return null;
         if (resultLevel === "suspected" && confidence < 0.45) return null;
         if (resultLevel === "confirmed" && confidence < 0.75) return null;
+        if (resultLevel === "suspected" && (
+            !value.same_person
+            || !["fall", "prolonged_floor_lying"].includes(eventType)
+            || !["lying", "fallen"].includes(postureAfter)
+            || surface !== "floor"
+            || !["descending", "rapid_descent"].includes(postureTransition)
+            || evidenceQuality === "low"
+        )) return null;
         if (resultLevel === "confirmed" && eventType === "fall" && (
             !value.same_person
+            || !["standing", "sitting"].includes(postureBefore)
             || postureTransition !== "rapid_descent"
             || !["lying", "fallen"].includes(postureAfter)
             || surface !== "floor"
+            || evidenceQuality !== "high"
         )) return null;
         if (resultLevel === "confirmed" && eventType === "prolonged_floor_lying" && (
             !value.same_person
             || !["lying", "fallen"].includes(postureAfter)
             || surface !== "floor"
+            || evidenceQuality !== "high"
         )) return null;
         return {
             schema_version: schemaVersion,
@@ -4845,7 +4856,7 @@ function createLocalAppServer(options = {}) {
             family_id: event.family_id,
             purpose: "vision_event_verification",
             model: runtime.model,
-            prompt_version: `vision-verification:${runtime.prompt_source}:v3`,
+            prompt_version: `vision-verification:${runtime.prompt_source}:v4`,
             input_hash: sha256(JSON.stringify({ context, asset_ids: assets.map((item) => item.id) })),
             output_status: "pending",
             request_payload: {

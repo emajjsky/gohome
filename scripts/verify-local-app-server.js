@@ -933,6 +933,7 @@ async function main() {
             GOHOME_MULTIMODAL_BASE_URL: process.env.GOHOME_MULTIMODAL_BASE_URL,
             GOHOME_MULTIMODAL_API_KEY: process.env.GOHOME_MULTIMODAL_API_KEY,
             GOHOME_MULTIMODAL_MODEL: process.env.GOHOME_MULTIMODAL_MODEL,
+            GOHOME_VISION_VERIFICATION_PROMPT: process.env.GOHOME_VISION_VERIFICATION_PROMPT,
         };
         let verificationRequestCount = 0;
         const mockVerificationServer = http.createServer(async (req, res) => {
@@ -954,6 +955,10 @@ async function main() {
             assert.match(requestPayload.messages[0].content, /suspected/);
             assert.match(requestPayload.messages[0].content, /before、transition、evidence、current/);
             assert.match(requestPayload.messages[0].content, /充分条件/);
+            assert.match(requestPayload.messages[0].content, /结果等级之间互斥/);
+            assert.match(requestPayload.messages[0].content, /边缘端提供的风险分数只作为上下文/);
+            assert.doesNotMatch(requestPayload.messages[0].content, /不要|禁止|不得/);
+            assert.doesNotMatch(requestPayload.messages[0].content, /旧生产提示词/);
             assert.doesNotMatch(requestPayload.messages[0].content, /火灾/);
             const textContent = userContent.find((item) => item.type === "text");
             assert.ok(textContent);
@@ -1002,7 +1007,7 @@ async function main() {
                     event_type: "fall",
                     person_count: 1,
                     posture_before: "standing",
-                    posture_transition: "unknown",
+                    posture_transition: "descending",
                     posture_after: "lying",
                     surface: "floor",
                     same_person: true,
@@ -1056,6 +1061,7 @@ async function main() {
             process.env.GOHOME_MULTIMODAL_BASE_URL = `${mockVerificationBaseUrl}/v1/chat/completions`;
             process.env.GOHOME_MULTIMODAL_API_KEY = "mock-vision-key";
             process.env.GOHOME_MULTIMODAL_MODEL = "mock-vision-model";
+            process.env.GOHOME_VISION_VERIFICATION_PROMPT = "旧生产提示词：只输出 emergency。";
             const waitingRoles = ["before", "transition", "evidence"];
             const waitingMediaItems = [];
             for (const [index, role] of waitingRoles.entries()) {
@@ -1450,6 +1456,7 @@ async function main() {
             assert.equal(verificationJob.output_status, "succeeded");
             assert.equal(verificationJob.metadata.attempt_count, 2);
             assert.equal(verificationJob.metadata.evidence_frame_count, 4);
+            assert.equal(verificationJob.prompt_version, "vision-verification:default:v4");
             assert.deepEqual(verificationJob.request_payload.asset_ids, [
                 verificationBeforeMedia.asset.id,
                 verificationTransitionMedia.asset.id,
@@ -1976,6 +1983,11 @@ async function main() {
         assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "multimodal-language"));
         assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "vision-event-verification"));
         assert.ok(opsConfig.model_capabilities.some((capability) => capability.capability_id === "care-card-image" && capability.aspect_ratio === "4:3"));
+        const visionCapability = opsConfig.model_capabilities.find((capability) => capability.capability_id === "vision-event-verification");
+        assert.equal(visionCapability.prompt_source, "default");
+        assert.equal("prompt" in visionCapability.env_keys, false);
+        assert.match(visionCapability.output_contract, /gohome-vision-verification-v2/);
+        assert.doesNotMatch(visionCapability.output_contract, /emergency|suggested_event_type/);
         for (const capability of opsConfig.model_capabilities) {
             assert.equal("base_url" in capability, false);
             assert.equal("api_key_preview" in capability, false);
