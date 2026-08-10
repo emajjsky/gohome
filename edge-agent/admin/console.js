@@ -2052,8 +2052,12 @@ function eventLogLifecycle(record) {
     return { key: "closed", label: incidentStatus === "resolved" ? "已恢复" : "App 已确认", tone: "muted" };
   }
   if (incidentStatus === "confirmed" || verificationStatus === "confirmed") return { key: "confirmed", label: "已确认风险", tone: "bad" };
+  if (incidentStatus === "suspected" || verificationStatus === "suspected") return { key: "attention", label: "需 App 确认", tone: "watch" };
   if (incidentStatus === "rejected" || verificationStatus === "rejected") return { key: "rejected", label: "已排除", tone: "muted" };
-  if (incidentStatus === "uncertain" || verificationStatus === "uncertain" || verificationStatus === "failed") {
+  if (incidentStatus === "uncertain" || verificationStatus === "uncertain") {
+    return { key: "record_only", label: "仅记录", tone: "muted" };
+  }
+  if (verificationStatus === "failed") {
     return { key: "attention", label: "需 App 确认", tone: "watch" };
   }
   if (incidentStatus === "verifying" || ["pending", "verifying", "retrying"].includes(verificationStatus)) {
@@ -2112,6 +2116,7 @@ function renderEventLog() {
     const cloud = record.cloud_event || null;
     const lifecycle = eventLogLifecycle(record);
     const syncStage = eventLogSyncStage(record);
+    const evidenceFrames = eventEvidenceFrames(record);
     const evidence = local.payload?.evidence || {};
     const pills = evidencePills({ event_type: local.type, payload: local.payload || {} });
     if (Number(evidence.metrics?.pet_count || 0) > 0) pills.push(`宠物 ${Number(evidence.metrics.pet_count)} 只`);
@@ -2122,9 +2127,7 @@ function renderEventLog() {
     const displaySummary = local.type === "camera_offline" && local.camera_status === "online"
       ? `${local.camera_name || "摄像头"} 曾发生连接中断，当前已恢复`
       : (local.summary || eventTypeLabel(local.type));
-    const thumbnail = local.snapshot_url
-      ? `<button class="event-evidence-thumb" type="button" data-event-log-action="snapshot" data-url="${escapeHtml(local.snapshot_url)}"><img src="${escapeHtml(local.snapshot_url)}" alt=""><span>证据帧</span></button>`
-      : '<div class="event-evidence-thumb empty"><span>无证据帧</span></div>';
+    const evidenceGallery = renderEventEvidenceGallery(record);
     return `
       <article class="event-log-card ${escapeHtml(lifecycle.tone || "")}">
         <header>
@@ -2136,19 +2139,19 @@ function renderEventLog() {
           <span class="status-pill ${escapeHtml(lifecycle.tone || "")}">${escapeHtml(lifecycle.label)}</span>
         </header>
         <div class="event-log-media-row">
-          ${thumbnail}
+          ${evidenceGallery}
           <div class="event-chain">
             ${eventLogStage("盒子触发", "规则事件", "done")}
-            ${eventLogStage(syncStage.label, uploadError || (local.snapshot_url ? "事件 + 截图" : "结构化数据"), syncStage.state)}
+            ${eventLogStage(syncStage.label, uploadError || (evidenceFrames.length ? `事件 + ${evidenceFrames.length}/4 帧证据` : local.snapshot_url ? "事件 + 截图" : "结构化数据"), syncStage.state)}
             ${eventLogStage(cloudStage.label, cloud ? "ID 已匹配" : "等待入库", cloudStage.state)}
-            ${eventLogStage(lifecycle.label, resultReason || (incidentId ? `事故 ${incidentId}` : "等待状态"), ["confirmed", "attention"].includes(lifecycle.key) ? "failed" : ["rejected", "closed", "synced"].includes(lifecycle.key) ? "done" : "active")}
+            ${eventLogStage(lifecycle.label, resultReason || (incidentId ? `事故 ${incidentId}` : "等待状态"), ["confirmed", "attention"].includes(lifecycle.key) ? "failed" : ["rejected", "record_only", "closed", "synced"].includes(lifecycle.key) ? "done" : "active")}
           </div>
         </div>
         ${pills.length ? `<div class="candidate-evidence">${pills.slice(0, 6).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
         <footer>
           <span>${incidentId ? `事件 ${escapeHtml(incidentId)}` : "云端状态会自动回写到此处"}</span>
           <div class="event-log-actions">
-            ${cloud && !["rejected", "closed"].includes(lifecycle.key) ? `<button class="ghost-button danger-text" type="button" data-event-log-action="false_positive" data-id="${local.id}">标记算法误报</button>` : ""}
+            ${cloud && !["rejected", "record_only", "closed"].includes(lifecycle.key) ? `<button class="ghost-button danger-text" type="button" data-event-log-action="false_positive" data-id="${local.id}">标记算法误报</button>` : ""}
           </div>
         </footer>
         <details class="event-log-details">
@@ -2370,12 +2373,73 @@ function verificationStatusLabel(status) {
     verifying: "复核中",
     retrying: "等待重试",
     confirmed: "已确认",
+    suspected: "需 App 确认",
     rejected: "已排除",
-    uncertain: "需人工确认",
+    uncertain: "仅记录",
     failed: "复核失败",
     unavailable: "不可用",
   };
   return labels[String(status || "")] || status || "未知";
+}
+
+const EVENT_EVIDENCE_ROLE_ORDER = { before: 0, transition: 1, evidence: 2, current: 3 };
+const EVENT_EVIDENCE_ROLE_LABELS = {
+  before: "事发前",
+  transition: "动作启动",
+  evidence: "下降过程",
+  current: "最终状态",
+};
+
+function eventEvidenceFrames(record) {
+  const local = record?.local_event || {};
+  const payload = local.payload || {};
+  const direct = Array.isArray(payload.evidence_media_assets) ? payload.evidence_media_assets : [];
+  const snapshots = payload.evidence?.temporal_evidence_bundle?.snapshots
+    || payload.temporal_evidence_bundle?.snapshots
+    || [];
+  const frames = [
+    ...direct.map((item) => ({
+      role: String(item?.role || item?.asset?.evidence_frame_role || "evidence"),
+      captured_at: String(item?.captured_at || item?.asset?.captured_at || ""),
+      snapshot_path: String(item?.asset?.snapshot_path || item?.snapshot_path || ""),
+      snapshot_url: String(item?.asset?.snapshot_url || item?.snapshot_url || ""),
+    })),
+    ...(Array.isArray(snapshots) ? snapshots : []).map((item) => ({
+      role: String(item?.role || "evidence"),
+      captured_at: String(item?.observed_at || item?.captured_at || ""),
+      snapshot_path: String(item?.snapshot_path || ""),
+      snapshot_url: String(item?.snapshot_url || ""),
+    })),
+  ]
+    .filter((item) => EVENT_EVIDENCE_ROLE_ORDER[item.role] !== undefined && (item.snapshot_url || item.snapshot_path))
+    .sort((left, right) => (
+      EVENT_EVIDENCE_ROLE_ORDER[left.role] - EVENT_EVIDENCE_ROLE_ORDER[right.role]
+      || left.captured_at.localeCompare(right.captured_at)
+    ));
+  const seen = new Set();
+  return frames.filter((item) => {
+    const key = `${item.role}:${item.snapshot_url || item.snapshot_path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 4);
+}
+
+function eventEvidenceFrameURL(frame) {
+  if (frame.snapshot_url) return frame.snapshot_url;
+  const path = String(frame.snapshot_path || "").replace(/^\/+/, "");
+  if (!path) return "";
+  return `/snapshots/${path.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+}
+
+function renderEventEvidenceGallery(record) {
+  const frames = eventEvidenceFrames(record);
+  if (!frames.length) return '<div class="event-evidence-gallery empty"><span>暂无完整证据帧</span></div>';
+  return `<div class="event-evidence-gallery" data-evidence-count="${frames.length}">${frames.map((frame) => {
+    const url = eventEvidenceFrameURL(frame);
+    const label = EVENT_EVIDENCE_ROLE_LABELS[frame.role] || "证据画面";
+    return `<button class="event-evidence-thumb" type="button" data-event-log-action="snapshot" data-url="${escapeHtml(url)}"><img src="${escapeHtml(url)}" alt="${escapeHtml(label)}"><span>${escapeHtml(label)}</span></button>`;
+  }).join("")}</div>`;
 }
 
 function verificationResultPills(record) {
@@ -2391,6 +2455,7 @@ function verificationResultPills(record) {
   if (verification.attempt_count || record?.job?.attempt_count) {
     pills.push(`尝试 ${verification.attempt_count || record.job.attempt_count} 次`);
   }
+  if (record?.evidence_frame_count) pills.push(`证据 ${record.evidence_frame_count}/4 帧`);
   return pills.slice(0, 5);
 }
 

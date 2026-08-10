@@ -2394,12 +2394,8 @@ function createLocalAppServer(options = {}) {
         }
     }
 
-    function publicEvent(event) {
-        const camera = store.db.cameras[String(event.camera_id)] || {};
-        const asset = event.media_asset_id
-            ? store.db.assets.find((item) => sameId(item.id, event.media_asset_id))
-            : null;
-        const evidenceMedia = eventMediaRelations(event)
+    function publicEvidenceMedia(event) {
+        return eventMediaRelations(event)
             .map((relation) => {
                 const evidenceAsset = store.db.assets.find((item) => sameId(item.id, relation.asset_id));
                 if (!evidenceAsset) return null;
@@ -2413,6 +2409,13 @@ function createLocalAppServer(options = {}) {
             })
             .filter(Boolean)
             .slice(0, 4);
+    }
+
+    function publicEvent(event) {
+        const camera = store.db.cameras[String(event.camera_id)] || {};
+        const asset = event.media_asset_id
+            ? store.db.assets.find((item) => sameId(item.id, event.media_asset_id))
+            : null;
         return {
             id: event.id,
             type: event.event_type,
@@ -2432,7 +2435,7 @@ function createLocalAppServer(options = {}) {
                 ? `/api/v1/video/assets/${encodeURIComponent(asset.id)}`
                 : (event.snapshot_path || ""),
             media_asset_id: asset?.id || null,
-            evidence_media: evidenceMedia,
+            evidence_media: publicEvidenceMedia(event),
             payload: event.payload || {},
         };
     }
@@ -2461,6 +2464,7 @@ function createLocalAppServer(options = {}) {
             snapshot_path: event.snapshot_path || asset?.snapshot_path || "",
             snapshot_url: event.snapshot_path || asset?.snapshot_path || "",
             media_asset_id: asset?.id || null,
+            evidence_media: publicEvidenceMedia(event),
             payload: {
                 ...(incident ? { incident: {
                     status: incident.status || "",
@@ -7805,6 +7809,7 @@ function createLocalAppServer(options = {}) {
             const job = verification.job_id
                 ? store.db.model_generation_jobs.find((item) => String(item.id) === String(verification.job_id))
                 : verificationJobForEvent(event.id);
+            const evidenceMedia = publicEvidenceMedia(event);
             return {
                 event_id: event.id,
                 edge_event_id: event.edge_event_id || event.payload?.edge_upload?.edge_event_id || "",
@@ -7816,6 +7821,8 @@ function createLocalAppServer(options = {}) {
                 updated_at: event.updated_at,
                 incident: event.payload?.incident || null,
                 verification,
+                evidence_frame_count: evidenceMedia.length,
+                evidence_roles: evidenceMedia.map((item) => item.role),
                 job: job ? {
                     id: job.id,
                     output_status: job.output_status,
@@ -7876,6 +7883,8 @@ function createLocalAppServer(options = {}) {
                 incident: event.payload?.incident || null,
                 verification: event.payload?.verification || null,
                 media_asset_id: event.media_asset_id || null,
+                evidence_frame_count: eventMediaRelations(event).length,
+                evidence_roles: eventMediaRelations(event).map((item) => item.role),
             }));
         write(res, 200, { ok: true, device_id: deviceId, records });
     }

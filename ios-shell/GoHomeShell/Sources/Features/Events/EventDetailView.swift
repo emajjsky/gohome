@@ -53,15 +53,19 @@ struct EventDetailView: View {
 
     private var hero: some View {
         VStack(alignment: .leading, spacing: 14) {
-            EventMediaImage(
-                assetID: event.mediaAssetID,
-                fallbackPath: event.snapshotURL,
-                apiClient: apiClient
-            )
-            .frame(maxWidth: .infinity)
-            .aspectRatio(16 / 9, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
-            .accessibilityIdentifier("event-evidence-image")
+            if event.evidenceMedia.count > 1 {
+                EventEvidenceGrid(event: event, apiClient: apiClient)
+            } else {
+                EventMediaImage(
+                    assetID: event.mediaAssetID,
+                    fallbackPath: event.snapshotURL,
+                    apiClient: apiClient
+                )
+                .frame(maxWidth: .infinity)
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+                .accessibilityIdentifier("event-evidence-image")
+            }
 
             HStack(alignment: .firstTextBaseline) {
                 Text(EventPresentation.label(for: event.type))
@@ -107,35 +111,47 @@ struct EventDetailView: View {
     }
 
     private var actionBar: some View {
-        VStack(spacing: 9) {
-            HStack(spacing: 10) {
-                Button {
-                    model.resolve(eventID, as: "handled")
-                } label: {
-                    Label("确认安全", systemImage: "checkmark")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(EventPrimaryButtonStyle())
-                .disabled(isActionDisabled)
-                .accessibilityIdentifier("event-confirm-safe")
+        Group {
+            if EventPresentation.requiresUserConfirmation(event) {
+                VStack(spacing: 9) {
+                    HStack(spacing: 10) {
+                        Button {
+                            model.resolve(eventID, as: "handled")
+                        } label: {
+                            Label("确认安全", systemImage: "checkmark")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(EventPrimaryButtonStyle())
+                        .disabled(isActionDisabled)
+                        .accessibilityIdentifier("event-confirm-safe")
 
-                Button {
-                    model.resolve(eventID, as: "false_positive")
-                } label: {
-                    Label("标记误报", systemImage: "checkmark.seal")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(EventSecondaryButtonStyle())
-                .disabled(isActionDisabled)
-                .accessibilityIdentifier("event-mark-false-positive")
+                        Button {
+                            model.resolve(eventID, as: "false_positive")
+                        } label: {
+                            Label("标记误报", systemImage: "checkmark.seal")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(EventSecondaryButtonStyle())
+                        .disabled(isActionDisabled)
+                        .accessibilityIdentifier("event-mark-false-positive")
 
-                ShareLink(item: shareMessage) {
-                    Image(systemName: "square.and.arrow.up")
-                        .frame(width: 42, height: 42)
+                        ShareLink(item: shareMessage) {
+                            Image(systemName: "square.and.arrow.up")
+                                .frame(width: 42, height: 42)
+                        }
+                        .buttonStyle(EventSecondaryButtonStyle())
+                        .accessibilityLabel("分享事件信息")
+                        .accessibilityIdentifier("event-share")
+                    }
                 }
-                .buttonStyle(EventSecondaryButtonStyle())
-                .accessibilityLabel("分享事件信息")
-                .accessibilityIdentifier("event-share")
+            } else {
+                Label(recordOnlyText, systemImage: recordOnlySymbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
+                    .padding(.vertical, 12)
+                    .accessibilityIdentifier("event-record-only")
             }
         }
         .padding(.horizontal, GoHomeTheme.pageHorizontalPadding)
@@ -148,6 +164,7 @@ struct EventDetailView: View {
         switch EventPresentation.segment(event) {
         case .pending: return "待处理"
         case .handled: return "已处理"
+        case .recordOnly: return "仅记录"
         case .falsePositive: return "误报"
         }
     }
@@ -163,6 +180,18 @@ struct EventDetailView: View {
 
     private var isActionDisabled: Bool {
         model.pendingActions.contains(eventID) || event.acknowledged
+    }
+
+    private var recordOnlyText: String {
+        switch event.payload.verification?.status {
+        case "rejected": return "云端已确认安全，事件已记录，无需操作"
+        case "uncertain": return "证据不足，事件已记录，未触发通知"
+        default: return "事件已记录"
+        }
+    }
+
+    private var recordOnlySymbol: String {
+        event.payload.verification?.status == "rejected" ? "checkmark.circle" : "archivebox"
     }
 
     private var shareMessage: String {

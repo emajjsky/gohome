@@ -277,6 +277,41 @@ body.admin-web-page .event-log-card > footer button { min-height: 26px; padding:
 body.admin-web-page .event-log-details { grid-column: 1; min-height: 0; margin: 0 !important; border-top: 1px dashed var(--console-line); padding: 6px 0 0 !important; color: var(--console-muted); font-size: 8px; }
 body.admin-web-page .event-log-details summary { cursor: pointer; color: var(--console-ink); font-weight: 650; }
 
+body.admin-web-page[data-page="events"] .event-evidence-gallery {
+  width: 112px;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  overflow: hidden;
+}
+body.admin-web-page[data-page="events"] .event-evidence-gallery .event-evidence-thumb {
+  width: auto !important;
+  height: 30px !important;
+  min-height: 0;
+  border-radius: 3px !important;
+}
+body.admin-web-page[data-page="events"] .event-evidence-gallery .event-evidence-thumb span {
+  left: 2px;
+  bottom: 2px;
+  padding: 1px 2px;
+  font-size: 6px;
+  line-height: 1.1;
+}
+body.admin-web-page[data-page="events"] .event-evidence-gallery.empty {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--console-line);
+  background: var(--console-surface-2);
+  color: var(--console-muted);
+  font-size: 8px;
+}
+body.admin-web-page[data-page="events"] .event-evidence-gallery.empty span {
+  position: static;
+  padding: 4px;
+  text-align: center;
+}
+
 /* Camera setup */
 body.admin-web-page .admin-camera-grid { display: grid; grid-template-columns: minmax(320px, .78fr) minmax(460px, 1.22fr); gap: 16px; align-items: start; }
 body.admin-web-page .admin-camera-column { display: grid; gap: 16px; }

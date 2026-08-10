@@ -16,30 +16,48 @@ struct EvidenceTimelineView: View {
                     )
                 }
             }
-            if event.evidenceMedia.count > 1 {
-                evidenceStrip
-            }
         }
     }
 
-    private var evidenceStrip: some View {
+}
+
+struct EventEvidenceGrid: View {
+    let event: AppEvent
+    let apiClient: APIClient?
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8),
+    ]
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("关键画面")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(GoHomeTheme.ink)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(event.evidenceMedia) { evidence in
-                        VStack(alignment: .leading, spacing: 7) {
-                            EventMediaImage(assetID: evidence.assetID, fallbackPath: nil, apiClient: apiClient)
-                                .frame(width: 156, height: 96)
-                                .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
-                            Text(roleLabel(evidence.role))
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(GoHomeTheme.mutedInk)
-                        }
+            HStack(alignment: .firstTextBaseline) {
+                Text("四帧证据")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(GoHomeTheme.ink)
+                Spacer()
+                Text("\(event.evidenceMedia.count)/4")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            }
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(event.evidenceMedia.prefix(4)) { evidence in
+                    VStack(alignment: .leading, spacing: 6) {
+                        EventMediaImage(assetID: evidence.assetID, fallbackPath: nil, apiClient: apiClient)
+                            .aspectRatio(16 / 10, contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+                            .accessibilityIdentifier("event-evidence-frame-\(evidence.role)")
+                        Text(roleLabel(evidence.role))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(GoHomeTheme.mutedInk)
                     }
                 }
+            }
+            if event.evidenceMedia.count < 4 {
+                Text("证据收集中，完整复核需要四张按时间排序的画面。")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
             }
         }
     }
@@ -47,8 +65,9 @@ struct EvidenceTimelineView: View {
     private func roleLabel(_ role: String) -> String {
         switch role {
         case "before": return "事发前"
-        case "transition": return "姿态变化"
-        case "current": return "当前画面"
+        case "transition": return "动作启动"
+        case "evidence": return "下降过程"
+        case "current": return "最终状态"
         default: return "证据画面"
         }
     }

@@ -1085,6 +1085,7 @@ struct EventRule: Codable, Equatable, Sendable {
 enum EventSegment: String, CaseIterable, Identifiable, Sendable {
     case pending
     case handled
+    case recordOnly
     case falsePositive
 
     var id: String { rawValue }
@@ -1092,6 +1093,7 @@ enum EventSegment: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .pending: return "待处理"
         case .handled: return "已处理"
+        case .recordOnly: return "系统记录"
         case .falsePositive: return "误报"
         }
     }
@@ -1111,12 +1113,20 @@ struct EventGroup: Identifiable, Equatable, Sendable {
 
 enum EventPresentation {
     static func segment(_ event: AppEvent) -> EventSegment {
-        if event.payload.verification?.status == "rejected" || event.payload.incident?.status == "rejected" {
-            return EventSegment.falsePositive
+        if event.resolution == "false_positive" {
+            return .falsePositive
         }
-        return event.resolution == "false_positive"
-            ? EventSegment.falsePositive
-            : (event.acknowledged ? EventSegment.handled : EventSegment.pending)
+        let verificationStatus = event.payload.verification?.status ?? ""
+        let incidentStatus = event.payload.incident?.status ?? ""
+        if ["rejected", "uncertain"].contains(verificationStatus)
+            || ["rejected", "uncertain"].contains(incidentStatus) {
+            return .recordOnly
+        }
+        return event.acknowledged ? .handled : .pending
+    }
+
+    static func requiresUserConfirmation(_ event: AppEvent) -> Bool {
+        segment(event) == .pending
     }
 
     static func groups(_ events: [AppEvent], segment: EventSegment) -> [EventGroup] {
@@ -1163,9 +1173,10 @@ enum EventPresentation {
     static func verificationText(_ verification: EventVerification?, evidenceCount: Int) -> String {
         guard let verification, !verification.status.isEmpty else { return "等待云端复核" }
         switch verification.status {
-        case "confirmed": return evidenceCount > 1 ? "云端复核支持异常判断 · \(evidenceCount) 张证据" : "云端复核支持异常判断"
-        case "rejected": return "云端复核未发现明确异常"
-        case "uncertain": return "云端证据不足，需要人工确认"
+        case "confirmed": return evidenceCount > 1 ? "云端复核确认风险 · \(evidenceCount) 张证据 · 请确认" : "云端复核确认风险 · 请确认"
+        case "suspected": return evidenceCount > 1 ? "云端复核发现风险疑点 · \(evidenceCount) 张证据 · 请确认" : "云端复核发现风险疑点 · 请确认"
+        case "rejected": return "云端复核确认安全 · 已记录，无需确认"
+        case "uncertain": return "证据不足 · 已记录，无需确认"
         case "pending", "verifying", "retrying": return "云端正在复核证据"
         case "failed", "unavailable": return "云端复核暂未完成"
         default: return "已收到云端复核结果"
@@ -1222,9 +1233,10 @@ enum EventPresentation {
 
     private static func verificationCopy(_ verification: EventVerification) -> (title: String, detail: String, symbol: String, tone: EventTimelineTone) {
         switch verification.status {
-        case "confirmed": return ("云端模型支持异常判断", safeVerificationReason(verification.result?.reason), "checkmark.seal", .warning)
-        case "rejected": return ("云端模型未发现明确异常", "原始记录仍然保留，供你核对。", "checkmark", .neutral)
-        case "uncertain": return ("云端证据不足", "模型无法明确判断，需要人工确认。", "questionmark.circle", .warning)
+        case "confirmed": return ("云端模型确认风险", safeVerificationReason(verification.result?.reason), "checkmark.seal", .warning)
+        case "suspected": return ("云端模型发现风险疑点", "请在 App 中确认家里是否安全。", "exclamationmark.triangle", .warning)
+        case "rejected": return ("云端模型确认安全", "事件已保留在系统记录中，无需用户确认。", "checkmark", .neutral)
+        case "uncertain": return ("证据不足，已保留记录", "当前未触发通知，也不需要用户确认。", "questionmark.circle", .neutral)
         default: return ("云端正在复核", "系统正在检查事件截图和边缘检测依据。", "icloud.and.arrow.down", .neutral)
         }
     }

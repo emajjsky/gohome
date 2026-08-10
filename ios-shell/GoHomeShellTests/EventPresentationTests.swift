@@ -20,6 +20,28 @@ final class EventPresentationTests: XCTestCase {
         XCTAssertFalse(text.contains("threshold"))
     }
 
+    func testCloudSafeAndInsufficientEvidenceAreRecordOnly() {
+        let safe = event(payload: EventPayload(verification: EventVerification(status: "rejected")))
+        let uncertain = event(payload: EventPayload(verification: EventVerification(status: "uncertain")))
+
+        XCTAssertEqual(EventPresentation.segment(safe), .recordOnly)
+        XCTAssertEqual(EventPresentation.segment(uncertain), .recordOnly)
+        XCTAssertFalse(EventPresentation.requiresUserConfirmation(safe))
+        XCTAssertFalse(EventPresentation.requiresUserConfirmation(uncertain))
+        XCTAssertTrue(EventPresentation.verificationText(safe.payload.verification, evidenceCount: 4).contains("无需确认"))
+        XCTAssertTrue(EventPresentation.verificationText(uncertain.payload.verification, evidenceCount: 4).contains("无需确认"))
+    }
+
+    func testVisionEventWithFourEvidenceFramesKeepsRoleOrder() {
+        let roles = ["before", "transition", "evidence", "current"]
+        let value = event(evidenceMedia: roles.enumerated().map { index, role in
+            EventEvidence(assetID: "asset-\(index)", role: role, capturedAt: "2026-07-22T09:30:0\(index)+08:00")
+        })
+
+        XCTAssertEqual(value.evidenceMedia.map(\.role), roles)
+        XCTAssertEqual(value.evidenceMedia.count, 4)
+    }
+
     func testSafetyEventLabelsDoNotExposeEngineeringNames() {
         XCTAssertEqual(EventPresentation.label(for: "fall_candidate"), "疑似跌倒")
         XCTAssertEqual(EventPresentation.label(for: "prolonged_floor_lying"), "长时间倒地")
@@ -53,7 +75,7 @@ final class EventPresentationTests: XCTestCase {
 
         let titles = EventPresentation.timeline(for: value).map(\.title)
         XCTAssertTrue(titles.contains("家庭盒子发现异常"))
-        XCTAssertTrue(titles.contains("云端证据不足"))
+        XCTAssertTrue(titles.contains("证据不足，已保留记录"))
         XCTAssertTrue(titles.contains("多路画面提供佐证"))
     }
 
@@ -91,6 +113,7 @@ final class EventPresentationTests: XCTestCase {
         cameraID: String = "2",
         acknowledged: Bool = false,
         resolution: String = "",
+        evidenceMedia: [EventEvidence] = [],
         payload: EventPayload = EventPayload()
     ) -> AppEvent {
         AppEvent(
@@ -105,6 +128,7 @@ final class EventPresentationTests: XCTestCase {
             updatedAt: "2026-07-22T09:30:00+08:00",
             acknowledged: acknowledged,
             resolution: resolution,
+            evidenceMedia: evidenceMedia,
             payload: payload
         )
     }

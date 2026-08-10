@@ -173,6 +173,7 @@ private struct EventEmptyState: View {
         switch segment {
         case .pending: return "暂无待处理事件"
         case .handled: return "暂无已处理记录"
+        case .recordOnly: return "暂无系统记录"
         case .falsePositive: return "暂无误报记录"
         }
     }
@@ -181,6 +182,7 @@ private struct EventEmptyState: View {
         switch segment {
         case .pending: return "只有需要家人确认的异常会出现在这里。"
         case .handled: return "确认安全后的事件会保留在这里。"
+        case .recordOnly: return "云端已排除或证据不足的事件会保留在这里，不触发通知。"
         case .falsePositive: return "标记为误报的证据会用于后续校准。"
         }
     }
