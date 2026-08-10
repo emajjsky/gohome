@@ -1861,7 +1861,6 @@ function createLocalAppServer(options = {}) {
                 storageDeletes.push({ id: idText(asset.id), key: String(asset.storage_key) });
             }
         }
-        countArray("assets", (asset) => verifyAsset(asset) || isValidationAsset(asset), "media_assets");
         countArray("event_media_assets", (relation) => (
             validationEventIds.has(idText(relation.event_id))
             || validationEventIds.has(idText(relation.eventId))
@@ -1873,6 +1872,7 @@ function createLocalAppServer(options = {}) {
             || verifyCameraIds.has(idText(event.camera_id))
             || validationEventIds.has(idText(event.id))
         ));
+        countArray("assets", (asset) => verifyAsset(asset) || isValidationAsset(asset), "media_assets");
         countArray("calendar_events", (event) => verifyFamilyIds.has(idText(event.family_id)));
         countObject("elder_profiles", (profile, key) => verifyFamilyIds.has(idText(profile.family_id)) || [...verifyFamilyIds].some((familyId) => String(key).startsWith(`${familyId}:`)), "elder_profiles", (profile, key) => `${profile.family_id || String(key).split(":")[0]}:${profile.elder_id || String(key).split(":")[1] || "elder_primary"}`);
         countObject("care_preferences", (preferences, key) => verifyFamilyIds.has(idText(preferences.family_id)) || verifyFamilyIds.has(idText(key)), "care_preferences", (preferences, key) => preferences.family_id || key);
