@@ -56,6 +56,10 @@
                         <strong>${capability.api_key_set ? "已设置" : "未配置"}</strong>
                     </div>
                     <div class="ops-read-field">
+                        <span>Provider</span>
+                        <strong>${escapeHtml(capability.provider || "未配置")}</strong>
+                    </div>
+                    <div class="ops-read-field">
                         <span>Model</span>
                         <strong>${escapeHtml(capability.model || "未配置")}</strong>
                     </div>
@@ -72,6 +76,7 @@
 
                 <div class="ops-env-block">
                     <span>平台方配置环境变量</span>
+                    <div class="ops-env-row"><em>provider</em>${envList(env.provider)}</div>
                     <div class="ops-env-row"><em>base_url</em>${envList(env.base_url)}</div>
                     <div class="ops-env-row"><em>api_key</em>${envList(env.api_key)}</div>
                     <div class="ops-env-row"><em>model</em>${envList(env.model)}</div>

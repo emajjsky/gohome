@@ -828,27 +828,63 @@ function createLocalAppServer(options = {}) {
         return raw;
     }
 
+    function inferModelProvider(baseUrl) {
+        const value = String(baseUrl || "").toLowerCase();
+        if (value.includes("dashscope.aliyuncs.com")) return "dashscope";
+        if (value.includes(".maas.aliyuncs.com")) return "dashscope-maas";
+        if (value.includes("siliconflow.cn")) return "siliconflow";
+        if (value) return "openai-compatible";
+        return "unset";
+    }
+
+    function modelRuntimeConfig({
+        providerKeys,
+        apiKeyKeys,
+        baseUrlKeys,
+        modelKeys,
+        promptKeys,
+        fallbackPrompt,
+    }) {
+        const baseUrl = normalizeModelEndpoint(envFirst(baseUrlKeys), "/chat/completions");
+        const provider = envFirst(providerKeys, inferModelProvider(baseUrl));
+        const resolvedApiKeyKeys = provider.startsWith("dashscope")
+            ? [apiKeyKeys[0], "DASHSCOPE_API_KEY", ...apiKeyKeys.slice(1)]
+            : apiKeyKeys;
+        return {
+            provider,
+            api_key: envFirst(resolvedApiKeyKeys),
+            base_url: baseUrl,
+            model: envFirst(modelKeys),
+            prompt: envFirst(promptKeys, fallbackPrompt),
+            prompt_source: process.env[promptKeys[0]] ? "env" : "default",
+        };
+    }
+
     function multimodalRuntimeConfig() {
         return {
+            ...modelRuntimeConfig({
+                providerKeys: ["GOHOME_CARE_MODEL_PROVIDER", "GOHOME_MULTIMODAL_PROVIDER"],
+                apiKeyKeys: ["GOHOME_CARE_MODEL_API_KEY", "GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"],
+                baseUrlKeys: ["GOHOME_CARE_MODEL_BASE_URL", "GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"],
+                modelKeys: ["GOHOME_CARE_MODEL", "GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"],
+                promptKeys: ["GOHOME_CARE_CARD_PROMPT"],
+                fallbackPrompt: defaultCareTextPrompt,
+            }),
             capability_id: "multimodal-language",
-            api_key: envFirst(["GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"]),
-            base_url: normalizeModelEndpoint(
-                envFirst(["GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"]),
-                "/chat/completions"
-            ),
-            model: envFirst(["GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"]),
-            prompt: envFirst(["GOHOME_CARE_CARD_PROMPT"], defaultCareTextPrompt),
-            prompt_source: process.env.GOHOME_CARE_CARD_PROMPT ? "env" : "default",
         };
     }
 
     function visionVerificationRuntimeConfig() {
-        const multimodal = multimodalRuntimeConfig();
         return {
-            ...multimodal,
+            ...modelRuntimeConfig({
+                providerKeys: ["GOHOME_VISION_MODEL_PROVIDER", "GOHOME_MULTIMODAL_PROVIDER"],
+                apiKeyKeys: ["GOHOME_VISION_MODEL_API_KEY", "GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"],
+                baseUrlKeys: ["GOHOME_VISION_MODEL_BASE_URL", "GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"],
+                modelKeys: ["GOHOME_VISION_MODEL", "GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"],
+                promptKeys: ["GOHOME_VISION_VERIFICATION_PROMPT"],
+                fallbackPrompt: defaultVisionVerificationPrompt,
+            }),
             capability_id: "vision-event-verification",
-            prompt: envFirst(["GOHOME_VISION_VERIFICATION_PROMPT"], defaultVisionVerificationPrompt),
-            prompt_source: process.env.GOHOME_VISION_VERIFICATION_PROMPT ? "env" : "default",
         };
     }
 
@@ -977,14 +1013,16 @@ function createLocalAppServer(options = {}) {
                 enabled: Boolean(multimodal.base_url && multimodal.api_key && multimodal.model),
                 base_url_set: Boolean(multimodal.base_url),
                 api_key_set: Boolean(multimodal.api_key),
+                provider: multimodal.provider,
                 model: multimodal.model,
                 purpose_label: "每日关怀内容生成",
                 prompt: multimodal.prompt,
                 prompt_source: multimodal.prompt_source,
                 env_keys: {
-                    base_url: ["GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"],
-                    api_key: ["GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"],
-                    model: ["GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"],
+                    provider: ["GOHOME_CARE_MODEL_PROVIDER", "GOHOME_MULTIMODAL_PROVIDER"],
+                    base_url: ["GOHOME_CARE_MODEL_BASE_URL", "GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"],
+                    api_key: ["GOHOME_CARE_MODEL_API_KEY", "GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"],
+                    model: ["GOHOME_CARE_MODEL", "GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"],
                     prompt: ["GOHOME_CARE_CARD_PROMPT"],
                 },
                 output_contract: "CareCard JSON: title/body/facts/actions/tone/image_brief",
@@ -998,11 +1036,16 @@ function createLocalAppServer(options = {}) {
                 enabled: Boolean(visionVerificationEnabled() && verification.base_url && verification.api_key && verification.model),
                 base_url_set: Boolean(verification.base_url),
                 api_key_set: Boolean(verification.api_key),
+                provider: verification.provider,
                 model: verification.model,
                 purpose_label: "跌倒、长时间倒地和火灾事件图片复核",
                 prompt: verification.prompt,
                 prompt_source: verification.prompt_source,
                 env_keys: {
+                    provider: ["GOHOME_VISION_MODEL_PROVIDER", "GOHOME_MULTIMODAL_PROVIDER"],
+                    base_url: ["GOHOME_VISION_MODEL_BASE_URL", "GOHOME_MULTIMODAL_BASE_URL", "GOHOME_TEXT_MODEL_BASE_URL", "OPENAI_BASE_URL"],
+                    api_key: ["GOHOME_VISION_MODEL_API_KEY", "GOHOME_MULTIMODAL_API_KEY", "GOHOME_TEXT_MODEL_API_KEY", "OPENAI_API_KEY"],
+                    model: ["GOHOME_VISION_MODEL", "GOHOME_MULTIMODAL_MODEL", "GOHOME_TEXT_MODEL", "OPENAI_MODEL"],
                     enabled: ["GOHOME_VISION_VERIFICATION_ENABLED"],
                     prompt: ["GOHOME_VISION_VERIFICATION_PROMPT"],
                 },
@@ -4287,7 +4330,6 @@ function createLocalAppServer(options = {}) {
             max_tokens: 1600,
             response_format: { type: "json_object" },
             enable_thinking: false,
-            thinking_budget: 128,
         };
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), modelRequestTimeoutMs());
@@ -4335,7 +4377,6 @@ function createLocalAppServer(options = {}) {
                     max_tokens: requestPayload.max_tokens,
                     response_format: requestPayload.response_format,
                     enable_thinking: requestPayload.enable_thinking,
-                    thinking_budget: requestPayload.thinking_budget,
                 },
                 response_payload: {
                     id: responsePayload.id || "",
@@ -4558,7 +4599,6 @@ function createLocalAppServer(options = {}) {
             max_tokens: 900,
             response_format: { type: "json_object" },
             enable_thinking: false,
-            thinking_budget: 64,
         };
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), visionVerificationTimeoutMs());
@@ -4666,6 +4706,7 @@ function createLocalAppServer(options = {}) {
             },
             metadata: {
                 event_id: String(event.id),
+                provider: runtime.provider,
                 asset_id: String(primaryAsset.id),
                 asset_ids: assets.map((item) => String(item.id)),
                 evidence_frame_count: assets.length,
@@ -6370,7 +6411,7 @@ function createLocalAppServer(options = {}) {
                 },
                 metadata: {
                     capability_id: runtime.capability_id,
-                    provider: "multimodal-language",
+                    provider: runtime.provider,
                 },
             });
             store.db.model_generation_jobs.push(job);
@@ -9592,7 +9633,7 @@ function createLocalAppServer(options = {}) {
                 if (!requireOps(req, res)) return;
                 write(res, 200, modelCapabilities().map((capability) => ({
                     provider_id: capability.capability_id,
-                    provider: capability.type,
+                    provider: capability.provider,
                     model: capability.model,
                     purpose: capability.scope,
                     enabled: capability.enabled,
