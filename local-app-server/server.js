@@ -954,6 +954,17 @@ function createLocalAppServer(options = {}) {
         return Number.isFinite(value) ? Math.max(1, Math.min(5, Math.round(value))) : 3;
     }
 
+    function visionVerificationReplayWindowMs() {
+        const value = Number(process.env.GOHOME_VISION_VERIFICATION_REPLAY_HOURS || 24);
+        const hours = Number.isFinite(value) ? Math.max(1, Math.min(168, value)) : 24;
+        return hours * 60 * 60 * 1000;
+    }
+
+    function visionVerificationEventIsRecent(event, nowMs = Date.now()) {
+        const occurredAt = Date.parse(event?.occurred_at || event?.created_at || "");
+        return Number.isFinite(occurredAt) && nowMs - occurredAt <= visionVerificationReplayWindowMs();
+    }
+
     function careImageCallsEnabled() {
         const value = String(process.env.GOHOME_CARE_IMAGE_CALLS || process.env.GOHOME_CARE_MODEL_CALLS || "1").trim().toLowerCase();
         return !["0", "false", "off", "disabled"].includes(value);
@@ -4805,6 +4816,7 @@ function createLocalAppServer(options = {}) {
                 const verification = event.payload?.verification || {};
                 if (
                     VISION_VERIFICATION_EVENT_TYPES.has(event.event_type)
+                    && (isValidationEvent(event) || visionVerificationEventIsRecent(event))
                     && !verificationJobForEvent(event.id)
                     && (
                         verification.status === "waiting_evidence"
