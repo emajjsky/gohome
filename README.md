@@ -6,11 +6,11 @@ GoHome 是一套由家庭边缘守护盒、云端服务和 iOS App 组成的家�
 
 - 正式 iOS 工程：`ios-shell/GoHomeShell.xcodeproj`
 - Bundle ID：`com.gohome.family`
-- 当前发布候选：`1.0.0 (15)`，已从唯一正式工程归档并上传 App Store Connect
+- 当前发布候选：`1.0.0 (16)`，事件证据链改动已部署盒子和云端，待 TestFlight 上传与真机验收
 - 硬件：树莓派 5 + Hailo-8 HAT+
 - 云端：Node API、PostgreSQL、COS、MediaMTX、Coturn、nginx
 - 视频主链路：RTSP 共享采集 -> 盒子一次隐私合成 -> H.264 -> WHEP/WebRTC -> iOS 原生渲染
-- 自动验证：iOS 单元 `194/194`、UI `28/28`；Node 服务门禁、Python 编译和 `git diff --check` 已通过
+- 自动验证：iOS 单元 `196` 项通过、UI `22` 项通过；Node 服务门禁、Python 编译和 `git diff --check` 已通过
 
 Build 15 是发布候选，不等于所有产品质量门禁已经完成。真实家庭误报/漏报、APNs 生产到达率、宠物猫狗混淆矩阵、跨品牌摄像头兼容、双摄纯骨架长时稳定性和 20-50 户家庭试点仍需独立验收。
 

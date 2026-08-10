@@ -1,8 +1,8 @@
 # iOS TestFlight Acceptance Checklist
 
-Distributed baseline: `1.0.0 (5)`
+Distributed baseline: `1.0.0 (15)`
 
-Candidate under validation: `1.0.0 (7)` (source fix pending final gates and upload)
+Candidate under validation: `1.0.0 (16)` (four-frame event evidence and multimodal record-only states)
 
 ## Automated Gates
 
