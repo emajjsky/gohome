@@ -123,8 +123,9 @@ def main() -> None:
     role_track = ""
     role_samples = [
         (101, 0.0, "standing", [240, 30, 340, 330], 0.01),
-        (102, 0.6, "bending", [230, 100, 360, 335], 0.08),
-        (103, 1.2, "lying", [210, 220, 520, 350], 0.05),
+        (102, 0.4, "bending", [230, 100, 360, 335], 0.08),
+        (103, 0.8, "low_body", [220, 180, 440, 345], 0.12),
+        (104, 1.2, "lying", [210, 220, 520, 350], 0.05),
     ]
     for snapshot_id, seconds, posture, bbox, motion in role_samples:
         payload = analysis(person(bbox, posture=posture))
@@ -150,8 +151,15 @@ def main() -> None:
         (item["snapshot_id"], item["role"])
         for item in role_bundle["snapshots"]
     ]
-    if role_sequence != [(101, "before"), (102, "transition"), (103, "current")]:
-        raise SystemExit(f"fall evidence must preserve before/transition/current roles: {role_bundle}")
+    if role_sequence != [
+        (101, "before"),
+        (102, "transition"),
+        (103, "evidence"),
+        (104, "current"),
+    ]:
+        raise SystemExit(f"fall evidence must preserve four ordered action roles: {role_bundle}")
+    if len({item[0] for item in role_sequence}) != 4:
+        raise SystemExit(f"fall evidence frames must be distinct: {role_bundle}")
     current_only = role_engine.evidence_bundle(
         13,
         event_type="pose_safety_candidate",
@@ -159,14 +167,14 @@ def main() -> None:
         limit=1,
         max_age_seconds=15,
     )
-    if [(item["snapshot_id"], item["role"]) for item in current_only["snapshots"]] != [(103, "current")]:
+    if [(item["snapshot_id"], item["role"]) for item in current_only["snapshots"]] != [(104, "current")]:
         raise SystemExit(f"single-frame evidence must keep the current frame: {current_only}")
 
     class RecordingTemporalEngine:
         def __init__(self) -> None:
             self.track_id = None
 
-        def evidence_bundle(self, camera_id, *, event_type, track_id=None, limit=3, max_age_seconds=None):
+        def evidence_bundle(self, camera_id, *, event_type, track_id=None, limit=4, max_age_seconds=None):
             self.track_id = track_id
             return {"snapshots": []}
 

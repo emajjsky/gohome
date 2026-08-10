@@ -304,8 +304,8 @@ class EacpAcceptanceService:
             verification_status = str((fall or {}).get("cloud_verification", {}).get("status") or "")
             return {
                 "simulated_fall_event": "passed" if fall else "failed" if finalizing else "pending",
-                "three_frame_evidence": (
-                    "passed" if fall and int(fall.get("evidence_frame_count") or 0) >= 3
+                "four_frame_evidence": (
+                    "passed" if fall and int(fall.get("evidence_frame_count") or 0) >= 4
                     else "failed" if finalizing else "pending"
                 ),
                 "event_uploaded": (

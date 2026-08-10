@@ -782,22 +782,23 @@ function createLocalAppServer(options = {}) {
     ].join("\n");
 
     const defaultVisionVerificationPrompt = [
-        "你是家庭守护事件的视觉时序复核模型。任务是结合按时间排序的证据帧与盒子结构化证据，对同一人物的动作变化给出一个风险等级。",
-        "证据帧依次表示 before、transition、current。比较人物身份连续性、身体高度、下降速度、身体方向、接触表面和最终姿态。",
-        "跌倒 confirmed 的充分条件是：同一人物在动作前处于站立或坐姿，transition 显示快速下降，动作后身体落到地面并呈 lying 或 fallen。",
-        "跌倒 suspected 表示画面支持人物由高位进入地面低位，但快速下降、身份连续性或落地过程有一项证据不完整。",
-        "长时间倒地 confirmed 的充分条件是：结构化边缘证据达到持续时间阈值，且 current 显示同一人物仍在地面 lying 或 fallen。持续时间直接采用结构化证据。",
-        "no_danger 用于连续帧明确显示稳定站立、行走、坐椅、坐沙发、正常躺床或正常躺沙发。",
-        "uncertain 用于证据质量不足以支持 suspected、confirmed 或 no_danger 的情况。",
-        "人物与宠物分别计数；猫狗不计入 person_count。",
+        "你是家庭守护事件的视觉时序复核模型。结合四张按时间排序的证据帧与盒子结构化指标，对画面中同一人物的动作变化给出一个风险等级。",
+        "四帧角色依次为 before、transition、evidence、current：before 表示动作基线，transition 表示姿态开始变化，evidence 表示下降或落地过程，current 表示动作后的最终姿态。",
+        "按以下顺序核验：人物身份连续性、身体重心变化、下降速度、身体方向、接触表面、最终姿态。same_person 表示四帧中的目标人物身份连续。",
+        "跌倒 confirmed 的充分条件是：same_person 为 true；before 为站立或坐姿；transition 与 evidence 共同显示快速下降；current 显示身体落到 floor 并呈 lying 或 fallen。",
+        "跌倒 suspected 的充分条件是：画面支持同一人物由高位进入 floor 低位并最终 lying 或 fallen，同时快速下降、身份连续性或落地过程中的一项证据清晰度有限。",
+        "长时间倒地 confirmed 的充分条件是：盒子结构化证据已达到持续时间阈值；same_person 为 true；current 显示目标人物仍在 floor 呈 lying 或 fallen。持续时间以结构化证据为准。",
+        "no_danger 的充分条件是：四帧形成稳定站立、正常行走、坐在 chair 或 sofa、躺在 bed 或 sofa、主动弯腰后恢复、主动坐下或起身中的一种完整过程。",
+        "uncertain 的充分条件是：遮挡、视野截断、帧间身份变化或关键动作阶段缺失，使现有证据只能描述画面而无法满足其他等级的充分条件。",
+        "person_count 仅统计画面中的人类，宠物单独作为环境对象理解。",
         "result_level 只能是 suspected、confirmed、no_danger、uncertain。",
         "event_type 只能是 fall、prolonged_floor_lying、none。",
         "posture_before 和 posture_after 只能是 standing、sitting、squatting、bending、lying、fallen、absent、unknown。",
         "posture_transition 只能是 stable、walking、rising、bending、descending、rapid_descent、absent、unknown。",
         "surface 只能是 floor、bed、sofa、chair、standing_area、unknown。",
         "evidence_quality 只能是 high、medium、low；confidence 是 0 到 1 的数字。",
-        "reason 用不超过 120 个中文字符陈述帧序列中可核验的动作、姿态与表面事实。",
-        "必须只输出一个 JSON 对象，字段严格为 schema_version、result_level、event_type、person_count、posture_before、posture_transition、posture_after、surface、same_person、confidence、evidence_quality、reason。",
+        "reason 使用不超过 120 个中文字符，按时间顺序陈述可核验的人物、动作、姿态与接触表面事实。",
+        "输出一个 JSON 对象，字段严格为 schema_version、result_level、event_type、person_count、posture_before、posture_transition、posture_after、surface、same_person、confidence、evidence_quality、reason。",
         "schema_version 固定为 gohome-vision-verification-v2，same_person 为布尔值，person_count 为 0 到 20 的整数。",
     ].join("\n");
 
@@ -2338,7 +2339,7 @@ function createLocalAppServer(options = {}) {
     }
 
     function eventMediaRelations(event, { canonicalOnly = true } = {}) {
-        const roleOrder = { before: 0, transition: 1, current: 2, evidence: 3 };
+        const roleOrder = { before: 0, transition: 1, evidence: 2, current: 3 };
         return store.db.event_media_assets
             .filter((relation) => sameId(relation.event_id, event?.id))
             .filter((relation) => !canonicalOnly || relation.canonical !== false)
@@ -2411,7 +2412,7 @@ function createLocalAppServer(options = {}) {
                 };
             })
             .filter(Boolean)
-            .slice(0, 3);
+            .slice(0, 4);
         return {
             id: event.id,
             type: event.event_type,
@@ -4447,6 +4448,8 @@ function createLocalAppServer(options = {}) {
         "fall_candidate",
         "prolonged_floor_lying",
     ]);
+    const VISION_EVIDENCE_ROLES = ["before", "transition", "evidence", "current"];
+    const VISION_EVIDENCE_FRAME_COUNT = VISION_EVIDENCE_ROLES.length;
 
     function sanitizeVisionVerification(value) {
         if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -4588,21 +4591,36 @@ function createLocalAppServer(options = {}) {
     function eventTemporalEvidenceSnapshots(event) {
         const evidence = event.payload?.evidence || {};
         const bundle = evidence.temporal_evidence_bundle || event.payload?.temporal_evidence_bundle || {};
-        return Array.isArray(bundle.snapshots) ? bundle.snapshots.slice(0, 3) : [];
+        const seen = new Set();
+        return (Array.isArray(bundle.snapshots) ? bundle.snapshots : [])
+            .filter((item) => item && typeof item === "object")
+            .filter((item) => {
+                const identity = String(item.snapshot_id || item.snapshot_path || "").trim();
+                if (!identity || seen.has(identity)) return false;
+                seen.add(identity);
+                return true;
+            })
+            .sort((left, right) => (
+                VISION_EVIDENCE_ROLES.indexOf(String(left.role || ""))
+                - VISION_EVIDENCE_ROLES.indexOf(String(right.role || ""))
+                || String(left.observed_at || "").localeCompare(String(right.observed_at || ""))
+            ))
+            .slice(0, VISION_EVIDENCE_FRAME_COUNT);
     }
 
     function eventEvidenceAssetRole(event, asset, orderedIndex, orderedCount) {
         const explicit = String(asset?.evidence_frame_role || asset?.metadata?.evidence_frame_role || "").trim();
-        if (["before", "transition", "current"].includes(explicit)) return explicit;
+        if (VISION_EVIDENCE_ROLES.includes(explicit)) return explicit;
         const snapshot = eventTemporalEvidenceSnapshots(event).find((item) => (
             String(item?.snapshot_path || "") === String(asset?.snapshot_path || "")
         ));
         const bundleRole = String(snapshot?.role || "").trim();
-        if (["before", "transition", "current"].includes(bundleRole)) return bundleRole;
+        if (VISION_EVIDENCE_ROLES.includes(bundleRole)) return bundleRole;
         if (String(asset?.purpose || asset?.metadata?.purpose || "") === "event_evidence") return "current";
+        if (orderedCount === VISION_EVIDENCE_FRAME_COUNT) return VISION_EVIDENCE_ROLES[orderedIndex];
         if (orderedIndex === 0) return "before";
         if (orderedIndex === orderedCount - 1) return "current";
-        return "transition";
+        return orderedIndex === 1 ? "transition" : "evidence";
     }
 
     function synchronizeEventEvidence(event, preferredAsset = null) {
@@ -4623,7 +4641,7 @@ function createLocalAppServer(options = {}) {
         assets = assets
             .filter((asset, index, items) => items.findIndex((item) => String(item.id) === String(asset.id)) === index)
             .sort((a, b) => String(a.captured_at || a.created_at || "").localeCompare(String(b.captured_at || b.created_at || "")))
-            .slice(-3);
+            .slice(-VISION_EVIDENCE_FRAME_COUNT);
         assets.forEach((asset, index) => {
             asset.evidence_frame_role = eventEvidenceAssetRole(event, asset, index, assets.length);
             asset.metadata = {
@@ -4631,7 +4649,7 @@ function createLocalAppServer(options = {}) {
                 evidence_frame_role: asset.evidence_frame_role,
             };
         });
-        const roleOrder = { before: 0, transition: 1, current: 2 };
+        const roleOrder = Object.fromEntries(VISION_EVIDENCE_ROLES.map((role, index) => [role, index]));
         assets.sort((a, b) => (
             (roleOrder[a.evidence_frame_role] ?? 3) - (roleOrder[b.evidence_frame_role] ?? 3)
             || String(a.captured_at || a.created_at || "").localeCompare(String(b.captured_at || b.created_at || ""))
@@ -4654,16 +4672,22 @@ function createLocalAppServer(options = {}) {
             event.media_asset_id = current.id;
             event.snapshot_path = current.snapshot_path || event.snapshot_path || "";
         }
-        const expectedCount = Math.max(1, Math.min(3, eventTemporalEvidenceSnapshots(event).length || 1));
+        const receivedRoles = new Set(assets.map((asset) => String(asset.evidence_frame_role || "")));
+        const distinctAssets = new Set(assets.map((asset) => String(asset.id || "")));
         return {
             assets,
-            expected_count: expectedCount,
-            ready: assets.length >= expectedCount && Boolean(current),
+            expected_count: VISION_EVIDENCE_FRAME_COUNT,
+            ready: (
+                assets.length === VISION_EVIDENCE_FRAME_COUNT
+                && distinctAssets.size === VISION_EVIDENCE_FRAME_COUNT
+                && VISION_EVIDENCE_ROLES.every((role) => receivedRoles.has(role))
+                && Boolean(current)
+            ),
         };
     }
 
     function visionEvidenceAssets(event, primaryAsset = null) {
-        const roleOrder = { before: 0, transition: 1, current: 2, evidence: 3 };
+        const roleOrder = Object.fromEntries(VISION_EVIDENCE_ROLES.map((role, index) => [role, index]));
         const ids = eventMediaRelations(event).map((relation) => String(relation.asset_id));
         if (primaryAsset?.id && !ids.includes(String(primaryAsset.id))) ids.push(String(primaryAsset.id));
         return ids
@@ -4675,15 +4699,24 @@ function createLocalAppServer(options = {}) {
                 if (roleDifference) return roleDifference;
                 return String(a.captured_at || a.created_at || "").localeCompare(String(b.captured_at || b.created_at || ""));
             })
-            .slice(0, 3);
+            .slice(0, VISION_EVIDENCE_FRAME_COUNT);
     }
 
     async function callVisionVerificationModel(event, assets) {
         const runtime = visionVerificationRuntimeConfig();
         if (!visionVerificationEnabled()) throw new Error("vision verification disabled");
         if (!runtime.base_url || !runtime.api_key || !runtime.model) throw new Error("vision verification model is not configured");
-        const evidenceAssets = Array.isArray(assets) ? assets.slice(0, 3) : [assets].filter(Boolean);
-        if (!evidenceAssets.length) throw new Error("event evidence image is unavailable");
+        const evidenceAssets = Array.isArray(assets)
+            ? assets.slice(0, VISION_EVIDENCE_FRAME_COUNT)
+            : [assets].filter(Boolean);
+        const evidenceRoles = evidenceAssets.map((asset) => String(asset.evidence_frame_role || ""));
+        if (
+            evidenceAssets.length !== VISION_EVIDENCE_FRAME_COUNT
+            || new Set(evidenceAssets.map((asset) => String(asset.id || ""))).size !== VISION_EVIDENCE_FRAME_COUNT
+            || !VISION_EVIDENCE_ROLES.every((role) => evidenceRoles.includes(role))
+        ) {
+            throw new Error("event evidence requires four distinct ordered frames");
+        }
         const frameInputs = await Promise.all(evidenceAssets.map((asset) => verificationAssetModelInput(asset)));
         if (frameInputs.reduce((total, item) => total + item.size, 0) > 18 * 1024 * 1024) {
             throw new Error("event evidence sequence exceeds 18MB");
@@ -4703,7 +4736,7 @@ function createLocalAppServer(options = {}) {
                         {
                             type: "text",
                             text: [
-                                `请按时间顺序复核这条家庭守护事件的 ${frameInputs.length} 张证据帧。严格按系统约定只输出 JSON。`,
+                                `请按时间顺序复核这条家庭守护事件的 ${frameInputs.length} 张证据帧，并按系统约定输出 JSON。`,
                                 `证据图角色顺序：${evidenceAssets.map((asset) => String(asset.evidence_frame_role || "evidence")).join(" -> ")}。`,
                                 JSON.stringify(context),
                             ].join("\n\n"),
@@ -4812,7 +4845,7 @@ function createLocalAppServer(options = {}) {
             family_id: event.family_id,
             purpose: "vision_event_verification",
             model: runtime.model,
-            prompt_version: `vision-verification:${runtime.prompt_source}:v2`,
+            prompt_version: `vision-verification:${runtime.prompt_source}:v3`,
             input_hash: sha256(JSON.stringify({ context, asset_ids: assets.map((item) => item.id) })),
             output_status: "pending",
             request_payload: {
@@ -7648,7 +7681,7 @@ function createLocalAppServer(options = {}) {
             })
             .filter(Boolean)
             .filter((entry, index, items) => items.findIndex((item) => sameId(item.asset_id, entry.asset_id)) === index)
-            .slice(0, 3);
+            .slice(0, VISION_EVIDENCE_FRAME_COUNT);
         const storedEventPayload = withoutEventMediaPayload({
             ...(payload.payload || {}),
             edge_camera_id: payload.camera_id || null,
@@ -7692,6 +7725,7 @@ function createLocalAppServer(options = {}) {
             && !isValidationEvent(event)
             && !correlatedPrimary
             && !verificationJob
+            && !VISION_VERIFICATION_EVENT_TYPES.has(event.event_type)
         ) {
             message = upsertAppMessage({
                 message_id: `edge-event-${event.idempotency_key}`,

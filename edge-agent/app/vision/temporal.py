@@ -232,7 +232,7 @@ class TemporalObservationEngine:
         *,
         event_type: str,
         track_id: str | None = None,
-        limit: int = 3,
+        limit: int = 4,
         max_age_seconds: float | None = None,
     ) -> Dict[str, Any]:
         history = list(self._histories.get(int(camera_id), ()))
@@ -251,7 +251,7 @@ class TemporalObservationEngine:
                 ]
             except (TypeError, ValueError):
                 pass
-        evidence_limit = max(1, min(3, int(limit)))
+        evidence_limit = max(1, min(4, int(limit)))
         selected = self._role_aware_evidence_samples(
             history,
             track_id=track_id,
@@ -259,7 +259,7 @@ class TemporalObservationEngine:
         )
         return {
             "schema_version": "temporal-evidence-bundle-v1",
-            "selection_policy": "role-aware-pose-transition-v2",
+            "selection_policy": "role-aware-four-frame-v3",
             "event_type": str(event_type),
             "track_id": str(track_id or ""),
             "window_started_at": history[0].get("observed_at") if history else None,
@@ -815,45 +815,63 @@ class TemporalObservationEngine:
         transition_candidates = [
             (index, item)
             for index, item in snapshots
-            if before_index < index < current_index
+            if before_index < index < transition_index
             and (before_pair is None or item.get("snapshot_id") != before_pair[1].get("snapshot_id"))
         ]
         transition_pair = max(
             transition_candidates,
             key=lambda pair: (
-                -abs(pair[0] - transition_index),
+                pair[0],
                 float(pair[1].get("motion_score") or 0.0),
             ),
             default=None,
         )
 
-        selected: dict[str, Dict[str, Any]] = {"current": current}
+        evidence_candidates = [
+            (index, item)
+            for index, item in snapshots
+            if transition_index <= index < current_index
+            and (transition_pair is None or item.get("snapshot_id") != transition_pair[1].get("snapshot_id"))
+        ]
+        evidence_pair = min(
+            evidence_candidates,
+            key=lambda pair: (
+                abs(pair[0] - transition_index),
+                -float(pair[1].get("motion_score") or 0.0),
+            ),
+            default=None,
+        )
+
+        selected_pairs: list[tuple[int, Dict[str, Any]]] = [(current_index, current)]
         if before_pair is not None:
-            selected["before"] = before_pair[1]
+            selected_pairs.append(before_pair)
         if transition_pair is not None:
-            selected["transition"] = transition_pair[1]
+            selected_pairs.append(transition_pair)
+        if evidence_pair is not None:
+            selected_pairs.append(evidence_pair)
 
-        used_ids = {item.get("snapshot_id") for item in selected.values()}
-        remaining = [item for _index, item in snapshots if item.get("snapshot_id") not in used_ids]
-        for role in ("before", "transition"):
-            if role in selected or not remaining:
+        target_count = min(limit, len(snapshots))
+        used_ids = {item.get("snapshot_id") for _index, item in selected_pairs}
+        for pair in snapshots:
+            if len(selected_pairs) >= target_count:
+                break
+            if pair[1].get("snapshot_id") in used_ids:
                 continue
-            candidate = remaining.pop(0 if role == "before" else -1)
-            selected[role] = candidate
-
-        role_order = (
-            ("current",)
-            if limit == 1
-            else ("before", "current")
-            if limit == 2 and "before" in selected
-            else ("transition", "current")
-            if limit == 2
-            else ("before", "transition", "current")
+            selected_pairs.append(pair)
+            used_ids.add(pair[1].get("snapshot_id"))
+        selected_pairs = sorted(selected_pairs, key=lambda pair: pair[0])[-target_count:]
+        roles = (
+            ["current"]
+            if len(selected_pairs) == 1
+            else ["before", "current"]
+            if len(selected_pairs) == 2
+            else ["before", "transition", "current"]
+            if len(selected_pairs) == 3
+            else ["before", "transition", "evidence", "current"]
         )
         return [
-            {**selected[role], "_evidence_role": role}
-            for role in role_order
-            if role in selected
+            {**pair[1], "_evidence_role": roles[index]}
+            for index, pair in enumerate(selected_pairs)
         ]
 
     def _observation_posture(self, observation: Dict[str, Any], track_id: str | None) -> str:
@@ -877,10 +895,8 @@ class TemporalObservationEngine:
             return items
         if limit == 1:
             return [items[-1]]
-        indices = {0, len(items) - 1}
-        if limit >= 3:
-            indices.add(len(items) // 2)
-        return [items[index] for index in sorted(indices)][:limit]
+        indices = [round(index * (len(items) - 1) / (limit - 1)) for index in range(limit)]
+        return [items[index] for index in indices]
 
     def _posture_sequence(self, history: list[Dict[str, Any]], track_id: str | None) -> list[Dict[str, Any]]:
         sequence: list[Dict[str, Any]] = []

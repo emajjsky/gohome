@@ -119,7 +119,12 @@ def main() -> None:
                 },
                 "evidence": {
                     "temporal_evidence_bundle": {
-                        "snapshots": [{"snapshot_id": 1}, {"snapshot_id": 2}, {"snapshot_id": 3}],
+                        "snapshots": [
+                            {"snapshot_id": 1},
+                            {"snapshot_id": 2},
+                            {"snapshot_id": 3},
+                            {"snapshot_id": 4},
+                        ],
                     },
                 },
             },
@@ -129,14 +134,15 @@ def main() -> None:
             {"id": 1, "event_id": 81, "job_type": "media_upload", "status": "completed"},
             {"id": 2, "event_id": 81, "job_type": "media_upload", "status": "completed"},
             {"id": 3, "event_id": 81, "job_type": "media_upload", "status": "completed"},
-            {"id": 4, "event_id": 81, "job_type": "event_upload", "status": "completed"},
+            {"id": 4, "event_id": 81, "job_type": "media_upload", "status": "completed"},
+            {"id": 5, "event_id": 81, "job_type": "event_upload", "status": "completed"},
         ])
         cloud["records"] = [{
             "edge_event_id": "81",
             "verification": {
                 "status": "confirmed",
                 "confidence": 0.91,
-                "result": {"reason": "三帧显示连续倒地过程。"},
+                "result": {"reason": "四帧显示连续倒地过程。"},
             },
         }]
 
@@ -148,11 +154,11 @@ def main() -> None:
             raise SystemExit(f"risk metrics are incomplete: {metrics}")
         if abs(float(metrics["first_risk_latency_seconds"]) - 0.3) > 0.001:
             raise SystemExit(f"risk latency is incorrect: {metrics}")
-        if report["events"][0]["evidence_frame_count"] != 3:
-            raise SystemExit(f"three-frame evidence was not counted: {report}")
+        if report["events"][0]["evidence_frame_count"] != 4:
+            raise SystemExit(f"four-frame evidence was not counted: {report}")
         if report["events"][0]["cloud_verification"]["status"] != "confirmed":
             raise SystemExit(f"cloud verification was not joined: {report}")
-        if report["events"][0]["cloud_verification"].get("reason") != "三帧显示连续倒地过程。":
+        if report["events"][0]["cloud_verification"].get("reason") != "四帧显示连续倒地过程。":
             raise SystemExit(f"cloud verification reason is missing: {report}")
         event_metrics = report["events"][0]
         if event_metrics.get("confirmation_path") != "dynamic_low_position":
@@ -161,11 +167,25 @@ def main() -> None:
             raise SystemExit(f"event action latency metrics are incorrect: {event_metrics}")
         if report["checks"]["simulated_fall_event"] != "passed":
             raise SystemExit(f"fall acceptance did not pass: {report['checks']}")
-        rejected_checks = service._checks(
+        if report["checks"].get("four_frame_evidence") != "passed" or "three_frame_evidence" in report["checks"]:
+            raise SystemExit(f"acceptance must expose the four-frame evidence contract: {report['checks']}")
+        incomplete_evidence_checks = service._checks(
             scenario="simulated_fall",
             events=[{
                 "event_type": "fall_candidate",
                 "evidence_frame_count": 3,
+                "event_upload_status": "completed",
+                "cloud_verification": {"status": "confirmed"},
+            }],
+            finalizing=True,
+        )
+        if incomplete_evidence_checks.get("four_frame_evidence") != "failed":
+            raise SystemExit(f"three frames must fail the production evidence contract: {incomplete_evidence_checks}")
+        rejected_checks = service._checks(
+            scenario="simulated_fall",
+            events=[{
+                "event_type": "fall_candidate",
+                "evidence_frame_count": 4,
                 "event_upload_status": "completed",
                 "cloud_verification": {"status": "rejected"},
             }],

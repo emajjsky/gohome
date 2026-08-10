@@ -922,9 +922,11 @@ async function main() {
         assert.equal(String(created.event.camera_id), String(camera.id));
         assert.equal(String(created.event.payload.edge_camera_id), "11");
         assert.equal(created.event.media_asset_id, media.asset.id);
-        assert.equal(created.message.generated_by, "edge-event");
-        assert.equal(created.message.source_event_ids[0], created.event.id);
-        assert.equal(created.deliveries.length, 1);
+        assert.equal(created.verification.status, "waiting_evidence");
+        assert.equal(created.verification.expected_count, 4);
+        assert.equal(created.verification.received_count, 1);
+        assert.equal(created.message, null);
+        assert.equal(created.deliveries.length, 0);
 
         const originalVerificationEnv = {
             GOHOME_VISION_VERIFICATION_ENABLED: process.env.GOHOME_VISION_VERIFICATION_ENABLED,
@@ -950,6 +952,8 @@ async function main() {
             assert.match(requestPayload.messages[0].content, /result_level/);
             assert.match(requestPayload.messages[0].content, /confirmed/);
             assert.match(requestPayload.messages[0].content, /suspected/);
+            assert.match(requestPayload.messages[0].content, /before、transition、evidence、current/);
+            assert.match(requestPayload.messages[0].content, /充分条件/);
             assert.doesNotMatch(requestPayload.messages[0].content, /火灾/);
             const textContent = userContent.find((item) => item.type === "text");
             assert.ok(textContent);
@@ -957,7 +961,7 @@ async function main() {
             assert.match(textContent.text, /evidence_frames/);
             const videoContent = userContent.filter((item) => item.type === "video");
             assert.equal(videoContent.length, 1);
-            assert.ok(videoContent[0].video.length >= 1 && videoContent[0].video.length <= 3);
+            assert.equal(videoContent[0].video.length, 4);
             assert.ok(videoContent[0].video.every((url) => /^data:image\/jpeg;base64,/.test(url)));
             const promptText = textContent.text;
             let parsed;
@@ -1052,6 +1056,74 @@ async function main() {
             process.env.GOHOME_MULTIMODAL_BASE_URL = `${mockVerificationBaseUrl}/v1/chat/completions`;
             process.env.GOHOME_MULTIMODAL_API_KEY = "mock-vision-key";
             process.env.GOHOME_MULTIMODAL_MODEL = "mock-vision-model";
+            const waitingRoles = ["before", "transition", "evidence"];
+            const waitingMediaItems = [];
+            for (const [index, role] of waitingRoles.entries()) {
+                const capturedAt = `2026-07-05T09:59:0${index}.000Z`;
+                const uploaded = await requestJson(
+                    baseUrl,
+                    deviceMediaUploadPath({
+                        file_name: `verification-waiting-${role}.jpg`,
+                        snapshot_path: `events/verification-waiting-${role}.jpg`,
+                        content_type: "image/jpeg",
+                        edge_event_id: "43-waiting",
+                        camera_id: camera.id,
+                        local_camera_id: 11,
+                        purpose: "event_evidence_keyframe",
+                        evidence_frame_role: role,
+                        captured_at: capturedAt,
+                        idempotency_key: `event-evidence:${camera.id}:43-waiting:${role}`,
+                    }),
+                    {
+                        method: "POST",
+                        body: Buffer.from(`mock-verification-waiting-${role}-jpeg`),
+                        headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
+                    },
+                );
+                waitingMediaItems.push({ asset: uploaded.asset, role, captured_at: capturedAt });
+            }
+            const waitingEvent = await requestJson(baseUrl, "/api/v1/device/events", {
+                method: "POST",
+                body: JSON.stringify({
+                    idempotency_key: "validation:event:43-waiting",
+                    edge_event_id: "43-waiting",
+                    event_type: "fall_candidate",
+                    summary: "三帧证据门控测试",
+                    level: "critical",
+                    room: "验证",
+                    camera_id: 11,
+                    payload: {
+                        validation: { test_event: true, vision_verification_probe: true },
+                        evidence: {
+                            temporal_evidence_bundle: {
+                                snapshots: [
+                                    ...waitingMediaItems.map((item) => ({
+                                        snapshot_path: item.asset.snapshot_path,
+                                        observed_at: item.captured_at,
+                                        role: item.role,
+                                    })),
+                                    {
+                                        snapshot_path: "events/verification-waiting-current.jpg",
+                                        observed_at: "2026-07-05T09:59:03.000Z",
+                                        role: "current",
+                                    },
+                                ],
+                            },
+                        },
+                        evidence_media_assets: waitingMediaItems,
+                        edge_upload: { edge_event_id: "43-waiting", edge_device_id: "edge-test" },
+                    },
+                }),
+                headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+            });
+            assert.equal(waitingEvent.verification.status, "waiting_evidence");
+            assert.equal(waitingEvent.verification.received_count, 3);
+            assert.equal(waitingEvent.verification.expected_count, 4);
+            assert.equal(verificationRequestCount, 0);
+            assert.equal(app.store.db.model_generation_jobs.some((job) => (
+                job.purpose === "vision_event_verification"
+                && String(job.metadata?.event_id) === String(waitingEvent.event.id)
+            )), false);
             const verificationMedia = await requestJson(
                 baseUrl,
                 deviceMediaUploadPath({
@@ -1112,6 +1184,26 @@ async function main() {
                     headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
                 },
             );
+            const verificationEvidenceMedia = await requestJson(
+                baseUrl,
+                deviceMediaUploadPath({
+                    file_name: "verification-evidence.jpg",
+                    snapshot_path: "events/verification-evidence.jpg",
+                    content_type: "image/jpeg",
+                    edge_event_id: 43,
+                    camera_id: camera.id,
+                    local_camera_id: 11,
+                    purpose: "event_evidence_keyframe",
+                    evidence_frame_role: "evidence",
+                    captured_at: "2026-07-05T10:00:02.500Z",
+                    idempotency_key: `event-evidence:${camera.id}:43:evidence`,
+                }),
+                {
+                    method: "POST",
+                    body: Buffer.from("mock-verification-evidence-jpeg"),
+                    headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
+                },
+            );
             const verificationEvent = await requestJson(baseUrl, "/api/v1/device/events", {
                 method: "POST",
                 body: JSON.stringify({
@@ -1128,11 +1220,21 @@ async function main() {
                         evidence: {
                             metrics: { fall_score: 0.88 },
                             pose_factor_graph: { fast_fall_candidate: true, fast_fall_score: 0.91 },
-                            temporal_evidence_bundle: { track_id: "c11-p1", posture_sequence: ["standing", "lying"] },
+                            temporal_evidence_bundle: {
+                                track_id: "c11-p1",
+                                posture_sequence: ["standing", "bending", "low_body", "lying"],
+                                snapshots: [
+                                    { snapshot_path: "events/verification-before.jpg", observed_at: "2026-07-05T10:00:01.000Z", role: "before" },
+                                    { snapshot_path: "events/verification-transition.jpg", observed_at: "2026-07-05T10:00:02.000Z", role: "transition" },
+                                    { snapshot_path: "events/verification-evidence.jpg", observed_at: "2026-07-05T10:00:02.500Z", role: "evidence" },
+                                    { snapshot_path: "events/verification.jpg", observed_at: "2026-07-05T10:00:03.000Z", role: "current" },
+                                ],
+                            },
                         },
                         evidence_media_assets: [
                             { asset: verificationBeforeMedia.asset, role: "before", captured_at: "2026-07-05T10:00:01.000Z", postures: ["standing"] },
                             { asset: verificationTransitionMedia.asset, role: "transition", captured_at: "2026-07-05T10:00:02.000Z", postures: ["bending"] },
+                            { asset: verificationEvidenceMedia.asset, role: "evidence", captured_at: "2026-07-05T10:00:02.500Z", postures: ["low_body"] },
                             { asset: verificationMedia.asset, role: "current", captured_at: "2026-07-05T10:00:03.000Z", postures: ["lying"] },
                         ],
                         media_upload_result: { asset: verificationMedia.asset },
@@ -1143,8 +1245,8 @@ async function main() {
             });
             assert.equal(verificationEvent.event.media_asset_id, verificationMedia.asset.id);
             assert.equal(verificationEvent.event.payload.evidence_media_assets, undefined);
-            assert.equal(verificationEvent.event.evidence_media.length, 3);
-            assert.deepEqual(verificationEvent.event.evidence_media.map((item) => item.role), ["before", "transition", "current"]);
+            assert.equal(verificationEvent.event.evidence_media.length, 4);
+            assert.deepEqual(verificationEvent.event.evidence_media.map((item) => item.role), ["before", "transition", "evidence", "current"]);
             assert.equal(verificationEvent.verification.status, "pending");
             assert.equal(verificationEvent.message, null);
             assert.equal(verificationEvent.deliveries.length, 0);
@@ -1210,26 +1312,33 @@ async function main() {
             assert.ok(verifiedEvent.payload.incident.notification.notified_at);
 
             const createVerificationPolicyProbe = async ({ edgeEventId, summary, occurredAt }) => {
-                const media = await requestJson(
-                    baseUrl,
-                    deviceMediaUploadPath({
-                        file_name: `${edgeEventId}.jpg`,
-                        snapshot_path: `events/${edgeEventId}.jpg`,
-                        content_type: "image/jpeg",
-                        edge_event_id: edgeEventId,
-                        camera_id: camera.id,
-                        local_camera_id: 11,
-                        purpose: "event_evidence",
-                        evidence_frame_role: "current",
-                        captured_at: occurredAt,
-                        idempotency_key: `event-evidence:${camera.id}:${edgeEventId}:current`,
-                    }),
-                    {
-                        method: "POST",
-                        body: Buffer.from(`mock-${edgeEventId}-jpeg`),
-                        headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
-                    },
-                );
+                const roles = ["before", "transition", "evidence", "current"];
+                const mediaItems = [];
+                for (const [index, role] of roles.entries()) {
+                    const capturedAt = new Date(Date.parse(occurredAt) + index * 250).toISOString();
+                    const media = await requestJson(
+                        baseUrl,
+                        deviceMediaUploadPath({
+                            file_name: `${edgeEventId}-${role}.jpg`,
+                            snapshot_path: `events/${edgeEventId}-${role}.jpg`,
+                            content_type: "image/jpeg",
+                            edge_event_id: edgeEventId,
+                            camera_id: camera.id,
+                            local_camera_id: 11,
+                            purpose: role === "current" ? "event_evidence" : "event_evidence_keyframe",
+                            evidence_frame_role: role,
+                            captured_at: capturedAt,
+                            idempotency_key: `event-evidence:${camera.id}:${edgeEventId}:${role}`,
+                        }),
+                        {
+                            method: "POST",
+                            body: Buffer.from(`mock-${edgeEventId}-${role}-jpeg`),
+                            headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
+                        },
+                    );
+                    mediaItems.push({ asset: media.asset, role, captured_at: capturedAt, postures: ["unknown"] });
+                }
+                const media = mediaItems.at(-1);
                 return requestJson(baseUrl, "/api/v1/device/events", {
                     method: "POST",
                     body: JSON.stringify({
@@ -1240,13 +1349,20 @@ async function main() {
                         level: "critical",
                         room: "客厅",
                         camera_id: 11,
-                        snapshot_path: `events/${edgeEventId}.jpg`,
+                        snapshot_path: `events/${edgeEventId}-current.jpg`,
                         occurred_at: occurredAt,
                         payload: {
                             rule: { reason: "边缘端提交候选，等待云端复核。" },
-                            evidence_media_assets: [
-                                { asset: media.asset, role: "current", captured_at: occurredAt, postures: ["unknown"] },
-                            ],
+                            evidence: {
+                                temporal_evidence_bundle: {
+                                    snapshots: mediaItems.map((item) => ({
+                                        snapshot_path: item.asset.snapshot_path,
+                                        observed_at: item.captured_at,
+                                        role: item.role,
+                                    })),
+                                },
+                            },
+                            evidence_media_assets: mediaItems,
                             media_upload_result: { asset: media.asset },
                             edge_upload: { edge_event_id: edgeEventId, edge_device_id: "edge-test" },
                         },
@@ -1333,10 +1449,11 @@ async function main() {
             assert.ok(verificationJob);
             assert.equal(verificationJob.output_status, "succeeded");
             assert.equal(verificationJob.metadata.attempt_count, 2);
-            assert.equal(verificationJob.metadata.evidence_frame_count, 3);
+            assert.equal(verificationJob.metadata.evidence_frame_count, 4);
             assert.deepEqual(verificationJob.request_payload.asset_ids, [
                 verificationBeforeMedia.asset.id,
                 verificationTransitionMedia.asset.id,
+                verificationEvidenceMedia.asset.id,
                 verificationMedia.asset.id,
             ]);
             assert.equal("api_key" in verificationJob.request_payload, false);
@@ -1621,10 +1738,10 @@ async function main() {
         const eventMessages = await requestJson(baseUrl, `/api/v1/app/messages?family_id=${family.id}&status=all`, {
             headers: { Authorization: `Bearer ${appSessionToken}` },
         });
-        assert.ok(eventMessages.some((message) => (
+        assert.equal(eventMessages.some((message) => (
             message.generated_by === "edge-event"
             && message.source_event_ids.some((eventId) => String(eventId) === String(created.event.id))
-        )));
+        )), false);
 
         const events = await requestJson(baseUrl, "/api/app/events?limit=5&acknowledged=false", {
             headers: { Authorization: `Bearer ${appSessionToken}` },

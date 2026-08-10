@@ -3853,8 +3853,8 @@ class Storage:
         stable_roles = [
             dict(item)
             for item in original_snapshots
-            if isinstance(item, dict) and str(item.get("role") or "") in {"before", "transition"}
-        ][:2]
+            if isinstance(item, dict) and str(item.get("role") or "") in {"before", "transition", "evidence"}
+        ][:3]
         if selected_snapshot is not None and selected_track is not None:
             stable_roles.append({
                 "snapshot_id": int(selected_snapshot["id"]),
@@ -3867,7 +3867,7 @@ class Storage:
             finalized_bundle = {
                 **original_bundle,
                 "schema_version": "temporal-evidence-bundle-v1",
-                "selection_policy": "role-aware-post-settle-v3",
+                "selection_policy": "role-aware-post-settle-v4",
                 "window_ended_at": str(selected_snapshot.get("captured_at") or ""),
                 "snapshots": stable_roles,
             }
@@ -3975,9 +3975,9 @@ class Storage:
                 "postures": item.get("postures") if isinstance(item.get("postures"), list) else [],
                 "role": str(item.get("role") or ""),
             })
-        for index, frame in enumerate(unique_frames[:2]):
-            role = frame["role"] if frame["role"] in {"before", "transition"} else (
-                "before" if index == 0 else "transition"
+        for index, frame in enumerate(unique_frames[:3]):
+            role = frame["role"] if frame["role"] in {"before", "transition", "evidence"} else (
+                ("before", "transition", "evidence")[index]
             )
             jobs.append(
                 self.enqueue_upload_job(

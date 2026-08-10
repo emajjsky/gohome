@@ -65,6 +65,17 @@ def main() -> None:
             person_count=1,
             analysis={"person_count": 1, "fall_candidate": False},
         )
+        evidence_snapshot = storage.create_snapshot(
+            camera_id=int(camera["id"]),
+            image_path="camera_1/evidence.jpg",
+            width=1280,
+            height=720,
+            brightness=119.5,
+            motion_score=0.15,
+            tags=["person_detected", "pose_detected", "pose_low_body"],
+            person_count=1,
+            analysis={"person_count": 1, "fall_candidate": True},
+        )
         event = storage.create_event(
             event_type="fall_candidate",
             summary="客厅摄像头 检测到疑似跌倒姿态。",
@@ -76,7 +87,7 @@ def main() -> None:
                 "evidence": {
                     "schema_version": "gohome-event-evidence-v1",
                     "temporal_evidence_bundle": {
-                        "selection_policy": "role-aware-pose-transition-v2",
+                        "selection_policy": "role-aware-four-frame-v3",
                         "snapshots": [
                             {
                                 "snapshot_id": before_snapshot["id"],
@@ -93,6 +104,13 @@ def main() -> None:
                                 "role": "transition",
                             },
                             {
+                                "snapshot_id": evidence_snapshot["id"],
+                                "snapshot_path": evidence_snapshot["image_path"],
+                                "observed_at": evidence_snapshot["captured_at"],
+                                "postures": ["low_body"],
+                                "role": "evidence",
+                            },
+                            {
                                 "snapshot_id": snapshot["id"],
                                 "snapshot_path": snapshot["image_path"],
                                 "observed_at": snapshot["captured_at"],
@@ -106,22 +124,22 @@ def main() -> None:
         )
         jobs = storage.enqueue_event_upload_jobs(event)
         summary = storage.upload_queue_summary()
-        if len(jobs) != 4:
-            raise SystemExit(f"expected 4 upload jobs, got {len(jobs)}")
+        if len(jobs) != 5:
+            raise SystemExit(f"expected 5 upload jobs, got {len(jobs)}")
         job_types = sorted(job["job_type"] for job in jobs)
-        if job_types != ["event_upload", "media_upload", "media_upload", "media_upload"]:
+        if job_types != ["event_upload", "media_upload", "media_upload", "media_upload", "media_upload"]:
             raise SystemExit(f"unexpected job types: {job_types}")
         media_jobs = [job for job in jobs if job["job_type"] == "media_upload"]
         purposes = sorted(job["payload"].get("purpose") for job in media_jobs)
         roles = sorted(job["payload"].get("evidence_frame_role") for job in media_jobs)
-        if purposes != ["event_evidence", "event_evidence_keyframe", "event_evidence_keyframe"] or roles != ["before", "current", "transition"]:
+        if purposes != ["event_evidence", "event_evidence_keyframe", "event_evidence_keyframe", "event_evidence_keyframe"] or roles != ["before", "current", "evidence", "transition"]:
             raise SystemExit(f"event evidence sequence missing: purposes={purposes} roles={roles}")
-        if any(job["payload"].get("evidence_selection_policy") != "role-aware-pose-transition-v2" for job in media_jobs):
+        if any(job["payload"].get("evidence_selection_policy") != "role-aware-four-frame-v3" for job in media_jobs):
             raise SystemExit("all event evidence uploads must preserve the selection policy")
         current_job = next(job for job in media_jobs if job["payload"].get("evidence_frame_role") == "current")
         if current_job["payload"].get("captured_at") != snapshot["captured_at"]:
             raise SystemExit("current evidence must retain frame capture time instead of upload time")
-        if summary["pending"] != 4 or summary["pending_critical"] != 4:
+        if summary["pending"] != 5 or summary["pending_critical"] != 5:
             raise SystemExit(f"unexpected upload summary: {summary}")
         deduped = storage.enqueue_event_upload_jobs(event)
         if [job["id"] for job in deduped] != [job["id"] for job in jobs]:
@@ -138,7 +156,7 @@ def main() -> None:
                     "schema_version": "gohome-event-evidence-v1",
                     "temporal_evidence_bundle": {
                         "schema_version": "temporal-evidence-bundle-v1",
-                        "selection_policy": "role-aware-pose-transition-v2",
+                        "selection_policy": "role-aware-four-frame-v3",
                         "track_id": "person-settle-1",
                         "snapshots": [
                             {
@@ -154,6 +172,13 @@ def main() -> None:
                                 "observed_at": transition_snapshot["captured_at"],
                                 "postures": ["bending"],
                                 "role": "transition",
+                            },
+                            {
+                                "snapshot_id": evidence_snapshot["id"],
+                                "snapshot_path": evidence_snapshot["image_path"],
+                                "observed_at": evidence_snapshot["captured_at"],
+                                "postures": ["low_body"],
+                                "role": "evidence",
                             },
                             {
                                 "snapshot_id": snapshot["id"],
@@ -221,14 +246,14 @@ def main() -> None:
             raise SystemExit(f"settled evidence finalization reason mismatch: {finalization}")
         if int(finalized.get("snapshot_id") or 0) != int(settled_snapshot["id"]):
             raise SystemExit("settled same-track frame did not replace the premature current frame")
-        if [item.get("role") for item in finalized_frames] != ["before", "transition", "current"]:
+        if [item.get("role") for item in finalized_frames] != ["before", "transition", "evidence", "current"]:
             raise SystemExit(f"finalized evidence roles are invalid: {finalized_frames}")
-        if finalized_bundle.get("selection_policy") != "role-aware-post-settle-v3":
+        if finalized_bundle.get("selection_policy") != "role-aware-post-settle-v4":
             raise SystemExit(f"settled evidence policy is missing: {finalized_bundle}")
         deferred_jobs = storage.enqueue_event_upload_jobs(finalized)
         deferred_media = [item for item in deferred_jobs if item.get("job_type") == "media_upload"]
-        if len(deferred_media) != 3:
-            raise SystemExit(f"settled finalization must still queue exactly three evidence frames: {deferred_jobs}")
+        if len(deferred_media) != 4:
+            raise SystemExit(f"settled finalization must queue exactly four evidence frames: {deferred_jobs}")
         repeated_deferred_jobs = storage.enqueue_event_upload_jobs(finalized)
         if [item["id"] for item in repeated_deferred_jobs] != [item["id"] for item in deferred_jobs]:
             raise SystemExit("settled evidence upload jobs are not idempotent")
