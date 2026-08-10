@@ -1786,8 +1786,18 @@ function createLocalAppServer(options = {}) {
         const verifyCameraIds = new Set(Object.values(store.db.cameras || {})
             .filter((camera) => verifyFamilyIds.has(idText(camera.family_id)))
             .map((camera) => idText(camera.id)));
+        const validationEventIds = new Set(store.db.events
+            .filter((event) => isValidationEvent(event))
+            .map((event) => idText(event.id)));
+        const validationJobIds = new Set(store.db.model_generation_jobs
+            .filter((job) => validationEventIds.has(idText(job.metadata?.event_id)))
+            .map((job) => idText(job.id)));
+        const isValidationUpload = (asset) => String(asset?.metadata?.device_upload_idempotency_key || "")
+            .startsWith("vision-provider-probe-");
+        const isValidationAsset = (asset) => isValidationUpload(asset);
         const deleted = {};
         const persistenceDeletes = [];
+        const storageDeletes = [];
 
         function countArray(key, predicate, table = key, primaryKey = (item) => item.id) {
             const items = Array.isArray(store.db[key]) ? store.db[key] : [];
@@ -1830,8 +1840,25 @@ function createLocalAppServer(options = {}) {
         countArray("heartbeats", (heartbeat) => verifyDeviceIds.has(idText(heartbeat.device_id)), "device_heartbeats");
         countObject("devices", (device, key) => verifyDeviceIds.has(idText(device.device_id || device.id || key)), "devices", (device, key) => device.device_id || device.id || key);
         countObject("cameras", (camera) => verifyFamilyIds.has(idText(camera.family_id)));
-        countArray("assets", (asset) => verifyFamilyIds.has(idText(asset.family_id)) || verifyCameraIds.has(idText(asset.camera_id)), "media_assets");
-        countArray("events", (event) => verifyFamilyIds.has(idText(event.family_id)) || verifyCameraIds.has(idText(event.camera_id)));
+        const verifyAsset = (asset) => verifyFamilyIds.has(idText(asset.family_id)) || verifyCameraIds.has(idText(asset.camera_id));
+        for (const asset of store.db.assets) {
+            if (!(verifyAsset(asset) || isValidationAsset(asset))) continue;
+            if (String(asset.storage_provider || "").toLowerCase() === "cos" && String(asset.storage_key || "")) {
+                storageDeletes.push({ id: idText(asset.id), key: String(asset.storage_key) });
+            }
+        }
+        countArray("assets", (asset) => verifyAsset(asset) || isValidationAsset(asset), "media_assets");
+        countArray("event_media_assets", (relation) => (
+            validationEventIds.has(idText(relation.event_id))
+            || validationEventIds.has(idText(relation.eventId))
+            || validationEventIds.has(idText(relation.source_event_id))
+            || validationEventIds.has(idText(relation.sourceEventId))
+        ));
+        countArray("events", (event) => (
+            verifyFamilyIds.has(idText(event.family_id))
+            || verifyCameraIds.has(idText(event.camera_id))
+            || validationEventIds.has(idText(event.id))
+        ));
         countArray("calendar_events", (event) => verifyFamilyIds.has(idText(event.family_id)));
         countObject("elder_profiles", (profile, key) => verifyFamilyIds.has(idText(profile.family_id)) || [...verifyFamilyIds].some((familyId) => String(key).startsWith(`${familyId}:`)), "elder_profiles", (profile, key) => `${profile.family_id || String(key).split(":")[0]}:${profile.elder_id || String(key).split(":")[1] || "elder_primary"}`);
         countObject("care_preferences", (preferences, key) => verifyFamilyIds.has(idText(preferences.family_id)) || verifyFamilyIds.has(idText(key)), "care_preferences", (preferences, key) => preferences.family_id || key);
@@ -1841,7 +1868,10 @@ function createLocalAppServer(options = {}) {
         countArray("notification_deliveries", (delivery) => verifyFamilyIds.has(idText(delivery.family_id)) || verifyUserIds.has(idText(delivery.user_id)));
         countArray("app_push_tokens", (token) => verifyFamilyIds.has(idText(token.family_id)) || verifyUserIds.has(idText(token.user_id)));
         countArray("scheduler_runs", (run) => verifyFamilyIds.has(idText(run.family_id)));
-        countArray("model_generation_jobs", (job) => verifyFamilyIds.has(idText(job.family_id)));
+        countArray("model_generation_jobs", (job) => (
+            verifyFamilyIds.has(idText(job.family_id))
+            || validationJobIds.has(idText(job.id))
+        ));
         countArray("content_sources", (source) => verifyFamilyIds.has(idText(source.family_id)));
         countArray("content_recommendations", (recommendation) => verifyFamilyIds.has(idText(recommendation.family_id)));
 
@@ -1867,8 +1897,10 @@ function createLocalAppServer(options = {}) {
             targets: {
                 users: verifyUsers.map((user) => ({ id: user.id, email: user.email })),
                 families: verifyFamilies.map((family) => ({ id: family.id, name: family.name })),
+                validation_events: [...validationEventIds],
             },
             deleted,
+            storage_deletes: storageDeletes,
             persistence_deletes: persistenceDeletes,
         };
     }
@@ -4459,6 +4491,43 @@ function createLocalAppServer(options = {}) {
         return target.startsWith(root) ? target : "";
     }
 
+    function verificationAssetAvailable(asset) {
+        return Boolean(
+            verificationAssetPath(asset)
+            || (String(asset?.storage_provider || "").toLowerCase() === "cos" && String(asset?.storage_key || "").trim())
+        );
+    }
+
+    async function readVerificationAsset(asset) {
+        const localPath = verificationAssetPath(asset);
+        if (localPath) {
+            if (!fs.existsSync(localPath)) throw new Error("event evidence image is unavailable");
+            return {
+                bytes: await fs.promises.readFile(localPath),
+                content_type: String(asset.content_type || "image/jpeg").split(";")[0].trim() || "image/jpeg",
+            };
+        }
+        const storageKey = String(asset?.storage_key || "").trim();
+        if (String(asset?.storage_provider || "").toLowerCase() !== "cos" || !storageKey || !cosStorage.enabled) {
+            throw new Error("event evidence image is unavailable");
+        }
+        const signedUrl = cosStorage.signedGetUrl({ key: storageKey, expiresSeconds: 120 });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), providerRequestTimeoutMs());
+        try {
+            const response = await fetch(signedUrl, { signal: controller.signal });
+            if (!response.ok) throw new Error(`event evidence download failed: ${response.status}`);
+            const bytes = Buffer.from(await response.arrayBuffer());
+            return {
+                bytes,
+                content_type: String(asset.content_type || response.headers.get("content-type") || "image/jpeg")
+                    .split(";")[0].trim() || "image/jpeg",
+            };
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
     function eventTemporalEvidenceSnapshots(event) {
         const evidence = event.payload?.evidence || {};
         const bundle = evidence.temporal_evidence_bundle || event.payload?.temporal_evidence_bundle || {};
@@ -4542,7 +4611,7 @@ function createLocalAppServer(options = {}) {
         if (primaryAsset?.id && !ids.includes(String(primaryAsset.id))) ids.push(String(primaryAsset.id));
         return ids
             .map((id) => store.db.assets.find((item) => sameId(item.id, id)))
-            .filter((item) => item && verificationAssetPath(item))
+            .filter((item) => item && verificationAssetAvailable(item))
             .sort((a, b) => {
                 const roleDifference = (roleOrder[String(a.evidence_frame_role || "evidence")] ?? 3)
                     - (roleOrder[String(b.evidence_frame_role || "evidence")] ?? 3);
@@ -4558,17 +4627,16 @@ function createLocalAppServer(options = {}) {
         if (!runtime.base_url || !runtime.api_key || !runtime.model) throw new Error("vision verification model is not configured");
         const evidenceAssets = Array.isArray(assets) ? assets.slice(0, 3) : [assets].filter(Boolean);
         if (!evidenceAssets.length) throw new Error("event evidence image is unavailable");
-        const images = evidenceAssets.map((asset) => {
-            const assetPath = verificationAssetPath(asset);
-            if (!assetPath || !fs.existsSync(assetPath)) throw new Error("event evidence image is unavailable");
-            const imageBytes = fs.readFileSync(assetPath);
+        const images = await Promise.all(evidenceAssets.map(async (asset) => {
+            const evidence = await readVerificationAsset(asset);
+            const imageBytes = evidence.bytes;
             if (!imageBytes.length) throw new Error("event evidence image is empty");
             if (imageBytes.length > 8 * 1024 * 1024) throw new Error("event evidence image exceeds 8MB");
             return {
                 bytes: imageBytes,
-                content_type: String(asset.content_type || "image/jpeg").split(";")[0].trim() || "image/jpeg",
+                content_type: evidence.content_type,
             };
-        });
+        }));
         if (images.reduce((total, item) => total + item.bytes.length, 0) > 18 * 1024 * 1024) {
             throw new Error("event evidence sequence exceeds 18MB");
         }
@@ -9682,10 +9750,21 @@ function createLocalAppServer(options = {}) {
                     : normalizeBool(url.searchParams.get("dry_run"));
                 const result = cleanupVerifyData({ dry_run: dryRun });
                 const persistenceDeletes = result.persistence_deletes || [];
+                const storageDeletes = result.storage_deletes || [];
                 delete result.persistence_deletes;
+                delete result.storage_deletes;
                 if (!dryRun) {
+                    const storageErrors = [];
+                    for (const item of storageDeletes) {
+                        try {
+                            await cosStorage.deleteObject({ key: item.key });
+                        } catch (error) {
+                            storageErrors.push({ id: item.id, key: item.key, error: String(error.message || error).slice(0, 240) });
+                        }
+                    }
                     await deletePersistedRows(persistenceDeletes);
                     await store.save();
+                    result.storage_errors = storageErrors;
                 }
                 write(res, 200, result);
                 return;
