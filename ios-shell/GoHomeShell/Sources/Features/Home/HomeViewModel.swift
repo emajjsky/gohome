@@ -24,25 +24,25 @@ enum HomePresentation {
     static func contextualTopic(_ home: HomeResponse?) -> HomeTopicSuggestion {
         if let event = home?.calendar.first {
             return HomeTopicSuggestion(
-                title: "聊聊接下来的安排",
+                title: "近期安排",
                 body: event.title,
                 topics: ["时间安排", "一起吃饭", "最近想做的事"],
-                message: "看到接下来有“\(event.title)”，你们那天怎么安排？我也想听听。"
+                message: "近期有“\(event.title)”这件事，方便的话，和家里提前确认一下时间。"
             )
         }
         if let weather = home?.weather, let text = weatherText(weather) {
             return HomeTopicSuggestion(
-                title: "从今天的天气聊起",
+                title: "今天可以这样问候",
                 body: text,
                 topics: ["出门走走", "今天吃什么", "最近睡得好吗"],
-                message: "今天\(weather.city)是\(weather.condition)，你们那边体感怎么样？"
+                message: "今天\(weather.city)\(weather.condition)，可以问问家里今天有没有出门、吃得怎么样。"
             )
         }
         return HomeTopicSuggestion(
-            title: "今天想聊点什么",
+            title: "给家里留一句问候",
             body: "一句自然的问候就够了",
             topics: ["今天吃什么", "最近在看什么", "周末安排"],
-            message: "今天过得怎么样？最近有没有什么新鲜事想和我说说？"
+            message: "今天过得怎么样？有空时给家里打个电话，听听最近的生活。"
         )
     }
 
@@ -180,6 +180,13 @@ final class HomeViewModel: ObservableObject {
         }
         state = nextState
         if pendingCareAction == nil { careMessage = nextState.value?.careMessage }
+        if nextState.value?.returnHome?.isAtHome == true,
+           nextState.value?.careMessage?.messageType == "return_home",
+           pendingCareAction == nil {
+            Task { [weak self] in
+                _ = await self?.recordCareAction(type: "returned_home", payload: ["source": "home_network_match"])
+            }
+        }
     }
 
     func cancelInFlightLoad() {

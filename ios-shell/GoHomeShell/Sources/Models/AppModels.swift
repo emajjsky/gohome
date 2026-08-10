@@ -155,6 +155,7 @@ struct HomeResponse: Codable, Equatable, Sendable {
     let distance: HomeDistance?
     let homeLocation: HomeLocation?
     let criticalAlert: HomeCriticalAlert?
+    let returnHome: HomeReturnHomeStatus?
     let careMessage: CareMessage?
     let articles: [HomeArticle]
     let cameras: [HomeCamera]
@@ -167,6 +168,7 @@ struct HomeResponse: Codable, Equatable, Sendable {
         distance: HomeDistance?,
         homeLocation: HomeLocation? = nil,
         criticalAlert: HomeCriticalAlert?,
+        returnHome: HomeReturnHomeStatus? = nil,
         careMessage: CareMessage?,
         articles: [HomeArticle],
         cameras: [HomeCamera],
@@ -178,6 +180,7 @@ struct HomeResponse: Codable, Equatable, Sendable {
         self.distance = distance
         self.homeLocation = homeLocation
         self.criticalAlert = criticalAlert
+        self.returnHome = returnHome
         self.careMessage = careMessage
         self.articles = articles
         self.cameras = cameras
@@ -188,7 +191,22 @@ struct HomeResponse: Codable, Equatable, Sendable {
         case family, weather, calendar, distance, articles, cameras, revision
         case homeLocation = "home_location"
         case criticalAlert = "critical_alert"
+        case returnHome = "return_home"
         case careMessage = "care_message"
+    }
+}
+
+struct HomeReturnHomeStatus: Codable, Equatable, Sendable {
+    let isAtHome: Bool
+    let networkMatched: Bool
+    let daysSinceLastVisit: Int?
+    let lastVisitAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case isAtHome = "is_at_home"
+        case networkMatched = "network_matched"
+        case daysSinceLastVisit = "days_since_last_visit"
+        case lastVisitAt = "last_visit_at"
     }
 }
 
@@ -690,14 +708,20 @@ struct HomeWeather: Codable, Equatable, Sendable {
     let city: String
     let temperature: Double
     let condition: String
+    let humidity: Double?
+    let wind: String
+    let advice: String
 
-    init(city: String, temperature: Double, condition: String) {
+    init(city: String, temperature: Double, condition: String, humidity: Double? = nil, wind: String = "", advice: String = "") {
         self.city = city
         self.temperature = temperature
         self.condition = condition
+        self.humidity = humidity
+        self.wind = wind
+        self.advice = advice
     }
 
-    enum CodingKeys: String, CodingKey { case city, temperature, condition }
+    enum CodingKeys: String, CodingKey { case city, temperature, condition, humidity, wind, advice }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -713,6 +737,9 @@ struct HomeWeather: Codable, Equatable, Sendable {
                 DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Expected numeric weather temperature")
             )
         }
+        humidity = try values.decodeIfPresent(Double.self, forKey: .humidity)
+        wind = try values.decodeIfPresent(String.self, forKey: .wind) ?? ""
+        advice = try values.decodeIfPresent(String.self, forKey: .advice) ?? ""
     }
 }
 
@@ -1084,7 +1111,12 @@ struct EventGroup: Identifiable, Equatable, Sendable {
 
 enum EventPresentation {
     static func segment(_ event: AppEvent) -> EventSegment {
-        event.resolution == "false_positive" ? .falsePositive : (event.acknowledged ? .handled : .pending)
+        if event.payload.verification?.status == "rejected" || event.payload.incident?.status == "rejected" {
+            return EventSegment.falsePositive
+        }
+        return event.resolution == "false_positive"
+            ? EventSegment.falsePositive
+            : (event.acknowledged ? EventSegment.handled : EventSegment.pending)
     }
 
     static func groups(_ events: [AppEvent], segment: EventSegment) -> [EventGroup] {

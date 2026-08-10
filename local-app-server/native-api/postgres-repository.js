@@ -718,7 +718,7 @@ class PostgresNativeRepository extends NativeRepository {
     async homeForFamily(userId, familyId) {
         await this.assertFamilyAccess(this.pool, userId, familyId);
         const id = textId(familyId);
-        const [familyResult, elderResult, camerasResult, calendarResult, eventsResult, articleResult, careCardResult, careMessageResult] = await Promise.all([
+        const [familyResult, elderResult, camerasResult, calendarResult, eventsResult, articleResult, careCardResult, careMessageResult, deviceResult, carePreferencesResult] = await Promise.all([
             this.pool.query(`select ${FAMILY_COLUMNS} from family_members fm join families f on f.id = fm.family_id where fm.user_id = $1 and fm.family_id = $2 and fm.status = 'active'`, [textId(userId), id]),
             this.pool.query(`select * from elder_profiles where family_id = $1 order by created_at asc limit 1`, [id]),
             this.pool.query(`select * from cameras where family_id = $1 order by created_at asc`, [id]),
@@ -739,19 +739,35 @@ class PostgresNativeRepository extends NativeRepository {
                  limit 1`,
                 [id],
             ),
+            this.pool.query(`select * from devices where family_id = $1 and status <> 'revoked' order by updated_at desc limit 1`, [id]),
+            this.pool.query(`select metadata from care_preferences where family_id = $1`, [id]),
         ]);
         const events = rows(eventsResult);
         const publishedArticles = rows(articleResult);
+        const cardArticles = articlesFromCareCards(rows(careCardResult), id);
+        const seenArticleKeys = new Set();
+        const articles = [...publishedArticles, ...cardArticles].filter((article) => {
+            const key = String(article.url || article.source_url || article.id || "").trim();
+            if (!key || seenArticleKeys.has(key)) return false;
+            seenArticleKeys.add(key);
+            return true;
+        }).slice(0, 30);
         return {
             family: row(familyResult),
             elder: row(elderResult),
             cameras: rows(camerasResult),
             calendar: rows(calendarResult),
-            critical_alert: events.find((event) => ["critical", "emergency"].includes(event.level)) || null,
+            critical_alert: events.find((event) => (
+                ["critical", "emergency"].includes(event.level)
+                && event.payload?.incident?.status !== "rejected"
+                && event.payload?.verification?.status !== "rejected"
+            )) || null,
             care_message: row(careMessageResult),
-            articles: publishedArticles.length ? publishedArticles : articlesFromCareCards(rows(careCardResult), id),
+            care_preferences: row(carePreferencesResult),
+            articles,
             weather: null,
             distance: null,
+            device: row(deviceResult),
         };
     }
 

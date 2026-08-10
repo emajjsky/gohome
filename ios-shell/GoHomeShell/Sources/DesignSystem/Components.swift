@@ -59,7 +59,15 @@ struct GoHomeStatusDot: View {
 struct GoHomeTabRoot<Content: View>: View {
     let tab: GoHomeTab
     @Binding var path: NavigationPath
+    let badge: Int?
     @ViewBuilder let content: () -> Content
+
+    init(tab: GoHomeTab, path: Binding<NavigationPath>, badge: Int? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.tab = tab
+        self._path = path
+        self.badge = badge
+        self.content = content
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -70,6 +78,7 @@ struct GoHomeTabRoot<Content: View>: View {
         .tabItem {
             Label(tab.title, systemImage: tab.icon)
         }
+        .badge(badge.map { $0 > 99 ? 99 : $0 } ?? 0)
         .tint(GoHomeTheme.ink)
     }
 }

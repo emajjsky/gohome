@@ -16,6 +16,7 @@ struct CommunityView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header
+                communityIntro
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(CommunityService.allCases) { service in
                         serviceButton(service)
@@ -48,12 +49,18 @@ struct CommunityView: View {
             Spacer()
             if homeLocation == nil {
                 if let onSetHomeLocation {
-                    Button(action: onSetHomeLocation) {
+                    Button {
+                        onSetHomeLocation()
+                    } label: {
                         Label("设置家庭位置", systemImage: "location")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(GoHomeTheme.ink)
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: 44)
                     }
                     .buttonStyle(.plain)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                     .accessibilityIdentifier("community-home-location-setup")
                 } else {
                     Label("家庭位置未设置", systemImage: "location.slash")
@@ -72,8 +79,12 @@ struct CommunityView: View {
                         }
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(GoHomeTheme.mutedInk)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: 44)
                     }
                     .buttonStyle(.plain)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                     .accessibilityLabel("更新家庭位置，当前为\(homeLocationLabel)")
                     .accessibilityIdentifier("community-home-location-edit")
                 } else {
@@ -84,6 +95,38 @@ struct CommunityView: View {
                 }
             }
         }
+    }
+
+    private var communityIntro: some View {
+        ZStack(alignment: .bottomLeading) {
+            GoHomeLocalImage(name: "memory-generations")
+                .scaledToFill()
+                .frame(maxWidth: .infinity)
+                .frame(height: 150)
+                .clipped()
+                .accessibilityHidden(true)
+            LinearGradient(
+                colors: [.clear, Color.black.opacity(0.62)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            VStack(alignment: .leading, spacing: 4) {
+                Text("从家庭位置出发")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white)
+                Text("查找家附近的助餐、医疗和便民服务")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.86))
+            }
+            .padding(15)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 150)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("从家庭位置出发，查找家附近的社区服务")
     }
 
     private func serviceButton(_ service: CommunityService) -> some View {

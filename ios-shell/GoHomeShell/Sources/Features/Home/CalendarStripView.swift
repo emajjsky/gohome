@@ -24,7 +24,7 @@ struct CalendarStripView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 15) {
-            GoHomeSectionHeader(title: "接下来", detail: nextEvent?.title)
+            GoHomeSectionHeader(title: "近期安排", detail: nextEvent?.title)
             HStack(spacing: 6) {
                 ForEach(days) { item in
                     VStack(spacing: 8) {

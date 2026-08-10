@@ -27,9 +27,9 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 welcomeHero
-                if let alert = HomePresentation.activeAlert(model.state.value?.criticalAlert) {
-                    CriticalAlertStrip(alert: alert) { onOpenAlert(alert.id) }
-                }
+                returnHomeSummary
+                weatherCard
+                DistanceMapView(state: distanceProvider.state, onSetHomeLocation: onSetHomeLocation)
                 if let message = model.careMessage {
                     CareMessageCard(message: message, model: model)
                 } else {
@@ -40,7 +40,6 @@ struct HomeView: View {
                     days: HomePresentation.calendarDays(reference: referenceDate),
                     nextEvent: model.state.value?.calendar.first
                 )
-                DistanceMapView(state: distanceProvider.state, onSetHomeLocation: onSetHomeLocation)
                 if let staleReason = model.state.staleReason, model.state.value != nil {
                     Text(staleReason)
                         .font(.system(size: 11, weight: .medium))
@@ -73,11 +72,9 @@ struct HomeView: View {
                 Text("今天")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .foregroundStyle(GoHomeTheme.ink)
-                if let weather = HomePresentation.weatherText(model.state.value?.weather) {
-                    Text(weather)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(GoHomeTheme.mutedInk)
-                }
+                Text(HomePresentation.weatherText(model.state.value?.weather) ?? "家庭状态与天气")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
             }
             Spacer()
         }
@@ -86,7 +83,7 @@ struct HomeView: View {
     private var welcomeHero: some View {
         GeometryReader { proxy in
             ZStack(alignment: .bottomLeading) {
-                GoHomeLocalImage(name: "memory-family-dinner")
+                GoHomeLocalImage(name: heroImageName)
                     .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
                     .clipped()
                 Rectangle()
@@ -121,34 +118,116 @@ struct HomeView: View {
         return formatter.string(from: referenceDate)
     }
 
-}
-
-private struct CriticalAlertStrip: View {
-    let alert: HomeCriticalAlert
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 11) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(GoHomeTheme.ginger)
-                Text(alert.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(GoHomeTheme.ink)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(GoHomeTheme.mutedInk)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.vertical, 12)
-        .overlay(alignment: .bottom) { Rectangle().fill(GoHomeTheme.line).frame(height: 1) }
-        .accessibilityLabel(alert.title)
-        .accessibilityHint("查看事件证据")
-        .accessibilityIdentifier("home-critical-alert")
+    private var heroImageName: String {
+        let catalog = [
+            "memory-family-dinner",
+            "memory-daughter-walk",
+            "memory-garden-sun",
+            "memory-generations",
+            "memory-outdoor-walk",
+            "memory-relax-chat",
+        ]
+        let day = Calendar(identifier: .gregorian).ordinality(of: .day, in: .year, for: referenceDate) ?? 0
+        return catalog[abs(day) % catalog.count]
     }
+
+    private var weatherCard: some View {
+        Group {
+            if let weather = model.state.value?.weather {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top, spacing: 14) {
+                        Image(systemName: weatherSymbol(weather.condition))
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundStyle(GoHomeTheme.leaf)
+                            .frame(width: 48, height: 48)
+                            .background(GoHomeTheme.paleLeaf, in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(weather.city.isEmpty ? "家庭所在地" : weather.city)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(GoHomeTheme.mutedInk)
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(weather.temperature.formatted(.number.precision(.fractionLength(0))))
+                                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                                    .foregroundStyle(GoHomeTheme.ink)
+                                Text("°")
+                                    .font(.system(size: 17, weight: .bold))
+                                    .foregroundStyle(GoHomeTheme.mutedInk)
+                                Text(weather.condition)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(GoHomeTheme.ink)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    HStack(spacing: 18) {
+                        if let humidity = weather.humidity {
+                            Label("湿度 \(humidity.formatted(.number.precision(.fractionLength(0))))%", systemImage: "drop.fill")
+                        }
+                        if !weather.wind.isEmpty {
+                            Label(weather.wind, systemImage: "wind")
+                        }
+                        if !weather.advice.isEmpty {
+                            Text(weather.advice).lineLimit(1)
+                        }
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(GoHomeTheme.surface, in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+                .overlay { RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous).stroke(GoHomeTheme.softLine, lineWidth: 0.5) }
+                .accessibilityIdentifier("home-weather")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var returnHomeSummary: some View {
+        if let status = model.state.value?.returnHome {
+            HStack(spacing: 12) {
+                Image(systemName: status.isAtHome ? "house.fill" : "clock.arrow.circlepath")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(status.isAtHome ? GoHomeTheme.leaf : GoHomeTheme.ginger)
+                    .frame(width: 32, height: 32)
+                    .background(
+                        status.isAtHome ? GoHomeTheme.paleLeaf : GoHomeTheme.paleGinger,
+                        in: Circle()
+                    )
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(status.isAtHome ? "已回到家" : "家庭近况")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(GoHomeTheme.ink)
+                    if status.isAtHome {
+                        Text("手机已连接家庭网络")
+                    } else if let days = status.daysSinceLastVisit, days > 0 {
+                        Text("距上次回家已 (days) 天")
+                    } else {
+                        Text("尚未记录最近一次回家时间")
+                    }
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(GoHomeTheme.mutedInk)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 58)
+            .background(GoHomeTheme.surface, in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous)
+                    .stroke(GoHomeTheme.softLine, lineWidth: 0.5)
+            }
+            .accessibilityIdentifier("home-return-home-status")
+        }
+    }
+
+    private func weatherSymbol(_ condition: String) -> String {
+        let value = condition.lowercased()
+        if value.contains("雨") { return "cloud.rain.fill" }
+        if value.contains("云") || value.contains("阴") { return "cloud.fill" }
+        if value.contains("雾") { return "cloud.fog.fill" }
+        if value.contains("雷") { return "cloud.bolt.rain.fill" }
+        return "sun.max.fill"
+    }
+
 }

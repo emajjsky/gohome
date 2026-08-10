@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { JsonNativeRepository } = require('../native-api/repository');
 const { PostgresNativeRepository } = require('../native-api/postgres-repository');
+const { NativeViewService } = require('../native-api/view-service');
 
 function fixture() {
   return {
@@ -63,6 +64,89 @@ test('JSON repository isolates every native read and write by family membership'
   assert.throws(() => repo.productsForFamily('user-a', 'family-b'), /family access denied/);
   assert.throws(() => repo.productPreferences('user-a', 'family-b'), /family access denied/);
   assert.equal(repo.homeForFamily('user-a', 'family-a').articles[0].title, '社区公园本周开放夜游');
+});
+
+test('home content merges anti-fraud editorial cards and excludes rejected events from alerts', () => {
+  const data = fixture();
+  data.content_recommendations = [{
+    id: 'anti-fraud-1',
+    family_id: 'family-a',
+    category: 'anti_fraud',
+    title: '陌生链接先核实，再转账',
+    summary: '常见冒充客服和熟人诈骗的识别要点。',
+    source_name: '国家反诈中心',
+    url: 'https://anti-fraud.example.com/guide',
+    status: 'published',
+  }];
+  data.care_cards[0].content_recommendations.push({
+    type: 'search_result',
+    module: 'anti_fraud',
+    title: '反诈提醒：不要共享验证码',
+    summary: '验证码和支付密码不能交给任何人。',
+    source: '国家反诈中心',
+    url: 'https://anti-fraud.example.com/otp',
+  });
+  data.events = [
+    {
+      id: 'rejected-event',
+      family_id: 'family-a',
+      level: 'critical',
+      summary: '云端复核未发现明确异常',
+      acknowledged: false,
+      payload: { verification: { status: 'rejected' } },
+    },
+    {
+      id: 'confirmed-event',
+      family_id: 'family-a',
+      level: 'critical',
+      summary: '客厅需要确认',
+      acknowledged: false,
+      payload: { verification: { status: 'confirmed' } },
+    },
+  ];
+  const repo = new JsonNativeRepository(data);
+  const home = repo.homeForFamily('user-a', 'family-a');
+
+  assert.deepEqual(home.articles.map((article) => article.title), [
+    '陌生链接先核实，再转账',
+    '社区公园本周开放夜游',
+    '反诈提醒：不要共享验证码',
+  ]);
+  assert.equal(home.critical_alert.id, 'confirmed-event');
+});
+
+test('home return status matches the box network and reports visit age', async () => {
+  const data = fixture();
+  data.devices['device-a'] = {
+    id: 'device-a',
+    family_id: 'family-a',
+    status: 'online',
+    runtime: { network_identity: '192.168.1.0/24' },
+  };
+  data.device_bindings = [{ family_id: 'family-a', device_id: 'device-a', status: 'active' }];
+  data.care_preferences = {
+    'family-a': {
+      family_id: 'family-a',
+      metadata: { care_card_schedule: { visit_reminder: { last_visit_at: '2026-08-01' } } },
+    },
+  };
+  const repo = new JsonNativeRepository(data);
+  const service = new NativeViewService(repo, { clock: () => new Date('2026-08-09T04:00:00.000Z') });
+
+  const atHome = await service.homeForFamily('user-a', 'family-a', {
+    'x-gohome-network-identity': '192.168.1.0/24',
+  });
+  assert.equal(atHome.return_home.is_at_home, true);
+  assert.equal(atHome.return_home.network_matched, true);
+  assert.equal(atHome.return_home.days_since_last_visit, 8);
+  assert.equal(atHome.return_home.last_visit_at, '2026-08-01');
+
+  const away = await service.homeForFamily('user-a', 'family-a', {
+    'x-gohome-network-identity': '192.168.2.0/24',
+  });
+  assert.equal(away.return_home.is_at_home, false);
+  assert.equal(away.return_home.network_matched, false);
+  assert.equal(away.return_home.days_since_last_visit, 8);
 });
 
 test('JSON family membership enforces creator boundaries and supports transfer then leave', () => {

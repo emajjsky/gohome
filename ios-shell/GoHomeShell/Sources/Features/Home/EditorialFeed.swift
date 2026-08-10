@@ -6,6 +6,7 @@ enum ArticleCategory: String, CaseIterable, Identifiable {
     case wellness = "生活健康"
     case culture = "文娱"
     case interests = "兴趣"
+    case antiFraud = "防诈骗"
 
     var id: String { rawValue }
 
@@ -18,6 +19,7 @@ enum ArticleCategory: String, CaseIterable, Identifiable {
         case .wellness: return category.contains("健康") || category.contains("养生") || category.contains("wellness")
         case .culture: return category.contains("文娱") || category.contains("文化") || category.contains("culture")
         case .interests: return category.contains("兴趣") || category.contains("生活") || category.contains("interest")
+        case .antiFraud: return category.contains("反诈") || category.contains("防诈骗") || category.contains("anti_fraud") || category.contains("fraud")
         }
     }
 
@@ -26,6 +28,7 @@ enum ArticleCategory: String, CaseIterable, Identifiable {
         if value.contains("健康") || value.contains("养生") { return "leaf" }
         if value.contains("文娱") || value.contains("文化") { return "music.note" }
         if value.contains("本地") || value.contains("热点") { return "building.2" }
+        if value.contains("反诈") || value.contains("诈骗") || value.contains("fraud") { return "checkmark.shield" }
         return "newspaper"
     }
 }

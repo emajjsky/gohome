@@ -109,7 +109,7 @@ class NativeApiRouter {
         }
 
         if (method === "GET" && url.pathname === "/api/v2/home") {
-            const body = await this.viewService.homeForFamily(userId, url.searchParams.get("family_id"));
+            const body = await this.viewService.homeForFamily(userId, url.searchParams.get("family_id"), headers);
             const etag = etagFor(body.revision);
             if (notModified(headers, body.revision)) return { status: 304, headers: { ETag: etag } };
             return { status: 200, body, headers: { ETag: etag } };

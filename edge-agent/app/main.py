@@ -117,6 +117,12 @@ def local_ip() -> str:
         return socket.gethostbyname(socket.gethostname())
 
 
+def local_network_identity() -> str:
+    value = local_ip()
+    parts = value.split(".")
+    return ".".join(parts[:3]) + ".0/24" if len(parts) == 4 else ""
+
+
 def _probe_camera_endpoint(camera: Dict[str, Any]) -> Dict[str, Any] | None:
     try:
         return camera_agent.probe_frame(camera)
@@ -136,6 +142,7 @@ def local_device_identity() -> Dict[str, Any]:
         "device_name": socket.gethostname(),
         "device_type": "edge-agent",
         "lan_ip": local_ip(),
+        "network_identity": local_network_identity(),
         "api_port": settings.port,
     }
 
@@ -672,6 +679,7 @@ config_sync_agent = ConfigSyncAgent(
     runtime_status_resolver=lambda: {
         "worker_running": worker.is_running,
         "lan_url": f"http://{local_ip()}:{settings.port}",
+        "network_identity": local_network_identity(),
         "service_url": f"http://{local_ip()}:{settings.port}",
         "detector_backend": settings.detector_backend,
         "yolo_model": settings.yolo_model if settings.detector_backend == "yolo" else "",

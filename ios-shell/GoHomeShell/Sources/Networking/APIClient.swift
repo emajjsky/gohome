@@ -1,4 +1,36 @@
 import Foundation
+import Darwin
+
+private enum GoHomeNetworkIdentity {
+    static func current() -> String {
+        var address: String?
+        var interfaces: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&interfaces) == 0, let first = interfaces else { return "" }
+        defer { freeifaddrs(interfaces) }
+
+        var current = first
+        while true {
+            let flags = Int32(current.pointee.ifa_flags)
+            let name = String(cString: current.pointee.ifa_name)
+            let family = current.pointee.ifa_addr.pointee.sa_family
+            if flags & Int32(IFF_UP) != 0,
+               flags & Int32(IFF_LOOPBACK) == 0,
+               family == UInt8(AF_INET),
+               let sockaddr = current.pointee.ifa_addr {
+                var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                getnameinfo(sockaddr, socklen_t(sockaddr.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
+                let value = String(cString: host)
+                if name == "en0" || name == "en1" { address = value; break }
+                if address == nil { address = value }
+            }
+            guard let next = current.pointee.ifa_next else { break }
+            current = next
+        }
+        guard let address, address.split(separator: ".").count == 4 else { return "" }
+        let parts = address.split(separator: ".")
+        return parts.prefix(3).joined(separator: ".") + ".0/24"
+    }
+}
 
 actor APIClient {
     typealias TokenProvider = @Sendable () async -> String?
@@ -17,6 +49,10 @@ actor APIClient {
         var request = try endpoint.request(baseURL: baseURL)
         if let token = await tokenProvider(), !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let networkIdentity = GoHomeNetworkIdentity.current()
+        if !networkIdentity.isEmpty {
+            request.setValue(networkIdentity, forHTTPHeaderField: "X-GoHome-Network-Identity")
         }
 
         let (data, response) = try await perform(request)
@@ -43,6 +79,10 @@ actor APIClient {
         var request = try endpoint.request(baseURL: baseURL)
         if let token = await tokenProvider(), !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let networkIdentity = GoHomeNetworkIdentity.current()
+        if !networkIdentity.isEmpty {
+            request.setValue(networkIdentity, forHTTPHeaderField: "X-GoHome-Network-Identity")
         }
         let (data, response) = try await perform(request)
         guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }

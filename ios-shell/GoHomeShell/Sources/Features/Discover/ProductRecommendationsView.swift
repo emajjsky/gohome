@@ -421,13 +421,17 @@ private struct ProductRecommendationImage: View {
     let aspectRatio: CGFloat
 
     var body: some View {
-        AsyncImage(url: proxiedContentImageURL(product.imageURL, baseURL: apiBaseURL)) { phase in
-            if case let .success(image) = phase {
-                image
-                    .resizable()
-                    .scaledToFill()
+        Group {
+            if let url = proxiedContentImageURL(product.imageURL, baseURL: apiBaseURL) {
+                AsyncImage(url: url) { phase in
+                    if case let .success(image) = phase {
+                        image.resizable().scaledToFill()
+                    } else {
+                        localFallback
+                    }
+                }
             } else {
-                unavailableState
+                localFallback
             }
         }
         .frame(maxWidth: .infinity)
@@ -449,6 +453,19 @@ private struct ProductRecommendationImage: View {
             }
         }
         .accessibilityLabel("推荐图片暂不可用")
+    }
+
+    private var localFallback: some View {
+        GoHomeLocalImage(name: localImageName)
+            .overlay {
+                Color.black.opacity(0.08)
+            }
+    }
+
+    private var localImageName: String {
+        let catalog = ["memory-garden-sun", "memory-outdoor-walk", "memory-relax-chat", "grandma-reading"]
+        let seed = product.id.unicodeScalars.reduce(0) { ($0 &* 31) &+ Int($1.value) }
+        return catalog[abs(seed) % catalog.count]
     }
 
     private var categorySymbol: String {

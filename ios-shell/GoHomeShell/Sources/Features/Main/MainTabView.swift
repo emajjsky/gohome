@@ -1,5 +1,18 @@
 import SwiftUI
 
+private struct HomeLocationSetupPresentation: Identifiable {
+    let id = UUID()
+}
+
+@MainActor
+private final class HomeLocationSetupCoordinator: ObservableObject {
+    @Published var presentation: HomeLocationSetupPresentation?
+
+    func present() {
+        presentation = HomeLocationSetupPresentation()
+    }
+}
+
 struct MainTabView: View {
     let repository: AppRepository?
     let scope: CacheScope?
@@ -25,7 +38,7 @@ struct MainTabView: View {
     @State private var profilePath = NavigationPath()
     @State private var guardSection: GuardSection = .live
     @State private var notificationRouteTask: Task<Void, Never>?
-    @State private var showsHomeLocationSetup = false
+    @StateObject private var homeLocationSetupCoordinator = HomeLocationSetupCoordinator()
 
     static var preview: MainTabView {
         let isMember = ProcessInfo.processInfo.arguments.contains("-uiTestMember")
@@ -180,7 +193,8 @@ struct MainTabView: View {
     }
 
     var body: some View {
-        TabView(selection: $selection) {
+        ZStack {
+            TabView(selection: $selection) {
             GoHomeTabRoot(tab: .home, path: $homePath) {
                 HomeView(
                     model: homeModel,
@@ -190,7 +204,7 @@ struct MainTabView: View {
                     openEvent(eventID)
                 }
             }
-            GoHomeTabRoot(tab: .guardView, path: $guardPath) {
+            GoHomeTabRoot(tab: .guardView, path: $guardPath, badge: eventsModel.pendingCount) {
                 if ProcessInfo.processInfo.arguments.contains("-uiTestEvent") {
                     EventsView(model: eventsModel, apiClient: apiClient)
                 } else {
@@ -227,19 +241,20 @@ struct MainTabView: View {
                 )
             }
         }
-        .tint(GoHomeTheme.ink)
-        .background(GoHomeTheme.paper)
-        .accessibilityIdentifier("main-tab-shell")
-        .task {
-            profileModel.start()
+            .tint(GoHomeTheme.ink)
+            .background(GoHomeTheme.paper)
+            .accessibilityIdentifier("main-tab-shell")
+            .task {
+                profileModel.start()
+            }
+            .onChange(of: profileModel.deviceConfigurationRevision) { _ in
+                homeModel.reconcileDeviceConfiguration()
+            }
+            .onReceive(pushNotifications.$pendingRoute.compactMap { $0 }) { route in
+                open(route)
+            }
         }
-        .onChange(of: profileModel.deviceConfigurationRevision) { _ in
-            homeModel.reconcileDeviceConfiguration()
-        }
-        .onReceive(pushNotifications.$pendingRoute.compactMap { $0 }) { route in
-            open(route)
-        }
-        .sheet(isPresented: $showsHomeLocationSetup) {
+        .sheet(item: $homeLocationSetupCoordinator.presentation) { presentation in
             if let apiClient {
                 HomeLocationSetupView(
                     service: OnboardingService(client: apiClient),
@@ -249,6 +264,7 @@ struct MainTabView: View {
                     profileModel.refresh()
                     homeModel.refresh()
                 }
+                .id(presentation.id)
             }
         }
     }
@@ -258,7 +274,7 @@ struct MainTabView: View {
             apiClient != nil,
             FamilyRole.resolve(familyRole: family.role, canEdit: false) == .creator
         else { return nil }
-        return { showsHomeLocationSetup = true }
+        return { homeLocationSetupCoordinator.present() }
     }
 
     private var guardCameras: [HomeCamera] {
@@ -315,6 +331,7 @@ struct MainTabView: View {
                 level: "critical",
                 acknowledged: false
             ),
+            returnHome: nil,
             careMessage: nil,
             articles: [
                 HomeArticle(

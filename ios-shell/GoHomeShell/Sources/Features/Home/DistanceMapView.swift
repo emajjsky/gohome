@@ -8,7 +8,7 @@ struct DistanceMapView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             ZStack(alignment: .trailing) {
-                GoHomeSectionHeader(title: "回家距离")
+                GoHomeSectionHeader(title: "离家还有多远")
                 if showsEditAction, let onSetHomeLocation {
                     Button(action: onSetHomeLocation) {
                         Label("更改", systemImage: "location.fill")
@@ -46,7 +46,7 @@ struct DistanceMapView: View {
                 }
             case .permissionRequired:
                 RouteBand()
-                Label("开启位置后查看回家距离", systemImage: "location")
+                Label("开启手机定位后查看与家庭的距离", systemImage: "location")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(GoHomeTheme.mutedInk)
             case .homeRequired:

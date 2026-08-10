@@ -66,7 +66,9 @@ struct HomeLocationSetupView: View {
                         .foregroundStyle(GoHomeTheme.mutedInk)
                 }
 
-                Button { locationProvider.requestLocation() } label: {
+                Button {
+                    locationProvider.requestLocation()
+                } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "location.fill")
                             .font(.system(size: 16, weight: .semibold))
@@ -96,6 +98,7 @@ struct HomeLocationSetupView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(locationProvider.isLocating || isSaving)
+                .accessibilityLabel("使用当前位置")
                 .accessibilityIdentifier("home-location-use-current")
 
                 if isLoadingProfile {

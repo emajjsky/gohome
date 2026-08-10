@@ -719,6 +719,9 @@ function createLocalAppServer(options = {}) {
                         city: weather.city || profile.city || "",
                         temperature: weather.temperature_c,
                         condition: weather.condition || "",
+                        humidity: weather.humidity,
+                        wind: weather.wind || "",
+                        advice: weather.advice || "",
                     }
                     : null,
             };

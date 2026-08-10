@@ -27,18 +27,14 @@ final class TabStateTests: XCTestCase {
         XCTAssertTrue(home.waitForExistence(timeout: 2))
     }
 
-    func testHomeCriticalAlertOpensExistingEventDetail() {
+    func testHomeKeepsEventsOutOfBodyAndShowsGuardBadge() {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTestState", "-uiTestMain", "-uiTestHome"]
         app.launch()
 
-        let alert = app.buttons["home-critical-alert"]
-        XCTAssertTrue(alert.waitForExistence(timeout: 5))
-        alert.tap()
-
-        XCTAssertTrue(app.tabBars.buttons["守护"].isSelected)
-        XCTAssertTrue(app.buttons["event-confirm-safe"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "未读消息")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["home-critical-alert"].exists)
+        XCTAssertTrue(app.tabBars.buttons["守护"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.tabBars.buttons["守护"].value as? String, "1 item")
     }
 
     func testCommunityTabOpensNativeProductRecommendations() {
@@ -64,13 +60,29 @@ final class TabStateTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["设置家庭位置"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.buttons["home-location-use-current"].exists)
         app.buttons["取消"].tap()
+        XCTAssertTrue(app.navigationBars["设置家庭位置"].waitForNonExistence(timeout: 2))
+
+        app.tabBars.buttons["社区"].tap()
+        let communitySetup = app.buttons["community-home-location-setup"]
+        XCTAssertTrue(communitySetup.waitForExistence(timeout: 2))
+        XCTAssertTrue(communitySetup.isHittable)
+        communitySetup.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.navigationBars["设置家庭位置"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["home-location-use-current"].exists)
+    }
+
+    func testCommunityHomeLocationSetupOpensFromFreshLaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTestState", "-uiTestMain", "-uiTestHome", "-uiTestProfile"]
+        app.launch()
 
         app.tabBars.buttons["社区"].tap()
         let communitySetup = app.buttons["community-home-location-setup"]
         XCTAssertTrue(communitySetup.waitForExistence(timeout: 2))
         communitySetup.tap()
+
         XCTAssertTrue(app.navigationBars["设置家庭位置"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.buttons["home-location-use-current"].exists)
+        XCTAssertTrue(app.buttons["home-location-use-current"].waitForExistence(timeout: 2))
     }
 
     func testHouseholdMemberCannotChangeTheFixedHomeLocation() {

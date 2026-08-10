@@ -21,7 +21,7 @@ final class ProfileFlowTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["守护规则"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.switches["人物出现"].exists)
         XCTAssertTrue(app.switches["姿态与跌倒"].exists)
-        XCTAssertTrue(app.switches["烟火风险"].exists)
+        XCTAssertFalse(app.switches["烟火风险"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["rule-number-静止提醒"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["rule-number-无人提醒"].exists)
         XCTAssertFalse(app.staticTexts["抽帧间隔"].exists)

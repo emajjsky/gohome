@@ -78,6 +78,17 @@ function articlesFromCareCards(cards = [], familyId = "") {
         }));
 }
 
+function mergeEditorialArticles(published = [], cards = [], familyId = "") {
+    const merged = [...published, ...articlesFromCareCards(cards, familyId)];
+    const seen = new Set();
+    return merged.filter((article) => {
+        const key = String(article.url || article.source_url || article.id || "").trim();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    }).slice(0, 30);
+}
+
 function actionInput(action = {}, now = Date.now()) {
     const actionType = textId(action.action_type || action.type);
     if (!ACTION_TYPES.has(actionType)) {
@@ -1076,15 +1087,16 @@ class JsonNativeRepository extends NativeRepository {
         const family = this.family(familyId);
         const elder = Object.values(this.db.elder_profiles || {}).find((profile) => textId(profile.family_id) === textId(familyId)) || null;
         const cameras = Object.values(this.db.cameras || {}).filter((camera) => textId(camera.family_id) === textId(familyId));
+        const binding = (this.db.device_bindings || []).find((item) => textId(item.family_id) === textId(familyId) && item.status !== "revoked");
+        const device = binding ? (this.db.devices || {})[textId(binding.device_id)] || null : null;
+        const carePreferences = this.db.care_preferences?.[textId(familyId)] || null;
         const calendar = (this.db.calendar_events || []).filter((event) => textId(event.family_id) === textId(familyId));
         const events = (this.db.events || []).filter((event) => textId(event.family_id) === textId(familyId));
         const published = (this.db.content_recommendations || []).filter((article) => (
             (textId(article.family_id) === textId(familyId) || !article.family_id)
             && (article.status || "published") === "published"
         ));
-        const articles = published.length
-            ? published
-            : articlesFromCareCards(this.db.care_cards || [], familyId);
+        const articles = mergeEditorialArticles(published, this.db.care_cards || [], familyId);
         const now = Date.parse(this.clock());
         const careMessage = this.db.app_messages
             .filter((message) => (
@@ -1105,11 +1117,18 @@ class JsonNativeRepository extends NativeRepository {
             elder,
             cameras,
             calendar,
-            critical_alert: events.find((event) => !event.acknowledged && ["critical", "emergency"].includes(event.level)) || null,
+            critical_alert: events.find((event) => (
+                !event.acknowledged
+                && ["critical", "emergency"].includes(event.level)
+                && event.payload?.incident?.status !== "rejected"
+                && event.payload?.verification?.status !== "rejected"
+            )) || null,
             care_message: careMessage,
+            care_preferences: carePreferences,
             articles,
             weather: null,
             distance: null,
+            device,
         });
     }
 

@@ -36,15 +36,56 @@ function httpsUrl(value) {
 function articleView(article) {
     const sourceUrl = httpsUrl(article.source_url || article.url);
     if (!sourceUrl) return null;
+    const rawCategory = String(article.category || article.content_type || "生活");
+    const category = /anti_fraud|反诈|防诈骗|fraud/i.test(rawCategory) ? "防诈骗" : rawCategory;
     return {
         id: String(article.id || ""),
-        category: String(article.category || article.content_type || "生活"),
+        category,
         title: String(article.title || "").trim(),
         summary: String(article.summary || "").trim(),
         image_url: httpsUrl(article.image_url || article.metadata?.image_url),
         source_name: String(article.source_name || "").trim(),
         source_url: sourceUrl,
         published_at: article.published_at || article.created_at || null,
+    };
+}
+
+function networkIdentity(value) {
+    return String(value || "").trim().toLowerCase().replace(/-/g, ":");
+}
+
+function shanghaiDateKey(value = new Date()) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return "";
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(date);
+}
+
+function daysSinceShanghaiDate(value, now = new Date()) {
+    const lastVisit = shanghaiDateKey(value);
+    const today = shanghaiDateKey(now);
+    if (!lastVisit || !today) return null;
+    const last = Date.parse(`${lastVisit}T00:00:00Z`);
+    const current = Date.parse(`${today}T00:00:00Z`);
+    if (!Number.isFinite(last) || !Number.isFinite(current) || last > current) return null;
+    return Math.floor((current - last) / 86_400_000);
+}
+
+function homeReturnView(source, headers = {}, now = new Date()) {
+    const deviceIdentity = networkIdentity(source.device?.runtime?.network_identity || source.device?.network_identity);
+    const appIdentity = networkIdentity(headers["x-gohome-network-identity"]);
+    const matched = Boolean(deviceIdentity && appIdentity && deviceIdentity === appIdentity);
+    const visitReminder = source.care_preferences?.metadata?.care_card_schedule?.visit_reminder || {};
+    const lastVisitAt = visitReminder.last_visit_at || source.care_message?.metadata?.last_visit_at || null;
+    return {
+        is_at_home: matched,
+        network_matched: matched,
+        days_since_last_visit: daysSinceShanghaiDate(lastVisitAt, now),
+        last_visit_at: lastVisitAt,
     };
 }
 
@@ -177,9 +218,10 @@ function activityIntervalView(interval) {
 }
 
 class NativeViewService {
-    constructor(repository, { homeEnricher = null } = {}) {
+    constructor(repository, { homeEnricher = null, clock = () => new Date() } = {}) {
         this.repository = repository;
         this.homeEnricher = homeEnricher;
+        this.clock = clock;
     }
 
     async bootstrapForUser(userId) {
@@ -264,7 +306,7 @@ class NativeViewService {
         return await this.repository.deleteAccount(userId, input);
     }
 
-    async homeForFamily(userId, familyId) {
+    async homeForFamily(userId, familyId, headers = {}) {
         if (!familyId) {
             const error = new Error("family_id required");
             error.statusCode = 400;
@@ -280,6 +322,7 @@ class NativeViewService {
             calendar: Array.isArray(source.calendar) ? source.calendar : [],
             distance: source.distance || null,
             home_location: homeLocationView(source.elder),
+            return_home: homeReturnView(source, headers, this.clock()),
             critical_alert: criticalAlertView(source.critical_alert),
             care_message: careMessageView(source.care_message),
             articles: (source.articles || []).map(articleView).filter((article) => article && article.title),
