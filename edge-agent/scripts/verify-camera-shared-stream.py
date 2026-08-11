@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from threading import Lock, Thread
+from types import SimpleNamespace
 from typing import Any
 import sys
 import time
@@ -267,6 +268,66 @@ def main() -> None:
     else:
         raise SystemExit("pending source transition opened a fallback capture")
 
+    class EventuallyStoppingReader:
+        def __init__(self) -> None:
+            self.stop_calls = 0
+            self.subscribers = 1
+
+        @property
+        def is_stopped(self) -> bool:
+            return self.stop_calls >= 2
+
+        @property
+        def is_running(self) -> bool:
+            return not self.is_stopped
+
+        def stop(self) -> bool:
+            self.stop_calls += 1
+            return self.is_stopped
+
+    delayed_agent = CameraAgent(Path("/tmp/gohome-delayed-source-retirement-test"))
+    delayed_camera = {"id": 13, "stream_url": "rtsp://example.invalid/old"}
+    delayed_replacement = {"id": 13, "stream_url": "rtsp://example.invalid/new"}
+    delayed_reader = EventuallyStoppingReader()
+    delayed_agent._managed_streams[13] = (delayed_camera, delayed_reader)  # type: ignore[assignment]
+    delayed_agent._shared_streams[delayed_agent._frame_cache_key(delayed_camera)] = delayed_reader  # type: ignore[assignment]
+    replacement_reader = SimpleNamespace(subscribers=1)
+    replacement_attempts: list[str] = []
+    delayed_transitions: list[dict[str, Any]] = []
+    delayed_agent.add_source_change_listener(delayed_transitions.append)
+
+    def acquire_delayed_replacement(camera: dict, **_kwargs: object):
+        replacement_attempts.append(str(camera.get("stream_url") or ""))
+        return replacement_reader
+
+    delayed_agent._acquire_shared_stream = acquire_delayed_replacement  # type: ignore[method-assign]
+    try:
+        delayed_agent.reconcile_managed_streams([delayed_replacement])
+    except CameraError:
+        pass
+    else:
+        raise SystemExit("delayed source retirement did not block the first replacement attempt")
+    if replacement_attempts:
+        raise SystemExit("delayed source retirement opened a duplicate reader on the first attempt")
+
+    delayed_agent.reconcile_managed_streams([delayed_replacement])
+    managed_after_retry = delayed_agent._managed_streams.get(13)
+    if (
+        delayed_reader.stop_calls != 2
+        or replacement_attempts != ["rtsp://example.invalid/new"]
+        or managed_after_retry is None
+        or managed_after_retry[1] is not replacement_reader
+        or delayed_agent._shared_streams.get(delayed_agent._frame_cache_key(delayed_camera))
+        is delayed_reader
+        or len(delayed_transitions) != 1
+        or delayed_transitions[0].get("reason") != "source_changed"
+    ):
+        raise SystemExit(
+            "delayed source retirement did not converge on the next reconcile cycle: "
+            f"stop_calls={delayed_reader.stop_calls} attempts={replacement_attempts} "
+            f"managed={managed_after_retry} transitions={delayed_transitions}"
+        )
+
     semantic_agent = CameraAgent(Path("/tmp/gohome-frame-semantics-test"))
     semantic_camera = {"id": 11, "stream_url": "rtsp://example.invalid/semantics"}
     semantic_frame = np.full((48, 64, 3), 126, dtype=np.uint8)
@@ -376,6 +437,7 @@ def main() -> None:
         "capture_metrics": stream_status,
         "source_transition": transitions[0],
         "old_reader_retired": True,
+        "delayed_reader_retired_on_retry": True,
         "stale_cache_rejected": True,
         "repeated_pixels_counted_as_content": False,
         "repeated_pixels_delivered_before_freeze": True,
