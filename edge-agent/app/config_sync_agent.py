@@ -11,7 +11,7 @@ import os
 import tempfile
 import time
 
-from .camera_endpoint_resolver import CameraEndpointResolver
+from .camera_endpoint_resolver import CameraEndpointResolver, normalize_network_identity
 from .video_privacy import normalize_privacy_mode
 
 
@@ -415,10 +415,15 @@ class ConfigSyncAgent:
             else:
                 status = "configuring" if unique_frames == 0 else "reconnecting"
                 last_error = str(runtime.get("last_error") or "")
+            config_error = (
+                str(report.get("last_error") or "")
+                if report.get("sync_status") == "edge_error"
+                else ""
+            )
             self.storage.update_camera_status(camera_id, status, last_error)
             report.update({
                 "status": status,
-                "last_error": last_error,
+                "last_error": config_error or last_error,
                 "runtime_stream": runtime,
                 "live": self._camera_live_status(camera_id, runtime, fresh),
             })
@@ -609,14 +614,35 @@ class ConfigSyncAgent:
         remote_id = self._remote_camera_id(camera_config)
         remote_stream_url = str(camera_config.get("stream_url") or "").strip()
         endpoint_binding = dict(endpoint_bindings.get(remote_id) or {})
+        cloud_network_identity = normalize_network_identity(
+            camera_config.get("network_identity")
+        )
+        stored_network_identity = normalize_network_identity(
+            endpoint_binding.get("network_identity")
+        )
+        identity_conflict = bool(
+            cloud_network_identity
+            and stored_network_identity
+            and cloud_network_identity != stored_network_identity
+        )
         recorded_remote_url = str(endpoint_binding.get("remote_stream_url") or "").strip()
         resolved_stream_url = str(endpoint_binding.get("resolved_stream_url") or "").strip()
-        if recorded_remote_url and remote_stream_url != recorded_remote_url:
+        if not identity_conflict and recorded_remote_url and remote_stream_url != recorded_remote_url:
             if remote_stream_url == resolved_stream_url:
                 endpoint_binding["remote_stream_url"] = remote_stream_url
             else:
                 endpoint_binding = {}
                 resolved_stream_url = ""
+                stored_network_identity = ""
+        if cloud_network_identity and not stored_network_identity:
+            endpoint_binding = {
+                "remote_stream_url": remote_stream_url,
+                "resolved_stream_url": resolved_stream_url or remote_stream_url,
+                "network_identity": cloud_network_identity,
+            }
+            resolved_stream_url = str(endpoint_binding["resolved_stream_url"])
+            stored_network_identity = cloud_network_identity
+            used_endpoint_identities.add(cloud_network_identity)
         stream_url = resolved_stream_url or remote_stream_url
         enabled = self._as_bool(camera_config.get("enabled", True))
         if not stream_url or bool(camera_config.get("setup_required")):
@@ -658,12 +684,14 @@ class ConfigSyncAgent:
         local_camera = self.storage.get_camera(int(local_camera["id"]), include_secret=True) or local_camera
         camera_map[remote_id] = int(local_camera["id"])
 
-        endpoint_binding, endpoint_update = self._reconcile_camera_endpoint(
-            camera=local_camera,
-            remote_stream_url=remote_stream_url,
-            endpoint_binding=endpoint_binding,
-            used_endpoint_identities=used_endpoint_identities,
-        )
+        endpoint_update = None
+        if not identity_conflict:
+            endpoint_binding, endpoint_update = self._reconcile_camera_endpoint(
+                camera=local_camera,
+                remote_stream_url=remote_stream_url,
+                endpoint_binding=endpoint_binding,
+                used_endpoint_identities=used_endpoint_identities,
+            )
         if endpoint_binding:
             endpoint_bindings[remote_id] = endpoint_binding
         else:
@@ -694,8 +722,8 @@ class ConfigSyncAgent:
             "room": payload["room"],
             "enabled": enabled,
             "status": status,
-            "sync_status": "synced" if not last_error else "edge_error",
-            "last_error": last_error,
+            "sync_status": "edge_error" if identity_conflict or last_error else "synced",
+            "last_error": "network_identity_conflict" if identity_conflict else last_error,
             "action": action,
             "presence": self.presence_status_resolver(
                 int(local_camera["id"]),
@@ -716,15 +744,18 @@ class ConfigSyncAgent:
     ) -> tuple[Dict[str, Any], Dict[str, Any] | None]:
         if self.endpoint_resolver is None or not bool(camera.get("enabled", True)):
             return endpoint_binding, self._endpoint_update(remote_stream_url, endpoint_binding)
-        identity = str(endpoint_binding.get("network_identity") or "").strip().lower()
+        identity = normalize_network_identity(endpoint_binding.get("network_identity"))
         observed = self.endpoint_resolver.observe(camera)
-        if observed is not None:
+        observed_identity = normalize_network_identity(
+            observed.network_identity if observed is not None else ""
+        )
+        if observed is not None and (not identity or observed_identity == identity):
             binding = {
                 "remote_stream_url": remote_stream_url,
                 "resolved_stream_url": observed.stream_url,
-                "network_identity": observed.network_identity,
+                "network_identity": observed_identity,
             }
-            used_endpoint_identities.add(observed.network_identity)
+            used_endpoint_identities.add(observed_identity)
             return binding, self._endpoint_update(remote_stream_url, binding)
         replacement = self.endpoint_resolver.resolve(
             camera,
@@ -733,12 +764,15 @@ class ConfigSyncAgent:
         )
         if replacement is None:
             return endpoint_binding, self._endpoint_update(remote_stream_url, endpoint_binding)
+        replacement_identity = normalize_network_identity(replacement.network_identity)
+        if identity and replacement_identity != identity:
+            return endpoint_binding, self._endpoint_update(remote_stream_url, endpoint_binding)
         binding = {
             "remote_stream_url": remote_stream_url,
             "resolved_stream_url": replacement.stream_url,
-            "network_identity": replacement.network_identity,
+            "network_identity": replacement_identity,
         }
-        used_endpoint_identities.add(replacement.network_identity)
+        used_endpoint_identities.add(replacement_identity)
         return binding, self._endpoint_update(remote_stream_url, binding)
 
     @staticmethod

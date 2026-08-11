@@ -15,7 +15,140 @@ from app.config_sync_agent import ConfigSyncAgent
 from app.storage import Storage
 
 
+def verify_cloud_network_identity_recovery() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        storage = Storage(root / "agent.db")
+        storage.init_schema()
+        settings = SimpleNamespace(
+            app_server_base_url="http://app-server.test",
+            device_api_token="dev-token",
+            runtime_dir=root / "runtime",
+            config_sync_enabled=True,
+            config_sync_interval_seconds=10,
+            video_privacy_sync_interval_seconds=1,
+            config_sync_request_timeout_seconds=2,
+            config_sync_test_capture_enabled=False,
+        )
+        reconciled_camera_sets: list[list[dict]] = []
+        camera_agent = SimpleNamespace(
+            reconcile_managed_streams=lambda cameras: reconciled_camera_sets.append([
+                dict(camera) for camera in cameras if camera.get("enabled", True)
+            ]),
+            managed_camera_status=lambda camera: {
+                "camera_id": int(camera["id"]),
+                "state": "streaming",
+                "unique_frames": 12,
+                "latest_frame_age_ms": 40.0,
+                "decoded_fps": 15.0,
+                "last_error": "",
+            },
+        )
+
+        class CloudIdentityResolver:
+            def __init__(self) -> None:
+                self.resolve_calls: list[dict] = []
+
+            def observe(self, _camera: dict) -> CameraEndpoint:
+                return CameraEndpoint("192.168.1.11", 554, "/1/2", "00:11:22:33:44:55")
+
+            def resolve(self, camera: dict, **kwargs: object) -> CameraEndpoint:
+                self.resolve_calls.append({"camera": dict(camera), **kwargs})
+                return CameraEndpoint("192.168.1.44", 554, "/1/2", "aa:bb:cc:dd:ee:ff")
+
+        resolver = CloudIdentityResolver()
+        agent = ConfigSyncAgent(
+            storage=storage,
+            settings=settings,
+            camera_agent=camera_agent,
+            device_id_resolver=lambda: "edge-cloud-identity-test",
+            token_resolver=lambda: "",
+            runtime_status_resolver=lambda: {"worker_running": True},
+            endpoint_resolver=resolver,  # type: ignore[arg-type]
+        )
+        config_holder = {
+            "payload": {
+                "ok": True,
+                "device_id": "edge-cloud-identity-test",
+                "config_version": "cloud-identity-1",
+                "cameras": [{
+                    "id": 201,
+                    "camera_id": 201,
+                    "name": "客厅主视",
+                    "room": "客厅",
+                    "stream_url": "rtsp://192.168.1.11:554/1/2",
+                    "network_identity": "AA-BB-CC-DD-EE-FF",
+                    "enabled": True,
+                }],
+            }
+        }
+        reports: list[dict] = []
+
+        def fake_request(method: str, path: str, **kwargs: object) -> dict:
+            if method == "GET" and path == "/api/v1/device/config":
+                return config_holder["payload"]
+            if method == "POST" and path == "/api/v1/device/sync":
+                body = kwargs.get("json_body")
+                if not isinstance(body, dict):
+                    raise AssertionError("sync report must send json_body")
+                reports.append(body)
+                return {"ok": True}
+            raise AssertionError(f"unexpected request: {method} {path}")
+
+        agent._request_json = fake_request  # type: ignore[method-assign]
+        recovered = agent.process_once()
+        cameras = storage.list_cameras(include_secret=True)
+        state = json.loads((root / "runtime" / "config-sync-state.json").read_text(encoding="utf-8"))
+        binding = dict((state.get("camera_endpoints") or {}).get("201") or {})
+        connection_update = dict(reports[-1]["cameras"][0].get("connection_update") or {})
+        if (
+            recovered.get("ok") is not True
+            or len(resolver.resolve_calls) != 1
+            or resolver.resolve_calls[0].get("network_identity") != "aa:bb:cc:dd:ee:ff"
+            or len(cameras) != 1
+            or cameras[0].get("stream_url") != "rtsp://192.168.1.44:554/1/2"
+            or binding.get("network_identity") != "aa:bb:cc:dd:ee:ff"
+            or connection_update.get("reason") != "dhcp_endpoint_changed"
+        ):
+            raise SystemExit(
+                "cloud camera identity did not seed DHCP endpoint recovery: "
+                f"result={recovered} calls={resolver.resolve_calls} cameras={cameras} "
+                f"binding={binding} report={reports[-1:] }"
+            )
+
+        config_holder["payload"] = {
+            **config_holder["payload"],
+            "config_version": "cloud-identity-conflict",
+            "cameras": [{
+                **config_holder["payload"]["cameras"][0],
+                "network_identity": "11:22:33:44:55:66",
+            }],
+        }
+        conflict = agent.process_once()
+        conflict_report = reports[-1]["cameras"][0]
+        camera_after_conflict = storage.list_cameras(include_secret=True)[0]
+        state_after_conflict = json.loads(
+            (root / "runtime" / "config-sync-state.json").read_text(encoding="utf-8")
+        )
+        binding_after_conflict = dict(
+            (state_after_conflict.get("camera_endpoints") or {}).get("201") or {}
+        )
+        if (
+            conflict.get("ok") is not True
+            or conflict_report.get("sync_status") != "edge_error"
+            or conflict_report.get("last_error") != "network_identity_conflict"
+            or camera_after_conflict.get("stream_url") != "rtsp://192.168.1.44:554/1/2"
+            or binding_after_conflict.get("network_identity") != "aa:bb:cc:dd:ee:ff"
+        ):
+            raise SystemExit(
+                "conflicting cloud camera identity was not rejected explicitly: "
+                f"result={conflict} report={conflict_report} camera={camera_after_conflict} "
+                f"binding={binding_after_conflict}"
+            )
+
+
 def main() -> None:
+    verify_cloud_network_identity_recovery()
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
         storage = Storage(root / "agent.db")
