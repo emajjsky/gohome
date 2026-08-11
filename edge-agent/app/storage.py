@@ -1597,6 +1597,7 @@ class Storage:
             "fire_motion_threshold",
             "fire_temporal_threshold",
             "fire_confirm_frames",
+            "notification_enabled",
         )
         columns = self._table_columns(conn, "rules")
         for column in obsolete_columns:
