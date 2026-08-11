@@ -2,7 +2,7 @@
 
 Distributed baseline: `1.0.0 (15)`
 
-Candidate under validation: `1.0.0 (16)` (uploaded; App Store Connect processing)
+Candidate under validation: `1.0.0 (16)` (processed; assigned to internal group `比赛内测`)
 
 ## Automated Gates
 
@@ -16,6 +16,7 @@ Candidate under validation: `1.0.0 (16)` (uploaded; App Store Connect processing
 - [x] App Store Connect finishes processing and exposes Build 4 to TestFlight.
 - [x] Build 5 is archived from the sole native project on `main` and accepted for upload.
 - [x] Build 5 finishes Apple processing and is installable from TestFlight.
+- [x] Build 16 finishes Apple processing and is assigned to `比赛内测`.
 - [x] Build 6 is archived from the sole native project on `main`, processed by Apple, and assigned to `比赛内测`.
 - [ ] Build 7 rejects cached location samples, is archived from the sole native project, processed by Apple, and assigned to `比赛内测`.
 
@@ -140,7 +141,8 @@ visual-event contract and record-only multimodal states to the Pi and production
 The Pi reported both cameras streaming after restart with no consecutive failures; the
 production HTTPS health endpoint reported PostgreSQL, COS, WHEP/H.264 and APNs configured
 with no queued deliveries. The sole native project archived `GoHome 1.0.0 (16)` from
-commit `99e7a76`; App Store Connect accepted the upload and started processing it. GoHome's
-dSYM is present. The binary WebRTC package did not supply its matching framework dSYM, so
-third-party WebRTC crash frames may remain unsymbolicated. Processing, internal-group
-availability, TestFlight installation and physical event-state acceptance remain open.
+commit `99e7a76`; App Store Connect accepted and processed the upload, and the build is
+assigned to the internal group `比赛内测` with one tester. GoHome's dSYM is present. The
+binary WebRTC package did not supply its matching framework dSYM, so third-party WebRTC
+crash frames may remain unsymbolicated. TestFlight installation and physical event-state
+acceptance remain open.
