@@ -8,7 +8,7 @@ import numpy as np
 class SceneGeometryVerifier:
     """Distinguish camera viewpoint changes from ordinary household changes."""
 
-    version = "privacy-scene-geometry-v4"
+    version = "privacy-scene-geometry-v5"
 
     def __init__(
         self,
@@ -26,6 +26,7 @@ class SceneGeometryVerifier:
         maximum_corner_displacement_ratio: float = 0.025,
         minimum_phase_response: float = 0.08,
         maximum_phase_displacement_ratio: float = 0.012,
+        maximum_model_displacement_disagreement_ratio: float = 0.006,
     ) -> None:
         self.minimum_features = max(8, int(minimum_features))
         self.minimum_matches = max(8, int(minimum_matches))
@@ -63,6 +64,10 @@ class SceneGeometryVerifier:
         self.maximum_phase_displacement_ratio = max(
             0.002,
             min(0.05, float(maximum_phase_displacement_ratio)),
+        )
+        self.maximum_model_displacement_disagreement_ratio = max(
+            0.001,
+            min(0.02, float(maximum_model_displacement_disagreement_ratio)),
         )
 
     def assess(
@@ -214,6 +219,8 @@ class SceneGeometryVerifier:
         )
         affine_median_displacement: float | None = None
         affine_maximum_displacement: float | None = None
+        affine_center_shift_x_ratio: float | None = None
+        affine_center_shift_y_ratio: float | None = None
         affine_same_view: bool | None = None
         affine_spatial_coverage = 0.0
         affine_grid_coverage = 0.0
@@ -244,6 +251,17 @@ class SceneGeometryVerifier:
             ) / max(1.0, float(np.hypot(width, height)))
             affine_median_displacement = float(np.median(affine_displacement))
             affine_maximum_displacement = float(np.max(affine_displacement))
+            center = np.float32([[[
+                float(width - 1) / 2.0,
+                float(height - 1) / 2.0,
+            ]]])
+            transformed_center = cv2.transform(center, affine)
+            center_shift = (
+                (transformed_center - center).reshape(2)
+                / max(1.0, float(np.hypot(width, height)))
+            )
+            affine_center_shift_x_ratio = float(center_shift[0])
+            affine_center_shift_y_ratio = float(center_shift[1])
             affine_same_view = bool(
                 affine_median_displacement <= self.maximum_median_corner_displacement_ratio
                 and affine_maximum_displacement <= self.maximum_corner_displacement_ratio
@@ -263,6 +281,58 @@ class SceneGeometryVerifier:
             else "conflict"
             if affine_same_view is not None
             else "homography_only"
+        )
+        phase_response = phase.get("geometry_phase_response")
+        phase_displacement = phase.get("geometry_phase_displacement_ratio")
+        phase_shift_x = phase.get("geometry_phase_shift_x_ratio")
+        phase_shift_y = phase.get("geometry_phase_shift_y_ratio")
+        phase_reliable = bool(
+            phase_response is not None
+            and phase_displacement is not None
+            and phase_shift_x is not None
+            and phase_shift_y is not None
+            and float(phase_response) >= self.minimum_phase_response
+        )
+        phase_affine_displacement_delta: float | None = None
+        if phase_displacement is not None and affine_median_displacement is not None:
+            phase_affine_displacement_delta = abs(
+                float(phase_displacement) - affine_median_displacement
+            )
+        phase_affine_vector_residual: float | None = None
+        if (
+            phase_shift_x is not None
+            and phase_shift_y is not None
+            and affine_center_shift_x_ratio is not None
+            and affine_center_shift_y_ratio is not None
+        ):
+            phase_affine_vector_residual = float(np.hypot(
+                float(phase_shift_x) + affine_center_shift_x_ratio,
+                float(phase_shift_y) + affine_center_shift_y_ratio,
+            ))
+        affine_phase_consensus = bool(
+            not homography_same_view
+            and affine_strong
+            and broad_evidence
+            and affine_median_displacement is not None
+            and affine_maximum_displacement is not None
+            and affine_median_displacement <= self.maximum_corner_displacement_ratio
+            and affine_maximum_displacement <= self.maximum_corner_displacement_ratio
+            and phase_reliable
+            and float(phase_displacement) <= self.maximum_median_corner_displacement_ratio
+            and phase_affine_vector_residual is not None
+            and phase_affine_vector_residual
+            <= self.maximum_model_displacement_disagreement_ratio
+        )
+        model_resolution = (
+            "model_agreement"
+            if model_agreement in {"same_view", "camera_view_changed"}
+            else "homography_supported"
+            if homography_same_view
+            else "affine_phase_consensus"
+            if affine_phase_consensus
+            else "affine_local_support"
+            if affine_same_view is True and affine_strong and not broad_evidence
+            else "inconclusive"
         )
         common = {
             "geometry_good_matches": len(matches),
@@ -289,7 +359,28 @@ class SceneGeometryVerifier:
                 if affine_maximum_displacement is None
                 else round(affine_maximum_displacement, 5)
             ),
+            "geometry_affine_center_shift_x_ratio": (
+                None
+                if affine_center_shift_x_ratio is None
+                else round(affine_center_shift_x_ratio, 5)
+            ),
+            "geometry_affine_center_shift_y_ratio": (
+                None
+                if affine_center_shift_y_ratio is None
+                else round(affine_center_shift_y_ratio, 5)
+            ),
             "geometry_model_agreement": model_agreement,
+            "geometry_model_resolution": model_resolution,
+            "geometry_phase_affine_displacement_delta_ratio": (
+                None
+                if phase_affine_displacement_delta is None
+                else round(phase_affine_displacement_delta, 5)
+            ),
+            "geometry_phase_affine_vector_residual_ratio": (
+                None
+                if phase_affine_vector_residual is None
+                else round(phase_affine_vector_residual, 5)
+            ),
             **phase,
             "geometry_cached": False,
         }
@@ -301,7 +392,7 @@ class SceneGeometryVerifier:
             affine_same_view is True
             and affine_strong
             and not broad_evidence
-        )
+        ) or affine_phase_consensus
         if same_view:
             return {
                 "accepted": True,
@@ -397,6 +488,8 @@ class SceneGeometryVerifier:
                 "geometry_phase_reason": "insufficient_global_edge_energy",
                 "geometry_phase_response": None,
                 "geometry_phase_displacement_ratio": None,
+                "geometry_phase_shift_x_ratio": None,
+                "geometry_phase_shift_y_ratio": None,
             }
         height, width = baseline_gray.shape[:2]
         window = cv2.createHanningWindow((int(width), int(height)), cv2.CV_32F)
@@ -409,6 +502,8 @@ class SceneGeometryVerifier:
             1.0,
             float(np.hypot(width, height)),
         )
+        shift_x_ratio = float(shift[0]) / max(1.0, float(np.hypot(width, height)))
+        shift_y_ratio = float(shift[1]) / max(1.0, float(np.hypot(width, height)))
         same_view = bool(
             np.isfinite(response)
             and np.isfinite(displacement_ratio)
@@ -421,6 +516,12 @@ class SceneGeometryVerifier:
             "geometry_phase_response": round(float(response), 5) if np.isfinite(response) else None,
             "geometry_phase_displacement_ratio": (
                 round(displacement_ratio, 5) if np.isfinite(displacement_ratio) else None
+            ),
+            "geometry_phase_shift_x_ratio": (
+                round(shift_x_ratio, 5) if np.isfinite(shift_x_ratio) else None
+            ),
+            "geometry_phase_shift_y_ratio": (
+                round(shift_y_ratio, 5) if np.isfinite(shift_y_ratio) else None
             ),
         }
 

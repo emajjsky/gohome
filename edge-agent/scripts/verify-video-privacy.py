@@ -289,6 +289,47 @@ def main() -> int:
         or clustered_assessment["geometry_grid_coverage_ratio"] < 0.25
     )
 
+    broad_baseline = np.random.default_rng(17).integers(
+        0,
+        256,
+        size=(360, 640, 3),
+        dtype=np.uint8,
+    )
+    broad_current = cv2.warpAffine(
+        broad_baseline,
+        np.float32([[1.0, 0.0, 9.0], [0.0, 1.0, 0.0]]),
+        (640, 360),
+        borderMode=cv2.BORDER_REFLECT,
+    )
+
+    def unstable_homography(current_coordinates, baseline_coordinates, *args, **kwargs):
+        del baseline_coordinates, args, kwargs
+        return (
+            np.float64([
+                [1.0, 0.0, -9.0],
+                [0.0, 1.0, 0.0],
+                [0.0003, 0.0, 1.0],
+            ]),
+            np.ones((len(current_coordinates), 1), dtype=np.uint8),
+        )
+
+    with patch.object(cv2, "findHomography", side_effect=unstable_homography):
+        broad_conflict_assessment = SceneGeometryVerifier().assess(
+            broad_baseline,
+            broad_current,
+            excluded_mask=None,
+        )
+    assert broad_conflict_assessment["geometry_status"] == "same_view"
+    assert broad_conflict_assessment["geometry_model_agreement"] == "conflict"
+    assert broad_conflict_assessment["geometry_model_resolution"] == "affine_phase_consensus"
+    assert broad_conflict_assessment["geometry_affine_grid_coverage_ratio"] >= 0.75
+    assert broad_conflict_assessment["geometry_phase_response"] >= 0.9
+    assert broad_conflict_assessment["geometry_phase_displacement_ratio"] <= 0.015
+    assert broad_conflict_assessment.get(
+        "geometry_phase_affine_vector_residual_ratio",
+        float("inf"),
+    ) <= 0.002
+
     low_feature_baseline = np.random.default_rng(9).integers(
         0,
         256,
@@ -1258,6 +1299,7 @@ def main() -> int:
         "large_household_change_restart_revalidated": True,
         "lighting_change_retained": True,
         "clustered_features_do_not_confirm_camera_move": True,
+        "affine_phase_consensus_rejects_homography_extrapolation": True,
         "low_feature_phase_revalidation": True,
         "unverifiable_scene_retains_baseline": True,
         "unverifiable_scene_recovers": True,

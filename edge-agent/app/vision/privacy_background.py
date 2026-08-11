@@ -59,6 +59,9 @@ class _BackgroundState:
     last_geometry_affine_median_corner_displacement_ratio: float | None = None
     last_geometry_affine_max_corner_displacement_ratio: float | None = None
     last_geometry_model_agreement: str = "not_checked"
+    last_geometry_model_resolution: str = "not_checked"
+    last_geometry_phase_affine_displacement_delta_ratio: float | None = None
+    last_geometry_phase_affine_vector_residual_ratio: float | None = None
     last_geometry_phase_status: str = "not_checked"
     last_geometry_phase_reason: str = ""
     last_geometry_phase_response: float | None = None
@@ -84,7 +87,7 @@ class _BackgroundState:
 class PrivacyBackgroundReconstructor:
     """Compose pure-skeleton scenes from an explicitly calibrated empty room."""
 
-    version = "privacy-background-calibration-v4"
+    version = "privacy-background-calibration-v5"
 
     def __init__(
         self,
@@ -296,6 +299,9 @@ class PrivacyBackgroundReconstructor:
                 state.last_geometry_affine_median_corner_displacement_ratio = None
                 state.last_geometry_affine_max_corner_displacement_ratio = None
                 state.last_geometry_model_agreement = "not_checked"
+                state.last_geometry_model_resolution = "not_checked"
+                state.last_geometry_phase_affine_displacement_delta_ratio = None
+                state.last_geometry_phase_affine_vector_residual_ratio = None
                 state.last_geometry_phase_status = "not_checked"
                 state.last_geometry_phase_reason = ""
                 state.last_geometry_phase_response = None
@@ -647,6 +653,9 @@ class PrivacyBackgroundReconstructor:
         state.last_geometry_affine_median_corner_displacement_ratio = None
         state.last_geometry_affine_max_corner_displacement_ratio = None
         state.last_geometry_model_agreement = "not_checked"
+        state.last_geometry_model_resolution = "not_checked"
+        state.last_geometry_phase_affine_displacement_delta_ratio = None
+        state.last_geometry_phase_affine_vector_residual_ratio = None
         state.last_geometry_phase_status = "not_checked"
         state.last_geometry_phase_reason = ""
         state.last_geometry_phase_response = None
@@ -875,6 +884,15 @@ class PrivacyBackgroundReconstructor:
             state.last_geometry_model_agreement = str(
                 assessment.get("geometry_model_agreement") or "not_checked"
             )
+            state.last_geometry_model_resolution = str(
+                assessment.get("geometry_model_resolution") or "not_checked"
+            )
+            state.last_geometry_phase_affine_displacement_delta_ratio = assessment.get(
+                "geometry_phase_affine_displacement_delta_ratio"
+            )
+            state.last_geometry_phase_affine_vector_residual_ratio = assessment.get(
+                "geometry_phase_affine_vector_residual_ratio"
+            )
             state.last_geometry_phase_status = str(
                 assessment.get("geometry_phase_status") or "not_checked"
             )
@@ -1036,6 +1054,9 @@ class PrivacyBackgroundReconstructor:
                     "geometry_affine_median_corner_displacement_ratio": state.last_geometry_affine_median_corner_displacement_ratio,
                     "geometry_affine_max_corner_displacement_ratio": state.last_geometry_affine_max_corner_displacement_ratio,
                     "geometry_model_agreement": state.last_geometry_model_agreement,
+                    "geometry_model_resolution": state.last_geometry_model_resolution,
+                    "geometry_phase_affine_displacement_delta_ratio": state.last_geometry_phase_affine_displacement_delta_ratio,
+                    "geometry_phase_affine_vector_residual_ratio": state.last_geometry_phase_affine_vector_residual_ratio,
                     "geometry_phase_status": state.last_geometry_phase_status,
                     "geometry_phase_reason": state.last_geometry_phase_reason,
                     "geometry_phase_response": state.last_geometry_phase_response,
@@ -1087,6 +1108,15 @@ class PrivacyBackgroundReconstructor:
                 )
                 state.last_geometry_model_agreement = str(
                     assessment.get("geometry_model_agreement") or "not_checked"
+                )
+                state.last_geometry_model_resolution = str(
+                    assessment.get("geometry_model_resolution") or "not_checked"
+                )
+                state.last_geometry_phase_affine_displacement_delta_ratio = assessment.get(
+                    "geometry_phase_affine_displacement_delta_ratio"
+                )
+                state.last_geometry_phase_affine_vector_residual_ratio = assessment.get(
+                    "geometry_phase_affine_vector_residual_ratio"
                 )
                 state.last_geometry_phase_status = str(
                     assessment.get("geometry_phase_status") or "not_checked"
@@ -1289,6 +1319,9 @@ class PrivacyBackgroundReconstructor:
             "last_geometry_affine_median_corner_displacement_ratio": state.last_geometry_affine_median_corner_displacement_ratio,
             "last_geometry_affine_max_corner_displacement_ratio": state.last_geometry_affine_max_corner_displacement_ratio,
             "last_geometry_model_agreement": state.last_geometry_model_agreement,
+            "last_geometry_model_resolution": state.last_geometry_model_resolution,
+            "last_geometry_phase_affine_displacement_delta_ratio": state.last_geometry_phase_affine_displacement_delta_ratio,
+            "last_geometry_phase_affine_vector_residual_ratio": state.last_geometry_phase_affine_vector_residual_ratio,
             "last_geometry_phase_status": state.last_geometry_phase_status,
             "last_geometry_phase_reason": state.last_geometry_phase_reason,
             "last_geometry_phase_response": state.last_geometry_phase_response,
