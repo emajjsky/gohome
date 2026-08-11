@@ -330,6 +330,29 @@ def main() -> int:
         float("inf"),
     ) <= 0.002
 
+    def near_limit_affine(current_coordinates, baseline_coordinates, *args, **kwargs):
+        del baseline_coordinates, args, kwargs
+        return (
+            np.float64([
+                [1.0, 0.0, -11.2],
+                [0.0, 1.0, 0.0],
+            ]),
+            np.ones((len(current_coordinates), 1), dtype=np.uint8),
+        )
+
+    with (
+        patch.object(cv2, "findHomography", side_effect=unstable_homography),
+        patch.object(cv2, "estimateAffinePartial2D", side_effect=near_limit_affine),
+    ):
+        near_limit_conflict = SceneGeometryVerifier().assess(
+            broad_baseline,
+            broad_current,
+            excluded_mask=None,
+        )
+    assert near_limit_conflict["geometry_status"] == "same_view"
+    assert near_limit_conflict["geometry_model_agreement"] == "camera_view_changed"
+    assert near_limit_conflict["geometry_model_resolution"] == "affine_phase_consensus"
+
     low_feature_baseline = np.random.default_rng(9).integers(
         0,
         256,

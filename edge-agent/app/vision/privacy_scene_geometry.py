@@ -324,12 +324,12 @@ class SceneGeometryVerifier:
             <= self.maximum_model_displacement_disagreement_ratio
         )
         model_resolution = (
-            "model_agreement"
+            "affine_phase_consensus"
+            if affine_phase_consensus
+            else "model_agreement"
             if model_agreement in {"same_view", "camera_view_changed"}
             else "homography_supported"
             if homography_same_view
-            else "affine_phase_consensus"
-            if affine_phase_consensus
             else "affine_local_support"
             if affine_same_view is True and affine_strong and not broad_evidence
             else "inconclusive"
