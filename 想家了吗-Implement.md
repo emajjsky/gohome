@@ -1,6 +1,6 @@
 # 回家 Implement
 
-更新时间：2026-08-10
+更新时间：2026-08-11
 
 ## 1. 文档目的
 
@@ -13427,7 +13427,7 @@ P4 风险升频边界：
 
 ### 已落地
 
-- 正式 iOS 工程统一为 `ios-shell/GoHomeShell.xcodeproj`，Bundle ID `com.gohome.family`，Build 15 已归档并上传 App Store Connect。
+- 正式 iOS 工程统一为 `ios-shell/GoHomeShell.xcodeproj`，Bundle ID `com.gohome.family`，当时 Build 15 已归档并上传 App Store Connect。
 - iOS 单元测试 `194/194`、UI 测试 `28/28` 通过；Node 服务门禁、Python 编译和 `git diff --check` 通过。
 - 首页、守护、记忆、社区和我的页面已按当前产品信息架构收口；家庭固定位置、手机定位距离和社区家庭位置采用分离语义。
 - 正式 App 实时视频消费盒子成品流，媒体主链路使用 H.264/WHEP/WebRTC；盒子是隐私模式唯一合成方，客户端不重复绘制骨架。
@@ -13440,7 +13440,7 @@ P4 风险升频边界：
 
 ### 文档口径
 
-旧章节中的版本号、FPS、测试数量和“待实现”描述属于历史记录；当前基线以 `README.md`、`想家了吗-PRD.md`、`想家了吗-Plan.md`、本文件和 Build 15 证据为准。任何未有独立实机或家庭试点证据的指标，不得写成产品准确率、医疗能力或救援 SLA。
+旧章节中的版本号、FPS、测试数量和“待实现”描述属于历史记录；当时基线以 `README.md`、`想家了吗-PRD.md`、`想家了吗-Plan.md`、本文件和 Build 15 证据为准。任何未有独立实机或家庭试点证据的指标，不得写成产品准确率、医疗能力或救援 SLA。
 
 ## 214. 2026-08-11 Build 16 四帧事件闭环与发布状态
 
