@@ -107,3 +107,46 @@ test('native product endpoints expose only policy-approved fields and family pre
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('content image proxy accepts an active product image from PostgreSQL', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-product-image-proxy-'));
+  const app = createLocalAppServer({
+    rootDir: path.join(__dirname, '..', '..'),
+    dataDir,
+    authMode: 'demo',
+    demoOtp: '246810',
+  });
+  const imageUrl = 'https://products.example.com/night-light.jpg';
+  app.store.kind = 'postgres';
+  app.store.db.product_catalog = [];
+  app.store.pool = {
+    async query(sql, values) {
+      assert.match(sql, /from product_catalog/i);
+      assert.deepEqual(values, [imageUrl]);
+      return { rows: [{ approved: 1 }] };
+    },
+  };
+
+  const originalFetch = global.fetch;
+  global.fetch = async (input, options) => {
+    if (String(input) === imageUrl) {
+      return new Response(Buffer.from([0xff, 0xd8, 0xff, 0xd9]), {
+        status: 200,
+        headers: { 'Content-Type': 'image/jpeg' },
+      });
+    }
+    return originalFetch(input, options);
+  };
+
+  const baseUrl = await listen(app.server);
+  try {
+    const response = await originalFetch(`${baseUrl}/api/v1/content/image?url=${encodeURIComponent(imageUrl)}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'image/jpeg');
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  } finally {
+    global.fetch = originalFetch;
+    await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

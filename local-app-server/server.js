@@ -5085,7 +5085,7 @@ function createLocalAppServer(options = {}) {
         return value;
     }
 
-    function knownContentImageUrl(targetUrl) {
+    async function knownContentImageUrl(targetUrl) {
         const target = String(targetUrl || "").trim();
         if (!target) return false;
         const cached = [...providerCache.values()].some((entry) => (
@@ -5100,7 +5100,15 @@ function createLocalAppServer(options = {}) {
         if (store.db.content_recommendations.some((item) => (
             String(item?.image_url || item?.metadata?.image_url || "").trim() === target
         ))) return true;
-        return store.db.product_catalog.some((item) => String(item?.image_url || "").trim() === target);
+        if (store.db.product_catalog.some((item) => String(item?.image_url || "").trim() === target)) return true;
+        if (store.kind !== "postgres" || !store.pool) return false;
+        const result = await store.pool.query(
+            `select 1 as approved from product_catalog
+             where status = 'active' and image_url = $1
+             limit 1`,
+            [target],
+        );
+        return result.rows.length > 0;
     }
 
     async function proxyContentImage(targetUrl) {
@@ -5111,7 +5119,7 @@ function createLocalAppServer(options = {}) {
         } catch (_error) {
             throw new Error("invalid content image URL");
         }
-        if (parsed.protocol !== "https:" || !knownContentImageUrl(parsed.toString())) {
+        if (parsed.protocol !== "https:" || !await knownContentImageUrl(parsed.toString())) {
             throw new Error("content image is not an approved recommendation asset");
         }
         const controller = new AbortController();
