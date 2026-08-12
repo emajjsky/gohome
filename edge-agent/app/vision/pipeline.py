@@ -1172,9 +1172,37 @@ class VisionPipeline:
         min_overlap = float(config.get("pose_person_min_overlap", 0.30))
         strict_when_pose_visible = bool(config.get("pose_refine_strict_when_pose_visible", True))
 
-        for person in people:
-            bbox = person.get("bbox")
-            matching_pose = self._matching_pose_for_person(bbox, poses, min_overlap=min_overlap)
+        candidates: list[tuple[float, float, float, int, int]] = []
+        for person_index, person in enumerate(people):
+            person_bbox = person.get("bbox")
+            if not self._valid_box(person_bbox):
+                continue
+            for pose_index, pose in enumerate(poses):
+                pose_bbox = pose.get("bbox")
+                if not self._valid_box(pose_bbox):
+                    continue
+                overlap = self._box_overlap_ratio(person_bbox, pose_bbox)
+                if overlap < min_overlap or not self._boxes_share_center(person_bbox, pose_bbox):
+                    continue
+                candidates.append((
+                    self._box_iou(person_bbox, pose_bbox),
+                    overlap,
+                    float(person.get("confidence") or 0.0),
+                    person_index,
+                    pose_index,
+                ))
+
+        person_pose_assignments: dict[int, int] = {}
+        assigned_poses: set[int] = set()
+        for _, _, _, person_index, pose_index in sorted(candidates, reverse=True):
+            if person_index in person_pose_assignments or pose_index in assigned_poses:
+                continue
+            person_pose_assignments[person_index] = pose_index
+            assigned_poses.add(pose_index)
+
+        for person_index, person in enumerate(people):
+            pose_index = person_pose_assignments.get(person_index)
+            matching_pose = poses[pose_index] if pose_index is not None else None
             overlaps_pose = matching_pose is not None
             if strict_when_pose_visible and not overlaps_pose:
                 continue
@@ -1193,11 +1221,11 @@ class VisionPipeline:
                 "scene_zone_overlap": (matching_pose or {}).get("scene_zone_overlap") or person.get("scene_zone_overlap"),
             })
 
-        for pose in poses:
+        for pose_index, pose in enumerate(poses):
             pose_box = pose.get("bbox")
             if not self._valid_box(pose_box):
                 continue
-            if any(self._box_overlap_ratio(person.get("bbox"), pose_box) >= 0.34 for person in refined):
+            if pose_index in assigned_poses:
                 continue
             refined.append(self._person_from_pose(pose, frame))
 
@@ -1295,24 +1323,6 @@ class VisionPipeline:
         x1, y1, x2, y2 = [float(value) for value in bbox]
         return x2 > x1 and y2 > y1
 
-    def _matching_pose_for_person(
-        self,
-        person_bbox: Any,
-        poses: list[Dict[str, Any]],
-        *,
-        min_overlap: float,
-    ) -> Dict[str, Any] | None:
-        if not self._valid_box(person_bbox):
-            return None
-        for pose in poses:
-            pose_bbox = pose.get("bbox")
-            if not self._valid_box(pose_bbox):
-                continue
-            overlap = self._box_overlap_ratio(person_bbox, pose_bbox)
-            if overlap >= min_overlap and self._boxes_share_center(person_bbox, pose_bbox):
-                return pose
-        return None
-
     def _boxes_share_center(self, first: Any, second: Any) -> bool:
         ax1, ay1, ax2, ay2 = [float(value) for value in first]
         bx1, by1, bx2, by2 = [float(value) for value in second]
@@ -1340,3 +1350,13 @@ class VisionPipeline:
         first_area = max(1.0, (ax2 - ax1) * (ay2 - ay1))
         second_area = max(1.0, (bx2 - bx1) * (by2 - by1))
         return inter_area / min(first_area, second_area)
+
+    def _box_iou(self, first: Any, second: Any) -> float:
+        if not self._valid_box(first) or not self._valid_box(second):
+            return 0.0
+        ax1, ay1, ax2, ay2 = [float(value) for value in first]
+        bx1, by1, bx2, by2 = [float(value) for value in second]
+        inter_area = max(0.0, min(ax2, bx2) - max(ax1, bx1)) * max(0.0, min(ay2, by2) - max(ay1, by1))
+        first_area = (ax2 - ax1) * (ay2 - ay1)
+        second_area = (bx2 - bx1) * (by2 - by1)
+        return inter_area / max(1.0, first_area + second_area - inter_area)

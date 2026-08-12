@@ -48,6 +48,7 @@ def main() -> None:
     )
     weak_fall_result = FallAnalyzer().analyze(synthetic_weak_fall_people(), {})
     pose_refine_result = verify_pose_refines_presence_candidates()
+    pose_person_ownership = verify_pose_person_ownership_is_one_to_one()
     pose_cache_result = verify_pose_cache_stabilizes_tracking()
     activity_temporal_result = verify_activity_temporal_candidates()
     pose_runtime_config = verify_pose_runtime_config()
@@ -90,6 +91,9 @@ def main() -> None:
         "pose_refine_person_count": pose_refine_result["person_count"],
         "pose_refine_filtered_count": pose_refine_result["filtered_count"],
         "pose_refine_pose_added": pose_refine_result["pose_added"],
+        "pose_duplicate_person_count": pose_person_ownership["duplicate_person_count"],
+        "pose_duplicate_retained_main_box": pose_person_ownership["retained_main_box"],
+        "pose_two_person_count": pose_person_ownership["two_person_count"],
         "pose_cache_state": pose_cache_result["tracking_state"],
         "pose_cache_model_status": pose_cache_result["model_status"],
         "pose_cache_person_count": pose_cache_result["person_count"],
@@ -202,6 +206,12 @@ def main() -> None:
         raise SystemExit("pose refinement should filter weak non-overlapping presence candidates")
     if not checks["pose_refine_pose_added"]:
         raise SystemExit("pose refinement should add a pose-confirmed person when YOLO boxes are unusable")
+    if checks["pose_duplicate_person_count"] != 1:
+        raise SystemExit("one pose must not validate multiple partial person boxes")
+    if not checks["pose_duplicate_retained_main_box"]:
+        raise SystemExit("pose ownership must retain the complete high-confidence person box")
+    if checks["pose_two_person_count"] != 2:
+        raise SystemExit("two independent poses must preserve two real people")
     if checks["pose_cache_state"] != "cached" or checks["pose_cache_person_count"] != 1:
         raise SystemExit("pose cache should stabilize a short RTMPose miss")
     if checks["pose_cache_model_status"] != "cached":
@@ -817,6 +827,54 @@ def verify_pose_refines_presence_candidates() -> dict:
         "person_count": len(refined),
         "filtered_count": len(raw_people) - len(refined),
         "pose_added": len(pose_added) == 1 and pose_added[0].get("source") == "pose_person",
+    }
+
+
+def verify_pose_person_ownership_is_one_to_one() -> dict:
+    pipeline = VisionPipeline(
+        black_brightness_threshold=18,
+        black_contrast_threshold=4,
+        motion_threshold=0.015,
+        detector_backend="basic",
+    )
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    production_people = [
+        {"bbox": [438.0, 279.9, 602.8, 357.5], "confidence": 0.8248, "source": "hailo"},
+        {"bbox": [455.9, 237.4, 565.5, 300.9], "confidence": 0.3779, "source": "hailo"},
+    ]
+    production_pose = {
+        "bbox": [439.0, 241.0, 613.8, 357.1],
+        "confidence": 0.88,
+        "tracking_state": "fresh",
+    }
+    duplicate_refined = pipeline._refine_people_with_pose(
+        production_people,
+        [production_pose],
+        frame,
+        {},
+    )
+
+    independent_people = [
+        {"bbox": [40.0, 70.0, 210.0, 345.0], "confidence": 0.91, "source": "hailo"},
+        {"bbox": [390.0, 65.0, 565.0, 340.0], "confidence": 0.87, "source": "hailo"},
+    ]
+    independent_poses = [
+        {"bbox": [45.0, 72.0, 208.0, 342.0], "confidence": 0.90, "tracking_state": "fresh"},
+        {"bbox": [394.0, 68.0, 562.0, 338.0], "confidence": 0.86, "tracking_state": "fresh"},
+    ]
+    two_person_refined = pipeline._refine_people_with_pose(
+        independent_people,
+        independent_poses,
+        frame,
+        {},
+    )
+    return {
+        "duplicate_person_count": len(duplicate_refined),
+        "retained_main_box": bool(
+            duplicate_refined
+            and duplicate_refined[0].get("bbox") == production_people[0]["bbox"]
+        ),
+        "two_person_count": len(two_person_refined),
     }
 
 
