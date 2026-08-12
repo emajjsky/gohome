@@ -667,6 +667,174 @@ def main() -> None:
     if any(result.candidates for result in production_followups):
         raise SystemExit("one physical transition must create exactly one cloud-review event")
 
+    dropout_engine = RuleEngine()
+    dropout_start = datetime(2026, 8, 12, 15, 12, 12, tzinfo=timezone.utc)
+    try:
+        current_time = [dropout_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        dropout_engine.evaluate_snapshot(
+            {"id": 32, "name": "冰箱上"},
+            {"id": 830338},
+            make_refrigerator_fall_analysis(
+                "standing",
+                [439.2, 73.8, 538.1, 338.1],
+                0.08,
+                0.0266,
+            ),
+            fast_rules,
+        )
+        for index in range(30):
+            current_time[0] = dropout_start + timedelta(seconds=0.2 + index * 0.07)
+            dropout_engine.evaluate_snapshot(
+                {"id": 32, "name": "冰箱上"},
+                {"id": 830339 + index},
+                make_refrigerator_fall_analysis(
+                    "sitting",
+                    [369.5, 189.9, 443.9, 271.9],
+                    0.24,
+                    0.0027,
+                ),
+                fast_rules,
+            )
+        current_time[0] = dropout_start + timedelta(seconds=4.6)
+        refrigerator_first = dropout_engine.evaluate_snapshot(
+            {"id": 32, "name": "冰箱上"},
+            {"id": 830341},
+            make_refrigerator_fall_analysis(
+                "lying",
+                [386.7, 194.2, 479.8, 275.8],
+                0.88,
+                0.0028,
+            ),
+            fast_rules,
+        )
+        current_time[0] = dropout_start + timedelta(seconds=5.65)
+        refrigerator_dropout = dropout_engine.evaluate_snapshot(
+            {"id": 32, "name": "冰箱上"},
+            {"id": 830342},
+            make_person_dropout_analysis(),
+            fast_rules,
+        )
+        current_time[0] = dropout_start + timedelta(seconds=6.3)
+        refrigerator_review = dropout_engine.evaluate_snapshot(
+            {"id": 32, "name": "冰箱上"},
+            {"id": 830343},
+            make_refrigerator_fall_analysis(
+                "lying",
+                [383.8, 206.8, 478.4, 268.6],
+                0.96,
+                0.0032,
+            ),
+            fast_rules,
+        )
+        refrigerator_followups = []
+        for snapshot_id, seconds, posture, bbox, score in (
+            (830344, 7.4, "sitting", [383.7, 202.5, 483.6, 287.0], 0.24),
+            (830345, 8.4, "sitting", [378.8, 202.5, 475.9, 282.0], 0.24),
+            (830346, 9.5, "squatting", [401.4, 191.7, 500.3, 296.3], 0.42),
+            (830348, 11.5, "lying", [415.8, 196.7, 505.4, 283.7], 0.88),
+        ):
+            current_time[0] = dropout_start + timedelta(seconds=seconds)
+            refrigerator_followups.append(dropout_engine.evaluate_snapshot(
+                {"id": 32, "name": "冰箱上"},
+                {"id": snapshot_id},
+                make_refrigerator_fall_analysis(posture, bbox, score, 0.003),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if refrigerator_first.candidates or refrigerator_first.state.get("fall_stage") != "awaiting_transition":
+        raise SystemExit(f"first refrigerator lying frame must remain pending: {refrigerator_first.state}")
+    if refrigerator_dropout.candidates or refrigerator_dropout.state.get("fall_stage") != "awaiting_transition":
+        raise SystemExit(f"one detector dropout must preserve the pending refrigerator fall: {refrigerator_dropout.state}")
+    if refrigerator_dropout.state.get("fall_pending_dropout_count") != 1:
+        raise SystemExit(f"pending dropout evidence was not recorded: {refrigerator_dropout.state}")
+    if len(refrigerator_review.candidates) != 1:
+        raise SystemExit(f"same-track strong reacquisition must create one cloud-review event: {refrigerator_review.state}")
+    if refrigerator_review.state.get("fall_confirmation_path") != "edge_cloud_review":
+        raise SystemExit(f"refrigerator dropout review path is not auditable: {refrigerator_review.state}")
+    if any(result.candidates for result in refrigerator_followups):
+        raise SystemExit("refrigerator posture jitter must not duplicate the physical fall event")
+
+    no_pending_dropout_engine = RuleEngine()
+    no_pending_dropout = no_pending_dropout_engine.evaluate_snapshot(
+        camera,
+        {"id": 831000},
+        make_person_dropout_analysis(),
+        fast_rules,
+    )
+    if no_pending_dropout.candidates or no_pending_dropout.state.get("fall_stage") != "clear":
+        raise SystemExit("person dropout without a prior strong fall must remain clear")
+
+    different_track_engine = RuleEngine()
+    expired_dropout_engine = RuleEngine()
+    try:
+        current_time = [dropout_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        for candidate_engine in (different_track_engine, expired_dropout_engine):
+            candidate_engine.evaluate_snapshot(
+                camera,
+                {"id": 831010},
+                make_refrigerator_fall_analysis("standing", [439.2, 73.8, 538.1, 338.1], 0.08, 0.0266),
+                fast_rules,
+            )
+            current_time[0] = dropout_start + timedelta(seconds=1.0)
+            candidate_engine.evaluate_snapshot(
+                camera,
+                {"id": 831011},
+                make_refrigerator_fall_analysis("lying", [386.7, 194.2, 479.8, 275.8], 0.88, 0.0028),
+                fast_rules,
+            )
+            current_time[0] = dropout_start + timedelta(seconds=2.0)
+            candidate_engine.evaluate_snapshot(camera, {"id": 831012}, make_person_dropout_analysis(), fast_rules)
+            current_time[0] = dropout_start
+        current_time[0] = dropout_start + timedelta(seconds=2.6)
+        different_track = different_track_engine.evaluate_snapshot(
+            camera,
+            {"id": 831013},
+            make_refrigerator_fall_analysis(
+                "lying",
+                [383.8, 206.8, 478.4, 268.6],
+                0.96,
+                0.0032,
+                track_id="c32-p2",
+            ),
+            fast_rules,
+        )
+        current_time[0] = dropout_start + timedelta(seconds=5.2)
+        expired_dropout = expired_dropout_engine.evaluate_snapshot(
+            camera,
+            {"id": 831014},
+            make_refrigerator_fall_analysis("lying", [383.8, 206.8, 478.4, 268.6], 0.96, 0.0032),
+            fast_rules,
+        )
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if different_track.candidates:
+        raise SystemExit("a different track after dropout must not inherit pending fall evidence")
+    if expired_dropout.candidates:
+        raise SystemExit("a reacquisition outside the bounded dropout gap must not inherit pending fall evidence")
+
+    dropout_sofa_engine = RuleEngine()
+    try:
+        current_time = [dropout_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        dropout_sofa_engine.evaluate_snapshot(camera, {"id": 831020}, make_upright_analysis(), fast_rules)
+        current_time[0] = dropout_start + timedelta(seconds=1.0)
+        sofa_first = make_refrigerator_fall_analysis("lying", [80, 180, 230, 238], 0.96, 0.03)
+        set_normal_lying_zone(sofa_first)
+        dropout_sofa_engine.evaluate_snapshot(camera, {"id": 831021}, sofa_first, fast_rules)
+        current_time[0] = dropout_start + timedelta(seconds=2.0)
+        dropout_sofa_engine.evaluate_snapshot(camera, {"id": 831022}, make_person_dropout_analysis(), fast_rules)
+        current_time[0] = dropout_start + timedelta(seconds=2.6)
+        sofa_second = make_refrigerator_fall_analysis("lying", [82, 182, 232, 240], 0.96, 0.03)
+        set_normal_lying_zone(sofa_second)
+        sofa_after_dropout = dropout_sofa_engine.evaluate_snapshot(camera, {"id": 831023}, sofa_second, fast_rules)
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if sofa_after_dropout.candidates or not sofa_after_dropout.state.get("fall_scene_suppressed"):
+        raise SystemExit("normal bed or sofa evidence must stay suppressed across a detector dropout")
+
     unmapped_sofa_engine = RuleEngine()
     try:
         current_time = [dynamic_start]
@@ -855,6 +1023,7 @@ def main() -> None:
                 "rapid_descent_corroborated": corroborated_payload["recent_rapid_descent"],
                 "history_baseline_stage": history_first.state["fall_stage"],
                 "production_rotation_review": len(production_rotation_review.candidates),
+                "refrigerator_dropout_review": len(refrigerator_review.candidates),
             },
             ensure_ascii=False,
             indent=2,
@@ -1225,6 +1394,55 @@ def make_rotation_transition_analysis(
         "people": [],
     }
     return analysis
+
+
+def make_refrigerator_fall_analysis(
+    posture: str,
+    bbox: list[float],
+    fall_score: float,
+    motion_score: float,
+    *,
+    track_id: str = "c32-p1",
+) -> dict:
+    analysis = make_rotation_transition_analysis(posture, bbox, motion_score, fall_score)
+    for target in [*analysis["people"], *analysis["poses"]]:
+        target["track_id"] = track_id
+    analysis["poses"][0]["posture_confidence"] = 0.88
+    return analysis
+
+
+def make_person_dropout_analysis() -> dict:
+    analysis = make_upright_analysis()
+    analysis.update({
+        "person_count": 0,
+        "people": [],
+        "pose_count": 0,
+        "poses": [],
+        "fall_candidate": False,
+        "fall_score": None,
+        "pose_fall_candidate": False,
+        "pose_fall_score": 0.0,
+        "motion_detected": False,
+        "motion_score": 0.001,
+        "tags": ["low_motion", "no_person_detected"],
+    })
+    analysis["algorithm_results"]["fall"]["data"] = {
+        "fall_candidate": False,
+        "candidate_count": 0,
+        "people": [],
+    }
+    return analysis
+
+
+def set_normal_lying_zone(analysis: dict) -> None:
+    for target in [*analysis.get("people", []), *analysis.get("poses", [])]:
+        target.update({
+            "normal_lying_zone": True,
+            "scene_zone_id": "couch-1",
+            "scene_zone_label": "couch",
+            "scene_zone_label_zh": "沙发",
+            "scene_zone_overlap": 0.82,
+        })
 
 
 def make_chair_seated_analysis() -> dict:
