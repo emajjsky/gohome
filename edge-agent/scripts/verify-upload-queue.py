@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 import tempfile
@@ -12,6 +12,44 @@ if str(ROOT) not in sys.path:
 
 from app.storage import Storage
 from app.event_agent import EventAgent
+import app.rule_engine as rule_engine_module
+from app.rule_engine import RuleEngine
+
+
+def production_rotation_analysis(posture: str, bbox: list[float], motion_score: float, fall_score: float) -> dict:
+    target = {
+        "bbox": list(bbox),
+        "confidence": 0.82,
+        "track_id": "c32-p1",
+        "posture": posture,
+        "posture_confidence": 0.82,
+        "fall_score": fall_score,
+        "fall_evidence_eligible": True,
+        "normal_lying_zone": False,
+        "posture_factors": {"body_aspect": (bbox[2] - bbox[0]) / (bbox[3] - bbox[1])},
+    }
+    return {
+        "pipeline_version": "production-regression",
+        "image_width": 640,
+        "image_height": 360,
+        "brightness": 110.0,
+        "contrast": 24.0,
+        "black_screen": False,
+        "motion_detected": motion_score >= 0.015,
+        "motion_score": motion_score,
+        "person_count": 1,
+        "people": [{**target, "source": "hailo", "fall_candidate": posture == "lying"}],
+        "pose_count": 1,
+        "poses": [{**target, "source": "hailo_pose"}],
+        "pet_count": 0,
+        "pets": [],
+        "fall_candidate": posture == "lying",
+        "fall_score": fall_score,
+        "pose_fall_candidate": posture == "lying",
+        "pose_fall_score": fall_score,
+        "algorithm_results": {"fall": {"status": "candidate" if posture == "lying" else "clear"}},
+        "tags": ["person_detected", "pose_detected"],
+    }
 
 
 def main() -> None:
@@ -258,6 +296,92 @@ def main() -> None:
         if [item["id"] for item in repeated_deferred_jobs] != [item["id"] for item in deferred_jobs]:
             raise SystemExit("settled evidence upload jobs are not idempotent")
 
+        production_engine = RuleEngine()
+        production_rules = {
+            "black_screen_enabled": False,
+            "person_detection_enabled": True,
+            "fall_detection_enabled": True,
+            "fall_score_threshold": 0.50,
+            "fall_confirm_frames": 2,
+            "fall_confirm_seconds": 4,
+            "fall_recover_frames": 2,
+            "activity_detection_enabled": True,
+            "no_motion_enabled": False,
+            "no_person_seconds": 300,
+        }
+        production_start = datetime(2026, 8, 12, 14, 10, 23, tzinfo=timezone.utc)
+        original_clock = rule_engine_module.utc_now
+        try:
+            current_time = [production_start]
+            rule_engine_module.utc_now = lambda: current_time[0]
+            production_engine.evaluate_snapshot(
+                camera,
+                {"id": before_snapshot["id"]},
+                production_rotation_analysis("standing", [468.4, 72.9, 590.2, 360.0], 0.0099, 0.08),
+                production_rules,
+            )
+            current_time[0] = production_start + timedelta(seconds=2.6)
+            production_engine.evaluate_snapshot(
+                camera,
+                {"id": transition_snapshot["id"]},
+                production_rotation_analysis("sitting", [383.8, 166.4, 453.2, 278.7], 0.0245, 0.18),
+                production_rules,
+            )
+            current_time[0] = production_start + timedelta(seconds=3.2)
+            production_review = production_engine.evaluate_snapshot(
+                camera,
+                {"id": evidence_snapshot["id"]},
+                production_rotation_analysis("lying", [356.9, 185.7, 438.9, 260.2], 0.0039, 0.82),
+                production_rules,
+            )
+        finally:
+            rule_engine_module.utc_now = original_clock
+        if len(production_review.candidates) != 1:
+            raise SystemExit(f"production rotation did not create one cloud-review candidate: {production_review.state}")
+        production_candidate = production_review.candidates[0]
+        production_event = EventAgent(storage, throttle_seconds=30).emit(
+            event_type=production_candidate.event_type,
+            summary=production_candidate.summary,
+            level=production_candidate.level,
+            camera=camera,
+            snapshot_id=int(snapshot["id"]),
+            payload={
+                **(production_candidate.payload or {}),
+                "evidence": {
+                    **((production_candidate.payload or {}).get("evidence") or {}),
+                    "temporal_evidence_bundle": {
+                        "schema_version": "temporal-evidence-bundle-v1",
+                        "selection_policy": "role-aware-four-frame-v3",
+                        "track_id": "c32-p1",
+                        "snapshots": [
+                            {"snapshot_id": before_snapshot["id"], "snapshot_path": before_snapshot["image_path"], "observed_at": before_snapshot["captured_at"], "postures": ["standing"], "role": "before"},
+                            {"snapshot_id": transition_snapshot["id"], "snapshot_path": transition_snapshot["image_path"], "observed_at": transition_snapshot["captured_at"], "postures": ["sitting"], "role": "transition"},
+                            {"snapshot_id": evidence_snapshot["id"], "snapshot_path": evidence_snapshot["image_path"], "observed_at": evidence_snapshot["captured_at"], "postures": ["lying"], "role": "evidence"},
+                            {"snapshot_id": snapshot["id"], "snapshot_path": snapshot["image_path"], "observed_at": snapshot["captured_at"], "postures": ["lying"], "role": "current"},
+                        ],
+                    },
+                },
+            },
+            force=True,
+        )
+        if production_event is None:
+            raise SystemExit("production cloud-review candidate did not persist one event")
+        production_finalized = storage.finalize_event_evidence(
+            int(production_event["id"]),
+            settle_seconds=0.3,
+            max_wait_seconds=0.3,
+        )
+        production_jobs = storage.enqueue_event_upload_jobs(production_finalized)
+        production_media = [item for item in production_jobs if item.get("job_type") == "media_upload"]
+        production_roles = [item.get("payload", {}).get("evidence_frame_role") for item in production_media]
+        production_snapshot_ids = [int(item.get("snapshot_id") or 0) for item in production_media]
+        if sorted(production_roles) != ["before", "current", "evidence", "transition"]:
+            raise SystemExit(f"production cloud-review event lost evidence roles: {production_roles}")
+        if len(production_snapshot_ids) != 4 or len(set(production_snapshot_ids)) != 4:
+            raise SystemExit(f"production cloud-review event must upload four distinct frames: {production_snapshot_ids}")
+        if len(storage.upload_jobs_for_event(event_id=int(production_event["id"]), job_type="event_upload")) != 1:
+            raise SystemExit("production cloud-review event must queue exactly one event upload")
+
         media_only_event = storage.create_event(
             event_type="legacy_local_event",
             summary="Legacy event with media but no event upload",
@@ -290,6 +414,8 @@ def main() -> None:
                     "snapshot_id": snapshot["id"],
                     "settled_event_id": deferred_event["id"],
                     "settled_snapshot_id": settled_snapshot["id"],
+                    "production_event_id": production_event["id"],
+                    "production_evidence_roles": production_roles,
                     "media_only_event_status": reconciled_media_only_event["cloud_sync_status"],
                 },
                 ensure_ascii=False,

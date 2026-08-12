@@ -591,13 +591,81 @@ def main() -> None:
             ))
     finally:
         rule_engine_module.utc_now = original_clock
-    if rotation_results[0].candidates or rotation_results[1].candidates:
-        raise SystemExit("body-rotation transition must retain bounded multi-frame confirmation")
-    if len(rotation_results[-1].candidates) != 1:
-        raise SystemExit(f"standing-to-horizontal rotation must create one fall event: {rotation_results[-1].state}")
-    transition = rotation_results[-1].state.get("fall_transition") or {}
+    if len(rotation_results[0].candidates) != 1:
+        raise SystemExit(f"strict standing-to-horizontal rotation must create one cloud-review event: {rotation_results[0].state}")
+    if any(result.candidates for result in rotation_results[1:]):
+        raise SystemExit("one body-rotation transition must not create duplicate cloud-review events")
+    if rotation_results[0].state.get("fall_confirmation_path") != "edge_cloud_review":
+        raise SystemExit(f"body-rotation cloud-review path is not auditable: {rotation_results[0].state}")
+    transition = rotation_results[0].state.get("fall_transition") or {}
     if not transition.get("body_rotation_confirmed"):
         raise SystemExit(f"rotation-based fall transition must remain auditable: {transition}")
+
+    production_rotation_engine = RuleEngine()
+    production_rotation_start = datetime(2026, 8, 12, 14, 10, 23, tzinfo=timezone.utc)
+    try:
+        current_time = [production_rotation_start]
+        rule_engine_module.utc_now = lambda: current_time[0]
+        production_rotation_engine.evaluate_snapshot(
+            camera,
+            {"id": 830316},
+            make_rotation_transition_analysis(
+                "standing",
+                [468.4, 72.9, 590.2, 360.0],
+                0.0099,
+                0.08,
+            ),
+            fast_rules,
+        )
+        current_time[0] = production_rotation_start + timedelta(seconds=2.6)
+        production_rotation_engine.evaluate_snapshot(
+            camera,
+            {"id": 830318},
+            make_rotation_transition_analysis(
+                "sitting",
+                [383.8, 166.4, 453.2, 278.7],
+                0.0245,
+                0.18,
+            ),
+            fast_rules,
+        )
+        current_time[0] = production_rotation_start + timedelta(seconds=3.2)
+        production_rotation_review = production_rotation_engine.evaluate_snapshot(
+            camera,
+            {"id": 830319},
+            make_rotation_transition_analysis(
+                "lying",
+                [356.9, 185.7, 438.9, 260.2],
+                0.0039,
+                0.82,
+            ),
+            fast_rules,
+        )
+        production_followups = []
+        for snapshot_id, seconds, posture, bbox, score in (
+            (830320, 4.3, "sitting", [368.7, 194.2, 453.2, 281.2], 0.24),
+            (830321, 5.3, "sitting", [385.5, 196.7, 454.9, 283.7], 0.24),
+            (830322, 6.3, "squatting", [351.9, 185.3, 473.7, 295.7], 0.42),
+            (830323, 7.3, "standing", [347.6, 183.2, 399.3, 285.4], 0.14),
+        ):
+            current_time[0] = production_rotation_start + timedelta(seconds=seconds)
+            production_followups.append(production_rotation_engine.evaluate_snapshot(
+                camera,
+                {"id": snapshot_id},
+                make_rotation_transition_analysis(posture, bbox, 0.002, score),
+                fast_rules,
+            ))
+    finally:
+        rule_engine_module.utc_now = original_clock
+    if len(production_rotation_review.candidates) != 1:
+        raise SystemExit(
+            "production standing-to-horizontal body rotation must enter cloud review before posture jitter clears it: "
+            f"{production_rotation_review.state}"
+        )
+    if production_rotation_review.state.get("fall_confirmation_path") != "edge_cloud_review":
+        raise SystemExit(f"production body rotation review path is not auditable: {production_rotation_review.state}")
+    if any(result.candidates for result in production_followups):
+        raise SystemExit("one physical transition must create exactly one cloud-review event")
 
     unmapped_sofa_engine = RuleEngine()
     try:
@@ -786,6 +854,7 @@ def main() -> None:
                 "fall_pose_interval": fall_pose_runtime["worker_pose_interval_frames"],
                 "rapid_descent_corroborated": corroborated_payload["recent_rapid_descent"],
                 "history_baseline_stage": history_first.state["fall_stage"],
+                "production_rotation_review": len(production_rotation_review.candidates),
             },
             ensure_ascii=False,
             indent=2,

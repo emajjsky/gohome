@@ -584,6 +584,15 @@ class RuleEngine:
         )
         scene_suppressed = bool(normal_lying_zone and not dynamic_scene_override)
         strong_candidate = strong_visual_candidate and transition_confirmed and not scene_suppressed
+        body_rotation_review_ready = bool(
+            not graph_candidate
+            and pose_score_ok
+            and previous.get("stage") not in {"suspect", "confirming"}
+            and strong_visual_candidate
+            and transition.get("body_rotation_confirmed")
+            and not identity_gate_failed
+            and not scene_suppressed
+        )
         inference_runtime = (
             analysis.get("inference_runtime")
             if isinstance(analysis.get("inference_runtime"), dict)
@@ -619,7 +628,13 @@ class RuleEngine:
                     "transition_confirmed": transition_confirmed,
                     "body_rotation_confirmed": bool(transition.get("body_rotation_confirmed")),
                     "fast_transition_confirmed": fast_transition_confirmed,
-                    "confirmation_path": "dynamic_low_position" if dynamic_transition_signal else "standard",
+                    "confirmation_path": (
+                        "edge_cloud_review"
+                        if body_rotation_review_ready
+                        else "dynamic_low_position"
+                        if dynamic_transition_signal
+                        else "standard"
+                    ),
                     "recovery": None,
                 }
             else:
@@ -662,11 +677,11 @@ class RuleEngine:
                 and int(track.get("confirm_count") or 0) >= confirm_frames
                 and duration >= confirm_seconds
             )
-            if fast_path_confirmed or dynamic_path_confirmed or standard_path_confirmed:
+            if body_rotation_review_ready or fast_path_confirmed or dynamic_path_confirmed or standard_path_confirmed:
                 track["stage"] = "confirmed"
                 track["confirmation_path"] = (
                     "edge_cloud_review"
-                    if graph_review_ready
+                    if graph_review_ready or body_rotation_review_ready
                     else "fast_factor_graph"
                     if fast_path_confirmed
                     else "dynamic_low_position"
@@ -805,6 +820,7 @@ class RuleEngine:
             "confirmation_path": str(track.get("confirmation_path") or "standard"),
             "fast_transition_confirmed": bool(track.get("fast_transition_confirmed")),
             "edge_cloud_review_ready": graph_review_ready,
+            "body_rotation_review_ready": body_rotation_review_ready,
             "same_target": bool(same_target),
             "target": track.get("target"),
             "observed_target": target,
@@ -841,6 +857,7 @@ class RuleEngine:
                 "fall_transition_confirmed": transition_confirmed,
                 "fall_fast_transition_confirmed": bool(track.get("fast_transition_confirmed")),
                 "fall_edge_cloud_review_ready": graph_review_ready,
+                "fall_body_rotation_review_ready": body_rotation_review_ready,
                 "fall_transition": {
                     **transition,
                     "confirmed": transition_confirmed,
