@@ -2012,12 +2012,24 @@ function createLocalAppServer(options = {}) {
             "publisher_error", "unavailable",
         ]);
         const privacyStatus = String(live.privacy_status || "starting").slice(0, 48);
+        const publishReady = normalizeBool(live.publish_ready);
+        const mediaReady = "media_ready" in live ? normalizeBool(live.media_ready) : publishReady;
+        const privacyReady = "privacy_ready" in live
+            ? normalizeBool(live.privacy_ready)
+            : privacyStatus === "ready";
+        const deliveredMode = String(
+            live.delivered_mode
+            || (privacyReady ? normalizeVideoPrivacyMode(live.privacy_mode) : "unavailable")
+        ).slice(0, 48);
         return {
             source_status: String(live.source_status || "warming").slice(0, 48),
             source_ready: normalizeBool(live.source_ready),
             privacy_status: allowedPrivacyStatuses.has(privacyStatus) ? privacyStatus : "unavailable",
-            publish_ready: normalizeBool(live.publish_ready),
+            publish_ready: publishReady,
+            media_ready: mediaReady,
+            privacy_ready: privacyReady,
             privacy_mode: normalizeVideoPrivacyMode(live.privacy_mode),
+            delivered_mode: deliveredMode,
             output_fps: Math.max(0, Math.min(120, Number(live.output_fps) || 0)),
             reason: String(live.reason || "").slice(0, 120),
             reported_at: reportedAt,
@@ -2033,7 +2045,7 @@ function createLocalAppServer(options = {}) {
         }
         if (!live.source_ready) return "摄像头当前没有有效画面，正在自动重连。";
         if (live.privacy_mode !== expectedPrivacyMode) return "隐私模式正在同步，请稍候。";
-        if (live.publish_ready) return "";
+        if (live.media_ready || live.publish_ready) return "";
         switch (live.privacy_status) {
         case "scene_review_required":
             return "摄像头机位发生变化，请在房间无人时重新确认空房画面。";
@@ -9436,6 +9448,12 @@ function createLocalAppServer(options = {}) {
                 write(res, 200, {
                     ...session,
                     minimum_privacy_mode: currentPrivacyMode,
+                    privacy_status: String(camera.live?.privacy_status || "ready"),
+                    privacy_ready: camera.live?.privacy_ready !== false,
+                    delivered_mode: String(
+                        camera.live?.delivered_mode
+                        || currentPrivacyMode
+                    ),
                 }, {
                     "Cache-Control": "private, no-store",
                 });

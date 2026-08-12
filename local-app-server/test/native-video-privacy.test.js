@@ -113,7 +113,7 @@ test('video privacy is one family state shared by app playback and the edge devi
     assert.equal(devicePrivacy.response.status, 200);
     assert.equal(devicePrivacy.body.minimum_mode, 'skeleton');
 
-    const blockedSync = await request(baseURL, '/api/v1/device/sync', {
+    const preparingSync = await request(baseURL, '/api/v1/device/sync', {
       method: 'POST',
       headers: { Authorization: `Bearer ${deviceToken}` },
       body: JSON.stringify({
@@ -127,31 +127,37 @@ test('video privacy is one family state shared by app playback and the edge devi
           live: {
             source_status: 'streaming',
             source_ready: true,
-            privacy_status: 'scene_review_required',
-            publish_ready: false,
+            privacy_status: 'calibrating',
+            publish_ready: true,
+            media_ready: true,
+            privacy_ready: false,
             privacy_mode: 'skeleton',
-            output_fps: 0,
-            reason: 'scene_revalidation_required',
+            delivered_mode: 'privacy_hold',
+            output_fps: 14.5,
+            reason: 'calibration_required',
           },
         }],
       }),
     });
-    assert.equal(blockedSync.response.status, 200);
+    assert.equal(preparingSync.response.status, 200);
 
-    const blockedCameraList = await request(baseURL, '/api/app/cameras', { headers: owner.headers });
-    assert.equal(blockedCameraList.response.status, 200);
-    assert.deepEqual(blockedCameraList.body[0].live, {
+    const preparingCameraList = await request(baseURL, '/api/app/cameras', { headers: owner.headers });
+    assert.equal(preparingCameraList.response.status, 200);
+    assert.deepEqual(preparingCameraList.body[0].live, {
       source_status: 'streaming',
       source_ready: true,
-      privacy_status: 'scene_review_required',
-      publish_ready: false,
+      privacy_status: 'calibrating',
+      publish_ready: true,
+      media_ready: true,
+      privacy_ready: false,
       privacy_mode: 'skeleton',
-      output_fps: 0,
-      reason: 'scene_revalidation_required',
-      reported_at: blockedSync.body.received_at,
+      delivered_mode: 'privacy_hold',
+      output_fps: 14.5,
+      reason: 'calibration_required',
+      reported_at: preparingSync.body.received_at,
     });
 
-    const blockedPlayback = await request(baseURL, '/api/v1/video/sessions', {
+    const preparingPlayback = await request(baseURL, '/api/v1/video/sessions', {
       method: 'POST', headers: owner.headers,
       body: JSON.stringify({
         resource_type: 'stream',
@@ -160,8 +166,10 @@ test('video privacy is one family state shared by app playback and the edge devi
         privacy_mode: 'skeleton',
       }),
     });
-    assert.equal(blockedPlayback.response.status, 409);
-    assert.equal(blockedPlayback.body.detail, '摄像头机位发生变化，请在房间无人时重新确认空房画面。');
+    assert.equal(preparingPlayback.response.status, 200);
+    assert.equal(preparingPlayback.body.privacy_status, 'calibrating');
+    assert.equal(preparingPlayback.body.privacy_ready, false);
+    assert.equal(preparingPlayback.body.delivered_mode, 'privacy_hold');
 
     const readySync = await request(baseURL, '/api/v1/device/sync', {
       method: 'POST',

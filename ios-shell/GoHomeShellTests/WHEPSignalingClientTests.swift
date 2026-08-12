@@ -19,7 +19,10 @@ final class WHEPSignalingClientTests: XCTestCase {
             "display_transport":"whep-h264-v1",
             "composition_owner":"edge",
             "privacy_mode":"skeleton",
-            "minimum_privacy_mode":"skeleton"
+            "minimum_privacy_mode":"skeleton",
+            "privacy_status":"calibrating",
+            "privacy_ready":false,
+            "delivered_mode":"privacy_hold"
         }
         """#.utf8)
 
@@ -34,6 +37,9 @@ final class WHEPSignalingClientTests: XCTestCase {
         XCTAssertEqual(session.minimumPrivacyMode, .skeleton)
         XCTAssertEqual(session.displayTransport, CameraDisplayTransport.whepH264)
         XCTAssertEqual(session.compositionOwner, "edge")
+        XCTAssertEqual(session.privacyStatus, "calibrating")
+        XCTAssertEqual(session.privacyReady, false)
+        XCTAssertEqual(session.deliveredMode, "privacy_hold")
     }
 
     func testPlaybackSessionDecodesProductionShapeWithoutOptionalMinimumMode() throws {

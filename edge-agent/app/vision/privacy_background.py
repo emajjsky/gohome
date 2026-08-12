@@ -68,6 +68,7 @@ class _BackgroundState:
     last_geometry_phase_displacement_ratio: float | None = None
     last_geometry_signature: Any | None = None
     calibration_active: bool = False
+    calibration_owner: str = ""
     calibration_id: str = ""
     calibration_reference: Any | None = None
     calibration_average: Any | None = None
@@ -87,7 +88,7 @@ class _BackgroundState:
 class PrivacyBackgroundReconstructor:
     """Compose pure-skeleton scenes from an explicitly calibrated empty room."""
 
-    version = "privacy-background-calibration-v5"
+    version = "privacy-background-calibration-v6"
 
     def __init__(
         self,
@@ -137,27 +138,41 @@ class PrivacyBackgroundReconstructor:
         now = self._clock()
         with self._lock:
             state = self._state(key, now)
-            if state.calibration_active:
+            if state.calibration_active and state.calibration_owner == "manual":
                 raise PrivacyCalibrationRequired(camera_id, "calibration_in_progress")
-            state.active_generation = generation
-            state.generation_validated = False
-            state.revalidation_observations = 0
-            state.scene_status = "calibrating"
-            state.scene_match_observations = 0
-            state.scene_mismatch_observations = 0
-            state.scene_unverifiable_observations = 0
-            state.calibration_active = True
-            state.calibration_id = str(calibration_id)
-            state.calibration_view_id = ""
-            state.calibration_reference = None
-            state.calibration_average = None
-            state.calibration_observations = 0
-            state.calibration_rejections = 0
-            state.last_calibration_token = ""
-            state.recent_person_mask = None
-            state.recent_person_at = 0.0
-            state.last_error = ""
-            state.last_used = now
+            self._start_calibration(
+                state,
+                generation=generation,
+                calibration_id=str(calibration_id),
+                owner="manual",
+                now=now,
+            )
+            return self._state_status(key, state)
+
+    def begin_automatic_calibration(
+        self,
+        camera_id: int,
+        *,
+        source_key: str,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        key, generation = self._state_key(camera_id, source_key, width, height)
+        now = self._clock()
+        with self._lock:
+            state = self._state(key, now)
+            self._activate_generation(state, generation)
+            if state.generation_validated:
+                return self._state_status(key, state)
+            if state.calibration_active:
+                return self._state_status(key, state)
+            self._start_calibration(
+                state,
+                generation=generation,
+                calibration_id=f"automatic:{generation}",
+                owner="automatic",
+                now=now,
+            )
             return self._state_status(key, state)
 
     def cancel_calibration(
@@ -176,6 +191,7 @@ class PrivacyBackgroundReconstructor:
             state.generation_validated = False
             state.revalidation_observations = 0
             state.calibration_active = False
+            state.calibration_owner = ""
             state.calibration_reference = None
             state.calibration_average = None
             state.calibration_observations = 0
@@ -308,6 +324,7 @@ class PrivacyBackgroundReconstructor:
                 state.last_geometry_phase_displacement_ratio = None
                 state.last_geometry_signature = None
                 state.calibration_active = False
+                state.calibration_owner = ""
                 state.calibration_reference = None
                 state.calibration_average = None
                 state.last_error = ""
@@ -573,9 +590,10 @@ class PrivacyBackgroundReconstructor:
             )
         return {
             "schema_version": self.version,
-            "strategy": "explicit_empty_room_calibration",
+            "strategy": "automatic_empty_room_calibration",
             "retained_pixel_state": True,
-            "automatic_background_learning": False,
+            "automatic_background_learning": True,
+            "automatic_calibration_requires_empty_room": True,
             "neutral_fill": False,
             "confirmation_frames": self.confirmation_frames,
             "revalidation_frames": self.revalidation_frames,
@@ -630,11 +648,34 @@ class PrivacyBackgroundReconstructor:
     def _activate_generation(self, state: _BackgroundState, generation: str) -> None:
         if state.active_generation == generation:
             return
+        automatic_calibration_active = bool(
+            state.calibration_active and state.calibration_owner == "automatic"
+        )
+        if state.calibration_active:
+            state.calibration_reference = None
+            state.calibration_average = None
+            state.calibration_observations = 0
+            state.calibration_rejections = 0
+            state.last_calibration_token = ""
+            if automatic_calibration_active:
+                state.calibration_id = f"automatic:{generation}"
+                state.last_error = "stream_generation_changed"
+            else:
+                state.calibration_active = False
+                state.calibration_owner = ""
+                state.calibration_id = ""
+                state.last_error = "stream_generation_changed"
         state.active_generation = generation
         state.generation_validated = False
         state.revalidation_observations = 0
         state.last_revalidation_token = ""
-        state.scene_status = "revalidation_required" if state.background is not None else "calibration_required"
+        state.scene_status = (
+            "calibrating"
+            if automatic_calibration_active
+            else "revalidation_required"
+            if state.background is not None
+            else "calibration_required"
+        )
         state.scene_match_observations = 0
         state.scene_mismatch_observations = 0
         state.scene_unverifiable_observations = 0
@@ -661,6 +702,36 @@ class PrivacyBackgroundReconstructor:
         state.last_geometry_phase_response = None
         state.last_geometry_phase_displacement_ratio = None
         state.last_geometry_signature = None
+
+    def _start_calibration(
+        self,
+        state: _BackgroundState,
+        *,
+        generation: str,
+        calibration_id: str,
+        owner: str,
+        now: float,
+    ) -> None:
+        state.active_generation = generation
+        state.generation_validated = False
+        state.revalidation_observations = 0
+        state.scene_status = "calibrating"
+        state.scene_match_observations = 0
+        state.scene_mismatch_observations = 0
+        state.scene_unverifiable_observations = 0
+        state.calibration_active = True
+        state.calibration_owner = str(owner)
+        state.calibration_id = str(calibration_id)
+        state.calibration_view_id = ""
+        state.calibration_reference = None
+        state.calibration_average = None
+        state.calibration_observations = 0
+        state.calibration_rejections = 0
+        state.last_calibration_token = ""
+        state.recent_person_mask = None
+        state.recent_person_at = 0.0
+        state.last_error = ""
+        state.last_used = now
 
     def _protected_mask(self, cv2: Any, state: _BackgroundState, mask: Any) -> Any:
         now = self._clock()
@@ -1332,6 +1403,7 @@ class PrivacyBackgroundReconstructor:
                 else None
             ),
             "calibration_active": bool(state.calibration_active),
+            "calibration_owner": state.calibration_owner,
             "calibration_id": state.calibration_id,
             "calibration_observations": state.calibration_observations,
             "calibration_required_frames": self.confirmation_frames,

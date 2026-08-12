@@ -200,6 +200,10 @@ class PrivacyRendererStub:
             raise PrivacyCalibrationRequired(camera_id, "stream_revalidation_required")
         return frame
 
+    def privacy_hold_frame(self, frame, *, reason):
+        assert reason == "stream_revalidation_required"
+        return np.full_like(frame, (18, 22, 28))
+
 
 class PublisherRecorder:
     def __init__(self, **configuration) -> None:
@@ -218,7 +222,16 @@ class PublisherRecorder:
         self.closed = True
 
     def status(self):
-        return {"frames_written": len(self.submissions), "closed": self.closed}
+        ready = bool(self.submissions) and not self.closed
+        return {
+            "frames_written": len(self.submissions),
+            "closed": self.closed,
+            "running": ready,
+            "publish_ready": ready,
+            "paused": False,
+            "encoder_input_fps_10s": 15.0 if ready else 0.0,
+            "last_error": "",
+        }
 
 
 class PublisherRecorderFactory:
@@ -520,13 +533,17 @@ def verify_relay_uses_single_composed_h264_publisher() -> None:
     publisher = publisher_factory.instances[0]
     assert publisher.closed
     assert renderer.render_calls == 8
-    assert len(publisher.submissions) == 6
+    assert len(publisher.submissions) == 8
+    assert np.all(publisher.submissions[0][0] == np.asarray((18, 22, 28), dtype=np.uint8))
+    assert np.all(publisher.submissions[1][0] == np.asarray((18, 22, 28), dtype=np.uint8))
+    assert publisher.submissions[0][1]["frame_id"].startswith("privacy-hold:2:")
+    assert publisher.submissions[1][1]["frame_id"].startswith("privacy-hold:2:")
     assert publisher.submissions[-1][1]["frame_id"] == "2-d8"
     assert publisher.submissions[-1][1]["privacy_mode"] == "skeleton"
     assert publisher.configuration["camera_id"] == 2
     assert publisher.configuration["publish_url"].endswith("/live/edge-test/102")
     assert publisher.configuration["fps"] == 15
-    assert "stream_revalidation_required" in publisher.pauses
+    assert publisher.pauses == []
     assert relay.status()["camera_privacy_states"]["2"]["status"] == "ready"
     assert relay.status()["last_error"] == ""
     assert LiveRelayAgent._privacy_block_status("calibration_in_progress") == "calibrating"
@@ -666,7 +683,7 @@ def main() -> int:
         "partial_frame_abort_order": True,
         "credentials_redacted": True,
         "jpeg_relay_removed": True,
-        "calibration_pauses_publication": True,
+        "calibration_keeps_privacy_safe_publication": True,
     })
     return 0
 

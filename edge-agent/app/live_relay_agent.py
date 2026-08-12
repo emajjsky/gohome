@@ -117,16 +117,22 @@ class LiveRelayAgent:
             or camera_error
             or ""
         )[:120]
-        publish_ready = bool(
-            privacy_status == "ready"
-            and publisher_status.get("publish_ready")
+        media_ready = bool(
+            publisher_status.get("publish_ready")
             and publisher_status.get("running")
             and not publisher_status.get("paused")
         )
+        privacy_ready = privacy_status == "ready"
         return {
             "privacy_status": privacy_status,
-            "publish_ready": publish_ready,
+            "publish_ready": media_ready,
+            "media_ready": media_ready,
+            "privacy_ready": privacy_ready,
             "privacy_mode": normalize_privacy_mode(privacy_mode),
+            "delivered_mode": str(
+                privacy_state.get("delivered_mode")
+                or (privacy_mode if privacy_ready else "unavailable")
+            ),
             "output_fps": round(float(publisher_status.get("encoder_input_fps_10s") or 0.0), 2),
             "reason": reason,
         }
@@ -163,6 +169,7 @@ class LiveRelayAgent:
             int(camera_id),
             "revalidating",
             "stream_revalidation_required",
+            delivered_mode="unavailable",
         )
         self._notify_delivery_status_if_changed(int(camera_id))
 
@@ -460,7 +467,7 @@ class LiveRelayAgent:
                             self._camera_privacy_modes[camera_id] = privacy_mode
                         try:
                             if privacy_mode == "skeleton" and self.privacy_renderer is None:
-                                raise PrivacyCalibrationRequired(camera_id, "privacy_renderer_unavailable")
+                                raise RuntimeError("privacy_renderer_unavailable")
                             output = (
                                 self.privacy_renderer.render_image(
                                     camera_id,
@@ -475,25 +482,50 @@ class LiveRelayAgent:
                                 else source_frame
                             )
                         except PrivacyCalibrationRequired as exc:
-                            publisher.pause(exc.reason)
+                            hold_frame = self.privacy_renderer.privacy_hold_frame(
+                                source_frame,
+                                reason=exc.reason,
+                            )
+                            publisher.submit(
+                                hold_frame,
+                                frame_id=f"privacy-hold:{camera_id}:{capture.get('delivery_frame_id') or capture.get('frame_id') or ''}",
+                                captured_monotonic=(
+                                    capture.get("delivery_captured_monotonic")
+                                    if capture.get("delivery_captured_monotonic") is not None
+                                    else capture.get("captured_monotonic")
+                                ),
+                                privacy_mode=privacy_mode,
+                                source_key=source_key,
+                            )
                             self._clear_camera_error(camera_id)
                             self._set_privacy_state(
                                 camera_id,
                                 self._privacy_block_status(exc.reason),
                                 exc.reason,
+                                delivered_mode="privacy_hold",
                             )
                             self._notify_delivery_status_if_changed(camera_id)
                             continue
                         except Exception as exc:
                             publisher.pause(f"render_error: {exc}")
-                            self._set_privacy_state(camera_id, "render_error", str(exc)[:240])
+                            self._set_privacy_state(
+                                camera_id,
+                                "render_error",
+                                str(exc)[:240],
+                                delivered_mode="unavailable",
+                            )
                             self._set_camera_error(camera_id, f"privacy render failed: {exc}")
                             self._notify_delivery_status_if_changed(camera_id)
                             continue
                         if self._stop.is_set() or stop_event.is_set():
                             publisher.pause("camera_stopping")
                             break
-                        self._set_privacy_state(camera_id, "ready", "")
+                        self._set_privacy_state(
+                            camera_id,
+                            "ready",
+                            "",
+                            delivered_mode=privacy_mode,
+                        )
                         publisher.submit(
                             output,
                             frame_id=str(
@@ -521,7 +553,12 @@ class LiveRelayAgent:
                     time.sleep(2.0)
         except Exception as exc:
             self._set_camera_error(camera_id, f"publisher setup failed: {exc}")
-            self._set_privacy_state(camera_id, "publisher_error", str(exc)[:240])
+            self._set_privacy_state(
+                camera_id,
+                "publisher_error",
+                str(exc)[:240],
+                delivered_mode="unavailable",
+            )
         finally:
             if publisher is not None:
                 publisher.close()
@@ -529,11 +566,19 @@ class LiveRelayAgent:
                 if self._publishers.get(camera_id) is publisher:
                     self._publishers.pop(camera_id, None)
 
-    def _set_privacy_state(self, camera_id: int, status: str, reason: str) -> None:
+    def _set_privacy_state(
+        self,
+        camera_id: int,
+        status: str,
+        reason: str,
+        *,
+        delivered_mode: str = "unavailable",
+    ) -> None:
         with self._state_lock:
             self._camera_privacy_states[int(camera_id)] = {
                 "status": str(status),
                 "reason": str(reason),
+                "delivered_mode": str(delivered_mode),
             }
 
     def _notify_delivery_status_if_changed(self, camera_id: int) -> None:
@@ -541,7 +586,9 @@ class LiveRelayAgent:
         signature = (
             status["privacy_status"],
             status["publish_ready"],
+            status["privacy_ready"],
             status["privacy_mode"],
+            status["delivered_mode"],
             status["reason"],
         )
         with self._state_lock:

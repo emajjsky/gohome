@@ -33,6 +33,37 @@ struct CameraPlaybackSession: Decodable, Sendable {
     let minimumPrivacyMode: VideoPrivacyMode?
     let displayTransport: String?
     let compositionOwner: String?
+    let privacyStatus: String?
+    let privacyReady: Bool?
+    let deliveredMode: String?
+
+    init(
+        sessionID: String,
+        expiresAt: String?,
+        whepURL: URL,
+        authorization: Authorization,
+        mediaPath: String,
+        privacyMode: VideoPrivacyMode?,
+        minimumPrivacyMode: VideoPrivacyMode?,
+        displayTransport: String?,
+        compositionOwner: String?,
+        privacyStatus: String? = nil,
+        privacyReady: Bool? = nil,
+        deliveredMode: String? = nil
+    ) {
+        self.sessionID = sessionID
+        self.expiresAt = expiresAt
+        self.whepURL = whepURL
+        self.authorization = authorization
+        self.mediaPath = mediaPath
+        self.privacyMode = privacyMode
+        self.minimumPrivacyMode = minimumPrivacyMode
+        self.displayTransport = displayTransport
+        self.compositionOwner = compositionOwner
+        self.privacyStatus = privacyStatus
+        self.privacyReady = privacyReady
+        self.deliveredMode = deliveredMode
+    }
 
     enum CodingKeys: String, CodingKey {
         case sessionID = "session_id"
@@ -44,5 +75,8 @@ struct CameraPlaybackSession: Decodable, Sendable {
         case minimumPrivacyMode = "minimum_privacy_mode"
         case displayTransport = "display_transport"
         case compositionOwner = "composition_owner"
+        case privacyStatus = "privacy_status"
+        case privacyReady = "privacy_ready"
+        case deliveredMode = "delivered_mode"
     }
 }

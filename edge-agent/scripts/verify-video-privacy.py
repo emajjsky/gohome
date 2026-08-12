@@ -427,6 +427,16 @@ def main() -> int:
         assert mean_delta(original, occupied_a) < 8.0
         assert mean_delta(blurred, occupied_a, PERSON_SLICE) > 18.0
         assert mean_delta(blurred, occupied_a, OUTSIDE_SLICE) < 8.0
+        automatic_waiting = renderer.background_reconstructor.inspect(
+            1,
+            source_key=source_a_g1,
+            width=320,
+            height=180,
+        )
+        assert automatic_waiting["calibration_active"] is True
+        assert automatic_waiting["calibration_owner"] == "automatic"
+        assert automatic_waiting["calibration_observations"] == 0
+        assert automatic_waiting["last_error"] == "person_present"
 
         blur_image_frame_id = "1-blur-image"
         blur_image_monotonic = time.monotonic()
@@ -461,14 +471,76 @@ def main() -> int:
         ))
         assert renderer.segmentation_backend.call_count == segmentation_calls_before_block
 
-        calibration = calibrate(
-            renderer,
+        calibration = {}
+        for sequence in range(renderer.background_reconstructor.confirmation_frames):
+            revalidation_clock.advance(1.0)
+            render(
+                renderer,
+                tracker,
+                clean_a,
+                camera_id=1,
+                source_key=source_a_g1,
+                frame_id=f"1-automatic-calibration-{sequence}",
+                person=False,
+                mode="original",
+            )
+            calibration = renderer.background_reconstructor.inspect(
+                1,
+                source_key=source_a_g1,
+                width=320,
+                height=180,
+            )
+        assert calibration["ready"] is True
+        assert calibration["calibration_owner"] == ""
+        assert calibration["calibration_observations"] == renderer.background_reconstructor.confirmation_frames
+
+        generation_reset_clock = ManualClock()
+        generation_reset = PrivacyFrameRenderer(
+            tracker,
+            PrivacyBackgroundReconstructor(),
+            SyntheticSegmentation({"camera-a": clean_a}),
+            revalidation_interval_seconds=1.0,
+            monotonic_clock=generation_reset_clock,
+        )
+        for sequence in range(2):
+            if sequence:
+                generation_reset_clock.advance(1.0)
+            render(
+                generation_reset,
+                tracker,
+                clean_a,
+                camera_id=9,
+                source_key="camera-a:g1",
+                frame_id=f"9-generation-one-{sequence}",
+                person=False,
+                mode="original",
+            )
+        before_generation_change = generation_reset.background_reconstructor.inspect(
+            9,
+            source_key="camera-a:g1",
+            width=320,
+            height=180,
+        )
+        assert before_generation_change["calibration_observations"] == 2
+        generation_reset_clock.advance(1.0)
+        render(
+            generation_reset,
             tracker,
             clean_a,
-            camera_id=1,
-            source_key=source_a_g1,
+            camera_id=9,
+            source_key="camera-a:g2",
+            frame_id="9-generation-two-0",
+            person=False,
+            mode="original",
         )
-        assert calibration["calibration_observations"] == renderer.background_reconstructor.confirmation_frames
+        after_generation_change = generation_reset.background_reconstructor.inspect(
+            9,
+            source_key="camera-a:g2",
+            width=320,
+            height=180,
+        )
+        assert after_generation_change["calibration_owner"] == "automatic"
+        assert after_generation_change["calibration_observations"] == 1
 
         started = time.perf_counter()
         skeleton = render(
@@ -1293,8 +1365,9 @@ def main() -> int:
         assert rejected["last_error"] == "person_present"
 
         status = renderer.background_reconstructor.status()
-        assert status["strategy"] == "explicit_empty_room_calibration"
-        assert status["automatic_background_learning"] is False
+        assert status["strategy"] == "automatic_empty_room_calibration"
+        assert status["automatic_background_learning"] is True
+        assert status["automatic_calibration_requires_empty_room"] is True
         assert status["neutral_fill"] is False
         assert status["state_count"] <= status["max_states"]
         stage_metrics = renderer.status()["cameras"]["1"]["stage_latency_ms"]
@@ -1306,8 +1379,10 @@ def main() -> int:
         "ok": True,
         "skeleton_base": "calibrated_empty_room",
         "person_blur_is_separate": True,
-        "explicit_calibration": True,
-        "missing_baseline_skips_segmentation": True,
+        "manual_calibration_retained": True,
+        "automatic_empty_room_calibration": True,
+        "person_present_automatic_calibration_blocked": True,
+        "source_generation_resets_automatic_candidate": True,
         "persistent_calibration": True,
         "persisted_baseline_discovery": True,
         "mode_independent_revalidation": True,
@@ -1334,7 +1409,7 @@ def main() -> int:
         "adjacent_pose_rejected": True,
         "camera_isolation": True,
         "neutral_fill": False,
-        "automatic_background_learning": False,
+        "automatic_background_learning": True,
         "stale_pose_suppressed": True,
         "stage_latency_metrics": True,
         "render_ms": round(render_ms, 2),

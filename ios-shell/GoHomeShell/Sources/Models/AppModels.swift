@@ -1490,7 +1490,10 @@ struct CameraLiveStatus: Codable, Equatable, Sendable {
     let sourceReady: Bool
     let privacyStatus: String
     let publishReady: Bool
+    let mediaReady: Bool?
+    let privacyReady: Bool?
     let privacyMode: VideoPrivacyMode
+    let deliveredMode: String?
     let outputFPS: Double
     let reason: String
     let reportedAt: String?
@@ -1500,7 +1503,10 @@ struct CameraLiveStatus: Codable, Equatable, Sendable {
         case sourceReady = "source_ready"
         case privacyStatus = "privacy_status"
         case publishReady = "publish_ready"
+        case mediaReady = "media_ready"
+        case privacyReady = "privacy_ready"
         case privacyMode = "privacy_mode"
+        case deliveredMode = "delivered_mode"
         case outputFPS = "output_fps"
         case reason
         case reportedAt = "reported_at"
@@ -1527,7 +1533,7 @@ extension CameraConfig {
         return enabled
             && readyStatuses.contains(status.lowercased())
             && readySyncStatuses.contains((syncStatus ?? "").lowercased())
-            && live?.publishReady != false
+            && (live?.mediaReady ?? live?.publishReady) != false
     }
 }
 

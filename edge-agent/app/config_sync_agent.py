@@ -440,7 +440,10 @@ class ConfigSyncAgent:
             "source_ready": bool(source_ready),
             "privacy_status": str(delivery.get("privacy_status") or "starting"),
             "publish_ready": bool(delivery.get("publish_ready", False)),
+            "media_ready": bool(delivery.get("media_ready", delivery.get("publish_ready", False))),
+            "privacy_ready": bool(delivery.get("privacy_ready", False)),
             "privacy_mode": normalize_privacy_mode(delivery.get("privacy_mode")),
+            "delivered_mode": str(delivery.get("delivered_mode") or "unavailable")[:48],
             "output_fps": round(max(0.0, float(delivery.get("output_fps") or 0.0)), 2),
             "reason": str(delivery.get("reason") or "")[:120],
         }

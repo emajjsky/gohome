@@ -20,7 +20,7 @@ from .skeleton_style import (
 class PrivacyFrameRenderer:
     """Render privacy-safe relay frames without changing safety inference inputs."""
 
-    version = "privacy-frame-renderer-v23"
+    version = "privacy-frame-renderer-v24"
     maximum_pose_wait_seconds = 0.055
 
     def __init__(
@@ -141,6 +141,16 @@ class PrivacyFrameRenderer:
                 "composition_total",
                 (time.perf_counter() - started_at) * 1000.0,
             )
+
+    def privacy_hold_frame(self, frame: Any, *, reason: str = "calibration_required") -> Any:
+        """Return a camera-pixel-free frame while pure-skeleton output is preparing."""
+        del reason
+        if frame is None or not getattr(frame, "size", 0):
+            raise RuntimeError("privacy hold frame geometry is unavailable")
+        height, width = frame.shape[:2]
+        output = np.empty((int(height), int(width), 3), dtype=np.uint8)
+        output[:, :] = (18, 22, 28)
+        return output
 
     def _render_image(
         self,
@@ -507,16 +517,46 @@ class PrivacyFrameRenderer:
             width=int(width),
             height=int(height),
         )
-        if (
-            not calibration.get("calibrated")
-            or calibration.get("ready")
-            or calibration.get("calibration_active")
-        ):
+        if calibration.get("ready"):
             self._clear_revalidation_schedule(
                 int(camera_id),
                 str(source_key or ""),
                 int(width),
                 int(height),
+            )
+            return
+        if not calibration.get("calibrated"):
+            self._observe_automatic_calibration(
+                cv2,
+                int(camera_id),
+                frame,
+                source_key=str(source_key or ""),
+                frame_id=str(frame_id),
+                captured_at=str(captured_at or ""),
+                captured_monotonic=captured_monotonic,
+            )
+            return
+        if calibration.get("calibration_active"):
+            if calibration.get("calibration_owner") == "automatic":
+                self._observe_automatic_calibration(
+                    cv2,
+                    int(camera_id),
+                    frame,
+                    source_key=str(source_key or ""),
+                    frame_id=str(frame_id),
+                    captured_at=str(captured_at or ""),
+                    captured_monotonic=captured_monotonic,
+                )
+            return
+        if calibration.get("scene_status") == "scene_review_required":
+            self._observe_automatic_calibration(
+                cv2,
+                int(camera_id),
+                frame,
+                source_key=str(source_key or ""),
+                frame_id=str(frame_id),
+                captured_at=str(captured_at or ""),
+                captured_monotonic=captured_monotonic,
             )
             return
         if not self._claim_revalidation_attempt(
@@ -563,6 +603,72 @@ class PrivacyFrameRenderer:
                 or mask_has_person
             ),
             evidence_synchronized=evidence_synchronized,
+        )
+        if result.get("ready"):
+            self._clear_revalidation_schedule(
+                int(camera_id),
+                str(source_key or ""),
+                int(width),
+                int(height),
+            )
+
+    def _observe_automatic_calibration(
+        self,
+        cv2: Any,
+        camera_id: int,
+        frame: Any,
+        *,
+        source_key: str,
+        frame_id: str,
+        captured_at: str,
+        captured_monotonic: float | None,
+    ) -> None:
+        height, width = frame.shape[:2]
+        calibration = self.background_reconstructor.begin_automatic_calibration(
+            int(camera_id),
+            source_key=str(source_key or ""),
+            width=int(width),
+            height=int(height),
+        )
+        if calibration.get("ready") or calibration.get("calibration_owner") != "automatic":
+            return
+        if not self._claim_revalidation_attempt(
+            int(camera_id),
+            str(source_key or ""),
+            int(width),
+            int(height),
+            str(frame_id),
+        ):
+            return
+        metadata = self._metadata_for_current_frame(
+            int(camera_id),
+            frame_id=str(frame_id),
+            source_key=str(source_key or ""),
+            captured_at=str(captured_at or ""),
+            captured_monotonic=captured_monotonic,
+            frame=frame,
+        )
+        mask = self._segmentation_mask(
+            cv2,
+            int(camera_id),
+            frame,
+            metadata,
+            source_key=source_key,
+            force_anchor=True,
+        )
+        if mask is None:
+            return
+        result = self.background_reconstructor.observe_calibration(
+            cv2,
+            int(camera_id),
+            frame,
+            mask,
+            frame_token=str(frame_id),
+            source_key=str(source_key or ""),
+            person_evidence=(
+                self._has_person_evidence(metadata)
+                or bool(cv2.countNonZero(mask))
+            ),
         )
         if result.get("ready"):
             self._clear_revalidation_schedule(
