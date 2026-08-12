@@ -10,8 +10,11 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const {
+    DEFAULT_VERIFICATION_DEADLINE_SECONDS,
     providerFailure,
-    verificationRetryDelaySeconds,
+    verificationDeadlineAt,
+    verificationDeadlineReached,
+    verificationNextAttemptAt,
 } = require("./vision-verification-runtime");
 const { pipeline } = require("stream/promises");
 const { URL } = require("url");
@@ -992,6 +995,11 @@ function createLocalAppServer(options = {}) {
     function visionVerificationMaxAttempts() {
         const value = Number(process.env.GOHOME_VISION_VERIFICATION_MAX_ATTEMPTS || 5);
         return Number.isFinite(value) ? Math.max(1, Math.min(5, Math.round(value))) : 5;
+    }
+
+    function visionVerificationDeadlineSeconds() {
+        const value = Number(process.env.GOHOME_VISION_VERIFICATION_DEADLINE_SECONDS || DEFAULT_VERIFICATION_DEADLINE_SECONDS);
+        return Number.isFinite(value) ? Math.max(10, Math.min(300, Math.round(value))) : DEFAULT_VERIFICATION_DEADLINE_SECONDS;
     }
 
     function visionVerificationReplayWindowMs() {
@@ -3679,6 +3687,7 @@ function createLocalAppServer(options = {}) {
         const incident = ensureSafetyIncident(primary);
         if (!incident || !primary.family_id) return null;
         const result = verification.result || {};
+        const timedOut = String(verification.status || "") === "timeout_suspected";
         const messageId = `incident-verification-${incident.incident_id}-${status}`;
         const confirmed = status === "confirmed";
         return upsertAppMessage({
@@ -3688,8 +3697,10 @@ function createLocalAppServer(options = {}) {
             event_id: primary.id,
             message_type: "alert",
             title: primary.summary || "家中异常已经确认",
-            subtitle: `${primary.room || primary.camera_name || "家里"} · ${confirmed ? "云端复核确认" : "云端复核疑似"}`,
-            body: result.reason || (confirmed
+            subtitle: `${primary.room || primary.camera_name || "家里"} · ${confirmed ? "云端复核确认" : timedOut ? "复核超时，请及时查看" : "云端复核疑似"}`,
+            body: result.reason || (timedOut
+                ? "家庭盒子检测到疑似危险动作，云端复核未在 90 秒内完成，请尽快查看事件证据并联系家里。"
+                : confirmed
                 ? "云端视觉模型确认当前证据支持危险事件，请尽快查看并联系家里。"
                 : "云端视觉模型发现危险疑点，请尽快查看事件证据并联系家里。"),
             facts: [primary.event_type, status, result.confidence !== undefined ? `置信度 ${Math.round(Number(result.confidence) * 100)}%` : ""].filter(Boolean),
@@ -3698,7 +3709,7 @@ function createLocalAppServer(options = {}) {
             source: [{ type: "safety_incident", id: incident.incident_id }],
             priority: "high",
             generated_by: "vision-verification-orchestrator",
-            metadata: { verification_status: status, model: verification.model || "" },
+            metadata: { verification_status: verification.status || status, model: verification.model || "" },
         });
     }
 
@@ -3712,7 +3723,7 @@ function createLocalAppServer(options = {}) {
             .map((item) => String(item.payload?.verification?.status || ""))
             .filter(Boolean);
         if (statuses.includes("confirmed")) return "confirmed";
-        if (statuses.includes("suspected")) return "suspected";
+        if (statuses.some((status) => ["suspected", "timeout_suspected"].includes(status))) return "suspected";
         if (statuses.some((status) => ["uncertain", "failed", "unavailable"].includes(status))) return "uncertain";
         if (statuses.some((status) => ["pending", "verifying", "retrying"].includes(status))) return "verifying";
         if (statuses.length && statuses.every((status) => status === "rejected")) return "rejected";
@@ -3744,9 +3755,20 @@ function createLocalAppServer(options = {}) {
         const shouldNotify = ["confirmed", "suspected"].includes(nextStatus)
             && !primary.acknowledged
             && currentRules(primary.family_id).notification_enabled;
+        const timedOut = String(event.payload?.verification?.status || "") === "timeout_suspected";
+        const notificationAlreadySent = Boolean(primaryIncident.notification?.notified_at);
+        const notificationReason = timedOut
+            ? "verification_timeout_suspected"
+            : notificationAlreadySent
+                ? String(primaryIncident.notification?.reason || "multimodal_risk_confirmed")
+                : "multimodal_risk_confirmed";
         const notificationDecision = setIncidentNotificationState(primary, {
             decision: shouldNotify ? "notify_once" : "record_only",
-            reason: shouldNotify ? "multimodal_risk_confirmed" : `multimodal_${nextStatus}`,
+            reason: shouldNotify
+                ? notificationReason
+                : notificationAlreadySent
+                    ? String(primaryIncident.notification?.reason || notificationReason)
+                    : `multimodal_${nextStatus}`,
             message_id: String(primaryIncident.notification?.message_id || ""),
             notified_at: String(primaryIncident.notification?.notified_at || ""),
             delivery_count: Number(primaryIncident.notification?.delivery_count || 0),
@@ -3755,7 +3777,7 @@ function createLocalAppServer(options = {}) {
             return { status: nextStatus, message: null, deliveries: [] };
         }
         const message = createVerificationOutcomeMessage(primary, nextStatus, event.payload?.verification || {});
-        const deliveries = queueSafetyIncidentNotification(primary, message, "multimodal_risk_confirmed");
+        const deliveries = queueSafetyIncidentNotification(primary, message, notificationReason);
         return { status: nextStatus, message, deliveries };
     }
 
@@ -4781,11 +4803,18 @@ function createLocalAppServer(options = {}) {
             return null;
         }
         const primaryAsset = asset || assets[assets.length - 1];
+        const verificationStartedAt = String(event.payload?.verification?.started_at || nowIso());
+        const verificationDeadline = String(
+            event.payload?.verification?.deadline_at
+            || verificationDeadlineAt(verificationStartedAt, visionVerificationDeadlineSeconds())
+        );
         const runtime = visionVerificationRuntimeConfig();
         if (!visionVerificationEnabled() || !runtime.base_url || !runtime.api_key || !runtime.model) {
             event.payload.verification = {
                 status: "unavailable",
                 reason: "model_not_configured",
+                started_at: verificationStartedAt,
+                deadline_at: verificationDeadline,
                 updated_at: nowIso(),
             };
             return null;
@@ -4815,6 +4844,8 @@ function createLocalAppServer(options = {}) {
                 evidence_frame_count: assets.length,
                 attempt_count: 0,
                 max_attempts: visionVerificationMaxAttempts(),
+                verification_started_at: verificationStartedAt,
+                verification_deadline_at: verificationDeadline,
                 next_attempt_at: nowIso(),
             },
         });
@@ -4824,9 +4855,47 @@ function createLocalAppServer(options = {}) {
             job_id: job.id,
             attempt_count: 0,
             model: runtime.model,
+            started_at: verificationStartedAt,
+            deadline_at: verificationDeadline,
             updated_at: nowIso(),
         };
         return job;
+    }
+
+    function enforceVisionVerificationDeadlines(nowMs = Date.now()) {
+        const result = { timed_out: 0, messages_created: 0, deliveries_created: 0 };
+        for (const event of store.db.events) {
+            if (!VISION_VERIFICATION_EVENT_TYPES.has(event.event_type)) continue;
+            const verification = event.payload?.verification;
+            if (!verification || ["confirmed", "suspected", "rejected", "timeout_suspected"].includes(String(verification.status || ""))) continue;
+            if (!verificationDeadlineReached(verification.deadline_at, nowMs)) continue;
+            event.payload.verification = {
+                ...verification,
+                status: "timeout_suspected",
+                decision: "notify_suspected",
+                reason: "verification_deadline_exceeded",
+                timed_out_at: new Date(nowMs).toISOString(),
+                updated_at: new Date(nowMs).toISOString(),
+            };
+            event.updated_at = new Date(nowMs).toISOString();
+            const job = verificationJobForEvent(event.id);
+            if (job && ["pending", "retrying", "verifying"].includes(String(job.output_status || ""))) {
+                updateModelJob(job, {
+                    output_status: "timed_out",
+                    error_message: "vision verification deadline exceeded",
+                });
+                job.metadata = {
+                    ...(job.metadata || {}),
+                    next_attempt_at: "",
+                    timed_out_at: new Date(nowMs).toISOString(),
+                };
+            }
+            const orchestration = applyIncidentVerificationOutcome(event);
+            result.timed_out += 1;
+            if (orchestration.message) result.messages_created += 1;
+            result.deliveries_created += orchestration.deliveries.length;
+        }
+        return result;
     }
 
     async function processVisionVerificationJobs(options = {}) {
@@ -4836,6 +4905,8 @@ function createLocalAppServer(options = {}) {
         const force = normalizeBool(options.force);
         const result = { ok: true, processed: 0, succeeded: 0, retrying: 0, failed: 0, skipped: 0 };
         try {
+            const deadlineResult = enforceVisionVerificationDeadlines();
+            result.timed_out = deadlineResult.timed_out;
             for (const event of store.db.events) {
                 const verification = event.payload?.verification || {};
                 if (
@@ -4855,6 +4926,7 @@ function createLocalAppServer(options = {}) {
             const jobs = store.db.model_generation_jobs
                 .filter((job) => job.purpose === "vision_event_verification")
                 .filter((job) => ["pending", "retrying", "verifying"].includes(job.output_status))
+                .filter((job) => !verificationDeadlineReached(job.metadata?.verification_deadline_at, now))
                 .filter((job) => force || !job.metadata?.next_attempt_at || Date.parse(job.metadata.next_attempt_at) <= now)
                 .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
                 .slice(0, limit);
@@ -4885,6 +4957,8 @@ function createLocalAppServer(options = {}) {
                 await store.save();
                 try {
                     const response = await callVisionVerificationModel(event, assets);
+                    const late = verificationDeadlineReached(job.metadata?.verification_deadline_at);
+                    if (late) enforceVisionVerificationDeadlines();
                     const decision = verificationDecision(response.verification);
                     updateModelJob(job, {
                         output_status: "succeeded",
@@ -4899,6 +4973,9 @@ function createLocalAppServer(options = {}) {
                         attempt_count: attempts,
                         model: job.model,
                         result: response.verification,
+                        started_at: event.payload?.verification?.started_at || job.metadata?.verification_started_at || job.created_at,
+                        deadline_at: event.payload?.verification?.deadline_at || job.metadata?.verification_deadline_at || "",
+                        timed_out_at: event.payload?.verification?.timed_out_at || job.metadata?.timed_out_at || "",
                         verified_at: nowIso(),
                         updated_at: nowIso(),
                     };
@@ -4913,31 +4990,39 @@ function createLocalAppServer(options = {}) {
                 } catch (error) {
                     const maxAttempts = Number(job.metadata?.max_attempts || visionVerificationMaxAttempts());
                     const retryable = error.retryable !== false;
-                    const exhausted = !retryable || attempts >= maxAttempts;
-                    const delaySeconds = verificationRetryDelaySeconds(attempts);
+                    const deadlineReached = verificationDeadlineReached(job.metadata?.verification_deadline_at);
+                    const nextAttemptAt = verificationNextAttemptAt({
+                        attempt: attempts,
+                        deadlineAt: job.metadata?.verification_deadline_at,
+                    });
+                    const exhausted = !retryable || attempts >= maxAttempts || deadlineReached || !nextAttemptAt;
                     updateModelJob(job, {
-                        output_status: exhausted ? "failed" : "retrying",
+                        output_status: deadlineReached ? "timed_out" : exhausted ? "failed" : "retrying",
                         response_payload: error.response_payload || {},
                         error_message: String(error.message || error).slice(0, 500),
                     });
                     job.metadata = {
                         ...job.metadata,
-                        next_attempt_at: exhausted ? "" : new Date(Date.now() + delaySeconds * 1000).toISOString(),
+                        next_attempt_at: exhausted ? "" : nextAttemptAt,
                         completed_at: exhausted ? nowIso() : "",
                         provider_status: error.provider_status ?? null,
                         provider_code: error.provider_code || "",
                         retryable,
                     };
-                    event.payload.verification = {
-                        ...(event.payload.verification || {}),
-                        status: exhausted ? "failed" : "retrying",
-                        job_id: job.id,
-                        attempt_count: attempts,
-                        next_attempt_at: job.metadata.next_attempt_at,
-                        error: String(error.message || error).slice(0, 240),
-                        updated_at: nowIso(),
-                    };
-                    if (exhausted) applyIncidentVerificationOutcome(event);
+                    if (deadlineReached || String(event.payload?.verification?.status || "") === "timeout_suspected") {
+                        enforceVisionVerificationDeadlines();
+                    } else {
+                        event.payload.verification = {
+                            ...(event.payload.verification || {}),
+                            status: exhausted ? "failed" : "retrying",
+                            job_id: job.id,
+                            attempt_count: attempts,
+                            next_attempt_at: job.metadata.next_attempt_at,
+                            error: String(error.message || error).slice(0, 240),
+                            updated_at: nowIso(),
+                        };
+                        if (exhausted) applyIncidentVerificationOutcome(event);
+                    }
                     if (exhausted) result.failed += 1;
                     else result.retrying += 1;
                 }
@@ -10479,6 +10564,7 @@ function createLocalAppServer(options = {}) {
     const server = http.createServer(route);
     let schedulerTimer = null;
     let visionVerificationTimer = null;
+    let visionVerificationDeadlineTimer = null;
     let mediaLifecycleTimer = null;
     let initialMediaLifecycleTimer = null;
     let apnsDispatchTimer = null;
@@ -10568,6 +10654,17 @@ function createLocalAppServer(options = {}) {
         schedulerTimer.unref?.();
         server.on("close", () => clearInterval(schedulerTimer));
     }
+    {
+        visionVerificationDeadlineTimer = setInterval(() => {
+            const result = enforceVisionVerificationDeadlines();
+            if (result.timed_out > 0) {
+                Promise.resolve(store.save())
+                    .catch((error) => console.error(`vision verification deadline persistence failed: ${error.message || error}`));
+            }
+        }, 1000);
+        visionVerificationDeadlineTimer.unref?.();
+        server.on("close", () => clearInterval(visionVerificationDeadlineTimer));
+    }
     if (visionVerificationEnabled()) {
         const intervalMs = Math.max(5000, normalizeNumber(process.env.GOHOME_VISION_VERIFICATION_INTERVAL_MS, 10000));
         visionVerificationTimer = setInterval(() => {
@@ -10601,6 +10698,9 @@ function createLocalAppServer(options = {}) {
         dispatchQueuedPushDeliveries,
         queueNotificationDelivery,
         upsertAppMessage,
+        processVisionVerificationJobs,
+        enforceVisionVerificationDeadlines,
+        applyIncidentVerificationOutcome,
     };
 }
 

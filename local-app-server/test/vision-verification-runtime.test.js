@@ -3,6 +3,9 @@ const test = require('node:test');
 
 const {
   providerFailure,
+  verificationDeadlineAt,
+  verificationDeadlineReached,
+  verificationNextAttemptAt,
   verificationRetryDelaySeconds,
 } = require('../vision-verification-runtime');
 
@@ -36,4 +39,28 @@ test('verification transport retries remain bounded while covering a short outag
     [5, 15, 30, 60],
   );
   assert.equal(verificationRetryDelaySeconds(99), 60);
+});
+
+test('verification deadline is measured from evidence readiness and expires at exactly 90 seconds', () => {
+  const startedAt = '2026-08-12T14:10:30.000Z';
+  const deadlineAt = verificationDeadlineAt(startedAt);
+
+  assert.equal(deadlineAt, '2026-08-12T14:12:00.000Z');
+  assert.equal(verificationDeadlineReached(deadlineAt, Date.parse('2026-08-12T14:11:59.999Z')), false);
+  assert.equal(verificationDeadlineReached(deadlineAt, Date.parse('2026-08-12T14:12:00.000Z')), true);
+});
+
+test('provider retries are scheduled only when they can start before the verification deadline', () => {
+  const deadlineAt = '2026-08-12T14:12:00.000Z';
+
+  assert.equal(verificationNextAttemptAt({
+    attempt: 1,
+    deadlineAt,
+    nowMs: Date.parse('2026-08-12T14:10:40.000Z'),
+  }), '2026-08-12T14:10:45.000Z');
+  assert.equal(verificationNextAttemptAt({
+    attempt: 3,
+    deadlineAt,
+    nowMs: Date.parse('2026-08-12T14:11:30.000Z'),
+  }), '');
 });
