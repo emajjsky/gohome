@@ -3720,7 +3720,7 @@ function createLocalAppServer(options = {}) {
         return linkedEvents;
     }
 
-    function rejectSafetyIncidentAsFalsePositive(event) {
+    function rejectSafetyIncidentAsFalsePositive(event, source = "edge_admin") {
         const incident = ensureSafetyIncident(event);
         const linkedEvents = incident ? incidentEvents(incident.incident_id) : [event];
         const timestamp = nowIso();
@@ -3728,11 +3728,11 @@ function createLocalAppServer(options = {}) {
             linked.payload = linked.payload && typeof linked.payload === "object" ? linked.payload : {};
             linked.payload.manual_feedback = {
                 resolution: "false_positive",
-                source: "edge_admin",
+                source,
                 updated_at: timestamp,
             };
             linked.resolution = "false_positive";
-            linked.acknowledged = false;
+            linked.acknowledged = true;
             const linkedIncident = ensureSafetyIncident(linked);
             if (linkedIncident) {
                 linkedIncident.status = "rejected";
@@ -3741,7 +3741,7 @@ function createLocalAppServer(options = {}) {
             linked.updated_at = timestamp;
         }
         if (incident) {
-            appendIncidentTransition(incidentPrimaryEvent(event), "rejected", "edge_admin", { resolution: "false_positive" });
+            appendIncidentTransition(incidentPrimaryEvent(event), "rejected", source, { resolution: "false_positive" });
             archiveIncidentMessages(incident.incident_id);
         }
         return linkedEvents;
@@ -9603,7 +9603,9 @@ function createLocalAppServer(options = {}) {
                 if ("acknowledged" in patch) event.acknowledged = normalizeBool(patch.acknowledged);
                 if ("resolution" in patch) event.resolution = String(patch.resolution || "");
                 const incident = ensureSafetyIncident(event);
-                if (incident && event.acknowledged) {
+                if (incident && event.resolution === "false_positive") {
+                    rejectSafetyIncidentAsFalsePositive(event, "app_user");
+                } else if (incident && event.acknowledged) {
                     acknowledgeSafetyIncident(event, event.resolution || "handled");
                 }
                 event.updated_at = nowIso();

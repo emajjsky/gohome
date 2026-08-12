@@ -60,6 +60,46 @@ final class EventsViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCorrelatedEventsLeavePendingTogether() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let primary = fixtureEvent(
+            id: "event-1",
+            cameraID: "2",
+            incidentID: "incident-42",
+            primaryEventID: "event-1"
+        )
+        let related = fixtureEvent(
+            id: "event-2",
+            cameraID: "3",
+            incidentID: "incident-42",
+            primaryEventID: "event-1"
+        )
+        let updated = resolved(primary, resolution: "false_positive")
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: root),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            eventActionLoader: { _, _ in
+                try await Task.sleep(nanoseconds: 40_000_000)
+                return updated
+            }
+        )
+        let model = EventsViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user", familyID: "family"),
+            seedEvents: [primary, related]
+        )
+
+        model.resolve(primary.id, as: "false_positive")
+        XCTAssertEqual(model.pendingCount, 0)
+        try await waitUntil { !model.pendingActions.contains(primary.id) }
+
+        XCTAssertEqual(model.pendingCount, 0)
+        XCTAssertEqual(model.state.value?.filter { $0.resolution == "false_positive" }.count, 2)
+        XCTAssertEqual(model.groups.count, 0)
+    }
+
+    @MainActor
     func testLateSuccessfulEventActionCannotCommitAfterCancellation() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -142,17 +182,46 @@ final class EventsViewModelTests: XCTestCase {
         }
     }
 
-    private func fixtureEvent() -> AppEvent {
+    private func fixtureEvent(
+        id: String = "event-1",
+        cameraID: String = "2",
+        incidentID: String? = nil,
+        primaryEventID: String? = nil
+    ) -> AppEvent {
         AppEvent(
-            id: "event-1",
+            id: id,
             type: "fall_candidate",
             level: "critical",
             room: "客厅",
-            cameraID: "2",
+            cameraID: cameraID,
             cameraName: "客厅摄像头",
             occurredAt: "2026-07-22T09:30:00+08:00",
             createdAt: "2026-07-22T09:30:00+08:00",
-            updatedAt: "2026-07-22T09:30:00+08:00"
+            updatedAt: "2026-07-22T09:30:00+08:00",
+            payload: EventPayload(incident: incidentID.map {
+                EventIncident(incidentID: $0, primaryEventID: primaryEventID, sourceCameraIDs: [cameraID])
+            })
+        )
+    }
+
+    private func resolved(_ event: AppEvent, resolution: String) -> AppEvent {
+        AppEvent(
+            id: event.id,
+            type: event.type,
+            level: event.level,
+            summary: event.summary,
+            room: event.room,
+            cameraID: event.cameraID,
+            cameraName: event.cameraName,
+            occurredAt: event.occurredAt,
+            createdAt: event.createdAt,
+            updatedAt: "2026-07-22T09:31:00+08:00",
+            acknowledged: true,
+            resolution: resolution,
+            snapshotURL: event.snapshotURL,
+            mediaAssetID: event.mediaAssetID,
+            evidenceMedia: event.evidenceMedia,
+            payload: event.payload
         )
     }
 }

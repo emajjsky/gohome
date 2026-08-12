@@ -13,7 +13,7 @@ final class EventsViewModel: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var detailTasks: [String: Task<Void, Never>] = [:]
     private var actionTasks: [String: Task<Void, Never>] = [:]
-    private var actionOriginals: [String: AppEvent] = [:]
+    private var actionOriginals: [String: [AppEvent]] = [:]
     private var actionGenerations: [String: Int] = [:]
     private var hasStarted = false
 
@@ -96,12 +96,13 @@ final class EventsViewModel: ObservableObject {
 
         let generation = (actionGenerations[eventID] ?? 0) + 1
         actionGenerations[eventID] = generation
-        actionOriginals[eventID] = original
-        let optimistic = resolvedCopy(original, resolution: resolution)
+        let originals = correlatedEvents(for: original)
+        actionOriginals[eventID] = originals
+        let optimistic = originals.map { resolvedCopy($0, resolution: resolution) }
         pendingActions.insert(eventID)
         actionErrors[eventID] = nil
         replace(optimistic)
-        details[eventID] = optimistic
+        details[eventID] = optimistic.first(where: { $0.id == eventID })
         persistCurrentEvents()
 
         let task = Task { @MainActor [weak self, repository, generation] in
@@ -111,18 +112,23 @@ final class EventsViewModel: ObservableObject {
                 let updated = try await repository.updateEvent(original, resolution: resolution)
                 try Task.checkCancellation()
                 guard self.actionGenerations[eventID] == generation else { return }
-                replace(updated)
+                let resolved = self.correlatedEvents(for: updated).map {
+                    $0.id == updated.id
+                        ? updated
+                        : self.resolvedCopy($0, resolution: updated.resolution.isEmpty ? resolution : updated.resolution)
+                }
+                replace(resolved)
                 details[eventID] = updated
                 persistCurrentEvents()
             } catch is CancellationError {
                 guard self.actionGenerations[eventID] == generation else { return }
-                replace(original)
-                details[eventID] = original
+                replace(originals)
+                details[eventID] = originals.first(where: { $0.id == eventID })
                 persistCurrentEvents()
             } catch {
                 guard self.actionGenerations[eventID] == generation else { return }
-                replace(original)
-                details[eventID] = original
+                replace(originals)
+                details[eventID] = originals.first(where: { $0.id == eventID })
                 actionErrors[eventID] = "未能保存处理结果，请重试"
                 persistCurrentEvents()
             }
@@ -135,9 +141,9 @@ final class EventsViewModel: ObservableObject {
         actionTasks.values.forEach { $0.cancel() }
         for eventID in eventIDs {
             actionGenerations[eventID, default: 0] += 1
-            if let original = actionOriginals[eventID] {
-                replace(original)
-                details[eventID] = original
+            if let originals = actionOriginals[eventID] {
+                replace(originals)
+                details[eventID] = originals.first(where: { $0.id == eventID })
             }
             actionErrors[eventID] = nil
             pendingActions.remove(eventID)
@@ -163,6 +169,21 @@ final class EventsViewModel: ObservableObject {
             events.insert(event, at: 0)
         }
         state.value = events
+    }
+
+    private func replace(_ replacements: [AppEvent]) {
+        for event in replacements {
+            replace(event)
+        }
+    }
+
+    private func correlatedEvents(for event: AppEvent) -> [AppEvent] {
+        let events = state.value ?? []
+        guard let incidentID = event.payload.incident?.incidentID, !incidentID.isEmpty else {
+            return [event]
+        }
+        let correlated = events.filter { $0.payload.incident?.incidentID == incidentID }
+        return correlated.isEmpty ? [event] : correlated
     }
 
     private func persistCurrentEvents() {

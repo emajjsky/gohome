@@ -124,6 +124,75 @@ test('app event acknowledgement is delivered to the edge exactly once', async ()
   }
 });
 
+test('app false-positive resolution atomically closes every event in the incident', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-incident-resolution-'));
+  const app = createLocalAppServer({
+    rootDir: path.join(__dirname, '..', '..'),
+    dataDir,
+    authMode: 'demo',
+    demoOtp: '246810',
+  });
+  const baseURL = await listen(app.server);
+  try {
+    const registration = await request(baseURL, '/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ phone: '13800138308', code: '246810', display_name: '关联事件测试' }),
+    });
+    const appHeaders = { Authorization: `Bearer ${registration.body.token}` };
+    const family = await request(baseURL, '/api/families', {
+      method: 'POST', headers: appHeaders, body: JSON.stringify({ name: '关联事件家庭' }),
+    });
+    const familyID = String(family.body.id);
+    const timestamp = new Date().toISOString();
+    for (const [id, cameraID] of [[910, 501], [911, 502]]) {
+      app.store.db.cameras[String(cameraID)] = {
+        id: cameraID, family_id: familyID, device_id: 'edge-incident', name: `摄像头${cameraID}`, room: '客厅', enabled: true,
+      };
+      app.store.db.events.push({
+        id,
+        family_id: familyID,
+        device_id: 'edge-incident',
+        camera_id: cameraID,
+        edge_event_id: String(id),
+        idempotency_key: `edge-incident:${id}`,
+        event_type: 'fall_candidate',
+        level: 'critical',
+        summary: '关联跌倒事件',
+        room: '客厅',
+        acknowledged: false,
+        resolution: '',
+        payload: { incident: {
+          incident_id: 'incident-two-cameras',
+          primary_event_id: 910,
+          status: 'suspected',
+          source_event_ids: [910, 911],
+          source_camera_ids: [501, 502],
+        } },
+        occurred_at: timestamp,
+        created_at: timestamp,
+        updated_at: timestamp,
+      });
+    }
+
+    const resolved = await request(baseURL, '/api/v1/events/910', {
+      method: 'PATCH',
+      headers: appHeaders,
+      body: JSON.stringify({ acknowledged: true, resolution: 'false_positive' }),
+    });
+
+    assert.equal(resolved.response.status, 200);
+    const linked = app.store.db.events.filter((event) => event.payload.incident.incident_id === 'incident-two-cameras');
+    assert.equal(linked.length, 2);
+    assert.ok(linked.every((event) => event.acknowledged === true));
+    assert.ok(linked.every((event) => event.resolution === 'false_positive'));
+    assert.ok(linked.every((event) => event.payload.incident.status === 'rejected'));
+    assert.ok(linked.every((event) => event.payload.manual_feedback.source === 'app_user'));
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('confirmed camera reconnection closes the offline event and archives its reminder idempotently', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-camera-recovery-sync-'));
   const app = createLocalAppServer({

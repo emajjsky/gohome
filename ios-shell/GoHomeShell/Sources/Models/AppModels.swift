@@ -994,6 +994,7 @@ struct EventPayload: Codable, Equatable, Sendable {
 }
 
 struct EventIncident: Codable, Equatable, Sendable {
+    let incidentID: String?
     let status: String
     let primaryEventID: String?
     let sourceCameraIDs: [String]
@@ -1002,18 +1003,21 @@ struct EventIncident: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case status, transitions
+        case incidentID = "incident_id"
         case primaryEventID = "primary_event_id"
         case sourceCameraIDs = "source_camera_ids"
         case startedAt = "started_at"
     }
 
     init(
+        incidentID: String? = nil,
         status: String = "",
         primaryEventID: String? = nil,
         sourceCameraIDs: [String] = [],
         startedAt: String? = nil,
         transitions: [EventTransition] = []
     ) {
+        self.incidentID = incidentID
         self.status = status
         self.primaryEventID = primaryEventID
         self.sourceCameraIDs = sourceCameraIDs
@@ -1023,6 +1027,7 @@ struct EventIncident: Codable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        incidentID = try values.decodeFlexibleIDIfPresent(forKey: .incidentID)
         status = try values.decodeIfPresent(String.self, forKey: .status) ?? ""
         primaryEventID = try values.decodeFlexibleIDIfPresent(forKey: .primaryEventID)
         sourceCameraIDs = try values.decodeFlexibleIDsIfPresent(forKey: .sourceCameraIDs) ?? []
