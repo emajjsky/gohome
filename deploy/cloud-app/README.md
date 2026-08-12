@@ -6,20 +6,31 @@ tree.
 
 ## Build
 
-Run from a clean tracked worktree:
+Build the immutable release from a committed revision. The default is `HEAD`;
+an explicit revision can be supplied as the second argument:
 
 ```sh
 deploy/cloud-app/build-release.sh
+deploy/cloud-app/build-release.sh dist/cloud-app COMMIT_SHA
 ```
 
 The archive contains only the cloud runtime, PostgreSQL migrations, the retained
 Web interface and their assets. Tests, iOS, edge code, research files,
 AppleDouble files and backups are rejected.
 
+The manifest, existence checks, archive, and per-file hashes are all read from
+the resolved commit object. Uncommitted worktree files are never inspected or
+included, so an unrelated in-progress App change cannot block or contaminate a
+backend release.
+
 The build also emits `<archive>.files.sha256`. It is the exact committed-file
 manifest used to create the archive; review it together with the archive
 checksum before uploading. The manifest is an audit artifact, not a runtime
 dependency.
+
+Run `deploy/cloud-app/verify-build-release.sh` after changing the builder. It
+proves that a dirty worktree cannot enter the archive and that an explicitly
+selected parent commit does not receive files from the current commit.
 
 ## Install
 
