@@ -427,11 +427,11 @@ private struct ProductRecommendationImage: View {
                     if case let .success(image) = phase {
                         image.resizable().scaledToFill()
                     } else {
-                        localFallback
+                        unavailableState
                     }
                 }
             } else {
-                localFallback
+                unavailableState
             }
         }
         .frame(maxWidth: .infinity)
@@ -453,19 +453,7 @@ private struct ProductRecommendationImage: View {
             }
         }
         .accessibilityLabel("推荐图片暂不可用")
-    }
-
-    private var localFallback: some View {
-        GoHomeLocalImage(name: localImageName)
-            .overlay {
-                Color.black.opacity(0.08)
-            }
-    }
-
-    private var localImageName: String {
-        let catalog = ["memory-garden-sun", "memory-outdoor-walk", "memory-relax-chat", "grandma-reading"]
-        let seed = product.id.unicodeScalars.reduce(0) { ($0 &* 31) &+ Int($1.value) }
-        return catalog[abs(seed) % catalog.count]
+        .accessibilityIdentifier("product-image-unavailable-\(product.id)")
     }
 
     private var categorySymbol: String {

@@ -27,6 +27,7 @@ final class AppSurfaceAuditTests: XCTestCase {
 
         app.tabBars.buttons["社区"].tap()
         XCTAssertTrue(app.scrollViews["product-recommendations-content"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)["product-image-unavailable-product-1"].waitForExistence(timeout: 2))
         capture(app, name: "06 Community")
         app.buttons["product-card-product-1"].tap()
         XCTAssertTrue(app.navigationBars["推荐详情"].waitForExistence(timeout: 2))
