@@ -118,7 +118,7 @@ test('content image proxy accepts an active product image from PostgreSQL', asyn
   });
   const imageUrl = 'https://products.example.com/night-light.jpg';
   app.store.kind = 'postgres';
-  app.store.db.product_catalog = [];
+  delete app.store.db.product_catalog;
   app.store.pool = {
     async query(sql, values) {
       assert.match(sql, /from product_catalog/i);

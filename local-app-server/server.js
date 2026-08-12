@@ -5100,7 +5100,7 @@ function createLocalAppServer(options = {}) {
         if (store.db.content_recommendations.some((item) => (
             String(item?.image_url || item?.metadata?.image_url || "").trim() === target
         ))) return true;
-        if (store.db.product_catalog.some((item) => String(item?.image_url || "").trim() === target)) return true;
+        if ((store.db.product_catalog || []).some((item) => String(item?.image_url || "").trim() === target)) return true;
         if (store.kind !== "postgres" || !store.pool) return false;
         const result = await store.pool.query(
             `select 1 as approved from product_catalog

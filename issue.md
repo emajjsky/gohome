@@ -1676,7 +1676,7 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **Build 17 生产反证（2026-08-12）**：真机已使用正式商品目录，但六个宜家官方图片请求在 `/api/v1/content/image` 返回 `404`。官方源站从生产服务器直接请求均返回 `200 image/jpeg`，故障不在图片资产或 iOS 布局。根因是原生商品接口从 PostgreSQL `product_catalog` 实时读取，图片代理却只检查服务启动时的内存快照，而 PostgreSQL Store 快照不包含 `product_catalog`，导致所有合法活动商品图都被误判为未批准。
 
-**根因修复与验证**：图片代理在 PostgreSQL 运行时使用当前活动商品目录做精确 URL 查询，JSON 运行时继续使用同一内存目录；保留 HTTPS、完整 URL 白名单、图片 MIME、5 MiB 上限和超时约束，不开放任意外网代理。新增回归先稳定复现 `404`，修复后通过；商品专项 `3/3`、完整 `npm test` 和 `git diff --check` 均通过。待生产部署后逐一确认六个官方 URL 返回 `200`，再由 Build 17 刷新适老好物完成真机关闭。
+**根因修复与验证**：图片代理在 PostgreSQL 运行时使用当前活动商品目录做精确 URL 查询，JSON 运行时继续使用同一内存目录；保留 HTTPS、完整 URL 白名单、图片 MIME、5 MiB 上限和超时约束，不开放任意外网代理。首版提交 `7d7240b` 部署后六图仍为 `404`，响应明确为 `Cannot read properties of undefined (reading 'some')`：生产 PostgreSQL Store 不仅没有商品目录数据，字段本身也不存在，首版测试用空数组掩盖了这一差异。回归现改为删除该字段，先稳定复现生产异常，再确认代理绕过不存在的内存目录并查询 PostgreSQL。商品专项 `3/3`、完整 `npm test` 和 `git diff --check` 均通过。待再次部署后逐一确认六个官方 URL 返回 `200`，再由 Build 17 刷新适老好物完成真机关闭。
 
 ### GH-131 回家记录依赖客户端自报网络且回家计划混入普通日历
 
