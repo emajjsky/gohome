@@ -6,8 +6,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUTPUT_ROOT="${1:?usage: build-production-payload.sh OUTPUT_ROOT}"
 
 cd "$REPO_ROOT"
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "tracked worktree changes must be committed before building the Pi payload" >&2
+if ! git diff --quiet -- edge-agent deploy/edge-agent \
+  || ! git diff --cached --quiet -- edge-agent deploy/edge-agent; then
+  echo "tracked Pi payload changes must be committed before building the Pi payload" >&2
   exit 1
 fi
 

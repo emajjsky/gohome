@@ -353,6 +353,7 @@ def main() -> None:
         raise SystemExit("demo mode configuration script remains in the production edge package")
 
     pi_deployment = (EDGE_ROOT / "scripts" / "deploy-to-pi.sh").read_text(encoding="utf-8")
+    pi_payload_builder = (REPO_ROOT / "deploy" / "edge-agent" / "build-production-payload.sh").read_text(encoding="utf-8")
     required_pi_contract = (
         "--delete-delay",
         "--exclude '/data/'",
@@ -367,6 +368,10 @@ def main() -> None:
     missing_pi = [item for item in required_pi_contract if item not in pi_deployment]
     if missing_pi:
         raise SystemExit(f"Pi deployment convergence contract is incomplete: {missing_pi}")
+    if "git diff --quiet -- edge-agent deploy/edge-agent" not in pi_payload_builder:
+        raise SystemExit("Pi payload builder must scope the dirty-worktree gate to payload-owned paths")
+    if "git diff --cached --quiet -- edge-agent deploy/edge-agent" not in pi_payload_builder:
+        raise SystemExit("Pi payload builder must reject staged changes in payload-owned paths")
 
     cloud_server = CLOUD_SERVER.read_text(encoding="utf-8")
     cloud_provider = CLOUD_APNS_PROVIDER.read_text(encoding="utf-8")
