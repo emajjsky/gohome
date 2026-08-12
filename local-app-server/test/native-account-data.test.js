@@ -39,6 +39,8 @@ function fixture() {
     family_rules: {},
     care_preferences: {},
     calendar_events: [],
+    home_visits: [{ id: 'visit-a', family_id: 'family-a', user_id: 'user-a', visit_date: '2026-07-27', verified_at: '2026-07-27T08:00:00Z', verification_method: 'public_network_match' }],
+    home_return_plans: [{ id: 'plan-a', family_id: 'family-a', user_id: 'user-a', starts_at: '2026-08-02T10:00:00Z', note: '回家吃饭', status: 'planned' }],
     care_cards: [],
     app_messages: [],
     app_message_actions: [],
@@ -64,6 +66,8 @@ test('account export is family-scoped and excludes credentials and storage secre
 
   assert.equal(exported.account.phone, '13800138000');
   assert.equal(exported.families[0].events[0].summary, '跌倒提醒');
+  assert.equal(exported.families[0].home_visits[0].visit_date, '2026-07-27');
+  assert.equal(exported.families[0].home_return_plan.note, '回家吃饭');
   for (const forbidden of ['raw-password', 'secret-hash', 'SECRET-CODE', 'device-token-secret', 'rtsp://secret', 'camera-secret', 'private/family-a/asset-a.jpg', 'raw-session-token', 'push-secret']) {
     assert.equal(serialized.includes(forbidden), false, forbidden);
   }

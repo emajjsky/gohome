@@ -37,6 +37,23 @@ final class TabStateTests: XCTestCase {
         XCTAssertEqual(app.tabBars.buttons["守护"].value as? String, "1 item")
     }
 
+    func testHomeShowsExplicitReturnPlanEditor() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTestState", "-uiTestMain", "-uiTestHome"]
+        app.launch()
+
+        let entry = app.buttons["home-return-plan"]
+        for _ in 0..<3 where !entry.exists { app.swipeUp() }
+        XCTAssertTrue(entry.waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["2026年8月19日 18:00"].exists)
+        entry.tap()
+
+        XCTAssertTrue(app.navigationBars["修改回家计划"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.datePickers.firstMatch.exists)
+        XCTAssertTrue(app.buttons["保存"].exists)
+        XCTAssertTrue(app.buttons["取消回家计划"].exists)
+    }
+
     func testCommunityTabOpensNativeProductRecommendations() {
         let app = XCUIApplication()
         app.launchArguments = ["-uiTestState", "-uiTestMain"]

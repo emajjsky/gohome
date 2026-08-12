@@ -2,6 +2,20 @@ import XCTest
 @testable import GoHomeShell
 
 final class HomeViewModelTests: XCTestCase {
+    func testHomeDecodesVerifiedVisitAndExplicitReturnPlan() throws {
+        let home = try JSONDecoder().decode(HomeResponse.self, from: Data("""
+        {"family":null,"weather":null,"calendar":[],"distance":null,"critical_alert":null,
+         "return_home":{"is_at_home":false,"network_matched":false,"last_visit_at":"2026-08-10T03:00:00Z","days_since_last_visit":2},
+         "return_plan":{"id":"plan-1","starts_at":"2026-08-19T10:00:00Z","note":"周末回家吃饭","status":"planned","updated_at":"2026-08-12T05:00:00Z"},
+         "articles":[],"cameras":[],"revision":"r-plan"}
+        """.utf8))
+
+        XCTAssertEqual(home.returnHome?.daysSinceLastVisit, 2)
+        XCTAssertEqual(home.returnHome?.lastVisitAt, "2026-08-10T03:00:00Z")
+        XCTAssertEqual(home.returnPlan?.id, "plan-1")
+        XCTAssertEqual(home.returnPlan?.note, "周末回家吃饭")
+    }
+
     func testHomeDecodesCareMessageAndRemainsCompatibleWhenItIsAbsent() throws {
         let withCare = try decodeHome(careFragment: """
         ,"care_message":{
@@ -157,6 +171,126 @@ final class HomeViewModelTests: XCTestCase {
         model.refresh()
         try await waitUntil { model.state.value?.revision == "r2" }
         XCTAssertEqual(model.state.value?.cameras.first?.id, "camera-1")
+    }
+
+    @MainActor
+    func testVisitVerificationCompletesBeforeHomeRefresh() async throws {
+        let trace = HomeOperationTrace()
+        let home = try decodeHome()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            homeLoader: { _ in
+                await trace.append("home")
+                return home
+            },
+            homeVisitVerifier: { _ in
+                await trace.append("verify")
+                return HomeVisitVerificationResponse(matched: true, recorded: true, verifiedAt: "2026-08-12T05:00:00Z")
+            }
+        )
+        let model = HomeViewModel(repository: repository, scope: CacheScope(userID: "user-1", familyID: "family-1"))
+
+        model.start()
+        try await waitUntil { model.state.value?.revision == "r1" }
+
+        let operationTrace = await trace.values
+        XCTAssertEqual(operationTrace, ["verify", "home"])
+        XCTAssertNil(model.homeVisitVerificationError)
+    }
+
+    @MainActor
+    func testVisitVerificationFailurePreservesSeedAndStillRefreshesHome() async throws {
+        let seed = try decodeHome()
+        let refreshed = HomeResponse(
+            family: nil,
+            weather: HomeWeather(city: "杭州", temperature: 29, condition: "晴"),
+            calendar: [],
+            distance: nil,
+            criticalAlert: nil,
+            careMessage: nil,
+            articles: [],
+            cameras: [],
+            revision: "refreshed"
+        )
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            homeLoader: { _ in refreshed },
+            homeVisitVerifier: { _ in throw APIError.invalidResponse }
+        )
+        let model = HomeViewModel(
+            repository: repository,
+            scope: CacheScope(userID: "user-1", familyID: "family-1"),
+            seed: seed
+        )
+
+        model.start()
+        XCTAssertEqual(model.state.value?.revision, "r1")
+        try await waitUntil { model.state.value?.revision == "refreshed" }
+
+        XCTAssertEqual(model.state.value?.weather?.city, "杭州")
+        XCTAssertEqual(model.homeVisitVerificationError, "当前网络暂时无法核验，到家记录未改变")
+    }
+
+    @MainActor
+    func testReturnPlanSaveAndCancelUseExplicitRepositoryOperations() async throws {
+        let calls = HomeReturnPlanCalls()
+        let home = try decodeHome()
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            homeLoader: { _ in home },
+            homeVisitVerifier: { _ in HomeVisitVerificationResponse(matched: false, recorded: false, verifiedAt: nil) },
+            homeReturnPlanUpdater: { familyID, request in
+                await calls.recordSave(familyID: familyID, request: request)
+                return HomeReturnPlanEnvelope(plan: HomeReturnPlan(
+                    id: "plan-1",
+                    startsAt: request.startsAt,
+                    note: request.note,
+                    status: "planned",
+                    updatedAt: nil
+                ))
+            },
+            homeReturnPlanCanceller: { familyID in
+                await calls.recordCancel(familyID: familyID)
+                return HomeReturnPlanCancelResponse(cancelled: true)
+            }
+        )
+        let model = HomeViewModel(repository: repository, scope: CacheScope(userID: "user-1", familyID: "family-1"))
+        let date = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-08-19T10:00:00Z"))
+
+        let saved = await model.saveReturnPlan(date: date, note: "周末回家吃饭")
+        let cancelled = await model.cancelReturnPlan()
+
+        let snapshot = await calls.snapshot
+        XCTAssertTrue(saved)
+        XCTAssertTrue(cancelled)
+        XCTAssertEqual(snapshot.savedFamilyID, "family-1")
+        XCTAssertEqual(snapshot.savedRequest?.startsAt, "2026-08-19T10:00:00Z")
+        XCTAssertEqual(snapshot.savedRequest?.note, "周末回家吃饭")
+        XCTAssertEqual(snapshot.cancelledFamilyID, "family-1")
+        XCTAssertNil(model.returnPlanError)
+        XCTAssertFalse(model.isSavingReturnPlan)
+    }
+
+    @MainActor
+    func testReturnPlanFailureDoesNotReportSuccess() async throws {
+        let repository = AppRepository(
+            cache: try DiskCache(rootURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+            bootstrapLoader: { throw APIError.invalidResponse },
+            homeReturnPlanUpdater: { _, _ in throw APIError.invalidResponse },
+            homeReturnPlanCanceller: { _ in throw APIError.invalidResponse }
+        )
+        let model = HomeViewModel(repository: repository, scope: CacheScope(userID: "user-1", familyID: "family-1"))
+
+        let saved = await model.saveReturnPlan(date: Date().addingTimeInterval(86_400), note: "")
+        XCTAssertFalse(saved)
+        XCTAssertEqual(model.returnPlanError, "回家计划没有保存，请稍后重试")
+        let cancelled = await model.cancelReturnPlan()
+        XCTAssertFalse(cancelled)
+        XCTAssertEqual(model.returnPlanError, "回家计划没有取消，请稍后重试")
+        XCTAssertFalse(model.isSavingReturnPlan)
     }
 
     @MainActor
@@ -346,6 +480,40 @@ private actor HomeLoadCounter {
     func increment() -> Int {
         value += 1
         return value
+    }
+}
+
+private actor HomeOperationTrace {
+    private var storage: [String] = []
+    var values: [String] { storage }
+
+    func append(_ value: String) {
+        storage.append(value)
+    }
+}
+
+private actor HomeReturnPlanCalls {
+    struct Snapshot: Sendable {
+        let savedFamilyID: String?
+        let savedRequest: HomeReturnPlanRequest?
+        let cancelledFamilyID: String?
+    }
+
+    private var savedFamilyID: String?
+    private var savedRequest: HomeReturnPlanRequest?
+    private var cancelledFamilyID: String?
+
+    var snapshot: Snapshot {
+        Snapshot(savedFamilyID: savedFamilyID, savedRequest: savedRequest, cancelledFamilyID: cancelledFamilyID)
+    }
+
+    func recordSave(familyID: String, request: HomeReturnPlanRequest) {
+        savedFamilyID = familyID
+        savedRequest = request
+    }
+
+    func recordCancel(familyID: String) {
+        cancelledFamilyID = familyID
     }
 }
 

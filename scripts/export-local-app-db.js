@@ -10,7 +10,7 @@ const {
     withoutEventMediaPayload,
 } = require("../local-app-server/event-media");
 
-const CLOUD_SEED_SCHEMA_VERSION = "017_protected_media_orphans";
+const CLOUD_SEED_SCHEMA_VERSION = "018_home_visits_and_return_plans";
 
 function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -568,6 +568,28 @@ function buildCloudSeedBundle(db, options = {}) {
         updated_at: iso(event.updated_at, iso(event.created_at, exportedAt)),
     }));
 
+    const homeVisits = toArray(db.home_visits).map((visit) => ({
+        id: textId(visit.id),
+        family_id: textId(visit.family_id, fallbackFamilyId),
+        user_id: textId(visit.user_id),
+        visit_date: dateText(visit.visit_date, exportedAt.slice(0, 10)),
+        verified_at: iso(visit.verified_at, exportedAt),
+        verification_method: "public_network_match",
+        created_at: iso(visit.created_at, exportedAt),
+        updated_at: iso(visit.updated_at, iso(visit.created_at, exportedAt)),
+    })).filter((visit) => visit.id && visit.family_id && visit.user_id);
+
+    const homeReturnPlans = toArray(db.home_return_plans).map((plan) => ({
+        id: textId(plan.id),
+        family_id: textId(plan.family_id, fallbackFamilyId),
+        user_id: textId(plan.user_id),
+        starts_at: iso(plan.starts_at),
+        note: String(plan.note || ""),
+        status: String(plan.status || "planned"),
+        created_at: iso(plan.created_at, exportedAt),
+        updated_at: iso(plan.updated_at, iso(plan.created_at, exportedAt)),
+    })).filter((plan) => plan.id && plan.family_id && plan.user_id && plan.starts_at);
+
     const rawCareCards = toArray(db.care_cards).map((card) => ({
         id: textId(card.id),
         card_id: String(card.card_id || `care:${card.family_id || fallbackFamilyId}:${card.card_date || exportedAt.slice(0, 10)}:${card.id || ""}`),
@@ -753,6 +775,8 @@ function buildCloudSeedBundle(db, options = {}) {
         event_media_assets: eventMediaAssets,
         device_heartbeats: deviceHeartbeats,
         calendar_events: calendarEvents,
+        home_visits: homeVisits,
+        home_return_plans: homeReturnPlans,
         care_cards: careCards,
         app_messages: appMessages,
         app_push_tokens: appPushTokens,

@@ -332,6 +332,13 @@ struct MainTabView: View {
                 acknowledged: false
             ),
             returnHome: nil,
+            returnPlan: HomeReturnPlan(
+                id: "ui-test-return-plan",
+                startsAt: "2026-08-19T10:00:00.000Z",
+                note: "周末回家吃饭",
+                status: "planned",
+                updatedAt: "2026-08-12T05:00:00Z"
+            ),
             careMessage: nil,
             articles: [
                 HomeArticle(

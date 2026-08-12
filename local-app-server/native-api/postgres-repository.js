@@ -15,6 +15,7 @@ const {
     invalidFamilyInvitation,
     normalizeFamilyInvitationCode,
     memoryInput,
+    currentHomeNetworkFingerprint,
     repositoryError,
 } = require("./repository");
 
@@ -477,7 +478,7 @@ class PostgresNativeRepository extends NativeRepository {
                 elder_profiles: {}, devices: {}, device_bindings: [], cameras: {}, family_rules: {}, care_preferences: {},
                 calendar_events: [], events: [], assets: [], family_memories: [], family_memory_media: [],
                 family_memory_comments: [], family_memory_favorites: [], activity_intervals: [], care_cards: [],
-                app_messages: [], app_message_actions: [],
+                app_messages: [], app_message_actions: [], home_visits: [], home_return_plans: [],
             };
             for (const membership of memberships) {
                 db.families.push({
@@ -510,6 +511,8 @@ class PostgresNativeRepository extends NativeRepository {
                     client.query(`select family_id, config, updated_at from care_rules where family_id::text = any($1::text[]) and camera_id is null and rule_type = 'edge_rules' and enabled = true`, familyValues),
                     client.query(`select * from care_preferences where family_id::text = any($1::text[])`, familyValues),
                     client.query(`select * from calendar_events where family_id::text = any($1::text[]) order by starts_at`, familyValues),
+                    client.query(`select * from home_visits where family_id::text = any($1::text[]) and user_id = $2 order by verified_at`, [familyIds, textId(userId)]),
+                    client.query(`select * from home_return_plans where family_id::text = any($1::text[]) and user_id = $2`, [familyIds, textId(userId)]),
                     client.query(`select id, family_id, camera_id, media_asset_id, event_type, level, summary, room, camera_name, acknowledged, resolution, payload, occurred_at, created_at, updated_at from events where family_id::text = any($1::text[]) order by occurred_at`, familyValues),
                     client.query(`select id, family_id, device_id, camera_id, content_type, size_bytes, metadata, created_at from media_assets where family_id::text = any($1::text[]) order by created_at`, familyValues),
                     client.query(`select * from family_memories where family_id::text = any($1::text[]) order by happened_at`, familyValues),
@@ -521,7 +524,7 @@ class PostgresNativeRepository extends NativeRepository {
                     client.query(`select id, message_id, family_id, user_id, message_type, title, subtitle, body, facts, status, created_at from app_messages where family_id::text = any($1::text[]) order by created_at`, familyValues),
                     client.query(`select id, family_id, message_id, user_id, action_type, payload, created_at from app_message_actions where family_id::text = any($1::text[]) order by created_at`, familyValues),
                 ]);
-                const [profiles, devices, bindings, cameras, rules, preferences, calendar, events, assets, memories, media, comments, favorites, activity, cards, messages, actions] = collections.map(rows);
+                const [profiles, devices, bindings, cameras, rules, preferences, calendar, visits, returnPlans, events, assets, memories, media, comments, favorites, activity, cards, messages, actions] = collections.map(rows);
                 db.elder_profiles = Object.fromEntries(profiles.map((item) => [textId(item.id), item]));
                 db.devices = Object.fromEntries(devices.map((item) => [textId(item.device_id), item]));
                 db.device_bindings = bindings;
@@ -529,6 +532,8 @@ class PostgresNativeRepository extends NativeRepository {
                 db.family_rules = Object.fromEntries(rules.map((item) => [textId(item.family_id), { ...(item.config || {}), updated_at: item.updated_at }]));
                 db.care_preferences = Object.fromEntries(preferences.map((item) => [textId(item.family_id), item]));
                 db.calendar_events = calendar;
+                db.home_visits = visits;
+                db.home_return_plans = returnPlans;
                 db.events = events;
                 db.assets = assets;
                 db.family_memories = memories;
@@ -661,6 +666,8 @@ class PostgresNativeRepository extends NativeRepository {
             await client.query(`delete from family_memories where author_user_id = $1`, [textId(userId)]);
             await client.query(`delete from family_memory_favorites where user_id = $1`, [textId(userId)]);
             await client.query(`delete from app_message_actions where user_id = $1`, [textId(userId)]);
+            await client.query(`delete from home_visits where user_id = $1`, [textId(userId)]);
+            await client.query(`delete from home_return_plans where user_id = $1`, [textId(userId)]);
             await client.query(`delete from notification_deliveries where user_id = $1`, [textId(userId)]);
             await client.query(`delete from app_messages where user_id = $1`, [textId(userId)]);
             await client.query(`delete from app_push_tokens where user_id = $1`, [textId(userId)]);
@@ -718,7 +725,7 @@ class PostgresNativeRepository extends NativeRepository {
     async homeForFamily(userId, familyId) {
         await this.assertFamilyAccess(this.pool, userId, familyId);
         const id = textId(familyId);
-        const [familyResult, elderResult, camerasResult, calendarResult, eventsResult, articleResult, careCardResult, careMessageResult, deviceResult, carePreferencesResult] = await Promise.all([
+        const [familyResult, elderResult, camerasResult, calendarResult, eventsResult, articleResult, careCardResult, careMessageResult, deviceResult, carePreferencesResult, homeVisitResult, returnPlanResult] = await Promise.all([
             this.pool.query(`select ${FAMILY_COLUMNS} from family_members fm join families f on f.id = fm.family_id where fm.user_id = $1 and fm.family_id = $2 and fm.status = 'active'`, [textId(userId), id]),
             this.pool.query(`select * from elder_profiles where family_id = $1 order by created_at asc limit 1`, [id]),
             this.pool.query(`select * from cameras where family_id = $1 order by created_at asc`, [id]),
@@ -739,8 +746,10 @@ class PostgresNativeRepository extends NativeRepository {
                  limit 1`,
                 [id],
             ),
-            this.pool.query(`select * from devices where family_id = $1 and status <> 'revoked' order by updated_at desc limit 1`, [id]),
+            this.pool.query(`select * from devices where family_id = $1 and status <> 'revoked' order by last_seen_at desc nulls last limit 1`, [id]),
             this.pool.query(`select metadata from care_preferences where family_id = $1`, [id]),
+            this.pool.query(`select * from home_visits where family_id = $1 and user_id = $2 order by verified_at desc limit 1`, [id, textId(userId)]),
+            this.pool.query(`select * from home_return_plans where family_id = $1 and user_id = $2 and status = 'planned' limit 1`, [id, textId(userId)]),
         ]);
         const events = rows(eventsResult);
         const publishedArticles = rows(articleResult);
@@ -768,7 +777,85 @@ class PostgresNativeRepository extends NativeRepository {
             weather: null,
             distance: null,
             device: row(deviceResult),
+            latest_home_visit: row(homeVisitResult),
+            return_plan: row(returnPlanResult),
         };
+    }
+
+    async verifyHomeVisit(userId, familyId, networkFingerprint) {
+        const fingerprint = String(networkFingerprint || "").trim();
+        const client = typeof this.pool.connect === "function" ? await this.pool.connect() : this.pool;
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            await this.assertFamilyAccess(client, userId, familyId);
+            const verifiedAt = new Date(this.clock());
+            const device = row(await client.query(
+                `select runtime, last_seen_at from devices where family_id = $1 and status <> 'revoked' order by last_seen_at desc nulls last limit 1 for share`,
+                [textId(familyId)],
+            ));
+            const boxFingerprint = currentHomeNetworkFingerprint(device, verifiedAt);
+            if (!fingerprint || !boxFingerprint || fingerprint !== boxFingerprint) {
+                await client.query("commit");
+                transaction = false;
+                return { matched: false, recorded: false, verified_at: null };
+            }
+            const visitDate = dateKeyShanghai(verifiedAt);
+            const result = await client.query(
+                `insert into home_visits (family_id, user_id, visit_date, verified_at, verification_method)
+                 values ($1, $2, $3, $4, 'public_network_match')
+                 on conflict (family_id, user_id, visit_date) do update set
+                     verified_at = excluded.verified_at,
+                     updated_at = excluded.verified_at
+                 returning *, (xmax = 0) as inserted`,
+                [textId(familyId), textId(userId), visitDate, verifiedAt.toISOString()],
+            );
+            await client.query(
+                `update home_return_plans set status = 'completed', updated_at = $3
+                 where family_id = $1 and user_id = $2 and status = 'planned' and starts_at <= $3`,
+                [textId(familyId), textId(userId), verifiedAt.toISOString()],
+            );
+            await client.query("commit");
+            transaction = false;
+            const visit = row(result);
+            return { matched: true, recorded: Boolean(visit?.inserted), verified_at: visit?.verified_at || verifiedAt.toISOString() };
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            if (client !== this.pool && typeof client.release === "function") client.release();
+        }
+    }
+
+    async updateHomeReturnPlan(userId, familyId, input = {}) {
+        await this.assertFamilyAccess(this.pool, userId, familyId);
+        const startsAt = new Date(input.starts_at || "");
+        const now = new Date(this.clock());
+        if (!Number.isFinite(startsAt.getTime()) || startsAt.getTime() < now.getTime() - 300_000 || startsAt.getTime() > now.getTime() + 2 * 365 * 86_400_000) {
+            throw repositoryError("return plan time is invalid", 400);
+        }
+        return row(await this.pool.query(
+            `insert into home_return_plans (family_id, user_id, starts_at, note, status)
+             values ($1, $2, $3, $4, 'planned')
+             on conflict (family_id, user_id) do update set
+                 starts_at = excluded.starts_at,
+                 note = excluded.note,
+                 status = 'planned',
+                 updated_at = now()
+             returning *`,
+            [textId(familyId), textId(userId), startsAt.toISOString(), String(input.note || "").trim().slice(0, 120)],
+        ));
+    }
+
+    async cancelHomeReturnPlan(userId, familyId) {
+        await this.assertFamilyAccess(this.pool, userId, familyId);
+        const result = await this.pool.query(
+            `update home_return_plans set status = 'cancelled', updated_at = now()
+             where family_id = $1 and user_id = $2 and status = 'planned'`,
+            [textId(familyId), textId(userId)],
+        );
+        return { cancelled: result.rowCount > 0 };
     }
 
     async messagesForFamily(userId, familyId, options = {}) {

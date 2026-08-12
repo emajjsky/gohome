@@ -25,6 +25,8 @@ const TABLE_ORDER = [
     "event_media_assets",
     "device_heartbeats",
     "calendar_events",
+    "home_visits",
+    "home_return_plans",
     "care_cards",
     "app_messages",
     "app_push_tokens",
@@ -59,6 +61,8 @@ const PRIMARY_KEYS = Object.freeze({
     event_media_assets: "id",
     device_heartbeats: "id",
     calendar_events: "id",
+    home_visits: "id",
+    home_return_plans: "id",
     care_cards: "id",
     app_messages: "id",
     app_push_tokens: "id",
@@ -121,6 +125,8 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
         event_media_assets: [],
         heartbeats: [],
         calendar_events: [],
+        home_visits: [],
+        home_return_plans: [],
         care_preferences: {},
         care_cards: [],
         app_messages: [],
@@ -494,6 +500,32 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             note: event.note || "",
             created_at: iso(event.created_at, db.created_at),
             updated_at: iso(event.updated_at, iso(event.created_at, db.created_at)),
+        });
+    }
+
+    for (const visit of rowsByTable.home_visits || []) {
+        db.home_visits.push({
+            id: visit.id,
+            family_id: visit.family_id,
+            user_id: visit.user_id,
+            visit_date: dateText(visit.visit_date),
+            verified_at: iso(visit.verified_at),
+            verification_method: visit.verification_method || "public_network_match",
+            created_at: iso(visit.created_at, db.created_at),
+            updated_at: iso(visit.updated_at, iso(visit.created_at, db.created_at)),
+        });
+    }
+
+    for (const plan of rowsByTable.home_return_plans || []) {
+        db.home_return_plans.push({
+            id: plan.id,
+            family_id: plan.family_id,
+            user_id: plan.user_id,
+            starts_at: iso(plan.starts_at),
+            note: plan.note || "",
+            status: plan.status || "planned",
+            created_at: iso(plan.created_at, db.created_at),
+            updated_at: iso(plan.updated_at, iso(plan.created_at, db.created_at)),
         });
     }
 

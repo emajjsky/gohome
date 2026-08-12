@@ -9,6 +9,7 @@ const {
     groupIntervalsByDate,
 } = require("./activity-reporting");
 const { normalizeProductPreferences, productView } = require("./product-policy");
+const { currentHomeNetworkFingerprint } = require("./repository");
 
 const ONBOARDING_STEPS = new Set(["family", "profile", "device", "camera", "complete"]);
 
@@ -50,10 +51,6 @@ function articleView(article) {
     };
 }
 
-function networkIdentity(value) {
-    return String(value || "").trim().toLowerCase().replace(/-/g, ":");
-}
-
 function shanghaiDateKey(value = new Date()) {
     const date = value instanceof Date ? value : new Date(value);
     if (!Number.isFinite(date.getTime())) return "";
@@ -75,17 +72,26 @@ function daysSinceShanghaiDate(value, now = new Date()) {
     return Math.floor((current - last) / 86_400_000);
 }
 
-function homeReturnView(source, headers = {}, now = new Date()) {
-    const deviceIdentity = networkIdentity(source.device?.runtime?.network_identity || source.device?.network_identity);
-    const appIdentity = networkIdentity(headers["x-gohome-network-identity"]);
-    const matched = Boolean(deviceIdentity && appIdentity && deviceIdentity === appIdentity);
-    const visitReminder = source.care_preferences?.metadata?.care_card_schedule?.visit_reminder || {};
-    const lastVisitAt = visitReminder.last_visit_at || source.care_message?.metadata?.last_visit_at || null;
+function homeReturnView(source, networkFingerprint = "", now = new Date()) {
+    const deviceFingerprint = currentHomeNetworkFingerprint(source.device, now);
+    const matched = Boolean(deviceFingerprint && networkFingerprint && deviceFingerprint === networkFingerprint);
+    const lastVisitAt = source.latest_home_visit?.verified_at || null;
     return {
         is_at_home: matched,
         network_matched: matched,
         days_since_last_visit: daysSinceShanghaiDate(lastVisitAt, now),
         last_visit_at: lastVisitAt,
+    };
+}
+
+function returnPlanView(plan) {
+    if (!plan || String(plan.status || "planned") !== "planned") return null;
+    return {
+        id: String(plan.id || ""),
+        starts_at: plan.starts_at || null,
+        note: String(plan.note || "").trim(),
+        status: "planned",
+        updated_at: plan.updated_at || null,
     };
 }
 
@@ -306,7 +312,7 @@ class NativeViewService {
         return await this.repository.deleteAccount(userId, input);
     }
 
-    async homeForFamily(userId, familyId, headers = {}) {
+    async homeForFamily(userId, familyId, networkFingerprint = "") {
         if (!familyId) {
             const error = new Error("family_id required");
             error.statusCode = 400;
@@ -322,13 +328,29 @@ class NativeViewService {
             calendar: Array.isArray(source.calendar) ? source.calendar : [],
             distance: source.distance || null,
             home_location: homeLocationView(source.elder),
-            return_home: homeReturnView(source, headers, this.clock()),
+            return_home: homeReturnView(source, networkFingerprint, this.clock()),
+            return_plan: returnPlanView(source.return_plan),
             critical_alert: criticalAlertView(source.critical_alert),
             care_message: careMessageView(source.care_message),
             articles: (source.articles || []).map(articleView).filter((article) => article && article.title),
             cameras: Array.isArray(source.cameras) ? source.cameras : [],
         };
         return { ...payload, revision: revisionFor(payload) };
+    }
+
+    async verifyHomeVisit(userId, familyId, networkFingerprint) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        return await this.repository.verifyHomeVisit(userId, familyId, networkFingerprint);
+    }
+
+    async updateHomeReturnPlan(userId, familyId, input) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        return { plan: returnPlanView(await this.repository.updateHomeReturnPlan(userId, familyId, input)) };
+    }
+
+    async cancelHomeReturnPlan(userId, familyId) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        return await this.repository.cancelHomeReturnPlan(userId, familyId);
     }
 
     async messagesForFamily(userId, familyId, options = {}) {

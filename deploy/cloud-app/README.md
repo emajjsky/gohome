@@ -43,6 +43,19 @@ three managed releases are retained.
 The first migration can roll back to the existing `/opt/gohome/app` tree. Remove
 that legacy mutable tree only after the WebRTC TestFlight and box cutover pass.
 
+## Home network verification
+
+Production startup requires `GOHOME_HOME_NETWORK_SECRET` in
+`/etc/gohome/gohome.env`. Generate an independent random value with at least 32
+characters; do not reuse an API, device, auth, media, database or COS secret.
+The service HMACs server-observed network addresses and never writes plaintext
+phone or box addresses to business tables. A missing or short secret is a
+startup error, not a disabled feature.
+
+After migration `018_home_visits_and_return_plans.sql` is applied, verify only
+the setting's presence and service health. Do not print the secret or device
+runtime fingerprints into deployment logs.
+
 ## COS permissions
 
 The cloud service identity has `PutObject`, `GetObject`, `HeadObject`,

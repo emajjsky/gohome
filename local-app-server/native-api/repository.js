@@ -25,6 +25,17 @@ function textId(value) {
     return String(value || "");
 }
 
+const HOME_NETWORK_OBSERVATION_MAX_AGE_MS = 2 * 60 * 1000;
+
+function currentHomeNetworkFingerprint(device, now = new Date()) {
+    const fingerprint = String(device?.runtime?.home_network_fingerprint || "").trim();
+    const observedAt = Date.parse(device?.last_seen_at || "");
+    const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+    if (!fingerprint || !Number.isFinite(observedAt) || !Number.isFinite(nowMs)) return "";
+    const age = nowMs - observedAt;
+    return age >= 0 && age <= HOME_NETWORK_OBSERVATION_MAX_AGE_MS ? fingerprint : "";
+}
+
 function limitValue(value, fallback = 50, maximum = 100) {
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed < 1) return fallback;
@@ -412,6 +423,16 @@ function accountExportForDb(db, userId, generatedAt = new Date().toISOString()) 
                 id: textId(item.id), title: String(item.title || ""), starts_at: item.starts_at || null,
                 note: String(item.note || ""), created_at: item.created_at || null,
             })),
+            home_visits: (db.home_visits || []).filter((item) => (
+                textId(item.family_id) === familyId && textId(item.user_id) === textId(userId)
+            )).map((item) => ({
+                visit_date: item.visit_date || null,
+                verified_at: item.verified_at || null,
+                verification_method: "public_network_match",
+            })),
+            home_return_plan: (db.home_return_plans || []).find((item) => (
+                textId(item.family_id) === familyId && textId(item.user_id) === textId(userId)
+            )) || null,
             events,
             media: forFamily(db.assets, familyId).map((item) => ({
                 id: textId(item.id),
@@ -511,6 +532,8 @@ function applyAccountDeletionToDb(db, userId, plan) {
     arrayFilter("events", familyMatches);
     arrayFilter("heartbeats", (item) => deletedDeviceIds.has(textId(item.device_id)));
     arrayFilter("calendar_events", familyMatches);
+    arrayFilter("home_visits", (item) => familyMatches(item) || textId(item.user_id) === user);
+    arrayFilter("home_return_plans", (item) => familyMatches(item) || textId(item.user_id) === user);
     arrayFilter("care_cards", familyMatches);
     arrayFilter("app_messages", (item) => familyMatches(item) || textId(item.user_id) === user);
     arrayFilter("app_message_actions", (item) => (
@@ -604,6 +627,18 @@ class NativeRepository {
 
     homeForFamily(_userId, _familyId) {
         throw new Error("NativeRepository.homeForFamily is not implemented");
+    }
+
+    verifyHomeVisit(_userId, _familyId, _networkFingerprint) {
+        throw new Error("NativeRepository.verifyHomeVisit is not implemented");
+    }
+
+    updateHomeReturnPlan(_userId, _familyId, _input) {
+        throw new Error("NativeRepository.updateHomeReturnPlan is not implemented");
+    }
+
+    cancelHomeReturnPlan(_userId, _familyId) {
+        throw new Error("NativeRepository.cancelHomeReturnPlan is not implemented");
     }
 
     messagesForFamily(_userId, _familyId, _options = {}) {
@@ -725,6 +760,8 @@ class JsonNativeRepository extends NativeRepository {
         if (!Array.isArray(this.db.activity_intervals)) this.db.activity_intervals = [];
         if (!Array.isArray(this.db.app_message_actions)) this.db.app_message_actions = [];
         if (!Array.isArray(this.db.media_upload_intents)) this.db.media_upload_intents = [];
+        if (!Array.isArray(this.db.home_visits)) this.db.home_visits = [];
+        if (!Array.isArray(this.db.home_return_plans)) this.db.home_return_plans = [];
     }
 
     user(userId) {
@@ -1089,6 +1126,14 @@ class JsonNativeRepository extends NativeRepository {
         const cameras = Object.values(this.db.cameras || {}).filter((camera) => textId(camera.family_id) === textId(familyId));
         const binding = (this.db.device_bindings || []).find((item) => textId(item.family_id) === textId(familyId) && item.status !== "revoked");
         const device = binding ? (this.db.devices || {})[textId(binding.device_id)] || null : null;
+        const latestHomeVisit = this.db.home_visits
+            .filter((visit) => textId(visit.family_id) === textId(familyId) && textId(visit.user_id) === textId(userId))
+            .sort((left, right) => String(right.verified_at || "").localeCompare(String(left.verified_at || "")))[0] || null;
+        const returnPlan = this.db.home_return_plans.find((plan) => (
+            textId(plan.family_id) === textId(familyId)
+            && textId(plan.user_id) === textId(userId)
+            && textId(plan.status || "planned") === "planned"
+        )) || null;
         const carePreferences = this.db.care_preferences?.[textId(familyId)] || null;
         const calendar = (this.db.calendar_events || []).filter((event) => textId(event.family_id) === textId(familyId));
         const events = (this.db.events || []).filter((event) => textId(event.family_id) === textId(familyId));
@@ -1129,7 +1174,94 @@ class JsonNativeRepository extends NativeRepository {
             weather: null,
             distance: null,
             device,
+            latest_home_visit: latestHomeVisit,
+            return_plan: returnPlan,
         });
+    }
+
+    verifyHomeVisit(userId, familyId, networkFingerprint) {
+        this.assertFamilyAccess(userId, familyId);
+        const fingerprint = String(networkFingerprint || "").trim();
+        const verifiedAt = this.clock();
+        const devices = Object.values(this.db.devices || {})
+            .filter((device) => textId(device.family_id) === textId(familyId) && textId(device.status).toLowerCase() !== "revoked")
+            .sort((left, right) => String(right.last_seen_at || "").localeCompare(String(left.last_seen_at || "")));
+        const boxFingerprint = currentHomeNetworkFingerprint(devices[0], new Date(verifiedAt));
+        const matched = Boolean(fingerprint && boxFingerprint && fingerprint === boxFingerprint);
+        if (!matched) return { matched: false, recorded: false, verified_at: null };
+
+        const visitDate = dateKeyShanghai(new Date(verifiedAt));
+        let visit = this.db.home_visits.find((item) => (
+            textId(item.family_id) === textId(familyId)
+            && textId(item.user_id) === textId(userId)
+            && textId(item.visit_date) === visitDate
+        ));
+        const recorded = !visit;
+        if (!visit) {
+            visit = {
+                id: `home-visit-${textId(familyId)}-${textId(userId)}-${visitDate}`,
+                family_id: textId(familyId),
+                user_id: textId(userId),
+                visit_date: visitDate,
+                verification_method: "public_network_match",
+                created_at: verifiedAt,
+            };
+            this.db.home_visits.push(visit);
+        }
+        visit.verified_at = verifiedAt;
+        visit.updated_at = verifiedAt;
+        for (const plan of this.db.home_return_plans) {
+            if (
+                textId(plan.family_id) === textId(familyId)
+                && textId(plan.user_id) === textId(userId)
+                && textId(plan.status || "planned") === "planned"
+                && Date.parse(plan.starts_at || "") <= Date.parse(verifiedAt)
+            ) {
+                plan.status = "completed";
+                plan.updated_at = verifiedAt;
+            }
+        }
+        return { matched: true, recorded, verified_at: verifiedAt };
+    }
+
+    updateHomeReturnPlan(userId, familyId, input = {}) {
+        this.assertFamilyAccess(userId, familyId);
+        const startsAt = new Date(input.starts_at || "");
+        const now = new Date(this.clock());
+        if (!Number.isFinite(startsAt.getTime()) || startsAt.getTime() < now.getTime() - 300_000 || startsAt.getTime() > now.getTime() + 2 * 365 * 86_400_000) {
+            throw repositoryError("return plan time is invalid", 400);
+        }
+        const timestamp = now.toISOString();
+        let plan = this.db.home_return_plans.find((item) => (
+            textId(item.family_id) === textId(familyId) && textId(item.user_id) === textId(userId)
+        ));
+        if (!plan) {
+            plan = {
+                id: `home-return-plan-${textId(familyId)}-${textId(userId)}`,
+                family_id: textId(familyId),
+                user_id: textId(userId),
+                created_at: timestamp,
+            };
+            this.db.home_return_plans.push(plan);
+        }
+        plan.starts_at = startsAt.toISOString();
+        plan.note = String(input.note || "").trim().slice(0, 120);
+        plan.status = "planned";
+        plan.updated_at = timestamp;
+        return clone(plan);
+    }
+
+    cancelHomeReturnPlan(userId, familyId) {
+        this.assertFamilyAccess(userId, familyId);
+        const plan = this.db.home_return_plans.find((item) => (
+            textId(item.family_id) === textId(familyId)
+            && textId(item.user_id) === textId(userId)
+            && textId(item.status || "planned") === "planned"
+        ));
+        if (!plan) return { cancelled: false };
+        plan.status = "cancelled";
+        plan.updated_at = this.clock();
+        return { cancelled: true };
     }
 
     messagesForFamily(userId, familyId, options = {}) {
@@ -1507,6 +1639,7 @@ class JsonNativeRepository extends NativeRepository {
 
 module.exports = {
     ACTION_TYPES,
+    HOME_NETWORK_OBSERVATION_MAX_AGE_MS,
     NativeRepository,
     JsonNativeRepository,
     accountDeletionPlanForDb,
@@ -1517,6 +1650,7 @@ module.exports = {
     activityIntervalInput,
     activityTrackingEnabled,
     articlesFromCareCards,
+    currentHomeNetworkFingerprint,
     familyMemberView,
     familyInvitationView,
     generateFamilyInvitationCode,

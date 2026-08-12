@@ -156,6 +156,7 @@ struct HomeResponse: Codable, Equatable, Sendable {
     let homeLocation: HomeLocation?
     let criticalAlert: HomeCriticalAlert?
     let returnHome: HomeReturnHomeStatus?
+    let returnPlan: HomeReturnPlan?
     let careMessage: CareMessage?
     let articles: [HomeArticle]
     let cameras: [HomeCamera]
@@ -169,6 +170,7 @@ struct HomeResponse: Codable, Equatable, Sendable {
         homeLocation: HomeLocation? = nil,
         criticalAlert: HomeCriticalAlert?,
         returnHome: HomeReturnHomeStatus? = nil,
+        returnPlan: HomeReturnPlan? = nil,
         careMessage: CareMessage?,
         articles: [HomeArticle],
         cameras: [HomeCamera],
@@ -181,6 +183,7 @@ struct HomeResponse: Codable, Equatable, Sendable {
         self.homeLocation = homeLocation
         self.criticalAlert = criticalAlert
         self.returnHome = returnHome
+        self.returnPlan = returnPlan
         self.careMessage = careMessage
         self.articles = articles
         self.cameras = cameras
@@ -192,8 +195,52 @@ struct HomeResponse: Codable, Equatable, Sendable {
         case homeLocation = "home_location"
         case criticalAlert = "critical_alert"
         case returnHome = "return_home"
+        case returnPlan = "return_plan"
         case careMessage = "care_message"
     }
+}
+
+struct HomeReturnPlan: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let startsAt: String
+    let note: String
+    let status: String
+    let updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, note, status
+        case startsAt = "starts_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct HomeVisitVerificationResponse: Codable, Equatable, Sendable {
+    let matched: Bool
+    let recorded: Bool
+    let verifiedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case matched, recorded
+        case verifiedAt = "verified_at"
+    }
+}
+
+struct HomeReturnPlanRequest: Codable, Equatable, Sendable {
+    let startsAt: String
+    let note: String
+
+    enum CodingKeys: String, CodingKey {
+        case note
+        case startsAt = "starts_at"
+    }
+}
+
+struct HomeReturnPlanEnvelope: Codable, Equatable, Sendable {
+    let plan: HomeReturnPlan
+}
+
+struct HomeReturnPlanCancelResponse: Codable, Equatable, Sendable {
+    let cancelled: Bool
 }
 
 struct HomeReturnHomeStatus: Codable, Equatable, Sendable {

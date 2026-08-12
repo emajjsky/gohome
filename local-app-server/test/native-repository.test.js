@@ -121,32 +121,74 @@ test('home return status matches the box network and reports visit age', async (
     id: 'device-a',
     family_id: 'family-a',
     status: 'online',
-    runtime: { network_identity: '192.168.1.0/24' },
+    last_seen_at: '2026-08-09T03:59:30.000Z',
+    runtime: { home_network_fingerprint: 'network-a' },
   };
   data.device_bindings = [{ family_id: 'family-a', device_id: 'device-a', status: 'active' }];
-  data.care_preferences = {
-    'family-a': {
-      family_id: 'family-a',
-      metadata: { care_card_schedule: { visit_reminder: { last_visit_at: '2026-08-01' } } },
-    },
-  };
-  const repo = new JsonNativeRepository(data);
+  data.home_visits = [{
+    id: 'visit-old', family_id: 'family-a', user_id: 'user-a', visit_date: '2026-08-01',
+    verified_at: '2026-08-01T04:00:00.000Z', verification_method: 'public_network_match',
+  }];
+  const repo = new JsonNativeRepository(data, { clock: () => '2026-08-09T04:00:00.000Z' });
   const service = new NativeViewService(repo, { clock: () => new Date('2026-08-09T04:00:00.000Z') });
 
-  const atHome = await service.homeForFamily('user-a', 'family-a', {
-    'x-gohome-network-identity': '192.168.1.0/24',
-  });
+  const firstVerification = await service.verifyHomeVisit('user-a', 'family-a', 'network-a');
+  const duplicateVerification = await service.verifyHomeVisit('user-a', 'family-a', 'network-a');
+  const atHome = await service.homeForFamily('user-a', 'family-a', 'network-a');
+  assert.equal(firstVerification.matched, true);
+  assert.equal(firstVerification.recorded, true);
+  assert.equal(duplicateVerification.matched, true);
+  assert.equal(duplicateVerification.recorded, false);
+  assert.equal(repo.db.home_visits.filter((visit) => visit.visit_date === '2026-08-09').length, 1);
   assert.equal(atHome.return_home.is_at_home, true);
   assert.equal(atHome.return_home.network_matched, true);
-  assert.equal(atHome.return_home.days_since_last_visit, 8);
-  assert.equal(atHome.return_home.last_visit_at, '2026-08-01');
+  assert.equal(atHome.return_home.days_since_last_visit, 0);
+  assert.equal(atHome.return_home.last_visit_at, '2026-08-09T04:00:00.000Z');
 
-  const away = await service.homeForFamily('user-a', 'family-a', {
-    'x-gohome-network-identity': '192.168.2.0/24',
-  });
+  const awayVerification = await service.verifyHomeVisit('user-a', 'family-a', 'network-b');
+  const away = await service.homeForFamily('user-a', 'family-a', 'network-b');
+  assert.equal(awayVerification.matched, false);
+  assert.equal(awayVerification.recorded, false);
   assert.equal(away.return_home.is_at_home, false);
   assert.equal(away.return_home.network_matched, false);
-  assert.equal(away.return_home.days_since_last_visit, 8);
+  assert.equal(away.return_home.days_since_last_visit, 0);
+
+  data.devices['device-a'].last_seen_at = '2026-08-09T03:50:00.000Z';
+  const stale = await service.verifyHomeVisit('user-a', 'family-a', 'network-a');
+  const staleHome = await service.homeForFamily('user-a', 'family-a', 'network-a');
+  assert.deepEqual(stale, { matched: false, recorded: false, verified_at: null });
+  assert.equal(staleHome.return_home.is_at_home, false);
+});
+
+test('home return plans are explicit and GPS distance cannot create a home visit', () => {
+  const data = fixture();
+  data.distance = { meters: 25, user_latitude: 30.1, user_longitude: 120.1 };
+  let now = '2026-08-09T04:00:00.000Z';
+  const repo = new JsonNativeRepository(data, { clock: () => now });
+
+  const plan = repo.updateHomeReturnPlan('user-a', 'family-a', {
+    starts_at: '2026-08-16T10:00:00.000Z', note: '周末一起吃饭',
+  });
+  const home = repo.homeForFamily('user-a', 'family-a');
+
+  assert.equal(plan.note, '周末一起吃饭');
+  assert.equal(home.return_plan.id, plan.id);
+  assert.equal(repo.db.home_visits.length, 0);
+  now = '2026-08-16T10:05:00.000Z';
+  data.devices['device-a'] = {
+    id: 'device-a', family_id: 'family-a', status: 'online', last_seen_at: now,
+    runtime: { home_network_fingerprint: 'network-a' },
+  };
+  const arrived = repo.verifyHomeVisit('user-a', 'family-a', 'network-a');
+  assert.equal(arrived.recorded, true);
+  assert.equal(repo.db.home_return_plans[0].status, 'completed');
+  assert.equal(repo.homeForFamily('user-a', 'family-a').return_plan, null);
+
+  repo.updateHomeReturnPlan('user-a', 'family-a', {
+    starts_at: '2026-08-23T10:00:00.000Z', note: '下周再回家',
+  });
+  assert.equal(repo.cancelHomeReturnPlan('user-a', 'family-a').cancelled, true);
+  assert.equal(repo.homeForFamily('user-a', 'family-a').return_plan, null);
 });
 
 test('JSON family membership enforces creator boundaries and supports transfer then leave', () => {
@@ -222,6 +264,48 @@ test('PostgreSQL ownership transfer locks the family and active memberships in o
   assert.equal(calls.some((call) => /^commit$/i.test(call.text)), true);
   assert.equal(changes[0].created_by_user_id, 'user-b');
   assert.deepEqual(changes[0].memberships.map((member) => member.role), ['member', 'member', 'owner']);
+});
+
+test('PostgreSQL home verification records the visit and completes a due plan in one transaction', async () => {
+  const calls = [];
+  const client = {
+    async query(text, values = []) {
+      calls.push({ text: String(text), values });
+      if (/select 1 from family_members/i.test(text)) return { rowCount: 1, rows: [{ '?column?': 1 }] };
+      if (/select runtime, last_seen_at from devices/i.test(text)) return {
+        rowCount: 1,
+        rows: [{
+          runtime: { home_network_fingerprint: 'network-a' },
+          last_seen_at: new Date('2026-08-16T10:04:30.000Z'),
+        }],
+      };
+      if (/insert into home_visits/i.test(text)) return {
+        rowCount: 1,
+        rows: [{ inserted: true, verified_at: new Date('2026-08-16T10:05:00.000Z') }],
+      };
+      return { rowCount: 1, rows: [] };
+    },
+    release() {},
+  };
+  const pool = { connect: async () => client, query: (...args) => client.query(...args) };
+  const repo = new PostgresNativeRepository(pool, {
+    clock: () => new Date('2026-08-16T10:05:00.000Z'),
+  });
+
+  const result = await repo.verifyHomeVisit('user-a', 'family-a', 'network-a');
+
+  assert.deepEqual(result, {
+    matched: true,
+    recorded: true,
+    verified_at: new Date('2026-08-16T10:05:00.000Z'),
+  });
+  assert.equal(calls[0].text, 'begin');
+  assert.match(calls[1].text, /family_members.*for share/is);
+  assert.match(calls[2].text, /order by last_seen_at desc nulls last.*for share/is);
+  assert.match(calls[3].text, /on conflict \(family_id, user_id, visit_date\) do update/is);
+  assert.match(calls[4].text, /update home_return_plans set status = 'completed'/i);
+  assert.deepEqual(calls[4].values, ['family-a', 'user-a', '2026-08-16T10:05:00.000Z']);
+  assert.equal(calls[5].text, 'commit');
 });
 
 test('JSON onboarding remains complete after the last camera is deleted', () => {

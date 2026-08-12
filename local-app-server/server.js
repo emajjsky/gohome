@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
 const https = require("https");
+const net = require("net");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
@@ -241,6 +242,35 @@ function normalizeRemoteAddress(value) {
         .replace(/^::ffff:/, "")
         .replace(/^::1$/, "127.0.0.1")
         .trim();
+}
+
+function observedClientAddress(req) {
+    const socketAddress = normalizeRemoteAddress(req.socket?.remoteAddress || req.connection?.remoteAddress || "");
+    const trustedProxy = socketAddress === "127.0.0.1" || socketAddress === "::1";
+    const forwarded = trustedProxy
+        ? String(req.headers["x-real-ip"] || String(req.headers["x-forwarded-for"] || "").split(",")[0] || "").trim()
+        : "";
+    const candidate = normalizeRemoteAddress(forwarded || socketAddress).replace(/^\[|\]$/g, "");
+    return net.isIP(candidate) ? candidate : "";
+}
+
+function ipv6NetworkPrefix(address) {
+    const sections = String(address || "").toLowerCase().split("::");
+    if (sections.length > 2) return "";
+    const left = sections[0] ? sections[0].split(":") : [];
+    const right = sections.length === 2 && sections[1] ? sections[1].split(":") : [];
+    const missing = 8 - left.length - right.length;
+    if (missing < 0 || (sections.length === 1 && missing !== 0)) return "";
+    const groups = [...left, ...Array(missing).fill("0"), ...right];
+    if (groups.length !== 8 || groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return "";
+    return `${groups.slice(0, 4).map((group) => group.padStart(4, "0")).join(":")}::/64`;
+}
+
+function observedHomeNetwork(address) {
+    const version = net.isIP(address);
+    if (version === 4) return address;
+    if (version === 6) return ipv6NetworkPrefix(address);
+    return "";
 }
 
 function normalizeBaseUrl(value) {
@@ -580,6 +610,8 @@ function normalizeDb(db) {
         db.family_rules[key] = normalizeRules(db.family_rules[key] || db.rules, db.rules);
     }
     db.calendar_events = Array.isArray(db.calendar_events) ? db.calendar_events : [];
+    db.home_visits = Array.isArray(db.home_visits) ? db.home_visits : [];
+    db.home_return_plans = Array.isArray(db.home_return_plans) ? db.home_return_plans : [];
     db.care_preferences = db.care_preferences && typeof db.care_preferences === "object" ? db.care_preferences : {};
     db.care_cards = compactCareCards(Array.isArray(db.care_cards) ? db.care_cards : []);
     db.app_messages = Array.isArray(db.app_messages) ? db.app_messages : [];
@@ -640,6 +672,12 @@ function createLocalAppServer(options = {}) {
     const apnsProvider = options.apnsProvider || createApnsProvider();
     const mediaUploadSecret = String(options.mediaUploadSecret || process.env.GOHOME_MEDIA_UPLOAD_SECRET || "").trim()
         || crypto.randomBytes(32).toString("hex");
+    const homeNetworkSecret = String(options.homeNetworkSecret || process.env.GOHOME_HOME_NETWORK_SECRET || "").trim();
+    const observedNetworkFingerprint = (req) => {
+        const network = observedHomeNetwork(observedClientAddress(req));
+        if (!network || homeNetworkSecret.length < 32) return "";
+        return crypto.createHmac("sha256", homeNetworkSecret).update(network).digest("hex");
+    };
     const { AuthService } = require("./native-api/auth-service");
     const { encodePassword, verifyLegacyPassword, verifyPassword } = require("./native-api/password-credentials");
     const authService = options.authService || new AuthService({
@@ -8069,12 +8107,20 @@ function createLocalAppServer(options = {}) {
             issuedToken.device_id = deviceId;
             issuedToken.last_heartbeat_at = nowIso();
         }
+        const existingRuntime = objectValue(store.db.devices[deviceId]?.runtime);
+        const reportedRuntime = objectValue(payload.runtime);
+        const networkFingerprint = observedNetworkFingerprint(req);
         store.db.devices[deviceId] = {
             ...store.db.devices[deviceId],
             ...payload,
             id: deviceId,
             device_id: deviceId,
             family_id: store.db.devices[deviceId]?.family_id || issuedToken?.family_id || null,
+            runtime: {
+                ...existingRuntime,
+                ...reportedRuntime,
+                ...(networkFingerprint ? { home_network_fingerprint: networkFingerprint } : {}),
+            },
             last_seen_at: nowIso(),
         };
         store.db.heartbeats.push({
@@ -8107,7 +8153,13 @@ function createLocalAppServer(options = {}) {
         const deviceId = String(payload.device_id || issuedToken?.device_id || currentEdgeDeviceId() || "edge-local");
         const reportedStatus = payload.status && typeof payload.status === "object" ? payload.status : {};
         const existingDevice = store.db.devices[deviceId] || {};
-        const runtime = payload.runtime || existingDevice.runtime || {};
+        const reportedRuntime = objectValue(payload.runtime);
+        const networkFingerprint = observedNetworkFingerprint(req);
+        const runtime = {
+            ...objectValue(existingDevice.runtime),
+            ...reportedRuntime,
+            ...(networkFingerprint ? { home_network_fingerprint: networkFingerprint } : {}),
+        };
         const deviceLanUrl = normalizeBaseUrl(runtime.lan_url || payload.lan_url || existingDevice.lan_url || inferredDeviceBaseUrl(req, runtime));
         const deviceServiceUrl = normalizeBaseUrl(runtime.service_url || payload.service_url || existingDevice.service_url || deviceLanUrl);
         const detectorBackend = String(payload.detector_backend || runtime.detector_backend || existingDevice.detector_backend || "").trim();
@@ -8458,11 +8510,15 @@ function createLocalAppServer(options = {}) {
             }
             if (pathname.startsWith("/api/v2/")) {
                 if (!requireNativeApp(req, res)) return;
+                const nativeHeaders = {
+                    ...req.headers,
+                    "x-gohome-observed-network-fingerprint": observedNetworkFingerprint(req),
+                };
                 const result = await nativeRouter.dispatch({
                     method: req.method,
                     url,
                     userId: req.appUserId,
-                    headers: req.headers,
+                    headers: nativeHeaders,
                     body: ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) ? await parseJsonBody(req) : {},
                 });
                 if (result) {
@@ -10569,6 +10625,11 @@ function initialDbFromJsonFallback(filePath, { seedDefaultData = true } = {}) {
 }
 
 async function createLocalAppServerAsync(options = {}) {
+    const authMode = String(options.authMode || process.env.GOHOME_AUTH_MODE || "production").trim().toLowerCase();
+    const homeNetworkSecret = String(options.homeNetworkSecret || process.env.GOHOME_HOME_NETWORK_SECRET || "").trim();
+    if (authMode === "production" && homeNetworkSecret.length < 32) {
+        throw new Error("GOHOME_HOME_NETWORK_SECRET must contain at least 32 characters in production");
+    }
     if (!shouldUsePostgresStore(options)) {
         return createLocalAppServer(options);
     }

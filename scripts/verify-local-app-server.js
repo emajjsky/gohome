@@ -2053,7 +2053,8 @@ async function main() {
                 headers: { Authorization: `Bearer ${appSessionToken}` },
             });
             assert.equal(modelCareCard.ok, true);
-            assert.equal(modelCareCard.card.title, "有提醒待确认");
+            assert.equal(modelCareCard.card.title, "这个周末，留一点时间回家");
+            assert.doesNotMatch(modelCareCard.card.title, /待确认|告警|异常/);
             assert.doesNotMatch(modelCareCard.card.body, /家里状态整体平稳|提醒喝水|少久晒/);
             assert.equal(modelCareCard.card.generated_by, "model:mock-care-model");
             assert.ok(app.store.db.model_generation_jobs.some((job) => (

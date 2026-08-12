@@ -109,10 +109,35 @@ class NativeApiRouter {
         }
 
         if (method === "GET" && url.pathname === "/api/v2/home") {
-            const body = await this.viewService.homeForFamily(userId, url.searchParams.get("family_id"), headers);
+            const body = await this.viewService.homeForFamily(
+                userId,
+                url.searchParams.get("family_id"),
+                headers["x-gohome-observed-network-fingerprint"],
+            );
             const etag = etagFor(body.revision);
             if (notModified(headers, body.revision)) return { status: 304, headers: { ETag: etag } };
             return { status: 200, body, headers: { ETag: etag } };
+        }
+
+        if (method === "POST" && url.pathname === "/api/v2/home/visit-verification") {
+            return {
+                status: 200,
+                body: await this.viewService.verifyHomeVisit(
+                    userId,
+                    url.searchParams.get("family_id"),
+                    headers["x-gohome-observed-network-fingerprint"],
+                ),
+            };
+        }
+
+        if (url.pathname === "/api/v2/home/return-plan") {
+            const familyId = url.searchParams.get("family_id");
+            if (method === "PUT") {
+                return { status: 200, body: await this.viewService.updateHomeReturnPlan(userId, familyId, body) };
+            }
+            if (method === "DELETE") {
+                return { status: 200, body: await this.viewService.cancelHomeReturnPlan(userId, familyId) };
+            }
         }
 
         if (method === "GET" && url.pathname === "/api/v2/messages") {

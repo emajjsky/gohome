@@ -30,12 +30,12 @@ function quoteIdentifier(value) {
 function copyNativeMigrations(targetDir) {
   const files = fs
     .readdirSync(migrationsDir)
-    .filter((file) => /^(001|002|003|004|005|010|011|012)_.+\.sql$/.test(file))
+    .filter((file) => /^(001|002|003|004|005|010|011|012|018)_.+\.sql$/.test(file))
     .sort();
 
   assert.deepEqual(
     files.map((file) => file.slice(0, 3)),
-    ['001', '002', '003', '004', '005', '010', '011', '012'],
+    ['001', '002', '003', '004', '005', '010', '011', '012', '018'],
   );
 
   for (const file of files) {
@@ -142,6 +142,7 @@ test(
           ['010', 'applied'],
           ['011', 'applied'],
           ['012', 'applied'],
+          ['018', 'applied'],
         ],
       );
       assert.deepEqual(
@@ -155,6 +156,7 @@ test(
           ['010', 'skipped'],
           ['011', 'skipped'],
           ['012', 'skipped'],
+          ['018', 'skipped'],
         ],
       );
 

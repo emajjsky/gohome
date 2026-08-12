@@ -5,6 +5,9 @@ actor AppRepository {
     typealias BootstrapUpdate = @Sendable (Loadable<BootstrapResponse>) async -> Void
     typealias HomeLoader = @Sendable (String) async throws -> HomeResponse
     typealias HomeUpdate = @Sendable (Loadable<HomeResponse>) async -> Void
+    typealias HomeVisitVerifier = @Sendable (String) async throws -> HomeVisitVerificationResponse
+    typealias HomeReturnPlanUpdater = @Sendable (String, HomeReturnPlanRequest) async throws -> HomeReturnPlanEnvelope
+    typealias HomeReturnPlanCanceller = @Sendable (String) async throws -> HomeReturnPlanCancelResponse
     typealias EventsLoader = @Sendable (String) async throws -> [AppEvent]
     typealias ProductsLoader = @Sendable (String) async throws -> ProductRecommendationsResponse
     typealias EventLoader = @Sendable (String) async throws -> AppEvent
@@ -45,6 +48,9 @@ actor AppRepository {
     private let cache: DiskCache
     private let bootstrapLoader: BootstrapLoader
     private let homeLoader: HomeLoader
+    private let homeVisitVerifier: HomeVisitVerifier
+    private let homeReturnPlanUpdater: HomeReturnPlanUpdater
+    private let homeReturnPlanCanceller: HomeReturnPlanCanceller
     private let eventsLoader: EventsLoader
     private let productsLoader: ProductsLoader
     private let eventLoader: EventLoader
@@ -95,6 +101,9 @@ actor AppRepository {
         cache: DiskCache,
         bootstrapLoader: @escaping BootstrapLoader,
         homeLoader: @escaping HomeLoader = { _ in throw APIError.invalidResponse },
+        homeVisitVerifier: @escaping HomeVisitVerifier = { _ in throw APIError.invalidResponse },
+        homeReturnPlanUpdater: @escaping HomeReturnPlanUpdater = { _, _ in throw APIError.invalidResponse },
+        homeReturnPlanCanceller: @escaping HomeReturnPlanCanceller = { _ in throw APIError.invalidResponse },
         eventsLoader: @escaping EventsLoader = { _ in throw APIError.invalidResponse },
         productsLoader: @escaping ProductsLoader = { _ in throw APIError.invalidResponse },
         eventLoader: @escaping EventLoader = { _ in throw APIError.invalidResponse },
@@ -135,6 +144,9 @@ actor AppRepository {
         self.cache = cache
         self.bootstrapLoader = bootstrapLoader
         self.homeLoader = homeLoader
+        self.homeVisitVerifier = homeVisitVerifier
+        self.homeReturnPlanUpdater = homeReturnPlanUpdater
+        self.homeReturnPlanCanceller = homeReturnPlanCanceller
         self.eventsLoader = eventsLoader
         self.productsLoader = productsLoader
         self.eventLoader = eventLoader
@@ -346,6 +358,18 @@ actor AppRepository {
         request: CareMessageActionRequest
     ) async throws -> CareMessageActionResponse {
         try await messageActionLoader(familyID, messageID, request)
+    }
+
+    func verifyHomeVisit(familyID: String) async throws -> HomeVisitVerificationResponse {
+        try await homeVisitVerifier(familyID)
+    }
+
+    func updateHomeReturnPlan(familyID: String, request: HomeReturnPlanRequest) async throws -> HomeReturnPlan {
+        try await homeReturnPlanUpdater(familyID, request).plan
+    }
+
+    func cancelHomeReturnPlan(familyID: String) async throws {
+        guard try await homeReturnPlanCanceller(familyID).cancelled else { return }
     }
 
     func memories(scope: CacheScope, onUpdate: @escaping @Sendable (Loadable<FamilyMemoriesResponse>) async -> Void) async {

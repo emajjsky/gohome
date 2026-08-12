@@ -13,6 +13,29 @@ enum AppRepositoryLiveFactory {
                         queryItems: [URLQueryItem(name: "family_id", value: familyID)]
                     ))
                 },
+                homeVisitVerifier: { familyID in
+                    try await client.send(Endpoint(
+                        method: .post,
+                        path: "/api/v2/home/visit-verification",
+                        queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                    ))
+                },
+                homeReturnPlanUpdater: { familyID, request in
+                    let endpoint: Endpoint<HomeReturnPlanEnvelope> = try .jsonBody(
+                        method: .put,
+                        path: "/api/v2/home/return-plan",
+                        body: request,
+                        queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                    )
+                    return try await client.send(endpoint)
+                },
+                homeReturnPlanCanceller: { familyID in
+                    try await client.send(Endpoint(
+                        method: .delete,
+                        path: "/api/v2/home/return-plan",
+                        queryItems: [URLQueryItem(name: "family_id", value: familyID)]
+                    ))
+                },
                 eventsLoader: { _ in
                     try await client.send(Endpoint(
                         path: "/api/v1/events",

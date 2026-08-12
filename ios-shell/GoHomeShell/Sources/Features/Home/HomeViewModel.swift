@@ -108,6 +108,9 @@ final class HomeViewModel: ObservableObject {
     @Published private(set) var careMessage: CareMessage?
     @Published private(set) var pendingCareAction: String?
     @Published private(set) var careActionError: String?
+    @Published private(set) var homeVisitVerificationError: String?
+    @Published private(set) var returnPlanError: String?
+    @Published private(set) var isSavingReturnPlan = false
 
     private let repository: AppRepository?
     private let scope: CacheScope?
@@ -162,6 +165,14 @@ final class HomeViewModel: ObservableObject {
         loadGeneration += 1
         let generation = loadGeneration
         let task = Task { @MainActor [weak self, repository, scope, generation] in
+            do {
+                _ = try await repository.verifyHomeVisit(familyID: scope.familyID)
+                self?.homeVisitVerificationError = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.homeVisitVerificationError = "当前网络暂时无法核验，到家记录未改变"
+            }
             await repository.home(scope: scope) { [weak self] next in
                 guard !Task.isCancelled else { return }
                 await self?.applyLoadedState(next, generation: generation)
@@ -180,12 +191,38 @@ final class HomeViewModel: ObservableObject {
         }
         state = nextState
         if pendingCareAction == nil { careMessage = nextState.value?.careMessage }
-        if nextState.value?.returnHome?.isAtHome == true,
-           nextState.value?.careMessage?.messageType == "return_home",
-           pendingCareAction == nil {
-            Task { [weak self] in
-                _ = await self?.recordCareAction(type: "returned_home", payload: ["source": "home_network_match"])
-            }
+    }
+
+    func saveReturnPlan(date: Date, note: String) async -> Bool {
+        guard let repository, let scope, !isSavingReturnPlan else { return false }
+        isSavingReturnPlan = true
+        returnPlanError = nil
+        defer { isSavingReturnPlan = false }
+        do {
+            _ = try await repository.updateHomeReturnPlan(
+                familyID: scope.familyID,
+                request: HomeReturnPlanRequest(startsAt: ISO8601DateFormatter().string(from: date), note: note)
+            )
+            refresh()
+            return true
+        } catch {
+            returnPlanError = "回家计划没有保存，请稍后重试"
+            return false
+        }
+    }
+
+    func cancelReturnPlan() async -> Bool {
+        guard let repository, let scope, !isSavingReturnPlan else { return false }
+        isSavingReturnPlan = true
+        returnPlanError = nil
+        defer { isSavingReturnPlan = false }
+        do {
+            try await repository.cancelHomeReturnPlan(familyID: scope.familyID)
+            refresh()
+            return true
+        } catch {
+            returnPlanError = "回家计划没有取消，请稍后重试"
+            return false
         }
     }
 

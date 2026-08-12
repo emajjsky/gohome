@@ -132,6 +132,7 @@ async function main() {
         storeKind: "postgres",
         appToken: APP_TOKEN,
         deviceToken: DEVICE_TOKEN,
+        homeNetworkSecret: process.env.GOHOME_HOME_NETWORK_SECRET || "postgres-loop-home-network-secret-32-bytes",
     });
     const baseUrl = await listen(app.server);
 

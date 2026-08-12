@@ -1,8 +1,15 @@
 import SwiftUI
 
+private func parseHomeReturnPlanDate(_ value: String) -> Date? {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+}
+
 struct HomeView: View {
     @ObservedObject var model: HomeViewModel
     @StateObject private var distanceProvider = HomeDistanceLocationProvider()
+    @State private var showingReturnPlanEditor = false
     let apiClient: APIClient?
     let onSetHomeLocation: (() -> Void)?
     let onOpenAlert: (String) -> Void
@@ -27,19 +34,16 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 welcomeHero
-                returnHomeSummary
-                weatherCard
                 DistanceMapView(state: distanceProvider.state, onSetHomeLocation: onSetHomeLocation)
+                returnHomeSummary
+                returnPlanSection
+                weatherCard
                 if let message = model.careMessage {
                     CareMessageCard(message: message, model: model)
                 } else {
                     ContextTopicCard(suggestion: HomePresentation.contextualTopic(model.state.value))
                 }
                 EditorialFeed(articles: model.state.value?.articles ?? [], apiBaseURL: apiClient?.baseURL)
-                CalendarStripView(
-                    days: HomePresentation.calendarDays(reference: referenceDate),
-                    nextEvent: model.state.value?.calendar.first
-                )
                 if let staleReason = model.state.staleReason, model.state.value != nil {
                     Text(staleReason)
                         .font(.system(size: 11, weight: .medium))
@@ -60,6 +64,9 @@ struct HomeView: View {
         .onDisappear {
             model.cancelInFlightLoad()
             model.cancelInFlightCareAction()
+        }
+        .sheet(isPresented: $showingReturnPlanEditor) {
+            ReturnHomePlanEditor(model: model, plan: model.state.value?.returnPlan)
         }
     }
 
@@ -201,7 +208,9 @@ struct HomeView: View {
                     if status.isAtHome {
                         Text("手机已连接家庭网络")
                     } else if let days = status.daysSinceLastVisit, days > 0 {
-                        Text("距上次回家已 (days) 天")
+                        Text("距上次回家已 \(days) 天")
+                    } else if status.daysSinceLastVisit == 0 {
+                        Text("今天已记录回家")
                     } else {
                         Text("尚未记录最近一次回家时间")
                     }
@@ -218,7 +227,52 @@ struct HomeView: View {
                     .stroke(GoHomeTheme.softLine, lineWidth: 0.5)
             }
             .accessibilityIdentifier("home-return-home-status")
+            if let message = model.homeVisitVerificationError {
+                Text(message)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(GoHomeTheme.ginger)
+            }
         }
+    }
+
+    private var returnPlanSection: some View {
+        Button { showingReturnPlanEditor = true } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "calendar.badge.plus")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.ginger)
+                    .frame(width: 36, height: 36)
+                    .background(GoHomeTheme.paleGinger, in: Circle())
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("回家计划")
+                        .font(.system(size: 14, weight: .bold))
+                    if let plan = model.state.value?.returnPlan {
+                        Text(returnPlanText(plan.startsAt))
+                    } else {
+                        Text("设置下一次回家的时间")
+                    }
+                }
+                .foregroundStyle(GoHomeTheme.ink)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(GoHomeTheme.mutedInk)
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 62)
+            .background(GoHomeTheme.surface, in: RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: GoHomeTheme.compactRadius).stroke(GoHomeTheme.softLine, lineWidth: 0.5) }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("home-return-plan")
+    }
+
+    private func returnPlanText(_ value: String) -> String {
+        guard let date = parseHomeReturnPlanDate(value) else { return value }
+        return date.formatted(
+            Date.FormatStyle(date: .abbreviated, time: .shortened)
+                .locale(Locale(identifier: "zh_CN"))
+        )
     }
 
     private func weatherSymbol(_ condition: String) -> String {
@@ -230,4 +284,51 @@ struct HomeView: View {
         return "sun.max.fill"
     }
 
+}
+
+private struct ReturnHomePlanEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var model: HomeViewModel
+    let plan: HomeReturnPlan?
+    @State private var date: Date
+    @State private var note: String
+
+    init(model: HomeViewModel, plan: HomeReturnPlan?) {
+        self.model = model
+        self.plan = plan
+        let parsed = plan.flatMap { parseHomeReturnPlanDate($0.startsAt) }
+        _date = State(initialValue: parsed ?? Date().addingTimeInterval(7 * 86_400))
+        _note = State(initialValue: plan?.note ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                DatePicker("回家时间", selection: $date, in: Date()..., displayedComponents: [.date, .hourAndMinute])
+                TextField("备注（可选）", text: $note, axis: .vertical)
+                    .lineLimit(2...4)
+                if let error = model.returnPlanError {
+                    Text(error).foregroundStyle(.red)
+                }
+                if plan != nil {
+                    Button("取消回家计划", role: .destructive) {
+                        Task { if await model.cancelReturnPlan() { dismiss() } }
+                    }
+                }
+            }
+            .navigationTitle(plan == nil ? "设置回家计划" : "修改回家计划")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        Task { if await model.saveReturnPlan(date: date, note: note) { dismiss() } }
+                    }
+                    .disabled(model.isSavingReturnPlan)
+                }
+            }
+        }
+    }
 }
