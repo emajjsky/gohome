@@ -1683,7 +1683,7 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **验证**：服务端专项覆盖同公网匹配、不同公网拒绝、同日幂等、客户端伪造距离和网络字段无效、计划新增取消、账号导出删除及迁移无 IP 列。`npm run test:native-server` 通过 `127` 项，另有 `1` 项仅因本机未配置 `GOHOME_DATABASE_URL` 跳过；`npm test` 全部通过，PostgreSQL 回家记录与计划完成事务专项通过。iOS 完整回归 `231/231` 通过，其中单元测试 `202/202`、UI 测试 `29/29`；首页截图确认距离区域位于回家计划和天气之前，计划时间显示为 `2026年8月19日 18:00`，无文字或卡片溢出。
 
-**状态（2026-08-12）**：本地代码、迁移、文档和完整回归已完成。生产部署前必须在 `/etc/gohome/gohome.env` 配置独立随机 `GOHOME_HOME_NETWORK_SECRET` 并执行迁移 `018_home_visits_and_return_plans.sql`；不得复用 API、设备或媒体密钥。部署后仍需用真实手机蜂窝网络、家庭 Wi-Fi、盒子断网重连和跨日场景做生产验收。
+**状态（2026-08-12）**：提交 `afc2b07` 已随云端 release `20260812084303-587c2791581b` 原子部署。服务器已生成独立随机 `GOHOME_HOME_NETWORK_SECRET` 且未输出密钥，迁移 `018_home_visits_and_return_plans.sql` 已登记，`home_visits / home_return_plans` 两表存在；服务 `active`、`NRestarts=0`、PostgreSQL/WHEP/APNs 健康。仍需用真实手机蜂窝网络、家庭 Wi-Fi、盒子断网重连和跨日场景做生产验收。
 
 ### GH-132 生产多模态复核短时传输失败后不可诊断且真实探针失效
 
@@ -1695,4 +1695,4 @@ Build 10 真机已证明旧 JSON 契约错误消失并成功完成 WHEP `OPTIONS
 
 **验证**：新增错误分类、永久/临时 HTTP 判定、退避上限和探针设备身份专项。服务端完整回归 `132` 项中 `131` 通过、`1` 项仅因本机未配置 PostgreSQL 集成地址跳过，App Server 闭环通过。修复后的生产隔离探针一次成功：`qwen3.7-plus-2026-05-26` 收到四帧，首次调用返回严格 `gohome-vision-verification-v2`，判定足球守门员主动扑救为 `no_danger / rejected`，只留档、不推送，四个临时 COS 对象完成清理。
 
-**状态（2026-08-12）**：代码与真实 Provider 验证完成，待随下一次云端原子发布部署；部署后需确认旧用户事件不被自动重放，新的真实跌倒候选按 `suspected / confirmed` 通知一次，`no_danger / uncertain` 只记录。
+**状态（2026-08-12）**：提交 `587c279` 已随 release `20260812084303-587c2791581b` 原子部署。部署后服务 `active`、`NRestarts=0`、退出码 `0`，近十分钟无视觉复核错误；使用当前 release 代码再次执行真实四帧隔离探针，首次调用成功返回 `no_danger / rejected`，临时 COS 对象已清理且新增用户消息为 `0`。旧失败任务 `486` 仍保持 `failed / attempt_count=3`，确认启动过程没有重放历史用户事件。下一次真实跌倒候选仍需现场确认 `suspected / confirmed` 只通知一次。
