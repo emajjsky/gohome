@@ -1,6 +1,12 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { factSignals, validateCareModelOutput } = require('../care-card-contract');
+const {
+  CARE_CARD_CONTRACT_VERSION,
+  currentCareCard,
+  currentCareMessage,
+  factSignals,
+  validateCareModelOutput,
+} = require('../care-card-contract');
 
 test('care model can only cite facts issued by the server', () => {
   const signals = factSignals([
@@ -22,4 +28,14 @@ test('care model can only cite facts issued by the server', () => {
     primary_fact_id: 'fact-1',
     title: '模型试图写入用户文案',
   }, signals), null);
+});
+
+test('care cards and daily messages require the current factual contract', () => {
+  const primarySignal = { fact_id: 'fact-1', type: 'weather', source_id: '2026-08-12' };
+  assert.equal(currentCareCard({ metadata: {} }), false);
+  assert.equal(currentCareCard({ metadata: { contract_version: CARE_CARD_CONTRACT_VERSION } }), false);
+  assert.equal(currentCareCard({ metadata: { contract_version: CARE_CARD_CONTRACT_VERSION, primary_signal: primarySignal } }), true);
+  assert.equal(currentCareMessage({ message_type: 'care_card', metadata: {} }), false);
+  assert.equal(currentCareMessage({ message_type: 'care_card', metadata: { care_contract_version: CARE_CARD_CONTRACT_VERSION } }), true);
+  assert.equal(currentCareMessage({ message_type: 'return_home', metadata: {} }), true);
 });

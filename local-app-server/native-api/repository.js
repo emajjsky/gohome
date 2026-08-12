@@ -1,5 +1,7 @@
 "use strict";
 
+const { currentCareMessage } = require("../care-card-contract");
+
 const crypto = require("crypto");
 const { dayBoundsShanghai } = require("./activity-reporting");
 
@@ -1151,6 +1153,7 @@ class JsonNativeRepository extends NativeRepository {
                 && (textId(message.message_type) !== "care_card"
                     || textId(message.message_id).endsWith(`-${dateKeyShanghai(new Date(this.clock()))}`))
             ))
+            .filter(currentCareMessage)
             .filter((message) => {
                 const snoozedUntil = Date.parse(message.metadata?.snoozed_until || "");
                 return !Number.isFinite(snoozedUntil) || snoozedUntil <= now;

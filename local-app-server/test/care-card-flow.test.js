@@ -136,6 +136,12 @@ test('daily care uses interests only after the user explicitly saves them', asyn
     assert.equal(legacy.body.card.status, 'pending', JSON.stringify(legacy.body.card));
     assert.equal(app.store.db.app_messages.some((item) => item.message_type === 'care_card'), false);
 
+    app.store.db.care_preferences[familyID].interests = ['天气', '养生', '家常', '戏曲', '本地资讯', '健康生活', '防诈骗', '节日'];
+    const expandedLegacy = await request(baseURL, '/api/v1/internal/care-cards/generate', {
+      method: 'POST', headers, body: JSON.stringify({ family_id: familyID, force: true }),
+    });
+    assert.equal(expandedLegacy.body.card.status, 'pending', JSON.stringify(expandedLegacy.body.card));
+
     const saved = await request(baseURL, `/api/v1/families/${familyID}/care-preferences`, {
       method: 'PUT', headers, body: JSON.stringify({ interests: ['戏曲', '家常'] }),
     });
@@ -152,6 +158,68 @@ test('daily care uses interests only after the user explicitly saves them', asyn
     assert.equal(persisted.body.metadata.interests_configured, true);
     const persistedDb = JSON.parse(fs.readFileSync(path.join(dataDir, 'db.json'), 'utf8'));
     assert.equal(persistedDb.care_preferences[familyID].metadata.interests_configured, true);
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+    if (previousModelCalls === undefined) delete process.env.GOHOME_CARE_MODEL_CALLS;
+    else process.env.GOHOME_CARE_MODEL_CALLS = previousModelCalls;
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('same-day legacy care content becomes pending and is rebuilt in place', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gohome-care-contract-upgrade-'));
+  const previousModelCalls = process.env.GOHOME_CARE_MODEL_CALLS;
+  process.env.GOHOME_CARE_MODEL_CALLS = '0';
+  const app = createLocalAppServer({
+    rootDir: path.join(__dirname, '..', '..'), dataDir, authMode: 'demo', demoOtp: '246810',
+  });
+  const baseURL = await listen(app.server);
+  try {
+    const registered = await request(baseURL, '/api/auth/register', {
+      method: 'POST', body: JSON.stringify({ phone: '13800138041', code: '246810' }),
+    });
+    const headers = { Authorization: `Bearer ${registered.body.token}` };
+    const family = await request(baseURL, '/api/families', {
+      method: 'POST', headers, body: JSON.stringify({ name: '旧关怀升级家庭' }),
+    });
+    const familyID = String(family.body.id);
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    app.store.db.care_cards.push({
+      id: 'legacy-today', card_id: `care-${familyID}-${today}`, family_id: Number(familyID),
+      elder_id: 'elder_primary', card_date: today, card_type: 'daily', title: '家里喜欢戏曲',
+      body: '问问最近有没有听到喜欢的戏曲。', facts: [], status: 'open', metadata: {},
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+    app.store.db.app_messages.push({
+      id: 'legacy-message', message_id: `care-daily-${familyID}-${today}`, family_id: Number(familyID),
+      care_card_id: `care-${familyID}-${today}`, message_type: 'care_card', title: '家里喜欢戏曲',
+      body: '问问最近有没有听到喜欢的戏曲。', status: 'open', metadata: {},
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+
+    const pending = await request(baseURL, `/api/v1/app/care-cards/today?family_id=${familyID}`, { headers });
+    assert.equal(pending.body.status, 'pending');
+    assert.equal(pending.body.title, '');
+    const history = await request(baseURL, `/api/v1/app/care-cards?family_id=${familyID}`, { headers });
+    assert.deepEqual(history.body, []);
+    const messages = await request(baseURL, `/api/v1/app/messages?family_id=${familyID}&status=open`, { headers });
+    assert.equal(messages.body.some((message) => message.message_type === 'care_card'), false);
+
+    app.store.db.home_return_plans.push({
+      id: 'upgrade-plan', family_id: Number(familyID), user_id: registered.body.user.id,
+      starts_at: '2026-08-20T10:00:00.000Z', note: '', status: 'planned',
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+    const generated = await request(baseURL, '/api/v1/internal/care-cards/generate', {
+      method: 'POST', headers, body: JSON.stringify({ family_id: familyID }),
+    });
+    assert.equal(generated.body.card.card_id, `care-${familyID}-${today}`);
+    assert.equal(generated.body.card.title, '回家计划已经定下来了');
+    assert.equal(app.store.db.care_cards.filter((card) => card.card_id === `care-${familyID}-${today}`).length, 1);
+    assert.equal(app.store.db.app_messages.filter((message) => message.message_id === `care-daily-${familyID}-${today}`).length, 1);
+    assert.equal(app.store.db.app_messages.find((message) => message.message_id === `care-daily-${familyID}-${today}`).metadata.care_contract_version, 'gohome-care-card-v3');
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
     if (previousModelCalls === undefined) delete process.env.GOHOME_CARE_MODEL_CALLS;

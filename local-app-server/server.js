@@ -709,7 +709,13 @@ function createLocalAppServer(options = {}) {
     const { PostgresNativeRepository } = require("./native-api/postgres-repository");
     const { NativeViewService } = require("./native-api/view-service");
     const { NativeApiRouter } = require("./native-api/router");
-    const { factSignals, validateCareModelOutput } = require("./care-card-contract");
+    const {
+        CARE_CARD_CONTRACT_VERSION,
+        currentCareCard,
+        currentCareMessage,
+        factSignals,
+        validateCareModelOutput,
+    } = require("./care-card-contract");
     const onFamilyMetadataChange = (familyId, patch) => {
         const family = store.db.families.find((item) => String(item.id) === String(familyId));
         if (!family) return;
@@ -2822,6 +2828,7 @@ function createLocalAppServer(options = {}) {
             source_summary: Array.isArray(card.source_summary) ? card.source_summary : [],
             content_recommendations: Array.isArray(card.content_recommendations) ? card.content_recommendations : [],
             metadata: card.metadata?.primary_signal ? {
+                contract_version: String(card.metadata.contract_version || ""),
                 primary_signal: {
                     fact_id: String(card.metadata.primary_signal.fact_id || ""),
                     type: String(card.metadata.primary_signal.type || ""),
@@ -3329,6 +3336,9 @@ function createLocalAppServer(options = {}) {
             priority: "normal",
             generated_by: card.generated_by ? `scheduler:${card.generated_by}` : "scheduler",
             scheduled_for: options.scheduled_for || "",
+            metadata: {
+                care_contract_version: CARE_CARD_CONTRACT_VERSION,
+            },
         });
         if (!Array.isArray(card.source_message_ids)) card.source_message_ids = [];
         if (!card.source_message_ids.includes(message.message_id)) {
@@ -6436,10 +6446,8 @@ function createLocalAppServer(options = {}) {
                 facts.push(`已开启回家间隔提醒，阈值是 ${schedule.visit_reminder.threshold_days} 天。`);
             }
         }
-        const legacyDefaultInterests = ["天气", "养生", "家常", "戏曲"];
         const userSelectedTopics = normalizeStringList(preferences.interests, [], 6);
-        const hasExplicitInterests = Boolean(preferences.metadata?.interests_configured)
-            || JSON.stringify(userSelectedTopics) !== JSON.stringify(legacyDefaultInterests);
+        const hasExplicitInterests = preferences.metadata?.interests_configured === true;
         if (schedule.content_types?.elder_interest_topics && hasExplicitInterests && userSelectedTopics.length) {
             const topic = userSelectedTopics[0];
             const topicText = `用户已选关注主题包括：${userSelectedTopics.join("、")}。`;
@@ -6534,7 +6542,7 @@ function createLocalAppServer(options = {}) {
         const existing = store.db.care_cards.find((card) => (
             Number(card.family_id) === targetFamilyId && card.card_date === cardDate && card.card_type === "daily"
         ));
-        if (existing && !options.force) {
+        if (existing && currentCareCard(existing) && !options.force) {
             if (careImageRequested(preferences) && !existing.image_url && existing.image_mode !== "failed_provider") {
                 const existingParts = await careCardFacts(targetFamilyId, preferences);
                 await ensureCareCardImage(existing, targetFamilyId, { ...existingParts, preferences });
@@ -6581,6 +6589,7 @@ function createLocalAppServer(options = {}) {
             source_summary: sourceSummary,
             content_recommendations: content?.available ? content.recommendations : [],
             metadata: initialSignal ? {
+                contract_version: CARE_CARD_CONTRACT_VERSION,
                 primary_signal: {
                     fact_id: initialSignal.id,
                     type: initialSignal.type,
@@ -6626,6 +6635,7 @@ function createLocalAppServer(options = {}) {
                 card.body = selectedTheme.body;
                 card.facts = selectedSignals.map((signal) => signal.text);
                 card.metadata = {
+                    contract_version: CARE_CARD_CONTRACT_VERSION,
                     primary_signal: {
                         fact_id: selectedSignals[0].id,
                         type: selectedSignals[0].type,
@@ -9819,7 +9829,7 @@ function createLocalAppServer(options = {}) {
                     && card.card_date === cardDate
                     && card.card_type === "daily"
                 ));
-                if (existing) {
+                if (existing && currentCareCard(existing)) {
                     write(res, 200, publicCareCard(existing));
                     const preferences = carePreferences(familyId);
                     if (careImageRequested(preferences) && !existing.image_url && existing.image_mode !== "failed_provider") {
@@ -9839,7 +9849,7 @@ function createLocalAppServer(options = {}) {
                 if (!familyId || !requireFamilyAccess(req, res, familyId)) return;
                 const limit = Math.max(1, Math.min(60, normalizeNumber(url.searchParams.get("limit"), 20)));
                 const cards = store.db.care_cards
-                    .filter((card) => Number(card.family_id) === Number(familyId))
+                    .filter((card) => Number(card.family_id) === Number(familyId) && currentCareCard(card))
                     .sort((a, b) => String(b.card_date || b.created_at || "").localeCompare(String(a.card_date || a.created_at || "")))
                     .slice(0, limit)
                     .map(publicCareCard);
@@ -10193,6 +10203,7 @@ function createLocalAppServer(options = {}) {
                 const messageFamilyIds = familyId ? new Set([Number(familyId)]) : userFamilyIds;
                 const persisted = store.db.app_messages
                     .filter((message) => messageFamilyIds.has(Number(message.family_id)))
+                    .filter(currentCareMessage)
                     .filter((message) => !statusFilter || statusFilter === "all" || String(message.status || "open") === statusFilter)
                     .map(publicAppMessage);
                 const persistedEventIds = new Set(persisted.flatMap((message) => (

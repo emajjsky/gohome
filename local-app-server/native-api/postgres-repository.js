@@ -1,6 +1,7 @@
 "use strict";
 
 const { dayBoundsShanghai } = require("./activity-reporting");
+const { CARE_CARD_CONTRACT_VERSION } = require("../care-card-contract");
 const {
     NativeRepository,
     accountExportForDb,
@@ -738,14 +739,17 @@ class PostgresNativeRepository extends NativeRepository {
                  where family_id = $1
                    and message_type in ('activity_insight', 'return_home', 'care_card')
                    and status = 'open'
-                   and (message_type <> 'care_card' or message_id = 'care-daily-' || $1 || '-' || to_char(now() at time zone 'Asia/Shanghai', 'YYYY-MM-DD'))
+                   and (message_type <> 'care_card' or (
+                       message_id = 'care-daily-' || $1 || '-' || to_char(now() at time zone 'Asia/Shanghai', 'YYYY-MM-DD')
+                       and metadata->>'care_contract_version' = $2
+                   ))
                    and (
                        nullif(metadata->>'snoozed_until', '') is null
                        or (metadata->>'snoozed_until')::timestamptz <= now()
                    )
                  order by case message_type when 'activity_insight' then 0 when 'return_home' then 1 else 2 end, created_at desc
                  limit 1`,
-                [id],
+                [id, CARE_CARD_CONTRACT_VERSION],
             ),
             this.pool.query(`select * from devices where family_id = $1 and status <> 'revoked' order by last_seen_at desc nulls last limit 1`, [id]),
             this.pool.query(`select metadata from care_preferences where family_id = $1`, [id]),

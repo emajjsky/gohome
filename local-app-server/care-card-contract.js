@@ -1,5 +1,7 @@
 "use strict";
 
+const CARE_CARD_CONTRACT_VERSION = "gohome-care-card-v3";
+
 function normalizeText(value, limit = 160) {
     return String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
 }
@@ -43,4 +45,25 @@ function validateCareModelOutput(parsed, signals) {
     };
 }
 
-module.exports = { factSignals, validateCareModelOutput };
+function currentCareCard(card) {
+    return Boolean(
+        card
+        && card.metadata
+        && card.metadata.contract_version === CARE_CARD_CONTRACT_VERSION
+        && card.metadata.primary_signal
+        && String(card.metadata.primary_signal.fact_id || "").trim(),
+    );
+}
+
+function currentCareMessage(message) {
+    if (!message || String(message.message_type || "") !== "care_card") return true;
+    return message.metadata?.care_contract_version === CARE_CARD_CONTRACT_VERSION;
+}
+
+module.exports = {
+    CARE_CARD_CONTRACT_VERSION,
+    currentCareCard,
+    currentCareMessage,
+    factSignals,
+    validateCareModelOutput,
+};

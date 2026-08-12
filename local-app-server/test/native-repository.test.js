@@ -3,6 +3,7 @@ const test = require('node:test');
 const { JsonNativeRepository } = require('../native-api/repository');
 const { PostgresNativeRepository } = require('../native-api/postgres-repository');
 const { NativeViewService } = require('../native-api/view-service');
+const { CARE_CARD_CONTRACT_VERSION } = require('../care-card-contract');
 
 function fixture() {
   return {
@@ -405,7 +406,8 @@ test('native home care message preserves its canonical care card identity', asyn
   data.app_messages.push({
     message_id: `care-daily-family-a-${today}`, family_id: 'family-a', care_card_id: 'care-family-a-2026-07-25',
     message_type: 'care_card', title: '今日联系话题', body: '正文', status: 'open',
-    created_at: '2026-07-25T08:00:00.000Z', metadata: {},
+    created_at: '2026-07-25T08:00:00.000Z',
+    metadata: { care_contract_version: CARE_CARD_CONTRACT_VERSION },
   });
   const view = await new NativeViewService(new JsonNativeRepository(data, { clock })).homeForFamily('user-a', 'family-a');
   assert.equal(view.care_message.care_card_id, 'care-family-a-2026-07-25');
