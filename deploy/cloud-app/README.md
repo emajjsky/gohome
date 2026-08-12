@@ -69,14 +69,19 @@ runtime fingerprints into deployment logs.
 
 ## Vision verification recovery
 
-Visual event verification uses five bounded attempts by default. Transport
-failures, request timeouts, throttling and provider 5xx responses retry with a
-short bounded backoff; permanent provider 4xx responses stop immediately. The
-persisted job error contains only the failure stage, HTTP status or safe network
-error code. It must not contain credentials, provider URLs or signed evidence
-URLs. Use `scripts/verify-vision-verification-live.js` from an operations
-worktree for an isolated four-frame provider check; the script uses a temporary
-database, does not send APNs, and deletes its temporary COS objects.
+Visual event verification starts its default 90-second product deadline only
+after all four evidence roles are ready and the model job is created. Transport
+failures, request timeouts, throttling and provider 5xx responses use bounded
+retries only while another attempt can start before that deadline; permanent
+provider 4xx responses stop immediately. At the deadline, an event without a
+definitive result becomes `timeout_suspected` and creates the incident's single
+notification. A late definitive result may update the archived incident but
+must not create a second notification. The persisted job error contains only
+the failure stage, HTTP status or safe network error code. It must not contain
+credentials, provider URLs or signed evidence URLs. Use
+`scripts/verify-vision-verification-live.js` from an operations worktree for an
+isolated four-frame provider check; the script uses a temporary database, does
+not send APNs, and deletes its temporary COS objects.
 
 ## COS permissions
 
