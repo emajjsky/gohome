@@ -2,7 +2,7 @@
 
 Distributed baseline: `1.0.0 (16)`
 
-Candidate under validation: `1.0.0 (17)` (full regression passed; upload pending)
+Candidate under validation: `1.0.0 (17)` (uploaded; Apple processing)
 
 ## Automated Gates
 
@@ -17,7 +17,7 @@ Candidate under validation: `1.0.0 (17)` (full regression passed; upload pending
 - [x] Build 5 is archived from the sole native project on `main` and accepted for upload.
 - [x] Build 5 finishes Apple processing and is installable from TestFlight.
 - [x] Build 16 finishes Apple processing and is assigned to `比赛内测`.
-- [ ] Build 17 is archived from the sole native project, accepted by App Store Connect, processed, and assigned to `比赛内测`.
+- [ ] Build 17 is archived from the sole native project and accepted by App Store Connect; Apple processing and assignment to `比赛内测` remain open.
 - [x] Build 6 is archived from the sole native project on `main`, processed by Apple, and assigned to `比赛内测`.
 - [ ] Build 7 rejects cached location samples, is archived from the sole native project, processed by Apple, and assigned to `比赛内测`.
 
@@ -147,3 +147,14 @@ assigned to the internal group `比赛内测` with one tester. GoHome's dSYM is 
 binary WebRTC package did not supply its matching framework dSYM, so third-party WebRTC
 crash frames may remain unsymbolicated. TestFlight installation and physical event-state
 acceptance remain open.
+
+Build 17 upload checkpoint on 2026-08-12: the sole native project passed `202/202`
+unit tests and `29/29` UI tests with zero failures, and release metadata verification
+passed. Commit `4e78154` generated and archived `GoHome 1.0.0 (17)` with Bundle ID
+`com.gohome.family`, arm64, team `X4M4T6Z4CJ`, production upload configuration, and a
+matching GoHome app dSYM. App Store Connect accepted Delivery UUID
+`1b3856c0-024c-47a3-8b83-22f8696b293a` and reported that the package is processing.
+The only upload warning remains the vendor WebRTC binary's missing matching dSYM; it
+does not affect installation or runtime behavior, but WebRTC-internal crash frames may
+remain unsymbolicated. Apple processing, internal-group assignment, installation, and
+the open physical checks in this document remain required.
