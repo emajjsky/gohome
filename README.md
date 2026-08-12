@@ -6,13 +6,13 @@ GoHome 是一套由家庭边缘守护盒、云端服务和 iOS App 组成的家�
 
 - 正式 iOS 工程：`ios-shell/GoHomeShell.xcodeproj`
 - Bundle ID：`com.gohome.family`
-- 当前发布候选：`1.0.0 (16)`，事件证据链改动已部署盒子和云端；App Store Connect 已完成处理并加入内部测试组“比赛内测”
+- 当前发布候选：`1.0.0 (17)`，事件处理、商品图片、回家记录/计划和今日关怀事实闭环已进入正式工程，待 App Store Connect 上传与真机验收
 - 硬件：树莓派 5 + Hailo-8 HAT+
 - 云端：Node API、PostgreSQL、COS、MediaMTX、Coturn、nginx
 - 视频主链路：RTSP 共享采集 -> 盒子一次隐私合成 -> H.264 -> WHEP/WebRTC -> iOS 原生渲染
-- 自动验证：iOS 单元 `196` 项通过、UI `22` 项通过；Node 服务门禁、Python 编译和 `git diff --check` 已通过
+- 自动验证：iOS 单元 `202/202`、UI `29/29`；Node 服务门禁、Python 编译和 `git diff --check` 已通过
 
-Build 16 是当前发布候选，不等于所有产品质量门禁已经完成。真实家庭误报/漏报、APNs 生产到达率、宠物猫狗混淆矩阵、跨品牌摄像头兼容、双摄纯骨架长时稳定性和 20-50 户家庭试点仍需独立验收。
+Build 17 是当前发布候选，不等于所有产品质量门禁已经完成。真实家庭误报/漏报、APNs 生产到达率、宠物猫狗混淆矩阵、跨品牌摄像头兼容、双摄纯骨架长时稳定性和 20-50 户家庭试点仍需独立验收。
 
 ## 产品边界
 
@@ -86,7 +86,7 @@ npm run verify:cloud-media
 
 ## 发布前必须补齐
 
-- TestFlight Build 16 的真机安装和事件状态验收；
+- TestFlight Build 17 的真机安装和事件、商品图片、回家计划及今日关怀状态验收；
 - 双摄三模式、前后台、Wi-Fi/蜂窝、断线恢复和 30 分钟长测；
 - APNs 生产通知的一次性去重、回执、深链和到达率；
 - 真实家庭数据集、猫狗混淆矩阵和分家庭 train/validation/test 隔离；

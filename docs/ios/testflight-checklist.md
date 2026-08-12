@@ -1,8 +1,8 @@
 # iOS TestFlight Acceptance Checklist
 
-Distributed baseline: `1.0.0 (15)`
+Distributed baseline: `1.0.0 (16)`
 
-Candidate under validation: `1.0.0 (16)` (processed; assigned to internal group `比赛内测`)
+Candidate under validation: `1.0.0 (17)` (full regression passed; upload pending)
 
 ## Automated Gates
 
@@ -17,6 +17,7 @@ Candidate under validation: `1.0.0 (16)` (processed; assigned to internal group 
 - [x] Build 5 is archived from the sole native project on `main` and accepted for upload.
 - [x] Build 5 finishes Apple processing and is installable from TestFlight.
 - [x] Build 16 finishes Apple processing and is assigned to `比赛内测`.
+- [ ] Build 17 is archived from the sole native project, accepted by App Store Connect, processed, and assigned to `比赛内测`.
 - [x] Build 6 is archived from the sole native project on `main`, processed by Apple, and assigned to `比赛内测`.
 - [ ] Build 7 rejects cached location samples, is archived from the sole native project, processed by Apple, and assigned to `比赛内测`.
 
