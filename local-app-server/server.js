@@ -9,6 +9,10 @@ const net = require("net");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const {
+    providerFailure,
+    verificationRetryDelaySeconds,
+} = require("./vision-verification-runtime");
 const { pipeline } = require("stream/promises");
 const { URL } = require("url");
 const {
@@ -991,8 +995,8 @@ function createLocalAppServer(options = {}) {
     }
 
     function visionVerificationMaxAttempts() {
-        const value = Number(process.env.GOHOME_VISION_VERIFICATION_MAX_ATTEMPTS || 3);
-        return Number.isFinite(value) ? Math.max(1, Math.min(5, Math.round(value))) : 3;
+        const value = Number(process.env.GOHOME_VISION_VERIFICATION_MAX_ATTEMPTS || 5);
+        return Number.isFinite(value) ? Math.max(1, Math.min(5, Math.round(value))) : 5;
     }
 
     function visionVerificationReplayWindowMs() {
@@ -4817,20 +4821,30 @@ function createLocalAppServer(options = {}) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), visionVerificationTimeoutMs());
         try {
-            const response = await fetch(runtime.base_url, {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${runtime.api_key}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify(requestPayload),
-                signal: controller.signal,
-            });
-            const responseText = await response.text();
+            let response;
+            try {
+                response = await fetch(runtime.base_url, {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${runtime.api_key}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(requestPayload),
+                    signal: controller.signal,
+                });
+            } catch (error) {
+                throw providerFailure(error);
+            }
+            let responseText;
+            try {
+                responseText = await response.text();
+            } catch (error) {
+                throw providerFailure(error);
+            }
             const responsePayload = safeJsonParse(responseText, null);
             if (!response.ok) {
                 const detail = responsePayload?.error?.message || responsePayload?.message || responseText.slice(0, 200);
-                throw new Error(`vision verification failed: ${response.status} ${detail}`);
+                throw providerFailure(null, { status: response.status, detail });
             }
             const content = responsePayload?.choices?.[0]?.message?.content
                 || responsePayload?.output_text
@@ -5025,8 +5039,9 @@ function createLocalAppServer(options = {}) {
                     result.succeeded += 1;
                 } catch (error) {
                     const maxAttempts = Number(job.metadata?.max_attempts || visionVerificationMaxAttempts());
-                    const exhausted = attempts >= maxAttempts;
-                    const delaySeconds = [5, 30, 120, 300][Math.min(attempts - 1, 3)];
+                    const retryable = error.retryable !== false;
+                    const exhausted = !retryable || attempts >= maxAttempts;
+                    const delaySeconds = verificationRetryDelaySeconds(attempts);
                     updateModelJob(job, {
                         output_status: exhausted ? "failed" : "retrying",
                         response_payload: error.response_payload || {},
@@ -5036,6 +5051,9 @@ function createLocalAppServer(options = {}) {
                         ...job.metadata,
                         next_attempt_at: exhausted ? "" : new Date(Date.now() + delaySeconds * 1000).toISOString(),
                         completed_at: exhausted ? nowIso() : "",
+                        provider_status: error.provider_status ?? null,
+                        provider_code: error.provider_code || "",
+                        retryable,
                     };
                     event.payload.verification = {
                         ...(event.payload.verification || {}),

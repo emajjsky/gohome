@@ -10,7 +10,8 @@ process.env.GOHOME_VISION_VERIFICATION_ENABLED = "1";
 const { createLocalAppServer } = require("../local-app-server/server");
 const { createCosStorage } = require("../local-app-server/cos-storage");
 
-const DEVICE_TOKEN = "vision-live-probe-device";
+const PROBE_DEVICE_ID = "vision-live-probe-device";
+const PROBE_DEVICE_TOKEN = "vision-live-probe-token";
 const FRAME_ROLES = ["before", "transition", "evidence", "current"];
 const DEFAULT_FRAME_URLS = [
     "https://img.alicdn.com/imgextra/i3/O1CN01K3SgGo1eqmlUgeE9b_!!6000000003923-0-tps-3840-2160.jpg",
@@ -49,6 +50,27 @@ async function frameBytes(source) {
     return fs.readFileSync(filePath);
 }
 
+function registerProbeDevice(app) {
+    const now = new Date().toISOString();
+    app.store.db.devices[PROBE_DEVICE_ID] = {
+        id: PROBE_DEVICE_ID,
+        device_id: PROBE_DEVICE_ID,
+        family_id: null,
+        status: "online",
+        created_at: now,
+        updated_at: now,
+    };
+    app.store.db.device_tokens.push({
+        id: `token-${PROBE_DEVICE_ID}`,
+        token: PROBE_DEVICE_TOKEN,
+        device_id: PROBE_DEVICE_ID,
+        family_id: null,
+        status: "active",
+        created_at: now,
+        updated_at: now,
+    });
+}
+
 async function main() {
     const frameSources = process.argv.slice(2);
     const sources = frameSources.length ? frameSources : DEFAULT_FRAME_URLS;
@@ -63,8 +85,9 @@ async function main() {
     const app = createLocalAppServer({
         rootDir: path.resolve(__dirname, ".."),
         dataDir: tempDir,
-        deviceToken: DEVICE_TOKEN,
+        deviceToken: PROBE_DEVICE_TOKEN,
     });
+    registerProbeDevice(app);
     await new Promise((resolve, reject) => {
         app.server.once("error", reject);
         app.server.listen(0, "127.0.0.1", resolve);
@@ -99,7 +122,7 @@ async function main() {
                 {
                     method: "POST",
                     body: frames[index],
-                    headers: { Authorization: `Bearer ${DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
+                    headers: { Authorization: `Bearer ${PROBE_DEVICE_TOKEN}`, "Content-Type": "image/jpeg" },
                 },
             );
             mediaAssets.push({ ...media.asset, role, captured_at: capturedAt });
@@ -140,10 +163,10 @@ async function main() {
                         captured_at: asset.captured_at,
                     })),
                     media_upload_result: { asset: mediaAssets.at(-1) },
-                    edge_upload: { edge_event_id: eventKey, edge_device_id: "public-probe" },
+                    edge_upload: { edge_event_id: eventKey, edge_device_id: PROBE_DEVICE_ID },
                 },
             }),
-            headers: { Authorization: `Bearer ${DEVICE_TOKEN}` },
+            headers: { Authorization: `Bearer ${PROBE_DEVICE_TOKEN}` },
         });
         let event = created.event;
         for (let attempt = 0; attempt < 12; attempt += 1) {
@@ -184,7 +207,15 @@ async function main() {
     }
 }
 
-main().catch((error) => {
-    console.error(error.message || error);
-    process.exit(1);
-});
+if (require.main === module) {
+    main().catch((error) => {
+        console.error(error.message || error);
+        process.exit(1);
+    });
+}
+
+module.exports = {
+    PROBE_DEVICE_ID,
+    PROBE_DEVICE_TOKEN,
+    registerProbeDevice,
+};

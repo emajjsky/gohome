@@ -56,6 +56,17 @@ After migration `018_home_visits_and_return_plans.sql` is applied, verify only
 the setting's presence and service health. Do not print the secret or device
 runtime fingerprints into deployment logs.
 
+## Vision verification recovery
+
+Visual event verification uses five bounded attempts by default. Transport
+failures, request timeouts, throttling and provider 5xx responses retry with a
+short bounded backoff; permanent provider 4xx responses stop immediately. The
+persisted job error contains only the failure stage, HTTP status or safe network
+error code. It must not contain credentials, provider URLs or signed evidence
+URLs. Use `scripts/verify-vision-verification-live.js` from an operations
+worktree for an isolated four-frame provider check; the script uses a temporary
+database, does not send APNs, and deletes its temporary COS objects.
+
 ## COS permissions
 
 The cloud service identity has `PutObject`, `GetObject`, `HeadObject`,
