@@ -403,7 +403,7 @@ function buildCloudSeedBundle(db, options = {}) {
         enabled: bool(provider.enabled),
         configured: bool(provider.configured || provider.api_key_set),
         api_key_secret_ref: String(provider.api_key_secret_ref || provider.secret_ref || ""),
-        metadata: {},
+        metadata: provider.metadata && typeof provider.metadata === "object" ? provider.metadata : {},
         created_at: iso(provider.created_at, iso(provider.updated_at, exportedAt)),
         updated_at: iso(provider.updated_at, exportedAt),
     }));
@@ -608,7 +608,7 @@ function buildCloudSeedBundle(db, options = {}) {
         generated_by: String(card.generated_by || ""),
         source_summary: Array.isArray(card.source_summary) ? card.source_summary : [],
         content_recommendations: Array.isArray(card.content_recommendations) ? card.content_recommendations : [],
-        metadata: {},
+        metadata: card.metadata && typeof card.metadata === "object" ? card.metadata : {},
         created_at: iso(card.created_at, exportedAt),
         updated_at: iso(card.updated_at, iso(card.created_at, exportedAt)),
     }));

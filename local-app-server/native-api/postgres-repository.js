@@ -738,6 +738,7 @@ class PostgresNativeRepository extends NativeRepository {
                  where family_id = $1
                    and message_type in ('activity_insight', 'return_home', 'care_card')
                    and status = 'open'
+                   and (message_type <> 'care_card' or message_id = 'care-daily-' || $1 || '-' || to_char(now() at time zone 'Asia/Shanghai', 'YYYY-MM-DD'))
                    and (
                        nullif(metadata->>'snoozed_until', '') is null
                        or (metadata->>'snoozed_until')::timestamptz <= now()

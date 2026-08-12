@@ -110,6 +110,7 @@ function careMessageView(message) {
     const metadata = message.metadata && typeof message.metadata === "object" ? message.metadata : {};
     return {
         message_id: String(message.message_id || message.id || ""),
+        care_card_id: String(message.care_card_id || ""),
         message_type: String(message.message_type || "care"),
         title: String(message.title || "").trim(),
         subtitle: String(message.subtitle || "").trim(),

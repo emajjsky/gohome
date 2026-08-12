@@ -548,6 +548,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             generated_by: card.generated_by || "",
             source_summary: Array.isArray(card.source_summary) ? card.source_summary : [],
             content_recommendations: Array.isArray(card.content_recommendations) ? card.content_recommendations : [],
+            metadata: card.metadata && typeof card.metadata === "object" ? card.metadata : {},
             created_at: iso(card.created_at, db.created_at),
             updated_at: iso(card.updated_at, iso(card.created_at, db.created_at)),
         });

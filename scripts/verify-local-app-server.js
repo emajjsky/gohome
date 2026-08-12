@@ -1899,8 +1899,10 @@ async function main() {
         });
         assert.equal(careCard.card_type, "daily");
         assert.equal(careCard.pending_refresh, true);
-        assert.equal(careCard.image_mode, "pending_provider");
-        assert.ok(careCard.actions.some((action) => action.key === "call"));
+        assert.equal(careCard.status, "pending");
+        assert.equal(careCard.title, "");
+        assert.equal(careCard.body, "");
+        assert.deepEqual(careCard.actions, []);
 
         const generatedCareCard = await requestJson(baseUrl, "/api/v1/internal/care-cards/generate", {
             method: "POST",
@@ -1909,7 +1911,8 @@ async function main() {
         });
         assert.equal(generatedCareCard.ok, true);
         assert.equal(generatedCareCard.card.card_id, careCard.card_id);
-        assert.ok(generatedCareCard.card.facts.length >= 3);
+        assert.ok(generatedCareCard.card.facts.length >= 1);
+        assert.ok(generatedCareCard.card.facts.length <= 3);
 
         const pushToken = await requestJson(baseUrl, "/api/v1/app/push-tokens", {
             method: "POST",
@@ -2007,6 +2010,7 @@ async function main() {
             GOHOME_MULTIMODAL_API_KEY: process.env.GOHOME_MULTIMODAL_API_KEY,
             GOHOME_MULTIMODAL_MODEL: process.env.GOHOME_MULTIMODAL_MODEL,
         };
+        let selectedMockFact = null;
         const mockModelServer = http.createServer(async (req, res) => {
             assert.equal(req.method, "POST");
             assert.equal(req.url, "/v1/chat/completions");
@@ -2018,22 +2022,19 @@ async function main() {
             });
             const payload = JSON.parse(body);
             assert.equal(payload.model, "mock-care-model");
-            assert.match(payload.messages[1].content, /care_card_schedule/);
-            assert.match(payload.messages[1].content, /先说明家里是否平稳/);
-            assert.match(payload.messages[1].content, /妈妈生日/);
+            assert.doesNotMatch(payload.messages[1].content, /care_card_schedule|device_id|cameras|recent_events/);
             res.writeHead(200, { "Content-Type": "application/json" });
+            const context = JSON.parse(payload.messages[1].content.split("\n\n").at(-1));
+            assert.deepEqual(Object.keys(context).sort(), ["card_date", "facts", "generated_at", "locale"]);
+            selectedMockFact = context.facts[0];
             res.end(JSON.stringify({
                 id: "mock-chatcmpl",
                 model: "mock-care-model",
                 choices: [{
                     message: {
                         content: JSON.stringify({
-                            title: "模型生成的今日关怀",
-                            body: "家里状态整体平稳，适合用轻松的语气问候一下今天的天气和午休。",
-                            facts: ["模型基于设备、摄像头和事件摘要生成。"],
-                            suggested_actions: ["打电话问候", "看看实时状态", "查看今日提醒"],
-                            tone: "warm",
-                            image_brief: "温馨家庭关怀卡片",
+                            primary_fact_id: selectedMockFact.id,
+                            supporting_fact_ids: [],
                         }),
                     },
                 }],
@@ -2053,10 +2054,15 @@ async function main() {
                 headers: { Authorization: `Bearer ${appSessionToken}` },
             });
             assert.equal(modelCareCard.ok, true);
-            assert.equal(modelCareCard.card.title, "这个周末，留一点时间回家");
+            assert.equal(modelCareCard.card.title, selectedMockFact.title);
             assert.doesNotMatch(modelCareCard.card.title, /待确认|告警|异常/);
             assert.doesNotMatch(modelCareCard.card.body, /家里状态整体平稳|提醒喝水|少久晒/);
-            assert.equal(modelCareCard.card.generated_by, "model:mock-care-model");
+            assert.equal(modelCareCard.card.generated_by, "model-selector:mock-care-model");
+            assert.ok(modelCareCard.card.facts.includes(selectedMockFact.text));
+            const canonicalMessage = app.store.db.app_messages.find((message) => (
+                message.message_type === "care_card" && message.care_card_id === modelCareCard.card.card_id
+            ));
+            assert.ok(canonicalMessage);
             assert.ok(app.store.db.model_generation_jobs.some((job) => (
                 job.model === "mock-care-model" && job.output_status === "succeeded"
             )));
@@ -2292,8 +2298,11 @@ async function main() {
         assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.visit_reminder.threshold_days, 10);
         assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.visit_reminder.next_visit_at, "2026-07-20");
         assert.equal(seedBundle.tables.care_preferences[0].metadata.care_card_schedule.anniversaries[0].label, "妈妈生日");
-        assert.equal(seedBundle.tables.care_cards.length, 1);
-        assert.equal(seedBundle.tables.care_cards[0].card_id, careCard.card_id);
+        assert.equal(seedBundle.tables.care_cards.length, app.store.db.care_cards.length);
+        const seededCareCard = seedBundle.tables.care_cards.find((card) => card.card_id === careCard.card_id);
+        assert.ok(seededCareCard);
+        assert.equal(String(seededCareCard.family_id), String(family.id));
+        assert.ok(seededCareCard.metadata.primary_signal.type);
         assert.ok(seedBundle.tables.app_messages.some((message) => message.message_type === "care_card"));
         assert.ok(seedBundle.tables.app_messages.some((message) => message.message_type === "test"));
         assert.equal(seedBundle.tables.app_push_tokens.length, 1);
@@ -2340,8 +2349,10 @@ async function main() {
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.delivery_time, "07:45");
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.message_focus, "先说明家里是否平稳，再给女儿一个适合打电话时聊的轻松话题。");
         assert.equal(restoredDb.care_preferences[String(family.id)].metadata.care_card_schedule.visit_reminder.next_visit_at, "2026-07-20");
-        assert.equal(restoredDb.care_cards.length, 1);
-        assert.equal(restoredDb.care_cards[0].card_id, careCard.card_id);
+        assert.equal(restoredDb.care_cards.length, seedBundle.tables.care_cards.length);
+        const restoredCareCard = restoredDb.care_cards.find((card) => card.card_id === careCard.card_id);
+        assert.ok(restoredCareCard);
+        assert.equal(restoredCareCard.metadata.primary_signal.type, seededCareCard.metadata.primary_signal.type);
         assert.ok(restoredDb.app_messages.some((message) => message.message_type === "care_card"));
         assert.equal(restoredDb.app_push_tokens.length, 1);
         assert.ok(restoredDb.notification_deliveries.length >= 2);

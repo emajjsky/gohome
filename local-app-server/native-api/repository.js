@@ -1148,6 +1148,8 @@ class JsonNativeRepository extends NativeRepository {
                 textId(message.family_id) === textId(familyId)
                 && ["activity_insight", "return_home", "care_card"].includes(textId(message.message_type))
                 && textId(message.status || "open") === "open"
+                && (textId(message.message_type) !== "care_card"
+                    || textId(message.message_id).endsWith(`-${dateKeyShanghai(new Date(this.clock()))}`))
             ))
             .filter((message) => {
                 const snoozedUntil = Date.parse(message.metadata?.snoozed_until || "");

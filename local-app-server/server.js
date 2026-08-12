@@ -709,6 +709,7 @@ function createLocalAppServer(options = {}) {
     const { PostgresNativeRepository } = require("./native-api/postgres-repository");
     const { NativeViewService } = require("./native-api/view-service");
     const { NativeApiRouter } = require("./native-api/router");
+    const { factSignals, validateCareModelOutput } = require("./care-card-contract");
     const onFamilyMetadataChange = (familyId, patch) => {
         const family = store.db.families.find((item) => String(item.id) === String(familyId));
         if (!family) return;
@@ -803,24 +804,12 @@ function createLocalAppServer(options = {}) {
     ensureDir(mediaDir);
 
     const defaultCareTextPrompt = [
-        "你是回家 App 的联系灵感编辑。",
-        "请基于家庭资料、日历、天气、关注话题、设备状态和最近事件，整理一条今天值得联系家里的具体理由。",
-        "这不是监控播报、健康教育或系统通知；目标是让成年子女自然地开启一次联系。",
-        "标题要像生活方式资讯标题，描述一个具体时刻或话题，不要写成命令、口号或功能名称。",
-        "正文先交代一个真实依据，再给一句能直接拿来开场的话；语气平等、自然，不教育用户，也不教育家里人。",
-        "普通关怀的标题和正文不要播报设备在线、无异常或无告警；这些状态只能放在 facts 里作为内容依据。",
-        "不要使用“提醒喝水”“注意身体”“多陪陪家人”“聊聊家常”“今天问个安”“家里一切平稳”等机械表达。",
-        "不要默认使用老人、妈妈、爸爸等身份标签；只有用户资料明确要求且句子确有必要时才使用称呼。",
-        "如果没有安全事件，也必须从天气、周末、节假日、纪念日、回家间隔或老人兴趣中选择一个真实信号作为主题。",
-        "热点或内容搜索结果只能作为温和话题候选，不要照抄耸动标题、负面标题或平台水印式标题。",
-        "家属通常不在家里，行动建议只能是打电话、发微信、约定回家或准备节日问候，禁止写成递茶、端水、送到手边或陪在身边。",
-        "不要编造老人真实行为、健康结论、实时天气、手机定位距离或未接入的数据。",
-        "高优先级安全事件要明确要求先确认；普通关怀不能渲染风险，也不要引导查看监控。",
-        "输出必须是 JSON，字段为 title、body、facts、suggested_actions、tone、image_brief。",
-        "title 不超过 18 个中文字符，body 不超过 88 个中文字符，facts 最多 3 条，每条只写一个可核验依据。",
-        "suggested_actions 最多 3 条，优先给打电话、发消息、准备节日问候；普通关怀不要引导去看监控。",
-        "tone 只能使用 warm、calm、alert、seasonal、memory 中的一个。",
-        "image_brief 只描述一幅无文字的生活场景图片，不要包含海报、排版、监控证据或真实人物肖像。",
+        "你是回家 App 的事实主题选择器。",
+        "你只负责从服务端提供的 facts 中选择今天最值得展示的一条事实，不负责撰写用户文案。",
+        "优先级依次是：待确认安全事件、临近回家计划或纪念日、已验证回家间隔、有效天气、来源明确的内容推荐、用户配置的兴趣话题。",
+        "不要评估、改写、补充或创造事实，不要输出标题、正文、建议、解释或其他字段。",
+        "输出必须是 JSON，且只能包含 primary_fact_id 和 supporting_fact_ids。",
+        "primary_fact_id 必须是输入 facts 中一个真实 id；supporting_fact_ids 最多两个，也必须来自输入 facts。",
     ].join("\n");
 
     const defaultVisionVerificationPrompt = [
@@ -2831,6 +2820,13 @@ function createLocalAppServer(options = {}) {
             generated_by: card.generated_by || "care-template-v1",
             source_summary: Array.isArray(card.source_summary) ? card.source_summary : [],
             content_recommendations: Array.isArray(card.content_recommendations) ? card.content_recommendations : [],
+            metadata: card.metadata?.primary_signal ? {
+                primary_signal: {
+                    fact_id: String(card.metadata.primary_signal.fact_id || ""),
+                    type: String(card.metadata.primary_signal.type || ""),
+                    source_id: String(card.metadata.primary_signal.source_id || ""),
+                },
+            } : {},
             created_at: card.created_at,
             updated_at: card.updated_at,
         };
@@ -3292,11 +3288,11 @@ function createLocalAppServer(options = {}) {
         if (!schedule?.enabled || schedule.delivery_rules?.daily_digest?.enabled === false) return false;
         const dueMinutes = timeOfDayMinutes(schedule.delivery_time || "08:30");
         if (dueMinutes !== null && currentShanghaiMinutes() < dueMinutes) return false;
-        const existing = store.db.app_messages.find((message) => (
-            Number(message.family_id) === Number(familyId)
-            && String(message.message_id || "") === dailyCareMessageId(familyId)
+        const messageId = dailyCareMessageId(familyId);
+        return !store.db.notification_deliveries.some((delivery) => (
+            Number(delivery.family_id) === Number(familyId)
+            && String(delivery.message_id || "") === messageId
         ));
-        return !existing;
     }
 
     function createCareCardMessage(card, preferences, options = {}) {
@@ -3320,6 +3316,13 @@ function createLocalAppServer(options = {}) {
             ],
             source: [
                 { type: "care_card", id: card.card_id },
+                ...(card.metadata?.primary_signal
+                    ? [{
+                        type: card.metadata.primary_signal.type,
+                        id: card.metadata.primary_signal.source_id,
+                        fact_id: card.metadata.primary_signal.fact_id,
+                    }]
+                    : []),
                 { type: "schedule", delivery_time: schedule.delivery_time || "08:30" },
             ],
             priority: "normal",
@@ -4043,13 +4046,17 @@ function createLocalAppServer(options = {}) {
                     const beforeMessages = store.db.app_messages.length;
                     const beforeDeliveries = store.db.notification_deliveries.length;
                     const card = await generateCareCard(family.id, { force: Boolean(options.force_generate_card) });
-                    const message = createCareCardMessage(card, preferences, {
-                        scheduled_for: `${dateKeyShanghai()}T${schedule.delivery_time || "08:30"}:00+08:00`,
-                    });
-                    queueNotificationDelivery(message, { scheduled_for: message.scheduled_for });
-                    result.care_cards_generated += 1;
-                    result.app_messages_created += Math.max(0, store.db.app_messages.length - beforeMessages);
-                    result.notification_deliveries_created += Math.max(0, store.db.notification_deliveries.length - beforeDeliveries);
+                    if (card.status === "open") {
+                        const message = createCareCardMessage(card, preferences, {
+                            scheduled_for: `${dateKeyShanghai()}T${schedule.delivery_time || "08:30"}:00+08:00`,
+                        });
+                        queueNotificationDelivery(message, { scheduled_for: message.scheduled_for });
+                        result.care_cards_generated += 1;
+                        result.app_messages_created += Math.max(0, store.db.app_messages.length - beforeMessages);
+                        result.notification_deliveries_created += Math.max(0, store.db.notification_deliveries.length - beforeDeliveries);
+                    } else {
+                        result.skipped.push({ family_id: family.id, reason: "no_factual_care_signal" });
+                    }
                 } else {
                     result.skipped.push({ family_id: family.id, reason: "daily_not_due_or_already_sent" });
                 }
@@ -4180,7 +4187,7 @@ function createLocalAppServer(options = {}) {
                 image_generation_enabled: Boolean(preferences.image_generation_enabled),
                 care_card_schedule: preferences.metadata?.care_card_schedule || defaultCareSchedule(),
             },
-            facts: Array.isArray(parts.facts) ? parts.facts : [],
+            facts: factSignals(parts.signals || parts.facts),
             device: {
                 device_id: device.device_id || device.id || currentEdgeDeviceId(),
                 name: device.name || "回家盒子",
@@ -4230,6 +4237,15 @@ function createLocalAppServer(options = {}) {
         };
     }
 
+    function careModelSelectionContext(signals) {
+        return {
+            generated_at: nowIso(),
+            card_date: dateKeyShanghai(),
+            locale: "zh-CN",
+            facts: factSignals(signals),
+        };
+    }
+
     function extractJsonObject(text) {
         const raw = String(text || "").trim();
         if (!raw) return null;
@@ -4256,63 +4272,6 @@ function createLocalAppServer(options = {}) {
             }
         }
         return null;
-    }
-
-    function sanitizeModelCareCard(parsed) {
-        if (!parsed || typeof parsed !== "object") return null;
-        const title = String(parsed.title || "").replace(/\s+/g, " ").trim().slice(0, 24);
-        const body = String(parsed.body || "").replace(/\s+/g, " ").trim().slice(0, 120);
-        if (!title || !body) return null;
-        const facts = Array.isArray(parsed.facts)
-            ? parsed.facts.map((item) => String(item || "").replace(/\s+/g, " ").trim().slice(0, 36)).filter(Boolean).slice(0, 3)
-            : [];
-        const suggestedActions = Array.isArray(parsed.suggested_actions)
-            ? parsed.suggested_actions.map((item) => String(item || "").replace(/\s+/g, " ").trim().slice(0, 18)).filter(Boolean).slice(0, 3)
-            : [];
-        const rawTone = String(parsed.tone || "warm").trim();
-        const allowedTones = new Set(["warm", "calm", "alert", "seasonal", "memory"]);
-        return {
-            title,
-            body,
-            facts,
-            suggested_actions: suggestedActions,
-            tone: allowedTones.has(rawTone) ? rawTone : "warm",
-            image_brief: String(parsed.image_brief || "").replace(/\s+/g, " ").trim().slice(0, 120),
-        };
-    }
-
-    function removeUnavailableWeatherClaims(card, context) {
-        if (!card) return null;
-        if (context?.weather?.available) return card;
-        const weatherPattern = /(多云|晴天|晴朗|晴|小雨|中雨|大雨|暴雨|阵雨|雷雨|阴天|阴|降温|升温|气温|温度|\d+\s*度|实时预报|天气预报|梅雨|台风|寒潮|闷热|湿热|凉爽|雨季|回南天|雾霾|空气质量)/;
-        const stripWeatherText = (value) => String(value || "")
-            .replace(/[^，。；,;]*(多云|晴天|晴朗|晴|小雨|中雨|大雨|暴雨|阵雨|雷雨|阴天|阴|降温|升温|气温|温度|\d+\s*度|实时预报|天气预报|梅雨|台风|寒潮|闷热|湿热|凉爽|雨季|回南天|雾霾|空气质量)[^，。；,;]*[，。；,;]?/g, "")
-            .replace(/\s+/g, " ")
-            .trim();
-        const city = context?.weather?.city || context?.elder?.city || "老人所在城市";
-        const next = { ...card };
-        if (weatherPattern.test(next.title)) {
-            next.title = "家里今天很平稳";
-        }
-        if (weatherPattern.test(next.body)) {
-            const cleaned = stripWeatherText(next.body);
-            next.body = cleaned || `设备在线，近 24 小时无高优先级告警。今天先给家里打个电话，聊聊近况和喜欢的内容。`;
-        }
-        next.facts = (Array.isArray(next.facts) ? next.facts : [])
-            .map((item) => weatherPattern.test(item) ? "" : item)
-            .filter(Boolean)
-            .slice(0, 3);
-        if (next.facts.length < 3) {
-            next.facts.push(`${city}可作为问候话题`);
-        }
-        next.suggested_actions = (Array.isArray(next.suggested_actions) ? next.suggested_actions : [])
-            .map((item) => weatherPattern.test(item) ? "发一句问候" : item)
-            .filter(Boolean)
-            .slice(0, 3);
-        if (weatherPattern.test(next.image_brief)) {
-            next.image_brief = "温暖家居生活场景，电话问候和家常陪伴氛围。";
-        }
-        return next;
     }
 
     function contextualCareTheme(context = {}) {
@@ -4361,64 +4320,13 @@ function createLocalAppServer(options = {}) {
         };
     }
 
-    function sanitizeContextualCareCard(card, context) {
-        if (!card) return null;
-        const genericPattern = /(家里.{0,6}(一切)?(很)?(平稳|安稳|安心)|一切(平稳|安稳)|聊聊家常|多陪陪家人|^今日关怀$|^今日关怀卡片$|今天问个安|打个电话聊聊近况|模型生成的今日关怀)/;
-        const directivePattern = /(提醒(多)?喝水|电话里提醒|少久晒|注意身体|多喝水|及时补水|关爱健康|送上关怀)/;
-        const impossibleActionPattern = /(递|端|倒|送)(一)?(杯)?(水|茶|热水|温水)|送到(手边|身边)|陪在(身边|旁边)|给.{0,4}(递|端|倒|送)/;
-        const next = { ...card };
-        const theme = contextualCareTheme(context);
-        const weather = context?.weather || {};
-        const hotWeather = weather.available && (Number(weather.temperature_c) >= 30 || /(闷热|炎热|高温|热)/.test(String(weather.advice || "")));
-        if (genericPattern.test(next.title) || directivePattern.test(next.title) || impossibleActionPattern.test(next.title) || next.title.length > 18) {
-            next.title = theme.title;
-        }
-        next.title = String(next.title || "")
-            .replace(/(老人|妈妈|母亲|爸爸|父亲)/g, "家里")
-            .replace(/家里家里/g, "家里")
-            .trim();
-        const weatherTopicMatch = next.title.match(/^[^，,]{1,12}[，,]\s*聊聊(.{2,10})(?:新动态|新消息)?$/);
-        if (weatherTopicMatch) {
-            const topic = weatherTopicMatch[1].replace(/新动态|新消息/g, "").trim();
-            next.title = /(旅行|旅游|文旅)/.test(topic)
-                ? `${topic}，问问最近想去哪`.slice(0, 18)
-                : `${topic}，刚好可以聊聊`.slice(0, 18);
-        }
-        if (hotWeather && (directivePattern.test(next.title) || /(一切|安稳|平稳|安心)/.test(next.title))) {
-            next.title = theme.title;
-        }
-        next.body = String(next.body || "")
-            .replace(/家里一切平稳[，,、 ]*/g, "")
-            .replace(/^家里设备在线(?:且)?无异常[。；，,\s]*/g, "")
-            .replace(/^设备在线(?:且)?无异常[。；，,\s]*/g, "")
-            .replace(/(老人|妈妈|母亲|爸爸|父亲)/g, "家里")
-            .replace(/家里家里/g, "家里")
-            .replace(/正好问问家里对(.+?)有没有兴趣[。.]?$/g, "晚点可以问一句：“最近有没有留意$1？”")
-            .replace(/\s+/g, " ")
-            .trim();
-        if (!next.body || genericPattern.test(next.body) || directivePattern.test(next.body) || impossibleActionPattern.test(next.body)) {
-            next.body = theme.body;
-        }
-        const bodyUsesGenericWeatherOpener = weather.available
-            && /(不用只说[“\"]?注意身体|问一句晚饭吃了什么|问问晚饭吃了什么|话题自然就打开了|从今天有没有出门)/.test(next.body);
-        const titleDescribesWeather = /(晴|阴|多云|雨|雪|闷热|高温|降温|天气|晚饭)/.test(next.title);
-        if (bodyUsesGenericWeatherOpener && !titleDescribesWeather) {
-            next.title = theme.title;
-        }
-        if (next.body.length > 90) next.body = next.body.slice(0, 87).trim() + "...";
-        next.facts = (Array.isArray(next.facts) ? next.facts : [])
-            .map((item) => String(item || "")
-                .replace(/(老人|妈妈|母亲|爸爸|父亲)兴趣/g, "已选关注主题")
-                .replace(/(老人|妈妈|母亲|爸爸|父亲)/g, "家里")
-                .replace(/家里家里/g, "家里")
-                .replace(/已选关注主题话题/g, "已选关注主题")
-                .trim())
-            .filter(Boolean)
-            .slice(0, 3);
-        if (!next.image_brief || genericPattern.test(next.image_brief) || directivePattern.test(next.image_brief) || impossibleActionPattern.test(next.image_brief)) {
-            next.image_brief = theme.image_brief;
-        }
-        return next;
+    function renderCareFactSignal(signal, context = {}) {
+        if (!signal) return contextualCareTheme(context);
+        return {
+            title: signal.title || contextualCareTheme(context).title,
+            body: signal.body || contextualCareTheme(context).body,
+            image_brief: signal.image_brief || contextualCareTheme(context).image_brief,
+        };
     }
 
     async function callMultimodalCareModel(context) {
@@ -4438,8 +4346,8 @@ function createLocalAppServer(options = {}) {
                     ].join("\n\n"),
                 },
             ],
-            temperature: 0.6,
-            max_tokens: 1600,
+            temperature: 0,
+            max_tokens: 300,
             response_format: { type: "json_object" },
             enable_thinking: false,
         };
@@ -4469,8 +4377,8 @@ function createLocalAppServer(options = {}) {
                 || responsePayload.text
                 || "";
             const parsed = extractJsonObject(content);
-            const card = sanitizeContextualCareCard(removeUnavailableWeatherClaims(sanitizeModelCareCard(parsed), context), context);
-            if (!card) {
+            const selection = validateCareModelOutput(parsed, context.facts);
+            if (!selection) {
                 const error = new Error("model response is not valid CareCard JSON");
                 error.response_payload = {
                     id: responsePayload.id || "",
@@ -4481,7 +4389,7 @@ function createLocalAppServer(options = {}) {
                 throw error;
             }
             return {
-                card,
+                selection,
                 request_payload: {
                     model: requestPayload.model,
                     messages: requestPayload.messages,
@@ -4494,7 +4402,7 @@ function createLocalAppServer(options = {}) {
                     id: responsePayload.id || "",
                     model: responsePayload.model || runtime.model,
                     usage: responsePayload.usage || {},
-                    parsed: card,
+                    parsed: selection,
                 },
             };
         } finally {
@@ -6489,6 +6397,9 @@ function createLocalAppServer(options = {}) {
         const profile = store.db.elder_profiles[elderProfileKey(family.id || familyId, "elder_primary")]
             || defaultElderProfile(family.id || familyId, "elder_primary");
         const schedule = preferences.metadata?.care_card_schedule || defaultCareSchedule();
+        const latestVerifiedVisit = store.db.home_visits
+            .filter((visit) => Number(visit.family_id) === Number(familyId))
+            .sort((left, right) => String(right.verified_at || "").localeCompare(String(left.verified_at || "")))[0];
         const region = contentRegionText(preferences, profile.city || "杭州", profile.district || "");
         const city = String(region.city || profile.city || "杭州").trim() || "杭州";
         const district = String(region.district || profile.district || "").trim();
@@ -6511,6 +6422,10 @@ function createLocalAppServer(options = {}) {
                 }),
         ]);
         const facts = [];
+        const signals = [];
+        const addSignal = (type, sourceId, text, title, body, imageBrief) => {
+            signals.push({ type, source_id: sourceId, text, title, body, image_brief: imageBrief });
+        };
         if (device.last_seen_at) {
             facts.push("家庭盒子在线，今天仍在同步状态。");
         } else {
@@ -6523,30 +6438,83 @@ function createLocalAppServer(options = {}) {
         }
         if (criticalEvents.length) {
             facts.push(`最近 24 小时有 ${criticalEvents.length} 条高优先级事件等待处理。`);
+            addSignal(
+                "critical_event",
+                criticalEvents[0].id,
+                `最近 24 小时有 ${criticalEvents.length} 条高优先级事件等待处理。`,
+                "有一条守护事件待确认",
+                "先查看事件证据并确认情况，再决定是否联系家里。",
+                "自然日光下的整洁桌面，一部熄屏手机放在触手可及的位置，画面克制安静。",
+            );
         } else if (openEvents.length) {
             facts.push(`最近 24 小时有 ${openEvents.length} 条普通提醒等待查看。`);
         } else {
             facts.push("最近 24 小时没有未处理的高优先级告警。");
         }
         if (schedule.content_types?.visit_reminder && schedule.visit_reminder?.enabled) {
-            const daysSinceVisit = daysSinceDateString(schedule.visit_reminder.last_visit_at);
+            const verifiedVisitDate = String(latestVerifiedVisit?.visit_date || latestVerifiedVisit?.verified_at || "").slice(0, 10);
+            const daysSinceVisit = daysSinceDateString(verifiedVisitDate);
             const daysUntilVisit = daysUntilDay(schedule.visit_reminder.next_visit_at);
+            const returnPlan = store.db.home_return_plans.find((plan) => (
+                Number(plan.family_id) === Number(familyId) && String(plan.status || "planned") === "planned"
+            ));
+            if (returnPlan?.starts_at) {
+                const planText = `已计划 ${String(returnPlan.starts_at).slice(0, 10)} 回家。`;
+                facts.push(planText);
+                addSignal(
+                    "return_plan",
+                    returnPlan.id,
+                    planText,
+                    "回家计划已经定下来了",
+                    `${planText}临近时再确认一下出发时间和家里的安排。`,
+                    "明亮玄关里的钥匙、轻便背包和一双干净便鞋，没有人物。",
+                );
+            }
             if (daysUntilVisit !== null && daysUntilVisit >= 0) {
                 facts.push(`计划 ${schedule.visit_reminder.next_visit_at} 回家，还有 ${daysUntilVisit} 天。`);
             }
             if (daysSinceVisit !== null) {
-                facts.push(`距离上次回家已经 ${daysSinceVisit} 天，提醒阈值是 ${schedule.visit_reminder.threshold_days} 天。`);
+                const visitText = `距离上次回家已经 ${daysSinceVisit} 天。`;
+                facts.push(`${visitText}提醒阈值是 ${schedule.visit_reminder.threshold_days} 天。`);
+                addSignal(
+                    "visit_interval",
+                    latestVerifiedVisit?.id || verifiedVisitDate,
+                    visitText,
+                    "这个周末，留一点时间回家",
+                    `${visitText}先看看周末安排，定不下来也可以今晚打个电话聊聊。`,
+                    "明亮玄关里的钥匙、轻便背包和一双干净便鞋，像正准备出门回家，没有人物。",
+                );
             } else {
                 facts.push(`已开启回家间隔提醒，阈值是 ${schedule.visit_reminder.threshold_days} 天。`);
             }
         }
-        if (schedule.content_types?.elder_interest_topics && schedule.interest_topics?.length) {
-            facts.push(`老人关心的话题包括：${schedule.interest_topics.slice(0, 6).join("、")}。`);
+        const userSelectedTopics = normalizeStringList(preferences.interests, [], 6);
+        if (schedule.content_types?.elder_interest_topics && userSelectedTopics.length) {
+            const topic = userSelectedTopics[0];
+            const topicText = `用户已选关注主题包括：${userSelectedTopics.join("、")}。`;
+            facts.push(topicText);
+            addSignal(
+                "interest_topic",
+                topic,
+                topicText,
+                `${topic}，刚好可以当开场`.slice(0, 18),
+                `今天联系时，可以从${topic}里挑一件具体的小事问起，不用先想一段完整的问候。`,
+                `自然日光下与${topic}有关的一件日常物品和一部熄屏手机，真实、克制、无人像。`,
+            );
         }
         if (schedule.content_types?.weather) {
             if (weather.available) {
                 const temp = Number.isFinite(Number(weather.temperature_c)) ? `${weather.temperature_c}°C` : "";
-                facts.push(`${weather.city || city} ${weather.condition || "天气已更新"}${temp ? `，${temp}` : ""}，可作为今天问候开场。`);
+                const weatherText = `${weather.city || city}今天${weather.condition || "天气已更新"}${temp ? `，${temp}` : ""}。`;
+                facts.push(`${weatherText}可作为今天问候开场。`);
+                addSignal(
+                    "weather",
+                    weather.updated_at || dateKeyShanghai(),
+                    weatherText,
+                    `${weather.condition || "今天的天气"}，晚点问问今天怎么过`.slice(0, 18),
+                    `${weatherText}晚点联系时，从今天有没有出门、晚饭吃什么聊起会更自然。`,
+                    "天气光线映在安静餐桌一角，一只素色杯子和一部熄屏手机，真实自然的生活摄影。",
+                );
             } else {
                 facts.push("天气数据源暂不可用，本次不会生成实时天气或温度文案。");
             }
@@ -6557,7 +6525,18 @@ function createLocalAppServer(options = {}) {
             || schedule.content_types?.anti_fraud
             || schedule.content_types?.culture_entertainment) && content.available) {
             const first = content.recommendations?.[0];
-            if (first?.title) facts.push(`今日内容候选：${first.title}`);
+            if (first?.title) {
+                const contentText = `今日内容候选：${first.title}`;
+                facts.push(contentText);
+                addSignal(
+                    "editorial_content",
+                    first.id || first.url || first.title,
+                    contentText,
+                    `${String(first.title).slice(0, 12)}，可以聊聊`.slice(0, 18),
+                    `晚点联系时，可以从“${String(first.title).slice(0, 28)}”问起，听听家里怎么看。`,
+                    "自然日光下的阅读桌面、一本合上的杂志和一部熄屏手机，没有人物和文字特写。",
+                );
+            }
         } else if (schedule.content_types?.elder_interest_topics
             || schedule.content_types?.local_hotspots
             || schedule.content_types?.health_tips
@@ -6565,11 +6544,33 @@ function createLocalAppServer(options = {}) {
             || schedule.content_types?.culture_entertainment) {
             facts.push("热点内容源暂未接通，先按老人兴趣生成通用聊天话题。");
         }
-        facts.push(...upcomingScheduleFacts(schedule));
+        const scheduleFacts = upcomingScheduleFacts(schedule);
+        facts.push(...scheduleFacts);
+        for (const [index, scheduleFact] of scheduleFacts.entries()) {
+            if (!/(今天是|还有 \d+ 天)/.test(scheduleFact)) continue;
+            addSignal(
+                "calendar_occasion",
+                `occasion-${index}-${dateKeyShanghai()}`,
+                scheduleFact,
+                "特别的日子快到了",
+                `${scheduleFact}现在可以提前想想怎么联系和问候。`,
+                "自然日光下的日历、素色信封和一部熄屏手机，温暖克制，没有人物。",
+            );
+        }
         if (schedule.message_focus) {
             facts.push(`本次关怀重点：${schedule.message_focus}`);
         }
-        return { facts, cameras, onlineCameras, openEvents, criticalEvents, device, profile, weather, content };
+        const signalPriority = {
+            critical_event: 0,
+            return_plan: 1,
+            calendar_occasion: 2,
+            visit_interval: 3,
+            weather: 4,
+            editorial_content: 5,
+            interest_topic: 6,
+        };
+        signals.sort((left, right) => (signalPriority[left.type] ?? 99) - (signalPriority[right.type] ?? 99));
+        return { facts, signals, cameras, onlineCameras, openEvents, criticalEvents, device, profile, weather, content };
     }
 
     async function generateCareCard(familyId, options = {}) {
@@ -6587,12 +6588,16 @@ function createLocalAppServer(options = {}) {
                 const existingParts = await careCardFacts(targetFamilyId, preferences);
                 await ensureCareCardImage(existing, targetFamilyId, { ...existingParts, preferences });
             }
+            createCareCardMessage(existing, preferences);
             return existing;
         }
         const factParts = await careCardFacts(targetFamilyId, preferences);
-        const { facts, openEvents, criticalEvents, profile, weather, content } = factParts;
+        const { facts, signals, openEvents, weather, content } = factParts;
         const templateContext = careCardModelContext(targetFamilyId, { ...factParts, preferences });
-        const templateTheme = contextualCareTheme(templateContext);
+        const initialSignals = factSignals(signals);
+        const initialSignal = initialSignals[0];
+        if (!initialSignal) return immediateCareCard(targetFamilyId, cardDate);
+        const templateTheme = renderCareFactSignal(initialSignal, templateContext);
         const title = templateTheme.title;
         const body = templateTheme.body;
         const sourceSummary = [
@@ -6612,7 +6617,7 @@ function createLocalAppServer(options = {}) {
             card_type: "daily",
             title,
             body,
-            facts,
+            facts: initialSignal ? [initialSignal.text] : facts.slice(0, 1),
             source_message_ids: [],
             image_mode: careImageRequested(preferences) ? "pending_provider" : "none",
             image_url: "",
@@ -6625,13 +6630,20 @@ function createLocalAppServer(options = {}) {
             generated_by: "care-template-v2",
             source_summary: sourceSummary,
             content_recommendations: content?.available ? content.recommendations : [],
+            metadata: initialSignal ? {
+                primary_signal: {
+                    fact_id: initialSignal.id,
+                    type: initialSignal.type,
+                    source_id: initialSignal.source_id,
+                },
+            } : {},
             created_at: existing?.created_at || nowIso(),
             updated_at: nowIso(),
         };
         const runtime = multimodalRuntimeConfig();
         const canUseModel = modelCallsEnabled() && runtime.base_url && runtime.api_key && runtime.model;
         if (canUseModel) {
-            const context = careCardModelContext(targetFamilyId, { ...factParts, preferences });
+            const context = careModelSelectionContext(signals);
             const inputHash = sha256(JSON.stringify(context));
             const job = modelJob({
                 family_id: targetFamilyId,
@@ -6657,24 +6669,29 @@ function createLocalAppServer(options = {}) {
                     request_payload: modelResult.request_payload,
                     response_payload: modelResult.response_payload,
                 });
-                const generated = modelResult.card;
-                card.title = generated.title;
-                card.body = generated.body;
-                card.facts = generated.facts.length ? generated.facts : facts;
-                card.actions = [
-                    { key: "call", label: generated.suggested_actions[0] || "打电话问候" },
-                    { key: "message", label: generated.suggested_actions[1] || "发一句问候" },
-                    { key: openEvents.length ? "open_events" : "prepare_greeting", label: generated.suggested_actions[2] || (openEvents.length ? "查看提醒" : "准备关怀卡") },
-                ];
-                card.generated_by = `model:${runtime.model}`;
+                const selection = modelResult.selection;
+                const selectedSignals = selection.fact_ids.map((id) => initialSignals.find((signal) => signal.id === id)).filter(Boolean);
+                const selectedTheme = renderCareFactSignal(selectedSignals[0], templateContext);
+                card.title = selectedTheme.title;
+                card.body = selectedTheme.body;
+                card.facts = selectedSignals.map((signal) => signal.text);
+                card.metadata = {
+                    primary_signal: {
+                        fact_id: selectedSignals[0].id,
+                        type: selectedSignals[0].type,
+                        source_id: selectedSignals[0].source_id,
+                    },
+                    supporting_signal_ids: selectedSignals.slice(1).map((signal) => signal.source_id),
+                };
+                card.generated_by = `model-selector:${runtime.model}`;
                 card.source_summary = [
                     ...sourceSummary,
                     "多模态语言模型",
                 ];
                 card.content_recommendations = [
                     ...(content?.available ? content.recommendations : []),
-                    ...(generated.image_brief
-                        ? [{ type: "image_brief", title: "关怀卡片配图建议", summary: generated.image_brief }]
+                    ...(selectedTheme.image_brief
+                        ? [{ type: "image_brief", title: "关怀卡片配图建议", summary: selectedTheme.image_brief }]
                         : []),
                 ];
             } catch (error) {
@@ -6711,10 +6728,12 @@ function createLocalAppServer(options = {}) {
                 created_at: target.created_at || card.created_at,
             });
             store.db.care_cards = compactCareCards(store.db.care_cards);
+            createCareCardMessage(target, preferences);
             return target;
         }
         store.db.care_cards.push(card);
         store.db.care_cards = compactCareCards(store.db.care_cards);
+        createCareCardMessage(card, preferences);
         return card;
     }
 
@@ -6731,12 +6750,6 @@ function createLocalAppServer(options = {}) {
     }
 
     function immediateCareCard(familyId, cardDate) {
-        const latest = store.db.care_cards
-            .filter((card) => Number(card.family_id) === Number(familyId) && card.card_type === "daily")
-            .sort((a, b) => String(b.card_date || b.created_at || "").localeCompare(String(a.card_date || a.created_at || "")))[0];
-        if (latest) return { ...publicCareCard(latest), pending_refresh: true };
-        const profile = existingElderProfile(familyId, "elder_primary") || {};
-        const displayName = profile.display_name || "家人";
         return {
             id: null,
             card_id: `care-${familyId}-${cardDate}`,
@@ -6744,22 +6757,19 @@ function createLocalAppServer(options = {}) {
             elder_id: "elder_primary",
             card_date: cardDate,
             card_type: "daily",
-            title: "今天问个安",
-            body: `可以先给${displayName}打一通电话，今天的天气、日历和家里状态会在后台整理好。`,
+            title: "",
+            body: "",
             facts: [],
             source_message_ids: [],
-            image_mode: "pending_provider",
+            image_mode: "none",
             image_url: "",
-            actions: [
-                { key: "call", label: "打电话问候" },
-                { key: "message", label: "发一句问候" },
-            ],
-            status: "open",
-            generated_by: "care-fast-fallback-v1",
+            actions: [],
+            status: "pending",
+            generated_by: "",
             source_summary: [],
             content_recommendations: [],
-            created_at: nowIso(),
-            updated_at: nowIso(),
+            created_at: null,
+            updated_at: null,
             pending_refresh: true,
         };
     }

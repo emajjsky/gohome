@@ -398,6 +398,19 @@ test('JSON repository prefers actionable return-home copy over a newer daily car
   assert.equal(repo.homeForFamily('user-a', 'family-a').care_message.message_id, 'return-home-a');
 });
 
+test('native home care message preserves its canonical care card identity', async () => {
+  const data = fixture();
+  const clock = () => '2026-07-21T09:00:00.000Z';
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date(clock()));
+  data.app_messages.push({
+    message_id: `care-daily-family-a-${today}`, family_id: 'family-a', care_card_id: 'care-family-a-2026-07-25',
+    message_type: 'care_card', title: '今日联系话题', body: '正文', status: 'open',
+    created_at: '2026-07-25T08:00:00.000Z', metadata: {},
+  });
+  const view = await new NativeViewService(new JsonNativeRepository(data, { clock })).homeForFamily('user-a', 'family-a');
+  assert.equal(view.care_message.care_card_id, 'care-family-a-2026-07-25');
+});
+
 test('JSON repository keeps product preferences family-scoped and returns copies', () => {
   const repo = new JsonNativeRepository(fixture());
   const saved = repo.updateProductPreferences('user-a', 'family-a', {
