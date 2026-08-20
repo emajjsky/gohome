@@ -130,6 +130,40 @@ class NativeApiRouter {
             };
         }
 
+        if (method === "GET" && url.pathname === "/api/v2/events") {
+            return {
+                status: 200,
+                body: await this.viewService.eventsForFamily(userId, url.searchParams.get("family_id"), {
+                    limit: url.searchParams.get("limit") || undefined,
+                }),
+            };
+        }
+
+        const eventDetailMatch = url.pathname.match(/^\/api\/v2\/events\/([^/]+)$/);
+        if (method === "GET" && eventDetailMatch) {
+            return { status: 200, body: await this.viewService.eventForUser(userId, decodeURIComponent(eventDetailMatch[1])) };
+        }
+
+        const elderProfileMatch = url.pathname.match(/^\/api\/v2\/families\/([^/]+)\/elders\/([^/]+)\/profile$/);
+        if (elderProfileMatch) {
+            const familyId = decodeURIComponent(elderProfileMatch[1]);
+            const elderId = decodeURIComponent(elderProfileMatch[2]);
+            if (method === "GET") {
+                return { status: 200, body: await this.viewService.elderProfile(userId, familyId, elderId) };
+            }
+            if (method === "PUT") {
+                return { status: 200, body: await this.viewService.updateElderProfile(userId, familyId, elderId, body) };
+            }
+        }
+
+        const eventActionMatch = url.pathname.match(/^\/api\/v2\/events\/([^/]+)$/);
+        if (method === "PATCH" && eventActionMatch) {
+            return {
+                status: 200,
+                body: await this.viewService.resolveEvent(userId, decodeURIComponent(eventActionMatch[1]), body),
+            };
+        }
+
         if (url.pathname === "/api/v2/home/return-plan") {
             const familyId = url.searchParams.get("family_id");
             if (method === "PUT") {

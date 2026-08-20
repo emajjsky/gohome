@@ -21,12 +21,12 @@ struct OnboardingService: Sendable {
 
     func saveProfile(familyID: String, elderID: String = "elder_primary", profile: ProfilePayload) async throws -> ElderProfile {
         let body = try JSONEncoder().encode(profile)
-        return try await client.send(Endpoint<ElderProfile>(method: .put, path: "/api/v1/families/\(familyID)/elders/\(elderID)/profile", body: body))
+        return try await client.send(Endpoint<ElderProfile>(method: .put, path: "/api/v2/families/\(familyID)/elders/\(elderID)/profile", body: body))
     }
 
     func profile(familyID: String, elderID: String = "elder_primary") async throws -> ElderProfile {
         try await client.send(Endpoint(
-            path: "/api/v1/families/\(familyID)/elders/\(elderID)/profile"
+            path: "/api/v2/families/\(familyID)/elders/\(elderID)/profile"
         ))
     }
 

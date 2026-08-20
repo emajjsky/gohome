@@ -8,7 +8,7 @@ struct DistanceMapView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             ZStack(alignment: .trailing) {
-                GoHomeSectionHeader(title: "离家还有多远")
+                GoHomeSectionHeader(title: "家庭距离")
                 if showsEditAction, let onSetHomeLocation {
                     Button(action: onSetHomeLocation) {
                         Label("更改", systemImage: "location.fill")

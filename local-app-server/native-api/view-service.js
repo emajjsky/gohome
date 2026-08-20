@@ -173,6 +173,45 @@ function homeLocationView(elder) {
     };
 }
 
+function elderProfileView(profile) {
+    if (!profile) return null;
+    const metadata = profile.metadata && typeof profile.metadata === "object" ? profile.metadata : {};
+    const home = metadata.home_location && typeof metadata.home_location === "object" ? metadata.home_location : {};
+    return {
+        ...profile,
+        id: String(profile.id || profile.elder_id || ""),
+        elder_id: String(profile.elder_id || profile.id || ""),
+        district: String(profile.district || home.district || metadata.district || ""),
+        home_latitude: profile.home_latitude ?? home.latitude ?? null,
+        home_longitude: profile.home_longitude ?? home.longitude ?? null,
+        home_location_label: String(profile.home_location_label || home.label || ""),
+    };
+}
+
+function eventView(event) {
+    if (!event) return null;
+    const evidence = Array.isArray(event.evidence_media) ? event.evidence_media : [];
+    return {
+        ...event,
+        id: String(event.id || ""),
+        type: String(event.type || event.event_type || "event"),
+        event_type: String(event.event_type || event.type || "event"),
+        camera_id: event.camera_id ? String(event.camera_id) : null,
+        camera_name: String(event.camera_name || ""),
+        acknowledged: Boolean(event.acknowledged),
+        resolution: String(event.resolution || ""),
+        snapshot_url: String(event.snapshot_url || event.snapshot_path || ""),
+        evidence_media: evidence.slice(0, 4).map((item) => ({
+            asset_id: String(item.asset_id || ""),
+            url: item.url || `/api/v1/video/assets/${encodeURIComponent(String(item.asset_id || ""))}`,
+            role: String(item.role || "evidence"),
+            captured_at: item.captured_at || "",
+            postures: Array.isArray(item.postures) ? item.postures : [],
+        })),
+        payload: event.payload && typeof event.payload === "object" ? event.payload : {},
+    };
+}
+
 function memoryView(memory) {
     const media = Array.isArray(memory?.media) ? memory.media : [];
     const comments = Array.isArray(memory?.comments) ? memory.comments : [];
@@ -342,6 +381,28 @@ class NativeViewService {
     async verifyHomeVisit(userId, familyId, networkFingerprint) {
         if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
         return await this.repository.verifyHomeVisit(userId, familyId, networkFingerprint);
+    }
+
+    async elderProfile(userId, familyId, elderId) {
+        return elderProfileView(await this.repository.elderProfile(userId, familyId, elderId));
+    }
+
+    async updateElderProfile(userId, familyId, elderId, input) {
+        return elderProfileView(await this.repository.updateElderProfile(userId, familyId, elderId, input));
+    }
+
+    async resolveEvent(userId, eventId, input) {
+        return eventView(await this.repository.resolveEvent(userId, eventId, input));
+    }
+
+    async eventsForFamily(userId, familyId, options = {}) {
+        if (!familyId) throw Object.assign(new Error("family_id required"), { statusCode: 400 });
+        const events = await this.repository.eventsForFamily(userId, familyId, options);
+        return events.map(eventView);
+    }
+
+    async eventForUser(userId, eventId) {
+        return eventView(await this.repository.eventForUser(userId, eventId));
     }
 
     async updateHomeReturnPlan(userId, familyId, input) {

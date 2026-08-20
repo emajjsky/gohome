@@ -227,6 +227,7 @@ function createDbFromCloudRows(rowsByTable, fallbackDb) {
             home_phone: profile.home_phone || "",
             health_notes: profile.health_notes || "",
             care_preferences: profile.care_preferences || {},
+            metadata: profile.metadata || {},
             created_at: iso(profile.created_at, db.created_at),
             updated_at: iso(profile.updated_at, iso(profile.created_at, db.created_at)),
         };

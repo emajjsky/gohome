@@ -36,12 +36,12 @@ enum AppRepositoryLiveFactory {
                         queryItems: [URLQueryItem(name: "family_id", value: familyID)]
                     ))
                 },
-                eventsLoader: { _ in
+                eventsLoader: { familyID in
                     try await client.send(Endpoint(
-                        path: "/api/v1/events",
+                        path: "/api/v2/events",
                         queryItems: [
+                            URLQueryItem(name: "family_id", value: familyID),
                             URLQueryItem(name: "limit", value: "30"),
-                            URLQueryItem(name: "view", value: "summary"),
                         ]
                     ))
                 },
@@ -52,12 +52,12 @@ enum AppRepositoryLiveFactory {
                     ))
                 },
                 eventLoader: { eventID in
-                    try await client.send(Endpoint(path: "/api/v1/events/\(eventID)"))
+                    try await client.send(Endpoint(path: "/api/v2/events/\(eventID)"))
                 },
                 eventActionLoader: { eventID, resolution in
                     let endpoint: Endpoint<AppEvent> = try .jsonBody(
                         method: .patch,
-                        path: "/api/v1/events/\(eventID)",
+                        path: "/api/v2/events/\(eventID)",
                         body: EventActionRequest(acknowledged: true, resolution: resolution)
                     )
                     return try await client.send(endpoint)
@@ -80,7 +80,7 @@ enum AppRepositoryLiveFactory {
                         queryItems: [URLQueryItem(name: "family_id", value: familyID)]
                     ))
                     async let elder: ElderProfile? = try? client.send(Endpoint(
-                        path: "/api/v1/families/\(familyID)/elders/elder_primary/profile"
+                        path: "/api/v2/families/\(familyID)/elders/elder_primary/profile"
                     ))
 
                     let loadedCameras = try await cameras
@@ -123,7 +123,7 @@ enum AppRepositoryLiveFactory {
                 elderProfileUpdater: { familyID, elderID, payload in
                     let endpoint: Endpoint<ElderProfile> = try .jsonBody(
                         method: .put,
-                        path: "/api/v1/families/\(familyID)/elders/\(elderID)/profile",
+                        path: "/api/v2/families/\(familyID)/elders/\(elderID)/profile",
                         body: payload
                     )
                     return try await client.send(endpoint)

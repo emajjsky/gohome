@@ -128,6 +128,77 @@ function actionInput(action = {}, now = Date.now()) {
     };
 }
 
+function elderProfileInput(input = {}, current = {}, now = new Date().toISOString()) {
+    const value = (key, fallback = "", maximum = 120) => String(
+        Object.prototype.hasOwnProperty.call(input, key) ? input[key] || "" : fallback || "",
+    ).trim().slice(0, maximum);
+    const displayName = value("display_name", current.display_name, 40);
+    if (!displayName) throw repositoryError("display_name required", 400);
+    const relationship = value("relationship", current.relationship, 40);
+    const city = value("city", current.city, 40);
+    const existingMetadata = current.metadata && typeof current.metadata === "object" && !Array.isArray(current.metadata)
+        ? clone(current.metadata)
+        : {};
+    const suppliedMetadata = input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata)
+        ? clone(input.metadata)
+        : {};
+    const metadata = { ...existingMetadata, ...suppliedMetadata };
+    const existingHome = metadata.home_location && typeof metadata.home_location === "object"
+        ? metadata.home_location
+        : {};
+    const district = value("district", current.district || existingHome.district || metadata.district, 40);
+    metadata.district = district;
+
+    const hasLatitude = Object.prototype.hasOwnProperty.call(input, "home_latitude") && input.home_latitude !== null;
+    const hasLongitude = Object.prototype.hasOwnProperty.call(input, "home_longitude") && input.home_longitude !== null;
+    if (hasLatitude !== hasLongitude) throw repositoryError("home coordinates must be provided together", 400);
+    if (hasLatitude) {
+        const latitude = Number(input.home_latitude);
+        const longitude = Number(input.home_longitude);
+        if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
+            || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+            throw repositoryError("home coordinates are invalid", 400);
+        }
+        metadata.home_location = {
+            latitude,
+            longitude,
+            label: value("home_location_label", existingHome.label, 120),
+            city,
+            district,
+            source: "family_setup_phone",
+            updated_at: now,
+        };
+    }
+
+    let age = current.age ?? null;
+    if (Object.prototype.hasOwnProperty.call(input, "age")) {
+        age = input.age === null || input.age === "" ? null : Number(input.age);
+        if (age !== null && (!Number.isInteger(age) || age < 0 || age > 130)) throw repositoryError("age is invalid", 400);
+    }
+    return {
+        display_name: displayName,
+        relationship,
+        age,
+        city,
+        district,
+        phone: value("phone", current.phone, 40),
+        mobile_phone: value("mobile_phone", current.mobile_phone, 40),
+        home_phone: value("home_phone", current.home_phone, 40),
+        health_notes: value("health_notes", current.health_notes, 2000),
+        care_preferences: input.care_preferences && typeof input.care_preferences === "object"
+            ? clone(input.care_preferences)
+            : clone(current.care_preferences || {}),
+        metadata,
+    };
+}
+
+function eventResolutionInput(input = {}) {
+    if (input.acknowledged !== true) throw repositoryError("acknowledged must be true", 400);
+    const resolution = String(input.resolution || "").trim();
+    if (!["handled", "false_positive"].includes(resolution)) throw repositoryError("invalid event resolution", 400);
+    return { acknowledged: true, resolution };
+}
+
 function memoryInput(input = {}, { partial = false } = {}) {
     const body = input.body === undefined && partial ? undefined : String(input.body || "").trim().slice(0, 4000);
     const people = input.people === undefined && partial ? undefined : arrayValue(input.people).slice(0, 20);
@@ -631,6 +702,26 @@ class NativeRepository {
         throw new Error("NativeRepository.homeForFamily is not implemented");
     }
 
+    elderProfile(_userId, _familyId, _elderId) {
+        throw new Error("NativeRepository.elderProfile is not implemented");
+    }
+
+    updateElderProfile(_userId, _familyId, _elderId, _input) {
+        throw new Error("NativeRepository.updateElderProfile is not implemented");
+    }
+
+    resolveEvent(_userId, _eventId, _input) {
+        throw new Error("NativeRepository.resolveEvent is not implemented");
+    }
+
+    eventsForFamily(_userId, _familyId, _options = {}) {
+        throw new Error("NativeRepository.eventsForFamily is not implemented");
+    }
+
+    eventForUser(_userId, _eventId) {
+        throw new Error("NativeRepository.eventForUser is not implemented");
+    }
+
     verifyHomeVisit(_userId, _familyId, _networkFingerprint) {
         throw new Error("NativeRepository.verifyHomeVisit is not implemented");
     }
@@ -764,6 +855,9 @@ class JsonNativeRepository extends NativeRepository {
         if (!Array.isArray(this.db.media_upload_intents)) this.db.media_upload_intents = [];
         if (!Array.isArray(this.db.home_visits)) this.db.home_visits = [];
         if (!Array.isArray(this.db.home_return_plans)) this.db.home_return_plans = [];
+        if (!this.db.elder_profiles || typeof this.db.elder_profiles !== "object") this.db.elder_profiles = {};
+        if (!Array.isArray(this.db.events)) this.db.events = [];
+        if (!Array.isArray(this.db.event_media_assets)) this.db.event_media_assets = [];
     }
 
     user(userId) {
@@ -1182,6 +1276,94 @@ class JsonNativeRepository extends NativeRepository {
             latest_home_visit: latestHomeVisit,
             return_plan: returnPlan,
         });
+    }
+
+    elderProfile(userId, familyId, elderId) {
+        this.assertFamilyAccess(userId, familyId);
+        const profile = Object.values(this.db.elder_profiles).find((item) => (
+            textId(item.family_id) === textId(familyId) && textId(item.elder_id || item.id) === textId(elderId)
+        ));
+        if (!profile) throw repositoryError("elder profile not found", 404);
+        return clone(profile);
+    }
+
+    updateElderProfile(userId, familyId, elderId, input = {}) {
+        this.assertFamilyAccess(userId, familyId);
+        const key = `${textId(familyId)}:${textId(elderId)}`;
+        const existingKey = Object.keys(this.db.elder_profiles).find((candidate) => {
+            const item = this.db.elder_profiles[candidate];
+            return textId(item?.family_id) === textId(familyId) && textId(item?.elder_id || item?.id) === textId(elderId);
+        });
+        const existing = existingKey ? this.db.elder_profiles[existingKey] : {};
+        const now = this.clock();
+        const normalized = elderProfileInput(input, existing, now);
+        const profile = {
+            ...existing,
+            ...normalized,
+            id: existing.id || textId(elderId),
+            elder_id: textId(elderId),
+            family_id: textId(familyId),
+            created_at: existing.created_at || now,
+            updated_at: now,
+        };
+        if (existingKey && existingKey !== key) delete this.db.elder_profiles[existingKey];
+        this.db.elder_profiles[key] = profile;
+        return clone(profile);
+    }
+
+    resolveEvent(userId, eventId, input = {}) {
+        const action = eventResolutionInput(input);
+        const event = this.db.events.find((item) => textId(item.id) === textId(eventId));
+        if (!event) throw repositoryError("event not found", 404);
+        this.assertFamilyAccess(userId, event.family_id);
+        const now = this.clock();
+        const incidentId = textId(event.payload?.incident?.incident_id);
+        const linked = this.db.events.filter((item) => (
+            textId(item.family_id) === textId(event.family_id)
+            && (textId(item.id) === textId(event.id) || (incidentId && textId(item.payload?.incident?.incident_id) === incidentId))
+        ));
+        for (const item of linked) {
+            item.acknowledged = true;
+            item.resolution = action.resolution;
+            item.payload = item.payload && typeof item.payload === "object" ? item.payload : {};
+            const incident = item.payload.incident && typeof item.payload.incident === "object" ? item.payload.incident : null;
+            if (incident) {
+                incident.status = action.resolution === "false_positive" ? "rejected" : "acknowledged";
+                if (action.resolution === "false_positive") incident.resolved_at = now;
+                else incident.acknowledged_at = now;
+            }
+            if (action.resolution === "false_positive") {
+                item.payload.manual_feedback = { resolution: "false_positive", source: "app_user", updated_at: now };
+            }
+            item.updated_at = now;
+        }
+        const linkedIds = new Set(linked.map((item) => textId(item.id)));
+        for (const message of this.db.app_messages) {
+            const sourceIds = Array.isArray(message.source_event_ids) ? message.source_event_ids.map(textId) : [];
+            const matchesIncident = incidentId && Array.isArray(message.source)
+                && message.source.some((source) => source?.type === "safety_incident" && textId(source.id) === incidentId);
+            if (textId(message.event_id) === textId(event.id) || sourceIds.some((id) => linkedIds.has(id)) || matchesIncident) {
+                message.status = "archived";
+                message.updated_at = now;
+            }
+        }
+        return clone(event);
+    }
+
+    eventsForFamily(userId, familyId, options = {}) {
+        this.assertFamilyAccess(userId, familyId);
+        const limit = limitValue(options.limit, 30, 100);
+        return clone(this.db.events
+            .filter((event) => textId(event.family_id) === textId(familyId))
+            .sort((left, right) => String(right.occurred_at || right.created_at || "").localeCompare(String(left.occurred_at || left.created_at || "")))
+            .slice(0, limit));
+    }
+
+    eventForUser(userId, eventId) {
+        const event = this.db.events.find((item) => textId(item.id) === textId(eventId));
+        if (!event) throw repositoryError("event not found", 404);
+        this.assertFamilyAccess(userId, event.family_id);
+        return clone(event);
     }
 
     verifyHomeVisit(userId, familyId, networkFingerprint) {
@@ -1656,6 +1838,8 @@ module.exports = {
     activityTrackingEnabled,
     articlesFromCareCards,
     currentHomeNetworkFingerprint,
+    elderProfileInput,
+    eventResolutionInput,
     familyMemberView,
     familyInvitationView,
     generateFamilyInvitationCode,

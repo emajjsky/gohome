@@ -32,12 +32,12 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                weatherCard
                 header
                 welcomeHero
                 DistanceMapView(state: distanceProvider.state, onSetHomeLocation: onSetHomeLocation)
                 returnHomeSummary
                 returnPlanSection
-                weatherCard
                 if let message = model.careMessage {
                     CareMessageCard(message: message, model: model)
                 } else {
@@ -79,9 +79,6 @@ struct HomeView: View {
                 Text("今天")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .foregroundStyle(GoHomeTheme.ink)
-                Text(HomePresentation.weatherText(model.state.value?.weather) ?? "家庭状态与天气")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(GoHomeTheme.mutedInk)
             }
             Spacer()
         }

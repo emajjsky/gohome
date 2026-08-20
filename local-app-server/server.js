@@ -8625,7 +8625,9 @@ function createLocalAppServer(options = {}) {
                         delete result.body.deleted_user_id;
                         delete result.body.deleted_family_ids;
                     }
-                    if (req.method !== "GET" && req.method !== "HEAD") await store.save();
+                    // Native PostgreSQL mutations are committed by the repository transaction.
+                    // Replaying the in-memory snapshot here can duplicate idempotent rows.
+                    if (store.kind === "json" && req.method !== "GET" && req.method !== "HEAD") await store.save();
                     if (result.status === 304) {
                         res.writeHead(304, {
                             "Access-Control-Allow-Origin": "*",

@@ -17,6 +17,8 @@ const {
     normalizeFamilyInvitationCode,
     memoryInput,
     currentHomeNetworkFingerprint,
+    elderProfileInput,
+    eventResolutionInput,
     repositoryError,
 } = require("./repository");
 
@@ -785,6 +787,201 @@ class PostgresNativeRepository extends NativeRepository {
             latest_home_visit: row(homeVisitResult),
             return_plan: row(returnPlanResult),
         };
+    }
+
+    async elderProfile(userId, familyId, elderId) {
+        await this.assertFamilyAccess(this.pool, userId, familyId);
+        const profile = row(await this.pool.query(
+            `select * from elder_profiles where family_id = $1 and elder_id = $2`,
+            [textId(familyId), textId(elderId)],
+        ));
+        if (!profile) throw repositoryError("elder profile not found", 404);
+        return profile;
+    }
+
+    async updateElderProfile(userId, familyId, elderId, input = {}) {
+        const client = typeof this.pool.connect === "function" ? await this.pool.connect() : this.pool;
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            await this.assertFamilyAccess(client, userId, familyId);
+            const current = row(await client.query(
+                `select * from elder_profiles where family_id = $1 and elder_id = $2 for update`,
+                [textId(familyId), textId(elderId)],
+            )) || {};
+            const normalized = elderProfileInput(input, current, new Date(this.clock()).toISOString());
+            const profile = row(await client.query(
+                `insert into elder_profiles
+                    (family_id, elder_id, display_name, relationship, age, city, phone, mobile_phone,
+                     home_phone, health_notes, care_preferences, metadata, created_at, updated_at)
+                 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, now(), now())
+                 on conflict (family_id, elder_id) do update set
+                    display_name = excluded.display_name,
+                    relationship = excluded.relationship,
+                    age = excluded.age,
+                    city = excluded.city,
+                    phone = excluded.phone,
+                    mobile_phone = excluded.mobile_phone,
+                    home_phone = excluded.home_phone,
+                    health_notes = excluded.health_notes,
+                    care_preferences = excluded.care_preferences,
+                    metadata = excluded.metadata,
+                    updated_at = now()
+                 returning *`,
+                [
+                    textId(familyId), textId(elderId), normalized.display_name, normalized.relationship,
+                    normalized.age, normalized.city, normalized.phone, normalized.mobile_phone,
+                    normalized.home_phone, normalized.health_notes, JSON.stringify(normalized.care_preferences),
+                    JSON.stringify(normalized.metadata),
+                ],
+            ));
+            await client.query("commit");
+            transaction = false;
+            return profile;
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            if (client !== this.pool && typeof client.release === "function") client.release();
+        }
+    }
+
+    async resolveEvent(userId, eventId, input = {}) {
+        const action = eventResolutionInput(input);
+        const client = typeof this.pool.connect === "function" ? await this.pool.connect() : this.pool;
+        let transaction = false;
+        try {
+            await client.query("begin");
+            transaction = true;
+            const target = row(await client.query(`select * from events where id = $1 for update`, [textId(eventId)]));
+            if (!target) throw repositoryError("event not found", 404);
+            await this.assertFamilyAccess(client, userId, target.family_id);
+            const incidentId = textId(target.payload?.incident?.incident_id);
+            const linked = rows(await client.query(
+                `select * from events
+                 where family_id = $1
+                   and (id = $2 or ($3 <> '' and payload->'incident'->>'incident_id' = $3))
+                 order by occurred_at, id
+                 for update`,
+                [textId(target.family_id), textId(target.id), incidentId],
+            ));
+            const now = new Date(this.clock()).toISOString();
+            const linkedIds = linked.map((event) => textId(event.id));
+            const primaryId = textId(target.payload?.incident?.primary_event_id || target.id);
+            let updatedTarget = null;
+            for (const event of linked) {
+                const payload = event.payload && typeof event.payload === "object" ? { ...event.payload } : {};
+                if (payload.incident && typeof payload.incident === "object") {
+                    const incident = { ...payload.incident };
+                    incident.status = action.resolution === "false_positive" ? "rejected" : "acknowledged";
+                    if (action.resolution === "false_positive") incident.resolved_at = now;
+                    else incident.acknowledged_at = now;
+                    if (textId(event.id) === primaryId) {
+                        const transitions = Array.isArray(incident.transitions) ? [...incident.transitions] : [];
+                        const status = action.resolution === "false_positive" ? "rejected" : "acknowledged";
+                        const previous = transitions[transitions.length - 1];
+                        if (previous?.status !== status || previous?.source !== "app_user") {
+                            transitions.push({ status, source: "app_user", at: now, resolution: action.resolution });
+                        }
+                        incident.transitions = transitions.slice(-24);
+                    }
+                    payload.incident = incident;
+                }
+                if (action.resolution === "false_positive") {
+                    payload.manual_feedback = { resolution: "false_positive", source: "app_user", updated_at: now };
+                }
+                const updated = row(await client.query(
+                    `update events
+                     set acknowledged = true, resolution = $2, payload = $3::jsonb, updated_at = $4
+                     where id = $1
+                     returning *`,
+                    [textId(event.id), action.resolution, JSON.stringify(payload), now],
+                ));
+                if (textId(updated?.id) === textId(target.id)) updatedTarget = updated;
+            }
+            if (linkedIds.length) {
+                await client.query(
+                    `update app_messages
+                     set status = 'archived', updated_at = $4
+                     where family_id = $1 and (
+                        event_id::text = any($2::text[])
+                        or source_event_ids ?| $2::text[]
+                        or ($3 <> '' and source @> $5::jsonb)
+                     )`,
+                    [
+                        textId(target.family_id), linkedIds, incidentId, now,
+                        JSON.stringify(incidentId ? [{ type: "safety_incident", id: incidentId }] : []),
+                    ],
+                );
+            }
+            await client.query("commit");
+            transaction = false;
+            const event = updatedTarget || target;
+            const [cameraResult, evidenceResult] = await Promise.all([
+                this.pool.query(`select name, room from cameras where id = $1`, [textId(event.camera_id)]),
+                this.pool.query(
+                    `select relation.asset_id, relation.role, relation.captured_at, relation.postures
+                     from event_media_assets relation
+                     join media_assets asset on asset.id = relation.asset_id
+                     where relation.event_id = $1 and relation.canonical = true
+                     order by relation.captured_at nulls last, relation.created_at
+                     limit 4`,
+                    [textId(event.id)],
+                ),
+            ]);
+            const camera = row(cameraResult) || {};
+            return {
+                ...event,
+                camera_name: event.camera_name || camera.name || "",
+                room: event.room || camera.room || camera.name || "",
+                evidence_media: rows(evidenceResult),
+            };
+        } catch (error) {
+            if (transaction) await client.query("rollback");
+            throw error;
+        } finally {
+            if (client !== this.pool && typeof client.release === "function") client.release();
+        }
+    }
+
+    async eventsForFamily(userId, familyId, options = {}) {
+        await this.assertFamilyAccess(this.pool, userId, familyId);
+        const limit = limitValue(options.limit, 30, 100);
+        const events = rows(await this.pool.query(
+            `select * from events where family_id = $1 order by occurred_at desc, id desc limit $2`,
+            [textId(familyId), limit],
+        ));
+        if (!events.length) return [];
+        const eventIds = events.map((event) => textId(event.id));
+        const media = rows(await this.pool.query(
+            `select event_id, asset_id, role, captured_at, postures
+             from event_media_assets
+             where event_id::text = any($1::text[]) and canonical = true
+             order by captured_at nulls last, created_at`,
+            [eventIds],
+        ));
+        const mediaByEvent = new Map();
+        for (const item of media) {
+            const key = textId(item.event_id);
+            const list = mediaByEvent.get(key) || [];
+            if (list.length < 4) list.push(item);
+            mediaByEvent.set(key, list);
+        }
+        return events.map((event) => ({ ...event, evidence_media: mediaByEvent.get(textId(event.id)) || [] }));
+    }
+
+    async eventForUser(userId, eventId) {
+        const event = row(await this.pool.query(`select * from events where id = $1`, [textId(eventId)]));
+        if (!event) throw repositoryError("event not found", 404);
+        await this.assertFamilyAccess(this.pool, userId, event.family_id);
+        const evidence = rows(await this.pool.query(
+            `select asset_id, role, captured_at, postures
+             from event_media_assets where event_id = $1 and canonical = true
+             order by captured_at nulls last, created_at limit 4`,
+            [textId(event.id)],
+        ));
+        return { ...event, evidence_media: evidence };
     }
 
     async verifyHomeVisit(userId, familyId, networkFingerprint) {
